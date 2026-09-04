@@ -7,6 +7,7 @@ import {
   TREE_FILE_MAX_BYTES,
   TREE_FILE_SEARCH_MAX_MATCHES,
   TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH,
+  isSchemaValue,
   treeFilePathSchema
 } from '@treeport/shared'
 import type {
@@ -414,7 +415,7 @@ export class TreeFileService {
     DomainError<unknown>
   > {
     return Effect.gen(function* () {
-      if (!treeFilePathSchema.safeParse(requestedPath).success) {
+      if (!isSchemaValue(treeFilePathSchema, requestedPath)) {
         return yield* Effect.fail(
           new DomainError(
             'INVALID_TREE_FILE_PATH',

@@ -1,8 +1,5 @@
 import { z } from 'zod'
-import {
-  terminalProgressSchema,
-  type TerminalSnapshotLink
-} from '@treeport/shared'
+import type { TerminalProgress, TerminalSnapshotLink } from '@treeport/shared'
 import type {
   HostedTerminal,
   TerminalLaunchSpec,
@@ -242,7 +239,7 @@ export interface TerminalHostResults {
   runtimeState: {
     title: string | null
     status: HostedTerminal['status']
-    progress: z.infer<typeof terminalProgressSchema> | null
+    progress: TerminalProgress | null
     bell: { sequence: number; at: string } | null
   } | null
   write: null
@@ -265,7 +262,13 @@ export type TerminalHostResult = TerminalHostResults[keyof TerminalHostResults]
 const runtimeEventSchema = z
   .object({
     title: z.string().optional(),
-    progress: terminalProgressSchema.nullable().optional(),
+    progress: z
+      .strictObject({
+        state: z.enum(['normal', 'error', 'indeterminate', 'paused']),
+        value: z.number().int().min(0).max(100).nullable()
+      })
+      .nullable()
+      .optional(),
     bell: z
       .object({
         sequence: z.number().int().positive(),

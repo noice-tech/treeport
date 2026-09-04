@@ -1,5 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import * as Either from 'effect/Either'
+import * as ParseResult from 'effect/ParseResult'
+import * as Schema from 'effect/Schema'
 import type {
   TerminalPresetDefinition,
   TerminalPresetDefinitionDiagnostic
@@ -59,19 +62,17 @@ export async function loadRepositoryTerminalPresets(
     }
   }
 
-  const file = repositoryTerminalPresetsFileSchema.safeParse(value)
-  if (!file.success) {
+  const file = Schema.decodeUnknownEither(repositoryTerminalPresetsFileSchema)(
+    value
+  )
+  if (Either.isLeft(file)) {
     return {
       definitions: [],
       diagnostics: [
         {
           path: CONFIG_PATH,
           itemId: null,
-          message: `Invalid repository terminal presets: ${file.error.issues
-            .map(
-              (issue) => `${issue.path.join('.') || 'value'} ${issue.message}`
-            )
-            .join('; ')}`
+          message: `Invalid repository terminal presets: ${ParseResult.TreeFormatter.formatErrorSync(file.left)}`
         }
       ]
     }
@@ -79,30 +80,28 @@ export async function loadRepositoryTerminalPresets(
 
   const definitions: TerminalPresetDefinition[] = []
   const diagnostics: TerminalPresetDefinitionDiagnostic[] = []
-  for (const presetId of Object.keys(file.data.presets).sort()) {
-    const preset = repositoryTerminalPresetSchema.safeParse(
-      file.data.presets[presetId]
+  for (const presetId of Object.keys(file.right.presets).sort()) {
+    const preset = Schema.decodeUnknownEither(repositoryTerminalPresetSchema)(
+      file.right.presets[presetId]
     )
-    if (!preset.success) {
+    if (Either.isLeft(preset)) {
       diagnostics.push({
         path: CONFIG_PATH,
         itemId: presetId,
-        message: `Invalid repository terminal preset ${presetId}: ${preset.error.issues
-          .map((issue) => `${issue.path.join('.') || 'value'} ${issue.message}`)
-          .join('; ')}`
+        message: `Invalid repository terminal preset ${presetId}: ${ParseResult.TreeFormatter.formatErrorSync(preset.left)}`
       })
       continue
     }
 
     definitions.push({
       id: `repository:${projectId}:terminal-preset:${presetId}`,
-      name: preset.data.name,
-      executable: preset.data.executable,
-      args: [...preset.data.args],
+      name: preset.right.name,
+      executable: preset.right.executable,
+      args: [...preset.right.args],
       shellCommand: null,
       cwd: null,
       env: {},
-      closeOnSuccess: preset.data.closeOnSuccess,
+      closeOnSuccess: preset.right.closeOnSuccess,
       source: { type: 'repository', format: 'treeport' }
     })
   }

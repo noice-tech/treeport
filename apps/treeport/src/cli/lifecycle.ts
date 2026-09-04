@@ -5,6 +5,11 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  decodeUnknownOrNull,
+  healthResponseSchema,
+  type HealthResponse
+} from '@treeport/shared'
 import { z } from 'zod'
 import { assertLoopbackHost } from '../server/core/loopback.js'
 
@@ -40,17 +45,7 @@ export interface DaemonRecord {
   daemonLifecycle: 'treeport' | 'service' | 'external'
 }
 
-export interface HealthRecord {
-  ok: true
-  version: string
-  protocolVersion: number
-  hostname?: string | undefined
-  pid: number
-  instanceId: string | null
-  installationMethod: string
-  daemonLifecycle: 'treeport' | 'service' | 'external'
-  url: string
-}
+export type HealthRecord = HealthResponse
 
 export interface DoctorCheck {
   name: string
@@ -131,18 +126,6 @@ const daemonRecordSchema = z.strictObject({
   startedAt: z.string(),
   installationMethod: z.string(),
   daemonLifecycle: z.enum(['treeport', 'service', 'external'])
-})
-
-const healthRecordSchema: z.ZodType<HealthRecord> = z.strictObject({
-  ok: z.literal(true),
-  version: z.string(),
-  protocolVersion: z.number(),
-  hostname: z.string().optional(),
-  pid: z.number(),
-  instanceId: z.string().nullable(),
-  installationMethod: z.string(),
-  daemonLifecycle: z.enum(['treeport', 'service', 'external']),
-  url: z.string()
 })
 
 async function preferences(
@@ -250,8 +233,7 @@ export async function daemonHealth(
         return null
       }
 
-      const result = healthRecordSchema.safeParse(await response.json())
-      return result.success ? result.data : null
+      return decodeUnknownOrNull(healthResponseSchema, await response.json())
     })
     .catch(() => null)
 }

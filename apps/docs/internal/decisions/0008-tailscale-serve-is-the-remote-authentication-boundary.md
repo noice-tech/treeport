@@ -35,7 +35,7 @@ The daemon stays on loopback and requires `Tailscale-User-Login` on a proxied re
 
 Optional Tailscale name and profile headers do not control authentication.
 
-Treeport applies this rule before HTTP application processing and during each Socket.IO upgrade.
+Treeport applies this rule before HTTP application processing and during each WebSocket upgrade.
 
 Treeport does not verify identity headers with cryptography.
 
@@ -83,8 +83,8 @@ A tagged device cannot connect because it does not identify a user.
 
 A future remote provider needs a separate design for all these traffic types:
 
-- browser HTTP;
-- both Socket.IO namespaces;
+- browser HTTP and Effect RPC;
+- terminal and Browser WebSocket channels;
 - desktop traffic;
 - CLI traffic.
 

@@ -17,7 +17,6 @@ import {
   ServerStackIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import { z } from 'zod'
 import type {
   BrowserFrame,
   BrowserPanel,
@@ -26,7 +25,8 @@ import type {
   WorktreeListener,
   WorktreeListenerDiscovery
 } from '@treeport/shared'
-import { browserUrlSchema } from '@treeport/shared'
+import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
+import { parseResponse, rpc } from '../../api'
 import { Button } from '../../components/ui/button'
 import { Empty, EmptyDescription, EmptyTitle } from '../../components/ui/empty'
 import { Input } from '../../components/ui/input'
@@ -42,21 +42,6 @@ import {
 import { useDesktopRuntime } from '../../desktop-runtime'
 import { LocalBrowserWebview } from './local-browser-webview'
 
-const listenerDiscoverySchema: z.ZodType<WorktreeListenerDiscovery> =
-  z.strictObject({
-    supported: z.boolean(),
-    message: z.string().nullable(),
-    listeners: z.array(
-      z.strictObject({
-        pid: z.number().int(),
-        command: z.string(),
-        host: z.string(),
-        port: z.number().int().min(1).max(65_535),
-        terminalId: z.string().nullable()
-      })
-    )
-  })
-
 function parseBrowserAddress(value: string): URL | null {
   const input = value.trim()
   if (!input) {
@@ -65,9 +50,9 @@ function parseBrowserAddress(value: string): URL | null {
 
   const hasProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
   const candidate = hasProtocol ? input : `http://${input}`
-  const parsed = browserUrlSchema.safeParse(candidate)
-  if (parsed.success) {
-    const url = new URL(parsed.data)
+  const parsed = decodeUnknownOrNull(browserUrlSchema, candidate)
+  if (parsed !== null) {
+    const url = new URL(parsed)
     if (
       hasProtocol ||
       url.hostname === 'localhost' ||
@@ -86,7 +71,9 @@ function parseBrowserAddress(value: string): URL | null {
 
   const search = new URL('https://www.google.com/search')
   search.searchParams.set('q', input)
-  return browserUrlSchema.safeParse(search.href).success ? search : null
+  return decodeUnknownOrNull(browserUrlSchema, search.href) !== null
+    ? search
+    : null
 }
 
 function listenerUrl(listener: WorktreeListener): URL | null {
@@ -98,7 +85,9 @@ function listenerUrl(listener: WorktreeListener): URL | null {
   }
 
   const value = `http://${host}:${listener.port}/`
-  return browserUrlSchema.safeParse(value).success ? new URL(value) : null
+  return decodeUnknownOrNull(browserUrlSchema, value) !== null
+    ? new URL(value)
+    : null
 }
 
 export function BrowserPanelWorkspace({
@@ -242,7 +231,8 @@ export function BrowserPanelWorkspace({
         }
 
         const pendingNavigation = pendingNavigationRef.current
-        const validUrl = browserUrlSchema.safeParse(message.state.url).success
+        const validUrl =
+          decodeUnknownOrNull(browserUrlSchema, message.state.url) !== null
         // takeControl can report the old page before the queued navigation starts.
         const navigationStarted =
           pendingNavigation === null ||
@@ -553,16 +543,11 @@ export function BrowserPanelWorkspace({
   const discoverListeners = useCallback(async () => {
     setListenersLoading(true)
     try {
-      const response = await fetch(
-        `/api/panels/${encodeURIComponent(panel.id)}/network/listeners`
+      const parsed = await parseResponse(
+        rpc.api.panels[':panelId'].network.listeners.$get({
+          param: { panelId: panel.id }
+        })
       )
-      const parsed = z
-        .object({ discovery: listenerDiscoverySchema })
-        .parse(await response.json())
-      if (!response.ok) {
-        throw new Error('Could not scan for development servers')
-      }
-
       setListeners(parsed.discovery)
     } catch (cause) {
       setListeners({
@@ -1077,12 +1062,8 @@ export function BrowserPanelWorkspace({
                   disabled={installingBrowser}
                   onClick={() => {
                     setInstallingBrowser(true)
-                    void fetch('/api/browser/install', { method: 'POST' })
-                      .then((response) => {
-                        if (!response.ok) {
-                          throw new Error('Could not install Chromium.')
-                        }
-
+                    void parseResponse(rpc.api.browser.install.$post())
+                      .then(() => {
                         setConnectionRevision((value) => value + 1)
                       })
                       .catch((cause) => {

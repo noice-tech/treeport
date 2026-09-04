@@ -1,5 +1,10 @@
-import { io, type Socket } from 'socket.io-client'
-import { z } from 'zod'
+import {
+  apiErrorBodySchema,
+  browserOwnerTicketResponseSchema,
+  createProtocolSocket,
+  decodeUnknownOrNull,
+  type ProtocolSocket
+} from '@treeport/shared'
 import type {
   BrowserOwnerClientMessage,
   BrowserOwnerClientToServerEvents,
@@ -9,14 +14,8 @@ import type {
 } from '@treeport/shared'
 import {
   BROWSER_PROTOCOL_VERSION,
-  browserOwnerServerMessageSchema,
-  SOCKET_IO_PATH
+  parseBrowserOwnerServerMessage
 } from '@treeport/shared'
-
-const ownerTicketResponseSchema = z.strictObject({
-  ticket: z.string().min(32).max(256),
-  challenge: z.string().min(32).max(256)
-})
 
 export interface LocalBrowserOwnerTicket {
   ticket: string
@@ -47,18 +46,20 @@ export async function requestLocalBrowserOwnerTicket(
       body: JSON.stringify({ clientId })
     }
   )
+  const body: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    const body = z
-      .object({ error: z.object({ message: z.string() }) })
-      .safeParse(await response.json().catch(() => null))
+    const error = decodeUnknownOrNull(apiErrorBodySchema, body)
     throw new Error(
-      body.success
-        ? body.data.error.message
-        : 'Could not request Browser ownership.'
+      error?.error.message ?? 'Could not request Browser ownership.'
     )
   }
 
-  return ownerTicketResponseSchema.parse(await response.json())
+  const ticket = decodeUnknownOrNull(browserOwnerTicketResponseSchema, body)
+  if (!ticket) {
+    throw new Error('The Browser owner ticket response is invalid.')
+  }
+
+  return ticket
 }
 
 export function connectLocalBrowserOwner(
@@ -75,13 +76,10 @@ export function connectLocalBrowserOwner(
     disconnected(): void
   }
 ): Promise<LocalBrowserOwnerConnection> {
-  const socket: Socket<
+  const socket: ProtocolSocket<
     BrowserOwnerServerToClientEvents,
     BrowserOwnerClientToServerEvents
-  > = io('/browser-owners', {
-    path: SOCKET_IO_PATH,
-    transports: ['websocket'],
-    forceNew: true,
+  > = createProtocolSocket('/browser-owners', {
     reconnection: false,
     auth: {
       ticket: ownerTicket.ticket,
@@ -105,13 +103,12 @@ export function connectLocalBrowserOwner(
       reject(cause instanceof Error ? cause : new Error(String(cause)))
     }
     socket.on('ownerMessage', (value: BrowserOwnerServerMessage) => {
-      const parsed = browserOwnerServerMessageSchema.safeParse(value)
-      if (!parsed.success) {
+      const message = parseBrowserOwnerServerMessage(value)
+      if (!message) {
         rejectBeforeReady(new Error('The Browser owner protocol is invalid.'))
         return
       }
 
-      const message = parsed.data
       if (message.type === 'claimRejected') {
         rejectBeforeReady(new Error(message.message))
         return
@@ -241,7 +238,7 @@ export function connectLocalBrowserOwner(
 }
 
 function sendOwnerResult(
-  socket: Socket<
+  socket: ProtocolSocket<
     BrowserOwnerServerToClientEvents,
     BrowserOwnerClientToServerEvents
   >,

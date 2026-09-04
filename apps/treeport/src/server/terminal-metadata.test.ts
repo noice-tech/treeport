@@ -1,4 +1,4 @@
-import type { TerminalRecord } from '@treeport/shared'
+import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
 import { ProductEventBus } from './core/events'
@@ -125,9 +125,13 @@ function fixture(states: TerminalBellState[] = []) {
   for (const state of states) {
     bells.states.set(state.terminalId, state)
   }
-  const listProjects = vi.fn(async () => [])
-  const getTerminal = vi.fn(async () => terminal)
-  const getWorktree = vi.fn(async () => ({ id: 'worktree', path: '/repo' }))
+  const listProjects = vi.fn(() => Effect.succeed([]))
+  const getTerminal = vi.fn(() => Effect.succeed(terminal))
+  const getWorktree = vi.fn(() =>
+    Effect.succeed(
+      testAccess<WorktreeRecord>({ id: 'worktree', path: '/repo' })
+    )
+  )
   // SAFETY: The fixture supplies the service methods used by metadata.
   const service = testAccess<TreeportService>({
     events,
@@ -142,16 +146,20 @@ function fixture(states: TerminalBellState[] = []) {
         ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
         : effect
     ),
+    forkApplicationEffect: vi.fn((effect) => {
+      // SAFETY: The metadata fixture provides every service required by the effect.
+      Effect.runFork(effect as Effect.Effect<void, never, never>)
+    }),
     terminalMetadataMutation: vi.fn((_terminalId, effect) => effect),
     drainTerminalMetadataMutations: vi.fn(() => Effect.void)
   })
   const manager = new TerminalMetadataManager(service, host, bells)
-  return { bells, events, host, manager }
+  return { bells, events, host, manager, service }
 }
 
 describe('TerminalMetadataManager', () => {
   it('projects host title, command, progress, BEL, and exit events', async () => {
-    const { bells, events, host, manager } = fixture()
+    const { bells, events, host, manager, service } = fixture()
     const published: string[] = []
     events.subscribe((event) => {
       if (event.type === 'terminal.metadata') {
@@ -160,8 +168,10 @@ describe('TerminalMetadataManager', () => {
         )
       }
     })
-    await manager.initialize()
-    await manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
+    await service.runEffect(manager.initialize())
+    await service.runEffect(
+      manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
+    )
 
     host.emit('terminal', {
       titleState: {
@@ -176,7 +186,7 @@ describe('TerminalMetadataManager', () => {
     host.emit('terminal', {
       bell: { sequence: 1, at: '2026-01-01T00:01:00.000Z' }
     })
-    await manager.drain()
+    await service.runEffect(manager.drain())
 
     expect(manager.get('terminal')).toMatchObject({
       title: 'pi --mode rpc',
@@ -204,15 +214,17 @@ describe('TerminalMetadataManager', () => {
       occurredAt: '2026-01-01T00:00:00.000Z',
       unread: true
     }
-    const { bells, host, manager } = fixture([existing])
+    const { bells, host, manager, service } = fixture([existing])
     host.state.progress = { state: 'normal', value: 71 }
     host.state.bell = {
       sequence: 4,
       at: '2026-01-01T00:01:00.000Z'
     }
-    await manager.initialize()
-    await manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
-    await manager.drain()
+    await service.runEffect(manager.initialize())
+    await service.runEffect(
+      manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
+    )
+    await service.runEffect(manager.drain())
 
     expect(manager.get('terminal')).toMatchObject({
       progress: { state: 'normal', value: 71 },
@@ -223,10 +235,10 @@ describe('TerminalMetadataManager', () => {
     host.emit('terminal', {
       bell: { sequence: 4, at: '2026-01-01T00:01:00.000Z' }
     })
-    await manager.drain()
+    await service.runEffect(manager.drain())
     expect(bells.upsert).toHaveBeenCalledTimes(1)
 
-    await manager.acknowledgeBell('terminal', 4)
+    await service.runEffect(manager.acknowledgeBell('terminal', 4))
     expect(bells.markRead).toHaveBeenCalledWith('terminal', 4)
     expect(manager.get('terminal').bell).toMatchObject({
       sequence: 4,
@@ -236,16 +248,18 @@ describe('TerminalMetadataManager', () => {
   })
 
   it('removes runtime subscriptions and persisted BEL state with a terminal', async () => {
-    const { bells, host, manager } = fixture()
-    await manager.initialize()
-    await manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
+    const { bells, host, manager, service } = fixture()
+    await service.runEffect(manager.initialize())
+    await service.runEffect(
+      manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
+    )
     host.emit('terminal', {
       bell: { sequence: 1, at: '2026-01-01T00:01:00.000Z' }
     })
-    await manager.drain()
+    await service.runEffect(manager.drain())
 
     manager.removeTerminal('terminal')
-    await manager.drain()
+    await service.runEffect(manager.drain())
     expect(host.listeners.get('terminal')?.size ?? 0).toBe(0)
     expect(bells.delete).toHaveBeenCalledWith('terminal')
     expect(manager.get('terminal').bell).toBeNull()

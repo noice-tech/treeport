@@ -2,8 +2,7 @@ import type { RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
-import { parseResponse } from 'hono/client'
-import { rpc } from '../../api'
+import { parseResponse, rpc } from '../../api'
 import {
   projectsQueryKey,
   recentProjectsQueryKey

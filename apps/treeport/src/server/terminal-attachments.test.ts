@@ -1,9 +1,12 @@
 import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as Scope from 'effect/Scope'
 import { describe, expect, it, vi } from 'vitest'
 import {
   parseTerminalServerEvent,
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES,
+  type TerminalAuth,
   type TerminalServerEvent,
   type TerminalServerEventPayloads,
   type TerminalServerPayload
@@ -149,22 +152,26 @@ class TransportDouble {
 
 function fixture() {
   const host = new HostDouble()
-  const getTerminalForAttachment = vi.fn(async () => ({
-    id: 'terminal',
-    worktreeId: 'worktree',
-    name: 'Shell',
-    argv: ['/bin/sh'],
-    shellCommand: null,
-    interactiveShell: true,
-    status: 'running',
-    exitCode: null,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z'
-  }))
-  const getWorktree = vi.fn(async () => ({
-    id: 'worktree',
-    path: '/tmp'
-  }))
+  const getTerminalForAttachment = vi.fn(() =>
+    Effect.succeed({
+      id: 'terminal',
+      worktreeId: 'worktree',
+      name: 'Shell',
+      argv: ['/bin/sh'],
+      shellCommand: null,
+      interactiveShell: true,
+      status: 'running',
+      exitCode: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    })
+  )
+  const getWorktree = vi.fn(() =>
+    Effect.succeed({
+      id: 'worktree',
+      path: '/tmp'
+    })
+  )
   // SAFETY: This fixture supplies the service methods exercised by attachments.
   const service = testAccess<TreeportService>({
     getTerminalForAttachment,
@@ -176,6 +183,10 @@ function fixture() {
         ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
         : effect
     ),
+    forkApplicationEffect: vi.fn((effect) => {
+      // SAFETY: The attachment fixture provides every service required by the effect.
+      Effect.runFork(effect as Effect.Effect<void, never, never>)
+    }),
     terminalAttachmentMutation: vi.fn((_terminalId, effect) => effect),
     events: { publish: vi.fn() }
   })
@@ -190,13 +201,21 @@ function fixture() {
   }
   // SAFETY: This fixture supplies the metadata methods exercised by attachments.
   const metadata = testAccess<TerminalMetadataManager>({
-    trackTerminal: vi.fn(async () => undefined),
+    trackTerminal: vi.fn(() => Effect.void),
     subscribe: vi.fn(() => () => undefined),
     get: vi.fn(() => metadataValue)
   })
+  const manager = new TerminalAttachmentManager(service, metadata, host)
+  const scope = Effect.runSync(Scope.make())
   return {
     host,
-    manager: new TerminalAttachmentManager(service, metadata, host)
+    manager,
+    accept: (auth: TerminalAuth, transport: TransportDouble) =>
+      service.runEffect(Scope.extend(manager.accept(auth, transport), scope)),
+    dispose: async () => {
+      manager.dispose()
+      await Effect.runPromise(Scope.close(scope, Exit.void))
+    }
   }
 }
 
@@ -269,14 +288,14 @@ async function activateAuthority(
 
 describe('TerminalAttachmentManager', () => {
   it('fences a canonical snapshot before exactly the concurrent live suffix', async () => {
-    const { host, manager } = fixture()
+    const { host, manager, accept, dispose } = fixture()
     let releaseSnapshot!: () => void
     host.snapshotGate = new Promise<void>((resolve) => {
       releaseSnapshot = resolve
     })
     host.snapshotFence = 4
     const transport = new TransportDouble('viewer')
-    const connectionId = manager.accept(
+    const connectionId = await accept(
       { terminalId: 'terminal', clientId: 'client', cols: 100, rows: 30 },
       transport
     )
@@ -307,18 +326,18 @@ describe('TerminalAttachmentManager', () => {
       streamId: output[0]!.streamId,
       sequence: output[0]!.sequence
     })
-    manager.dispose()
+    await dispose()
   })
 
   it('disconnects a slow viewer without pausing output to another viewer', async () => {
-    const { host, manager } = fixture()
+    const { host, manager, accept, dispose } = fixture()
     const slow = new TransportDouble('slow')
     const fast = new TransportDouble('fast')
-    const slowId = manager.accept(
+    const slowId = await accept(
       { terminalId: 'terminal', clientId: 'slow-client', cols: 100, rows: 30 },
       slow
     )
-    const fastId = manager.accept(
+    const fastId = await accept(
       { terminalId: 'terminal', clientId: 'fast-client', cols: 100, rows: 30 },
       fast
     )
@@ -366,13 +385,13 @@ describe('TerminalAttachmentManager', () => {
     )
     expect(host.outputListeners.size).toBe(1)
     manager.close(slowId)
-    manager.dispose()
+    await dispose()
   })
 
   it('reports an asynchronous terminal-host write failure and disconnects the controller', async () => {
-    const { host, manager } = fixture()
+    const { host, manager, accept, dispose } = fixture()
     const transport = new TransportDouble('controller')
-    const connectionId = manager.accept(
+    const connectionId = await accept(
       { terminalId: 'terminal', clientId: 'client', cols: 100, rows: 30 },
       transport
     )
@@ -390,13 +409,13 @@ describe('TerminalAttachmentManager', () => {
       retryable: true
     })
     expect(transport.disconnects).toEqual([true])
-    manager.dispose()
+    await dispose()
   })
 
   it('hands query authority between controllers behind parser fences', async () => {
-    const { host, manager } = fixture()
+    const { host, manager, accept, dispose } = fixture()
     const first = new TransportDouble('first')
-    const firstId = manager.accept(
+    const firstId = await accept(
       { terminalId: 'terminal', clientId: 'client-a', cols: 100, rows: 30 },
       first
     )
@@ -416,7 +435,7 @@ describe('TerminalAttachmentManager', () => {
     await vi.waitFor(() => expect(host.writes).toHaveLength(1))
 
     const second = new TransportDouble('second')
-    const secondId = manager.accept(
+    const secondId = await accept(
       { terminalId: 'terminal', clientId: 'client-b', cols: 100, rows: 30 },
       second
     )
@@ -450,6 +469,6 @@ describe('TerminalAttachmentManager', () => {
     ])
     expect(host.activations).toHaveLength(2)
     expect(host.hostAuthorityCount).toBeGreaterThanOrEqual(1)
-    manager.dispose()
+    await dispose()
   })
 })

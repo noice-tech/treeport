@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
-import { z } from 'zod'
 import type {
   BrowserPanel,
   ProductEventDataMap,
@@ -19,8 +18,7 @@ import { TerminalBellAttention } from './features/notifications/terminal-bell-at
 import { BrowserPanelWorkspace } from './features/browser-panels/browser-panel-workspace'
 import { ClosePanelDialog } from './features/panels/close-panel-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
-import { parseResponse } from 'hono/client'
-import { rpc } from './api'
+import { parseResponse, rpc } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
 import {
@@ -79,9 +77,6 @@ import { ForceSpecificCursor } from './force-specific-cursor'
 import { errorDetails } from './error-message'
 import { cn } from './lib/utils'
 
-const webPanelPermissionErrorSchema = z.object({
-  error: z.object({ message: z.string() })
-})
 const TOOL_PANE_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
 
 type ClosePanelReason =
@@ -404,31 +399,20 @@ function WorkspaceApp() {
           definition.permissions.length > 0 &&
           !definition.permissionsGranted
         ) {
-          const response = await fetch(
-            `/api/worktrees/${encodeURIComponent(
-              worktree.id
-            )}/web-panel-definitions/${encodeURIComponent(
-              definition.id
-            )}/permission-grant`,
-            {
-              method: 'PUT',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
+          await parseResponse(
+            rpc.api.worktrees[':worktreeId']['web-panel-definitions'][
+              ':definitionId'
+            ]['permission-grant'].$put({
+              param: {
+                worktreeId: worktree.id,
+                definitionId: definition.id
+              },
+              json: {
                 granted: true,
                 permissions: definition.permissions
-              })
-            }
+              }
+            })
           )
-          if (!response.ok) {
-            const result = webPanelPermissionErrorSchema.safeParse(
-              await response.json().catch(() => null)
-            )
-            throw new Error(
-              result.success
-                ? result.data.error.message
-                : 'Could not grant web panel permission'
-            )
-          }
         }
 
         return (

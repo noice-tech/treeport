@@ -1,10 +1,11 @@
-import { z } from 'zod'
+import * as Schema from 'effect/Schema'
 import type {
   WebPanel,
   WebPanelInput,
   WebPanelPermission
 } from '@treeport/panel-sdk'
 import { browserUrlSchema } from './browser-protocol.js'
+import { jsonValueSchema } from './json-schema.js'
 import { webPanelPermissionSchema } from './web-panel-protocol.js'
 import {
   terminalSizeSchema,
@@ -31,6 +32,12 @@ export type {
   WorktreeListenerDiscovery
 } from '@treeport/panel-sdk'
 export * from './browser-protocol.js'
+export * from './http-protocol.js'
+export * from './json-schema.js'
+export * from './network-rpc.js'
+export * from './network-rpc-client.js'
+export * from './protocol-socket-client.js'
+export * from './schema.js'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 export * from './web-panel-protocol.js'
@@ -562,9 +569,14 @@ export type OperationRecord =
       result: object | null
     })
 
-export interface ApiErrorBody {
-  error: { code: string; message: string; details?: unknown }
-}
+export const apiErrorBodySchema = Schema.Struct({
+  error: Schema.Struct({
+    code: Schema.String,
+    message: Schema.String,
+    details: Schema.optional(Schema.Unknown)
+  })
+})
+export type ApiErrorBody = Schema.Schema.Type<typeof apiErrorBodySchema>
 
 export interface DirectoryBreadcrumb {
   name: string
@@ -601,350 +613,347 @@ export interface DirectoryBrowseResponse {
   repository: DirectoryRepositoryStatus
 }
 
-export const browseDirectoryQuerySchema = z.object({
-  input: z.string().trim().min(1).max(4096),
-  hidden: z
-    .enum(['true', 'false'])
-    .optional()
-    .default('false')
-    .transform((value) => value === 'true')
+export const browseDirectoryQuerySchema = Schema.Struct({
+  input: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096)),
+  hidden: Schema.optionalWith(
+    Schema.Literal('true', 'false').pipe(
+      Schema.transform(Schema.Boolean, {
+        strict: true,
+        decode: (value) => value === 'true',
+        encode: (value) => (value ? 'true' : 'false')
+      })
+    ),
+    { default: () => false }
+  )
 })
 
-export const terminalCaptureQuerySchema = z.object({
-  lines: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(TERMINAL_CAPTURE_MAX_LINES)
-    .optional()
-    .default(TERMINAL_CAPTURE_DEFAULT_LINES)
+export const terminalCaptureQuerySchema = Schema.Struct({
+  lines: Schema.optionalWith(
+    Schema.NumberFromString.pipe(
+      Schema.int(),
+      Schema.between(1, TERMINAL_CAPTURE_MAX_LINES)
+    ),
+    { default: () => TERMINAL_CAPTURE_DEFAULT_LINES }
+  )
 })
 
-export const registerProjectSchema = z.object({
-  path: z.string().trim().min(1),
-  name: z.string().trim().min(1).max(120).optional()
+export const registerProjectSchema = Schema.Struct({
+  path: Schema.Trim.pipe(Schema.minLength(1)),
+  name: Schema.optional(
+    Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(120))
+  )
 })
 
-export const updateProjectSchema = z.object({
-  color: z.enum(PROJECT_COLORS).nullable()
+export const updateProjectSchema = Schema.Struct({
+  color: Schema.NullOr(Schema.Literal(...PROJECT_COLORS))
 })
 
-const terminalNameSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(TERMINAL_NAME_MAX_LENGTH)
-const terminalArgvSchema = z
-  .array(z.string())
-  .min(1)
-  .max(TERMINAL_ARGV_MAX_COUNT)
-const terminalPresetArgumentSchema = z
-  .string()
-  .max(TERMINAL_ARGUMENT_MAX_LENGTH)
-const terminalPresetExecutableSchema = z
-  .string()
-  .min(1)
-  .max(TERMINAL_EXECUTABLE_MAX_LENGTH)
-  .refine((value) => value.trim().length > 0, {
-    message: 'Executable cannot be blank'
+const terminalNameSchema = Schema.Trim.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(TERMINAL_NAME_MAX_LENGTH)
+)
+const terminalArgvSchema = Schema.Array(Schema.String).pipe(
+  Schema.minItems(1),
+  Schema.maxItems(TERMINAL_ARGV_MAX_COUNT)
+)
+const terminalPresetArgumentSchema = Schema.String.pipe(
+  Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH)
+)
+const terminalPresetExecutableSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(TERMINAL_EXECUTABLE_MAX_LENGTH),
+  Schema.filter((value) => value.trim().length > 0, {
+    message: () => 'Executable cannot be blank'
   })
+)
 const terminalPresetFields = {
   name: terminalNameSchema,
   executable: terminalPresetExecutableSchema,
-  args: z
-    .array(terminalPresetArgumentSchema)
-    .max(TERMINAL_PRESET_ARGUMENT_MAX_COUNT),
-  closeOnSuccess: z.boolean().default(false)
+  args: Schema.Array(terminalPresetArgumentSchema).pipe(
+    Schema.maxItems(TERMINAL_PRESET_ARGUMENT_MAX_COUNT)
+  ),
+  closeOnSuccess: Schema.optionalWith(Schema.Boolean, {
+    default: () => false
+  })
 }
 export const repositoryTerminalPresetSchema =
-  z.strictObject(terminalPresetFields)
-const repositoryTerminalPresetIdSchema = z
-  .string()
-  .regex(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
-    message:
+  Schema.Struct(terminalPresetFields)
+const repositoryTerminalPresetIdSchema = Schema.String.pipe(
+  Schema.pattern(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
+    message: () =>
       'Preset IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
   })
-export const repositoryTerminalPresetsFileSchema = z.strictObject({
-  version: z.literal(1),
-  presets: z.record(repositoryTerminalPresetIdSchema, z.unknown())
+)
+export const repositoryTerminalPresetsFileSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  presets: Schema.Record({
+    key: repositoryTerminalPresetIdSchema,
+    value: Schema.Unknown
+  })
 })
-const terminalPresetRevisionSchema = z.string().min(1).max(64)
-
-const treeContextFieldIdSchema = z
-  .string()
-  .trim()
-  .regex(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
-    message:
-      'Field IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
-  })
-export const treeContextFieldDefinitionSchema = z.strictObject({
-  id: treeContextFieldIdSchema,
-  label: z
-    .string()
-    .trim()
-    .min(1)
-    .max(120)
-    .refine((value) => !value.includes('\0'), {
-      message: 'Field labels cannot contain NUL'
-    }),
-  input: z.enum(['text', 'textarea'])
-})
-
-export const treeContextValuesSchema = z
-  .record(
-    treeContextFieldIdSchema,
-    z
-      .string()
-      .trim()
-      .min(1)
-      .max(TREE_CONTEXT_VALUE_MAX_LENGTH)
-      .refine((value) => !value.includes('\0'), {
-        message: 'Tree context values cannot contain NUL'
-      })
-  )
-  .superRefine((values, context) => {
-    const entries = Object.entries(values)
-    if (entries.length > TREE_CONTEXT_FIELD_MAX_COUNT) {
-      context.addIssue({
-        code: 'custom',
-        message: `Tree context cannot contain more than ${TREE_CONTEXT_FIELD_MAX_COUNT} values`
-      })
-    }
-
-    const totalLength = entries.reduce(
-      (length, [key, value]) => length + key.length + value.length,
-      0
-    )
-    if (totalLength > TREE_CONTEXT_VALUES_MAX_LENGTH) {
-      context.addIssue({
-        code: 'custom',
-        message: `Tree context cannot contain more than ${TREE_CONTEXT_VALUES_MAX_LENGTH} characters`
-      })
-    }
-  })
-
-const initialTerminalSchema = z.object({
-  name: terminalNameSchema,
-  initialTitle: terminalNameSchema.optional(),
-  argv: terminalArgvSchema.optional(),
-  returnToShell: z.boolean().optional(),
-  initialSize: terminalSizeSchema.optional()
-})
-
-export const createWorktreeSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120),
-    base: z.enum(['default', 'current']).default('default'),
-    context: treeContextValuesSchema.optional(),
-    sourceWorktreeId: z.string().min(1).optional(),
-    initialTerminal: initialTerminalSchema.optional()
-  })
-  .superRefine((value, context) => {
-    if (value.base === 'current' && !value.sourceWorktreeId) {
-      context.addIssue({
-        code: 'custom',
-        path: ['sourceWorktreeId'],
-        message: 'A source tree is required when starting from current'
-      })
-    }
-  })
-
-const terminalCwdSchema = z
-  .string()
-  .min(1)
-  .max(4_096)
-  .refine((value) => value.trim().length > 0 && !value.includes('\0'), {
-    message: 'Working directory cannot be blank or contain NUL'
-  })
-const terminalEnvironmentKeySchema = z
-  .string()
-  .min(1)
-  .max(256)
-  .refine((value) => !value.includes('=') && !value.includes('\0'), {
-    message: 'Environment keys cannot contain equals or NUL'
-  })
-const terminalShellCommandSchema = z
-  .string()
-  .min(1)
-  .max(TERMINAL_ARGUMENT_MAX_LENGTH)
-  .refine((value) => value.trim().length > 0 && !value.includes('\0'), {
-    message: 'Shell command cannot be blank or contain NUL'
-  })
-const terminalEnvironmentSchema = z
-  .record(
-    terminalEnvironmentKeySchema,
-    z
-      .string()
-      .max(TERMINAL_ARGUMENT_MAX_LENGTH)
-      .refine((value) => !value.includes('\0'), {
-        message: 'Environment values cannot contain NUL'
-      })
-  )
-  .refine((value) => Object.keys(value).length <= 128, {
-    message: 'Environment cannot contain more than 128 variables'
-  })
-
-export const createTerminalSchema = z
-  .object({
-    name: terminalNameSchema,
-    initialTitle: terminalNameSchema.optional(),
-    argv: terminalArgvSchema.optional(),
-    shellCommand: terminalShellCommandSchema.optional(),
-    cwd: terminalCwdSchema.optional(),
-    env: terminalEnvironmentSchema.optional(),
-    returnToShell: z.boolean().optional(),
-    closeOnSuccess: z.boolean().optional(),
-    initialSize: terminalSizeSchema.optional()
-  })
-  .refine((value) => !(value.argv && value.shellCommand), {
-    message: 'A terminal cannot have both argv and a shell command'
-  })
-  .refine((value) => !(value.returnToShell && value.closeOnSuccess), {
-    message: 'A terminal cannot return to a shell and close on success'
-  })
-
-export const updateTerminalSchema = z.object({
-  name: terminalNameSchema
-})
-
-export const webPanelInputSchema: z.ZodType<WebPanelInput> = z.record(
-  z.string(),
-  z.json()
+const terminalPresetRevisionSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(64)
 )
 
-export const createWebPanelSchema = z.object({
-  definitionId: z.string().min(1).max(256),
-  input: webPanelInputSchema.nullable().optional(),
-  launchCwd: z.string().max(4096).nullable().optional()
+const treeContextFieldIdSchema = Schema.String.pipe(
+  Schema.pattern(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
+    message: () =>
+      'Field IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
+  })
+)
+export const treeContextFieldDefinitionSchema = Schema.Struct({
+  id: treeContextFieldIdSchema,
+  label: Schema.Trim.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(120),
+    Schema.filter((value) => !value.includes('\0'), {
+      message: () => 'Field labels cannot contain NUL'
+    })
+  ),
+  input: Schema.Literal('text', 'textarea')
 })
 
-export const updateWebPanelPermissionGrantSchema = z.strictObject({
-  granted: z.boolean(),
-  permissions: z.array(webPanelPermissionSchema)
+export const treeContextValuesSchema = Schema.Record({
+  key: treeContextFieldIdSchema,
+  value: Schema.Trim.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(TREE_CONTEXT_VALUE_MAX_LENGTH),
+    Schema.filter((value) => !value.includes('\0'), {
+      message: () => 'Tree context values cannot contain NUL'
+    })
+  )
+}).pipe(
+  Schema.filter(
+    (values) => {
+      const entries = Object.entries(values)
+      return (
+        entries.length <= TREE_CONTEXT_FIELD_MAX_COUNT &&
+        entries.reduce(
+          (length, [key, value]) => length + key.length + value.length,
+          0
+        ) <= TREE_CONTEXT_VALUES_MAX_LENGTH
+      )
+    },
+    { message: () => 'Tree context exceeds its size limit' }
+  )
+)
+
+const initialTerminalSchema = Schema.Struct({
+  name: terminalNameSchema,
+  initialTitle: Schema.optional(terminalNameSchema),
+  argv: Schema.optional(terminalArgvSchema),
+  returnToShell: Schema.optional(Schema.Boolean),
+  initialSize: Schema.optional(terminalSizeSchema)
 })
 
-export const createBrowserPanelSchema = z.strictObject({
-  url: browserUrlSchema.optional(),
-  sourceTerminalId: z.string().min(1).max(128).nullable().optional()
+export const createWorktreeSchema = Schema.Struct({
+  name: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(120)),
+  base: Schema.optionalWith(Schema.Literal('default', 'current'), {
+    default: () => 'default' as const
+  }),
+  context: Schema.optional(treeContextValuesSchema),
+  sourceWorktreeId: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
+  initialTerminal: Schema.optional(initialTerminalSchema)
+}).pipe(
+  Schema.filter(
+    (value) => value.base !== 'current' || Boolean(value.sourceWorktreeId),
+    { message: () => 'A source tree is required when starting from current' }
+  )
+)
+
+const terminalCwdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(4_096),
+  Schema.filter((value) => value.trim().length > 0 && !value.includes('\0'), {
+    message: () => 'Working directory cannot be blank or contain NUL'
+  })
+)
+const terminalEnvironmentKeySchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(256),
+  Schema.filter((value) => !value.includes('=') && !value.includes('\0'), {
+    message: () => 'Environment keys cannot contain equals or NUL'
+  })
+)
+const terminalShellCommandSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH),
+  Schema.filter((value) => value.trim().length > 0 && !value.includes('\0'), {
+    message: () => 'Shell command cannot be blank or contain NUL'
+  })
+)
+const terminalEnvironmentSchema = Schema.Record({
+  key: terminalEnvironmentKeySchema,
+  value: Schema.String.pipe(
+    Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH),
+    Schema.filter((value) => !value.includes('\0'), {
+      message: () => 'Environment values cannot contain NUL'
+    })
+  )
+}).pipe(
+  Schema.filter((value) => Object.keys(value).length <= 128, {
+    message: () => 'Environment cannot contain more than 128 variables'
+  })
+)
+
+export const createTerminalSchema = Schema.Struct({
+  name: terminalNameSchema,
+  initialTitle: Schema.optional(terminalNameSchema),
+  argv: Schema.optional(terminalArgvSchema),
+  shellCommand: Schema.optional(terminalShellCommandSchema),
+  cwd: Schema.optional(terminalCwdSchema),
+  env: Schema.optional(terminalEnvironmentSchema),
+  returnToShell: Schema.optional(Schema.Boolean),
+  closeOnSuccess: Schema.optional(Schema.Boolean),
+  initialSize: Schema.optional(terminalSizeSchema)
+}).pipe(
+  Schema.filter((value) => !(value.argv && value.shellCommand), {
+    message: () => 'A terminal cannot have both argv and a shell command'
+  }),
+  Schema.filter((value) => !(value.returnToShell && value.closeOnSuccess), {
+    message: () => 'A terminal cannot return to a shell and close on success'
+  })
+)
+
+export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })
+
+export const webPanelInputSchema: Schema.Schema<WebPanelInput> = Schema.Record({
+  key: Schema.String,
+  value: jsonValueSchema
 })
 
-export const openBrowserPanelFromTerminalSchema = z.strictObject({
+export const createWebPanelSchema = Schema.Struct({
+  definitionId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
+  input: Schema.optional(Schema.NullOr(webPanelInputSchema)),
+  launchCwd: Schema.optional(
+    Schema.NullOr(Schema.String.pipe(Schema.maxLength(4_096)))
+  )
+})
+export const updateWebPanelPermissionGrantSchema = Schema.Struct({
+  granted: Schema.Boolean,
+  permissions: Schema.Array(webPanelPermissionSchema)
+})
+export const createBrowserPanelSchema = Schema.Struct({
+  url: Schema.optional(browserUrlSchema),
+  sourceTerminalId: Schema.optional(
+    Schema.NullOr(
+      Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+    )
+  )
+})
+export const openBrowserPanelFromTerminalSchema = Schema.Struct({
   url: browserUrlSchema
 })
-
-export const openWebPanelSchema = createWebPanelSchema.extend({
-  newInstance: z.boolean().optional(),
-  sourceTerminalId: z.string().min(1).max(128).nullable().optional()
+export const openWebPanelSchema = Schema.Struct({
+  ...createWebPanelSchema.fields,
+  newInstance: Schema.optional(Schema.Boolean),
+  sourceTerminalId: Schema.optional(
+    Schema.NullOr(
+      Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+    )
+  )
+})
+export const requestWorkspaceOpenSchema = Schema.Struct({
+  sourceTerminalId: Schema.String.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(128)
+  )
 })
 
-export const requestWorkspaceOpenSchema = z.object({
-  sourceTerminalId: z.string().min(1).max(128)
-})
-
-export const webPanelStorageKeySchema = z.string().min(1).max(128)
-
-export const getWebPanelStorageSchema = z.object({
+export const webPanelStorageKeySchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(128)
+)
+export const getWebPanelStorageSchema = Schema.Struct({
   key: webPanelStorageKeySchema
 })
-
-export const setWebPanelStorageSchema = z.object({
+export const setWebPanelStorageSchema = Schema.Struct({
   key: webPanelStorageKeySchema,
-  value: z.json()
+  value: jsonValueSchema
 })
-
-export const deleteWebPanelStorageSchema = z.object({
+export const deleteWebPanelStorageSchema = Schema.Struct({
   key: webPanelStorageKeySchema
 })
 
-export const treeFilePathSchema = z
-  .string()
-  .min(1)
-  .max(4_096)
-  .refine(
+export const treeFilePathSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(4_096),
+  Schema.filter(
     (value) =>
       !value.includes('\0') &&
       !value.startsWith('/') &&
       value.split('/').every((segment) => segment !== '' && segment !== '..'),
-    { message: 'File path must be a relative path inside the tree' }
+    { message: () => 'File path must be a relative path inside the tree' }
   )
-
-export const readTreeFileSchema = z.strictObject({
-  path: treeFilePathSchema
-})
-
-export const searchTreeFilesSchema = z.strictObject({
-  query: z
-    .string()
-    .min(1)
-    .max(TREE_FILE_SEARCH_QUERY_MAX_LENGTH)
-    .refine((value) => !/[\0\r\n]/.test(value), {
-      message: 'Search query must be one line and cannot contain NUL'
+)
+export const readTreeFileSchema = Schema.Struct({ path: treeFilePathSchema })
+export const searchTreeFilesSchema = Schema.Struct({
+  query: Schema.String.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(TREE_FILE_SEARCH_QUERY_MAX_LENGTH),
+    Schema.filter((value) => !/[\0\r\n]/.test(value), {
+      message: () => 'Search query must be one line and cannot contain NUL'
     })
+  )
 })
-
-export const writeTreeFileSchema = z.strictObject({
+export const writeTreeFileSchema = Schema.Struct({
   path: treeFilePathSchema,
-  content: z.string(),
-  expectedRevision: z.string().min(1).max(128)
+  content: Schema.String,
+  expectedRevision: Schema.String.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(128)
+  )
 })
 
-export const createTerminalPresetSchema = z.object(terminalPresetFields)
-
-export const updateTerminalPresetSchema = z.object({
+export const createTerminalPresetSchema = Schema.Struct(terminalPresetFields)
+export const updateTerminalPresetSchema = Schema.Struct({
   ...terminalPresetFields,
-  closeOnSuccess: z.boolean().optional(),
+  closeOnSuccess: Schema.optional(Schema.Boolean),
+  expectedUpdatedAt: terminalPresetRevisionSchema
+})
+export const deleteTerminalPresetSchema = Schema.Struct({
   expectedUpdatedAt: terminalPresetRevisionSchema
 })
 
-export const deleteTerminalPresetSchema = z.object({
-  expectedUpdatedAt: terminalPresetRevisionSchema
+export const packageProjectQuerySchema = Schema.Struct({
+  path: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096))
 })
-
-export const packageProjectQuerySchema = z.object({
-  path: z.string().trim().min(1).max(4096)
+export const packageInstallSchema = Schema.Struct({
+  source: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096)),
+  projectId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
 })
-
-export const packageInstallSchema = z.object({
-  source: z.string().trim().min(1).max(4096),
-  projectId: z.string().min(1).optional()
+export const packageRemoveSchema = Schema.Struct({
+  source: Schema.String.pipe(Schema.minLength(1)),
+  projectId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
 })
-
-export const packageRemoveSchema = z.object({
-  source: z.string().trim().min(1).max(4096),
-  projectId: z.string().min(1).optional()
+export const packageUpdateSchema = Schema.Struct({
+  source: Schema.optional(
+    Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096))
+  )
 })
-
-export const packageUpdateSchema = z.object({
-  source: z.string().trim().min(1).max(4096).optional()
+export const packageReloadSchema = Schema.Struct({
+  projectId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
 })
-
-export const packageReloadSchema = z.object({
-  projectId: z.string().min(1).optional()
+export const removeWorktreeSchema = Schema.Struct({
+  confirmationToken: Schema.String.pipe(Schema.length(64)),
+  confirmDestructive: Schema.Boolean
 })
-
-export const removeWorktreeSchema = z.object({
-  confirmationToken: z.string().length(64),
-  confirmDestructive: z.boolean()
-})
-
-export const spawnSchema = z
-  .object({
-    project: z.string().min(1),
-    worktreeName: z.string().trim().min(1).max(120),
-    name: terminalNameSchema,
-    argv: terminalArgvSchema.optional(),
-    base: z.enum(['default', 'current']).default('default'),
-    sourceWorktreeId: z.string().min(1).optional()
-  })
-  .superRefine((value, context) => {
-    if (value.base === 'current' && !value.sourceWorktreeId) {
-      context.addIssue({
-        code: 'custom',
-        path: ['sourceWorktreeId'],
-        message: 'A source tree is required when starting from current'
-      })
-    }
-  })
+export const spawnSchema = Schema.Struct({
+  project: Schema.String.pipe(Schema.minLength(1)),
+  worktreeName: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(120)),
+  name: terminalNameSchema,
+  argv: Schema.optional(terminalArgvSchema),
+  base: Schema.optionalWith(Schema.Literal('default', 'current'), {
+    default: () => 'default' as const
+  }),
+  sourceWorktreeId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
+}).pipe(
+  Schema.filter(
+    (value) => value.base !== 'current' || Boolean(value.sourceWorktreeId),
+    { message: () => 'A source tree is required when starting from current' }
+  )
+)
 
 interface ProductEventPayloadMap {
   'project.created': { projectId: string }

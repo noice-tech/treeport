@@ -3,8 +3,7 @@ import type {
   TerminalProgress,
   TerminalRuntimeMetadata
 } from '@treeport/shared'
-import { parseResponse } from 'hono/client'
-import { rpc } from './api'
+import { parseResponse, rpc } from './api'
 
 export interface TerminalBellMetadata {
   sequence: number

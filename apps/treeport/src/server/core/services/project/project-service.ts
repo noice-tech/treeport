@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { treeContextValuesSchema } from '@treeport/shared'
+import { decodeUnknownOrNull, treeContextValuesSchema } from '@treeport/shared'
 import type {
   DirectoryBrowseResponse,
   OperationRecord,
@@ -276,7 +276,15 @@ export class ProjectService {
         )
       }
 
-      return treeContextValuesSchema.parse(JSON.parse(row.treeContextJson))
+      const context = decodeUnknownOrNull(
+        treeContextValuesSchema,
+        JSON.parse(row.treeContextJson)
+      )
+      if (!context) {
+        throw new Error(`Tree ${worktreeId} has invalid stored context`)
+      }
+
+      return context
     })
   }
 

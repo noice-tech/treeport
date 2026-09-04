@@ -45,16 +45,16 @@ function terminalSessionTestAccess<Session extends object>(
   return session as TerminalSessionTestAccess
 }
 
-const socketClient = { io: vi.fn() }
+const socketClient = { create: vi.fn() }
 
-class FakeSocketIO {
+class FakeProtocolSocket {
   connected = false
   readonly handlers = new Map<string, Array<(value: any) => void>>()
   readonly managerHandlers = new Map<string, Array<() => void>>()
   readonly emit = vi.fn()
   readonly volatile = { emit: vi.fn() }
   readonly reconnection = vi.fn()
-  readonly io = {
+  readonly manager = {
     reconnection: this.reconnection,
     on: (event: string, listener: () => void) => {
       this.managerHandlers.set(event, [
@@ -79,7 +79,7 @@ class FakeSocketIO {
     const wasConnected = this.connected
     this.connected = false
     if (wasConnected) {
-      this.emitServer('disconnect', 'io client disconnect')
+      this.emitServer('disconnect', 'client disconnect')
     }
 
     return this
@@ -168,7 +168,7 @@ beforeAll(async () => {
 function createTerminalSession(terminalId: string): TerminalSessionInstance {
   return new TerminalSession(
     terminalId,
-    testAccess<TerminalSocketFactory>(socketClient.io)
+    testAccess<TerminalSocketFactory>(socketClient.create)
   )
 }
 
@@ -206,7 +206,7 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
 }
 
 function controllerSessionFixture() {
-  const socket = new FakeSocketIO()
+  const socket = new FakeProtocolSocket()
   socket.connected = true
   let proposal = { cols: 120, rows: 40 }
   const host = testAccess<HTMLElement>({})
@@ -482,8 +482,8 @@ describe('terminal keyboard input', () => {
 
 describe('TerminalSession', () => {
   beforeEach(() => {
-    socketClient.io.mockReset()
-    socketClient.io.mockImplementation(() => new FakeSocketIO())
+    socketClient.create.mockReset()
+    socketClient.create.mockImplementation(() => new FakeProtocolSocket())
   })
 
   it('reports the proposed viewport size for a new terminal launch', () => {
@@ -494,7 +494,7 @@ describe('TerminalSession', () => {
     expect(session.getInitialSize()).toEqual({ cols: 132, rows: 47 })
   })
 
-  it('uses an independent WebSocket-only Socket.IO connection with bounded auth', () => {
+  it('uses an independent Effect WebSocket connection with bounded auth', () => {
     const clientId = '12121212-1212-4212-9212-121212121212'
     const setItem = vi.fn()
     vi.stubGlobal('sessionStorage', {
@@ -510,33 +510,26 @@ describe('TerminalSession', () => {
       dispose: vi.fn()
     }
     terminalSessionTestAccess(session).connect()
-    expect(socketClient.io).toHaveBeenCalledWith(
+    expect(socketClient.create).toHaveBeenCalledWith(
       '/terminals',
       expect.objectContaining({
-        path: '/api/socket.io/',
-        transports: ['websocket'],
-        forceNew: true,
-        multiplex: false,
+        autoConnect: false,
+        reconnection: true,
         reconnectionDelay: 100,
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
-        retries: 0,
-        query: { terminalProtocol: '6' }
+        query: { terminalProtocol: '7' }
       })
     )
     const options = testAccess<{
-      auth: (
-        authorize: (auth: {
-          terminalId: string
-          clientId: string
-          cols: number
-          rows: number
-        }) => void
-      ) => void
-    }>(socketClient.io.mock.calls[0]![1])
-    const authorize = vi.fn()
-    options.auth(authorize)
-    expect(authorize).toHaveBeenCalledWith({
+      authorize: () => {
+        terminalId: string
+        clientId: string
+        cols: number
+        rows: number
+      }
+    }>(socketClient.create.mock.calls[0]![1])
+    expect(options.authorize()).toEqual({
       terminalId: 'terminal-one',
       clientId,
       cols: 1_000,
@@ -549,7 +542,7 @@ describe('TerminalSession', () => {
   })
 
   it('reconnects only mounted terminal sessions after a server interruption', () => {
-    const socket = new FakeSocketIO()
+    const socket = new FakeProtocolSocket()
     socket.connected = true
     const session = createTerminalSession('terminal-one')
     const host = testAccess<HTMLElement>({ appendChild: vi.fn() })
@@ -585,10 +578,10 @@ describe('TerminalSession', () => {
   })
 
   it('keeps two synchronized clients scroll and selection independent', async () => {
-    const firstSocket = new FakeSocketIO()
-    const secondSocket = new FakeSocketIO()
+    const firstSocket = new FakeProtocolSocket()
+    const secondSocket = new FakeProtocolSocket()
     const sockets = [firstSocket, secondSocket]
-    socketClient.io.mockImplementation(() => sockets.shift()!)
+    socketClient.create.mockImplementation(() => sockets.shift()!)
     const firstSession = createTerminalSession('terminal-one')
     const secondSession = createTerminalSession('terminal-one')
     const content = ['', '']
@@ -657,8 +650,8 @@ describe('TerminalSession', () => {
 
   it('answers queries only after fenced controller authority and through handoff', async () => {
     const { Terminal: BrowserTerminal } = await import('@xterm/xterm')
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
     const terminal = new BrowserTerminal({
       cols: 80,
@@ -782,8 +775,8 @@ describe('TerminalSession', () => {
   })
 
   it('batches contiguous output writes while ACKing only parsed data', async () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const reset = vi.fn()
@@ -855,8 +848,8 @@ describe('TerminalSession', () => {
   })
 
   it('drains earlier output before resizing and admitting later output', async () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const resize = vi.fn()
@@ -911,8 +904,8 @@ describe('TerminalSession', () => {
   })
 
   it('drains stale output before a new stream reset without ACKing it', async () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const reset = vi.fn()
@@ -1015,8 +1008,8 @@ describe('TerminalSession', () => {
   })
 
   it('closes on render queue failure and does not run later operations', async () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
     terminalSessionTestAccess(session).terminal = {
       reset: () => {
@@ -1059,7 +1052,7 @@ describe('TerminalSession', () => {
   })
 
   it('translates FitAddon exceptions through the fatal rendering boundary', () => {
-    const socket = new FakeSocketIO()
+    const socket = new FakeProtocolSocket()
     socket.connected = true
     const session = createTerminalSession('terminal-one')
     Object.assign(session, {
@@ -1187,8 +1180,8 @@ describe('TerminalSession', () => {
   })
 
   it('publishes ready only after the initial snapshot write completes', async () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
     let completeSnapshotWrite: (() => void) | null = null
     const focus = vi.fn()
@@ -1314,8 +1307,8 @@ describe('TerminalSession', () => {
   })
 
   it('never buffers takeover while disconnected or before application ready', () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
     terminalSessionTestAccess(session).connect()
     session.requestControl()
@@ -1369,8 +1362,8 @@ describe('TerminalSession', () => {
   })
 
   it('requests control only when focus is explicitly user-initiated', () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
     const focus = vi.fn()
     const session = createTerminalSession('terminal-one')
     Object.assign(session, {

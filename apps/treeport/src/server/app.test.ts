@@ -41,6 +41,99 @@ function fixture(webDist = '/missing') {
     daemonLifecycle: 'treeport',
     webDevelopment: false
   }
+  const projectRecord = {
+    id: 'p',
+    name: 'Project',
+    kind: 'folder' as const,
+    rootPath: '/repo',
+    repositoryPath: '/repo',
+    mainWorktreePath: '/repo',
+    defaultBranch: '',
+    color: null,
+    availability: { state: 'available' as const, message: null },
+    worktrees: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
+  const terminalRecord = {
+    id: 'term_1',
+    worktreeId: 'wt_1',
+    name: 'Pi',
+    argv: ['pi'],
+    shellCommand: null,
+    interactiveShell: true,
+    status: 'running' as const,
+    exitCode: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
+  const createOperationRecord = {
+    id: 'op_create',
+    projectId: 'p',
+    worktreeId: null,
+    kind: 'create' as const,
+    status: 'pending' as const,
+    error: null,
+    request: { name: 'feature', base: 'default' as const },
+    result: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
+  const removePreviewRecord = {
+    worktreeId: 'wt_1',
+    name: 'feature',
+    path: '/repo/feature',
+    head: 'abc123',
+    branch: 'feature',
+    detached: false,
+    locked: false,
+    lockReason: null,
+    dirty: {
+      dirty: false,
+      staged: 0,
+      unstaged: 0,
+      untracked: 0,
+      conflicts: 0,
+      total: 0
+    },
+    detachedHeadReachable: null,
+    forceRequired: false,
+    eligible: true,
+    reasons: [],
+    warnings: [],
+    cleanup: { commands: [], available: true, unavailableReason: null },
+    terminals: [],
+    confirmationToken: 'a'.repeat(64)
+  }
+  const removeOperationRecord = {
+    id: 'op_1',
+    projectId: 'p',
+    worktreeId: 'wt_1',
+    kind: 'remove' as const,
+    status: 'pending' as const,
+    error: null,
+    request: {
+      confirmation: true,
+      confirmationToken: 'a'.repeat(64),
+      confirmDestructive: false,
+      preview: removePreviewRecord,
+      checkoutIdentity: null,
+      prunable: false,
+      gitWorktreeKey: null,
+      repositoryIdentity: null,
+      phase: 'accepted' as const,
+      managedWrapperPath: null,
+      cleanupCommands: {
+        status: 'pending' as const,
+        definitionHash: null,
+        skippedReason: null,
+        commands: []
+      }
+    },
+    result: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
   const serviceMethods = {
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
@@ -54,7 +147,7 @@ function fixture(webDist = '/missing') {
         lastOpenedAt: '2026-01-01T00:00:00.000Z'
       }
     ]),
-    openProject: vi.fn(async (id: string) => ({ id })),
+    openProject: vi.fn(async (id: string) => ({ ...projectRecord, id })),
     browseDirectory: vi.fn(async (input: string, _hidden: boolean) => ({
       input,
       exact: true,
@@ -103,6 +196,7 @@ function fixture(webDist = '/missing') {
           name: 'Package dev',
           executable: 'pnpm',
           args: ['dev'],
+          shellCommand: null,
           cwd: null,
           env: {},
           closeOnSuccess: false,
@@ -118,6 +212,7 @@ function fixture(webDist = '/missing') {
     })),
     listPackages: vi.fn(() => ({ packages: [], diagnostics: [] })),
     resolveRegisteredProject: vi.fn((inputPath: string) => ({
+      ...projectRecord,
       id: 'project_1',
       repositoryPath: inputPath
     })),
@@ -168,17 +263,14 @@ function fixture(webDist = '/missing') {
       })
     ),
     deleteTerminalPreset: vi.fn(),
-    getProjectSnapshot: vi.fn(async (id: string) => ({ id })),
+    getProjectSnapshot: vi.fn(async (id: string) => ({
+      ...projectRecord,
+      id
+    })),
     resolveProject: vi.fn(async () => ({ id: 'p' })),
     refreshTerminalStatus: vi.fn(async (id: string) => ({
-      id,
-      worktreeId: 'wt_1',
-      name: 'Pi',
-      argv: ['pi'],
-      status: 'running',
-      exitCode: null,
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z'
+      ...terminalRecord,
+      id
     })),
     database: {
       worktree: vi.fn(() => ({ id: 'wt_1', path: '/repo' }))
@@ -190,7 +282,11 @@ function fixture(webDist = '/missing') {
       {
         id: 'project:review',
         title: 'Review',
-        source: { type: 'project' }
+        icon: null,
+        source: { type: 'project' },
+        permissions: [],
+        permissionsGranted: true,
+        sandbox: { allowSameOrigin: false }
       }
     ]),
     openBrowserPanel: vi.fn(async (worktreeId: string, url?: string) => ({
@@ -245,6 +341,8 @@ function fixture(webDist = '/missing') {
       definitionId: 'project:review',
       title: 'Review',
       launch: { input: null, cwd: null },
+      permissions: [],
+      sandbox: { allowSameOrigin: false },
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })),
@@ -259,6 +357,8 @@ function fixture(webDist = '/missing') {
           input: { path: 'output/demo.mp4' },
           cwd: 'packages/preview'
         },
+        permissions: [],
+        sandbox: { allowSameOrigin: false },
         createdAt: '2026-01-01',
         updatedAt: '2026-01-02'
       },
@@ -268,8 +368,32 @@ function fixture(webDist = '/missing') {
     deletePanel: vi.fn(async () => undefined),
     getWebPanelContext: vi.fn(async () => ({
       apiVersion: 1,
-      panel: { id: 'panel_review' },
-      launch: { input: null, cwd: null }
+      panel: {
+        id: 'panel_review',
+        kind: 'web',
+        worktreeId: 'wt_1',
+        definitionId: 'project:review',
+        title: 'Review',
+        launch: { input: null, cwd: null },
+        permissions: [],
+        sandbox: { allowSameOrigin: false },
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01'
+      },
+      launch: { input: null, cwd: null },
+      project: {
+        id: 'p',
+        name: 'Project',
+        kind: 'folder',
+        defaultBranch: null
+      },
+      worktree: {
+        id: 'wt_1',
+        name: 'Project',
+        kind: 'folder',
+        branch: null,
+        head: null
+      }
     })),
     listTreeFiles: vi.fn(async () => ({
       paths: ['src/app.ts'],
@@ -344,22 +468,22 @@ function fixture(webDist = '/missing') {
       development: false,
       allowNetworkRequests: false
     })),
-    createTerminal: vi.fn(),
+    createTerminal: vi.fn(async () => terminalRecord),
     getTerminal: vi.fn(async (id: string) => ({
       id,
       worktreeId: 'wt_1'
     })),
-    beginCreateWorktree: vi.fn(async () => ({
-      id: 'op_create',
-      kind: 'create',
-      status: 'pending'
-    })),
+    beginCreateWorktree: vi.fn(async () => createOperationRecord),
     listActiveOperations: vi.fn(async () => [
-      { id: 'op_create', kind: 'create', status: 'running' }
+      { ...createOperationRecord, status: 'running' as const }
     ]),
-    getOperation: vi.fn(async (id: string) => ({ id, status: 'running' })),
-    removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
-    beginRemove: vi.fn(async () => ({ id: 'op_1' })),
+    getOperation: vi.fn(async (id: string) => ({
+      ...createOperationRecord,
+      id,
+      status: 'running' as const
+    })),
+    removePreview: vi.fn(async () => removePreviewRecord),
+    beginRemove: vi.fn(async () => removeOperationRecord),
     terminateAllTerminals: vi.fn(async () => 2)
   }
   // SAFETY: The fixture exposes the same doubles through the temporary façade
@@ -394,11 +518,10 @@ function fixture(webDist = '/missing') {
     ...runtimeMetadata,
     terminalId
   }))
-  const metadataTrack = vi.fn(async () => undefined)
-  const metadataAcknowledgeBell = vi.fn(async () => undefined)
+  const metadataTrack = vi.fn(() => Effect.void)
+  const metadataAcknowledgeBell = vi.fn(() => Effect.void)
   // SAFETY: The test fixture provides the asserted contract used here.
   const terminalMetadata = testAccess<TerminalMetadataManager>({
-    initialize: vi.fn(async () => undefined),
     snapshot: metadataSnapshot,
     get: metadataGet,
     trackTerminal: metadataTrack,
@@ -1631,6 +1754,35 @@ describe('HTTP API validation', () => {
     })
   })
 
+  it('interrupts owned HTTP work when the client aborts', async () => {
+    const { app, service } = fixture()
+    let started = false
+    let interrupted = false
+    vi.mocked(service.listProjects).mockReturnValueOnce(
+      // SAFETY: This test intentionally replaces the Promise double with the
+      // Effect returned by the production domain service.
+      Effect.sync(() => {
+        started = true
+      }).pipe(
+        Effect.zipRight(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interrupted = true
+          })
+        )
+      ) as never
+    )
+    const abort = new AbortController()
+    const response = app.request(
+      new Request('http://localhost/api/projects', { signal: abort.signal })
+    )
+
+    await vi.waitFor(() => expect(started).toBe(true))
+    abort.abort()
+    await expect(response).resolves.toMatchObject({ status: 499 })
+    await vi.waitFor(() => expect(interrupted).toBe(true))
+  })
+
   it('rejects malformed JSON with a machine-readable code', async () => {
     const { app } = fixture()
     const response = await app.request('/api/projects', {
@@ -1893,6 +2045,13 @@ describe('HTTP API validation', () => {
       )
       expect(deepLink.status).toBe(200)
       expect(await deepLink.text()).toContain('Treeport route fallback')
+
+      const head = await app.request(
+        '/projects/project/worktrees/worktree/terminals/terminal',
+        { method: 'HEAD' }
+      )
+      expect(head.status).toBe(200)
+      expect(await head.text()).toBe('')
 
       const missingApi = await app.request('/api/missing')
       expect(missingApi.status).toBe(404)

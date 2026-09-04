@@ -4,11 +4,25 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron, chromium, expect, test } from '@playwright/test'
-import { Server as SocketServer, type Socket } from 'socket.io'
+import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
+import { RpcSerialization, RpcServer } from '@effect/rpc'
 import {
   BROWSER_PROTOCOL_VERSION,
-  DESKTOP_PROTOCOL_VERSION
+  DESKTOP_PROTOCOL_VERSION,
+  TreeportRpcs,
+  parseBrowserOwnerAuth,
+  parseSocketHandshake,
+  parseSocketMessage,
+  type BrowserOwnerServerMessage,
+  type NetworkProductEvent,
+  type ProjectEventsItem
 } from '@treeport/shared'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as PubSub from 'effect/PubSub'
+import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
+import { WebSocketServer, type WebSocket } from 'ws'
 import { z } from 'zod'
 import { MINIMUM_SUPPORTED_BACKEND_VERSION } from '../src/desktop-contract'
 
@@ -80,7 +94,6 @@ function projectFixture() {
         lockReason: null,
         prunable: false,
         kind: 'main',
-        tmuxSocketName: 'treeport-wt-main',
         managedWrapperPath: null,
         pr: {
           state: 'no_pr',
@@ -107,7 +120,6 @@ function projectFixture() {
             id: 'term_shell',
             worktreeId: 'wt_main',
             name: 'Shell',
-            tmuxSessionName: 'treeport-term-shell',
             argv: ['/bin/zsh', '-l'],
             shellCommand: null,
             interactiveShell: true,
@@ -134,15 +146,13 @@ test('controls the local Browser through its exact bridge while another workspac
     path: '/worktrees/topic',
     branch: 'topic',
     kind: 'linked',
-    tmuxSocketName: 'treeport-wt-topic',
     panels: [],
     terminals: [
       {
         ...topicWorktree.terminals[0]!,
         id: 'term_topic',
         worktreeId: 'wt_topic',
-        name: 'Topic Shell',
-        tmuxSessionName: 'treeport-term-topic'
+        name: 'Topic Shell'
       }
     ]
   })
@@ -157,10 +167,54 @@ test('controls the local Browser through its exact bridge while another workspac
   const ownerEndpoints = new Map<string, string>()
   const ownerReadyUrls = new Map<string, string>()
   const ownerControls = new Map<string, BrowserOwnerControl>()
-  const ownerSockets = new Map<string, Socket>()
+  const ownerSockets = new Map<string, WebSocket>()
   const ownerConnectionCounts = new Map<string, number>()
+  const rpcEvents = await Effect.runPromise(
+    PubSub.unbounded<ProjectEventsItem>()
+  )
+  const rpcScope = await Effect.runPromise(Scope.make())
+  const rpcHandlers = TreeportRpcs.toLayer(
+    Effect.succeed({
+      WatchProjectEvents: () =>
+        Stream.unwrap(
+          Effect.sync(() =>
+            Stream.concat(
+              Stream.succeed({
+                _tag: 'Snapshot' as const,
+                snapshot: {
+                  at: new Date().toISOString(),
+                  terminalMetadata: [],
+                  webPanels: [],
+                  browserPanels: project.worktrees.flatMap(
+                    (worktree) => worktree.panels
+                  )
+                }
+              }),
+              Stream.fromPubSub(rpcEvents)
+            )
+          )
+        )
+    })
+  )
+  const rpcApp = await Effect.runPromise(
+    Scope.extend(
+      RpcServer.toHttpApp(TreeportRpcs).pipe(
+        Effect.provide(rpcHandlers),
+        Effect.provide(RpcSerialization.layerNdjson)
+      ),
+      rpcScope
+    )
+  )
+  const rpcListener = await Effect.runPromise(
+    NodeHttpServer.makeHandler(rpcApp)
+  )
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/api/rpc' && request.method === 'POST') {
+      rpcListener(request, response)
+      return
+    }
+
     if (url.pathname === '/api/health') {
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -312,126 +366,164 @@ test('controls the local Browser through its exact bridge while another workspac
     response.statusCode = 404
     response.end('Not found')
   })
-  server.on('upgrade', () => {
+  const ownerWebSockets = new WebSocketServer({ noServer: true })
+  server.on('upgrade', (request, socket, head) => {
     websocketRequests += 1
-  })
-  const sockets = new SocketServer(server, {
-    path: '/api/socket.io/',
-    transports: ['websocket'],
-    serveClient: false
-  })
-  const events = sockets.of('/events')
-  sockets.of('/browser-owners').on('connection', (socket) => {
-    const auth = z
-      .strictObject({
-        ticket: z.string(),
-        protocolVersion: z.literal(BROWSER_PROTOCOL_VERSION),
-        endpoint: z.string().url(),
-        challenge: z.string()
-      })
-      .safeParse(socket.handshake.auth)
-    const ticket = auth.success ? ownerTickets.get(auth.data.ticket) : null
-    if (!auth.success || !ticket || ticket.challenge !== auth.data.challenge) {
-      socket.disconnect(true)
+    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname
+    if (pathname !== '/api/socket/browser-owners') {
+      socket.destroy()
       return
     }
 
-    ownerTickets.delete(auth.data.ticket)
-    ownerEndpoints.set(ticket.panelId, auth.data.endpoint)
-    const panel = project.worktrees[0]!.panels.find(
-      (candidate) => candidate.id === ticket.panelId
-    )!
-    let revision = -1
-    const generation = 1
-    const pendingControlRequests = new Map<
-      string,
-      (accepted: boolean) => void
-    >()
-    const ownerControl: BrowserOwnerControl = {
-      generation,
-      request(controller, retainPaint) {
-        const requestId = crypto.randomUUID()
-        return new Promise<boolean>((resolve) => {
-          pendingControlRequests.set(requestId, resolve)
-          socket.emit('ownerMessage', {
-            type: 'runtimeControl',
-            generation,
-            requestId,
-            controller,
-            retainPaint
-          })
-        })
-      }
-    }
-    ownerControls.set(panel.id, ownerControl)
-    ownerSockets.set(panel.id, socket)
-    ownerConnectionCounts.set(
-      panel.id,
-      (ownerConnectionCounts.get(panel.id) ?? 0) + 1
-    )
-    socket.on('disconnect', () => {
-      if (ownerControls.get(panel.id) === ownerControl) {
-        ownerControls.delete(panel.id)
-      }
-
-      if (ownerSockets.get(panel.id) === socket) {
-        ownerSockets.delete(panel.id)
-      }
-
-      for (const resolve of pendingControlRequests.values()) {
-        resolve(false)
-      }
-      pendingControlRequests.clear()
+    ownerWebSockets.handleUpgrade(request, socket, head, (accepted) => {
+      ownerWebSockets.emit('connection', accepted, request)
     })
-    socket.emit('ownerMessage', {
-      type: 'claimGranted',
-      panelId: panel.id,
-      generation,
-      resumed: false,
-      state: {
-        url: panel.url,
-        title: panel.title === 'Browser' ? '' : panel.title,
-        loading: false,
-        canGoBack: false,
-        canGoForward: false,
-        viewport: { width: 0, height: 0 }
-      }
-    })
-    socket.on('ownerMessage', (message) => {
-      const value = z
-        .object({ type: z.string(), generation: z.number() })
-        .passthrough()
-        .safeParse(message)
-      if (!value.success || value.data.generation !== generation) {
+  })
+  ownerWebSockets.on('connection', (socket) => {
+    let initialized = false
+    let cleanup = () => undefined
+    socket.on('message', (raw) => {
+      let json: unknown
+      try {
+        json = JSON.parse(raw.toString())
+      } catch {
+        socket.close(1007, 'Invalid message')
         return
       }
 
-      if (value.data.type === 'runtimeControlResult') {
-        const result = z
-          .object({ requestId: z.string(), accepted: z.boolean() })
-          .parse(value.data)
-        pendingControlRequests.get(result.requestId)?.(result.accepted)
-        pendingControlRequests.delete(result.requestId)
-      } else if (value.data.type === 'ready' || value.data.type === 'state') {
-        const state = z
-          .object({
-            revision: z.number().int(),
-            state: z.object({ url: z.string(), title: z.string() })
-          })
-          .parse(value.data)
-        if (state.revision > revision) {
-          revision = state.revision
-          Object.assign(panel, state.state, { updatedAt: '2026-01-02' })
-          if (value.data.type === 'ready') {
-            ownerReadyUrls.set(panel.id, state.state.url)
+      if (!initialized) {
+        const handshake = parseSocketHandshake(json)
+        const auth = handshake ? parseBrowserOwnerAuth(handshake.auth) : null
+        const ticket = auth ? ownerTickets.get(auth.ticket) : null
+        if (
+          !auth ||
+          auth.protocolVersion !== BROWSER_PROTOCOL_VERSION ||
+          !ticket ||
+          ticket.challenge !== auth.challenge
+        ) {
+          socket.close(4001, 'Browser owner rejected')
+          return
+        }
+
+        initialized = true
+        ownerTickets.delete(auth.ticket)
+        ownerEndpoints.set(ticket.panelId, auth.endpoint)
+        const panel = project.worktrees[0]!.panels.find(
+          (candidate) => candidate.id === ticket.panelId
+        )!
+        let revision = -1
+        const generation = 1
+        const pendingControlRequests = new Map<
+          string,
+          (accepted: boolean) => void
+        >()
+        const send = (message: BrowserOwnerServerMessage) =>
+          socket.send(
+            JSON.stringify({ event: 'ownerMessage', payload: message })
+          )
+        const ownerControl: BrowserOwnerControl = {
+          generation,
+          request(controller, retainPaint) {
+            const requestId = crypto.randomUUID()
+            return new Promise<boolean>((resolve) => {
+              pendingControlRequests.set(requestId, resolve)
+              send({
+                type: 'runtimeControl',
+                generation,
+                requestId,
+                controller,
+                retainPaint
+              })
+            })
           }
         }
-      } else if (value.data.type === 'popup') {
-        popupRequests += 1
-      } else if (value.data.type === 'takeControl') {
-        ownerTakeControlRequests += 1
+        ownerControls.set(panel.id, ownerControl)
+        ownerSockets.set(panel.id, socket)
+        ownerConnectionCounts.set(
+          panel.id,
+          (ownerConnectionCounts.get(panel.id) ?? 0) + 1
+        )
+        cleanup = () => {
+          if (ownerControls.get(panel.id) === ownerControl) {
+            ownerControls.delete(panel.id)
+          }
+
+          if (ownerSockets.get(panel.id) === socket) {
+            ownerSockets.delete(panel.id)
+          }
+
+          for (const resolve of pendingControlRequests.values()) {
+            resolve(false)
+          }
+          pendingControlRequests.clear()
+        }
+        socket.send(JSON.stringify({ event: 'connected', payload: null }))
+        send({
+          type: 'claimGranted',
+          panelId: panel.id,
+          generation,
+          resumed: false,
+          state: {
+            url: panel.url,
+            title: panel.title === 'Browser' ? '' : panel.title,
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            viewport: { width: 0, height: 0 }
+          }
+        })
+        socket.on('message', (nextRaw) => {
+          let nextJson: unknown
+          try {
+            nextJson = JSON.parse(nextRaw.toString())
+          } catch {
+            return
+          }
+          const message = parseSocketMessage(nextJson)
+          if (!message || message.event !== 'ownerMessage') {
+            return
+          }
+
+          const value = z
+            .object({ type: z.string(), generation: z.number() })
+            .passthrough()
+            .safeParse(message.payload)
+          if (!value.success || value.data.generation !== generation) {
+            return
+          }
+
+          if (value.data.type === 'runtimeControlResult') {
+            const result = z
+              .object({ requestId: z.string(), accepted: z.boolean() })
+              .parse(value.data)
+            pendingControlRequests.get(result.requestId)?.(result.accepted)
+            pendingControlRequests.delete(result.requestId)
+          } else if (
+            value.data.type === 'ready' ||
+            value.data.type === 'state'
+          ) {
+            const state = z
+              .object({
+                revision: z.number().int(),
+                state: z.object({ url: z.string(), title: z.string() })
+              })
+              .parse(value.data)
+            if (state.revision > revision) {
+              revision = state.revision
+              Object.assign(panel, state.state, { updatedAt: '2026-01-02' })
+              if (value.data.type === 'ready') {
+                ownerReadyUrls.set(panel.id, state.state.url)
+              }
+            }
+          } else if (value.data.type === 'popup') {
+            popupRequests += 1
+          } else if (value.data.type === 'takeControl') {
+            ownerTakeControlRequests += 1
+          }
+        })
       }
     })
+    socket.on('close', () => cleanup())
   })
   let electronApp: Awaited<ReturnType<typeof electron.launch>> | null = null
 
@@ -800,7 +892,7 @@ test('controls the local Browser through its exact bridge while another workspac
         loads: sessionStorage.loads,
         href: location.href
       }))
-      ownerSockets.get(browserPanelId)?.disconnect(true)
+      ownerSockets.get(browserPanelId)?.close(1012, 'Reconnect required')
       await expect.poll(() => ownerConnectionCounts.get(browserPanelId)).toBe(2)
       await expect
         .poll(() =>
@@ -854,7 +946,7 @@ test('controls the local Browser through its exact bridge while another workspac
 
     await window.getByRole('button', { name: /^Shell/ }).click()
     await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
-    events.emit('product_event', {
+    const openEvent: NetworkProductEvent = {
       id: crypto.randomUUID(),
       type: 'panel.open_requested',
       at: new Date().toISOString(),
@@ -867,7 +959,10 @@ test('controls the local Browser through its exact bridge while another workspac
         sourceTerminalId: 'term_shell',
         sourcePanelId: null
       }
-    })
+    }
+    Effect.runSync(
+      PubSub.publish(rpcEvents, { _tag: 'ProductEvent', event: openEvent })
+    )
     await expect(window).toHaveURL(/\/panels\/panel_browser_1$/)
     await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
     await window.mouse.click(webviewBounds.x + 20, webviewBounds.y + 20)
@@ -1096,7 +1191,8 @@ test('controls the local Browser through its exact bridge while another workspac
       .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
   } finally {
     await electronApp?.close().catch(() => undefined)
-    sockets.close()
+    await new Promise<void>((resolve) => ownerWebSockets.close(() => resolve()))
+    await Effect.runPromise(Scope.close(rpcScope, Exit.void))
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await fs.rm(userData, { recursive: true, force: true })
   }

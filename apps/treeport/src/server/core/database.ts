@@ -9,7 +9,6 @@ import { drizzle } from 'drizzle-orm/libsql'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql/driver'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { z } from 'zod'
-import { treeContextValuesSchema } from '@treeport/shared'
 import type {
   CreateOperationRequest,
   CreateOperationResult,
@@ -38,7 +37,7 @@ const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
   z.strictObject({
     name: z.string(),
     base: z.enum(['default', 'current']),
-    context: treeContextValuesSchema.optional(),
+    context: z.record(z.string(), z.string()).optional(),
     initialTerminal: z
       .strictObject({
         name: z.string(),

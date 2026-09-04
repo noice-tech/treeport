@@ -1,6 +1,6 @@
 import http, { type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { io as createClient, type Socket } from 'socket.io-client'
+import WebSocket from 'ws'
 import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -17,20 +17,19 @@ import type {
   BrowserOwnerServerToClientEvents,
   BrowserServerMessage,
   BrowserServerToClientEvents,
-  EventsClientToServerEvents,
-  EventsServerToClientEvents,
   TerminalClientToServerEvents,
   TerminalRuntimeMetadata,
   TerminalReady,
   TerminalRecord,
   TerminalServerToClientEvents,
   BrowserPanel,
-  WebPanel
+  WebPanel,
+  ProtocolSocket,
+  ProtocolSocketOptions
 } from '@treeport/shared'
 import {
   BROWSER_PROTOCOL_VERSION,
-  parseEventsSnapshot,
-  SOCKET_IO_PATH,
+  createProtocolSocket,
   TERMINAL_PROTOCOL_VERSION
 } from '@treeport/shared'
 import { testAccess } from './test-access'
@@ -94,10 +93,13 @@ interface NetworkFixture {
   listWebPanels: ReturnType<typeof vi.fn<() => Promise<WebPanel[]>>>
   listBrowserPanels: ReturnType<typeof vi.fn<() => Promise<BrowserPanel[]>>>
   getTerminalForAttachment: ReturnType<
-    typeof vi.fn<(terminalId?: string) => Promise<TerminalRecord>>
+    typeof vi.fn<
+      (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
+    >
   >
   ptys: FakePty[]
   service: TreeportService
+  closeConnections(): void
   close(): Promise<void>
 }
 
@@ -111,23 +113,27 @@ async function fixture(
   const listWebPanels = vi.fn<() => Promise<WebPanel[]>>(async () => [])
   const listBrowserPanels = vi.fn<() => Promise<BrowserPanel[]>>(async () => [])
   const getTerminalForAttachment = vi.fn<
-    (terminalId?: string) => Promise<TerminalRecord>
-  >(async () => ({
-    id: 'term',
-    worktreeId: 'wt',
-    name: 'Terminal',
-    argv: ['shell'],
-    shellCommand: null,
-    interactiveShell: false,
-    status: 'running',
-    exitCode: null,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z'
-  }))
-  const getWorktree = vi.fn(async () => ({
-    id: 'wt',
-    path: '/tmp'
-  }))
+    (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
+  >(() =>
+    Effect.succeed({
+      id: 'term',
+      worktreeId: 'wt',
+      name: 'Terminal',
+      argv: ['shell'],
+      shellCommand: null,
+      interactiveShell: false,
+      status: 'running',
+      exitCode: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    })
+  )
+  const getWorktree = vi.fn(() =>
+    Effect.succeed({
+      id: 'wt',
+      path: '/tmp'
+    })
+  )
   // SAFETY: The test fixture provides the asserted contract used here.
   const service = testAccess<TreeportService>({
     events,
@@ -143,6 +149,13 @@ async function fixture(
         ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
         : effect
     ),
+    forkEffect: vi.fn((effect) =>
+      Effect.runFork(effect as Effect.Effect<void, unknown, never>)
+    ),
+    forkApplicationEffect: vi.fn((effect) => {
+      // SAFETY: The socket fixture provides every service required by the effect.
+      Effect.runFork(effect as Effect.Effect<void, never, never>)
+    }),
     terminalAttachmentMutation: vi.fn((_terminalId, effect) => effect)
   })
   const child = new FakePty()
@@ -188,10 +201,10 @@ async function fixture(
   ])
   // SAFETY: The test fixture provides the asserted contract used here.
   const metadata = testAccess<TerminalMetadataManager>({
-    initialize: vi.fn(async () => undefined),
+    initialize: vi.fn(() => Effect.void),
     snapshot: metadataSnapshot,
     get: vi.fn(() => currentMetadata),
-    trackTerminal: vi.fn(async () => undefined),
+    trackTerminal: vi.fn(() => Effect.void),
     subscribe: vi.fn(() => () => undefined)
   })
   const attachmentManager = new TerminalAttachmentManager(
@@ -224,12 +237,18 @@ async function fixture(
     terminalHost,
     attachmentManager
   }
-  const { io, attachments } = browserSessions
-    ? createSocketServer(server, {
+  const socketServer = browserSessions
+    ? createSocketServer({
         ...socketServerDependencies,
         browserSessions
       })
-    : createSocketServer(server, socketServerDependencies)
+    : createSocketServer(socketServerDependencies)
+  const { attachments } = socketServer
+  server.on('upgrade', (request, socket, head) => {
+    if (!socketServer.handleUpgrade(request, socket, head)) {
+      socket.destroy()
+    }
+  })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   // SAFETY: The test fixture provides the asserted contract used here.
   const address = server.address() as AddressInfo
@@ -245,27 +264,29 @@ async function fixture(
     getTerminalForAttachment,
     ptys,
     service,
-    close: () =>
-      new Promise<void>((resolve) => {
-        attachments.dispose()
-        io.close(() => resolve())
-      })
+    closeConnections: socketServer.closeConnections,
+    close: async () => {
+      await socketServer.close()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
   }
   fixtures.push(value)
   return value
 }
 
-function eventClient(
-  url: string,
-  options: { extraHeaders?: Record<string, string> } = {}
-): Socket<EventsServerToClientEvents, EventsClientToServerEvents> {
-  return createClient(`${url}/events`, {
-    path: SOCKET_IO_PATH,
-    transports: ['websocket'],
-    forceNew: true,
-    reconnection: false,
-    ...options
-  })
+function webSocketConstructor(extraHeaders?: Record<string, string>) {
+  if (!extraHeaders) {
+    return undefined
+  }
+
+  return (url: string, protocols?: string | string[]) => {
+    const socket = new WebSocket(url, protocols, { headers: extraHeaders })
+    // SAFETY: ws implements the WebSocket operations consumed by Effect Socket.
+    // eslint-disable-next-line anti-slop/no-chained-type-assertions -- The ws and DOM declarations describe the same runtime object differently.
+    return socket as unknown as globalThis.WebSocket
+  }
 }
 
 function terminalClient(
@@ -273,25 +294,32 @@ function terminalClient(
   clientId = 'tab-a',
   terminalProtocol: string | null = String(TERMINAL_PROTOCOL_VERSION),
   options: { extraHeaders?: Record<string, string> } = {}
-): Socket<TerminalServerToClientEvents, TerminalClientToServerEvents> {
-  const clientOptions: NonNullable<Parameters<typeof createClient>[1]> = {
-    path: SOCKET_IO_PATH,
-    transports: ['websocket'],
-    forceNew: true,
+): ProtocolSocket<TerminalServerToClientEvents, TerminalClientToServerEvents> {
+  const query: Record<string, string> = {}
+  if (terminalProtocol !== null) {
+    query.terminalProtocol = terminalProtocol
+  }
+
+  const constructor = webSocketConstructor(options.extraHeaders)
+  const socketOptions: ProtocolSocketOptions = {
     reconnection: true,
     reconnectionDelay: 10,
     auth: { terminalId: 'term', clientId, cols: 100, rows: 30 },
-    ...options
+    query
   }
-  if (terminalProtocol !== null) {
-    clientOptions.query = { terminalProtocol }
-  }
-
-  return createClient(`${url}/terminals`, clientOptions)
+  return createProtocolSocket(
+    `${url}/terminals`,
+    constructor
+      ? { ...socketOptions, webSocketConstructor: constructor }
+      : socketOptions
+  )
 }
 
 async function activateQueryAuthority(
-  socket: Socket<TerminalServerToClientEvents, TerminalClientToServerEvents>,
+  socket: ProtocolSocket<
+    TerminalServerToClientEvents,
+    TerminalClientToServerEvents
+  >,
   generation: number
 ): Promise<void> {
   let phase = 0
@@ -315,7 +343,7 @@ async function activateQueryAuthority(
   })
 }
 
-async function closeClient(socket: Socket): Promise<void> {
+async function closeClient(socket: ProtocolSocket<any, any>): Promise<void> {
   socket.removeAllListeners()
   socket.disconnect()
 }
@@ -326,230 +354,66 @@ afterEach(async () => {
   }
 })
 
-describe('Socket.IO real network', () => {
-  it('emits an authoritative snapshot before unrepresented ordered events', async () => {
-    const value = await fixture()
-    value.metadataSnapshot.mockImplementationOnce(() => {
-      value.events.publish('terminal.metadata', {
-        terminalId: 'term',
-        title: 'snapshot',
-        program: null,
-        progress: null,
-        progressStartedAt: null,
-        progressClearedAt: null,
-        bell: null
-      })
-      return [
-        {
-          terminalId: 'term',
-          title: 'snapshot',
-          program: null,
-          progress: null,
-          progressStartedAt: null,
-          progressClearedAt: null,
-          bell: null
-        }
-      ]
-    })
-    const socket = eventClient(value.url)
-    const received: string[] = []
-    socket.on('snapshot', (snapshot) => {
-      received.push(`snapshot:${snapshot.terminalMetadata[0]?.title}`)
-      value.events.publish('terminal.metadata', {
-        ...snapshot.terminalMetadata[0]!,
-        title: 'incremental'
-      })
-    })
-    socket.on('product_event', (event) => {
-      if (event.type === 'terminal.metadata') {
-        received.push(`event:${event.data.title}`)
-      }
-    })
-
-    await vi.waitFor(() => expect(received).toHaveLength(2))
-    expect(received).toEqual(['snapshot:snapshot', 'event:incremental'])
-    await closeClient(socket)
-  })
-
-  it('snapshots durable WebPanel and BrowserPanel records and broadcasts closure to every client', async () => {
-    const value = await fixture()
-    vi.mocked(value.listWebPanels).mockResolvedValue([
-      {
-        id: 'panel_review',
-        kind: 'web',
-        worktreeId: 'wt',
-        definitionId: 'project:review',
-        title: 'Review',
-        launch: { input: null, cwd: null },
-        permissions: [],
-        sandbox: { allowSameOrigin: false },
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-01T00:00:00.000Z'
-      }
-    ])
-    vi.mocked(value.listBrowserPanels).mockResolvedValue([
-      {
-        id: 'panel_browser',
-        kind: 'browser',
-        worktreeId: 'wt',
-        title: 'Example',
-        url: 'https://example.com/',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-01T00:00:00.000Z'
-      }
-    ])
-    const first = eventClient(value.url)
-    const second = eventClient(value.url)
-    const snapshots = await Promise.all(
-      [first, second].map(
-        (socket) =>
-          new Promise<Parameters<EventsServerToClientEvents['snapshot']>[0]>(
-            (resolve) => socket.once('snapshot', resolve)
-          )
-      )
-    )
-    expect(
-      snapshots.map((snapshot) => parseEventsSnapshot(snapshot)?.webPanels[0])
-    ).toEqual([
-      expect.objectContaining({
-        id: 'panel_review',
-        sandbox: { allowSameOrigin: false }
-      }),
-      expect.objectContaining({
-        id: 'panel_review',
-        sandbox: { allowSameOrigin: false }
-      })
-    ])
-    expect(
-      snapshots.map(
-        (snapshot) => parseEventsSnapshot(snapshot)?.browserPanels[0]
-      )
-    ).toEqual([
-      expect.objectContaining({
-        id: 'panel_browser',
-        url: 'https://example.com/'
-      }),
-      expect.objectContaining({
-        id: 'panel_browser',
-        url: 'https://example.com/'
-      })
-    ])
-
-    const closures = [first, second].map(
-      (socket) =>
-        new Promise<string>((resolve) =>
-          socket.on('product_event', (event) => {
-            if (event.type === 'panel.removed') {
-              resolve(String(event.data.panelId))
-            }
-          })
-        )
-    )
-    value.events.publish('panel.removed', {
-      worktreeId: 'wt',
-      panelId: 'panel_review'
-    })
-    await expect(Promise.all(closures)).resolves.toEqual([
-      'panel_review',
-      'panel_review'
-    ])
-    await Promise.all([closeClient(first), closeClient(second)])
-  })
-
-  it('broadcasts authoritative bell acknowledgement metadata to every client', async () => {
-    const value = await fixture()
-    const first = eventClient(value.url)
-    const second = eventClient(value.url)
-    const firstEvents: TerminalRuntimeMetadata[] = []
-    const secondEvents: TerminalRuntimeMetadata[] = []
-    first.on('product_event', (event) => {
-      if (event.type === 'terminal.metadata') {
-        // SAFETY: The test fixture provides the asserted contract used here.
-        firstEvents.push(event.data as TerminalRuntimeMetadata)
-      }
-    })
-    second.on('product_event', (event) => {
-      if (event.type === 'terminal.metadata') {
-        // SAFETY: The test fixture provides the asserted contract used here.
-        secondEvents.push(event.data as TerminalRuntimeMetadata)
-      }
-    })
-    await Promise.all([
-      new Promise<void>((resolve) => first.once('snapshot', () => resolve())),
-      new Promise<void>((resolve) => second.once('snapshot', () => resolve()))
-    ])
-
-    value.events.publish('terminal.metadata', {
-      terminalId: 'term',
-      title: 'shell',
-      program: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
-        sequence: 1,
-        at: '2026-01-01T00:02:00.000Z',
-        unread: false
-      }
-    })
-
-    await vi.waitFor(() => {
-      expect(firstEvents).toHaveLength(1)
-      expect(secondEvents).toHaveLength(1)
-    })
-    expect(firstEvents[0]?.bell).toMatchObject({ sequence: 1, unread: false })
-    expect(secondEvents[0]?.bell).toMatchObject({ sequence: 1, unread: false })
-    await closeClient(first)
-    await closeClient(second)
-  })
-
+describe('Effect WebSocket real network', () => {
   it('uses one-use browser authorization before relaying hosted browser commands', async () => {
     const messages: BrowserClientMessage[] = []
     const ownerMessages: BrowserOwnerClientMessage[] = []
     const closes: string[] = []
     const ownerCloses: string[] = []
     const browserSessions = {
-      accept: vi.fn(async (ticket: string, transport: BrowserTransport) => {
-        expect(ticket).toBe('b'.repeat(43))
-        transport.sendMessage({
-          type: 'ready',
-          state: {
-            url: 'about:blank',
-            title: '',
-            loading: false,
-            canGoBack: false,
-            canGoForward: false,
-            controlled: true,
-            hasController: true,
-            controller: 'you',
-            viewport: { width: 800, height: 600 }
-          }
+      accept: vi.fn((ticket: string, transport: BrowserTransport) =>
+        Effect.sync(() => {
+          expect(ticket).toBe('b'.repeat(43))
+          transport.sendMessage({
+            type: 'ready',
+            state: {
+              url: 'about:blank',
+              title: '',
+              loading: false,
+              canGoBack: false,
+              canGoForward: false,
+              controlled: true,
+              hasController: true,
+              controller: 'you',
+              viewport: { width: 800, height: 600 }
+            }
+          })
+          transport.sendFrame({
+            sequence: 1,
+            mimeType: 'image/jpeg',
+            timestamp: 123,
+            width: 800,
+            height: 600,
+            data: Uint8Array.from([1, 2, 3])
+          })
+          return 'browser-connection'
         })
-        return 'browser-connection'
-      }),
+      ),
       message: vi.fn(
         (_connectionId: string, message: BrowserClientMessage) =>
           void messages.push(message)
       ),
       close: vi.fn((connectionId: string) => void closes.push(connectionId)),
-      acceptOwner: vi.fn(async (auth, transport: BrowserOwnerTransport) => {
-        expect(auth.endpoint).toBe('http://127.0.0.1:43210/private-owner/')
-        transport.send({
-          type: 'claimGranted',
-          panelId: 'panel_browser',
-          generation: 4,
-          resumed: false,
-          state: {
-            url: 'about:blank',
-            title: '',
-            loading: false,
-            canGoBack: false,
-            canGoForward: false,
-            viewport: { width: 800, height: 600 }
-          }
+      acceptOwner: vi.fn((auth, transport: BrowserOwnerTransport) =>
+        Effect.sync(() => {
+          expect(auth.endpoint).toBe('http://127.0.0.1:43210/private-owner/')
+          transport.send({
+            type: 'claimGranted',
+            panelId: 'panel_browser',
+            generation: 4,
+            resumed: false,
+            state: {
+              url: 'about:blank',
+              title: '',
+              loading: false,
+              canGoBack: false,
+              canGoForward: false,
+              viewport: { width: 800, height: 600 }
+            }
+          })
+          return 'browser-owner'
         })
-        return 'browser-owner'
-      }),
+      ),
       ownerMessage: vi.fn(
         (_connectionId: string, message: BrowserOwnerClientMessage) =>
           void ownerMessages.push(message)
@@ -559,19 +423,19 @@ describe('Socket.IO real network', () => {
       )
     } satisfies BrowserSessionController
     const value = await fixture(browserSessions)
-    const browser: Socket<
+    const browser = createProtocolSocket<
       BrowserServerToClientEvents,
       BrowserClientToServerEvents
-    > = createClient(`${value.url}/browsers`, {
-      path: SOCKET_IO_PATH,
-      transports: ['websocket'],
-      forceNew: true,
+    >(`${value.url}/browsers`, {
       reconnection: false,
       auth: {
         ticket: 'b'.repeat(43),
         protocolVersion: BROWSER_PROTOCOL_VERSION
       }
     })
+    const frame = new Promise<
+      Parameters<BrowserServerToClientEvents['frame']>[0]
+    >((resolve) => browser.once('frame', resolve))
     const ready = await new Promise<BrowserServerMessage>((resolve) =>
       browser.once('message', resolve)
     )
@@ -579,19 +443,19 @@ describe('Socket.IO real network', () => {
       type: 'ready',
       state: { controlled: true, viewport: { width: 800, height: 600 } }
     })
+    await expect(frame).resolves.toMatchObject({
+      sequence: 1,
+      data: Uint8Array.from([1, 2, 3])
+    })
     browser.emit('command', { type: 'back' })
     await vi.waitFor(() => expect(messages).toEqual([{ type: 'back' }]))
-    const socketId = browser.id!
     await closeClient(browser)
-    await vi.waitFor(() => expect(closes).toEqual([socketId]))
+    await vi.waitFor(() => expect(closes).toEqual(['browser-connection']))
 
-    const owner: Socket<
+    const owner = createProtocolSocket<
       BrowserOwnerServerToClientEvents,
       BrowserOwnerClientToServerEvents
-    > = createClient(`${value.url}/browser-owners`, {
-      path: SOCKET_IO_PATH,
-      transports: ['websocket'],
-      forceNew: true,
+    >(`${value.url}/browser-owners`, {
       reconnection: false,
       auth: {
         ticket: 'o'.repeat(43),
@@ -622,18 +486,59 @@ describe('Socket.IO real network', () => {
         }
       ])
     )
-    const ownerSocketId = owner.id!
     await closeClient(owner)
-    await vi.waitFor(() => expect(ownerCloses).toEqual([ownerSocketId]))
+    await vi.waitFor(() => expect(ownerCloses).toEqual(['browser-owner']))
   })
 
-  it('authenticates local and Tailscale clients before accepting either socket namespace', async () => {
-    const value = await fixture()
-    const local = eventClient(value.url, {
-      extraHeaders: { Origin: value.url }
+  it('interrupts Browser attachment work when the client disconnects before ready', async () => {
+    let started = false
+    let interrupted = false
+    const browserSessions: BrowserSessionController = {
+      accept: vi.fn(() =>
+        Effect.sync(() => {
+          started = true
+        }).pipe(
+          Effect.zipRight(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted = true
+            })
+          )
+        )
+      ),
+      message: vi.fn(),
+      close: vi.fn(),
+      acceptOwner: vi.fn(() => Effect.succeed('owner')),
+      ownerMessage: vi.fn(),
+      closeOwner: vi.fn()
+    }
+    const value = await fixture(browserSessions)
+    const browser = createProtocolSocket<
+      BrowserServerToClientEvents,
+      BrowserClientToServerEvents
+    >(`${value.url}/browsers`, {
+      reconnection: false,
+      auth: {
+        ticket: 'b'.repeat(43),
+        protocolVersion: BROWSER_PROTOCOL_VERSION
+      }
     })
+
+    await vi.waitFor(() => expect(started).toBe(true))
+    browser.disconnect()
+    await vi.waitFor(() => expect(interrupted).toBe(true))
+  })
+
+  it('authenticates local and Tailscale clients before accepting socket connections', async () => {
+    const value = await fixture()
+    const local = terminalClient(
+      value.url,
+      'tab-local',
+      String(TERMINAL_PROTOCOL_VERSION),
+      { extraHeaders: { Origin: value.url } }
+    )
     await new Promise<void>((resolve, reject) => {
-      local.once('connect', () => resolve())
+      local.once('ready', () => resolve())
       local.once('connect_error', reject)
     })
 
@@ -643,23 +548,15 @@ describe('Socket.IO real network', () => {
       'X-Forwarded-Host': 'feature.treeport.localhost',
       'X-Forwarded-Proto': 'https'
     }
-    const proxied = eventClient(value.url, {
-      extraHeaders: tailscaleHeaders
-    })
-    await new Promise<void>((resolve, reject) => {
-      proxied.once('connect', () => resolve())
-      proxied.once('connect_error', reject)
-    })
-
-    const proxiedTerminal = terminalClient(
+    const proxied = terminalClient(
       value.url,
       'tab-proxied',
       String(TERMINAL_PROTOCOL_VERSION),
       { extraHeaders: tailscaleHeaders }
     )
     await new Promise<void>((resolve, reject) => {
-      proxiedTerminal.once('ready', () => resolve())
-      proxiedTerminal.once('connect_error', reject)
+      proxied.once('ready', () => resolve())
+      proxied.once('connect_error', reject)
     })
 
     const bypassHeaders = {
@@ -667,59 +564,52 @@ describe('Socket.IO real network', () => {
       'X-Forwarded-Host': 'feature.treeport.localhost',
       'X-Forwarded-Proto': 'https'
     }
-    const bypassedEvents = eventClient(value.url, {
-      extraHeaders: bypassHeaders
-    })
-    const eventError = await new Promise<Error>((resolve) =>
-      bypassedEvents.once('connect_error', resolve)
-    )
-    expect(eventError.message).toMatch(/websocket error/i)
-
-    const bypassedTerminal = terminalClient(
+    const bypassed = terminalClient(
       value.url,
       'tab-bypassed',
       String(TERMINAL_PROTOCOL_VERSION),
       { extraHeaders: bypassHeaders }
     )
-    bypassedTerminal.io.reconnection(false)
-    const terminalError = await new Promise<Error>((resolve) =>
-      bypassedTerminal.once('connect_error', resolve)
+    bypassed.manager.reconnection(false)
+    const bypassError = await new Promise<Error>((resolve) =>
+      bypassed.once('connect_error', resolve)
     )
-    expect(terminalError.message).toMatch(/websocket error/i)
-    expect(value.getTerminalForAttachment).toHaveBeenCalledTimes(1)
+    expect(bypassError.message).toMatch(/websocket error/i)
 
-    const foreignOrigin = eventClient(value.url, {
-      extraHeaders: { ...tailscaleHeaders, Origin: 'https://evil.example' }
-    })
+    const foreignOrigin = terminalClient(
+      value.url,
+      'tab-foreign',
+      String(TERMINAL_PROTOCOL_VERSION),
+      { extraHeaders: { ...tailscaleHeaders, Origin: 'https://evil.example' } }
+    )
+    foreignOrigin.manager.reconnection(false)
     const originError = await new Promise<Error>((resolve) =>
       foreignOrigin.once('connect_error', resolve)
     )
     expect(originError.message).toMatch(/websocket error/i)
 
-    const opaqueOrigin = eventClient(value.url, {
-      extraHeaders: { ...tailscaleHeaders, Origin: 'null' }
-    })
+    const opaqueOrigin = terminalClient(
+      value.url,
+      'tab-opaque',
+      String(TERMINAL_PROTOCOL_VERSION),
+      { extraHeaders: { ...tailscaleHeaders, Origin: 'null' } }
+    )
+    opaqueOrigin.manager.reconnection(false)
     const opaqueOriginError = await new Promise<Error>((resolve) =>
       opaqueOrigin.once('connect_error', resolve)
     )
     expect(opaqueOriginError.message).toMatch(/websocket error/i)
 
-    const originless = eventClient(value.url)
+    const originless = terminalClient(value.url, 'tab-originless')
     await new Promise<void>((resolve, reject) => {
-      originless.once('connect', () => resolve())
+      originless.once('ready', () => resolve())
       originless.once('connect_error', reject)
     })
+    expect(value.getTerminalForAttachment).toHaveBeenCalledTimes(3)
     await Promise.all(
-      [
-        local,
-        proxied,
-        proxiedTerminal,
-        bypassedEvents,
-        bypassedTerminal,
-        foreignOrigin,
-        opaqueOrigin,
-        originless
-      ].map(closeClient)
+      [local, proxied, bypassed, foreignOrigin, opaqueOrigin, originless].map(
+        closeClient
+      )
     )
   })
 
@@ -737,14 +627,14 @@ describe('Socket.IO real network', () => {
     })
 
     const missing = terminalClient(value.url, 'tab-missing', null)
-    missing.io.reconnection(false)
+    missing.manager.reconnection(false)
     const missingError = await new Promise<Error>((resolve) =>
       missing.once('connect_error', resolve)
     )
     expect(missingError.message).toBe('UNSUPPORTED_TERMINAL_PROTOCOL')
 
     const unsupported = terminalClient(value.url, 'tab-unsupported', '2')
-    unsupported.io.reconnection(false)
+    unsupported.manager.reconnection(false)
     const error = await new Promise<Error>((resolve) =>
       unsupported.once('connect_error', resolve)
     )
@@ -757,18 +647,15 @@ describe('Socket.IO real network', () => {
 
   it('does not finish attachment setup after a real pre-ready disconnect', async () => {
     const value = await fixture()
-    type RefreshedTerminal = Awaited<
-      ReturnType<typeof value.getTerminalForAttachment>
-    >
-    let finishRefresh!: (terminal: RefreshedTerminal) => void
+    let finishRefresh!: (terminal: TerminalRecord) => void
     vi.mocked(value.getTerminalForAttachment).mockReturnValueOnce(
-      new Promise<RefreshedTerminal>((resolve) => {
-        finishRefresh = resolve
+      Effect.async<TerminalRecord>((resume) => {
+        finishRefresh = (terminal) => resume(Effect.succeed(terminal))
       })
     )
     const closeAttachment = vi.spyOn(value.attachments, 'close')
     const socket = terminalClient(value.url)
-    socket.io.reconnection(false)
+    socket.manager.reconnection(false)
     await new Promise<void>((resolve, reject) => {
       socket.once('connect', () => resolve())
       socket.once('connect_error', reject)
@@ -818,14 +705,16 @@ describe('Socket.IO real network', () => {
     })
     await vi.waitFor(() => expect(value.ptys[0]!.writes).toEqual(['before']))
 
-    socket.io.engine?.close()
-    await vi.waitFor(() => expect(socket.connected).toBe(false))
-    if (socket.connected) {
-      socket.volatile.emit('input', {
-        generation: readyEvents[0]!.generation,
-        data: 'disconnected'
-      })
-    }
+    const disconnected = new Promise<void>((resolve) =>
+      socket.once('disconnect', () => resolve())
+    )
+    value.closeConnections()
+    await disconnected
+    expect(socket.connected).toBe(false)
+    socket.volatile.emit('input', {
+      generation: readyEvents[0]!.generation,
+      data: 'disconnected'
+    })
 
     await vi.waitFor(() => expect(readyEvents).toHaveLength(2))
 
@@ -839,7 +728,7 @@ describe('Socket.IO real network', () => {
   it('rejects a missing terminal payload without crashing the daemon', async () => {
     const value = await fixture()
     const socket = terminalClient(value.url)
-    socket.io.reconnection(false)
+    socket.manager.reconnection(false)
     await new Promise<void>((resolve) => socket.once('ready', () => resolve()))
 
     // SAFETY: The test fixture provides the asserted contract used here.
@@ -847,16 +736,16 @@ describe('Socket.IO real network', () => {
     await vi.waitFor(() => expect(socket.connected).toBe(false))
     expect(value.ptys[0]!.kills).toBe(0)
 
-    const probe = eventClient(value.url)
+    const probe = terminalClient(value.url, 'tab-probe')
     await new Promise<void>((resolve, reject) => {
-      probe.once('connect', () => resolve())
+      probe.once('ready', () => resolve())
       probe.once('connect_error', reject)
     })
     await closeClient(socket)
     await closeClient(probe)
   })
 
-  it('enforces the Engine.IO payload ceiling and cleans live viewers on shutdown', async () => {
+  it('enforces the WebSocket payload ceiling and cleans live viewers on shutdown', async () => {
     const value = await fixture()
     const socket = terminalClient(value.url)
     let generation = 0
@@ -865,7 +754,7 @@ describe('Socket.IO real network', () => {
     })
     await vi.waitFor(() => expect(generation).toBeGreaterThan(0))
 
-    socket.io.reconnection(false)
+    socket.manager.reconnection(false)
     socket.emit('input', {
       generation,
       data: 'x'.repeat(TERMINAL_TEST_OVERSIZED_BYTES)

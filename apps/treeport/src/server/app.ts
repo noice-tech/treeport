@@ -4,59 +4,115 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Hono } from 'hono'
-import * as Effect from 'effect/Effect'
-import * as Exit from 'effect/Exit'
-import { HTTPException } from 'hono/http-exception'
-import { requestId, type RequestIdVariables } from 'hono/request-id'
-import { validator } from 'hono/validator'
-import { z } from 'zod'
-import { getConnInfo } from '@hono/node-server/conninfo'
-import { serveStatic } from '@hono/node-server/serve-static'
-import { zValidator } from '@hono/zod-validator'
+import * as HttpApp from '@effect/platform/HttpApp'
+import * as HttpRouter from '@effect/platform/HttpRouter'
+import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
+import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import {
+  apiErrorBodySchema,
+  applicationUpdateStatusSchema,
   browseDirectoryQuerySchema,
   browserAgentCommandSchema,
+  browserAgentResponseSchema,
+  browserInstallResponseSchema,
+  browserInstallStatusSchema,
   browserOwnerTicketRequestSchema,
+  browserOwnerTicketResponseSchema,
   browserTicketRequestSchema,
+  browserTicketResponseSchema,
   createBrowserPanelSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
+  createWorktreeSchema,
   createWebPanelSchema,
+  deletePanelQuerySchema,
   deleteTerminalPresetSchema,
-  openWebPanelSchema,
-  openBrowserPanelFromTerminalSchema,
   deleteWebPanelStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
+  directoryBrowseResponseSchema,
   getWebPanelStorageSchema,
-  createWorktreeSchema,
+  healthResponseSchema,
+  openBrowserPanelFromTerminalSchema,
+  openBrowserPanelResponseSchema,
+  openWebPanelResponseSchema,
+  openWebPanelSchema,
+  operationQuerySchema,
+  operationResponseSchema,
+  operationsResponseSchema,
   packageInstallSchema,
+  packageListingResponseSchema,
+  packageOperationResponseSchema,
+  packageOperationsResponseSchema,
   packageProjectQuerySchema,
+  packageProjectResponseSchema,
+  packageReloadResponseSchema,
   packageReloadSchema,
   packageRemoveSchema,
   packageUpdateSchema,
+  prResponseSchema,
+  projectResponseSchema,
+  projectsResponseSchema,
   readTreeFileSchema,
+  recentProjectsResponseSchema,
+  removePreviewResponseSchema,
   registerProjectSchema,
-  searchTreeFilesSchema,
-  requestWorkspaceOpenSchema,
-  TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
+  requestWorkspaceOpenSchema,
+  searchTreeFilesSchema,
   setWebPanelStorageSchema,
+  storageValueResponseSchema,
   terminalBellAcknowledgementSchema,
   terminalCaptureQuerySchema,
+  terminalCaptureResponseSchema,
+  terminalObservationResponseSchema,
+  terminalPresetDefinitionListingSchema,
+  terminalPresetDefinitionsQuerySchema,
+  terminalPresetResponseSchema,
+  terminalPresetsResponseSchema,
+  terminalResponseSchema,
+  TERMINAL_MAX_UPLOAD_BYTES,
+  terminatedTerminalsResponseSchema,
+  treeContextFieldListingSchema,
+  treeContextFieldsQuerySchema,
+  treeContextResponseSchema,
+  treeFileListingSchema,
+  treeFileSchema,
+  treeFileSearchResultSchema,
+  treeFileWriteResultSchema,
+  uploadedFileResponseSchema,
   updateProjectSchema,
   updateTerminalPresetSchema,
   updateTerminalSchema,
   updateWebPanelPermissionGrantSchema,
-  writeTreeFileSchema
+  webPanelContextResponseSchema,
+  webPanelDefinitionResponseSchema,
+  webPanelDefinitionsResponseSchema,
+  webPanelResponseSchema,
+  worktreeResponseSchema,
+  worktreesResponseSchema,
+  gitDiffResponseSchema,
+  hasDataResponseSchema,
+  listenerDiscoveryResponseSchema,
+  okResponseSchema,
+  writeTreeFileSchema,
+  type ApiErrorBody
 } from '@treeport/shared'
-import type { ApiErrorBody } from '@treeport/shared'
+import * as Cause from 'effect/Cause'
+import * as Effect from 'effect/Effect'
+import * as Either from 'effect/Either'
+import * as Exit from 'effect/Exit'
+import * as Option from 'effect/Option'
+import * as ParseResult from 'effect/ParseResult'
+import * as Schema from 'effect/Schema'
+import type * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
 import type {
   AppConfig,
   TerminalSessionBackend,
   TreeportService
 } from './core/index'
 import { DomainError } from './core/index'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
 import {
   webPanelBrowserOrigin,
   webPanelContentSecurityPolicy
@@ -65,6 +121,7 @@ import type { ApplicationUpdateManager } from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
 import { isLoopbackAddress } from './request-security'
+import { networkTelemetry } from './network-telemetry'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
   ['application/pdf', 'pdf'],
@@ -77,30 +134,7 @@ const UPLOAD_MIME_EXTENSIONS = new Map([
 ])
 const UPLOAD_RETENTION_MS = 24 * 60 * 60_000
 const UPLOAD_DIRECTORY_MAX_BYTES = 512 * 1024 * 1024
-const terminalPresetDefinitionsQuerySchema = z.object({
-  projectId: z.string().optional(),
-  worktreeId: z.string().optional()
-})
-const treeContextFieldsQuerySchema = z.object({
-  projectId: z.string().min(1)
-})
-const operationQuerySchema = z.object({
-  kind: z
-    .enum([
-      'create',
-      'finish',
-      'discard',
-      'project_cleanup',
-      'remove',
-      'external_remove'
-    ])
-    .optional(),
-  projectId: z.string().optional()
-})
-const deletePanelQuerySchema = z.object({
-  discardStoredData: z.string().optional(),
-  force: z.string().optional()
-})
+
 interface UploadFileInfo {
   path: string
   size: number
@@ -165,624 +199,838 @@ interface AppDependencies {
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata: TerminalMetadataManager
   browserSessions?: BrowserSessionManager
+  rpcHttpApp?: HttpApp.Default<never, Scope.Scope>
   webDist?: string
 }
 
-function jsonInput<T extends z.ZodType>(schema: T) {
-  return zValidator('json', schema, (result) => {
-    if (!result.success) {
-      throw new DomainError(
-        'VALIDATION_ERROR',
-        'Request validation failed',
-        400,
-        z.flattenError(result.error)
-      )
-    }
-  })
+type AppEffect<A> = Effect.Effect<A, unknown, ApplicationServices>
+type RouteEffect<A> = Effect.Effect<
+  A,
+  unknown,
+  | ApplicationServices
+  | HttpRouter.RouteContext
+  | HttpServerRequest.HttpServerRequest
+  | HttpServerRequest.ParsedSearchParams
+  | Scope.Scope
+>
+
+function operation<A>(
+  evaluate: () =>
+    | Effect.Effect<A, unknown, ApplicationServices>
+    | PromiseLike<A>
+    | A
+): AppEffect<A> {
+  return Effect.try({ try: evaluate, catch: (cause) => cause }).pipe(
+    Effect.flatMap((value) =>
+      Effect.isEffect(value)
+        ? value
+        : Effect.tryPromise({
+            try: () => Promise.resolve(value),
+            catch: (cause) => cause
+          })
+    )
+  )
 }
 
-function queryInput<T extends z.ZodType>(schema: T) {
-  return zValidator('query', schema, (result) => {
-    if (!result.success) {
-      throw new DomainError(
-        'VALIDATION_ERROR',
-        'Request validation failed',
-        400,
-        z.flattenError(result.error)
-      )
-    }
-  })
-}
-
-function createTreeFilesApi(
-  treeFiles: TreeportService['treeFiles'],
-  runEffect: TreeportService['runEffect']
+function jsonContractResponse<S extends Schema.Schema<any, any, never>>(
+  schema: S,
+  // eslint-disable-next-line anti-slop/no-unknown-parameters -- The supplied Effect Schema validates this response boundary before serialization.
+  body: unknown,
+  status = 200,
+  headers?: Record<string, string>
 ) {
-  return new Hono()
-    .get('/api/panels/:panelId/files', async (context) =>
-      context.json(
-        await runEffect(treeFiles.listTreeFiles(context.req.param('panelId')))
-      )
+  const decoded = Schema.decodeUnknownEither(schema, {
+    onExcessProperty: 'error'
+  })(body)
+  if (Either.isLeft(decoded)) {
+    throw new Error(
+      `Server response violated its network schema: ${ParseResult.TreeFormatter.formatErrorSync(
+        decoded.left
+      )}`
     )
-    .post(
-      '/api/panels/:panelId/files/search',
-      jsonInput(searchTreeFilesSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
-          await runEffect(
-            treeFiles.searchTreeFiles(context.req.param('panelId'), body.query)
-          )
-        )
-      }
-    )
-    .post(
-      '/api/panels/:panelId/files/read',
-      jsonInput(readTreeFileSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
-          await runEffect(
-            treeFiles.readTreeFile(context.req.param('panelId'), body.path)
-          )
-        )
-      }
-    )
-    .put(
-      '/api/panels/:panelId/files',
-      jsonInput(writeTreeFileSchema),
-      async (context) =>
-        context.json(
-          await runEffect(
-            treeFiles.writeTreeFile(
-              context.req.param('panelId'),
-              context.req.valid('json')
-            )
-          )
-        )
-    )
+  }
+
+  return HttpServerResponse.unsafeJson(decoded.right, { status, headers })
 }
 
-export type TreeFilesApiType = ReturnType<typeof createTreeFilesApi>
+function requestBody<S extends Schema.Schema<any, any, never>>(schema: S) {
+  return Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const value = yield* request.json.pipe(
+      Effect.mapError(
+        () =>
+          new DomainError(
+            'INVALID_JSON',
+            'Request body must be valid JSON',
+            400
+          )
+      )
+    )
+    const parsed = Schema.decodeUnknownEither(schema, {
+      onExcessProperty: 'error'
+    })(value)
+    if (Either.isLeft(parsed)) {
+      return yield* Effect.fail(
+        new DomainError(
+          'VALIDATION_ERROR',
+          'Request validation failed',
+          400,
+          ParseResult.ArrayFormatter.formatErrorSync(parsed.left)
+        )
+      )
+    }
+
+    return parsed.right
+  })
+}
+
+function requestQuery<S extends Schema.Schema<any, any, never>>(
+  schema: S,
+  errorCode = 'VALIDATION_ERROR',
+  errorMessage = 'Request validation failed'
+) {
+  return Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const url = new URL(request.url, 'http://treeport.local')
+    const value = Object.fromEntries(url.searchParams)
+    const parsed = Schema.decodeUnknownEither(schema, {
+      onExcessProperty: 'error'
+    })(value)
+    if (Either.isLeft(parsed)) {
+      return yield* Effect.fail(new DomainError(errorCode, errorMessage, 400))
+    }
+
+    return parsed.right
+  })
+}
+
+const routeParams = HttpRouter.params
+const serverRequest = HttpServerRequest.HttpServerRequest
+
+function route(
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | '*',
+  routePath: `/${string}` | '*',
+  handler: RouteEffect<HttpServerResponse.HttpServerResponse>
+) {
+  return HttpRouter.makeRoute(method, routePath, handler)
+}
+
+function contentType(filePath: string): string {
+  const types = new Map([
+    ['.css', 'text/css; charset=utf-8'],
+    ['.gif', 'image/gif'],
+    ['.html', 'text/html; charset=utf-8'],
+    ['.jpeg', 'image/jpeg'],
+    ['.jpg', 'image/jpeg'],
+    ['.js', 'text/javascript; charset=utf-8'],
+    ['.json', 'application/json; charset=utf-8'],
+    ['.map', 'application/json; charset=utf-8'],
+    ['.mjs', 'text/javascript; charset=utf-8'],
+    ['.png', 'image/png'],
+    ['.svg', 'image/svg+xml'],
+    ['.webp', 'image/webp'],
+    ['.woff', 'font/woff'],
+    ['.woff2', 'font/woff2'],
+    ['.webmanifest', 'application/manifest+json']
+  ])
+  return (
+    types.get(path.extname(filePath).toLowerCase()) ??
+    'application/octet-stream'
+  )
+}
+
+function fileResponse(
+  filePath: string,
+  headers: Record<string, string> = {}
+): AppEffect<HttpServerResponse.HttpServerResponse> {
+  return operation(() => fs.readFile(filePath)).pipe(
+    Effect.map((body) =>
+      HttpServerResponse.uint8Array(body, {
+        headers: { 'content-type': contentType(filePath), ...headers }
+      })
+    ),
+    Effect.catchAll(() =>
+      Effect.succeed(HttpServerResponse.empty({ status: 404 }))
+    )
+  )
+}
+
+export interface TreeportHttpApp {
+  readonly httpApp: HttpApp.Default<unknown, ApplicationServices>
+  request(input: string | URL | Request, init?: RequestInit): Promise<Response>
+}
 
 export function createApp({
   service,
   config,
   terminalHost,
   applicationUpdate,
-  terminalMetadata,
+  terminalMetadata: metadata,
   browserSessions,
+  rpcHttpApp,
   webDist
-}: AppDependencies) {
-  const runEffect = service.runEffect.bind(service)
-  const app = new Hono<{ Variables: RequestIdVariables }>()
-  app.use(
-    '/api/*',
-    requestId({
-      limitLength: 128,
-      generator: () => crypto.randomUUID()
-    })
-  )
-  const metadata = terminalMetadata
-  const metadataReady = metadata.initialize().catch((error) => {
-    console.error(
-      '[Treeport] Terminal metadata initialization failed:',
-      error instanceof Error ? error.message : String(error)
+}: AppDependencies): TreeportHttpApp {
+  const webPanelAsset = Effect.gen(function* () {
+    const params = yield* routeParams
+    const request = yield* serverRequest
+    const pathname = new URL(request.url, 'http://treeport.local').pathname
+    const marker = `/api/web-panels/${encodeURIComponent(
+      params.panelId!
+    )}/assets/`
+    const markerStart = pathname.indexOf(marker)
+    const requestedPath =
+      markerStart < 0
+        ? ''
+        : decodeURI(pathname.slice(markerStart + marker.length))
+    const resolution = yield* operation(() =>
+      service.panels.resolveWebPanelAsset(params.panelId!, requestedPath)
     )
-  })
-
-  app.onError((error, context) => {
-    if (
-      error instanceof HTTPException &&
-      error.status === 400 &&
-      error.message === 'Malformed JSON in request body'
-    ) {
-      return context.json(
-        {
-          error: {
-            code: 'INVALID_JSON',
-            message: 'Request body must be valid JSON'
-          }
-        },
-        400
-      )
+    if (resolution.kind === 'redirect') {
+      return HttpServerResponse.redirect(resolution.location, {
+        status: 307,
+        headers: { 'cache-control': 'no-store' }
+      })
     }
 
-    if (error instanceof DomainError) {
-      const body: ApiErrorBody = {
-        error: { code: error.code, message: error.message }
-      }
-      if (error.details !== undefined) {
-        body.error.details = error.details
-      }
-
-      return context.json(
-        body,
-        // SAFETY: The surrounding boundary contract establishes this asserted value.
-        error.status as any
-      )
+    const browserOrigin = webPanelBrowserOrigin({
+      referrer: request.headers.referer,
+      forwardedHost: request.headers['x-forwarded-host'],
+      host: request.headers.host,
+      forwardedProtocol: request.headers['x-forwarded-proto'],
+      requestProtocol: new URL(request.url, config.apiUrl).protocol
+    })
+    const commonHeaders = {
+      'cache-control':
+        resolution.kind === 'error'
+          ? 'no-store'
+          : 'public, max-age=31536000, immutable',
+      'content-security-policy': webPanelContentSecurityPolicy(
+        resolution.kind === 'error' ? 'error' : 'immutable',
+        browserOrigin,
+        resolution.allowNetworkRequests
+      ),
+      'x-content-type-options': 'nosniff'
     }
-
-    const requestIdentifier = context.get('requestId') || crypto.randomUUID()
-    context.header('X-Request-Id', requestIdentifier)
-    console.error('[Treeport] API request failed', {
-      requestId: requestIdentifier,
-      method: context.req.method,
-      path: new URL(context.req.url).pathname,
-      status: 500,
-      code: 'INTERNAL_ERROR',
-      error: error instanceof Error ? error.message : String(error)
-    })
-    return context.json(
-      {
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: 'Unexpected server error',
-          details: { requestId: requestIdentifier }
-        }
-      },
-      500
-    )
-  })
-
-  const browserApi = new Hono()
-    .get('/api/browser/status', async (context) => {
-      if (!browserSessions) {
-        throw new DomainError(
-          'BROWSER_UNAVAILABLE',
-          'Hosted browser service is unavailable',
-          503
-        )
-      }
-
-      return context.json(await browserSessions.status())
-    })
-    .post('/api/browser/install', async (context) => {
-      if (!browserSessions) {
-        throw new DomainError(
-          'BROWSER_UNAVAILABLE',
-          'Hosted browser service is unavailable',
-          503
-        )
-      }
-
-      return context.json({ message: await browserSessions.install() })
-    })
-    .delete('/api/browser/install', async (context) => {
-      if (!browserSessions) {
-        throw new DomainError(
-          'BROWSER_UNAVAILABLE',
-          'Hosted browser service is unavailable',
-          503
-        )
-      }
-
-      await browserSessions.remove()
-      return context.json({ ok: true })
-    })
-    .put(
-      '/api/worktrees/:worktreeId/web-panel-definitions/:definitionId/permission-grant',
-      jsonInput(updateWebPanelPermissionGrantSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        const definition = await runEffect(
-          service.panels.setWebPanelPermissionGrant(
-            context.req.param('worktreeId'),
-            context.req.param('definitionId'),
-            body.granted,
-            body.permissions
-          )
-        )
-        return context.json({ definition })
-      }
-    )
-    .post(
-      '/api/panels/:panelId/browser-agent',
-      jsonInput(browserAgentCommandSchema),
-      async (context) => {
-        if (!browserSessions) {
-          throw new DomainError(
-            'BROWSER_UNAVAILABLE',
-            'Hosted browser service is unavailable',
-            503
-          )
-        }
-
-        const panelId = context.req.param('panelId')
-        const input = context.req.valid('json')
-        return context.json({
-          output: await browserSessions
-            .agentCommand(panelId, input)
-            .catch((cause) => {
-              if (cause instanceof DomainError) {
-                throw cause
-              }
-
-              throw new DomainError<{
-                command: string
-                recovery: string
-              }>(
-                'BROWSER_COMMAND_FAILED',
-                cause instanceof Error
-                  ? cause.message
-                  : 'The Browser command failed.',
-                409,
-                {
-                  command: input.command,
-                  recovery:
-                    input.command === 'snapshot'
-                      ? `Retry \`treeport browser snapshot --panel ${panelId}\`.`
-                      : input.command === 'screenshot'
-                        ? `Open Browser ${panelId} in Treeport, then retry the screenshot.`
-                        : `Run \`treeport browser snapshot --panel ${panelId}\`, then retry this Browser command.`
-                }
-              )
-            })
+    if (resolution.kind === 'error') {
+      return HttpServerResponse.html(resolution.html).pipe(
+        HttpServerResponse.setStatus(500),
+        HttpServerResponse.setHeaders({
+          ...commonHeaders,
+          'content-type': 'text/html; charset=utf-8'
         })
+      )
+    }
+
+    const body = yield* operation(() => fs.readFile(resolution.path))
+    return HttpServerResponse.uint8Array(body, {
+      headers: {
+        ...commonHeaders,
+        'content-type': contentType(resolution.path),
+        'access-control-allow-origin': '*'
       }
-    )
-    .post(
-      '/api/panels/:panelId/browser-owner-ticket',
-      jsonInput(browserOwnerTicketRequestSchema),
-      async (context) => {
+    })
+  })
+  const routes = [
+    route(
+      'GET',
+      '/api/panels/:panelId/files',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(
+          treeFileListingSchema,
+          yield* operation(() =>
+            service.treeFiles.listTreeFiles(params.panelId!)
+          )
+        )
+      })
+    ),
+    route(
+      'POST',
+      '/api/panels/:panelId/files/search',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(searchTreeFilesSchema)
+        return jsonContractResponse(
+          treeFileSearchResultSchema,
+          yield* operation(() =>
+            service.treeFiles.searchTreeFiles(params.panelId!, body.query)
+          )
+        )
+      })
+    ),
+    route(
+      'POST',
+      '/api/panels/:panelId/files/read',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(readTreeFileSchema)
+        return jsonContractResponse(
+          treeFileSchema,
+          yield* operation(() =>
+            service.treeFiles.readTreeFile(params.panelId!, body.path)
+          )
+        )
+      })
+    ),
+    route(
+      'PUT',
+      '/api/panels/:panelId/files',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(writeTreeFileSchema)
+        return jsonContractResponse(
+          treeFileWriteResultSchema,
+          yield* operation(() =>
+            service.treeFiles.writeTreeFile(params.panelId!, body)
+          )
+        )
+      })
+    ),
+
+    route(
+      'GET',
+      '/api/browser/status',
+      Effect.gen(function* () {
         if (!browserSessions) {
-          throw new DomainError(
-            'BROWSER_UNAVAILABLE',
-            'Browser service is unavailable',
-            503
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_UNAVAILABLE',
+              'Hosted browser service is unavailable',
+              503
+            )
           )
         }
 
-        const remoteAddress = getConnInfo(context).remote.address
+        return jsonContractResponse(
+          browserInstallStatusSchema,
+          yield* operation(() => browserSessions.status())
+        )
+      })
+    ),
+    route(
+      'POST',
+      '/api/browser/install',
+      Effect.gen(function* () {
+        if (!browserSessions) {
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_UNAVAILABLE',
+              'Hosted browser service is unavailable',
+              503
+            )
+          )
+        }
+
+        return jsonContractResponse(browserInstallResponseSchema, {
+          message: yield* operation(() => browserSessions.install())
+        })
+      })
+    ),
+    route(
+      'DELETE',
+      '/api/browser/install',
+      Effect.gen(function* () {
+        if (!browserSessions) {
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_UNAVAILABLE',
+              'Hosted browser service is unavailable',
+              503
+            )
+          )
+        }
+
+        yield* operation(() => browserSessions.remove())
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'PUT',
+      '/api/worktrees/:worktreeId/web-panel-definitions/:definitionId/permission-grant',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(updateWebPanelPermissionGrantSchema)
+        const definition = yield* operation(() =>
+          service.panels.setWebPanelPermissionGrant(
+            params.worktreeId!,
+            params.definitionId!,
+            body.granted,
+            [...body.permissions]
+          )
+        )
+        return jsonContractResponse(webPanelDefinitionResponseSchema, {
+          definition
+        })
+      })
+    ),
+    route(
+      'POST',
+      '/api/panels/:panelId/browser-agent',
+      Effect.gen(function* () {
+        if (!browserSessions) {
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_UNAVAILABLE',
+              'Hosted browser service is unavailable',
+              503
+            )
+          )
+        }
+
+        const params = yield* routeParams
+        const input = yield* requestBody(browserAgentCommandSchema)
+        const output = yield* operation(() =>
+          browserSessions.agentCommand(params.panelId!, input)
+        ).pipe(
+          Effect.mapError((cause) =>
+            cause instanceof DomainError
+              ? cause
+              : new DomainError(
+                  'BROWSER_COMMAND_FAILED',
+                  cause instanceof Error
+                    ? cause.message
+                    : 'The Browser command failed.',
+                  409,
+                  {
+                    command: input.command,
+                    recovery:
+                      input.command === 'snapshot'
+                        ? `Retry \`treeport browser snapshot --panel ${params.panelId}\`.`
+                        : input.command === 'screenshot'
+                          ? `Open Browser ${params.panelId} in Treeport, then retry the screenshot.`
+                          : `Run \`treeport browser snapshot --panel ${params.panelId}\`, then retry this Browser command.`
+                  }
+                )
+          )
+        )
+        return jsonContractResponse(browserAgentResponseSchema, { output })
+      })
+    ),
+    route(
+      'POST',
+      '/api/panels/:panelId/browser-owner-ticket',
+      Effect.gen(function* () {
+        if (!browserSessions) {
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_UNAVAILABLE',
+              'Browser service is unavailable',
+              503
+            )
+          )
+        }
+
+        const params = yield* routeParams
+        const request = yield* serverRequest
+        const body = yield* requestBody(browserOwnerTicketRequestSchema)
+        const remoteAddress = Option.getOrNull(request.remoteAddress)
         const proxiedIdentity = [
           'tailscale-user-login',
           'tailscale-user-name',
           'tailscale-user-profile-pic'
-        ].some((name) => context.req.header(name) !== undefined)
-        if (!isLoopbackAddress(remoteAddress) || proxiedIdentity) {
-          throw new DomainError(
-            'BROWSER_LOCAL_OWNER_REQUIRED',
-            'Only a local desktop app can own this Browser.',
-            403
+        ].some((name) => request.headers[name] !== undefined)
+        if (!isLoopbackAddress(remoteAddress ?? undefined) || proxiedIdentity) {
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_LOCAL_OWNER_REQUIRED',
+              'Only a local desktop app can own this Browser.',
+              403
+            )
           )
         }
 
-        return context.json(
-          await browserSessions.issueOwnerTicket(
-            context.req.param('panelId'),
-            context.req.valid('json').clientId
+        return jsonContractResponse(
+          browserOwnerTicketResponseSchema,
+          yield* operation(() =>
+            browserSessions.issueOwnerTicket(params.panelId!, body.clientId)
           )
         )
-      }
-    )
-
-    .post(
+      })
+    ),
+    route(
+      'POST',
       '/api/panels/:panelId/browser-ticket',
-      jsonInput(browserTicketRequestSchema),
-      async (context) => {
+      Effect.gen(function* () {
         if (!browserSessions) {
-          throw new DomainError(
-            'BROWSER_UNAVAILABLE',
-            'Hosted browser service is unavailable',
-            503
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_UNAVAILABLE',
+              'Hosted browser service is unavailable',
+              503
+            )
           )
         }
 
-        const body = context.req.valid('json')
-        return context.json({
-          ticket: await browserSessions.issueTicket(
-            context.req.param('panelId'),
-            body.clientId,
-            body.visible
+        const params = yield* routeParams
+        const body = yield* requestBody(browserTicketRequestSchema)
+        return jsonContractResponse(browserTicketResponseSchema, {
+          ticket: yield* operation(() =>
+            browserSessions.issueTicket(
+              params.panelId!,
+              body.clientId,
+              body.visible
+            )
           )
         })
-      }
-    )
-
-  app.route('/', browserApi)
-
-  app.route('/', createTreeFilesApi(service.treeFiles, runEffect))
-
-  const api = new Hono()
-    .get('/api/health', (context) =>
-      context.json({
-        ok: true,
-        version: config.appVersion ?? 'development',
-        // The 0.5 desktop requires this field. New clients use release versions.
-        protocolVersion: DESKTOP_PROTOCOL_VERSION,
-        hostname: os.hostname(),
-        pid: process.pid,
-        instanceId: config.instanceId ?? null,
-        installationMethod: config.installationMethod ?? 'development',
-        daemonLifecycle: config.daemonLifecycle,
-        url: config.apiUrl
       })
-    )
+    ),
 
-    .get('/api/update', async (context) => {
-      context.header('Cache-Control', 'no-store')
-      return context.json(await applicationUpdate.status())
-    })
-
-    .post('/api/update', async (context) => {
-      context.header('Cache-Control', 'no-store')
-      return context.json(await applicationUpdate.start(), 202)
-    })
-
-    .get('/api/terminal-presets', async (context) =>
-      context.json({
-        presets: await runEffect(service.terminalPresets.listTerminalPresets())
-      })
-    )
-
-    .get(
-      '/api/tree-context-fields',
-      queryInput(treeContextFieldsQuerySchema),
-      async (context) =>
-        context.json(
-          await runEffect(
-            service.projects.listTreeContextFields(
-              context.req.valid('query').projectId
-            )
-          )
+    route(
+      'GET',
+      '/api/health',
+      Effect.succeed(
+        jsonContractResponse(healthResponseSchema, {
+          ok: true,
+          version: config.appVersion ?? 'development',
+          protocolVersion: DESKTOP_PROTOCOL_VERSION,
+          hostname: os.hostname(),
+          pid: process.pid,
+          instanceId: config.instanceId ?? null,
+          installationMethod: config.installationMethod ?? 'development',
+          daemonLifecycle: config.daemonLifecycle,
+          url: config.apiUrl
+        })
+      )
+    ),
+    route(
+      'GET',
+      '/api/update',
+      operation(() => applicationUpdate.status()).pipe(
+        Effect.map((body) =>
+          jsonContractResponse(applicationUpdateStatusSchema, body, 200, {
+            'cache-control': 'no-store'
+          })
         )
-    )
-
-    .get(
-      '/api/terminal-preset-definitions',
-      queryInput(terminalPresetDefinitionsQuerySchema),
-      async (context) =>
-        context.json(
-          await runEffect(
-            service.terminalPresets.listTerminalPresetDefinitions(
-              context.req.valid('query')
-            )
-          )
+      )
+    ),
+    route(
+      'POST',
+      '/api/update',
+      operation(() => applicationUpdate.start()).pipe(
+        Effect.map((body) =>
+          jsonContractResponse(applicationUpdateStatusSchema, body, 202, {
+            'cache-control': 'no-store'
+          })
         )
-    )
-
-    .post(
+      )
+    ),
+    route(
+      'GET',
       '/api/terminal-presets',
-      jsonInput(createTerminalPresetSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
+      operation(() => service.terminalPresets.listTerminalPresets()).pipe(
+        Effect.map((presets) =>
+          jsonContractResponse(terminalPresetsResponseSchema, { presets })
+        )
+      )
+    ),
+    route(
+      'GET',
+      '/api/tree-context-fields',
+      Effect.gen(function* () {
+        const query = yield* requestQuery(treeContextFieldsQuerySchema)
+        return jsonContractResponse(
+          treeContextFieldListingSchema,
+          yield* operation(() =>
+            service.projects.listTreeContextFields(query.projectId)
+          )
+        )
+      })
+    ),
+    route(
+      'GET',
+      '/api/terminal-preset-definitions',
+      Effect.gen(function* () {
+        const query = yield* requestQuery(terminalPresetDefinitionsQuerySchema)
+        return jsonContractResponse(
+          terminalPresetDefinitionListingSchema,
+          yield* operation(() =>
+            service.terminalPresets.listTerminalPresetDefinitions(query)
+          )
+        )
+      })
+    ),
+    route(
+      'POST',
+      '/api/terminal-presets',
+      Effect.gen(function* () {
+        const body = yield* requestBody(createTerminalPresetSchema)
+        return jsonContractResponse(
+          terminalPresetResponseSchema,
           {
-            preset: await runEffect(
-              service.terminalPresets.createTerminalPreset(body)
+            preset: yield* operation(() =>
+              service.terminalPresets.createTerminalPreset({
+                ...body,
+                args: [...body.args]
+              })
             )
           },
           201
         )
-      }
-    )
-
-    .patch(
+      })
+    ),
+    route(
+      'PATCH',
       '/api/terminal-presets/:presetId',
-      jsonInput(updateTerminalPresetSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        const { expectedUpdatedAt, ...presetInput } = body
-        return context.json({
-          preset: await runEffect(
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(updateTerminalPresetSchema)
+        const { expectedUpdatedAt, ...input } = body
+        return jsonContractResponse(terminalPresetResponseSchema, {
+          preset: yield* operation(() =>
             service.terminalPresets.updateTerminalPreset(
-              context.req.param('presetId'),
-              presetInput,
+              params.presetId!,
+              { ...input, args: [...input.args] },
               expectedUpdatedAt
             )
           )
         })
-      }
-    )
-
-    .delete(
+      })
+    ),
+    route(
+      'DELETE',
       '/api/terminal-presets/:presetId',
-      jsonInput(deleteTerminalPresetSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        await runEffect(
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(deleteTerminalPresetSchema)
+        yield* operation(() =>
           service.terminalPresets.deleteTerminalPreset(
-            context.req.param('presetId'),
+            params.presetId!,
             body.expectedUpdatedAt
           )
         )
-        return context.json({ ok: true })
-      }
-    )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
 
-    .get('/api/packages', async (context) =>
-      context.json(await runEffect(service.packageManagement.listPackages()))
-    )
-
-    .get(
+    route(
+      'GET',
+      '/api/packages',
+      operation(() => service.packageManagement.listPackages()).pipe(
+        Effect.map((body) =>
+          jsonContractResponse(packageListingResponseSchema, body)
+        )
+      )
+    ),
+    route(
+      'GET',
       '/api/packages/project',
-      queryInput(packageProjectQuerySchema),
-      async (context) =>
-        context.json({
-          project: await runEffect(
-            service.projects.resolveRegisteredProject(
-              context.req.valid('query').path
-            )
+      Effect.gen(function* () {
+        const query = yield* requestQuery(packageProjectQuerySchema)
+        return jsonContractResponse(packageProjectResponseSchema, {
+          project: yield* operation(() =>
+            service.projects.resolveRegisteredProject(query.path)
           )
         })
-    )
-
-    .post(
+      })
+    ),
+    route(
+      'POST',
       '/api/packages/install',
-      jsonInput(packageInstallSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json({
-          result: await runEffect(
+      Effect.gen(function* () {
+        const body = yield* requestBody(packageInstallSchema)
+        return jsonContractResponse(packageOperationResponseSchema, {
+          result: yield* operation(() =>
             service.packageManagement.installPackage(
               body.source,
               body.projectId
             )
           )
         })
-      }
-    )
-
-    .post(
+      })
+    ),
+    route(
+      'POST',
       '/api/packages/remove',
-      jsonInput(packageRemoveSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json({
-          result: await runEffect(
+      Effect.gen(function* () {
+        const body = yield* requestBody(packageRemoveSchema)
+        return jsonContractResponse(packageOperationResponseSchema, {
+          result: yield* operation(() =>
             service.packageManagement.removePackage(body.source, body.projectId)
           )
         })
-      }
-    )
-
-    .post(
+      })
+    ),
+    route(
+      'POST',
       '/api/packages/update',
-      jsonInput(packageUpdateSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json({
-          results: await runEffect(
+      Effect.gen(function* () {
+        const body = yield* requestBody(packageUpdateSchema)
+        return jsonContractResponse(packageOperationsResponseSchema, {
+          results: yield* operation(() =>
             service.packageManagement.updatePackages(body.source)
           )
         })
-      }
-    )
-
-    .post(
+      })
+    ),
+    route(
+      'POST',
       '/api/packages/reload',
-      jsonInput(packageReloadSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
-          await runEffect(
+      Effect.gen(function* () {
+        const body = yield* requestBody(packageReloadSchema)
+        return jsonContractResponse(
+          packageReloadResponseSchema,
+          yield* operation(() =>
             service.packageManagement.reloadPackages(body.projectId)
           )
         )
-      }
-    )
-
-    .get('/api/projects', async (context) =>
-      context.json({
-        projects: await runEffect(service.projects.listProjects())
       })
-    )
+    ),
 
-    .get('/api/projects/recent', async (context) =>
-      context.json({
-        projects: await runEffect(service.projects.listRecentProjects())
-      })
-    )
-
-    .get(
+    route(
+      'GET',
+      '/api/projects',
+      operation(() => service.projects.listProjects()).pipe(
+        Effect.map((projects) =>
+          jsonContractResponse(projectsResponseSchema, { projects })
+        )
+      )
+    ),
+    route(
+      'GET',
+      '/api/projects/recent',
+      operation(() => service.projects.listRecentProjects()).pipe(
+        Effect.map((projects) =>
+          jsonContractResponse(recentProjectsResponseSchema, { projects })
+        )
+      )
+    ),
+    route(
+      'GET',
       '/api/filesystem/directories',
-      queryInput(browseDirectoryQuerySchema),
-      async (context) => {
-        const query = context.req.valid('query')
-        return context.json(
-          await runEffect(
+      Effect.gen(function* () {
+        const query = yield* requestQuery(browseDirectoryQuerySchema)
+        return jsonContractResponse(
+          directoryBrowseResponseSchema,
+          yield* operation(() =>
             service.projects.browseDirectory(query.input, query.hidden)
           )
         )
-      }
-    )
-
-    .post(
+      })
+    ),
+    route(
+      'POST',
       '/api/projects',
-      jsonInput(registerProjectSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        const registered = await runEffect(
+      Effect.gen(function* () {
+        const body = yield* requestBody(registerProjectSchema)
+        const registered = yield* operation(() =>
           service.projects.registerProject(body.path, body.name)
         )
-        return context.json(
+        return jsonContractResponse(
+          projectResponseSchema,
           {
-            project: await runEffect(
+            project: yield* operation(() =>
               service.projects.getProjectSnapshot(registered.id)
             )
           },
           201
         )
-      }
-    )
-
-    .post('/api/projects/:projectId/open', async (context) =>
-      context.json({
-        project: await runEffect(
-          service.projects.openProject(context.req.param('projectId'))
-        )
       })
-    )
-
-    .post('/api/projects/:projectId/close', async (context) => {
-      await runEffect(
-        service.projects.closeProject(context.req.param('projectId'))
-      )
-      return context.json({ ok: true })
-    })
-
-    .delete('/api/projects/:projectId/recent', async (context) => {
-      await runEffect(
-        service.projects.dismissRecentProject(context.req.param('projectId'))
-      )
-      return context.json({ ok: true })
-    })
-
-    .get('/api/projects/:projectId', async (context) =>
-      context.json({
-        project: await runEffect(
-          service.projects.getProjectSnapshot(context.req.param('projectId'))
-        )
-      })
-    )
-
-    .patch(
-      '/api/projects/:projectId',
-      jsonInput(updateProjectSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        const projectId = context.req.param('projectId')
-        await runEffect(
-          service.projects.updateProjectColor(projectId, body.color)
-        )
-        return context.json({
-          project: await runEffect(
-            service.projects.getProjectSnapshot(projectId)
+    ),
+    route(
+      'POST',
+      '/api/projects/:projectId/open',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(projectResponseSchema, {
+          project: yield* operation(() =>
+            service.projects.openProject(params.projectId!)
           )
         })
-      }
-    )
-
-    .post('/api/projects/:projectId/refresh', async (context) => {
-      const projectId = context.req.param('projectId')
-      await runEffect(service.projects.refreshProject(projectId))
-      return context.json({
-        project: await runEffect(service.projects.getProjectSnapshot(projectId))
       })
-    })
-
-    .delete('/api/projects/:projectId', async (context) => {
-      await runEffect(
-        service.projects.deleteProject(context.req.param('projectId'))
-      )
-      return context.json({ ok: true })
-    })
-
-    .get('/api/projects/:projectId/worktrees', async (context) =>
-      context.json({
-        worktrees: (
-          await runEffect(
-            service.projects.getProjectSnapshot(context.req.param('projectId'))
+    ),
+    route(
+      'POST',
+      '/api/projects/:projectId/close',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        yield* operation(() => service.projects.closeProject(params.projectId!))
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'DELETE',
+      '/api/projects/:projectId/recent',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        yield* operation(() =>
+          service.projects.dismissRecentProject(params.projectId!)
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'GET',
+      '/api/projects/:projectId',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(projectResponseSchema, {
+          project: yield* operation(() =>
+            service.projects.getProjectSnapshot(params.projectId!)
           )
-        ).worktrees
+        })
       })
-    )
-
-    .post(
+    ),
+    route(
+      'PATCH',
+      '/api/projects/:projectId',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(updateProjectSchema)
+        yield* operation(() =>
+          service.projects.updateProjectColor(params.projectId!, body.color)
+        )
+        return jsonContractResponse(projectResponseSchema, {
+          project: yield* operation(() =>
+            service.projects.getProjectSnapshot(params.projectId!)
+          )
+        })
+      })
+    ),
+    route(
+      'POST',
+      '/api/projects/:projectId/refresh',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        yield* operation(() =>
+          service.projects.refreshProject(params.projectId!)
+        )
+        return jsonContractResponse(projectResponseSchema, {
+          project: yield* operation(() =>
+            service.projects.getProjectSnapshot(params.projectId!)
+          )
+        })
+      })
+    ),
+    route(
+      'DELETE',
+      '/api/projects/:projectId',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        yield* operation(() =>
+          service.projects.deleteProject(params.projectId!)
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'GET',
+      '/api/projects/:projectId/worktrees',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const project = yield* operation(() =>
+          service.projects.getProjectSnapshot(params.projectId!)
+        )
+        return jsonContractResponse(worktreesResponseSchema, {
+          worktrees: project.worktrees
+        })
+      })
+    ),
+    route(
+      'POST',
       '/api/projects/:projectId/worktree-operations',
-      jsonInput(createWorktreeSchema),
-      async (context) => {
-        const body = context.req.valid('json')
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(createWorktreeSchema)
         let initialTerminal:
           | NonNullable<
               Parameters<TreeportService['worktrees']['beginCreateWorktree']>[3]
@@ -795,7 +1043,7 @@ export function createApp({
           }
 
           if (body.initialTerminal.argv) {
-            initialTerminal.argv = body.initialTerminal.argv
+            initialTerminal.argv = [...body.initialTerminal.argv]
           }
 
           if (body.initialTerminal.returnToShell) {
@@ -807,65 +1055,77 @@ export function createApp({
           }
         }
 
-        return context.json(
-          {
-            operation: await runEffect(
-              service.worktrees.beginCreateWorktree(
-                context.req.param('projectId'),
-                body.name,
-                body.base,
-                initialTerminal,
-                body.sourceWorktreeId,
-                body.context
-              )
-            )
-          },
-          202
-        )
-      }
-    )
-
-    .get('/api/worktrees/:worktreeId', async (context) => {
-      const worktreeId = context.req.param('worktreeId')
-      await runEffect(service.worktrees.refreshPr(worktreeId, false))
-      return context.json({
-        worktree: await runEffect(
-          service.projects.getWorktreeSnapshot(worktreeId)
-        )
-      })
-    })
-
-    .get('/api/worktrees/:worktreeId/context', async (context) =>
-      context.json({
-        context: await runEffect(
-          service.projects.getWorktreeContext(context.req.param('worktreeId'))
-        )
-      })
-    )
-
-    .post(
-      '/api/worktrees/:worktreeId/open',
-      jsonInput(requestWorkspaceOpenSchema),
-      async (context) => {
-        await runEffect(
-          service.projects.requestWorkspaceOpen(
-            context.req.param('worktreeId'),
-            context.req.valid('json').sourceTerminalId
+        const operationRecord = yield* operation(() =>
+          service.worktrees.beginCreateWorktree(
+            params.projectId!,
+            body.name,
+            body.base,
+            initialTerminal,
+            body.sourceWorktreeId,
+            body.context ? { ...body.context } : undefined
           )
         )
-        return context.json({ ok: true })
-      }
-    )
+        return jsonContractResponse(
+          operationResponseSchema,
+          { operation: operationRecord },
+          202
+        )
+      })
+    ),
 
-    .post(
+    route(
+      'GET',
+      '/api/worktrees/:worktreeId',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        yield* operation(() =>
+          service.worktrees.refreshPr(params.worktreeId!, false)
+        )
+        return jsonContractResponse(worktreeResponseSchema, {
+          worktree: yield* operation(() =>
+            service.projects.getWorktreeSnapshot(params.worktreeId!)
+          )
+        })
+      })
+    ),
+    route(
+      'GET',
+      '/api/worktrees/:worktreeId/context',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(treeContextResponseSchema, {
+          context: yield* operation(() =>
+            service.projects.getWorktreeContext(params.worktreeId!)
+          )
+        })
+      })
+    ),
+    route(
+      'POST',
+      '/api/worktrees/:worktreeId/open',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(requestWorkspaceOpenSchema)
+        yield* operation(() =>
+          service.projects.requestWorkspaceOpen(
+            params.worktreeId!,
+            body.sourceTerminalId
+          )
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'POST',
       '/api/worktrees/:worktreeId/browser-panels',
-      jsonInput(createBrowserPanelSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
-          await runEffect(
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(createBrowserPanelSchema)
+        return jsonContractResponse(
+          openBrowserPanelResponseSchema,
+          yield* operation(() =>
             service.panels.openBrowserPanel(
-              context.req.param('worktreeId'),
+              params.worktreeId!,
               body.url,
               body.sourceTerminalId ?? null,
               null
@@ -873,271 +1133,204 @@ export function createApp({
           ),
           201
         )
-      }
-    )
-
-    .post(
+      })
+    ),
+    route(
+      'POST',
       '/api/terminals/:terminalId/browser-panels/open',
-      jsonInput(openBrowserPanelFromTerminalSchema),
-      async (context) =>
-        context.json(
-          await runEffect(
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(openBrowserPanelFromTerminalSchema)
+        return jsonContractResponse(
+          openBrowserPanelResponseSchema,
+          yield* operation(() =>
             service.panels.openBrowserPanelFromTerminal(
-              context.req.param('terminalId'),
-              context.req.valid('json').url
+              params.terminalId!,
+              body.url
             )
           ),
           201
         )
-    )
-
-    .get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
-      context.json({
-        definitions: await runEffect(
-          service.panels.listWebPanelDefinitions(
-            context.req.param('worktreeId')
-          )
-        )
       })
-    )
-
-    .post(
+    ),
+    route(
+      'GET',
+      '/api/worktrees/:worktreeId/web-panel-definitions',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(webPanelDefinitionsResponseSchema, {
+          definitions: yield* operation(() =>
+            service.panels.listWebPanelDefinitions(params.worktreeId!)
+          )
+        })
+      })
+    ),
+    route(
+      'POST',
       '/api/worktrees/:worktreeId/panels',
-      jsonInput(createWebPanelSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
-          {
-            panel: await runEffect(
-              service.panels.createWebPanel(
-                context.req.param('worktreeId'),
-                body.definitionId,
-                {
-                  input: body.input ?? null,
-                  cwd: body.launchCwd ?? null
-                }
-              )
-            )
-          },
-          201
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(createWebPanelSchema)
+        const panel = yield* operation(() =>
+          service.panels.createWebPanel(params.worktreeId!, body.definitionId, {
+            input: body.input ?? null,
+            cwd: body.launchCwd ?? null
+          })
         )
-      }
-    )
-
-    .post(
+        return jsonContractResponse(webPanelResponseSchema, { panel }, 201)
+      })
+    ),
+    route(
+      'POST',
       '/api/worktrees/:worktreeId/panels/open',
-      jsonInput(openWebPanelSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
-          await runEffect(
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(openWebPanelSchema)
+        return jsonContractResponse(
+          openWebPanelResponseSchema,
+          yield* operation(() =>
             service.panels.openWebPanel(
-              context.req.param('worktreeId'),
+              params.worktreeId!,
               body.definitionId,
-              {
-                input: body.input ?? null,
-                cwd: body.launchCwd ?? null
-              },
+              { input: body.input ?? null, cwd: body.launchCwd ?? null },
               body.newInstance ?? false,
               body.sourceTerminalId ?? null
             )
           )
         )
-      }
-    )
-
-    .delete(
+      })
+    ),
+    route(
+      'DELETE',
       '/api/panels/:panelId',
-      queryInput(deletePanelQuerySchema),
-      async (context) => {
-        const panelId = context.req.param('panelId')
-        const query = context.req.valid('query')
-        const canClose = await browserSessions?.requestPanelClose(
-          panelId,
-          query.force === 'true'
-        )
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const query = yield* requestQuery(deletePanelQuerySchema)
+        const canClose = browserSessions
+          ? yield* operation(() =>
+              browserSessions.requestPanelClose(
+                params.panelId!,
+                query.force === 'true'
+              )
+            )
+          : undefined
         if (canClose === false) {
-          throw new DomainError(
-            'BROWSER_BEFORE_UNLOAD',
-            'Changes you made may not be saved.',
-            409
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_BEFORE_UNLOAD',
+              'Changes you made may not be saved.',
+              409
+            )
           )
         }
 
-        await runEffect(
+        yield* operation(() =>
           service.panels.deletePanel(
-            panelId,
+            params.panelId!,
             query.discardStoredData === 'true'
           )
         )
-        return context.json({ ok: true })
-      }
-    )
-
-    .get('/api/panels/:panelId/context', async (context) =>
-      context.json({
-        context: await runEffect(
-          service.panels.getWebPanelContext(context.req.param('panelId'))
-        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
       })
-    )
-
-    .get('/api/panels/:panelId/diff', async (context) =>
-      context.json({
-        diff: await runEffect(
-          service.panels.getWebPanelDiff(context.req.param('panelId'))
-        )
-      })
-    )
-
-    .get('/api/panels/:panelId/network/listeners', async (context) =>
-      context.json({
-        discovery: await runEffect(
-          service.panels.getPanelListeners(context.req.param('panelId'))
-        )
-      })
-    )
-
-    .get('/api/panels/:panelId/storage', async (context) =>
-      context.json({
-        hasData: await runEffect(
-          service.panels.hasWebPanelStorage(context.req.param('panelId'))
-        )
-      })
-    )
-
-    .post(
-      '/api/panels/:panelId/storage/get',
-      jsonInput(getWebPanelStorageSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json({
-          value: await runEffect(
-            service.panels.getWebPanelStorage(
-              context.req.param('panelId'),
-              body.key
-            )
+    ),
+    route(
+      'GET',
+      '/api/panels/:panelId/context',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(webPanelContextResponseSchema, {
+          context: yield* operation(() =>
+            service.panels.getWebPanelContext(params.panelId!)
           )
         })
-      }
-    )
-
-    .put(
+      })
+    ),
+    route(
+      'GET',
+      '/api/panels/:panelId/diff',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(gitDiffResponseSchema, {
+          diff: yield* operation(() =>
+            service.panels.getWebPanelDiff(params.panelId!)
+          )
+        })
+      })
+    ),
+    route(
+      'GET',
+      '/api/panels/:panelId/network/listeners',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(listenerDiscoveryResponseSchema, {
+          discovery: yield* operation(() =>
+            service.panels.getPanelListeners(params.panelId!)
+          )
+        })
+      })
+    ),
+    route(
+      'GET',
       '/api/panels/:panelId/storage',
-      jsonInput(setWebPanelStorageSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        await runEffect(
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(hasDataResponseSchema, {
+          hasData: yield* operation(() =>
+            service.panels.hasWebPanelStorage(params.panelId!)
+          )
+        })
+      })
+    ),
+    route(
+      'POST',
+      '/api/panels/:panelId/storage/get',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(getWebPanelStorageSchema)
+        return jsonContractResponse(storageValueResponseSchema, {
+          value: yield* operation(() =>
+            service.panels.getWebPanelStorage(params.panelId!, body.key)
+          )
+        })
+      })
+    ),
+    route(
+      'PUT',
+      '/api/panels/:panelId/storage',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(setWebPanelStorageSchema)
+        yield* operation(() =>
           service.panels.setWebPanelStorage(
-            context.req.param('panelId'),
+            params.panelId!,
             body.key,
             body.value
           )
         )
-        return context.json({ ok: true })
-      }
-    )
-
-    .delete(
-      '/api/panels/:panelId/storage',
-      jsonInput(deleteWebPanelStorageSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        await runEffect(
-          service.panels.deleteWebPanelStorage(
-            context.req.param('panelId'),
-            body.key
-          )
-        )
-        return context.json({ ok: true })
-      }
-    )
-
-    .get('/api/web-panels/:panelId/assets/*', async (context) => {
-      const pathname = new URL(context.req.url).pathname
-      const assetMarker = `/api/web-panels/${encodeURIComponent(
-        context.req.param('panelId')
-      )}/assets/`
-      const requestedPath = decodeURI(
-        pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
-      )
-      const resolution = await runEffect(
-        service.panels.resolveWebPanelAsset(
-          context.req.param('panelId'),
-          requestedPath
-        )
-      )
-      if (resolution.kind === 'redirect') {
-        context.header('cache-control', 'no-store')
-        return context.redirect(resolution.location, 307)
-      }
-
-      const browserOrigin = webPanelBrowserOrigin({
-        referrer: context.req.header('referer'),
-        forwardedHost: context.req.header('x-forwarded-host'),
-        host: context.req.header('host'),
-        forwardedProtocol: context.req.header('x-forwarded-proto'),
-        requestProtocol: new URL(context.req.url).protocol
+        return jsonContractResponse(okResponseSchema, { ok: true })
       })
-
-      if (resolution.kind === 'error') {
-        context.header('content-type', 'text/html; charset=utf-8')
-        context.header('cache-control', 'no-store')
-        context.header('x-content-type-options', 'nosniff')
-        context.header(
-          'content-security-policy',
-          webPanelContentSecurityPolicy(
-            'error',
-            browserOrigin,
-            resolution.allowNetworkRequests
-          )
+    ),
+    route(
+      'DELETE',
+      '/api/panels/:panelId/storage',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(deleteWebPanelStorageSchema)
+        yield* operation(() =>
+          service.panels.deleteWebPanelStorage(params.panelId!, body.key)
         )
-        return context.html(resolution.html, 500)
-      }
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route('GET', '/api/web-panels/:panelId/assets', webPanelAsset),
+    route('GET', '/api/web-panels/:panelId/assets/*', webPanelAsset),
 
-      const extension = path.extname(resolution.path).toLowerCase()
-      const body = await fs.readFile(resolution.path)
-      const mimeTypes = new Map([
-        ['.css', 'text/css; charset=utf-8'],
-        ['.gif', 'image/gif'],
-        ['.html', 'text/html; charset=utf-8'],
-        ['.jpeg', 'image/jpeg'],
-        ['.jpg', 'image/jpeg'],
-        ['.js', 'text/javascript; charset=utf-8'],
-        ['.json', 'application/json; charset=utf-8'],
-        ['.map', 'application/json; charset=utf-8'],
-        ['.mjs', 'text/javascript; charset=utf-8'],
-        ['.png', 'image/png'],
-        ['.svg', 'image/svg+xml'],
-        ['.webp', 'image/webp'],
-        ['.woff', 'font/woff'],
-        ['.woff2', 'font/woff2']
-      ])
-
-      context.header(
-        'content-type',
-        mimeTypes.get(extension) ?? 'application/octet-stream'
-      )
-      context.header('cache-control', 'public, max-age=31536000, immutable')
-      context.header('access-control-allow-origin', '*')
-      context.header(
-        'content-security-policy',
-        webPanelContentSecurityPolicy(
-          'immutable',
-          browserOrigin,
-          resolution.allowNetworkRequests
-        )
-      )
-      context.header('x-content-type-options', 'nosniff')
-      // SAFETY: The surrounding boundary contract establishes this asserted value.
-      return context.body(body as any)
-    })
-
-    .post(
+    route(
+      'POST',
       '/api/worktrees/:worktreeId/terminals',
-      jsonInput(createTerminalSchema),
-      async (context) => {
-        const body = context.req.valid('json')
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(createTerminalSchema)
         const options: NonNullable<
           Parameters<TreeportService['terminals']['createTerminal']>[3]
         > = {}
@@ -1162,260 +1355,270 @@ export function createApp({
         }
 
         if (body.env) {
-          options.env = body.env
+          options.env = { ...body.env }
         }
 
         if (body.shellCommand) {
           options.shellCommand = body.shellCommand
         }
 
-        const terminal = await runEffect(
+        const terminal = yield* operation(() =>
           service.terminals.createTerminal(
-            context.req.param('worktreeId'),
+            params.worktreeId!,
             body.name,
-            body.argv,
-            Object.keys(options).length > 0 ? options : undefined
+            body.argv ? [...body.argv] : undefined,
+            Object.keys(options).length ? options : undefined
           )
         )
-        return context.json({ terminal }, 201)
-      }
-    )
-
-    .get('/api/worktrees/:worktreeId/remove-preview', async (context) =>
-      context.json({
-        preview: await runEffect(
-          service.worktrees.removePreview(context.req.param('worktreeId'))
-        )
+        return jsonContractResponse(terminalResponseSchema, { terminal }, 201)
       })
-    )
-
-    .post(
+    ),
+    route(
+      'GET',
+      '/api/worktrees/:worktreeId/remove-preview',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(removePreviewResponseSchema, {
+          preview: yield* operation(() =>
+            service.worktrees.removePreview(params.worktreeId!)
+          )
+        })
+      })
+    ),
+    route(
+      'POST',
       '/api/worktrees/:worktreeId/remove',
-      jsonInput(removeWorktreeSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json(
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(removeWorktreeSchema)
+        return jsonContractResponse(
+          operationResponseSchema,
           {
-            operation: await runEffect(
-              service.worktrees.beginRemove(
-                context.req.param('worktreeId'),
-                body
-              )
+            operation: yield* operation(() =>
+              service.worktrees.beginRemove(params.worktreeId!, body)
             )
           },
           202
         )
-      }
-    )
-
-    .post('/api/worktrees/:worktreeId/pr/refresh', async (context) =>
-      context.json({
-        pr: await runEffect(
-          service.worktrees.refreshPr(context.req.param('worktreeId'), true)
-        )
       })
-    )
-
-    .get(
+    ),
+    route(
+      'POST',
+      '/api/worktrees/:worktreeId/pr/refresh',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(prResponseSchema, {
+          pr: yield* operation(() =>
+            service.worktrees.refreshPr(params.worktreeId!, true)
+          )
+        })
+      })
+    ),
+    route(
+      'GET',
       '/api/terminals/:terminalId/capture',
-      queryInput(terminalCaptureQuerySchema),
-      async (context) => {
-        const query = context.req.valid('query')
-        const terminal = await runEffect(
-          service.terminals.getTerminal(context.req.param('terminalId'))
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const query = yield* requestQuery(terminalCaptureQuerySchema)
+        const terminal = yield* operation(() =>
+          service.terminals.getTerminal(params.terminalId!)
         )
-        const content = await terminalHost.captureTerminal(
-          terminal.id,
-          query.lines
+        const content = yield* operation(() =>
+          terminalHost.captureTerminal(terminal.id, query.lines)
         )
         if (content === null) {
-          throw new DomainError(
-            'TERMINAL_CAPTURE_UNAVAILABLE',
-            'Terminal is unavailable',
-            409,
-            { terminalId: terminal.id }
+          return yield* Effect.fail(
+            new DomainError(
+              'TERMINAL_CAPTURE_UNAVAILABLE',
+              'Terminal is unavailable',
+              409,
+              { terminalId: terminal.id }
+            )
           )
         }
 
-        return context.json({
+        return jsonContractResponse(terminalCaptureResponseSchema, {
           terminalId: terminal.id,
           capturedAt: new Date().toISOString(),
           lineLimit: query.lines,
           content
         })
-      }
-    )
-
-    .get('/api/terminals/:terminalId', async (context) => {
-      const terminal = await runEffect(
-        service.terminals.refreshTerminalStatus(context.req.param('terminalId'))
-      )
-      await metadataReady
-      const worktree = await runEffect(
-        service.projects.getWorktree(terminal.worktreeId)
-      )
-      await metadata.trackTerminal(terminal, worktree)
-
-      return context.json({ terminal, metadata: metadata.get(terminal.id) })
-    })
-
-    .post(
+      })
+    ),
+    route(
+      'GET',
+      '/api/terminals/:terminalId',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const terminal = yield* operation(() =>
+          service.terminals.refreshTerminalStatus(params.terminalId!)
+        )
+        const worktree = yield* operation(() =>
+          service.projects.getWorktree(terminal.worktreeId)
+        )
+        yield* operation(() => metadata.trackTerminal(terminal, worktree))
+        return jsonContractResponse(terminalObservationResponseSchema, {
+          terminal,
+          metadata: metadata.get(terminal.id)
+        })
+      })
+    ),
+    route(
+      'POST',
       '/api/terminals/:terminalId/bell/acknowledge',
-      jsonInput(terminalBellAcknowledgementSchema),
-      async (context) => {
-        const terminalId = context.req.param('terminalId')
-        const body = context.req.valid('json')
-        await metadataReady
-        await runEffect(service.terminals.getTerminal(terminalId))
-        await metadata.acknowledgeBell(terminalId, body.sequence)
-        return context.json({ ok: true })
-      }
-    )
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(terminalBellAcknowledgementSchema)
+        yield* operation(() =>
+          service.terminals.getTerminal(params.terminalId!)
+        )
+        yield* operation(() =>
+          metadata.acknowledgeBell(params.terminalId!, body.sequence)
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'POST',
+      '/api/terminals/:terminalId/files',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const request = yield* serverRequest
+        yield* operation(() =>
+          service.terminals.getTerminal(params.terminalId!)
+        )
+        const contentLength = request.headers['content-length']
+        if (contentLength) {
+          const declaredBytes = Number(contentLength)
+          if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
+            return yield* Effect.fail(
+              new DomainError('VALIDATION_ERROR', 'File size is invalid', 400)
+            )
+          }
 
-    .post('/api/terminals/:terminalId/files', async (context) => {
-      await runEffect(
-        service.terminals.getTerminal(context.req.param('terminalId'))
-      )
-
-      const contentLength = context.req.header('content-length')
-      if (contentLength) {
-        const declaredBytes = Number(contentLength)
-        if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
-          throw new DomainError('VALIDATION_ERROR', 'File size is invalid', 400)
+          if (declaredBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+            return yield* Effect.fail(
+              new DomainError(
+                'FILE_TOO_LARGE',
+                `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+                413
+              )
+            )
+          }
         }
 
-        if (declaredBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-          throw new DomainError(
-            'FILE_TOO_LARGE',
-            `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
-            413
+        const requestedExtension =
+          request.headers['x-treeport-file-extension']?.toLowerCase()
+        if (
+          requestedExtension &&
+          !/^[a-z0-9]{1,16}$/.test(requestedExtension)
+        ) {
+          return yield* Effect.fail(
+            new DomainError(
+              'VALIDATION_ERROR',
+              'File extension is invalid',
+              400
+            )
           )
         }
-      }
 
-      const requestedExtension = context.req
-        .header('x-treeport-file-extension')
-        ?.toLowerCase()
-      if (requestedExtension && !/^[a-z0-9]{1,16}$/.test(requestedExtension)) {
-        throw new DomainError(
-          'VALIDATION_ERROR',
-          'File extension is invalid',
-          400
-        )
-      }
-
-      const contentType =
-        context.req.header('content-type')?.split(';', 1)[0]?.toLowerCase() ??
-        ''
-      const extension =
-        requestedExtension || UPLOAD_MIME_EXTENSIONS.get(contentType) || ''
-      const uploaded = await runEffect(
-        service.terminalUploadMutation(
-          Effect.gen(function* () {
-            const uploadDirectory = path.join(config.runtimeDir, 'uploads')
-            yield* Effect.promise(() =>
-              fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
-            )
-            yield* Effect.promise(() => fs.chmod(uploadDirectory, 0o700))
-            yield* Effect.promise(() => pruneTerminalUploads(uploadDirectory))
-            const filePath = path.join(
-              uploadDirectory,
-              `treeport-upload-${crypto.randomUUID()}${
-                extension ? `.${extension}` : ''
-              }`
-            )
-            yield* Effect.acquireUseRelease(
-              Effect.promise(() => fs.open(filePath, 'wx', 0o600)),
-              (file) =>
-                Effect.gen(function* () {
-                  let receivedBytes = 0
-                  const reader = context.req.raw.body?.getReader()
-                  if (!reader) {
-                    return
-                  }
-
-                  while (true) {
-                    const { done, value } = yield* Effect.promise(() =>
-                      reader.read()
-                    )
-                    if (done) {
-                      break
-                    }
-
-                    receivedBytes += value.byteLength
-                    if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-                      return yield* Effect.fail(
-                        new DomainError(
-                          'FILE_TOO_LARGE',
-                          `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
-                          413
+        const requestContentType =
+          request.headers['content-type']?.split(';', 1)[0]?.toLowerCase() ?? ''
+        const extension =
+          requestedExtension ||
+          UPLOAD_MIME_EXTENSIONS.get(requestContentType) ||
+          ''
+        const uploaded = yield* operation(() =>
+          service.terminalUploadMutation(
+            Effect.gen(function* () {
+              const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+              yield* Effect.promise(() =>
+                fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
+              )
+              yield* Effect.promise(() => fs.chmod(uploadDirectory, 0o700))
+              yield* Effect.promise(() => pruneTerminalUploads(uploadDirectory))
+              const filePath = path.join(
+                uploadDirectory,
+                `treeport-upload-${crypto.randomUUID()}${
+                  extension ? `.${extension}` : ''
+                }`
+              )
+              yield* Effect.acquireUseRelease(
+                Effect.promise(() => fs.open(filePath, 'wx', 0o600)),
+                (file) =>
+                  Effect.gen(function* () {
+                    let receivedBytes = 0
+                    yield* Stream.runForEach(request.stream, (value) => {
+                      receivedBytes += value.byteLength
+                      if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+                        return Effect.fail(
+                          new DomainError(
+                            'FILE_TOO_LARGE',
+                            `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+                            413
+                          )
                         )
+                      }
+
+                      return Effect.promise(() => file.writeFile(value)).pipe(
+                        Effect.asVoid
                       )
-                    }
-
-                    yield* Effect.promise(() => file.writeFile(value))
-                  }
-                }),
-              (file, exit) =>
-                Effect.promise(() =>
-                  file
-                    .close()
-                    .finally(() =>
-                      Exit.isFailure(exit)
-                        ? fs.rm(filePath, { force: true })
-                        : undefined
-                    )
-                )
-            )
-            yield* Effect.promise(() =>
-              pruneTerminalUploads(uploadDirectory, filePath)
-            )
-            return { file: { path: filePath } }
-          })
+                    })
+                  }),
+                (file, exit) =>
+                  Effect.promise(() =>
+                    file
+                      .close()
+                      .finally(() =>
+                        Exit.isFailure(exit)
+                          ? fs.rm(filePath, { force: true })
+                          : undefined
+                      )
+                  )
+              )
+              yield* Effect.promise(() =>
+                pruneTerminalUploads(uploadDirectory, filePath)
+              )
+              return { file: { path: filePath } }
+            })
+          )
         )
-      )
-      return context.json(uploaded, 201)
-    })
-
-    .patch(
+        return jsonContractResponse(uploadedFileResponseSchema, uploaded, 201)
+      })
+    ),
+    route(
+      'PATCH',
       '/api/terminals/:terminalId',
-      jsonInput(updateTerminalSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json({
-          terminal: await runEffect(
-            service.terminals.renameTerminal(
-              context.req.param('terminalId'),
-              body.name
-            )
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(updateTerminalSchema)
+        return jsonContractResponse(terminalResponseSchema, {
+          terminal: yield* operation(() =>
+            service.terminals.renameTerminal(params.terminalId!, body.name)
           )
         })
-      }
-    )
-
-    .delete('/api/terminals/:terminalId', async (context) => {
-      await runEffect(
-        service.terminals.deleteTerminal(context.req.param('terminalId'))
-      )
-      return context.json({ ok: true })
-    })
-
-    .get(
+      })
+    ),
+    route(
+      'DELETE',
+      '/api/terminals/:terminalId',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        yield* operation(() =>
+          service.terminals.deleteTerminal(params.terminalId!)
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'GET',
       '/api/operations',
-      validator('query', (value) => {
-        const parsed = operationQuerySchema.safeParse(value)
-        if (!parsed.success) {
-          throw new DomainError(
-            'INVALID_OPERATION_KIND',
-            'Invalid operation query',
-            400
-          )
-        }
-
-        return parsed.data
-      }),
-      async (context) => {
-        const query = context.req.valid('query')
+      Effect.gen(function* () {
+        const query = yield* requestQuery(
+          operationQuerySchema,
+          'INVALID_OPERATION_KIND',
+          'Invalid operation query'
+        )
         const filters: Parameters<
           TreeportService['worktrees']['listActiveOperations']
         >[0] = {}
@@ -1427,38 +1630,51 @@ export function createApp({
           filters.kind = query.kind
         }
 
-        return context.json({
-          operations: await runEffect(
+        return jsonContractResponse(operationsResponseSchema, {
+          operations: yield* operation(() =>
             service.worktrees.listActiveOperations(filters)
           )
         })
-      }
-    )
-
-    .get('/api/operations/:operationId', async (context) =>
-      context.json({
-        operation: await runEffect(
-          service.projects.getOperation(context.req.param('operationId'))
-        )
       })
-    )
-
-    .post('/api/admin/terminate-terminals', async (context) => {
-      const terminated = await runEffect(
-        service.terminals.terminateAllTerminals()
+    ),
+    route(
+      'GET',
+      '/api/operations/:operationId',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        return jsonContractResponse(operationResponseSchema, {
+          operation: yield* operation(() =>
+            service.projects.getOperation(params.operationId!)
+          )
+        })
+      })
+    ),
+    route(
+      'POST',
+      '/api/admin/terminate-terminals',
+      Effect.gen(function* () {
+        const terminated = yield* operation(() =>
+          service.terminals.terminateAllTerminals()
+        )
+        yield* operation(() => terminalHost.shutdownIfEmpty())
+        return jsonContractResponse(terminatedTerminalsResponseSchema, {
+          terminated
+        })
+      })
+    ),
+    ...(rpcHttpApp ? [route('POST', '/api/rpc', rpcHttpApp)] : []),
+    route(
+      '*',
+      '/api/*',
+      Effect.succeed(
+        jsonContractResponse(
+          apiErrorBodySchema,
+          { error: { code: 'NOT_FOUND', message: 'API endpoint not found' } },
+          404
+        )
       )
-      await terminalHost.shutdownIfEmpty()
-      return context.json({ terminated })
-    })
-
-    .all('/api/*', (context) =>
-      context.json(
-        { error: { code: 'NOT_FOUND', message: 'API endpoint not found' } },
-        404
-      )
     )
-
-  const routes = app.route('/', api)
+  ]
 
   const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
   const builtStaticRoot = path.resolve(moduleDirectory, '../../web')
@@ -1467,19 +1683,172 @@ export function createApp({
     webDist ??
     config.webDist ??
     (existsSync(builtStaticRoot) ? builtStaticRoot : sourceStaticRoot)
-  app.use('/assets/*', serveStatic({ root: staticRoot }))
-  app.get(
-    '/manifest.webmanifest',
-    serveStatic({ root: staticRoot, path: 'manifest.webmanifest' })
+  routes.push(
+    route(
+      'GET',
+      '/assets/*',
+      Effect.gen(function* () {
+        const request = yield* serverRequest
+        const pathname = decodeURIComponent(
+          new URL(request.url, 'http://treeport.local').pathname
+        )
+        const relative = pathname.slice('/assets/'.length)
+        const candidate = path.resolve(staticRoot, 'assets', relative)
+        const root = path.resolve(staticRoot, 'assets')
+        if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
+          return HttpServerResponse.empty({ status: 404 })
+        }
+
+        return yield* fileResponse(candidate, {
+          'cache-control': 'public, max-age=31536000, immutable'
+        })
+      })
+    ),
+    route(
+      'GET',
+      '/manifest.webmanifest',
+      fileResponse(path.join(staticRoot, 'manifest.webmanifest'))
+    ),
+    route(
+      'GET',
+      '/sw.js',
+      Effect.succeed(HttpServerResponse.empty({ status: 404 }))
+    ),
+    route('GET', '*', fileResponse(path.join(staticRoot, 'index.html')))
   )
 
-  // A 404 here makes browsers unregister service workers left over from
-  // when the web app shipped one; the SPA fallback would keep them alive.
-  app.get('/sw.js', (c) => c.body(null, 404))
+  const router = HttpRouter.fromIterable(routes)
+  const routed = Effect.flatMap(
+    HttpRouter.toHttpApp(router),
+    (httpApp) => httpApp
+  )
+  const httpApp = Effect.gen(function* () {
+    const request = yield* serverRequest
+    const started = Date.now()
+    const requestId = (
+      request.headers['x-request-id'] ?? crypto.randomUUID()
+    ).slice(0, 128)
+    const requestPath = new URL(
+      request.url,
+      'http://treeport.local'
+    ).pathname.slice(0, 2_048)
+    yield* Effect.annotateCurrentSpan({
+      'treeport.request.id': requestId,
+      'http.request.method': request.method,
+      'url.path': requestPath
+    })
+    yield* networkTelemetry.connectionOpened('http')
+    const declaredRequestBytes = Number(request.headers['content-length'])
+    yield* networkTelemetry.message(
+      'http',
+      'in',
+      Number.isSafeInteger(declaredRequestBytes) && declaredRequestBytes >= 0
+        ? declaredRequestBytes
+        : 0
+    )
+    const response = yield* routed.pipe(
+      Effect.catchAllCause((cause) => {
+        if (Cause.isInterruptedOnly(cause)) {
+          return Effect.failCause(cause)
+        }
 
-  app.get('*', serveStatic({ root: staticRoot, path: 'index.html' }))
+        const failure = Cause.failureOption(cause)
+        if (Option.isSome(failure) && failure.value instanceof DomainError) {
+          const error = failure.value
+          const errorBody =
+            error.details === undefined
+              ? { code: error.code, message: error.message }
+              : {
+                  code: error.code,
+                  message: error.message,
+                  details: error.details
+                }
+          const body: ApiErrorBody = { error: errorBody }
 
-  return routes
+          return Effect.succeed(
+            jsonContractResponse(apiErrorBodySchema, body, error.status)
+          )
+        }
+
+        const unexpected = Option.isSome(failure)
+          ? failure.value
+          : Cause.squash(cause)
+        const error =
+          unexpected instanceof Error ? unexpected.message : String(unexpected)
+        return Effect.sync(() => {
+          console.error('[Treeport] API request failed', {
+            requestId,
+            method: request.method,
+            path: requestPath,
+            status: 500,
+            code: 'INTERNAL_ERROR',
+            error
+          })
+        }).pipe(
+          Effect.zipRight(
+            Effect.logError('API request failed').pipe(
+              Effect.annotateLogs({
+                requestId,
+                method: request.method,
+                path: requestPath,
+                cause: error
+              })
+            )
+          ),
+          Effect.as(
+            jsonContractResponse(
+              apiErrorBodySchema,
+              {
+                error: {
+                  code: 'INTERNAL_ERROR',
+                  message: 'Unexpected server error',
+                  details: { requestId }
+                }
+              },
+              500
+            )
+          )
+        )
+      }),
+      Effect.onExit((exit) =>
+        Effect.all([
+          networkTelemetry.duration('http', 'request', Date.now() - started),
+          ...(Exit.isInterrupted(exit)
+            ? [networkTelemetry.interrupted('http')]
+            : []),
+          networkTelemetry.connectionClosed(
+            'http',
+            Exit.isInterrupted(exit)
+              ? 'interrupted'
+              : Exit.isFailure(exit)
+                ? 'failed'
+                : 'request_complete'
+          )
+        ]).pipe(Effect.asVoid)
+      )
+    )
+    yield* networkTelemetry.message(
+      'http',
+      'out',
+      response.body.contentLength ?? 0
+    )
+    return requestPath.startsWith('/api')
+      ? HttpServerResponse.setHeader(response, 'x-request-id', requestId)
+      : response
+  }).pipe(Effect.withSpan('treeport.http.request'))
+
+  // SAFETY: Tests provide Promise doubles instead of the application Layer;
+  // production passes the precisely typed httpApp to NodeHttpServer.
+  const testHttpApp = httpApp as HttpApp.Default<unknown, Scope.Scope>
+  const requestHandler = HttpApp.toWebHandler(testHttpApp)
+  return {
+    httpApp,
+    request(input, init) {
+      const request =
+        input instanceof Request
+          ? input
+          : new Request(new URL(String(input), 'http://localhost'), init)
+      return requestHandler(request)
+    }
+  }
 }
-
-export type AppType = ReturnType<typeof createApp>

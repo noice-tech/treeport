@@ -51,8 +51,9 @@
     "access": "public"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.10",
-    "@hono/zod-validator": "^0.9.0",
+    "@effect/platform": "^0.97.1",
+    "@effect/platform-node": "^0.108.1",
+    "@effect/rpc": "^0.76.2",
     "@libsql/client": "^0.17.4",
     "@playwright/cli": "0.1.18",
     "@radix-ui/react-context-menu": "^2.3.7",
@@ -63,14 +64,12 @@
     "cmdk": "^1.1.1",
     "commander": "14.0.3",
     "drizzle-orm": "^0.45.2",
-    "effect": "^3.22.0",
-    "hono": "^4.11.7",
+    "effect": "^3.22.1",
     "jsonc-parser": "^3.3.1",
     "node-pty": "1.2.0-beta.14",
     "playwright": "1.61.1",
-    "socket.io": "4.8.3",
-    "socket.io-client": "4.8.3",
     "vite": "8.1.5",
+    "ws": "^8.21.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -89,6 +88,7 @@
     "@treeport/shared": "workspace:*",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@types/ws": "^8.18.1",
     "@xterm/addon-fit": "0.12.0-beta.301",
     "@xterm/addon-image": "0.10.0-beta.301",
     "@xterm/addon-web-links": "0.13.0-beta.301",

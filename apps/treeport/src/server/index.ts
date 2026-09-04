@@ -1,7 +1,8 @@
-import { createServer } from 'node:http'
+import { createServer, type IncomingMessage } from 'node:http'
 import path from 'node:path'
+import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { getRequestListener } from '@hono/node-server'
+import { NodeHttpServer } from '@effect/platform-node'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
@@ -22,6 +23,7 @@ import { BrowserSessionManager } from './browser-sessions'
 import { acquireDaemonOwnership } from './daemon-ownership'
 import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
+import { makeRpcHttpApp } from './rpc-server'
 import { acquireTerminalMetadataManager } from './terminal-metadata'
 import { createUpdateStartupReporter } from './update-startup'
 import { connectOrStartTerminalHost } from './terminal-host-client'
@@ -119,7 +121,7 @@ async function main(): Promise<void> {
         resourceScope
       )
     )
-    const terminalMetadata = await Effect.runPromise(
+    const terminalMetadata = await service.runEffect(
       Scope.extend(
         acquireTerminalMetadataManager(service, terminalHost),
         resourceScope
@@ -144,37 +146,85 @@ async function main(): Promise<void> {
       )
     )
 
+    const rpcHttpApp = await service.runEffect(
+      Scope.extend(makeRpcHttpApp(service, terminalMetadata), resourceScope)
+    )
     const app = createApp({
       service,
       config,
       terminalHost,
       applicationUpdate,
       terminalMetadata,
-      browserSessions
+      browserSessions,
+      rpcHttpApp
     })
-    const honoListener = getRequestListener(app.fetch)
+    const effectListener = await service.runEffect(
+      NodeHttpServer.makeHandler(app.httpApp)
+    )
     let vite: ViteDevServer | null = null
-    const server = createServer((request, response) => {
-      const security = authorizeRequest(request)
-      if (!security.allowed) {
-        rejectHttpRequest(request, response, security)
-        return
-      }
+    let viteUpgrade:
+      | ((request: IncomingMessage, socket: Duplex, head: Buffer) => void)
+      | null = null
+    const server = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(() =>
+            createServer((request, response) => {
+              const security = authorizeRequest(request)
+              if (!security.allowed) {
+                rejectHttpRequest(request, response, security)
+                return
+              }
 
-      service.handleWebPanelDevelopmentRequest(request, response, () => {
-        if (vite && !request.url?.startsWith('/api')) {
-          vite.middlewares(request, response, () => {
-            honoListener(request, response)
-          })
+              service.handleWebPanelDevelopmentRequest(
+                request,
+                response,
+                () => {
+                  if (vite && !request.url?.startsWith('/api')) {
+                    vite.middlewares(request, response, () => {
+                      effectListener(request, response)
+                    })
+                    return
+                  }
+
+                  effectListener(request, response)
+                }
+              )
+            })
+          ),
+          (httpServer) =>
+            Effect.async<void>((resume) => {
+              if (!httpServer.listening) {
+                resume(Effect.void)
+                return
+              }
+
+              httpServer.close(() => resume(Effect.void))
+            })
+        ),
+        resourceScope
+      )
+    )
+    let socketServer: ReturnType<typeof createSocketServer> | null = null
+    server.on('upgrade', (request, socket, head) => {
+      const security = authorizeRequest(request, { socketUpgrade: true })
+      if (security.allowed) {
+        if (socketServer?.handleUpgrade(request, socket, head)) {
           return
         }
 
-        honoListener(request, response)
-      })
-    })
-    server.on('upgrade', (request, socket) => {
-      const security = authorizeRequest(request, { socketUpgrade: true })
-      if (security.allowed) {
+        if (service.handleWebPanelDevelopmentUpgrade(request, socket, head)) {
+          return
+        }
+
+        const pathname = new URL(request.url ?? '/', 'http://treeport.local')
+          .pathname
+        if (pathname === '/@vite-hmr' && viteUpgrade) {
+          viteUpgrade(request, socket, head)
+          return
+        }
+
+        socket.destroy()
         return
       }
 
@@ -191,21 +241,47 @@ async function main(): Promise<void> {
     })
     if (config.webDevelopment) {
       const { createServer: createViteServer } = await import('vite')
-      vite = await createViteServer({
-        configFile: path.resolve(
-          path.dirname(fileURLToPath(import.meta.url)),
-          '../../../vite.config.ts'
-        ),
-        appType: 'spa',
-        server: {
-          middlewareMode: true,
-          hmr: { server }
-        }
-      })
+      const previousUpgradeListeners = new Set(server.listeners('upgrade'))
+      vite = await Effect.runPromise(
+        Scope.extend(
+          Effect.acquireRelease(
+            Effect.promise(() =>
+              createViteServer({
+                configFile: path.resolve(
+                  path.dirname(fileURLToPath(import.meta.url)),
+                  '../../../vite.config.ts'
+                ),
+                appType: 'spa',
+                server: {
+                  middlewareMode: true,
+                  hmr: { server, path: '/@vite-hmr' }
+                }
+              })
+            ),
+            (developmentServer) =>
+              Effect.promise(() => developmentServer.close())
+          ),
+          resourceScope
+        )
+      )
+      const addedUpgradeListeners = server
+        .listeners('upgrade')
+        .filter((listener) => !previousUpgradeListeners.has(listener))
+      if (addedUpgradeListeners.length !== 1) {
+        throw new Error('Vite did not register one HMR upgrade handler')
+      }
+
+      // SAFETY: Vite registered this listener on Node's upgrade event above.
+      viteUpgrade = addedUpgradeListeners[0] as (
+        request: IncomingMessage,
+        socket: Duplex,
+        head: Buffer
+      ) => void
+      server.removeListener('upgrade', viteUpgrade)
     }
 
     service.attachHttpServer(server)
-    const socketDependencies: Parameters<typeof createSocketServer>[1] = {
+    const socketDependencies: Parameters<typeof createSocketServer>[0] = {
       service,
       config,
       terminalMetadata,
@@ -213,7 +289,15 @@ async function main(): Promise<void> {
       browserSessions
     }
 
-    const { io, attachments } = createSocketServer(server, socketDependencies)
+    socketServer = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(() => createSocketServer(socketDependencies)),
+          (sockets) => Effect.promise(() => sockets.close())
+        ),
+        resourceScope
+      )
+    )
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(config.port, config.host, () => {
@@ -241,14 +325,13 @@ async function main(): Promise<void> {
       }
 
       shuttingDown = true
-      attachments.dispose()
-      const viteClosed = vite?.close()
-      io.close(() => {
-        void Promise.resolve(viteClosed)
-          .then(() => Effect.runPromise(Scope.close(resourceScope, Exit.void)))
-          .then(() => process.exit(0))
-      })
-      setTimeout(() => process.exit(1), 5_000).unref()
+      void Effect.runPromise(Scope.close(resourceScope, Exit.void)).then(() =>
+        process.exit(0)
+      )
+      setTimeout(() => {
+        server.closeAllConnections()
+        process.exit(1)
+      }, 5_000).unref()
     }
 
     process.once('SIGINT', shutdown)

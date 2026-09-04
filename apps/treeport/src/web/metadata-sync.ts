@@ -1,4 +1,4 @@
-import { DetailedError } from 'hono/client'
+import { DetailedError } from './api'
 
 export const METADATA_STALE_TIME_MS = 30_000
 const METADATA_INVALIDATION_DELAY_MS = 75
