@@ -44,6 +44,14 @@ test.describe('desktop terminal links and metadata', () => {
       page.getByRole('tab', { name: 'example.test, Browser' })
     ).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    await page.keyboard.down('Control')
+    await page.mouse.click(httpPoint.x, httpPoint.y)
+    await page.keyboard.up('Control')
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await expect(
+      page.getByRole('tab', { name: 'example.test, Browser' })
+    ).toHaveCount(1)
   })
 
   test('reconciles terminal metadata in chronological order', async ({
