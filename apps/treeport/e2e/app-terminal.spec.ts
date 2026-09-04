@@ -808,6 +808,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       tools.getByRole('tab', { name: 'Browser', exact: true })
     ).toBeVisible()
+    const address = page.getByRole('textbox', { name: 'Application URL' })
+    await expect(address).toHaveValue('')
+    await expect(address).toBeFocused()
     await expect(terminal).toBeVisible()
     const topicTerminalList = page.getByRole('list', {
       name: 'topic terminal tabs'
@@ -881,10 +884,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       tools.getByRole('tab', { name: 'Browser', exact: true })
     ).toBeVisible()
-    const address = page.getByRole('textbox', { name: 'Application URL' })
     const viewport = page.getByLabel(/^Browser viewport/)
-    await expect(address).toHaveValue('')
-    await expect(address).toBeFocused()
 
     await tools.getByRole('button', { name: 'Open another tool' }).click()
     await expect(toolPicker).toBeVisible()

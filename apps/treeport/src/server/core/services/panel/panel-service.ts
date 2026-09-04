@@ -258,8 +258,8 @@ export class PanelService {
 
       let existingPanel: BrowserPanel | null = null
       if (reuseExistingUrl && requestedUrl) {
-        const parsedUrl = browserUrlSchema.safeParse(requestedUrl)
-        if (!parsedUrl.success) {
+        const parsedUrl = decodeUnknownOrNull(browserUrlSchema, requestedUrl)
+        if (!parsedUrl) {
           return yield* Effect.fail(
             new DomainError(
               'INVALID_BROWSER_URL',
@@ -269,7 +269,7 @@ export class PanelService {
           )
         }
 
-        const url = new URL(parsedUrl.data).href
+        const url = new URL(parsedUrl).href
         const [existing] = yield* Effect.promise(() =>
           database.db
             .select()
