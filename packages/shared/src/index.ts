@@ -6,6 +6,7 @@ import type {
 } from '@treeport/panel-sdk'
 import { browserUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
+import type { WorkspacePresence } from './presence-protocol.js'
 import { webPanelPermissionSchema } from './web-panel-protocol.js'
 import {
   terminalSizeSchema,
@@ -37,6 +38,7 @@ export * from './json-schema.js'
 export * from './network-rpc.js'
 export * from './network-rpc-client.js'
 export * from './protocol-socket-client.js'
+export * from './presence-protocol.js'
 export * from './schema.js'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
@@ -967,6 +969,9 @@ export const spawnSchema = Schema.Struct({
 )
 
 interface ProductEventPayloadMap {
+  'presence.changed': {
+    viewers: readonly WorkspacePresence[]
+  }
   'project.created': { projectId: string }
   'project.updated': { projectId: string }
   'project.removed': { projectId: string }

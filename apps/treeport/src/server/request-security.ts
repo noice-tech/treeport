@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { ViewerIdentity } from '@treeport/shared'
 
 const MAX_HOST_BYTES = 512
 const MAX_LOGIN_BYTES = 320
@@ -6,12 +7,13 @@ const MAX_NAME_BYTES = 512
 const MAX_PROFILE_PICTURE_BYTES = 2_048
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-interface RequestPrincipal {
-  source: 'local' | 'tailscale'
-  login: string | null
-  name: string | null
-  profilePicture: string | null
-}
+type RequestPrincipal = ViewerIdentity
+
+// Only the Node ingress can attach an authenticated identity to a request.
+export const authenticatedPrincipals = new WeakMap<
+  IncomingMessage,
+  ViewerIdentity
+>()
 
 export interface RequestSecurityDecision {
   allowed: boolean

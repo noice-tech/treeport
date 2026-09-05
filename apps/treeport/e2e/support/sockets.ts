@@ -168,6 +168,7 @@ export async function installMockSockets(
                 this.deliverSocket('snapshot', {
                   webPanels: [],
                   browserPanels: [],
+                  presence: [],
                   ...value
                 })
                 return
@@ -192,7 +193,8 @@ export async function installMockSockets(
             at: new Date().toISOString(),
             terminalMetadata: initialMetadata,
             webPanels: [],
-            browserPanels: []
+            browserPanels: [],
+            presence: []
           })
           return
         }

@@ -3,13 +3,14 @@ import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 import { browserUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
+import { workspacePresenceSchema } from './presence-protocol.js'
 import {
   terminalRuntimeMetadataFields,
   terminalRuntimeMetadataSchema
 } from './terminal-protocol.js'
 import { webPanelPermissionSchema } from './web-panel-protocol.js'
 
-export const EVENT_PROTOCOL_VERSION = 2
+export const EVENT_PROTOCOL_VERSION = 3
 
 const identifierSchema = Schema.String.pipe(
   Schema.minLength(1),
@@ -91,6 +92,13 @@ function nonEmptyString() {
 }
 
 export const productEventSchema = Schema.Union(
+  eventEnvelope(
+    'presence.changed',
+    Schema.Struct({
+      viewers: Schema.Array(workspacePresenceSchema),
+      worktreeId: Schema.Null
+    })
+  ),
   eventEnvelope('project.created', projectEventDataSchema),
   eventEnvelope('project.updated', projectEventDataSchema),
   eventEnvelope('project.removed', projectEventDataSchema),
@@ -220,7 +228,8 @@ export const eventsSnapshotSchema = Schema.Struct({
   at: dateTimeString,
   terminalMetadata: Schema.Array(terminalRuntimeMetadataSchema),
   webPanels: Schema.Array(webPanelSnapshotSchema),
-  browserPanels: Schema.Array(browserPanelSnapshotSchema)
+  browserPanels: Schema.Array(browserPanelSnapshotSchema),
+  presence: Schema.Array(workspacePresenceSchema)
 })
 export type EventsSnapshot = Schema.Schema.Type<typeof eventsSnapshotSchema>
 

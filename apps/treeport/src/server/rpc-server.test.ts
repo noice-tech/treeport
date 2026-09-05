@@ -18,6 +18,7 @@ import * as Stream from 'effect/Stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProductEventBus, type TreeportService } from './core/index'
 import { makeRpcHttpApp } from './rpc-server'
+import { WorkspacePresenceManager } from './workspace-presence'
 import { testAccess } from './test-access'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
@@ -26,6 +27,7 @@ interface RpcFixture {
   readonly server: HttpServer
   readonly scope: Scope.CloseableScope
   readonly events: ProductEventBus
+  readonly presence: WorkspacePresenceManager
   readonly metadataSnapshot: ReturnType<
     typeof vi.fn<() => TerminalRuntimeMetadata[]>
   >
@@ -42,6 +44,7 @@ const fixtures: RpcFixture[] = []
 
 async function fixture(): Promise<RpcFixture> {
   const events = new ProductEventBus()
+  const presence = new WorkspacePresenceManager(events)
   const metadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'shell',
@@ -73,7 +76,7 @@ async function fixture(): Promise<RpcFixture> {
   })
   const scope = await Effect.runPromise(Scope.make())
   const app = await service.runEffect(
-    Scope.extend(makeRpcHttpApp(service, terminalMetadata), scope)
+    Scope.extend(makeRpcHttpApp(service, terminalMetadata, presence), scope)
   )
   const listener = await Effect.runPromise(NodeHttpServer.makeHandler(app))
   const server = http.createServer(listener)
@@ -85,10 +88,12 @@ async function fixture(): Promise<RpcFixture> {
     server,
     scope,
     events,
+    presence,
     metadataSnapshot,
     listWebPanels,
     listBrowserPanels,
     close: async () => {
+      presence.dispose()
       await Effect.runPromise(Scope.close(scope, Exit.void))
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve()))
@@ -222,8 +227,22 @@ describe('Effect RPC project event stream', () => {
       ])
     )
 
-    const first = collect(value.url, 2)
-    const second = collect(value.url, 2)
+    const identity = {
+      source: 'tailscale' as const,
+      login: 'alice@example.test',
+      name: 'Alice',
+      profilePicture: null
+    }
+    const viewer = {
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      worktreeId: 'wt',
+      focusedPanelId: 'panel_review',
+      visible: true,
+      focused: true
+    }
+    value.presence.update(identity, viewer)
+    const first = collect(value.url, 3)
+    const second = collect(value.url, 3)
     await vi.waitFor(() => expect(value.listWebPanels).toHaveBeenCalledTimes(2))
     value.events.publish('terminal.metadata', {
       terminalId: 'term',
@@ -239,13 +258,18 @@ describe('Effect RPC project event stream', () => {
       }
     })
 
+    value.presence.update(identity, {
+      ...viewer,
+      focusedPanelId: 'panel_browser'
+    })
     const clients = await Promise.all([first, second])
     for (const received of clients) {
       expect(received[0]).toMatchObject({
         _tag: 'Snapshot',
         snapshot: {
           webPanels: [{ id: 'panel_review' }],
-          browserPanels: [{ id: 'panel_browser', url: 'https://example.com/' }]
+          browserPanels: [{ id: 'panel_browser', url: 'https://example.com/' }],
+          presence: [{ identity, focusedPanelId: 'panel_review' }]
         }
       })
       expect(received[1]).toMatchObject({
@@ -255,6 +279,17 @@ describe('Effect RPC project event stream', () => {
           data: { bell: { sequence: 1, unread: false } }
         }
       })
+      expect(received[2]).toMatchObject({
+        _tag: 'ProductEvent',
+        event: {
+          type: 'presence.changed',
+          data: { viewers: [{ identity, focusedPanelId: 'panel_browser' }] }
+        }
+      })
     }
+    expect((await collect(value.url, 1))[0]).toMatchObject({
+      _tag: 'Snapshot',
+      snapshot: { presence: [{ identity, focusedPanelId: 'panel_browser' }] }
+    })
   })
 })

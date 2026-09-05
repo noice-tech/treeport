@@ -170,6 +170,7 @@ describe('WebSocket contracts', () => {
   it('validates snapshot-first product event payloads', () => {
     expect(
       parseEventsSnapshot({
+        presence: [],
         at: '2026-01-01T00:00:00.000Z',
         terminalMetadata: [{ terminalId: 'term', title: null, progress: null }],
         webPanels: [
@@ -209,6 +210,7 @@ describe('WebSocket contracts', () => {
     expect(
       parseEventsSnapshot({
         at: '2026-01-01T00:00:00.000Z',
+        presence: [],
         terminalMetadata: [],
         webPanels: [
           {
@@ -229,6 +231,7 @@ describe('WebSocket contracts', () => {
     ).toBeNull()
     expect(
       parseEventsSnapshot({
+        presence: [],
         at: 'not-a-date',
         terminalMetadata: [],
         webPanels: [],
@@ -238,6 +241,7 @@ describe('WebSocket contracts', () => {
     expect(
       parseEventsSnapshot({
         at: '2026-01-01T00:00:00.000Z',
+        presence: [],
         terminalMetadata: [],
         webPanels: [],
         browserPanels: [

@@ -1,4 +1,13 @@
 import crypto from 'node:crypto'
+import http from 'node:http'
+import type { AddressInfo } from 'node:net'
+import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
+import {
+  authenticatedPrincipals,
+  authorizeRequest,
+  rejectHttpRequest
+} from './request-security'
+import { WorkspacePresenceManager } from './workspace-presence'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -275,6 +284,13 @@ function fixture(webDist = '/missing') {
     database: {
       worktree: vi.fn(() => ({ id: 'wt_1', path: '/repo' }))
     },
+    getWorktreeSnapshot: vi.fn(async (id: string) => {
+      if (!['wt_1', 'wt_2'].includes(id)) {
+        throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
+      }
+
+      return { id, panels: [{ id: `${id}_panel` }] }
+    }),
     getWorktree: vi.fn(() => ({ id: 'wt_1' })),
     getWorktreeContext: vi.fn(() => ({ issue: 'TREE-123' })),
     requestWorkspaceOpen: vi.fn(async () => undefined),
@@ -563,6 +579,7 @@ function fixture(webDist = '/missing') {
     captureTerminal,
     shutdownIfEmpty: vi.fn(async () => undefined)
   })
+  const presence = new WorkspacePresenceManager(service.events)
   const app = createApp({
     service,
     config,
@@ -570,10 +587,12 @@ function fixture(webDist = '/missing') {
     applicationUpdate,
     terminalMetadata,
     browserSessions,
+    presence,
     webDist
   })
   return {
     app,
+    presence,
     applicationUpdate,
     browserAgentCommand,
     browserRequestPanelClose,
@@ -589,6 +608,159 @@ function fixture(webDist = '/missing') {
 }
 
 describe('HTTP API validation', () => {
+  it('binds workspace presence to authenticated requests and validates focus', async ({
+    onTestFinished
+  }) => {
+    const { app, presence, service } = fixture()
+    const listener = await service.runEffect(
+      NodeHttpServer.makeHandler(app.httpApp)
+    )
+    const server = http.createServer((request, response) => {
+      const security = authorizeRequest(request)
+      if (!security.allowed) {
+        rejectHttpRequest(request, response, security)
+        return
+      }
+
+      if (security.principal) {
+        authenticatedPrincipals.set(request, security.principal)
+      }
+
+      listener(request, response)
+    })
+    onTestFinished(async () => {
+      presence.dispose()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    // SAFETY: The server is listening on a TCP port.
+    const address = server.address() as AddressInfo
+    const url = `http://127.0.0.1:${address.port}/api/presence`
+    const headers = {
+      'content-type': 'application/json',
+      host: 'treeport.tailnet.ts.net',
+      origin: 'https://treeport.tailnet.ts.net',
+      'x-forwarded-host': 'treeport.tailnet.ts.net',
+      'x-forwarded-proto': 'https',
+      'tailscale-user-login': 'alice@example.test',
+      'tailscale-user-name': 'Alice'
+    }
+    const input = {
+      sessionId: crypto.randomUUID(),
+      worktreeId: 'wt_1',
+      focusedPanelId: 'wt_1_panel',
+      visible: true,
+      focused: true
+    }
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(input)
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      identity: {
+        source: 'tailscale',
+        login: 'alice@example.test',
+        name: 'Alice',
+        profilePicture: null
+      }
+    })
+    expect(presence.snapshot()).toMatchObject([
+      { ...input, identity: { name: 'Alice' } }
+    ])
+
+    const bobHeaders = {
+      ...headers,
+      'tailscale-user-login': 'bob@example.test',
+      'tailscale-user-name': 'Bob'
+    }
+    await fetch(url, {
+      method: 'POST',
+      headers: bobHeaders,
+      body: JSON.stringify(input)
+    })
+    expect(presence.snapshot().map((viewer) => viewer.identity.name)).toEqual([
+      'Alice',
+      'Bob'
+    ])
+    await fetch(url, {
+      method: 'POST',
+      headers: bobHeaders,
+      body: JSON.stringify({
+        ...input,
+        worktreeId: 'wt_2',
+        focusedPanelId: 'wt_2_panel'
+      })
+    })
+    expect(presence.snapshot().map((viewer) => viewer.worktreeId)).toEqual([
+      'wt_1',
+      'wt_2'
+    ])
+    await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...input, visible: false })
+    })
+    expect(presence.snapshot()[0]).toMatchObject({
+      visible: false,
+      focused: false,
+      focusedPanelId: null
+    })
+
+    for (const [body, status] of [
+      [{ ...input, identity: { name: 'Mallory' } }, 400],
+      [{ ...input, focusedPanelId: 'wt_2_panel' }, 400],
+      [{ ...input, worktreeId: null }, 400],
+      [{ ...input, worktreeId: 'missing' }, 404],
+      [{ ...input, sessionId: 'not-a-session' }, 400]
+    ] as const) {
+      expect(
+        (
+          await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+          })
+        ).status
+      ).toBe(status)
+    }
+    expect(
+      (
+        await fetch(url, {
+          method: 'POST',
+          headers: { ...headers, origin: 'https://evil.example' },
+          body: JSON.stringify(input)
+        })
+      ).status
+    ).toBe(403)
+    expect(presence.snapshot()).toHaveLength(2)
+
+    // Even with the same tab ID, Bob can remove only Bob's presence.
+    await fetch(url, {
+      method: 'POST',
+      headers: bobHeaders,
+      body: JSON.stringify({
+        ...input,
+        worktreeId: null,
+        focusedPanelId: null
+      })
+    })
+    expect(presence.snapshot().map((viewer) => viewer.identity.name)).toEqual([
+      'Alice'
+    ])
+    // A Fetch request that bypasses the Node ingress cannot forge its principal.
+    expect(
+      (
+        await app.request('/api/presence', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(input)
+        })
+      ).status
+    ).toBe(401)
+  })
+
   it('advertises the desktop compatibility and computer identity contract', async () => {
     const { app } = fixture()
     const response = await app.request('/api/health')

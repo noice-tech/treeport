@@ -55,6 +55,8 @@ import { useSidebar } from './components/ui/sidebar'
 import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync'
 import { notifyError } from './features/notifications/error-notifications'
 import { useProjectEventsBridge } from './project-events-bridge'
+import { useWorkspacePresence } from './features/presence/use-workspace-presence'
+import { WorkspaceViewers } from './features/presence/workspace-viewers'
 import {
   projectsQueryOptions,
   terminalPresetDefinitionsQueryOptions,
@@ -122,8 +124,12 @@ export default function App() {
 function WorkspaceApp() {
   const { dismiss: dismissToolPicker, setOpen: setToolPickerOpen } =
     useToolPicker()
-  const { focusedSurfaceRef, focusSurface, restoreEmptyToolFocus } =
-    useWorkspaceSurfaceFocus()
+  const {
+    focusedSurface,
+    focusedSurfaceRef,
+    focusSurface,
+    restoreEmptyToolFocus
+  } = useWorkspaceSurfaceFocus()
   const desktopBridge = window.treeportDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
   const queryClient = useQueryClient()
@@ -897,10 +903,23 @@ function WorkspaceApp() {
     },
     [navigateToWorkspace, queryClient, selectedTerminalId]
   )
+  const presence = useWorkspacePresence(
+    selectedWorktree?.id ?? null,
+    dialog !== null
+      ? null
+      : toolPaneOpen && focusedSurface === 'tool'
+        ? activePanelId
+        : (selectedWorktree?.panels.find(
+            (panel) =>
+              panel.kind === 'terminal' &&
+              panel.terminalId === selectedTerminalId
+          )?.id ?? null)
+  )
   const eventsDisconnected = useProjectEventsBridge(
     projectsQuery.data,
     navigatePanelOpenRequest,
-    navigateWorkspaceOpenRequest
+    navigateWorkspaceOpenRequest,
+    presence.setViewers
   )
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
@@ -1463,7 +1482,15 @@ function WorkspaceApp() {
           }
         />
       </WorkspaceSidebar>
-      <WorkspaceMain>
+      <WorkspaceMain
+        presence={
+          <WorkspaceViewers
+            worktree={selectedWorktree}
+            identity={presence.identity}
+            viewers={presence.viewers}
+          />
+        }
+      >
         <div className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]">
           <SidePanelToggle
             open={toolPaneOpen}

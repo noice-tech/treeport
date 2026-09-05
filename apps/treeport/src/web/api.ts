@@ -1,4 +1,5 @@
 import {
+  presenceResponseSchema,
   apiErrorBodySchema,
   applicationUpdateStatusSchema,
   browserInstallResponseSchema,
@@ -33,6 +34,8 @@ import {
 } from '@treeport/shared'
 import type * as Schema from 'effect/Schema'
 import type {
+  PresenceUpdate,
+  ViewerIdentity,
   DirectoryBrowseResponse,
   GitDiff,
   JsonValue,
@@ -175,6 +178,16 @@ const id = (value: string) => encodeURIComponent(value)
 
 export const rpc = {
   api: {
+    presence: {
+      $post: (json: PresenceUpdate, init?: RequestInit) =>
+        endpoint<{ identity: ViewerIdentity }>(
+          'POST',
+          '/api/presence',
+          presenceResponseSchema,
+          { json },
+          init
+        )
+    },
     browser: {
       install: {
         $post: () =>

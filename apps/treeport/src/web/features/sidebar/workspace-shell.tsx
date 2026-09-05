@@ -113,14 +113,20 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   )
 }
 
-export function WorkspaceMain({ children }: { children: ReactNode }) {
+export function WorkspaceMain({
+  children,
+  presence
+}: {
+  children: ReactNode
+  presence: ReactNode
+}) {
   const { isMobile, openMobile } = useSidebar()
   const projectSwitcher = useProjectSwitcher()
 
   return (
     <SidebarInset asChild>
       <div
-        className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-zinc-950"
+        className="relative grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-zinc-950"
         inert={isMobile && openMobile ? true : undefined}
         aria-hidden={isMobile && openMobile ? true : undefined}
         onPointerDownCapture={() => {
@@ -130,6 +136,7 @@ export function WorkspaceMain({ children }: { children: ReactNode }) {
           }
         }}
       >
+        <div>{presence}</div>
         {children}
       </div>
     </SidebarInset>
