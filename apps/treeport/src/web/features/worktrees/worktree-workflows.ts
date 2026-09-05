@@ -56,7 +56,7 @@ export function useWorktreeWorkflows({
   onWorktreeSubmitted,
   onRemovalNeedsConfirmation,
   onRemovalProgress,
-  onRemovalCompleted,
+  onRemovalDismiss,
   selectedTerminalId
 }: {
   projects: ProjectRecord[]
@@ -74,7 +74,7 @@ export function useWorktreeWorkflows({
     operation: RemoveOperationRecord,
     open: boolean
   ) => void
-  onRemovalCompleted: (worktreeId: string) => void
+  onRemovalDismiss: (worktreeId: string) => void
   selectedTerminalId: string | null
 }) {
   const queryClient = useQueryClient()
@@ -435,12 +435,8 @@ export function useWorktreeWorkflows({
 
       let operation: RemoveOperationRecord = acceptedOperation
 
-      onRemovalProgress(
-        worktree,
-        preview,
-        operation,
-        preview.cleanup.commands.length > 0
-      )
+      // Cleanup output is persisted in the operation; routine removal stays quiet.
+      onRemovalDismiss(worktree.id)
       await queryClient.invalidateQueries({
         queryKey: ['worktree-removals']
       })
@@ -466,16 +462,11 @@ export function useWorktreeWorkflows({
       })
       releaseRemoval(worktree.id)
       if (operation.status === 'failed') {
-        onRemovalProgress(
-          worktree,
-          preview,
-          operation,
-          preview.cleanup.commands.length === 0
-        )
+        onRemovalProgress(worktree, preview, operation, true)
         return
       }
 
-      onRemovalCompleted(worktree.id)
+      onRemovalDismiss(worktree.id)
       void queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
         { cancelRefetch: false }
@@ -548,11 +539,7 @@ export function useWorktreeWorkflows({
           })
         )
       ).preview
-      if (
-        preview.eligible &&
-        preview.warnings.length === 0 &&
-        preview.cleanup.commands.length === 0
-      ) {
+      if (preview.eligible && preview.warnings.length === 0) {
         await submitRemoval(worktree, preview, false, 1)
         return
       }
