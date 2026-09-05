@@ -1131,11 +1131,9 @@ function WorkspaceApp() {
             }
           : current
       ),
-    onRemovalCompleted: (worktreeId) =>
+    onRemovalDismiss: (worktreeId) =>
       setDialog((current) =>
-        current?.type === 'remove' &&
-        current.worktree.id === worktreeId &&
-        current.preview.cleanup.commands.length === 0
+        current?.type === 'remove' && current.worktree.id === worktreeId
           ? null
           : current
       ),

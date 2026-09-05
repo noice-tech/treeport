@@ -202,7 +202,7 @@ test.describe('desktop terminal input and removal', () => {
       .toBe(true)
   })
 
-  test('shows cleanup progress, retries failure, and permits an explicit skip', async ({
+  test('keeps cleanup quiet, retries failure, and permits an explicit skip', async ({
     page
   }) => {
     const mocked = await mockApp(page)
@@ -215,10 +215,8 @@ test.describe('desktop terminal input and removal', () => {
     })
     const menu = await openWorktreeContextMenu(page, 'topic')
     await menu.getByRole('menuitem', { name: 'Remove tree…' }).click()
-    const dialog = page.getByRole('alertdialog', { name: 'Remove tree' })
-    await expect(dialog.getByText('Drop database')).toBeVisible()
-    await dialog.getByRole('button', { name: 'Remove tree' }).click()
     await expect.poll(() => mocked.removeRequests()).toBe(1)
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
 
     mocked.setRemovalCleanup('running', [
       {
@@ -240,10 +238,8 @@ test.describe('desktop terminal input and removal', () => {
         outputTruncated: false
       }
     ])
-    await expect(page.getByText('Database removed')).toBeVisible()
-    await expect(
-      page.getByText('Running cleanup command: Remove cache')
-    ).toBeVisible()
+    await expect(page.getByText('Database removed')).toHaveCount(0)
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
 
     mocked.setRemovalCleanup(
       'failed',
@@ -332,9 +328,7 @@ test.describe('desktop terminal input and removal', () => {
       skipCleanup: true
     })
     mocked.completeRemoval()
-    await expect(
-      page.getByText('Treeport skipped project cleanup and removed the tree.')
-    ).toBeVisible()
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
   })
 
   test('refreshes a stale clean preview and requires confirmation when it becomes dirty', async ({
