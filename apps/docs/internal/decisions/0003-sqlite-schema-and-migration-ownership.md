@@ -124,6 +124,14 @@ The database and premigration snapshot stay available for a corrected binary.
 
 After an update startup failure, the CLI starts the previous binary only when the daemon proved that migration history did not advance. An advanced or unknown result keeps the new binary active. The CLI reports snapshots but never restores one automatically.
 
+The CLI records that startup has not begun before it starts the replacement daemon. It then records an uncertain operation state before launch.
+
+The daemon acquires ownership before it updates startup evidence. It records uncertainty before opening the database and records snapshot creation before migrations can fail.
+
+Repeated startup attempts preserve earlier advanced or uncertain evidence. Missing or invalid evidence after a possible startup does not authorize rollback.
+
+The CLI recognizes the ownership lock before the daemon publishes its listening address. It stops service retries before reading final rollback evidence.
+
 ## Consequences
 
 - Catalog access and schema changes use one typed Drizzle boundary over libSQL.

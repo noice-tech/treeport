@@ -140,16 +140,16 @@ export function App() {
               : 'pointer-events-none fixed inset-x-0 top-0 z-80 flex h-8 items-center justify-center'
           }
         >
-          {state.updateReady ? (
+          {state.updateReady || state.updateError ? (
             <Button
               variant="ghost"
               size="xs"
               className="pointer-events-auto text-cyan-300 hover:text-cyan-100 [-webkit-app-region:no-drag]"
-              title="Restart to update Treeport"
+              title={state.updateError ?? 'Restart to update Treeport'}
               onClick={() => window.treeportShell.installUpdate()}
             >
               <DownloadIcon data-icon="inline-start" />
-              Update & restart
+              {state.updateError ? 'Desktop update failed' : 'Update & restart'}
             </Button>
           ) : null}
           <ComputerSelector

@@ -227,7 +227,10 @@ describe('application update manager', () => {
           message: 'npm could not resolve the release.',
           details: {
             operationId: secondOperationId,
-            recovery: 'Retry the update.'
+            recovery: 'Retry the update.',
+            cause: 'Registry unavailable',
+            logPath: '/data/logs/daemon.log',
+            snapshotPaths: ['/data/database-backups/before.db']
           }
         }
       })
@@ -235,7 +238,8 @@ describe('application update manager', () => {
     expect(await manager.status()).toMatchObject({
       phase: 'failed',
       operationId: secondOperationId,
-      error: 'npm could not resolve the release. Retry the update.'
+      error:
+        'npm could not resolve the release.\nRegistry unavailable\nRetry the update.\nDaemon log: /data/logs/daemon.log\nPre-migration snapshot: /data/database-backups/before.db'
     })
 
     manager.dispose()

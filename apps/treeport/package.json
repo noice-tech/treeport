@@ -22,7 +22,7 @@
     "build:web": "vite build",
     "prepack": "pnpm --dir=../.. exec turbo run build --filter=@treeport/treeport 1>&2",
     "check:package": "node scripts/check-package.mjs",
-    "test:package": "node scripts/smoke-package.mjs",
+    "test:package": "node scripts/smoke-package.mjs && node scripts/smoke-upgrade.mjs",
     "dev": "node scripts/development.mjs",
     "dev:server": "rm -rf .treeport-dev-dist && TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime TREEPORT_DAEMON_LIFECYCLE=external tsdown --watch --out-dir .treeport-dev-dist",
     "start": "TREEPORT_WEB_DIST=dist/web node dist/node/server/index.js",

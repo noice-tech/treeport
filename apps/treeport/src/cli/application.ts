@@ -56,6 +56,7 @@ import { extractJsonOutput } from './args.js'
 import { OpenWorkspaceError, openWorkspace } from './open.js'
 import {
   LocalUpdateError,
+  formatLocalUpdateError,
   runLocalUpdate,
   type LocalUpdateOptions
 } from './update.js'
@@ -1976,7 +1977,9 @@ async function main(args: string[]): Promise<void> {
       const result = await runLocalUpdate(selfUpdateOptions).catch((error) => {
         if (error instanceof LocalUpdateError) {
           throw new CliError(
-            error.message,
+            jsonOutput
+              ? error.message
+              : formatLocalUpdateError(error.message, error.details),
             error.exitCode,
             error.code,
             error.details

@@ -37,6 +37,7 @@ interface UpdatePaths {
 
 interface UpdateStartupReporter {
   databaseOpening(): Promise<void>
+  snapshotCreated(snapshotPath: string): Promise<void>
   databaseOpened(input: {
     migrationState: 'unchanged' | 'advanced'
     snapshotPaths: string[]
@@ -76,17 +77,28 @@ export async function createUpdateStartupReporter(
     .catch(() => null)
   const active =
     pending && pending.targetVersion === config.appVersion ? pending : null
+  const previous = await readUpdateStartupReport(config.dataDir)
+  const previousState =
+    active &&
+    previous?.operationId === active.operationId &&
+    previous.targetVersion === active.targetVersion
+      ? previous.migrationState
+      : 'unknown'
   const report: UpdateStartupReport | null = active
     ? {
         schemaVersion: 1,
         operationId: active.operationId,
         targetVersion: active.targetVersion,
         instanceId: config.instanceId ?? null,
-        migrationState: 'not_started',
+        migrationState: previousState,
         ready: false,
         error: null,
         logPath: path.join(config.dataDir, 'logs', 'daemon.log'),
-        snapshotPaths: [],
+        snapshotPaths:
+          previous?.operationId === active.operationId &&
+          previous.targetVersion === active.targetVersion
+            ? previous.snapshotPaths
+            : [],
         updatedAt: new Date().toISOString()
       }
     : null
@@ -104,14 +116,31 @@ export async function createUpdateStartupReporter(
   return {
     async databaseOpening() {
       if (report) {
-        report.migrationState = 'unknown'
+        report.migrationState =
+          previousState === 'advanced' ? 'advanced' : 'unknown'
+        await save()
+      }
+    },
+    async snapshotCreated(snapshotPath) {
+      if (report) {
+        report.snapshotPaths = [
+          ...new Set([...report.snapshotPaths, snapshotPath])
+        ]
         await save()
       }
     },
     async databaseOpened(input) {
       if (report) {
-        report.migrationState = input.migrationState
-        report.snapshotPaths = input.snapshotPaths
+        // A later attempt cannot prove that an earlier attempt left the schema unchanged.
+        report.migrationState =
+          previousState === 'advanced' || input.migrationState === 'advanced'
+            ? 'advanced'
+            : previousState === 'unknown'
+              ? 'unknown'
+              : 'unchanged'
+        report.snapshotPaths = [
+          ...new Set([...report.snapshotPaths, ...input.snapshotPaths])
+        ]
         await save()
       }
     },

@@ -223,6 +223,7 @@ export type OperationRow = typeof operations.$inferSelect
 export interface DatabaseOpenOptions {
   migrationsFolder?: string
   backupDirectory?: string
+  onMigrationSnapshot?: (snapshotPath: string) => Promise<void>
 }
 
 export function serializeOperation<Value extends object>(
@@ -403,6 +404,7 @@ export async function openDatabase(
           await fs.promises.rm(backupPath, { force: true })
           throw error
         }
+        await options.onMigrationSnapshot?.(backupPath)
         const backups = (await fs.promises.readdir(backupDirectory))
           .filter((name) => name.startsWith(prefix) && name.endsWith('.db'))
           .sort()

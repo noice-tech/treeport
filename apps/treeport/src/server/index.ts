@@ -33,7 +33,9 @@ async function main(): Promise<void> {
   process.title = config.webDevelopment
     ? 'treeport-server-dev'
     : 'treeport-server'
-  const updateStartup = await createUpdateStartupReporter(config)
+  let updateStartup: Awaited<
+    ReturnType<typeof createUpdateStartupReporter>
+  > | null = null
   const resourceScope = await Effect.runPromise(Scope.make())
 
   try {
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
         resourceScope
       )
     )
+    updateStartup = await createUpdateStartupReporter(config)
     const prerequisites = await checkRuntimePrerequisites(config)
     const runner = new SpawnCommandRunner()
     await updateStartup.databaseOpening()
@@ -54,7 +57,11 @@ async function main(): Promise<void> {
         Effect.acquireRelease(
           Effect.promise(() =>
             openDatabase(config.databasePath, {
-              backupDirectory: path.join(config.dataDir, 'database-backups')
+              backupDirectory: path.join(config.dataDir, 'database-backups'),
+              onMigrationSnapshot: async (snapshotPath) => {
+                console.log(`Pre-migration snapshot: ${snapshotPath}`)
+                await updateStartup!.snapshotCreated(snapshotPath)
+              }
             })
           ),
           (opened) => Effect.sync(() => opened.close())
@@ -341,9 +348,12 @@ async function main(): Promise<void> {
     process.once('SIGINT', shutdown)
     process.once('SIGTERM', shutdown)
   } catch (error) {
-    await Effect.runPromise(Scope.close(resourceScope, Exit.fail(error)))
-    await updateStartup.failed(
-      error instanceof Error ? error : new Error(String(error))
+    await (
+      updateStartup?.failed(
+        error instanceof Error ? error : new Error(String(error))
+      ) ?? Promise.resolve()
+    ).finally(() =>
+      Effect.runPromise(Scope.close(resourceScope, Exit.fail(error)))
     )
     throw error
   }

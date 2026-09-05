@@ -6,6 +6,7 @@ import * as Schedule from 'effect/Schedule'
 import { z } from 'zod'
 import {
   compareTreeportVersions,
+  formatLocalUpdateError,
   inspectLocalUpdateInstallation,
   isCanonicalTreeportVersion,
   readLocalUpdateProgress,
@@ -36,7 +37,10 @@ const updateErrorSchema = z.looseObject({
     details: z
       .looseObject({
         operationId: z.string().optional(),
-        recovery: z.string().optional()
+        recovery: z.string().optional(),
+        cause: z.string().optional(),
+        logPath: z.string().optional(),
+        snapshotPaths: z.array(z.string()).optional()
       })
       .optional()
   })
@@ -236,11 +240,7 @@ export function createApplicationUpdateManager(
     const error =
       launchError ??
       (cliError
-        ? [cliError.message, cliError.details?.recovery]
-            .filter((value, index, values) =>
-              Boolean(value && values.indexOf(value) === index)
-            )
-            .join(' ')
+        ? formatLocalUpdateError(cliError.message, cliError.details)
         : recoveryError) ??
       (interrupted
         ? 'The update process stopped before it returned a result. Retry the update or run `treeport update` on the host.'

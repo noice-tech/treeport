@@ -13,6 +13,7 @@ import {
   autoUpdater,
   BrowserWindow,
   clipboard,
+  dialog,
   ipcMain,
   Menu,
   nativeTheme,
@@ -148,6 +149,7 @@ let connectionGeneration = 0
 let connectionAbort: AbortController | null = null
 let fullscreen = false
 let updateReady = desktopUpdateReady
+let updateError: string | null = null
 let stopAutomaticUpdates: (() => void) | null = null
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 let workspaceTargetQueue: Promise<void> = Promise.resolve()
@@ -205,6 +207,7 @@ function shellState(): DesktopShellState {
     platform: process.platform,
     fullscreen,
     updateReady,
+    updateError,
     computers: store?.summaries() ?? [],
     connection,
     navigation: navigationState()
@@ -1076,7 +1079,31 @@ function registerIpc(): void {
     }
   })
   ipcMain.on('shell:install-update', (event) => {
-    if (!isTrustedRendererEvent(event) || !updateReady) {
+    if (!isTrustedRendererEvent(event)) {
+      return
+    }
+
+    if (updateError) {
+      void dialog
+        .showMessageBox({
+          type: 'error',
+          title: 'Desktop update failed',
+          message: 'Treeport could not install the desktop update.',
+          detail: `${updateError}\nThe backend has not been changed. Install the latest desktop application manually, or wait for the next automatic check.`,
+          buttons: ['Installation instructions', 'Dismiss'],
+          cancelId: 1
+        })
+        .then(({ response }) => {
+          if (response === 0) {
+            return shell.openExternal(
+              'https://treeport.app/getting-started/installation/'
+            )
+          }
+        })
+      return
+    }
+
+    if (!updateReady) {
       return
     }
 
@@ -1330,11 +1357,21 @@ if (!hasSingleInstanceLock) {
         createWindow()
       }
 
+      autoUpdater.on('error', (error) => {
+        updateError = error.message
+        updateReady = false
+        broadcastState()
+      })
+      autoUpdater.on('update-not-available', () => {
+        updateError = null
+        broadcastState()
+      })
+      autoUpdater.on('update-downloaded', () => {
+        updateError = null
+        updateReady = true
+        broadcastState()
+      })
       if (app.isPackaged && process.platform === 'darwin' && !desktopE2e) {
-        autoUpdater.on('update-downloaded', () => {
-          updateReady = true
-          broadcastState()
-        })
         const updater = updateElectronApp({
           updateSource: {
             type: UpdateSourceType.ElectronPublicUpdateService,

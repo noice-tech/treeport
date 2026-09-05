@@ -124,7 +124,9 @@ These commands include `start`, `stop`, `update`, `service`, `status`, `logs`, `
 
 Bare `treeport update` resolves and verifies the latest stable npm release before it stops the local daemon. It preserves hosted terminals and an enabled service. It restarts the same lifecycle only when the daemon was running before the update. The command does not use `sudo` and refuses remote, external, development, and non-writable installations.
 
-With `--json`, update success has stable `schemaVersion`, `operationId`, `status`, `phase`, `fromVersion`, `toVersion`, `installation`, `daemon`, `terminals`, and `rollback` fields. `status` is `current` or `updated`. Update errors identify the failed phase, rollback safety, and the next safe action.
+With `--json`, update success has stable `schemaVersion`, `operationId`, `status`, `phase`, `fromVersion`, `toVersion`, `installation`, `daemon`, `terminals`, and `rollback` fields. `status` is `current` or `updated`. Update errors identify the failed phase, rollback safety, and the next safe action. Normal text output also includes available failure details, daemon log paths, and pre-migration snapshot paths.
+
+See [Recover after an update](/getting-started/update-recovery/) before you restore a snapshot or install an older version.
 
 Stable update refusal codes are:
 

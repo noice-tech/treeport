@@ -199,7 +199,13 @@ A running service stops and starts through its existing operating-system manager
 
 Normal macOS user service updates do not need administrator access. Stop an advanced headless service with the administrator action before you update it.
 
-If updated startup fails before a database migration, Treeport restores the previous version. If migration history advanced or is unknown, Treeport keeps the new version, stops the service without disabling it, and reports the daemon log and snapshot paths. It never starts an older daemon against a possibly newer database.
+If startup fails, Treeport stops service retries before it checks rollback safety. It restores the previous version only with evidence that migration did not advance.
+
+If migration history advanced or is unknown, Treeport keeps the new version and stops the service without disabling it. The error includes available daemon log and snapshot paths.
+
+If Treeport cannot verify shutdown, it does not activate an older binary. Follow the error's stop instruction before further recovery.
+
+See [Recover after an update](/getting-started/update-recovery/) for interrupted installation, faulty releases, and explicit snapshot restoration.
 
 The npm prefix must be writable by the service owner. If the npm prefix or Node.js installation changes outside Treeport, reinstall Treeport and run the applicable service enable command again.
 

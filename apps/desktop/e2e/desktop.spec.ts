@@ -1218,6 +1218,8 @@ test('guides version updates and reconnects to a supported backend', async () =>
   )
   const health: CompatibilityHealthFixture = { version: '0.4.0' }
   let applicationRequests = 0
+  let updateRequests = 0
+  let remoteUpdateRequests = 0
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
       response.setHeader('content-type', 'application/json')
@@ -1232,6 +1234,13 @@ test('guides version updates and reconnects to a supported backend', async () =>
     }
 
     applicationRequests += 1
+    if (request.url === '/api/update') {
+      updateRequests += 1
+      if (request.headers['x-treeport-test-remote'] === '1') {
+        remoteUpdateRequests += 1
+      }
+    }
+
     response.setHeader('content-type', 'application/json')
     if (request.url === '/api/projects') {
       response.end(JSON.stringify({ projects: [] }))
@@ -1302,6 +1311,78 @@ test('guides version updates and reconnects to a supported backend', async () =>
       window.getByText('Open project', { exact: true })
     ).toBeVisible()
     expect(applicationRequests).toBeGreaterThan(0)
+    await expect.poll(() => updateRequests).toBeGreaterThan(0)
+
+    await electronApp.evaluate(({ autoUpdater, dialog, clipboard }) => {
+      dialog.showMessageBox = async (options) => {
+        // SAFETY: This fixture records the single-options overload used by the update action.
+        clipboard.writeText(
+          (options as Electron.MessageBoxOptions).detail ?? ''
+        )
+        return { response: 1, checkboxChecked: false }
+      }
+      autoUpdater.emit(
+        'error',
+        new Error('The update download was interrupted.')
+      )
+    })
+    await window.getByRole('button', { name: 'Desktop update failed' }).click()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ clipboard }) => clipboard.readText())
+      )
+      .toContain('Install the latest desktop application manually')
+    await electronApp.evaluate(({ autoUpdater }) =>
+      autoUpdater.emit('update-downloaded')
+    )
+    await window
+      .getByRole('button', { name: 'Update & restart', exact: true })
+      .click()
+    await expect(
+      window.getByRole('button', { name: 'Update & restart', exact: true })
+    ).toHaveCount(0)
+
+    // Route a private remote fixture without contacting a real remote backend.
+    await electronApp.evaluate((_electron, backendOrigin) => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = (input, init) => {
+        const request = new Request(input, init)
+        const url = new URL(request.url)
+        if (url.hostname === 'fixture.example.ts.net') {
+          request.headers.set('x-treeport-test-remote', '1')
+          return originalFetch(
+            new Request(
+              new URL(`${url.pathname}${url.search}`, backendOrigin),
+              request
+            )
+          )
+        }
+
+        return originalFetch(request)
+      }
+    }, `http://127.0.0.1:${port}`)
+    await window.evaluate(async () => {
+      const result = await window.treeportShell.addComputer(
+        'https://fixture.example.ts.net'
+      )
+      if (!result.ok) {
+        throw new Error(result.error)
+      }
+    })
+    await expect(window).toHaveURL('https://fixture.example.ts.net/')
+    await expect(
+      window.getByText('Open project', { exact: true })
+    ).toBeVisible()
+    await electronApp.evaluate(({ autoUpdater }) =>
+      autoUpdater.emit('update-downloaded')
+    )
+    await window
+      .getByRole('button', { name: 'Update & restart', exact: true })
+      .click()
+    await expect(
+      window.getByRole('button', { name: 'Update & restart', exact: true })
+    ).toHaveCount(0)
+    expect(remoteUpdateRequests).toBe(0)
   } finally {
     await electronApp?.close().catch(() => undefined)
     await new Promise<void>((resolve) => server.close(() => resolve()))
