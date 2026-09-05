@@ -165,6 +165,58 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
   })
 
+  test('keeps an externally started tree visible until it is ready', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    const releaseCreate = mocked.delayNextCreate()
+    const operationId = await page.evaluate(async () => {
+      const response = await fetch('/api/projects/proj_1/worktree-operations', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'CLI spawn',
+          base: 'default',
+          initialTerminal: { name: 'Pi' }
+        })
+      })
+      return (await response.json()).operation.id
+    })
+    const pending = page.getByRole('status', {
+      name: 'Creating tree cli-spawn'
+    })
+    await expect(pending).toBeVisible()
+
+    const releaseCompletedProjects = mocked.delayNextProjects()
+    releaseCreate()
+    await expect
+      .poll(() =>
+        page.evaluate(async (id) => {
+          const response = await fetch(`/api/operations/${id}`)
+          return (await response.json()).operation.status
+        }, operationId)
+      )
+      .toBe('completed')
+    await page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/operations'
+    )
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        )
+    )
+    expect(await pending.count()).toBe(1)
+
+    releaseCompletedProjects()
+    await expect(
+      page.getByRole('button', { name: 'cli-spawn', exact: true })
+    ).toBeVisible()
+    await expect(pending).toHaveCount(0)
+  })
+
   test('restores an in-progress worktree creation after reload without taking over navigation', async ({
     page
   }) => {
