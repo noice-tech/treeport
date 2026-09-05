@@ -1,1 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#09090b"/><path d="M14 17h36v8H36v25h-8V25H14z" fill="#67e8f9"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- macOS footprint: 824 px tile, 100 px margins, 185 px corners with 60% smoothing. -->
+    <path id="tile" d="M628 100
+      c103.6097 0 155.4146 0 194.9882 20.1638
+      a185 185 0 0 1 80.848 80.848
+      c20.1638 39.5737 20.1638 91.3785 20.1638 194.9882
+      V628
+      c0 103.6097 0 155.4146 -20.1638 194.9882
+      a185 185 0 0 1 -80.848 80.848
+      c-39.5737 20.1638 -91.3785 20.1638 -194.9882 20.1638
+      H396
+      c-103.6097 0 -155.4146 0 -194.9882 -20.1638
+      a185 185 0 0 1 -80.848 -80.848
+      C100 783.4146 100 731.6097 100 628
+      V396
+      c0 -103.6097 0 -155.4146 20.1638 -194.9882
+      a185 185 0 0 1 80.848 -80.848
+      C240.5854 100 292.3903 100 396 100 Z"/>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#18181b"/>
+      <stop offset="1" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fff" stop-opacity=".16"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity=".04"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".08"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dy="10"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".3"/></feComponentTransfer>
+    </filter>
+    <clipPath id="mask"><use href="#tile"/></clipPath>
+  </defs>
+  <use href="#tile" fill="#000" filter="url(#shadow)"/>
+  <use href="#tile" fill="url(#background)"/>
+  <use href="#tile" fill="none" stroke="url(#rim)" stroke-width="3" clip-path="url(#mask)"/>
+  <path d="M14 17h36v8H36v25h-8V25H14z" transform="translate(100 100) scale(12.875)" fill="#67e8f9"/>
+</svg>

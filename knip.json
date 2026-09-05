@@ -18,7 +18,7 @@
         "@electron-forge/publisher-github",
         "^@treeport-web/"
       ],
-      "ignoreBinaries": ["lipo", "plutil"]
+      "ignoreBinaries": ["iconutil", "lipo", "plutil"]
     },
     "packages/web-panel-review": {
       "entry": ["web-panels/review/review.tsx"]
