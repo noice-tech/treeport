@@ -458,6 +458,8 @@ class SystemDouble implements CommandRunner {
   terminalCreateFails = false
   terminalCreateGate: Promise<void> | null = null
   terminalCreateAttempts = 0
+  worktreeLaunchIdentityGate: Promise<void> | null = null
+  worktreeLaunchIdentityAttempts = 0
   terminalInventoryFails = false
   terminalInventoryGate: Promise<void> | null = null
   terminalInventoryAttempts = 0
@@ -499,6 +501,16 @@ class SystemDouble implements CommandRunner {
       exitCode: 1
     })
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') {
+      if (
+        args.includes('--git-common-dir') &&
+        args.includes('--absolute-git-dir')
+      ) {
+        this.worktreeLaunchIdentityAttempts += 1
+        if (this.worktreeLaunchIdentityGate) {
+          await this.worktreeLaunchIdentityGate
+        }
+      }
+
       const cwd = request.cwd ?? ''
       const containingWorktree = (
         await Promise.all(

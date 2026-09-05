@@ -1895,11 +1895,24 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     await expect.poll(() => mocked.terminalDeletions()).toBe(1)
 
+    const releaseCreates = mocked.delayNextTerminalCreate()
     await page.evaluate(() => {
       for (let index = 0; index < 10; index += 1) {
         window.__dispatchDesktopCommand('new-terminal')
       }
     })
+    await expect.poll(() => mocked.terminalCreations()).toBeGreaterThan(10)
+    await expect(terminals).toHaveCount(1)
+    await page
+      .getByRole('button', {
+        name: 'Notifications, no unread notifications'
+      })
+      .click()
+    await expect(
+      page.getByRole('dialog', { name: 'Notifications' })
+    ).toBeVisible()
+    await page.keyboard.press('Escape')
+    releaseCreates()
     await expect.poll(() => mocked.terminalCreations()).toBe(20)
     await expect(terminals).toHaveCount(11)
     await expect(page).toHaveURL(
