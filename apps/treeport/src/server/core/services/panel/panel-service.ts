@@ -24,7 +24,8 @@ import * as Schema from 'effect/Schema'
 import {
   browserPanels,
   webPanels,
-  webPanelStorage
+  webPanelStorage,
+  workspaceItemOrders
 } from '../../database-schema'
 import { DomainError } from '../../domain'
 import type {
@@ -134,6 +135,78 @@ export class PanelService {
     definition: WebPanelDefinition
   ): PanelEffect<void> {
     return this.definitions.requireWebPanelPermissions(worktreeId, definition)
+  }
+
+  reorderPanels(
+    worktreeId: string,
+    panelIds: readonly string[]
+  ): PanelEffect<void> {
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      yield* requireAvailableWorktree(worktreeId)
+      const [browserRows, webRows] = yield* Effect.all(
+        [
+          Effect.promise(() =>
+            database.db
+              .select({ id: browserPanels.id })
+              .from(browserPanels)
+              .where(eq(browserPanels.worktreeId, worktreeId))
+          ),
+          Effect.promise(() =>
+            database.db
+              .select({ id: webPanels.id })
+              .from(webPanels)
+              .where(eq(webPanels.worktreeId, worktreeId))
+          )
+        ],
+        { concurrency: 'unbounded' }
+      )
+      const currentIds = new Set(
+        [...browserRows, ...webRows].map((panel) => panel.id)
+      )
+      if (
+        panelIds.length !== currentIds.size ||
+        panelIds.some((panelId) => !currentIds.has(panelId))
+      ) {
+        return yield* Effect.fail(
+          new DomainError(
+            'STALE_WORKSPACE_ORDER',
+            'Tool tabs changed before they could be reordered',
+            409
+          )
+        )
+      }
+
+      yield* Effect.promise(() =>
+        database.db.transaction(async (tx) => {
+          await tx
+            .delete(workspaceItemOrders)
+            .where(
+              and(
+                eq(workspaceItemOrders.worktreeId, worktreeId),
+                eq(workspaceItemOrders.surface, 'tool')
+              )
+            )
+          await tx.insert(workspaceItemOrders).values(
+            panelIds.map((itemId, position) => ({
+              worktreeId,
+              surface: 'tool' as const,
+              itemId,
+              position
+            }))
+          )
+        })
+      )
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('worktree.updated', { worktreeId })
+      })
+    })
   }
 
   private normalizeWebPanelLaunch(

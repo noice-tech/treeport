@@ -363,6 +363,18 @@ export const rpc = {
                 openWebPanelResponseSchema,
                 { json }
               )
+          },
+          order: {
+            $put: ({
+              param,
+              json
+            }: RequestInput<{ worktreeId: string }, unknown>) =>
+              endpoint<{ ok: true }>(
+                'PUT',
+                `/api/worktrees/${id(param.worktreeId)}/panels/order`,
+                okResponseSchema,
+                { json }
+              )
           }
         },
         'browser-panels': {
@@ -388,7 +400,19 @@ export const rpc = {
               terminalResponseSchema,
               { json },
               options?.init
-            )
+            ),
+          order: {
+            $put: ({
+              param,
+              json
+            }: RequestInput<{ worktreeId: string }, unknown>) =>
+              endpoint<{ ok: true }>(
+                'PUT',
+                `/api/worktrees/${id(param.worktreeId)}/terminals/order`,
+                okResponseSchema,
+                { json }
+              )
+          }
         },
         remove: {
           $post: ({

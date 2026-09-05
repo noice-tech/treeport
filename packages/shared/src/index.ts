@@ -818,6 +818,17 @@ export const createTerminalSchema = Schema.Struct({
 
 export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })
 
+export const reorderWorkspaceItemsSchema = Schema.Struct({
+  itemIds: Schema.Array(
+    Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+  ).pipe(
+    Schema.minItems(1),
+    Schema.filter((itemIds) => new Set(itemIds).size === itemIds.length, {
+      message: () => 'Item order cannot contain duplicates'
+    })
+  )
+})
+
 export const webPanelInputSchema: Schema.Schema<WebPanelInput> = Schema.Record({
   key: Schema.String,
   value: jsonValueSchema

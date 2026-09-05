@@ -45,6 +45,7 @@ import {
   TooltipTrigger
 } from '../../components/ui/tooltip'
 import { cn } from '../../lib/utils'
+import { useReorderableItems } from '../../use-reorderable-items'
 import { WebPanelIcon } from '../web-panels/web-panel-icon'
 import { describeWebPanelPermissions } from '../web-panels/web-panel-permissions'
 import { useToolPicker } from './tool-picker-context'
@@ -354,6 +355,7 @@ export function WorktreeToolPane({
   children,
   onSelectPanel,
   onClosePanel,
+  onReorderPanels,
   onCreateBrowserPanel,
   onOpenWebPanel,
   onFocusSurface
@@ -371,6 +373,7 @@ export function WorktreeToolPane({
   children: ReactNode
   onSelectPanel: (panel: BrowserPanel | WebPanel) => void
   onClosePanel: (panel: BrowserPanel | WebPanel, trigger?: HTMLElement) => void
+  onReorderPanels: (panelIds: string[]) => void
   onCreateBrowserPanel: () => void
   onOpenWebPanel: (definition: WebPanelDefinition) => void
   onFocusSurface: () => void
@@ -382,6 +385,16 @@ export function WorktreeToolPane({
   } = useToolPicker()
   const { focusedSurface, emptyToolFocusRevision } = useWorkspaceSurfaceFocus()
   const focused = focusedSurface === 'tool'
+  const {
+    orderedItems: orderedTools,
+    announcement: reorderAnnouncement,
+    getItemProps: getReorderItemProps,
+    getHandleProps: getReorderHandleProps
+  } = useReorderableItems({
+    items: tools,
+    orientation: 'horizontal',
+    onReorder: onReorderPanels
+  })
   const toolPickerCommandRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLElement>(null)
   const restoredEmptyFocusRevisionRef = useRef(0)
@@ -522,7 +535,7 @@ export function WorktreeToolPane({
             role="tablist"
             aria-label={`${worktreeName} tool tabs`}
           >
-            {tools.map((panel, index) => {
+            {orderedTools.map((panel, index) => {
               const title =
                 panel.kind === 'web'
                   ? (webPanelRuntimeTitles[panel.id] ?? panel.title)
@@ -534,6 +547,7 @@ export function WorktreeToolPane({
               return (
                 <div
                   key={panel.id}
+                  {...getReorderItemProps(panel.id)}
                   className={cn(
                     'group/tool relative flex min-w-28 max-w-56 shrink-0 items-center rounded-md',
                     active ? 'bg-white/8 hover:bg-white/10' : 'hover:bg-white/6'
@@ -546,9 +560,13 @@ export function WorktreeToolPane({
                     className="min-w-0 flex-1 justify-start pr-8 hover:bg-transparent hover:text-zinc-400"
                     role="tab"
                     aria-selected={active}
-                    aria-keyshortcuts={
-                      focused && index < 9 ? `Meta+${index + 1}` : undefined
-                    }
+                    aria-keyshortcuts={[
+                      focused && index < 9 ? `Meta+${index + 1}` : null,
+                      'Alt+Shift+ArrowLeft',
+                      'Alt+Shift+ArrowRight'
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
                     aria-label={
                       panel.kind === 'browser'
                         ? `${
@@ -573,6 +591,7 @@ export function WorktreeToolPane({
                       event.preventDefault()
                       onClosePanel(panel, event.currentTarget)
                     }}
+                    {...getReorderHandleProps(panel.id)}
                   >
                     {panel.kind === 'browser' ? (
                       loading ? (
@@ -619,6 +638,9 @@ export function WorktreeToolPane({
                 </div>
               )
             })}
+            <span className="sr-only" role="status">
+              {reorderAnnouncement}
+            </span>
           </div>
           <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
             <PopoverTrigger asChild>

@@ -13,7 +13,12 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Schema from 'effect/Schema'
-import { browserPanels, projects, webPanels } from '../../database-schema'
+import {
+  browserPanels,
+  projects,
+  webPanels,
+  workspaceItemOrders
+} from '../../database-schema'
 import { DomainError } from '../../domain'
 import {
   PanelOperations,
@@ -241,32 +246,44 @@ export class ProjectSnapshotService {
 
                   worktree.dirty = dirty
                   worktree.terminals = terminals
-                  const [storedBrowserPanels, storedWebPanels] =
-                    yield* Effect.all(
-                      [
-                        Effect.promise(() =>
-                          database.db
-                            .select()
-                            .from(browserPanels)
-                            .where(eq(browserPanels.worktreeId, worktree.id))
-                            .orderBy(
-                              asc(browserPanels.createdAt),
-                              asc(browserPanels.id)
+                  const [
+                    storedBrowserPanels,
+                    storedWebPanels,
+                    storedToolOrder
+                  ] = yield* Effect.all(
+                    [
+                      Effect.promise(() =>
+                        database.db
+                          .select()
+                          .from(browserPanels)
+                          .where(eq(browserPanels.worktreeId, worktree.id))
+                          .orderBy(
+                            asc(browserPanels.createdAt),
+                            asc(browserPanels.id)
+                          )
+                      ),
+                      Effect.promise(() =>
+                        database.db
+                          .select()
+                          .from(webPanels)
+                          .where(eq(webPanels.worktreeId, worktree.id))
+                          .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+                      ),
+                      Effect.promise(() =>
+                        database.db
+                          .select()
+                          .from(workspaceItemOrders)
+                          .where(
+                            and(
+                              eq(workspaceItemOrders.worktreeId, worktree.id),
+                              eq(workspaceItemOrders.surface, 'tool')
                             )
-                        ),
-                        Effect.promise(() =>
-                          database.db
-                            .select()
-                            .from(webPanels)
-                            .where(eq(webPanels.worktreeId, worktree.id))
-                            .orderBy(
-                              asc(webPanels.createdAt),
-                              asc(webPanels.id)
-                            )
-                        )
-                      ],
-                      { concurrency: 'unbounded' }
-                    )
+                          )
+                          .orderBy(asc(workspaceItemOrders.position))
+                      )
+                    ],
+                    { concurrency: 'unbounded' }
+                  )
                   const definitions =
                     project.availability.state === 'available' &&
                     storedWebPanels.length > 0
@@ -278,7 +295,7 @@ export class ProjectSnapshotService {
                   const definitionsById = new Map(
                     definitions.map((definition) => [definition.id, definition])
                   )
-                  worktree.panels = [
+                  const panelSlots = [
                     ...terminals.map((terminal) => ({
                       id: `panel_${terminal.id}`,
                       kind: 'terminal' as const,
@@ -301,6 +318,36 @@ export class ProjectSnapshotService {
                     (left, right) =>
                       left.createdAt.localeCompare(right.createdAt) ||
                       left.id.localeCompare(right.id)
+                  )
+                  const toolPositionById = new Map(
+                    storedToolOrder.map((item) => [item.itemId, item.position])
+                  )
+                  const orderedTools = panelSlots
+                    .filter((panel) => panel.kind !== 'terminal')
+                    .sort((left, right) => {
+                      const leftPosition = toolPositionById.get(left.id)
+                      const rightPosition = toolPositionById.get(right.id)
+
+                      if (
+                        leftPosition !== undefined ||
+                        rightPosition !== undefined
+                      ) {
+                        return (
+                          (leftPosition ?? Number.MAX_SAFE_INTEGER) -
+                          (rightPosition ?? Number.MAX_SAFE_INTEGER)
+                        )
+                      }
+
+                      return (
+                        left.createdAt.localeCompare(right.createdAt) ||
+                        left.id.localeCompare(right.id)
+                      )
+                    })
+                  let toolIndex = 0
+                  worktree.panels = panelSlots.map((panel) =>
+                    panel.kind === 'terminal'
+                      ? panel
+                      : orderedTools[toolIndex++]!
                   )
                 })
               ),

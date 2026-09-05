@@ -164,6 +164,9 @@ export function integrationService(
     renameTerminal: run(
       application.terminals.renameTerminal.bind(application.terminals)
     ),
+    reorderTerminals: run(
+      application.terminals.reorderTerminals.bind(application.terminals)
+    ),
     terminateAllTerminals: run(
       application.terminals.terminateAllTerminals.bind(application.terminals)
     ),
@@ -256,6 +259,9 @@ export function integrationService(
       application.panels.openBrowserPanelFromTerminal.bind(application.panels)
     ),
     openWebPanel: run(application.panels.openWebPanel.bind(application.panels)),
+    reorderPanels: run(
+      application.panels.reorderPanels.bind(application.panels)
+    ),
     resolveWebPanelAsset: run(
       application.panels.resolveWebPanelAsset.bind(application.panels)
     ),

@@ -57,6 +57,7 @@ import {
   removePreviewResponseSchema,
   registerProjectSchema,
   removeWorktreeSchema,
+  reorderWorkspaceItemsSchema,
   requestWorkspaceOpenSchema,
   searchTreeFilesSchema,
   setWebPanelStorageSchema,
@@ -1111,6 +1112,30 @@ export function createApp({
             params.worktreeId!,
             body.sourceTerminalId
           )
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'PUT',
+      '/api/worktrees/:worktreeId/terminals/order',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(reorderWorkspaceItemsSchema)
+        yield* operation(() =>
+          service.terminals.reorderTerminals(params.worktreeId!, body.itemIds)
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
+    route(
+      'PUT',
+      '/api/worktrees/:worktreeId/panels/order',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(reorderWorkspaceItemsSchema)
+        yield* operation(() =>
+          service.panels.reorderPanels(params.worktreeId!, body.itemIds)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })

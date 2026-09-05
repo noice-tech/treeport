@@ -9,6 +9,8 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
 import * as Exit from 'effect/Exit'
+import { and, asc, eq } from 'drizzle-orm'
+import { workspaceItemOrders } from '../../database-schema'
 import { DomainError } from '../../domain'
 import type { WorktreeSetupTask } from '../../setup'
 import type { TerminalSessionBackend } from '../../terminal'
@@ -27,6 +29,7 @@ import {
 import { MutationLocks } from '../infrastructure/mutation-locks'
 import {
   ConfigPort,
+  DatabasePort,
   EventBusPort,
   TerminalHostPort
 } from '../infrastructure/ports'
@@ -99,6 +102,7 @@ export class TerminalService {
     worktree: WorktreeRecord
   ): TerminalEffect<TerminalRecord[]> {
     return Effect.gen(function* () {
+      const database = yield* DatabasePort
       const events = yield* EventBusPort
       const locks = yield* MutationLocks
       const terminalHost = yield* TerminalHostPort
@@ -124,6 +128,21 @@ export class TerminalService {
         }
       }
 
+      const storedOrder = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(workspaceItemOrders)
+          .where(
+            and(
+              eq(workspaceItemOrders.worktreeId, worktree.id),
+              eq(workspaceItemOrders.surface, 'terminal')
+            )
+          )
+          .orderBy(asc(workspaceItemOrders.position))
+      )
+      const positionById = new Map(
+        storedOrder.map((item) => [item.itemId, item.position])
+      )
       const terminals = sessions
         .map((terminal) => ({
           id: terminal.id,
@@ -137,7 +156,22 @@ export class TerminalService {
           createdAt: terminal.createdAt,
           updatedAt: terminal.updatedAt
         }))
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .sort((left, right) => {
+          const leftPosition = positionById.get(left.id)
+          const rightPosition = positionById.get(right.id)
+
+          if (leftPosition !== undefined || rightPosition !== undefined) {
+            return (
+              (leftPosition ?? Number.MAX_SAFE_INTEGER) -
+              (rightPosition ?? Number.MAX_SAFE_INTEGER)
+            )
+          }
+
+          return (
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.id.localeCompare(right.id)
+          )
+        })
       yield* terminalState.updateCloseOnSuccess(
         sessions.map((terminal) => ({
           terminalId: terminal.id,
@@ -167,6 +201,61 @@ export class TerminalService {
         }
       })
       return terminals
+    })
+  }
+
+  reorderTerminals(
+    worktreeId: string,
+    terminalIds: readonly string[]
+  ): TerminalEffect<void> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+    const listWorktreeTerminals = this.listWorktreeTerminals.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const projectStore = yield* ProjectStore
+      const worktree = yield* projectStore.getWorktree(worktreeId)
+      const terminals = yield* listWorktreeTerminals(worktree)
+      const currentIds = new Set(terminals.map((terminal) => terminal.id))
+      if (
+        terminalIds.length !== currentIds.size ||
+        terminalIds.some((terminalId) => !currentIds.has(terminalId))
+      ) {
+        return yield* Effect.fail(
+          new DomainError(
+            'STALE_WORKSPACE_ORDER',
+            'Terminal tabs changed before they could be reordered',
+            409
+          )
+        )
+      }
+
+      yield* Effect.promise(() =>
+        database.db.transaction(async (tx) => {
+          await tx
+            .delete(workspaceItemOrders)
+            .where(
+              and(
+                eq(workspaceItemOrders.worktreeId, worktreeId),
+                eq(workspaceItemOrders.surface, 'terminal')
+              )
+            )
+          await tx.insert(workspaceItemOrders).values(
+            terminalIds.map((itemId, position) => ({
+              worktreeId,
+              surface: 'terminal' as const,
+              itemId,
+              position
+            }))
+          )
+        })
+      )
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('worktree.updated', { worktreeId })
+      })
     })
   }
 

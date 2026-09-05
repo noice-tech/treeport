@@ -103,7 +103,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 13 })
+    ).toEqual({ count: 14 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -417,6 +417,7 @@ describe('SQLite migration and catalog ordering', () => {
     await initial.db.transaction(async (tx) => {
       await tx.run(sql`DROP INDEX terminal_presets_order_idx`)
       await tx.run(sql`DROP TABLE terminal_presets`)
+      await tx.run(sql`DROP TABLE workspace_item_orders`)
       await tx.run(sql`DROP INDEX projects_recent_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
       await tx.run(sql`
@@ -490,7 +491,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 13 })
+    ).toEqual({ count: 14 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -654,6 +655,7 @@ describe('SQLite migration and catalog ordering', () => {
         FROM terminal_presets_latest
       `)
       await tx.run(sql`DROP TABLE terminal_presets_latest`)
+      await tx.run(sql`DROP TABLE workspace_item_orders`)
       await tx.run(sql`DROP INDEX projects_recent_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
       await tx.run(sql`
@@ -944,6 +946,7 @@ describe('SQLite migration and catalog ordering', () => {
     await removeFolderProjectSchema(initial)
     await restoreVersion7WorktreeSchema(initial)
     await initial.db.transaction(async (tx) => {
+      await tx.run(sql`DROP TABLE workspace_item_orders`)
       await tx.run(sql`DROP INDEX projects_recent_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
       await tx.run(sql`
@@ -1026,6 +1029,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 13 })
+    ).toEqual({ count: 14 })
   })
 })
