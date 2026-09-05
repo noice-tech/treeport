@@ -166,11 +166,12 @@ describe('detached terminal host lifecycle', () => {
         }).then((response) => response.json())
       )
       const terminalId = created.terminal.id
+      // At 20 lines per second, 200 lines can omit the startup marker during
+      // a slow restart. Capture enough history for the full 45-second test.
+      const captureUrl = `${apiUrl}/api/terminals/${terminalId}/capture?lines=2000`
       await waitFor(async () => {
         const capture = captureSchema.parse(
-          await fetch(
-            `${apiUrl}/api/terminals/${terminalId}/capture?lines=200`
-          ).then((response) => response.json())
+          await fetch(captureUrl).then((response) => response.json())
         )
         return capture.content.includes('host-line-3') ? capture.content : null
       })
@@ -184,9 +185,7 @@ describe('detached terminal host lifecycle', () => {
 
       await runCli(['start'])
       const afterCrash = await waitFor(async () => {
-        const response = await fetch(
-          `${apiUrl}/api/terminals/${terminalId}/capture?lines=200`
-        ).catch(() => null)
+        const response = await fetch(captureUrl).catch(() => null)
         if (!response?.ok) {
           return null
         }
@@ -203,9 +202,7 @@ describe('detached terminal host lifecycle', () => {
       await runCli(['stop'])
       await runCli(['start'])
       const afterNormalRestart = await waitFor(async () => {
-        const response = await fetch(
-          `${apiUrl}/api/terminals/${terminalId}/capture?lines=200`
-        ).catch(() => null)
+        const response = await fetch(captureUrl).catch(() => null)
         if (!response?.ok) {
           return null
         }
