@@ -1094,6 +1094,7 @@ function WorkspaceApp() {
     submitWorktreeCreation,
     prepareRemoval,
     confirmRemoval,
+    removeWithoutCleanup,
     viewRemoval,
     retryRemoval
   } = useWorktreeWorkflows({
@@ -1709,6 +1710,7 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         onConfirm={confirmRemoval}
+        onSkipCleanup={removeWithoutCleanup}
         onRetry={(worktree) => void retryRemoval(worktree)}
       />
     </>

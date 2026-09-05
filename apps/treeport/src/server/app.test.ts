@@ -125,6 +125,7 @@ function fixture(webDist = '/missing') {
       confirmation: true,
       confirmationToken: 'a'.repeat(64),
       confirmDestructive: false,
+      skipCleanup: false,
       preview: removePreviewRecord,
       checkoutIdentity: null,
       prunable: false,
@@ -2061,7 +2062,8 @@ describe('HTTP API validation', () => {
     expect(removed.status).toBe(202)
     expect(service.beginRemove).toHaveBeenCalledWith('wt_1', {
       confirmationToken: 'a'.repeat(64),
-      confirmDestructive: true
+      confirmDestructive: true,
+      skipCleanup: false
     })
   })
 

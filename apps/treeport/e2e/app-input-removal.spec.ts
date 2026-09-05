@@ -214,7 +214,7 @@ test.describe('desktop terminal input and removal', () => {
       .toBe(true)
   })
 
-  test('shows cleanup progress, keeps a failed tree, and retries removal', async ({
+  test('shows cleanup progress, retries failure, and permits an explicit skip', async ({
     page
   }) => {
     const mocked = await mockApp(page)
@@ -291,29 +291,44 @@ test.describe('desktop terminal input and removal', () => {
     ).toBeVisible()
     await page.getByRole('button', { name: 'Remove tree' }).click()
     await expect.poll(() => mocked.removeRequests()).toBe(2)
-    mocked.setRemovalCleanup('completed', [
-      {
-        name: 'Drop database',
-        status: 'completed',
-        stdout: 'Database removed\n',
-        stderr: '',
-        exitCode: 0,
-        error: null,
-        outputTruncated: false
-      },
-      {
-        name: 'Remove cache',
-        status: 'completed',
-        stdout: 'Cache removed\n',
-        stderr: '',
-        exitCode: 0,
-        error: null,
-        outputTruncated: false
-      }
-    ])
+    mocked.setRemovalCleanup(
+      'failed',
+      [
+        {
+          name: 'Drop database',
+          status: 'failed',
+          stdout: '',
+          stderr: 'Legacy tree has no isolated database\n',
+          exitCode: 1,
+          error: 'exit 1',
+          outputTruncated: false
+        },
+        {
+          name: 'Remove cache',
+          status: 'pending',
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          error: null,
+          outputTruncated: false
+        }
+      ],
+      'Project cleanup command “Drop database” failed. Git kept the tree.'
+    )
+    await expect(
+      page.getByText(
+        'Removing without cleanup can leave project resources behind.'
+      )
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Remove without cleanup' }).click()
+    await expect.poll(() => mocked.removeRequests()).toBe(3)
+    expect(mocked.removeRequestBodies().at(-1)).toMatchObject({
+      confirmDestructive: true,
+      skipCleanup: true
+    })
     mocked.completeRemoval()
     await expect(
-      page.getByText('Treeport completed project cleanup and removed the tree.')
+      page.getByText('Treeport skipped project cleanup and removed the tree.')
     ).toBeVisible()
   })
 

@@ -227,7 +227,8 @@ treeport worktree create \
   --name <name> \
   [--from-current] [--json]
 
-treeport worktree remove <id-or-path-or-dot> [--force] [--json]
+treeport worktree remove <id-or-path-or-dot> \
+  [--force] [--skip-cleanup] [--json]
 ```
 
 `worktree create` and `spawn` select the registered project that contains the current folder when you omit `--project`.
@@ -244,7 +245,13 @@ Treeport changes tree names to lowercase slugs. It replaces spaces and punctuati
 
 Before removal, Treeport gets a current safety preview.
 
-`--force` confirms the reported Git warnings when removal is permitted. It does not skip configured cleanup commands.
+`--force` confirms the reported Git warnings when removal is permitted.
+
+`--force` does not skip configured cleanup commands by itself.
+
+Use `--force --skip-cleanup` to remove a tree without project cleanup.
+
+Skipped cleanup can leave project resources behind.
 
 Treeport stops tree terminals before cleanup. It runs cleanup before Git removes the worktree.
 

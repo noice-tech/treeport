@@ -163,7 +163,13 @@ If Treeport restarts, it does not repeat commands with a saved successful result
 
 Make each cleanup command safe to repeat. A later removal attempt starts a new cleanup sequence.
 
-`--force` confirms Git warnings. It does not skip cleanup.
+`--force` confirms Git warnings. It does not skip cleanup by itself.
+
+After cleanup fails, select **Remove without cleanup** to remove the tree.
+
+This action can leave project resources behind.
+
+For the CLI, use `--force --skip-cleanup` to do the same action.
 
 If a prunable tree cannot run configured cleanup safely, Treeport refuses the removal. Restore the tree or clean the resource manually.
 

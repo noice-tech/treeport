@@ -106,7 +106,11 @@ export class WorktreeService {
 
   beginRemove(
     worktreeId: string,
-    request: { confirmationToken: string; confirmDestructive: boolean }
+    request: {
+      confirmationToken: string
+      confirmDestructive: boolean
+      skipCleanup?: boolean
+    }
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     return this.removal.beginRemove(worktreeId, request)
   }

@@ -277,6 +277,7 @@ const removeOperationRequestSchema = Schema.Struct({
   confirmation: Schema.NullOr(Schema.Boolean),
   confirmationToken: nullableStringSchema,
   confirmDestructive: Schema.NullOr(Schema.Boolean),
+  skipCleanup: Schema.Boolean,
   preview: Schema.NullOr(removePreviewSchema),
   checkoutIdentity: Schema.NullOr(removalCheckoutIdentitySchema),
   prunable: Schema.NullOr(Schema.Boolean),

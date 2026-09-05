@@ -23,6 +23,7 @@ export function RemoveWorktreeDialog({
   onOpenChange,
   restoreFocusTo,
   onConfirm,
+  onSkipCleanup,
   onRetry
 }: {
   worktree: WorktreeRecord | null
@@ -32,6 +33,7 @@ export function RemoveWorktreeDialog({
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
   onConfirm: (worktree: WorktreeRecord, preview: RemovePreview) => void
+  onSkipCleanup: (worktree: WorktreeRecord, preview: RemovePreview) => void
   onRetry: (worktree: WorktreeRecord) => void
 }) {
   const destructive = Boolean(preview?.warnings.length)
@@ -73,7 +75,9 @@ export function RemoveWorktreeDialog({
                   ? 'Project cleanup failed. Git kept the tree.'
                   : 'Tree removal failed. Git kept the tree.'
                 : removalCompleted
-                  ? 'Treeport completed project cleanup and removed the tree.'
+                  ? cleanup?.status === 'skipped'
+                    ? 'Treeport skipped project cleanup and removed the tree.'
+                    : 'Treeport completed project cleanup and removed the tree.'
                   : operation
                     ? activeCommand
                       ? `Running cleanup command: ${activeCommand.name}`
@@ -162,20 +166,40 @@ export function RemoveWorktreeDialog({
                 </section>
               ))}
               {operation.error ? <p>{operation.error}</p> : null}
+              {cleanupFailed && preview.cleanup.commands.length > 0 ? (
+                <div className="warning danger">
+                  <strong>Cleanup can be skipped.</strong>
+                  <p>
+                    Removing without cleanup can leave project resources behind.
+                  </p>
+                </div>
+              ) : null}
             </div>
           )}
           <AlertDialogFooter>
             {operation ? (
               <>
                 {removalFailed ? (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    disabled={busy}
-                    onClick={() => onRetry(worktree)}
-                  >
-                    {busy ? 'Retrying…' : 'Retry'}
-                  </Button>
+                  <>
+                    {cleanupFailed && preview.cleanup.commands.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        disabled={busy}
+                        onClick={() => onSkipCleanup(worktree, preview)}
+                      >
+                        {busy ? 'Removing…' : 'Remove without cleanup'}
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={busy}
+                      onClick={() => onRetry(worktree)}
+                    >
+                      {busy ? 'Retrying…' : 'Retry'}
+                    </Button>
+                  </>
                 ) : null}
                 <AlertDialogCancel>Close</AlertDialogCancel>
               </>

@@ -411,7 +411,8 @@ export function useWorktreeWorkflows({
     worktree: WorktreeRecord,
     preview: RemovePreview,
     confirmDestructive: boolean,
-    staleRetriesRemaining: number
+    staleRetriesRemaining: number,
+    skipCleanup = false
   ): Promise<void> => {
     setRemovalStage(worktree.id, 'removing')
     try {
@@ -421,7 +422,8 @@ export function useWorktreeWorkflows({
             param: { worktreeId: worktree.id },
             json: {
               confirmationToken: preview.confirmationToken,
-              confirmDestructive
+              confirmDestructive,
+              skipCleanup
             }
           })
         )
@@ -495,8 +497,9 @@ export function useWorktreeWorkflows({
             await submitRemoval(
               worktree,
               freshPreview,
-              false,
-              staleRetriesRemaining - 1
+              skipCleanup,
+              staleRetriesRemaining - 1,
+              skipCleanup
             )
             return
           }
@@ -567,6 +570,18 @@ export function useWorktreeWorkflows({
     void submitRemoval(worktree, preview, preview.warnings.length > 0, 1)
   }
 
+  const removeWithoutCleanup = (
+    worktree: WorktreeRecord,
+    preview: RemovePreview
+  ) => {
+    if (removalGuardsRef.current.has(worktree.id)) {
+      return
+    }
+
+    removalGuardsRef.current.add(worktree.id)
+    void submitRemoval(worktree, preview, true, 1, true)
+  }
+
   const viewRemoval = (worktree: WorktreeRecord) => {
     const operation = (removalsQuery.data ?? []).find(
       (candidate): candidate is RemoveOperationRecord =>
@@ -609,6 +624,7 @@ export function useWorktreeWorkflows({
     submitWorktreeCreation,
     prepareRemoval,
     confirmRemoval,
+    removeWithoutCleanup,
     viewRemoval,
     retryRemoval
   }

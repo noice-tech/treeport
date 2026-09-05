@@ -2163,11 +2163,14 @@ async function main(args: string[]): Promise<void> {
     .description('Remove a linked tree')
     .argument('<id-or-path-or-dot>', 'Tree to remove')
     .option('--force', 'confirm destructive removal warnings')
+    .option('--skip-cleanup', 'remove without configured project cleanup')
     .option('--json', 'emit machine-readable JSON')
   worktreeRemoveCommand.action(async (identifier: string) => {
-    const { force: confirmed } = worktreeRemoveCommand.opts<{
-      force?: boolean
-    }>()
+    const { force: confirmed, skipCleanup: requestedSkipCleanup } =
+      worktreeRemoveCommand.opts<{
+        force?: boolean
+        skipCleanup?: boolean
+      }>()
     const worktree = await resolveWorktree(identifier)
     const preview = (
       await request(
@@ -2186,6 +2189,15 @@ async function main(args: string[]): Promise<void> {
       )
     }
 
+    const skipCleanup =
+      Boolean(requestedSkipCleanup) && preview.cleanup.commands.length > 0
+    if (skipCleanup && !confirmed) {
+      throw new CliError(
+        'Skipping project cleanup can leave project resources behind.\nRe-run with --force --skip-cleanup to confirm removal.',
+        5
+      )
+    }
+
     let operation = (
       await request(
         `/api/worktrees/${worktree.id}/remove`,
@@ -2194,7 +2206,8 @@ async function main(args: string[]): Promise<void> {
           method: 'POST',
           body: JSON.stringify({
             confirmationToken: preview.confirmationToken,
-            confirmDestructive: preview.warnings.length > 0
+            confirmDestructive: preview.warnings.length > 0 || skipCleanup,
+            skipCleanup
           })
         }
       )

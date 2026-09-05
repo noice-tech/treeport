@@ -194,7 +194,8 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
 
     if (pathname.endsWith('/remove')) {
       removeRequests += 1
-      removeRequestBodies.push(route.request().postDataJSON())
+      const removeRequest = route.request().postDataJSON()
+      removeRequestBodies.push(removeRequest)
       if (staleRemovePreview) {
         removePreviewOverride = staleRemovePreview
         staleRemovePreview = null
@@ -227,7 +228,8 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
         request: {
           confirmation: null,
           confirmationToken: 'a'.repeat(64),
-          confirmDestructive: false,
+          confirmDestructive: Boolean(removeRequest.confirmDestructive),
+          skipCleanup: Boolean(removeRequest.skipCleanup),
           preview: {
             worktreeId: worktree.id,
             name: worktree.name,
@@ -265,26 +267,29 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           phase: 'accepted',
           managedWrapperPath: worktree.managedWrapperPath,
           cleanupCommands: {
-            status:
-              (removePreviewOverride.cleanup?.commands.length ?? 0) > 0
+            status: removeRequest.skipCleanup
+              ? 'skipped'
+              : (removePreviewOverride.cleanup?.commands.length ?? 0) > 0
                 ? 'pending'
                 : 'completed',
             definitionHash:
               (removePreviewOverride.cleanup?.commands.length ?? 0) > 0
                 ? 'cleanup-definition'
                 : null,
-            skippedReason: null,
-            commands: (removePreviewOverride.cleanup?.commands ?? []).map(
-              (name) => ({
-                name,
-                status: 'pending',
-                stdout: '',
-                stderr: '',
-                exitCode: null,
-                error: null,
-                outputTruncated: false
-              })
-            )
+            skippedReason: removeRequest.skipCleanup
+              ? 'Project cleanup was skipped by user request'
+              : null,
+            commands: removeRequest.skipCleanup
+              ? []
+              : (removePreviewOverride.cleanup?.commands ?? []).map((name) => ({
+                  name,
+                  status: 'pending',
+                  stdout: '',
+                  stderr: '',
+                  exitCode: null,
+                  error: null,
+                  outputTruncated: false
+                }))
           }
         },
         result: null,

@@ -355,8 +355,16 @@ describe('API input validation', () => {
       })
     ).toEqual({
       confirmationToken,
-      confirmDestructive: true
+      confirmDestructive: true,
+      skipCleanup: false
     })
+    expect(
+      removeWorktreeSchema.parse({
+        confirmationToken,
+        confirmDestructive: true,
+        skipCleanup: true
+      })
+    ).toMatchObject({ skipCleanup: true })
     expect(
       removeWorktreeSchema.safeParse({
         confirmationToken: 'short',
