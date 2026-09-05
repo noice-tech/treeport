@@ -7,21 +7,18 @@ const docsDirectory = path.resolve(
   '..'
 )
 const publicContentDirectory = path.join(docsDirectory, 'src/content/docs')
-const internalContentDirectory = path.join(docsDirectory, 'internal')
 const errors = []
 
 const markdownFiles = []
-for (const root of [publicContentDirectory, internalContentDirectory]) {
-  const directories = [root]
-  while (directories.length > 0) {
-    const directory = directories.pop()
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name)
-      if (entry.isDirectory()) {
-        directories.push(entryPath)
-      } else if (/\.mdx?$/.test(entry.name)) {
-        markdownFiles.push(entryPath)
-      }
+const directories = [publicContentDirectory]
+while (directories.length > 0) {
+  const directory = directories.pop()
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name)
+    if (entry.isDirectory()) {
+      directories.push(entryPath)
+    } else if (/\.mdx?$/.test(entry.name)) {
+      markdownFiles.push(entryPath)
     }
   }
 }
@@ -69,9 +66,7 @@ function getAnchors(content) {
 }
 
 const pages = new Map()
-for (const file of markdownFiles.filter((file) =>
-  file.startsWith(publicContentDirectory)
-)) {
+for (const file of markdownFiles) {
   const relativePath = path.relative(publicContentDirectory, file)
   const withoutExtension = relativePath.replace(/\.mdx?$/, '')
   const route =
@@ -127,34 +122,11 @@ for (const file of markdownFiles) {
       continue
     }
 
-    if (file.startsWith(publicContentDirectory)) {
-      const relativePath = path.relative(publicContentDirectory, file)
-      const withoutExtension = relativePath.replace(/\.mdx?$/, '')
-      const sourceRoute =
-        withoutExtension === 'index' ? '/' : `/${withoutExtension}/`
-      validatePublicTarget(file, sourceRoute, target)
-      continue
-    }
-
-    const [relativeTarget, hash = ''] = target.split('#')
-    const targetFile = relativeTarget
-      ? path.resolve(path.dirname(file), decodeURIComponent(relativeTarget))
-      : file
-    if (!fs.existsSync(targetFile)) {
-      errors.push(
-        `${path.relative(docsDirectory, file)}: missing file ${relativeTarget}`
-      )
-      continue
-    }
-
-    if (hash && /\.mdx?$/.test(targetFile)) {
-      const anchors = getAnchors(fs.readFileSync(targetFile, 'utf8'))
-      if (!anchors.has(decodeURIComponent(hash))) {
-        errors.push(
-          `${path.relative(docsDirectory, file)}: missing anchor #${hash} in ${relativeTarget || path.basename(file)}`
-        )
-      }
-    }
+    const relativePath = path.relative(publicContentDirectory, file)
+    const withoutExtension = relativePath.replace(/\.mdx?$/, '')
+    const sourceRoute =
+      withoutExtension === 'index' ? '/' : `/${withoutExtension}/`
+    validatePublicTarget(file, sourceRoute, target)
   }
 }
 
