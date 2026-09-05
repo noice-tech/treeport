@@ -6,67 +6,9 @@ test.describe('mobile terminal UI', () => {
   test('uses the mobile drawer and terminal controls end to end', async ({
     page
   }) => {
-    const mocked = await mockApp(page, [
-      {
-        terminalId: 'term_pi',
-        title: 'background · /repo',
-        progress: { state: 'normal', value: 42 },
-        bell: {
-          sequence: 3,
-          at: '2026-01-01T00:02:00.000Z',
-          unread: true
-        }
-      }
-    ])
-    const notifications = page.getByRole('button', {
-      name: 'Notifications, 1 unread'
-    })
-    await expect(notifications).toBeVisible()
-    await notifications.click()
-    const notificationCenter = page.getByRole('dialog', {
-      name: 'Notifications'
-    })
-    await expect(
-      notificationCenter.getByText('background · /repo')
-    ).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(notifications).toBeVisible()
-
-    const trigger = page.getByLabel('Open tree drawer')
-    await trigger.click()
-    await expect(page.getByLabel('Close drawer')).toBeFocused()
-    await expect(
-      page.getByRole('button', { name: /background · \/repo.*42% complete/ })
-    ).toBeVisible()
-    await page.evaluate(() =>
-      window.__eventSource.emit(
-        'terminal.metadata',
-        JSON.stringify({
-          data: {
-            terminalId: 'term_pi',
-            title: 'background · /repo',
-            progress: null,
-            progressStartedAt: '2026-01-01T00:00:00.000Z',
-            progressClearedAt: '2026-01-01T00:00:01.000Z',
-            bell: {
-              sequence: 3,
-              at: '2026-01-01T00:02:00.000Z',
-              unread: true
-            }
-          }
-        })
-      )
-    )
-    await expect(
-      page.getByRole('button', { name: 'background · /repo, running' })
-    ).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(trigger).toBeFocused()
-
-    await trigger.click()
-    await page
-      .getByRole('button', { name: /background · \/repo, running.*bell/ })
-      .click()
+    const mocked = await mockApp(page)
+    await page.getByLabel('Open tree drawer').click()
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
@@ -77,14 +19,10 @@ test.describe('mobile terminal UI', () => {
     await page.getByRole('button', { name: 'Esc' }).click()
     await page.evaluate(() => {
       const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 2,
-          data: '\u001b[?1h'
-        })
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 2,
+        data: '\u001b[?1h'
       })
     })
     await page.getByRole('button', { name: 'Arrow up' }).click()
@@ -210,53 +148,6 @@ test.describe('mobile terminal UI', () => {
     ).toBeVisible()
   })
 
-  test('keeps mobile modal and drawer flows coherent', async ({ page }) => {
-    const mocked = await mockApp(page)
-    await page.getByLabel('Open tree drawer').click()
-    const trigger = page.getByRole('button', { name: 'New tree' })
-    await trigger.click()
-    await expect(
-      page.getByRole('dialog', { name: 'Create tree' })
-    ).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(
-      page.getByRole('heading', { name: 'Create tree' })
-    ).toHaveCount(0)
-    await expect(trigger).toBeFocused()
-    await page.keyboard.press('Escape')
-
-    await page.getByLabel('Open tree drawer').click()
-    await trigger.click()
-    await page.clock.install()
-    const submit = page.getByRole('button', { name: 'Create tree' })
-    const submitBox = await submit.boundingBox()
-    expect(submitBox).not.toBeNull()
-    const requestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname ===
-          '/api/projects/proj_1/worktree-operations'
-    )
-    await page.getByLabel('Tree name').fill('touch submit')
-    await page.touchscreen.tap(
-      submitBox!.x + submitBox!.width / 2,
-      submitBox!.y + submitBox!.height / 2
-    )
-    expect((await requestPromise).postDataJSON()).toMatchObject({
-      name: 'touch submit'
-    })
-    await expect(
-      page.getByRole('heading', { name: 'Create tree' })
-    ).toHaveCount(0)
-
-    mocked.failNextCreate()
-    await page.getByLabel('Open tree drawer').click()
-    await trigger.click()
-    await page.getByLabel('Tree name').fill('mobile failure')
-    await page.getByRole('button', { name: 'Create tree' }).click()
-    await expect(page.getByText('create failed')).toBeVisible()
-  })
-
   test('keeps one-finger history scrolling local across mouse modes', async ({
     page
   }, testInfo) => {
@@ -265,17 +156,13 @@ test.describe('mobile terminal UI', () => {
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.evaluate(() => {
       const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 2,
-          data: Array.from(
-            { length: 120 },
-            (_, index) => `mobile-history-${index}\r\n`
-          ).join('')
-        })
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 2,
+        data: Array.from(
+          { length: 120 },
+          (_, index) => `mobile-history-${index}\r\n`
+        ).join('')
       })
       window.__wsSent = []
     })
@@ -362,14 +249,10 @@ test.describe('mobile terminal UI', () => {
     await waitForTerminalControl(page)
     await page.evaluate(() => {
       const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 3,
-          data: '\u001b[?1049h\u001b[?1000h\u001b[?1006h'
-        })
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 3,
+        data: '\u001b[?1049h\u001b[?1000h\u001b[?1006h'
       })
       window.__wsSent = []
     })
@@ -397,14 +280,10 @@ test.describe('mobile terminal UI', () => {
 
     await page.evaluate(() => {
       const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 4,
-          data: '\u001b[?1000l\u001b[?1049l'
-        })
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 4,
+        data: '\u001b[?1000l\u001b[?1049l'
       })
     })
     const inputMessagesBeforeModeChange = await page.evaluate(

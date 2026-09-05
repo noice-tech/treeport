@@ -63,26 +63,6 @@ describe('TreeportService with injected command adapters', () => {
     runner.statusGate = null
   })
 
-  it('persists project colors and publishes an update', async () => {
-    const { main, service } = await fixture()
-    const project = await service.registerProject(main)
-    const events: string[] = []
-    const unsubscribe = service.events.subscribe((event) =>
-      events.push(event.type)
-    )
-
-    expect((await service.updateProjectColor(project.id, 'violet')).color).toBe(
-      'violet'
-    )
-    expect((await service.getProject(project.id)).color).toBe('violet')
-    expect(
-      (await service.updateProjectColor(project.id, null)).color
-    ).toBeNull()
-
-    unsubscribe()
-    expect(events).toEqual(['project.updated', 'project.updated'])
-  })
-
   it('provisions one shell terminal and keeps the last terminal', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)

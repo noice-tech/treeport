@@ -3,11 +3,6 @@ interface TreeportTestSocketMessage {
   data?: string
 }
 
-interface TreeportTestBrowserCommand {
-  type: string
-  [key: string]: unknown
-}
-
 interface TreeportTestTerminalState {
   terminalId: string
   cols: number
@@ -23,8 +18,13 @@ interface TreeportTestWebSocket {
   terminalId: string
   streamId: string
   generation: number
-  onmessage: (event: { data: string }) => void
-  onclose: () => void
+  readyState: number
+  clientId: string
+  cols: number
+  rows: number
+  revision: number
+  receive(event: string, payload: import('@treeport/shared').JsonValue): void
+  close(): void
   applyTerminalState(state: TreeportTestTerminalState): void
 }
 
@@ -42,15 +42,12 @@ type TreeportTestDesktopCommand =
 
 interface Window {
   __attentionRequests: number
-  __browserCommands: TreeportTestBrowserCommand[]
-  __browserNavigationCompleted: string | null
   __delayTakeControl: boolean
   __dispatchDesktopCommand(command: TreeportTestDesktopCommand): void
   __dispatchDesktopFullscreen(fullscreen: boolean): void
   __dispatchTerminalSelectionRelease(): void
   __eventSource: {
-    disconnect(): void
-    emit(name: string, source?: string): void
+    emit(name: string, source: string): void
   }
   __lastWs: TreeportTestWebSocket
   __openedDesktopFileUrls: string[]
@@ -58,9 +55,6 @@ interface Window {
   __openedTerminalLinks: Array<Parameters<Window['open']>>
   __pasteTerminalFile(): { files: number; prevented: boolean }
   __releaseTakeControl: (() => void) | null
-  __repeatBrowserState(): void
-  __setBrowserLoading(loading: boolean): void
-  __setBrowserUrl(url: string): void
   __restoreStorageGetItem(): void
   __suppressInitialTitle: boolean
   __terminalStateListener: boolean

@@ -48,10 +48,10 @@
       "cache": false
     },
     "//#test:unit": {
-      "dependsOn": ["@treeport/treeport#build"],
+      "dependsOn": ["@treeport/shared#build"],
       "cache": false
     },
-    "//#test:integration": {
+    "//#test:integration:run": {
       "dependsOn": ["@treeport/treeport#build"],
       "cache": false
     }

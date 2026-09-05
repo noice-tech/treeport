@@ -35,7 +35,7 @@ const activePhases = new Set<ApplicationUpdateStatus['phase']>([
   'rollback'
 ])
 
-export function backendUpdateEnabled(
+function backendUpdateEnabled(
   desktopClient: boolean,
   hostname: string
 ): boolean {

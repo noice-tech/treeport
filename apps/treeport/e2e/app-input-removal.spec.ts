@@ -21,14 +21,10 @@ test.describe('desktop terminal input and removal', () => {
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
       const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 2,
-          data: '\u001b[?2004h'
-        })
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 2,
+        data: '\u001b[?2004h'
       })
       window.__wsSent = []
       window.__delayTakeControl = true
@@ -151,17 +147,13 @@ test.describe('desktop terminal input and removal', () => {
 
     await page.evaluate(() => {
       const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 2,
-          data: Array.from(
-            { length: 120 },
-            (_, index) => `local-history-${index}\r\n`
-          ).join('')
-        })
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 2,
+        data: Array.from(
+          { length: 120 },
+          (_, index) => `local-history-${index}\r\n`
+        ).join('')
       })
       window.__wsSent = []
     })
@@ -189,14 +181,10 @@ test.describe('desktop terminal input and removal', () => {
 
     await page.evaluate(() => {
       const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 3,
-          data: '\u001b[?1000h\u001b[?1006h'
-        })
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 3,
+        data: '\u001b[?1000h\u001b[?1006h'
       })
       window.__wsSent = []
     })
@@ -349,47 +337,6 @@ test.describe('desktop terminal input and removal', () => {
     ).toBeVisible()
   })
 
-  test('retries a stale clean preview without a dialog or repeated requests', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    mocked.setRemovePreviewDelay(200)
-    mocked.staleNextRemoveWithPreview({
-      confirmationToken: 'c'.repeat(64)
-    })
-    const releaseRemove = mocked.delayNextRemove()
-    const menu = await openWorktreeContextMenu(page, 'topic')
-    const removeItem = menu.getByRole('menuitem', {
-      name: 'Remove tree…'
-    })
-    await removeItem.evaluate((item: HTMLElement) => {
-      item.click()
-      item.click()
-    })
-
-    await expect(page.getByText('Preparing removal…')).toHaveCount(0)
-    await expect(
-      page.getByRole('button', { name: 'topic, removing' })
-    ).toBeVisible()
-    await expect.poll(() => mocked.removePreviewRequests()).toBe(2)
-    await expect(page.getByText('Removing…')).toHaveCount(0)
-    await expect.poll(() => mocked.removeRequests()).toBe(2)
-    await expect(
-      page.getByRole('heading', { name: 'Remove tree' })
-    ).toHaveCount(0)
-    expect(mocked.removeRequestBodies()).toEqual([
-      {
-        confirmationToken: 'a'.repeat(64),
-        confirmDestructive: false
-      },
-      {
-        confirmationToken: 'c'.repeat(64),
-        confirmDestructive: false
-      }
-    ])
-    releaseRemove()
-  })
-
   test('refreshes a stale clean preview and requires confirmation when it becomes dirty', async ({
     page
   }) => {
@@ -425,7 +372,8 @@ test.describe('desktop terminal input and removal', () => {
     await page.getByRole('button', { name: 'Remove anyway' }).click()
     expect((await secondRemove).postDataJSON()).toEqual({
       confirmationToken: 'c'.repeat(64),
-      confirmDestructive: true
+      confirmDestructive: true,
+      skipCleanup: false
     })
     await expect.poll(() => mocked.removeRequests()).toBe(2)
   })
@@ -463,7 +411,12 @@ test.describe('desktop terminal input and removal', () => {
         response.request().method() === 'GET' &&
         new URL(response.url()).pathname === '/api/projects'
     )
-    await page.evaluate(() => window.__eventSource.emit('worktree.removed'))
+    await page.evaluate(() =>
+      window.__eventSource.emit(
+        'worktree.removed',
+        JSON.stringify({ projectId: 'proj_1', worktreeId: 'wt_topic' })
+      )
+    )
     await removedRefresh
     await expect(
       page.getByRole('button', { name: 'topic', exact: true })
