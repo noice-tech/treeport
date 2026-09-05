@@ -117,6 +117,27 @@ In this mode, Forge stops before packaging when a signing or notarization value 
 
 Do not distribute a local build as a stable release.
 
+## App icon
+
+`apps/desktop/assets/treeport-icon.svg` is the source for the macOS icon.
+
+Its 1024-pixel canvas contains an 824-pixel tile with 100-pixel transparent margins.
+The corners use a 185-pixel radius with 60% smoothing.
+The shadow stays inside the canvas. Do not remove the transparent margins.
+
+After you edit the SVG, run this command on macOS:
+
+```sh
+pnpm --filter @treeport/desktop generate:icon
+```
+
+Commit the SVG and `apps/desktop/assets/Treeport.icns` together.
+The export contains all ten standard and Retina representations, from 16 to 1024 pixels.
+Forge uses this ICNS for the application and DMG. Release builds do not regenerate it.
+
+Compare the result beside native macOS icons on light and dark backgrounds, including small Dock sizes.
+This is a flattened icon, not a layered Icon Composer asset with system-controlled appearances.
+
 ## Automatic update design
 
 A packaged macOS application checks `https://update.electronjs.org/noice-tech/treeport` at startup.
