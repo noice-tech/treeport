@@ -30,6 +30,7 @@ import {
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { cn } from '../../lib/utils'
 import { terminalProgressLabel } from '../../terminal-session'
+import { ReorderableItems } from '../../use-reorderable-items'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
 import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import type {
@@ -119,6 +120,7 @@ export interface WorkspaceTreeProps {
   onRetryProjects: () => void
   onSelectTerminal: (terminal: TerminalRecord) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
+  onReorderTerminals: (worktree: WorktreeRecord, terminalIds: string[]) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
@@ -146,6 +148,7 @@ export function WorkspaceTree({
   onRetryProjects,
   onSelectTerminal: selectTerminal,
   onCloseTerminal: closeTerminal,
+  onReorderTerminals: reorderTerminals,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
   onViewRemoval: viewRemoval,
@@ -350,117 +353,132 @@ export function WorkspaceTree({
                       className="terminal-list mr-0 ml-4 gap-px border-white/6 pr-0 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5"
                       aria-label={`${worktree.name} terminal tabs`}
                     >
-                      {worktree.terminals.map((terminal, index) => {
-                        const title =
-                          runtimeTitles.get(terminal.id) || terminal.name
-                        const needsAttention = bellAttention.has(terminal.id)
-                        const progress = terminalProgress.get(terminal.id)
-                        const working =
-                          !!progress &&
-                          !needsAttention &&
-                          progress.state !== 'paused' &&
-                          progress.state !== 'error'
-                        const status = [
-                          progress
-                            ? terminalProgressLabel(progress)
-                            : terminal.status,
-                          needsAttention ? 'bell' : null
-                        ]
-                          .filter(Boolean)
-                          .join(', ')
-                        const shortcutIndex =
-                          selectedWorktree?.id === worktree.id && index < 9
-                            ? index + 1
-                            : null
-                        return (
-                          <SidebarMenuSubItem
-                            key={terminal.id}
-                            className="group/terminal relative min-w-0"
-                          >
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={selectedTerminalId === terminal.id}
+                      <ReorderableItems
+                        items={worktree.terminals}
+                        orientation="vertical"
+                        onReorder={(terminalIds) =>
+                          reorderTerminals(worktree, terminalIds)
+                        }
+                      >
+                        {(terminal, itemProps, handleProps, index) => {
+                          const title =
+                            runtimeTitles.get(terminal.id) || terminal.name
+                          const needsAttention = bellAttention.has(terminal.id)
+                          const progress = terminalProgress.get(terminal.id)
+                          const working =
+                            !!progress &&
+                            !needsAttention &&
+                            progress.state !== 'paused' &&
+                            progress.state !== 'error'
+                          const status = [
+                            progress
+                              ? terminalProgressLabel(progress)
+                              : terminal.status,
+                            needsAttention ? 'bell' : null
+                          ]
+                            .filter(Boolean)
+                            .join(', ')
+                          const shortcutIndex =
+                            selectedWorktree?.id === worktree.id && index < 9
+                              ? index + 1
+                              : null
+                          return (
+                            <SidebarMenuSubItem
+                              key={terminal.id}
+                              {...itemProps}
+                              className="group/terminal relative min-w-0"
                             >
-                              <Button
-                                variant="ghost"
-                                type="button"
-                                className={cn(
-                                  'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
-                                  selectedTerminalId === terminal.id
-                                    ? 'selected bg-cyan-400/8! text-cyan-50'
-                                    : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
-                                )}
-                                onClick={() => selectTerminal(terminal)}
-                                onMouseDown={(event) => {
-                                  if (event.button === 1) {
-                                    event.preventDefault()
-                                  }
-                                }}
-                                onAuxClick={(event) => {
-                                  if (event.button !== 1) {
-                                    return
-                                  }
-
-                                  event.preventDefault()
-                                  closeTerminal(terminal)
-                                }}
-                                aria-label={`${title}, ${status}`}
-                                aria-keyshortcuts={
-                                  focusedSurface === 'terminal' && shortcutIndex
-                                    ? `Meta+${shortcutIndex}`
-                                    : undefined
-                                }
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={selectedTerminalId === terminal.id}
                               >
-                                <TerminalStatusIcon
-                                  program={
-                                    terminalPrograms.get(terminal.id) ?? null
-                                  }
-                                  progress={progress ?? null}
-                                  attention={needsAttention}
-                                  exited={terminal.status === 'exited'}
-                                  className="size-4! min-[701px]:size-3.5!"
-                                />
-                                <span
+                                <Button
+                                  variant="ghost"
+                                  type="button"
                                   className={cn(
-                                    'truncate',
-                                    working && 'text-cyan-300',
-                                    needsAttention && 'text-amber-200'
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                    selectedTerminalId === terminal.id
+                                      ? 'selected bg-cyan-400/8! text-cyan-50'
+                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
                                   )}
-                                  aria-hidden="true"
+                                  onClick={() => selectTerminal(terminal)}
+                                  onMouseDown={(event) => {
+                                    if (event.button === 1) {
+                                      event.preventDefault()
+                                    }
+                                  }}
+                                  onAuxClick={(event) => {
+                                    if (event.button !== 1) {
+                                      return
+                                    }
+
+                                    event.preventDefault()
+                                    closeTerminal(terminal)
+                                  }}
+                                  aria-label={`${title}, ${status}`}
+                                  aria-keyshortcuts={[
+                                    focusedSurface === 'terminal' &&
+                                    shortcutIndex
+                                      ? `Meta+${shortcutIndex}`
+                                      : null,
+                                    'Alt+Shift+ArrowUp',
+                                    'Alt+Shift+ArrowDown'
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' ')}
+                                  {...handleProps}
                                 >
-                                  {title}
-                                </span>
-                                {focusedSurface === 'terminal' &&
-                                shortcutIndex ? (
-                                  <kbd
-                                    className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
+                                  <TerminalStatusIcon
+                                    program={
+                                      terminalPrograms.get(terminal.id) ?? null
+                                    }
+                                    progress={progress ?? null}
+                                    attention={needsAttention}
+                                    exited={terminal.status === 'exited'}
+                                    className="size-4! min-[701px]:size-3.5!"
+                                  />
+                                  <span
+                                    className={cn(
+                                      'truncate',
+                                      working && 'text-cyan-300',
+                                      needsAttention && 'text-amber-200'
+                                    )}
                                     aria-hidden="true"
                                   >
-                                    ⌘{shortcutIndex}
-                                  </kbd>
-                                ) : (
-                                  <span aria-hidden="true" />
-                                )}
-                              </Button>
-                            </SidebarMenuSubButton>
-                            <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
-                              <SidebarAction
-                                label={`Close ${title}`}
-                                tooltip={
-                                  worktree.terminals.length === 1
-                                    ? 'Every tree keeps at least one terminal'
-                                    : 'Close terminal'
-                                }
-                                disabled={worktree.terminals.length === 1}
-                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
-                                onClick={() => closeTerminal(terminal)}
-                              >
-                                <XMarkIcon />
-                              </SidebarAction>
-                            </div>
-                          </SidebarMenuSubItem>
-                        )
-                      })}
+                                    {title}
+                                  </span>
+                                  {focusedSurface === 'terminal' &&
+                                  shortcutIndex ? (
+                                    <kbd
+                                      className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
+                                      aria-hidden="true"
+                                    >
+                                      ⌘{shortcutIndex}
+                                    </kbd>
+                                  ) : (
+                                    <span aria-hidden="true" />
+                                  )}
+                                </Button>
+                              </SidebarMenuSubButton>
+                              <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
+                                <SidebarAction
+                                  label={`Close ${title}`}
+                                  tooltip={
+                                    worktree.terminals.length === 1
+                                      ? 'Every tree keeps at least one terminal'
+                                      : 'Close terminal'
+                                  }
+                                  disabled={worktree.terminals.length === 1}
+                                  className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
+                                  onClick={() => closeTerminal(terminal)}
+                                >
+                                  <XMarkIcon />
+                                </SidebarAction>
+                              </div>
+                            </SidebarMenuSubItem>
+                          )
+                        }}
+                      </ReorderableItems>
                     </SidebarMenuSub>
                   </SidebarMenuItem>
                 ))}

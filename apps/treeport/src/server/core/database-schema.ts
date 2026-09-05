@@ -114,6 +114,34 @@ export const terminalBellStates = sqliteTable(
   ]
 )
 
+export const workspaceItemOrders = sqliteTable(
+  'workspace_item_orders',
+  {
+    worktreeId: text('worktree_id')
+      .notNull()
+      .references(() => worktrees.id, { onDelete: 'cascade' }),
+    surface: text({ enum: ['terminal', 'tool'] }).notNull(),
+    itemId: text('item_id').notNull(),
+    position: integer().notNull()
+  },
+  (table) => [
+    uniqueIndex('workspace_item_orders_item_idx').on(
+      table.surface,
+      table.itemId
+    ),
+    check(
+      'workspace_item_orders_surface_check',
+      sql`${table.surface} IN ('terminal','tool')`
+    ),
+    check('workspace_item_orders_position_check', sql`${table.position} >= 0`),
+    index('workspace_item_orders_worktree_idx').on(
+      table.worktreeId,
+      table.surface,
+      table.position
+    )
+  ]
+)
+
 export const browserPanels = sqliteTable(
   'browser_panels',
   {

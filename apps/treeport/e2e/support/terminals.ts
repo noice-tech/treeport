@@ -17,6 +17,24 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
     if (
+      pathname === '/api/worktrees/wt_topic/terminals/order' &&
+      route.request().method() === 'PUT'
+    ) {
+      const body: { itemIds: string[] } = route.request().postDataJSON()
+      const worktree = state.worktrees.find(
+        (candidate) => candidate.id === 'wt_topic'
+      )!
+      const terminalsById = new Map(
+        worktree.terminals.map((terminal) => [terminal.id, terminal])
+      )
+      worktree.terminals = body.itemIds.map((terminalId) =>
+        terminalsById.get(terminalId)!
+      )
+      await route.fulfill({ json: { ok: true } })
+      return
+    }
+
+    if (
       pathname === '/api/worktrees/wt_topic/terminals' &&
       route.request().method() === 'POST'
     ) {

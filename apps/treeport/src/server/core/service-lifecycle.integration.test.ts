@@ -80,6 +80,32 @@ describe('TreeportService with injected command adapters', () => {
     )
     expect(terminalOpened.panel.id).not.toBe(opened.panel.id)
     expect(popupOpened.panel.id).not.toBe(opened.panel.id)
+
+    const secondTerminal = await service.createTerminal(worktree.id, 'Second', [
+      'sh'
+    ])
+    const terminalOrder = [
+      secondTerminal.id,
+      ...(await service.getWorktreeSnapshot(worktree.id)).terminals
+        .map((item) => item.id)
+        .filter((terminalId) => terminalId !== secondTerminal.id)
+    ]
+    await service.reorderTerminals(worktree.id, terminalOrder)
+    await service.reorderPanels(worktree.id, [
+      popupOpened.panel.id,
+      terminalOpened.panel.id,
+      opened.panel.id
+    ])
+    const reordered = await service.getWorktreeSnapshot(worktree.id)
+    expect(reordered.terminals.map((item) => item.id)).toEqual(terminalOrder)
+    expect(
+      reordered.panels
+        .filter((panel) => panel.kind !== 'terminal')
+        .map((panel) => panel.id)
+    ).toEqual([popupOpened.panel.id, terminalOpened.panel.id, opened.panel.id])
+    await expect(
+      service.reorderTerminals(worktree.id, [terminal.id])
+    ).rejects.toMatchObject({ code: 'STALE_WORKSPACE_ORDER' })
     expect(
       events.filter((event) => event.type === 'panel.open_requested')
     ).toEqual(
@@ -125,7 +151,8 @@ describe('TreeportService with injected command adapters', () => {
         'panel.created',
         'panel.updated',
         'panel.open_requested',
-        'panel.removed'
+        'panel.removed',
+        'worktree.updated'
       ])
     )
     unsubscribe()

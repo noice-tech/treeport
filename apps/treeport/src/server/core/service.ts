@@ -91,6 +91,7 @@ type TerminalApi = Pick<
   | 'getTerminalForAttachment'
   | 'refreshTerminalStatus'
   | 'renameTerminal'
+  | 'reorderTerminals'
   | 'terminateAllTerminals'
 >
 type TerminalPresetApi = Pick<
@@ -125,6 +126,7 @@ type PanelApi = Pick<
   | 'openBrowserPanelFromPanel'
   | 'openBrowserPanelFromTerminal'
   | 'openWebPanel'
+  | 'reorderPanels'
   | 'resolveWebPanelAsset'
   | 'setWebPanelPermissionGrant'
   | 'setWebPanelStorage'

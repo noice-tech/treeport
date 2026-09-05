@@ -34,6 +34,12 @@ A focus outline shows the active tab group. Numbered selection operates only in 
 
 Only the first nine tabs in each group have numbered shortcuts.
 
+Drag a terminal row or tool tab to change its position. Treeport saves the order and shares it with connected clients.
+
+For a focused terminal row, press `Alt+Shift+Up` or `Alt+Shift+Down` to move it.
+
+For a focused tool tab, press `Alt+Shift+Left` or `Alt+Shift+Right` to move it.
+
 In the terminal tab group, `Cmd+T` creates a shell immediately.
 
 In the tool tab group, `Cmd+T` opens the tool picker.

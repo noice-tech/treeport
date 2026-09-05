@@ -1191,6 +1191,133 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toBeVisible()
   })
 
+  test('reorders terminal rows and tool tabs without changing the active tab', async ({
+    page
+  }) => {
+    const dragWithPointer = async (
+      source: ReturnType<typeof page.getByRole>,
+      target: ReturnType<typeof page.getByRole>
+    ) => {
+      const sourceBox = await source.boundingBox()
+      const targetBox = await target.boundingBox()
+      if (!sourceBox || !targetBox) {
+        throw new Error('Could not find reorder targets')
+      }
+
+      await page.mouse.move(
+        sourceBox.x + sourceBox.width / 2,
+        sourceBox.y + sourceBox.height / 2
+      )
+      await page.mouse.down()
+      await page.mouse.move(
+        targetBox.x + targetBox.width / 2,
+        targetBox.y + targetBox.height / 2,
+        { steps: 10 }
+      )
+      await page.mouse.up()
+    }
+
+    await mockApp(page)
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+
+    const createTerminalRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
+    await page
+      .getByRole('dialog', { name: 'New panel' })
+      .getByRole('button', { name: 'Shell' })
+      .click()
+    await createTerminalRequest
+
+    const terminalTabs = page.getByRole('list', {
+      name: 'topic terminal tabs'
+    })
+    const firstTerminal = terminalTabs.getByRole('button', {
+      name: /^(?:zsh · \/worktrees\/topic|Pi),/
+    })
+    const secondTerminal = terminalTabs.getByRole('button', {
+      name: /^(?:dev · \/worktrees\/topic|Shell),/
+    })
+    const terminalOrderRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PUT' &&
+        new URL(request.url()).pathname ===
+          '/api/worktrees/wt_topic/terminals/order'
+    )
+    await dragWithPointer(secondTerminal, firstTerminal)
+    expect((await terminalOrderRequest).postDataJSON()).toEqual({
+      itemIds: ['term_dev', 'term_pi']
+    })
+    await expect(page).toHaveURL(/\/terminals\/term_dev$/)
+    await page.keyboard.press('Meta+2')
+    await expect(page).toHaveURL(/\/terminals\/term_pi$/)
+
+    await page.getByRole('button', { name: 'Toggle side panel' }).click()
+    const tools = page.getByRole('region', { name: 'topic tool tab group' })
+    await tools
+      .getByRole('button', { name: 'Review, web panel, Project' })
+      .click()
+    await tools.getByRole('button', { name: 'Open another tool' }).click()
+    const createBrowserRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/worktrees/wt_topic/browser-panels'
+    )
+    await page.keyboard.press('Enter')
+    await createBrowserRequest
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+
+    const browserTab = tools.getByRole('tab', {
+      name: 'Browser',
+      exact: true
+    })
+    const reviewTab = tools.getByRole('tab', { name: 'Review, web panel' })
+    const panelOrderRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PUT' &&
+        new URL(request.url()).pathname ===
+          '/api/worktrees/wt_topic/panels/order'
+    )
+    await dragWithPointer(browserTab, reviewTab)
+    expect((await panelOrderRequest).postDataJSON()).toEqual({
+      itemIds: ['browser_panel_1', 'panel_1']
+    })
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await page.keyboard.press('Meta+2')
+    await expect(page).toHaveURL(/\/panels\/panel_1$/)
+
+    await page.reload()
+    await tools.getByRole('tab', { name: 'Review, web panel' }).click()
+    await page.keyboard.press('Meta+1')
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    const closePanelRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/panels/browser_panel_1'
+    )
+    await page.getByRole('button', { name: 'Close Browser' }).click()
+    await closePanelRequest
+    await expect(page).toHaveURL(/\/panels\/panel_1$/)
+
+    await terminalTabs.getByRole('button', { name: /^(?:zsh|Pi),/ }).click()
+    await page.keyboard.press('Meta+1')
+    await expect(page).toHaveURL(/\/terminals\/term_dev$/)
+    const closeTerminalRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/terminals/term_dev'
+    )
+    await terminalTabs
+      .getByRole('button', { name: /^(?:dev · \/worktrees\/topic|Shell),/ })
+      .click({ button: 'middle' })
+    await closeTerminalRequest
+    await expect(page).toHaveURL(/\/terminals\/term_pi$/)
+  })
+
   test('launches repository presets and keeps global choices available while repository configuration refreshes', async ({
     page
   }) => {

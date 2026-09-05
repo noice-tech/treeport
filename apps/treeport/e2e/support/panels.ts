@@ -91,6 +91,22 @@ export async function createPanelMock(
     const panelAssetMatch = /^\/api\/web-panels\/([^/]+)\/assets\/(.+)$/.exec(
       pathname
     )
+    const panelOrderMatch = /^\/api\/worktrees\/([^/]+)\/panels\/order$/.exec(
+      pathname
+    )
+    if (panelOrderMatch && route.request().method() === 'PUT') {
+      const body: { itemIds: string[] } = route.request().postDataJSON()
+      const worktree = state.worktrees.find(
+        (candidate) => candidate.id === panelOrderMatch[1]
+      )!
+      const panelsById = new Map(
+        worktree.panels.map((panel) => [panel.id, panel])
+      )
+      worktree.panels = body.itemIds.map((panelId) => panelsById.get(panelId)!)
+      await route.fulfill({ json: { ok: true } })
+      return
+    }
+
     if (panelAssetMatch && route.request().method() === 'GET') {
       const panel = state.worktrees
         .flatMap((worktree) => worktree.panels)

@@ -202,6 +202,106 @@ function WorkspaceApp() {
       ) ?? [],
     [selectedWorktree]
   )
+  const reorderTerminals = useCallback(
+    (worktree: WorktreeRecord, itemIds: string[]) => {
+      queryClient.setQueryData<ProjectRecord[]>(
+        projectsQueryOptions.queryKey,
+        (current) =>
+          current?.map((project) => ({
+            ...project,
+            worktrees: project.worktrees.map((candidate) => {
+              if (candidate.id !== worktree.id) {
+                return candidate
+              }
+
+              const terminalsById = new Map(
+                candidate.terminals.map((terminal) => [terminal.id, terminal])
+              )
+              return {
+                ...candidate,
+                terminals: itemIds.map((terminalId) =>
+                  terminalsById.get(terminalId)!
+                )
+              }
+            })
+          }))
+      )
+      void parseResponse(
+        rpc.api.worktrees[':worktreeId'].terminals.order.$put({
+          param: { worktreeId: worktree.id },
+          json: { itemIds }
+        })
+      ).then(
+        () =>
+          queryClient.invalidateQueries({
+            queryKey: projectsQueryOptions.queryKey
+          }),
+        (error) => {
+          notifyError(error, {
+            operation: `reorder terminals in tree “${worktree.name}”`
+          })
+          return queryClient.invalidateQueries({
+            queryKey: projectsQueryOptions.queryKey
+          })
+        }
+      )
+    },
+    [queryClient]
+  )
+  const reorderTools = useCallback(
+    (itemIds: string[]) => {
+      if (!selectedWorktree) {
+        return
+      }
+
+      queryClient.setQueryData<ProjectRecord[]>(
+        projectsQueryOptions.queryKey,
+        (current) =>
+          current?.map((project) => ({
+            ...project,
+            worktrees: project.worktrees.map((worktree) => {
+              if (worktree.id !== selectedWorktree.id) {
+                return worktree
+              }
+
+              const panelsById = new Map(
+                worktree.panels.map((panel) => [panel.id, panel])
+              )
+              const orderedTools = itemIds.map((panelId) =>
+                panelsById.get(panelId)!
+              )
+              let toolIndex = 0
+              return {
+                ...worktree,
+                panels: worktree.panels.map((panel) =>
+                  panel.kind === 'terminal' ? panel : orderedTools[toolIndex++]!
+                )
+              }
+            })
+          }))
+      )
+      void parseResponse(
+        rpc.api.worktrees[':worktreeId'].panels.order.$put({
+          param: { worktreeId: selectedWorktree.id },
+          json: { itemIds }
+        })
+      ).then(
+        () =>
+          queryClient.invalidateQueries({
+            queryKey: projectsQueryOptions.queryKey
+          }),
+        (error) => {
+          notifyError(error, {
+            operation: `reorder tools in tree “${selectedWorktree.name}”`
+          })
+          return queryClient.invalidateQueries({
+            queryKey: projectsQueryOptions.queryKey
+          })
+        }
+      )
+    },
+    [queryClient, selectedWorktree]
+  )
   const rememberedActivePanel = selectedWorktreeTools.find(
     (panel) => panel.id === activePanelByWorktree[selectedWorktree?.id ?? '']
   )
@@ -612,9 +712,11 @@ function WorkspaceApp() {
           }))
       )
       if (selectedPanel?.id === panel.id) {
-        const target = worktree
-          ? targetForWorktree(projects, worktree, selectedTerminalId)
-          : null
+        const target = nextTool
+          ? targetForPanel(projects, nextTool)
+          : worktree
+            ? targetForWorktree(projects, worktree, selectedTerminalId)
+            : null
         if (target) {
           await navigateToWorkspace(target, true)
         }
@@ -1336,6 +1438,7 @@ function WorkspaceApp() {
           onRetryProjects={() => void projectsQuery.refetch()}
           onSelectTerminal={selectTerminal}
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
+          onReorderTerminals={reorderTerminals}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
           onViewRemoval={viewRemoval}
@@ -1410,6 +1513,7 @@ function WorkspaceApp() {
                 }
                 onSelectPanel={selectPanel}
                 onClosePanel={requestClosePanel}
+                onReorderPanels={reorderTools}
                 onCreateBrowserPanel={() =>
                   createBrowserPanel.mutate({ worktree: selectedWorktree })
                 }
