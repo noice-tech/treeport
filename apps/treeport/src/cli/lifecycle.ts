@@ -250,7 +250,22 @@ function matchesOwnership(
 }
 
 async function readState(): Promise<DaemonRecord | null> {
-  return readJson(localPaths().statePath, daemonRecordSchema)
+  const paths = localPaths()
+  // The ownership lock exists during migrations, before daemon.json is published.
+  const starting = await fs
+    .readFile(paths.lockPath, 'utf8')
+    .then((value) => daemonRecordSchema.parse(JSON.parse(value)))
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') {
+        return null
+      }
+
+      throw new Error(
+        `Cannot verify daemon ownership at ${paths.lockPath}. Inspect the daemon log before starting or stopping Treeport.`,
+        { cause: error }
+      )
+    })
+  return starting ?? readJson(paths.statePath, daemonRecordSchema)
 }
 
 async function removeStaleState(state: DaemonRecord): Promise<void> {

@@ -988,11 +988,18 @@ describe('SQLite migration and catalog ordering', () => {
       '--> statement-breakpoint\nCREATE TABLE migration_will_rollback(id TEXT);\n--> statement-breakpoint\nTHIS IS NOT SQL;\n'
     )
 
+    const reportedSnapshots: string[] = []
     await expect(
       openDatabase(filePath, {
-        migrationsFolder: brokenMigrations
+        migrationsFolder: brokenMigrations,
+        onMigrationSnapshot: async (snapshotPath) => {
+          await fs.access(snapshotPath)
+          reportedSnapshots.push(snapshotPath)
+        }
       })
     ).rejects.toThrow()
+    expect(reportedSnapshots).toHaveLength(1)
+    await expect(fs.access(reportedSnapshots[0]!)).resolves.toBeUndefined()
     const failedClient = createClient({ url: pathToFileURL(filePath).href })
     const failed = drizzle(failedClient)
     expect(

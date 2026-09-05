@@ -54,7 +54,11 @@ export default defineConfig({
         {
           label: 'Getting started',
           items: [
-            { label: 'Install Treeport', slug: 'getting-started/installation' }
+            { label: 'Install Treeport', slug: 'getting-started/installation' },
+            {
+              label: 'Recover after an update',
+              slug: 'getting-started/update-recovery'
+            }
           ]
         },
         {

@@ -201,6 +201,9 @@ jobs:
           console.log(`Published one GitHub Release: ${release.html_url}`)
           NODE
 
+      - name: Verify public updater discovery on both Mac architectures
+        run: node apps/desktop/scripts/check-update-feed.mjs "$RELEASE_VERSION"
+
       - name: Remove temporary Apple credentials
         if: always()
         run: |

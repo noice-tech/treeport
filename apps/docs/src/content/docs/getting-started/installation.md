@@ -33,6 +33,8 @@ Select this control to restart the client and install the update.
 
 A desktop update does not upgrade or restart the selected backend.
 
+If installation fails, see [Recover after an update](/getting-started/update-recovery/).
+
 The desktop client checks the selected backend version before it loads Treeport.
 
 If the backend needs an update, run `treeport update` on that computer. Then, select **Retry**.
@@ -96,7 +98,11 @@ Your user must have write access to the global npm prefix. Treeport never uses `
 
 If the prefix is not writable, install Node and npm under your user account. Then, install Treeport globally again.
 
-Installations older than the first release that supports updates need one final manual npm update.
+Installations without self-update support need one manual npm update.
+
+Old tmux-backed releases also need a one-time terminal shutdown before the upgrade.
+
+See [Recover after an update](/getting-started/update-recovery/) for the commands, failure recovery, and snapshot restoration.
 
 ## Connect the desktop client
 

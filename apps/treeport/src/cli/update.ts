@@ -15,7 +15,8 @@ import {
 import { serviceInstalled, serviceStatus, serviceStop } from './service.js'
 import {
   readUpdateStartupReport,
-  type UpdateMigrationState
+  type UpdateMigrationState,
+  type UpdateStartupReport
 } from '../server/update-startup.js'
 
 const PACKAGE_NAME = '@treeport/treeport'
@@ -184,6 +185,30 @@ export interface LocalUpdateErrorDetails {
   logPath?: string
   snapshotPaths?: string[]
   terminalIds?: string[]
+}
+
+export function formatLocalUpdateError(
+  message: string,
+  details: {
+    cause?: string | undefined
+    recovery?: string | undefined
+    logPath?: string | undefined
+    snapshotPaths?: string[] | undefined
+  } = {}
+): string {
+  return [
+    ...new Set(
+      [
+        message,
+        details.cause,
+        details.recovery,
+        details.logPath ? `Daemon log: ${details.logPath}` : null,
+        ...(details.snapshotPaths ?? []).map(
+          (snapshot) => `Pre-migration snapshot: ${snapshot}`
+        )
+      ].filter(Boolean)
+    )
+  ].join('\n')
 }
 
 export interface LocalUpdateOptions {
@@ -381,6 +406,59 @@ async function terminalIds(apiUrl: string): Promise<string[]> {
     .flatMap((worktree) => worktree.terminals)
     .map((terminal) => terminal.id)
     .sort()
+}
+
+// Missing evidence after a possible startup must never authorize an older binary.
+export function updateMigrationState(
+  operation: Pick<
+    UpdateOperation,
+    'operationId' | 'toVersion' | 'phase' | 'migrationState'
+  >,
+  report: UpdateStartupReport | null
+): UpdateMigrationState {
+  if (operation.migrationState === 'advanced') {
+    return 'advanced'
+  }
+
+  if (
+    report?.operationId === operation.operationId &&
+    report.targetVersion === operation.toVersion
+  ) {
+    return report.migrationState
+  }
+
+  return ['stop', 'activate'].includes(operation.phase) &&
+    operation.migrationState === 'not_started'
+    ? 'not_started'
+    : 'unknown'
+}
+
+async function stopUpdateDaemon(
+  lifecycle: UpdateOperation['daemonLifecycle']
+): Promise<void> {
+  if (lifecycle === 'service') {
+    const stopped = await serviceStop()
+    if (stopped.administratorCommand) {
+      throw new LocalUpdateError(
+        'UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED',
+        'The service requires administrator action and was not stopped.',
+        { phase: 'stop' }
+      )
+    }
+
+    const deadline = Date.now() + 7_000
+    while ((await daemonStatus()).state) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          'Treeport could not verify that the service daemon stopped. Inspect the daemon log before changing the installed version.'
+        )
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  } else {
+    await daemonDown()
+  }
 }
 
 async function startThroughStableEntrypoint(
@@ -679,6 +757,7 @@ export async function runLocalUpdate(
     updatedAt: new Date().toISOString()
   }
   let recoveryOperation: UpdateOperation | null = null
+  let recoveryReport: UpdateStartupReport | null = null
   const save = async (phase: LocalUpdatePhase) => {
     operation = { ...operation, phase, updatedAt: new Date().toISOString() }
     if (recoveryOperation && !DESTRUCTIVE_PHASES.has(phase)) {
@@ -710,12 +789,21 @@ export async function runLocalUpdate(
       DESTRUCTIVE_PHASES.has(staleOperation.phase) &&
       !(await daemonStatus()).running
     ) {
+      await stopUpdateDaemon(staleOperation.daemonLifecycle)
       const staleReport = await readUpdateStartupReport(paths.dataDir)
-      const rollbackUnsafe = Boolean(
-        staleReport?.operationId === staleOperation.operationId &&
-        ['advanced', 'unknown'].includes(staleReport.migrationState)
+      staleOperation.migrationState = updateMigrationState(
+        staleOperation,
+        staleReport
+      )
+      const rollbackUnsafe = ['advanced', 'unknown'].includes(
+        staleOperation.migrationState
       )
       if (rollbackUnsafe) {
+        recoveryReport =
+          staleReport?.operationId === staleOperation.operationId &&
+          staleReport.targetVersion === staleOperation.toVersion
+            ? staleReport
+            : null
         if (
           staleOperation.previousTarget &&
           operation.activeTarget === staleOperation.previousTarget
@@ -726,7 +814,9 @@ export async function runLocalUpdate(
             {
               phase: 'recovery_required',
               operationId: staleOperation.operationId,
-              migrationState: staleReport?.migrationState ?? 'unknown',
+              migrationState: staleOperation.migrationState,
+              logPath: recoveryReport?.logPath ?? paths.logPath,
+              snapshotPaths: recoveryReport?.snapshotPaths ?? [],
               recovery:
                 'Install the same or a newer Treeport release and inspect the daemon log.'
             }
@@ -869,6 +959,8 @@ export async function runLocalUpdate(
           phase: 'recovery_required',
           operationId: recoveryOperation.operationId,
           migrationState: recoveryOperation.migrationState,
+          logPath: recoveryReport?.logPath ?? paths.logPath,
+          snapshotPaths: recoveryReport?.snapshotPaths ?? [],
           recovery:
             'Install the next Treeport release when it is available and run `treeport update` again.'
         }
@@ -1089,6 +1181,8 @@ export async function runLocalUpdate(
       )
     }
 
+    operation.migrationState =
+      recoveryOperation?.migrationState ?? 'not_started'
     operation.daemonWasRunning =
       (daemonBefore.running && daemonBefore.verified) ||
       recoveryOperation !== null
@@ -1120,18 +1214,7 @@ export async function runLocalUpdate(
     await save('stop')
     progress('Stopping the Treeport daemon and preserving terminals…')
     if (operation.daemonWasRunning) {
-      if (operation.daemonLifecycle === 'service') {
-        const stopped = await serviceStop()
-        if (stopped.administratorCommand) {
-          throw new LocalUpdateError(
-            'UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED',
-            'The service requires administrator action and was not stopped.',
-            { phase: 'stop', operationId }
-          )
-        }
-      } else {
-        await daemonDown()
-      }
+      await stopUpdateDaemon(operation.daemonLifecycle)
     }
 
     await save('activate')
@@ -1182,9 +1265,21 @@ export async function runLocalUpdate(
         targetVersion: release.version,
         createdAt: new Date().toISOString()
       })
-      await fs.rm(path.join(updateDirectory, 'startup-report.json'), {
-        force: true
-      })
+      // Seed only lifecycle evidence, before any new daemon can open the database.
+      await writeJson(path.join(updateDirectory, 'startup-report.json'), {
+        schemaVersion: 1,
+        operationId,
+        targetVersion: release.version,
+        instanceId: null,
+        migrationState: operation.migrationState,
+        ready: false,
+        error: null,
+        logPath: paths.logPath,
+        snapshotPaths: recoveryReport?.snapshotPaths ?? [],
+        updatedAt: new Date().toISOString()
+      } satisfies UpdateStartupReport)
+      operation.migrationState =
+        operation.migrationState === 'advanced' ? 'advanced' : 'unknown'
       await save('restart')
       progress(
         `Restarting the ${
@@ -1209,8 +1304,7 @@ export async function runLocalUpdate(
         daemonAfter = await daemonStatus()
         report = await readUpdateStartupReport(paths.dataDir)
       }
-      operation.migrationState =
-        report?.operationId === operationId ? report.migrationState : 'unknown'
+      operation.migrationState = updateMigrationState(operation, report)
       if (
         !daemonAfter.running ||
         !daemonAfter.verified ||
@@ -1336,30 +1430,33 @@ export async function runLocalUpdate(
       )
     }
 
-    const startupReport = await readUpdateStartupReport(paths.dataDir)
-    if (startupReport?.operationId === operationId) {
-      operation.migrationState = startupReport.migrationState
-    }
+    // Stop service retries before reading evidence or changing the active binary.
+    const stopError = operation.daemonWasRunning
+      ? await stopUpdateDaemon(operation.daemonLifecycle).then(
+          () => null,
+          (cause: unknown) =>
+            cause instanceof Error ? cause.message : String(cause)
+        )
+      : null
+    const observedReport = await readUpdateStartupReport(paths.dataDir)
+    const startupReport =
+      observedReport?.operationId === operationId &&
+      observedReport.targetVersion === operation.toVersion
+        ? observedReport
+        : null
+    operation.migrationState = updateMigrationState(operation, startupReport)
 
-    const rollbackSafe = ['not_started', 'unchanged'].includes(
-      operation.migrationState
-    )
+    const rollbackSafe =
+      !stopError &&
+      ['not_started', 'unchanged'].includes(operation.migrationState)
     if (!rollbackSafe) {
-      const serviceStopError =
-        operation.daemonLifecycle === 'service'
-          ? await serviceStop().then(
-              () => null,
-              (cause) =>
-                cause instanceof Error ? cause.message : String(cause)
-            )
-          : null
-      operation.recoveryAction = serviceStopError
-        ? `Keep the new version installed. Stop the service, then inspect the daemon log. Service stop failed: ${serviceStopError}`
+      operation.recoveryAction = stopError
+        ? `Keep the new version installed. Stop the daemon, then inspect the daemon log. Stop failed: ${stopError}`
         : 'Keep the new version installed. Inspect the daemon log and repair with the same or a newer Treeport release.'
       await save('recovery_required')
       throw new LocalUpdateError(
         'UPDATE_RECOVERY_REQUIRED',
-        'The updated daemon did not become healthy after database migration began. Treeport did not start the older daemon.',
+        'Treeport could not prove that rollback is safe. Treeport did not start the older daemon.',
         {
           operationId,
           phase: failedPhase,
@@ -1367,6 +1464,9 @@ export async function runLocalUpdate(
           toVersion: operation.toVersion,
           migrationState: operation.migrationState,
           rollback: { attempted: false, safe: false, succeeded: false },
+          cause:
+            startupReport?.error ??
+            (error instanceof Error ? error.message : String(error)),
           logPath: startupReport?.logPath ?? paths.logPath,
           snapshotPaths: startupReport?.snapshotPaths ?? [],
           recovery: operation.recoveryAction
@@ -1417,6 +1517,8 @@ export async function runLocalUpdate(
           succeeded: rollbackError === null
         },
         cause: error instanceof Error ? error.message : String(error),
+        logPath: startupReport?.logPath ?? paths.logPath,
+        snapshotPaths: startupReport?.snapshotPaths ?? [],
         recovery: operation.recoveryAction
       }
     )
