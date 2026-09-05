@@ -4,11 +4,14 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as NodeHttpServerRequest from '@effect/platform-node/NodeHttpServerRequest'
 import * as HttpApp from '@effect/platform/HttpApp'
 import * as HttpRouter from '@effect/platform/HttpRouter'
 import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import {
+  presenceUpdateSchema,
+  presenceResponseSchema,
   apiErrorBodySchema,
   applicationUpdateStatusSchema,
   browseDirectoryQuerySchema,
@@ -121,7 +124,8 @@ import {
 import type { ApplicationUpdateManager } from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
-import { isLoopbackAddress } from './request-security'
+import { authenticatedPrincipals, isLoopbackAddress } from './request-security'
+import type { WorkspacePresenceManager } from './workspace-presence'
 import { networkTelemetry } from './network-telemetry'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
@@ -200,6 +204,7 @@ interface AppDependencies {
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata: TerminalMetadataManager
   browserSessions?: BrowserSessionManager
+  presence: WorkspacePresenceManager
   rpcHttpApp?: HttpApp.Default<never, Scope.Scope>
   webDist?: string
 }
@@ -368,6 +373,7 @@ export function createApp({
   applicationUpdate,
   terminalMetadata: metadata,
   browserSessions,
+  presence,
   rpcHttpApp,
   webDist
 }: AppDependencies): TreeportHttpApp {
@@ -432,6 +438,57 @@ export function createApp({
     })
   })
   const routes = [
+    route(
+      'POST',
+      '/api/presence',
+      Effect.gen(function* () {
+        const request = yield* serverRequest
+        const identity = authenticatedPrincipals.get(
+          NodeHttpServerRequest.toIncomingMessage(request)
+        )
+        if (!identity) {
+          return yield* Effect.fail(
+            new DomainError(
+              'AUTHENTICATION_REQUIRED',
+              'An authenticated request is required',
+              401
+            )
+          )
+        }
+
+        const body = yield* requestBody(presenceUpdateSchema)
+        if (body.worktreeId !== null) {
+          const worktree = yield* operation(() =>
+            service.projects.getWorktreeSnapshot(body.worktreeId!)
+          )
+          if (
+            body.focusedPanelId !== null &&
+            !worktree.panels.some((panel) => panel.id === body.focusedPanelId)
+          ) {
+            return yield* Effect.fail(
+              new DomainError(
+                'INVALID_PRESENCE_PANEL',
+                'The focused panel must belong to this tree',
+                400
+              )
+            )
+          }
+        } else if (body.focusedPanelId !== null) {
+          return yield* Effect.fail(
+            new DomainError(
+              'INVALID_PRESENCE_PANEL',
+              'A focused panel requires a tree',
+              400
+            )
+          )
+        }
+
+        yield* operation(() => presence.update(identity, body))
+        return jsonContractResponse(presenceResponseSchema, { identity }, 200, {
+          'cache-control': 'no-store'
+        })
+      })
+    ),
     route(
       'GET',
       '/api/panels/:panelId/files',

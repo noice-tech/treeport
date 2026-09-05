@@ -21,7 +21,12 @@ import { ApplicationDaemons } from './core/services/infrastructure/application-r
 import { createApplicationUpdateManager } from './application-update'
 import { BrowserSessionManager } from './browser-sessions'
 import { acquireDaemonOwnership } from './daemon-ownership'
-import { authorizeRequest, rejectHttpRequest } from './request-security'
+import {
+  authenticatedPrincipals,
+  authorizeRequest,
+  rejectHttpRequest
+} from './request-security'
+import { WorkspacePresenceManager } from './workspace-presence'
 import { createSocketServer } from './socket-server'
 import { makeRpcHttpApp } from './rpc-server'
 import { acquireTerminalMetadataManager } from './terminal-metadata'
@@ -150,8 +155,20 @@ async function main(): Promise<void> {
       )
     )
 
+    const presence = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(() => new WorkspacePresenceManager(service.events)),
+          (manager) => Effect.sync(() => manager.dispose())
+        ),
+        resourceScope
+      )
+    )
     const rpcHttpApp = await service.runEffect(
-      Scope.extend(makeRpcHttpApp(service, terminalMetadata), resourceScope)
+      Scope.extend(
+        makeRpcHttpApp(service, terminalMetadata, presence),
+        resourceScope
+      )
     )
     const app = createApp({
       service,
@@ -160,6 +177,7 @@ async function main(): Promise<void> {
       applicationUpdate,
       terminalMetadata,
       browserSessions,
+      presence,
       rpcHttpApp
     })
     const effectListener = await service.runEffect(
@@ -178,6 +196,10 @@ async function main(): Promise<void> {
               if (!security.allowed) {
                 rejectHttpRequest(request, response, security)
                 return
+              }
+
+              if (security.principal) {
+                authenticatedPrincipals.set(request, security.principal)
               }
 
               service.handleWebPanelDevelopmentRequest(

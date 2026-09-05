@@ -15,7 +15,7 @@ Your tailnet ACLs and grants control access. Each permitted user can control Tre
 Do not use Tailscale Funnel, a public proxy, an arbitrary reverse proxy, or a direct network listener.
 :::
 
-A tagged Tailscale device does not supply a user identity. Thus, a tagged device cannot use Treeport remote access.
+A tagged client device does not supply a user identity. Use a user-owned device to connect. The server can be tagged.
 
 ## Enable remote access
 
@@ -48,6 +48,20 @@ Local access does not change. Browsers and commands on the host continue to use 
 You can install Treeport on a virtual private server. Keep the daemon on loopback, and use Tailscale Serve for private HTTPS.
 
 Do not make Treeport available through the public address of the server.
+
+## See other people in a workspace
+
+When another person opens the same workspace, Treeport shows their name above the workspace.
+Select the people button to see their focused panel or background status.
+
+Treeport uses the connecting device's Tailscale identity. Your own tabs do not count as other people.
+Local connections appear as **Local user**, because they do not supply a Tailscale identity.
+
+Focus comes from the browser. It does not prove that a person is reading or typing.
+It does not change terminal control or access permissions.
+
+Treeport shares workspace and panel presence, not terminal input or browser URLs. It does not save presence history.
+Disconnected tabs disappear after their presence expires. Presence can take up to 45 seconds to expire after the last update.
 
 ## Connect the desktop client
 

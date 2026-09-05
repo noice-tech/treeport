@@ -17,12 +17,14 @@ import type { TreeportService } from './core/index'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
 import { networkTelemetry } from './network-telemetry'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import type { WorkspacePresenceManager } from './workspace-presence'
 
 const EVENT_QUEUE_CAPACITY = 256
 
 export function makeRpcHttpApp(
   service: TreeportService,
-  terminalMetadata: TerminalMetadataManager
+  terminalMetadata: TerminalMetadataManager,
+  presence: WorkspacePresenceManager
 ): Effect.Effect<
   HttpApp.Default<never, Scope.Scope>,
   never,
@@ -115,6 +117,7 @@ export function makeRpcHttpApp(
               ]).pipe(Effect.asVoid)
             })
             const terminalMetadataSnapshot = terminalMetadata.snapshot()
+            const presenceSnapshot = presence.snapshot()
             const representedEventCount = queuedEvents.length
             const [webPanels, browserPanels] = yield* Effect.all([
               service.panels.listWebPanels(),
@@ -138,7 +141,8 @@ export function makeRpcHttpApp(
                 at: new Date().toISOString(),
                 terminalMetadata: terminalMetadataSnapshot,
                 webPanels,
-                browserPanels
+                browserPanels,
+                presence: presenceSnapshot
               }
             })
             queuedEvents.splice(0, representedEventCount)

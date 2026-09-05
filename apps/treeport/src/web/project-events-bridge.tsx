@@ -8,7 +8,8 @@ import {
   type EventsSnapshot,
   type NetworkProductEvent,
   type ProductEventDataMap,
-  type ProjectRecord
+  type ProjectRecord,
+  type WorkspacePresence
 } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
@@ -25,9 +26,12 @@ export function useProjectEventsBridge(
   ) => void,
   onWorkspaceOpenRequested?: (
     request: ProductEventDataMap['workspace.open_requested']
-  ) => void
+  ) => void,
+  onPresenceChanged?: (viewers: readonly WorkspacePresence[]) => void
 ): boolean {
   const queryClient = useQueryClient()
+  const onPresenceChangedRef = useRef(onPresenceChanged)
+  onPresenceChangedRef.current = onPresenceChanged
   const onPanelOpenRequestedRef = useRef(onPanelOpenRequested)
   onPanelOpenRequestedRef.current = onPanelOpenRequested
   const onWorkspaceOpenRequestedRef = useRef(onWorkspaceOpenRequested)
@@ -76,10 +80,16 @@ export function useProjectEventsBridge(
     const refreshProjects = () => projectRefreshes.schedule()
     const snapshot = (payload: EventsSnapshot) => {
       terminalSessions.replaceRuntimeMetadata(payload.terminalMetadata)
+      onPresenceChangedRef.current?.(payload.presence)
       setEventsDisconnected(false)
       refresh()
     }
     const productEvent = (event: NetworkProductEvent) => {
+      if (event.type === 'presence.changed') {
+        onPresenceChangedRef.current?.(event.data.viewers)
+        return
+      }
+
       if (event.type === 'terminal.created') {
         let targetFound = false
         queryClient.setQueryData<ProjectRecord[]>(
@@ -200,6 +210,7 @@ export function useProjectEventsBridge(
                   cause
                 )
                 setEventsDisconnected(true)
+                onPresenceChangedRef.current?.([])
               })
         ),
         Effect.zipRight(Effect.sleep(500))

@@ -975,7 +975,8 @@ describe('CLI context and machine output', () => {
                   at: timestamp,
                   terminalMetadata: [observedMetadata],
                   webPanels: [],
-                  browserPanels: []
+                  browserPanels: [],
+                  presence: []
                 }
               })
               if (

@@ -38,6 +38,19 @@ export async function mockApp(
     })
   })
 
+  await page.route('**/api/presence', (route) =>
+    route.fulfill({
+      json: {
+        identity: {
+          source: 'local',
+          login: null,
+          name: null,
+          profilePicture: null
+        }
+      }
+    })
+  )
+
   const { state, ...projects } = await createProjectMock(page, options)
   const updates = await createUpdateMock(page, options)
   const presets = await createPresetMock(page, options)

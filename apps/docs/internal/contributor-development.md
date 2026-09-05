@@ -19,6 +19,22 @@ The driver prints the local application URL.
 
 One listener supplies the web interface, API, terminal WebSockets, and Vite hot reload.
 
+## Preview workspace presence
+
+To show a simulated collaborator, start development with this flag:
+
+```sh
+VITE_TREEPORT_MOCK_PRESENCE=1 pnpm dev
+```
+
+Open a workspace. Select **Bob (demo) is here** to see the focus details.
+The simulated collaborator follows your selected workspace and panel.
+
+This flag adds display data only. It does not change authentication or send a simulated identity to the daemon.
+Production builds ignore the flag.
+
+Restart development without the flag to remove the simulated collaborator.
+
 ## Start private remote development
 
 Install Tailscale and connect the development computer:
