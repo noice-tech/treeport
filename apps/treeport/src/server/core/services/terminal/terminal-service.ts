@@ -5,6 +5,7 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
+import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
 import * as Exit from 'effect/Exit'
@@ -33,6 +34,7 @@ import {
   TerminalHostPort
 } from '../infrastructure/ports'
 import { ProjectStore } from '../project/project-store'
+import { currentTraceContext } from '../../../tracing'
 import { TerminalState } from './terminal-state'
 
 const now = (): string => new Date().toISOString()
@@ -57,6 +59,14 @@ export interface TerminalLaunchOptions {
 }
 
 export class TerminalService {
+  private readonly launchVerifications = new Map<
+    string,
+    {
+      result: Deferred.Deferred<WorktreeRecord, DomainError<unknown>>
+      users: number
+    }
+  >()
+
   private listProjects() {
     return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
       snapshots.listProjects()
@@ -427,6 +437,10 @@ export class TerminalService {
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
       const terminalId = id('term')
+      yield* Effect.annotateCurrentSpan({
+        'treeport.terminal.id': terminalId,
+        'treeport.worktree.id': worktree.id
+      })
       const shellCommand = options?.shellCommand ?? null
       const interactiveShell = !argv && shellCommand === null
       const commandArgv = argv
@@ -480,15 +494,31 @@ export class TerminalService {
         session.setupError = options.setup.error
       }
 
-      yield* Effect.tryPromise({
-        try: () => terminalHost.createTerminal(session),
-        catch: (error) =>
-          new DomainError(
-            'TERMINAL_CREATE_FAILED',
-            error instanceof Error ? error.message : String(error),
-            500
-          )
-      })
+      yield* Effect.gen(function* () {
+        const trace = yield* currentTraceContext
+        yield* Effect.tryPromise({
+          try: () => terminalHost.createTerminal(session, trace ?? undefined),
+          catch: (error) =>
+            new DomainError(
+              'TERMINAL_CREATE_FAILED',
+              error instanceof Error ? error.message : String(error),
+              500
+            )
+        })
+      }).pipe(
+        Effect.withSpan('treeport.terminal_host.ipc.create', {
+          kind: 'client',
+          attributes: {
+            'treeport.terminal.id': terminalId,
+            'treeport.worktree.id': worktree.id,
+            'treeport.terminal.launch_kind': interactiveShell
+              ? 'shell'
+              : shellCommand
+                ? 'shell_command'
+                : 'argv'
+          }
+        })
+      )
 
       const terminal: TerminalRecord = {
         id: terminalId,
@@ -527,20 +557,93 @@ export class TerminalService {
   ): TerminalEffect<TerminalRecord> {
     const executeCreateTerminal = this.executeCreateTerminal.bind(this)
 
-    return Effect.gen(function* () {
-      const terminalMutations = yield* TerminalMutations
-      return yield* terminalMutations.enqueue(
-        worktreeId,
-        executeCreateTerminal(worktreeId, name, argv, options)
-      )
-    })
+    return Effect.uninterruptibleMask((restore) =>
+      Effect.gen(this, function* () {
+        const applicationFibers = yield* ApplicationFibers
+        const observations = yield* ProjectObservationOperations
+        const projectStore = yield* ProjectStore
+        const terminalMutations = yield* TerminalMutations
+        const candidate = {
+          result: yield* Deferred.make<WorktreeRecord, DomainError<unknown>>(),
+          users: 1
+        }
+        const verification = yield* Effect.sync(() => {
+          const active = this.launchVerifications.get(worktreeId)
+          if (active) {
+            active.users += 1
+            return active
+          }
+
+          this.launchVerifications.set(worktreeId, candidate)
+          return candidate
+        })
+        if (verification === candidate) {
+          yield* applicationFibers.fork(
+            Effect.gen(function* () {
+              const result = yield* Effect.exit(
+                Effect.gen(function* () {
+                  const worktree =
+                    yield* projectStore.storedWorktree(worktreeId)
+                  if (!worktree) {
+                    return yield* Effect.fail(
+                      new DomainError(
+                        'WORKTREE_NOT_FOUND',
+                        'Tree not found',
+                        404
+                      )
+                    )
+                  }
+
+                  return yield* observations.verifyWorktreeLaunchTarget(
+                    worktree
+                  )
+                })
+              )
+              yield* Deferred.done(candidate.result, result)
+            })
+          )
+        }
+
+        return yield* restore(
+          terminalMutations.enqueue(
+            worktreeId,
+            executeCreateTerminal(
+              worktreeId,
+              name,
+              argv,
+              options,
+              undefined,
+              verification.result
+            )
+          )
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              verification.users -= 1
+              if (
+                verification.users === 0 &&
+                this.launchVerifications.get(worktreeId) === verification
+              ) {
+                this.launchVerifications.delete(worktreeId)
+              }
+            })
+          )
+        )
+      })
+    ).pipe(
+      Effect.withSpan('treeport.terminal.create', {
+        attributes: { 'treeport.worktree.id': worktreeId }
+      })
+    )
   }
 
   executeCreateTerminal(
     worktreeId: string,
     name: string,
     argv?: string[],
-    options?: TerminalLaunchOptions
+    options?: TerminalLaunchOptions,
+    verifiedWorktree?: WorktreeRecord,
+    launchVerification?: Deferred.Deferred<WorktreeRecord, DomainError<unknown>>
   ): TerminalEffect<TerminalRecord> {
     const createTerminalSession = this.createTerminalSession.bind(this)
     const invalidateProjectsSnapshot =
@@ -556,6 +659,7 @@ export class TerminalService {
         )
       }
 
+      yield* projectStore.requireOpenProject(worktree.projectId)
       if (worktree.prunable) {
         return yield* Effect.fail(
           new DomainError(
@@ -581,14 +685,17 @@ export class TerminalService {
       }
 
       return yield* Effect.gen(function* () {
-        const verifiedWorktree =
-          yield* observations.verifyWorktreeLaunchTarget(worktree)
-        return yield* createTerminalSession(
-          verifiedWorktree,
-          name,
-          argv,
-          options
-        )
+        const preverifiedWorktree = launchVerification
+          ? yield* Deferred.await(launchVerification)
+          : verifiedWorktree
+        const launchWorktree =
+          preverifiedWorktree &&
+          preverifiedWorktree.projectId === worktree.projectId &&
+          preverifiedWorktree.path === worktree.path &&
+          preverifiedWorktree.kind === worktree.kind
+            ? worktree
+            : yield* observations.verifyWorktreeLaunchTarget(worktree)
+        return yield* createTerminalSession(launchWorktree, name, argv, options)
       }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktreeId] })))
     }).pipe(Effect.onError(() => invalidateProjectsSnapshot()))
   }
@@ -740,13 +847,21 @@ export class TerminalService {
       const cachedTerminal = yield* terminalState.terminal(terminalId)
       const terminal =
         cachedTerminal ?? (yield* getTerminalFromBindings(terminalId))
+      yield* Effect.annotateCurrentSpan({
+        'treeport.terminal.id': terminalId,
+        'treeport.worktree.id': terminal.worktreeId
+      })
       const projectId = (yield* projectStore.getWorktree(terminal.worktreeId))
         .projectId
       yield* worktreeMutations.enqueue(
         projectId,
         executeDeleteTerminal(terminalId, terminal.worktreeId)
       )
-    })
+    }).pipe(
+      Effect.withSpan('treeport.terminal.remove', {
+        attributes: { 'treeport.terminal.id': terminalId }
+      })
+    )
   }
 
   private executeDeleteTerminal(
@@ -799,7 +914,20 @@ export class TerminalService {
         )
       }
 
-      yield* Effect.promise(() => terminalHost.killTerminal(terminal.id))
+      yield* Effect.gen(function* () {
+        const trace = yield* currentTraceContext
+        yield* Effect.promise(() =>
+          terminalHost.killTerminal(terminal.id, trace ?? undefined)
+        )
+      }).pipe(
+        Effect.withSpan('treeport.terminal_host.ipc.remove', {
+          kind: 'client',
+          attributes: {
+            'treeport.terminal.id': terminal.id,
+            'treeport.worktree.id': worktree.id
+          }
+        })
+      )
       yield* terminalState.removeTerminal(terminalId, worktree.id)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {

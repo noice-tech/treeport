@@ -4,7 +4,8 @@ import type {
   HostedTerminal,
   TerminalLaunchSpec,
   TerminalSessionState,
-  TerminalTitleState
+  TerminalTitleState,
+  TerminalTraceContext
 } from './core/terminal'
 import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
 
@@ -182,6 +183,7 @@ export interface TerminalHostRequestFrame {
   id: string
   method: TerminalHostRequestMethod
   input: object
+  trace?: TerminalTraceContext | undefined
 }
 
 export interface TerminalHostResponseFrame {
@@ -222,7 +224,10 @@ export type TerminalHostFrame =
   | TerminalHostEventFrame
 
 export interface TerminalHostResults {
-  handshake: TerminalHostRecord & { liveSessionCount: number }
+  handshake: TerminalHostRecord & {
+    liveSessionCount: number
+    traceContext?: boolean
+  }
   create: null
   inventory: HostedTerminal[]
   state: TerminalSessionState
@@ -294,7 +299,15 @@ const terminalHostFrameSchema: z.ZodType<TerminalHostFrame> = z.union([
       type: z.literal('request'),
       id: z.string(),
       method: z.enum(TERMINAL_HOST_REQUEST_METHODS),
-      input: z.record(z.string(), z.unknown())
+      input: z.record(z.string(), z.unknown()),
+      trace: z
+        .object({
+          traceId: z.string().regex(/^[0-9a-f]{32}$/),
+          spanId: z.string().regex(/^[0-9a-f]{16}$/),
+          sampled: z.boolean()
+        })
+        .strict()
+        .optional()
     })
     .strict(),
   z

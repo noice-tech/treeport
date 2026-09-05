@@ -76,6 +76,7 @@ import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
 import { errorDetails } from './error-message'
 import { cn } from './lib/utils'
+import { browserTrace, newBrowserCorrelationId } from './agent-tracing'
 
 const TOOL_PANE_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
 
@@ -1345,10 +1346,15 @@ function WorkspaceApp() {
             setToolPickerOpen(true)
           }
         } else {
+          const correlationId = newBrowserCorrelationId()
+          browserTrace('terminal.desktop_command.received', correlationId, {
+            command: 'new-terminal',
+            worktreeId: selectedWorktree.id
+          })
           terminalWorkflows.createTerminalInWorktree(
             selectedProject,
             selectedWorktree,
-            { name: 'Shell' }
+            { name: 'Shell', correlationId }
           )
         }
       } else if (command === 'new-panel') {

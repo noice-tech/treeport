@@ -390,15 +390,16 @@ export const rpc = {
             )
         },
         terminals: {
-          $post: ({
-            param,
-            json
-          }: RequestInput<{ worktreeId: string }, unknown>) =>
+          $post: (
+            { param, json }: RequestInput<{ worktreeId: string }, unknown>,
+            options?: { readonly init: RequestInit }
+          ) =>
             endpoint<{ terminal: TerminalRecord }>(
               'POST',
               `/api/worktrees/${id(param.worktreeId)}/terminals`,
               terminalResponseSchema,
-              { json }
+              { json },
+              options?.init
             ),
           order: {
             $put: ({
@@ -518,11 +519,16 @@ export const rpc = {
     },
     terminals: {
       ':terminalId': {
-        $delete: ({ param }: RequestInput<{ terminalId: string }>) =>
+        $delete: (
+          { param }: RequestInput<{ terminalId: string }>,
+          options?: { readonly init: RequestInit }
+        ) =>
           endpoint<{ ok: true }>(
             'DELETE',
             `/api/terminals/${id(param.terminalId)}`,
-            okResponseSchema
+            okResponseSchema,
+            undefined,
+            options?.init
           ),
         bell: {
           acknowledge: {

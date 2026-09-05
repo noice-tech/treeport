@@ -1,13 +1,17 @@
+import * as Context from 'effect/Context'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as FiberSet from 'effect/FiberSet'
+import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
 import * as SynchronizedRef from 'effect/SynchronizedRef'
 import type * as Scope from 'effect/Scope'
+import * as Tracer from 'effect/Tracer'
 
 interface QueuedMutation {
   readonly effect: Effect.Effect<unknown, unknown>
   readonly result: Deferred.Deferred<unknown, unknown>
+  readonly started: Deferred.Deferred<void>
 }
 
 interface KeyState {
@@ -33,11 +37,9 @@ export interface MutationCoordinator<Key> {
  * A scoped, keyed FIFO coordinator. Work for different keys is forked into
  * separate fibers, while work for one key is consumed by a single worker.
  */
-export function makeMutationCoordinator<Key>(): Effect.Effect<
-  MutationCoordinator<Key>,
-  never,
-  Scope.Scope
-> {
+export function makeMutationCoordinator<Key>(
+  coordinator = 'unspecified'
+): Effect.Effect<MutationCoordinator<Key>, never, Scope.Scope> {
   return Effect.gen(function* () {
     const fibers = yield* FiberSet.make<unknown, never>()
     const state = yield* SynchronizedRef.make<CoordinatorState<Key>>({
@@ -51,6 +53,7 @@ export function makeMutationCoordinator<Key>(): Effect.Effect<
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const mutation = yield* Queue.take(queue)
+        yield* Deferred.succeed(mutation.started, undefined)
         const result = yield* Effect.exit(mutation.effect)
         yield* Deferred.done(mutation.result, result)
 
@@ -96,22 +99,50 @@ export function makeMutationCoordinator<Key>(): Effect.Effect<
     ): Effect.Effect<Result, Failure, Requirements> =>
       Effect.gen(function* () {
         const context = yield* Effect.context<Requirements>()
-        const provided = Effect.provide(effect, context)
+        const parent = Option.getOrUndefined(
+          Context.getOption(context, Tracer.ParentSpan)
+        )
         const result = yield* Deferred.make<unknown, unknown>()
+        const started = yield* Deferred.make<void>()
+        const enqueuedAt = Date.now()
+        let queuedAhead = 0
+        const queuedMutation = (position: number): QueuedMutation => ({
+          effect: Effect.suspend(() => {
+            const attributes = {
+              'treeport.mutation.coordinator': coordinator,
+              'treeport.mutation.queued_ahead': position,
+              'treeport.mutation.queue_wait_ms': Date.now() - enqueuedAt
+            }
+            const options: Tracer.SpanOptions = parent
+              ? { parent, attributes }
+              : { attributes }
+            return Effect.useSpan(
+              'treeport.mutation.execute',
+              options,
+              (span) =>
+                Effect.provide(
+                  effect,
+                  Context.add(context, Tracer.ParentSpan, span)
+                )
+            )
+          }),
+          result,
+          started
+        })
         const worker = yield* SynchronizedRef.modifyEffect(state, (current) => {
           const active = current.keys.get(key)
           if (active) {
+            queuedAhead = active.pending
             const keys = new Map(current.keys)
             keys.set(key, { ...active, pending: active.pending + 1 })
-            return Queue.offer(active.queue, {
-              effect: provided,
-              result
-            }).pipe(Effect.as([null, { ...current, keys }] as const))
+            return Queue.offer(active.queue, queuedMutation(queuedAhead)).pipe(
+              Effect.as([null, { ...current, keys }] as const)
+            )
           }
 
           return Effect.gen(function* () {
             const queue = yield* Queue.unbounded<QueuedMutation>()
-            yield* Queue.offer(queue, { effect: provided, result })
+            yield* Queue.offer(queue, queuedMutation(queuedAhead))
             const created: KeyState = { queue, pending: 1 }
             const keys = new Map(current.keys)
             keys.set(key, created)
@@ -122,6 +153,15 @@ export function makeMutationCoordinator<Key>(): Effect.Effect<
         if (worker) {
           yield* FiberSet.run(fibers, runKey(key, worker.queue))
         }
+
+        yield* Deferred.await(started).pipe(
+          Effect.withSpan('treeport.mutation.wait', {
+            attributes: {
+              'treeport.mutation.coordinator': coordinator,
+              'treeport.mutation.queued_ahead': queuedAhead
+            }
+          })
+        )
 
         // SAFETY: The queued effect and deferred are created from the same
         // Result/Failure pair in this invocation; the queue only erases it.

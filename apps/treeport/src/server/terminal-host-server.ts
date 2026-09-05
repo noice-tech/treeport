@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import net from 'node:net'
 import type { Socket } from 'node:net'
 import type { TerminalHostSessionManager } from './terminal-host-sessions'
+import type { TreeportSpanAttributes, TreeportTraceContext } from './tracing'
 import {
   encodeTerminalHostFrame,
   TERMINAL_HOST_PROTOCOL_VERSION,
@@ -20,7 +21,7 @@ import {
 // additional frames waiting behind a write that returned false.
 const TERMINAL_HOST_MAX_QUEUED_BYTES = 4 * 1024 * 1024
 
-interface TerminalHostServerOptions {
+export interface TerminalHostServerOptions {
   hostId: string
   hostKey: string
   token: string
@@ -30,6 +31,12 @@ interface TerminalHostServerOptions {
   pid?: number
   startedAt?: string
   onShutdown?: () => void | Promise<void>
+  trace?: <A>(
+    name: string,
+    parent: TreeportTraceContext,
+    attributes: TreeportSpanAttributes,
+    evaluate: () => Promise<A>
+  ) => Promise<A>
 }
 
 interface QueuedFrame {
@@ -229,7 +236,8 @@ export async function startTerminalHostServer(
       connection.authenticated = true
       respond<'handshake'>(connection, frame.id, {
         ...record,
-        liveSessionCount: options.sessions.sessionCount
+        liveSessionCount: options.sessions.sessionCount,
+        traceContext: true
       })
       return
     }
@@ -542,8 +550,29 @@ export async function startTerminalHostServer(
           return
         }
 
-        const run = () =>
-          handleRequest(connection, frame).catch((error) => {
+        const admittedAt = Date.now()
+        const run = () => {
+          const evaluate = () => handleRequest(connection, frame)
+          const request =
+            frame.trace && options.trace
+              ? options.trace(
+                  frame.method === 'create'
+                    ? 'treeport.terminal_host.pty.create'
+                    : frame.method === 'attach'
+                      ? 'treeport.terminal_host.attach'
+                      : frame.method === 'kill'
+                        ? 'treeport.terminal_host.pty.remove'
+                        : 'treeport.terminal_host.request',
+                  frame.trace,
+                  {
+                    'treeport.terminal_host.method': frame.method,
+                    'treeport.terminal_host.queue_wait_ms':
+                      Date.now() - admittedAt
+                  },
+                  evaluate
+                )
+              : evaluate()
+          return request.catch((error) => {
             fail(
               connection,
               frame.id,
@@ -551,6 +580,7 @@ export async function startTerminalHostServer(
               error instanceof Error ? error.message : String(error)
             )
           })
+        }
         if (connection.authenticated && frame.method === 'kill') {
           // Wait for preceding control work so kill cannot overtake create for
           // the same ID, but do not put slow physical cleanup on the control

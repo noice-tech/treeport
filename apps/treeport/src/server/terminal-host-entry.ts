@@ -1,5 +1,9 @@
 import { TerminalHostSessionManager } from './terminal-host-sessions'
-import { startTerminalHostServer } from './terminal-host-server'
+import {
+  startTerminalHostServer,
+  type TerminalHostServerOptions
+} from './terminal-host-server'
+import { makeHostTraceRuntime } from './tracing'
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name]?.trim()
@@ -14,7 +18,14 @@ async function main(): Promise<void> {
   const runtimeDir = requiredEnvironment('TREEPORT_TERMINAL_HOST_RUNTIME_DIR')
   const launcherPath = requiredEnvironment('TREEPORT_TERMINAL_HOST_LAUNCHER')
   const sessions = new TerminalHostSessionManager(runtimeDir, launcherPath)
-  const host = await startTerminalHostServer({
+  const traceRuntime = makeHostTraceRuntime(
+    process.env.TREEPORT_APP_VERSION ?? 'unknown'
+  )
+  const trace: TerminalHostServerOptions['trace'] = traceRuntime
+    ? (name, parent, attributes, evaluate) =>
+        traceRuntime.run(name, parent, attributes, evaluate)
+    : undefined
+  const options: TerminalHostServerOptions = {
     hostId: requiredEnvironment('TREEPORT_TERMINAL_HOST_ID'),
     hostKey: requiredEnvironment('TREEPORT_TERMINAL_HOST_KEY'),
     token: requiredEnvironment('TREEPORT_TERMINAL_HOST_TOKEN'),
@@ -23,9 +34,15 @@ async function main(): Promise<void> {
     sessions,
     onShutdown: async () => {
       await sessions.shutdown()
+      await traceRuntime?.dispose()
       process.exit(0)
     }
-  })
+  }
+  if (trace) {
+    options.trace = trace
+  }
+
+  const host = await startTerminalHostServer(options)
 
   let stopping = false
   const stop = () => {
@@ -37,6 +54,7 @@ async function main(): Promise<void> {
     void host
       .close()
       .then(() => sessions.shutdown())
+      .then(() => traceRuntime?.dispose())
       .then(
         () => process.exit(0),
         (error) => {

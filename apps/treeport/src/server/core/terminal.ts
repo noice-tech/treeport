@@ -62,10 +62,19 @@ export interface TerminalCreateInput {
   setupError?: string | undefined
 }
 
+export interface TerminalTraceContext {
+  traceId: string
+  spanId: string
+  sampled: boolean
+}
+
 /** API daemon view of the detached terminal host. */
 export interface TerminalSessionBackend {
   initialize(): Promise<boolean>
-  createTerminal(input: TerminalCreateInput): Promise<void>
+  createTerminal(
+    input: TerminalCreateInput,
+    trace?: TerminalTraceContext
+  ): Promise<void>
   renameTerminal(
     terminalId: string,
     name: string,
@@ -75,7 +84,7 @@ export interface TerminalSessionBackend {
   listProcesses(worktreeId: string): Promise<TerminalProcess[]>
   terminalState(terminalId: string): Promise<TerminalSessionState>
   captureTerminal(terminalId: string, lines: number): Promise<string | null>
-  killTerminal(terminalId: string): Promise<void>
+  killTerminal(terminalId: string, trace?: TerminalTraceContext): Promise<void>
   killWorktree(worktreeId: string): Promise<string[]>
   shutdownIfEmpty(): Promise<void>
 }

@@ -51,10 +51,13 @@
     "access": "public"
   },
   "dependencies": {
+    "@effect/opentelemetry": "^0.64.0",
     "@effect/platform": "^0.97.1",
     "@effect/platform-node": "^0.108.1",
     "@effect/rpc": "^0.76.2",
     "@libsql/client": "^0.17.4",
+    "@opentelemetry/sdk-trace-base": "^2.11.0",
+    "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@playwright/cli": "0.1.18",
     "@radix-ui/react-context-menu": "^2.3.7",
     "@treeport/panel-sdk": "workspace:*",

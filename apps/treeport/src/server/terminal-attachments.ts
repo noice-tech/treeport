@@ -29,6 +29,7 @@ import type { ApplicationServices } from './core/services/infrastructure/applica
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { TerminalAttachmentBackend } from './terminal-host-sessions'
 import { networkTelemetry } from './network-telemetry'
+import { currentTraceContext } from './tracing'
 
 type ConnectionState = 'initializing' | 'ready' | 'closed'
 type TerminalProtocolVersion = typeof TERMINAL_PROTOCOL_VERSION
@@ -478,36 +479,52 @@ export class TerminalAttachmentManager {
             }
           }),
         catch: (cause) => cause
-      })
-      const initial = yield* Effect.tryPromise({
-        try: () =>
-          self.terminalHost.attach(
-            connection.terminalId,
-            (data, ownerSequence) => {
-              if (connection.state === 'initializing') {
-                connection.pendingDirectOutputBytes += Buffer.byteLength(data)
-                networkTelemetry.watermarkBytesNow(
-                  'terminals',
-                  'pending_output',
-                  connection.pendingDirectOutputBytes
-                )
-                if (
-                  connection.pendingDirectOutputBytes >=
-                  TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES
-                ) {
-                  connection.transport.disconnect(true)
-                  self.close(connection.id)
-                  return
-                }
+      }).pipe(
+        Effect.withSpan('treeport.terminal.attach.runtime_subscription', {
+          attributes: { 'treeport.terminal.id': connection.terminalId }
+        })
+      )
+      const initial = yield* Effect.gen(function* () {
+        const trace = yield* currentTraceContext
+        return yield* Effect.tryPromise({
+          try: () =>
+            self.terminalHost.attach(
+              connection.terminalId,
+              (data, ownerSequence) => {
+                if (connection.state === 'initializing') {
+                  connection.pendingDirectOutputBytes += Buffer.byteLength(data)
+                  networkTelemetry.watermarkBytesNow(
+                    'terminals',
+                    'pending_output',
+                    connection.pendingDirectOutputBytes
+                  )
+                  if (
+                    connection.pendingDirectOutputBytes >=
+                    TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES
+                  ) {
+                    connection.transport.disconnect(true)
+                    self.close(connection.id)
+                    return
+                  }
 
-                connection.pendingDirectOutput.push({ data, ownerSequence })
-              } else {
-                self.sendOutput(connection, data)
-              }
-            }
-          ),
-        catch: (cause) => cause
-      })
+                  connection.pendingDirectOutput.push({ data, ownerSequence })
+                } else {
+                  self.sendOutput(connection, data)
+                }
+              },
+              trace ?? undefined
+            ),
+          catch: (cause) => cause
+        })
+      }).pipe(
+        Effect.withSpan('treeport.terminal_host.ipc.attach', {
+          kind: 'client',
+          attributes: {
+            'treeport.connection.id': connection.id,
+            'treeport.terminal.id': connection.terminalId
+          }
+        })
+      )
       if (!active()) {
         initial?.unsubscribe()
         return
@@ -558,6 +575,11 @@ export class TerminalAttachmentManager {
         return
       }
 
+      yield* Effect.annotateCurrentSpan({
+        'treeport.terminal.snapshot_bytes': Buffer.byteLength(initial.data),
+        'treeport.terminal.pending_output_bytes':
+          connection.pendingDirectOutputBytes
+      })
       connection.announcedReady = true
       if (connection.exitObserved) {
         self.send(connection, 'exit', {
@@ -584,7 +606,14 @@ export class TerminalAttachmentManager {
       connection.pendingDirectOutputBytes = 0
       networkTelemetry.watermarkBytesNow('terminals', 'pending_output', 0)
       self.broadcastControl(connection.terminalId)
-    })
+    }).pipe(
+      Effect.withSpan('treeport.terminal.attach', {
+        attributes: {
+          'treeport.connection.id': connection.id,
+          'treeport.terminal.id': connection.terminalId
+        }
+      })
+    )
   }
 
   private releaseMetadataSubscription(connection: ClientConnection): void {

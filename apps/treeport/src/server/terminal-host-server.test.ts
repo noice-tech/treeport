@@ -6,6 +6,7 @@ import { TerminalHostClient } from './terminal-host-client'
 import { startTerminalHostServer } from './terminal-host-server'
 import type { TerminalHostSessionManager } from './terminal-host-sessions'
 import { testAccess } from './test-access'
+import type { TreeportSpanAttributes } from './tracing'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -31,6 +32,11 @@ describe('terminal host request scheduling', () => {
       markKillStarted = resolve
     })
     const createTerminal = vi.fn(async () => undefined)
+    const traced: Array<{
+      name: string
+      parent: { traceId: string; spanId: string; sampled: boolean }
+      attributes: TreeportSpanAttributes
+    }> = []
     const sessions = testAccess<TerminalHostSessionManager>({
       sessionCount: 0,
       initialize: async () => undefined,
@@ -47,7 +53,11 @@ describe('terminal host request scheduling', () => {
       token: 'token',
       socketPath: path.join(root, 'host.sock'),
       recordPath: path.join(root, 'host.json'),
-      sessions
+      sessions,
+      trace: async (name, parent, attributes, evaluate) => {
+        traced.push({ name, parent, attributes })
+        return evaluate()
+      }
     })
     const client = await TerminalHostClient.connect(
       host.record.socketPath,
@@ -67,12 +77,38 @@ describe('terminal host request scheduling', () => {
       env: {}
     })
 
+    const trace = {
+      traceId: '1234567890abcdef1234567890abcdef',
+      spanId: '1234567890abcdef',
+      sampled: true
+    }
+
     try {
       await client.createTerminal(input('old'))
-      const killing = client.killTerminal('old')
+      const killing = client.killTerminal('old', trace)
       await killStarted
-      await expect(client.createTerminal(input('new'))).resolves.toBeUndefined()
+      await expect(
+        client.createTerminal(input('new'), trace)
+      ).resolves.toBeUndefined()
       expect(createTerminal).toHaveBeenCalledTimes(2)
+      expect(traced).toEqual([
+        {
+          name: 'treeport.terminal_host.pty.remove',
+          parent: trace,
+          attributes: {
+            'treeport.terminal_host.method': 'kill',
+            'treeport.terminal_host.queue_wait_ms': expect.any(Number)
+          }
+        },
+        {
+          name: 'treeport.terminal_host.pty.create',
+          parent: trace,
+          attributes: {
+            'treeport.terminal_host.method': 'create',
+            'treeport.terminal_host.queue_wait_ms': expect.any(Number)
+          }
+        }
+      ])
       releaseKill()
       await killing
     } finally {

@@ -1987,9 +1987,18 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(readmeEditor).toContainText('# Refreshed')
   })
 
-  test('creates a terminal while prior closes are pending', async ({
+  test('keeps rapid create, remove, and create churn responsive', async ({
     page
   }) => {
+    const creationRequestIds: string[] = []
+    page.on('request', (request) => {
+      if (
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname.endsWith('/terminals')
+      ) {
+        creationRequestIds.push(request.headers()['x-request-id'] ?? '')
+      }
+    })
     const mocked = await mockApp(page, [], { desktopBridge: true })
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
     const terminals = page
@@ -1997,14 +2006,14 @@ test.describe('desktop worktree and terminal workflows', () => {
       .getByRole('listitem')
 
     await page.evaluate(() => {
-      for (let index = 0; index < 7; index += 1) {
+      for (let index = 0; index < 10; index += 1) {
         window.__dispatchDesktopCommand('new-terminal')
       }
     })
-    await expect(terminals).toHaveCount(8)
+    await expect(terminals).toHaveCount(11)
 
     const releaseDeletes = mocked.delayNextTerminalDelete()
-    for (let count = 8; count > 1; count -= 1) {
+    for (let count = 11; count > 1; count -= 1) {
       await terminals
         .last()
         .getByRole('button', { name: /^Close / })
@@ -2013,15 +2022,37 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     await expect.poll(() => mocked.terminalDeletions()).toBe(1)
 
-    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
-    await expect.poll(() => mocked.terminalCreations()).toBe(8)
-    await expect(terminals).toHaveCount(2)
+    const releaseCreates = mocked.delayNextTerminalCreate()
+    await page.evaluate(() => {
+      for (let index = 0; index < 10; index += 1) {
+        window.__dispatchDesktopCommand('new-terminal')
+      }
+    })
+    await expect.poll(() => mocked.terminalCreations()).toBeGreaterThan(10)
+    await expect(terminals).toHaveCount(1)
+    await page
+      .getByRole('button', {
+        name: 'Notifications, no unread notifications'
+      })
+      .click()
+    await expect(
+      page.getByRole('dialog', { name: 'Notifications' })
+    ).toBeVisible()
+    await page.keyboard.press('Escape')
+    releaseCreates()
+    await expect.poll(() => mocked.terminalCreations()).toBe(20)
+    await expect(terminals).toHaveCount(11)
     await expect(page).toHaveURL(
-      /\/worktrees\/wt_topic\/terminals\/term_dev_8$/
+      /\/worktrees\/wt_topic\/terminals\/term_dev_20$/
+    )
+    expect(creationRequestIds).toHaveLength(20)
+    expect(new Set(creationRequestIds).size).toBe(20)
+    expect(creationRequestIds.every((requestId) => requestId.length > 0)).toBe(
+      true
     )
 
     releaseDeletes()
-    await expect.poll(() => mocked.terminalDeletions()).toBe(7)
+    await expect.poll(() => mocked.terminalDeletions()).toBe(10)
   })
 
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
