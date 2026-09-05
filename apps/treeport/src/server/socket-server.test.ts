@@ -360,10 +360,12 @@ describe('Effect WebSocket real network', () => {
     const ownerMessages: BrowserOwnerClientMessage[] = []
     const closes: string[] = []
     const ownerCloses: string[] = []
+    const transports = new Map<string, BrowserTransport>()
     const browserSessions = {
       accept: vi.fn((ticket: string, transport: BrowserTransport) =>
         Effect.sync(() => {
           expect(ticket).toBe('b'.repeat(43))
+          transports.set('browser-connection', transport)
           transport.sendMessage({
             type: 'ready',
             state: {
@@ -389,10 +391,19 @@ describe('Effect WebSocket real network', () => {
           return 'browser-connection'
         })
       ),
-      message: vi.fn(
-        (_connectionId: string, message: BrowserClientMessage) =>
-          void messages.push(message)
-      ),
+      message: vi.fn((connectionId: string, message: BrowserClientMessage) => {
+        messages.push(message)
+        if (message.type === 'setVisible' && message.visible) {
+          transports.get(connectionId)?.sendFrame({
+            sequence: 2,
+            mimeType: 'image/jpeg',
+            timestamp: 456,
+            width: 800,
+            height: 600,
+            data: Uint8Array.from([4, 5, 6])
+          })
+        }
+      }),
       close: vi.fn((connectionId: string) => void closes.push(connectionId)),
       acceptOwner: vi.fn((auth, transport: BrowserOwnerTransport) =>
         Effect.sync(() => {
@@ -436,8 +447,20 @@ describe('Effect WebSocket real network', () => {
     const frame = new Promise<
       Parameters<BrowserServerToClientEvents['frame']>[0]
     >((resolve) => browser.once('frame', resolve))
+    const streamedFrames: number[] = []
+    browser.on('frame', (received) => {
+      streamedFrames.push(received.sequence)
+      browser.emit('command', {
+        type: 'frameAck',
+        sequence: received.sequence
+      })
+    })
     const ready = await new Promise<BrowserServerMessage>((resolve) =>
-      browser.once('message', resolve)
+      browser.once('message', (message) => {
+        // The workspace requests frames synchronously when it receives ready.
+        browser.emit('command', { type: 'setVisible', visible: true })
+        resolve(message)
+      })
     )
     expect(ready).toMatchObject({
       type: 'ready',
@@ -447,8 +470,16 @@ describe('Effect WebSocket real network', () => {
       sequence: 1,
       data: Uint8Array.from([1, 2, 3])
     })
+    await vi.waitFor(() => expect(streamedFrames).toEqual([1, 2]))
     browser.emit('command', { type: 'back' })
-    await vi.waitFor(() => expect(messages).toEqual([{ type: 'back' }]))
+    await vi.waitFor(() =>
+      expect(messages).toEqual([
+        { type: 'setVisible', visible: true },
+        { type: 'frameAck', sequence: 1 },
+        { type: 'frameAck', sequence: 2 },
+        { type: 'back' }
+      ])
+    )
     await closeClient(browser)
     await vi.waitFor(() => expect(closes).toEqual(['browser-connection']))
 
@@ -465,7 +496,18 @@ describe('Effect WebSocket real network', () => {
       }
     })
     const claimed = await new Promise<BrowserOwnerServerMessage>((resolve) =>
-      owner.once('ownerMessage', resolve)
+      owner.once('ownerMessage', (message) => {
+        if (message.type === 'claimGranted') {
+          owner.emit('ownerMessage', {
+            type: 'ready',
+            generation: message.generation,
+            revision: 1,
+            state: message.state
+          })
+        }
+
+        resolve(message)
+      })
     )
     expect(claimed).toMatchObject({
       type: 'claimGranted',
@@ -479,6 +521,7 @@ describe('Effect WebSocket real network', () => {
     })
     await vi.waitFor(() =>
       expect(ownerMessages).toEqual([
+        expect.objectContaining({ type: 'ready', generation: 4, revision: 1 }),
         {
           type: 'popup',
           generation: 4,
@@ -494,9 +537,13 @@ describe('Effect WebSocket real network', () => {
     let started = false
     let interrupted = false
     const browserSessions: BrowserSessionController = {
-      accept: vi.fn(() =>
+      accept: vi.fn((_ticket, transport) =>
         Effect.sync(() => {
           started = true
+          transport.sendMessage({
+            type: 'navigationError',
+            message: 'Queued before acceptance completes'
+          })
         }).pipe(
           Effect.zipRight(Effect.never),
           Effect.onInterrupt(() =>
@@ -524,9 +571,80 @@ describe('Effect WebSocket real network', () => {
       }
     })
 
+    const received: BrowserServerMessage[] = []
+    browser.on('message', (message) => received.push(message))
     await vi.waitFor(() => expect(started).toBe(true))
     browser.disconnect()
     await vi.waitFor(() => expect(interrupted).toBe(true))
+    expect(received).toEqual([])
+  })
+
+  it('closes Browser attachments on output failure and permits a fresh connection', async () => {
+    const transports: BrowserTransport[] = []
+    const closed: string[] = []
+    const browserSessions: BrowserSessionController = {
+      accept: (_ticket, transport) =>
+        Effect.sync(() => {
+          transports.push(transport)
+          return transport.id
+        }),
+      message: vi.fn(),
+      close: (id) => void closed.push(id),
+      acceptOwner: () => Effect.succeed('owner'),
+      ownerMessage: vi.fn(),
+      closeOwner: vi.fn()
+    }
+    const value = await fixture(browserSessions)
+    const connect = () =>
+      createProtocolSocket<
+        BrowserServerToClientEvents,
+        BrowserClientToServerEvents
+      >(`${value.url}/browsers`, {
+        reconnection: false,
+        auth: {
+          ticket: 'b'.repeat(43),
+          protocolVersion: BROWSER_PROTOCOL_VERSION
+        }
+      })
+    const browser = connect()
+    await new Promise<void>((resolve) => browser.once('connect', resolve))
+    const disconnected = vi.fn()
+    browser.on('disconnect', disconnected)
+    const frame = {
+      sequence: 1,
+      mimeType: 'image/jpeg' as const,
+      timestamp: 123,
+      width: 800,
+      height: 600,
+      data: Uint8Array.from([1, 2, 3])
+    }
+    // Only the server uses ws here; clients use the native WebSocket.
+    const send = vi
+      .spyOn(WebSocket.prototype, 'send')
+      .mockImplementation(() => {
+        throw new Error('Injected frame write failure')
+      })
+    try {
+      expect(transports[0]!.sendFrame(frame)).toBe(true)
+      await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
+      expect(closed).toEqual([transports[0]!.id])
+      expect(transports[0]!.sendFrame(frame)).toBe(false)
+    } finally {
+      send.mockRestore()
+      await closeClient(browser)
+    }
+
+    const reconnected = connect()
+    await new Promise<void>((resolve) => reconnected.once('connect', resolve))
+    const nextFrame = new Promise((resolve) =>
+      reconnected.once('frame', resolve)
+    )
+    expect(transports[1]!.sendFrame(frame)).toBe(true)
+    await expect(nextFrame).resolves.toMatchObject(frame)
+    await closeClient(reconnected)
+    await vi.waitFor(() =>
+      expect(closed).toEqual(transports.map((transport) => transport.id))
+    )
   })
 
   it('authenticates local and Tailscale clients before accepting socket connections', async () => {

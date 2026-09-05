@@ -140,14 +140,20 @@ export function createSocketServer({
 
     return Effect.scoped(
       Effect.gen(function* () {
-        const incoming = yield* Queue.bounded<{
-          message: string | Uint8Array
-          queuedAt: number
-        }>(64)
-        const outgoing = yield* Queue.bounded<{
-          message: string | Uint8Array
-          queuedAt: number
-        }>(OUTBOUND_QUEUE_CAPACITY)
+        const incoming = yield* Effect.acquireRelease(
+          Queue.bounded<{
+            message: string | Uint8Array
+            queuedAt: number
+          }>(64),
+          Queue.shutdown
+        )
+        const outgoing = yield* Effect.acquireRelease(
+          Queue.bounded<{
+            message: string | Uint8Array
+            queuedAt: number
+          }>(OUTBOUND_QUEUE_CAPACITY),
+          Queue.shutdown
+        )
         const socket = yield* EffectSocket.fromWebSocket(
           Effect.acquireRelease(
             // SAFETY: ws implements the WebSocket operations consumed by Effect Socket.
@@ -181,7 +187,11 @@ export function createSocketServer({
             )
           )
         )
-        yield* Effect.forkScoped(
+        // Acceptance can enqueue ready/claimGranted and even binary frames.
+        // Do not drain them until acceptance finishes: their handlers must be
+        // able to reply, so connected must be the first successful wire event.
+        const writer = Effect.zipRight(
+          write(JSON.stringify({ event: 'connected', payload: null })),
           Effect.forever(
             Effect.gen(function* () {
               const outgoingMessage = yield* Queue.take(outgoing)
@@ -294,7 +304,6 @@ export function createSocketServer({
             TERMINAL_PROTOCOL_VERSION
           )
           closeConnection = () => attachments.close(protocolConnectionId!)
-          send('connected', null)
         } else if (channel === 'browsers') {
           const auth = parseBrowserAuth(handshake.auth)
           if (!auth) {
@@ -319,7 +328,6 @@ export function createSocketServer({
             )
           )
           closeConnection = () => hostedBrowsers.close(protocolConnectionId!)
-          send('connected', null)
         } else {
           const auth = parseBrowserOwnerAuth(handshake.auth)
           if (!auth) {
@@ -344,7 +352,6 @@ export function createSocketServer({
           )
           closeConnection = () =>
             hostedBrowsers.closeOwner(protocolConnectionId!)
-          send('connected', null)
         }
 
         yield* Effect.addFinalizer(() => Effect.sync(() => closeConnection?.()))
@@ -400,7 +407,12 @@ export function createSocketServer({
             }
           })
         )
-        yield* Effect.raceFirst(messages, Fiber.join(reader))
+        // A failed writer must end the connection too, rather than leaving a
+        // live reader and a black/frozen browser behind a dead output fiber.
+        yield* Effect.raceFirst(
+          writer,
+          Effect.raceFirst(messages, Fiber.join(reader))
+        )
       }).pipe(
         Effect.onExit((exit) => {
           if (!telemetryOpened) {
