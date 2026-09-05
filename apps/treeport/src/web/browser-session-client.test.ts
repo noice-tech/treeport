@@ -110,7 +110,8 @@ it('connects the Browser workspace directly and preserves command and frame cont
   socket.emitServer('message', ready)
   socket.emitServer('frame', {
     sequence: 7,
-    mimeType: 'image/jpeg',
+    mimeType: 'video/vp8',
+    keyframe: true,
     timestamp: 123,
     width: 1_280,
     height: 800,
@@ -121,7 +122,8 @@ it('connects the Browser workspace directly and preserves command and frame cont
   expect(frames).toEqual([
     expect.objectContaining({
       sequence: 7,
-      mimeType: 'image/jpeg',
+      mimeType: 'video/vp8',
+      keyframe: true,
       data: Uint8Array.from([1, 2, 3])
     })
   ])

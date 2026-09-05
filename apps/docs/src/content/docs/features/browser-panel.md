@@ -23,6 +23,10 @@ The toolbar and `treeport browser` commands control the same live page.
 
 Treeport does not synchronize two browser pages.
 
+Remote viewing requires a browser with WebCodecs VP8 decoding, such as Chrome or the Treeport desktop app.
+
+The remote stream contains video only. It does not contain page audio.
+
 For an Electron runtime, page requests come from the desktop computer.
 
 For a Playwright runtime, page requests come from the daemon computer.
@@ -102,6 +106,8 @@ If a Browser panel has the exact URL in that tree, Treeport selects it instead o
 If the browser cannot start or its page process stops, Treeport shows **Browser unavailable**.
 
 Select **Retry** to reopen the page. Unsaved page input can be lost.
+
+If only video capture fails, **Retry** reconnects to the existing page. It does not replace that page.
 
 Each desktop window can run six local Browser pages. Hidden Browser tabs count toward this limit.
 
