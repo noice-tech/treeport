@@ -130,6 +130,7 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
         confirmation: z.null().default(null),
         confirmationToken: z.string(),
         confirmDestructive: z.boolean(),
+        skipCleanup: z.boolean().default(false),
         preview: removePreviewSchema,
         checkoutIdentity: z
           .strictObject({
@@ -166,6 +167,7 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
         confirmation,
         confirmationToken: null,
         confirmDestructive: null,
+        skipCleanup: false,
         preview: null,
         checkoutIdentity: null,
         prunable: null,

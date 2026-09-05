@@ -19,22 +19,26 @@ export function RemoveWorktreeDialog({
   worktree,
   preview,
   operation,
+  skipCleanup,
   busy,
   onOpenChange,
   restoreFocusTo,
   onConfirm,
+  onSkipCleanup,
   onRetry
 }: {
   worktree: WorktreeRecord | null
   preview: RemovePreview | null
   operation: RemoveOperationRecord | null
+  skipCleanup: boolean
   busy: boolean
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
   onConfirm: (worktree: WorktreeRecord, preview: RemovePreview) => void
+  onSkipCleanup: (worktree: WorktreeRecord, preview: RemovePreview) => void
   onRetry: (worktree: WorktreeRecord) => void
 }) {
-  const destructive = Boolean(preview?.warnings.length)
+  const destructive = Boolean(preview?.warnings.length) || skipCleanup
   const name = preview?.name ?? worktree?.name
   const branch = preview?.branch ?? worktree?.branch
   const detached = preview?.detached ?? worktree?.detached
@@ -73,7 +77,9 @@ export function RemoveWorktreeDialog({
                   ? 'Project cleanup failed. Git kept the tree.'
                   : 'Tree removal failed. Git kept the tree.'
                 : removalCompleted
-                  ? 'Treeport completed project cleanup and removed the tree.'
+                  ? cleanup?.status === 'skipped'
+                    ? 'Treeport skipped project cleanup and removed the tree.'
+                    : 'Treeport completed project cleanup and removed the tree.'
                   : operation
                     ? activeCommand
                       ? `Running cleanup command: ${activeCommand.name}`
@@ -119,7 +125,12 @@ export function RemoveWorktreeDialog({
                   <dd>{preview.cleanup.commands.join(', ') || 'none'}</dd>
                 </div>
               </dl>
-              {preview.cleanup.commands.length > 0 ? (
+              {skipCleanup ? (
+                <div className="warning danger">
+                  <strong>Project cleanup will be skipped.</strong>
+                  <p>This action can leave project resources behind.</p>
+                </div>
+              ) : preview.cleanup.commands.length > 0 ? (
                 <p>
                   Treeport stops terminals before cleanup. Git removes the tree
                   only after all cleanup commands succeed.
@@ -162,20 +173,40 @@ export function RemoveWorktreeDialog({
                 </section>
               ))}
               {operation.error ? <p>{operation.error}</p> : null}
+              {cleanupFailed && preview.cleanup.commands.length > 0 ? (
+                <div className="warning danger">
+                  <strong>Cleanup can be skipped.</strong>
+                  <p>
+                    Removing without cleanup can leave project resources behind.
+                  </p>
+                </div>
+              ) : null}
             </div>
           )}
           <AlertDialogFooter>
             {operation ? (
               <>
                 {removalFailed ? (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    disabled={busy}
-                    onClick={() => onRetry(worktree)}
-                  >
-                    {busy ? 'Retrying…' : 'Retry'}
-                  </Button>
+                  <>
+                    {cleanupFailed && preview.cleanup.commands.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        disabled={busy}
+                        onClick={() => onSkipCleanup(worktree, preview)}
+                      >
+                        {busy ? 'Removing…' : 'Remove without cleanup'}
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={busy}
+                      onClick={() => onRetry(worktree)}
+                    >
+                      {busy ? 'Retrying…' : 'Retry'}
+                    </Button>
+                  </>
                 ) : null}
                 <AlertDialogCancel>Close</AlertDialogCancel>
               </>
@@ -189,14 +220,20 @@ export function RemoveWorktreeDialog({
                     disabled={busy || !preview.eligible}
                     onClick={(event) => {
                       event.preventDefault()
-                      onConfirm(worktree, preview)
+                      if (skipCleanup) {
+                        onSkipCleanup(worktree, preview)
+                      } else {
+                        onConfirm(worktree, preview)
+                      }
                     }}
                   >
                     {busy
                       ? 'Removing…'
-                      : destructive
-                        ? 'Remove anyway'
-                        : 'Remove tree'}
+                      : skipCleanup
+                        ? 'Remove without cleanup'
+                        : destructive
+                          ? 'Remove anyway'
+                          : 'Remove tree'}
                   </Button>
                 </AlertDialogAction>
               </>

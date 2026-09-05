@@ -510,6 +510,55 @@ describe('TreeportService with injected command adapters', () => {
       'cleanup-last'
     ])
     await expect(fs.stat(linked.path)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const legacy = (
+      await service.createWorktree(project.id, 'legacy-cleanup', 'default')
+    ).worktree
+    const legacyPreview = await service.removePreview(legacy.id)
+    await expect(
+      service.beginRemove(legacy.id, {
+        confirmationToken: legacyPreview.confirmationToken,
+        confirmDestructive: false,
+        skipCleanup: true
+      })
+    ).rejects.toMatchObject({ code: 'REMOVE_CONFIRMATION_REQUIRED' })
+
+    const skipped = await waitForOperation(
+      service,
+      (
+        await service.beginRemove(legacy.id, {
+          confirmationToken: legacyPreview.confirmationToken,
+          confirmDestructive: true,
+          skipCleanup: true
+        })
+      ).id
+    )
+    expect(skipped).toMatchObject({
+      status: 'completed',
+      request: {
+        skipCleanup: true,
+        cleanupCommands: {
+          status: 'skipped',
+          skippedReason: 'Project cleanup was skipped by user request',
+          commands: []
+        }
+      },
+      result: {
+        cleanup: {
+          status: 'completed',
+          warning: 'Project cleanup was skipped by user request',
+          commands: []
+        }
+      }
+    })
+    expect(started).toEqual([
+      'cleanup-first',
+      'cleanup-second',
+      'cleanup-first',
+      'cleanup-second',
+      'cleanup-last'
+    ])
+    await expect(fs.stat(legacy.path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('does not run native setup when discovering or refreshing an existing worktree', async () => {

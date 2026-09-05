@@ -497,6 +497,7 @@ export interface RemoveOperationRequest {
   confirmation: boolean | null
   confirmationToken: string | null
   confirmDestructive: boolean | null
+  skipCleanup: boolean
   preview: RemovePreview | null
   checkoutIdentity: RemovalCheckoutIdentity | null
   prunable: boolean | null
@@ -950,7 +951,10 @@ export const packageReloadSchema = Schema.Struct({
 })
 export const removeWorktreeSchema = Schema.Struct({
   confirmationToken: Schema.String.pipe(Schema.length(64)),
-  confirmDestructive: Schema.Boolean
+  confirmDestructive: Schema.Boolean,
+  skipCleanup: Schema.optionalWith(Schema.Boolean, {
+    default: () => false
+  })
 })
 export const spawnSchema = Schema.Struct({
   project: Schema.String.pipe(Schema.minLength(1)),

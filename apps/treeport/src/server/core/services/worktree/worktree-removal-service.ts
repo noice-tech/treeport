@@ -573,7 +573,11 @@ export class WorktreeRemovalService {
 
   beginRemove(
     worktreeId: string,
-    request: { confirmationToken: string; confirmDestructive: boolean }
+    request: {
+      confirmationToken: string
+      confirmDestructive: boolean
+      skipCleanup?: boolean
+    }
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     const acceptRemove = this.acceptRemove.bind(this)
 
@@ -645,7 +649,11 @@ export class WorktreeRemovalService {
 
   private acceptRemove(
     worktreeId: string,
-    request: { confirmationToken: string; confirmDestructive: boolean }
+    request: {
+      confirmationToken: string
+      confirmDestructive: boolean
+      skipCleanup?: boolean
+    }
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     const prepareRemovePreview = this.prepareRemovePreview.bind(this)
     const checkoutStat = this.checkoutStat.bind(this)
@@ -704,11 +712,18 @@ export class WorktreeRemovalService {
               )
             }
 
-            if (preview.warnings.length > 0 && !request.confirmDestructive) {
+            const skipCleanup =
+              request.skipCleanup === true && cleanupTasks.length > 0
+            if (
+              (preview.warnings.length > 0 || skipCleanup) &&
+              !request.confirmDestructive
+            ) {
               return yield* Effect.fail(
                 new DomainError(
                   'REMOVE_CONFIRMATION_REQUIRED',
-                  'Confirm the destructive removal after reviewing its warnings',
+                  skipCleanup
+                    ? 'Confirm removal without project cleanup'
+                    : 'Confirm the destructive removal after reviewing its warnings',
                   409,
                   preview
                 )
@@ -826,6 +841,7 @@ export class WorktreeRemovalService {
                     },${worktreeId},'pending',
                     ${serializeOperation({
                       ...request,
+                      skipCleanup,
                       preview,
                       checkoutIdentity,
                       prunable,
@@ -834,19 +850,26 @@ export class WorktreeRemovalService {
                       phase: 'accepted',
                       managedWrapperPath: checkoutBinding.managed_wrapper_path,
                       cleanupCommands: {
-                        status:
-                          cleanupTasks.length > 0 ? 'pending' : 'completed',
+                        status: skipCleanup
+                          ? 'skipped'
+                          : cleanupTasks.length > 0
+                            ? 'pending'
+                            : 'completed',
                         definitionHash: cleanupDefinitionHash,
-                        skippedReason: null,
-                        commands: cleanupTasks.map((task) => ({
-                          name: task.label,
-                          status: 'pending',
-                          stdout: '',
-                          stderr: '',
-                          exitCode: null,
-                          error: null,
-                          outputTruncated: false
-                        }))
+                        skippedReason: skipCleanup
+                          ? 'Project cleanup was skipped by user request'
+                          : null,
+                        commands: skipCleanup
+                          ? []
+                          : cleanupTasks.map((task) => ({
+                              name: task.label,
+                              status: 'pending',
+                              stdout: '',
+                              stderr: '',
+                              exitCode: null,
+                              error: null,
+                              outputTruncated: false
+                            }))
                       }
                     })},
                     NULL,NULL,${timestamp},${timestamp}
@@ -1187,7 +1210,10 @@ export class WorktreeRemovalService {
             }
           }
 
-          request.cleanupCommands.status = 'completed'
+          if (request.cleanupCommands.status !== 'skipped') {
+            request.cleanupCommands.status = 'completed'
+          }
+
           yield* persistPhase('cleanup_commands_completed')
 
           if (request.prunable) {
@@ -1358,7 +1384,8 @@ export class WorktreeRemovalService {
                   cleanup: {
                     status: cleanupWarning ? 'preserved' : 'completed',
                     residualPath,
-                    warning: cleanupWarning,
+                    warning:
+                      cleanupWarning ?? request.cleanupCommands.skippedReason,
                     commands: request.cleanupCommands.commands
                   }
                 })},

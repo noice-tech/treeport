@@ -97,6 +97,7 @@ type AppDialog =
       worktree: WorktreeRecord
       preview: RemovePreview
       operation: RemoveOperationRecord | null
+      skipCleanup: boolean
     }
   | {
       type: 'close-panel'
@@ -1094,6 +1095,7 @@ function WorkspaceApp() {
     submitWorktreeCreation,
     prepareRemoval,
     confirmRemoval,
+    removeWithoutCleanup,
     viewRemoval,
     retryRemoval
   } = useWorktreeWorkflows({
@@ -1106,16 +1108,27 @@ function WorkspaceApp() {
       }
     },
     onWorktreeSubmitted: () => setDialog(null),
-    onRemovalNeedsConfirmation: (worktree, preview, trigger) =>
+    onRemovalNeedsConfirmation: (
+      worktree,
+      preview,
+      trigger,
+      skipCleanup = false
+    ) =>
       openDialog(
-        { type: 'remove', worktree, preview, operation: null },
+        { type: 'remove', worktree, preview, operation: null, skipCleanup },
         trigger
       ),
     onRemovalProgress: (worktree, preview, operation, open) =>
       setDialog((current) =>
         open ||
         (current?.type === 'remove' && current.worktree.id === worktree.id)
-          ? { type: 'remove', worktree, preview, operation }
+          ? {
+              type: 'remove',
+              worktree,
+              preview,
+              operation,
+              skipCleanup: operation.request.skipCleanup
+            }
           : current
       ),
     onRemovalCompleted: (worktreeId) =>
@@ -1702,6 +1715,7 @@ function WorkspaceApp() {
         worktree={dialog?.type === 'remove' ? dialog.worktree : null}
         preview={dialog?.type === 'remove' ? dialog.preview : null}
         operation={dialog?.type === 'remove' ? dialog.operation : null}
+        skipCleanup={dialog?.type === 'remove' ? dialog.skipCleanup : false}
         busy={
           dialog?.type === 'remove' &&
           pendingRemovals[dialog.worktree.id] !== undefined
@@ -1709,6 +1723,7 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         onConfirm={confirmRemoval}
+        onSkipCleanup={removeWithoutCleanup}
         onRetry={(worktree) => void retryRemoval(worktree)}
       />
     </>

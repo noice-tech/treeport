@@ -304,6 +304,7 @@ describe('CLI context and machine output', () => {
   let observedDaemonLifecycle: 'treeport' | 'service' | 'external' = 'treeport'
   let creationOperation: OperationRecord | null = null
   let removalOperations: OperationRecord[] = []
+  const removalBodies: unknown[] = []
   let createdWorktree: WorktreeRecord | null = null
   let createdWebPanels: WebPanel[] = []
   let createdBrowserPanels: BrowserPanel[] = []
@@ -324,6 +325,7 @@ describe('CLI context and machine output', () => {
     observedDaemonLifecycle = 'treeport'
     creationOperation = null
     removalOperations = []
+    removalBodies.length = 0
     createdWorktree = null
     createdWebPanels = []
     createdBrowserPanels = []
@@ -879,6 +881,11 @@ describe('CLI context and machine output', () => {
         request.method === 'POST' &&
         request.url === '/api/worktrees/wt_context/remove'
       ) {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        removalBodies.push(JSON.parse(source))
         response.statusCode = 202
         response.end(JSON.stringify({ operation: removalOperations.shift() }))
         return
@@ -1505,6 +1512,7 @@ describe('CLI context and machine output', () => {
       confirmation: null,
       confirmationToken: 'token',
       confirmDestructive: false,
+      skipCleanup: false,
       preview,
       checkoutIdentity: null,
       prunable: false,
@@ -1573,6 +1581,7 @@ describe('CLI context and machine output', () => {
       'Cleanup: Drop database\ndatabase removed\nCleanup: Remove cache\ncache removed'
     )
     expect(human.stdout).toContain(`Removed tree ${worktree.name}`)
+    expect(removalBodies.at(-1)).toMatchObject({ skipCleanup: false })
 
     removalOperations = [pending, completed]
     const json = await runCli(['worktree', 'remove', worktree.id, '--json'], {
@@ -1587,6 +1596,27 @@ describe('CLI context and machine output', () => {
           { name: 'Remove cache', stderr: 'cache removed\n' }
         ]
       }
+    })
+
+    removalOperations = [pending]
+    const unconfirmedSkip = await runCli(
+      ['worktree', 'remove', worktree.id, '--skip-cleanup'],
+      { TREEPORT_API_URL: apiUrl }
+    )
+    expect(unconfirmedSkip.code).toBe(5)
+    expect(unconfirmedSkip.stderr).toContain(
+      'Re-run with --force --skip-cleanup to confirm removal.'
+    )
+
+    removalOperations = [pending, completed]
+    const confirmedSkip = await runCli(
+      ['worktree', 'remove', worktree.id, '--force', '--skip-cleanup'],
+      { TREEPORT_API_URL: apiUrl }
+    )
+    expect(confirmedSkip.code).toBe(0)
+    expect(removalBodies.at(-1)).toMatchObject({
+      confirmDestructive: true,
+      skipCleanup: true
     })
   })
 
@@ -1634,6 +1664,7 @@ describe('CLI context and machine output', () => {
       confirmation: null,
       confirmationToken: 'token',
       confirmDestructive: false,
+      skipCleanup: false,
       preview,
       checkoutIdentity: null,
       prunable: false,
