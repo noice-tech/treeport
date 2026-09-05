@@ -184,6 +184,7 @@ test('controls the local Browser through its exact bridge while another workspac
                 snapshot: {
                   at: new Date().toISOString(),
                   terminalMetadata: [],
+                  presence: [],
                   webPanels: [],
                   browserPanels: project.worktrees.flatMap(
                     (worktree) => worktree.panels
@@ -212,6 +213,21 @@ test('controls the local Browser through its exact bridge while another workspac
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/api/rpc' && request.method === 'POST') {
       rpcListener(request, response)
+      return
+    }
+
+    if (url.pathname === '/api/presence' && request.method === 'POST') {
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          identity: {
+            source: 'local',
+            login: null,
+            name: null,
+            profilePicture: null
+          }
+        })
+      )
       return
     }
 
