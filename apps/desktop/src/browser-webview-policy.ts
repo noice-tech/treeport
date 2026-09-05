@@ -25,6 +25,8 @@ import type {
   DesktopCommand
 } from './desktop-contract'
 
+import { permitsBrowserVideoCapture } from './browser-video'
+
 const BROWSER_PARTITION = 'persist:treeport-browser'
 
 function browserBootstrapPanelId(value: string): string | null {
@@ -243,7 +245,8 @@ export function installBrowserWebviewPolicy(options: {
       return { action: 'deny' }
     })
     guest.session.setPermissionRequestHandler(
-      (_contents, _permission, callback) => callback(false)
+      (contents, permission, callback, details) =>
+        callback(permitsBrowserVideoCapture(contents, permission, details))
     )
     const reportBrowserFocus = () => {
       if (

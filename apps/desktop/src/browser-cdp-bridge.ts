@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { WebContents } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
+import { ElectronBrowserVideo } from './browser-video'
 
 interface CdpRequest {
   id: number
@@ -60,6 +61,9 @@ export async function createBrowserCdpBridge(
   let client: WebSocket | null = null
   let stopping = false
   let port = 0
+  const video = new ElectronBrowserVideo(guest)
+  let videoSession: string | null = null
+  let videoTail: Promise<void> = Promise.resolve()
 
   const targetInfo = () => ({
     targetId,
@@ -155,6 +159,9 @@ export async function createBrowserCdpBridge(
     }
 
     stopping = true
+    video.stop()
+    await videoTail.catch(() => undefined)
+    video.stop()
     guest.debugger.removeListener('message', onDebuggerMessage)
     guest.debugger.removeListener('detach', onDebuggerDetach)
     guest.removeListener('destroyed', onDestroyed)
@@ -298,6 +305,88 @@ export async function createBrowserCdpBridge(
       }
 
       void (async () => {
+        if (request.method.startsWith('Treeport.')) {
+          if (!request.sessionId || !pageSessions.has(request.sessionId)) {
+            sendError(
+              socket,
+              request,
+              'Browser video requires an attached page session.'
+            )
+            return
+          }
+
+          const operation = videoTail.then(async () => {
+            if (
+              stopping ||
+              socket !== client ||
+              !pageSessions.has(request.sessionId!)
+            ) {
+              throw new Error('The Browser video connection closed.')
+            }
+
+            if (request.method === 'Treeport.startVideo') {
+              const { width, height } = request.params
+              if (
+                typeof width !== 'number' ||
+                typeof height !== 'number' ||
+                !Number.isInteger(width) ||
+                !Number.isInteger(height) ||
+                width < 1 ||
+                width > 3_840 ||
+                height < 1 ||
+                height > 2_160
+              ) {
+                throw new Error('The Browser video viewport is invalid.')
+              }
+
+              if (videoSession !== request.sessionId) {
+                video.stop()
+              }
+
+              videoSession = request.sessionId!
+              await video.start(width, height, (payload) => {
+                if (
+                  videoSession === request.sessionId &&
+                  pageSessions.has(request.sessionId!)
+                ) {
+                  if (socket.bufferedAmount > 8 * 1024 * 1024) {
+                    video.stop()
+                    socket.close(1013, 'Browser video reader is too slow')
+                    return
+                  }
+
+                  sendEvent(
+                    socket,
+                    'Treeport.videoFrame',
+                    { payload },
+                    request.sessionId
+                  )
+                }
+              })
+              if (stopping || socket !== client) {
+                video.stop()
+              }
+            } else if (
+              request.method === 'Treeport.stopVideo' &&
+              videoSession === request.sessionId
+            ) {
+              videoSession = null
+              video.stop()
+            } else if (
+              request.method === 'Treeport.requestVideoKeyframe' &&
+              videoSession === request.sessionId
+            ) {
+              await video.requestKeyframe()
+            } else {
+              throw new Error('The Browser video command is not available.')
+            }
+          })
+          videoTail = operation.catch(() => undefined)
+          await operation
+          sendResult(socket, request, {})
+          return
+        }
+
         if (request.method === 'Browser.getVersion') {
           sendResult(socket, request, {
             protocolVersion: '1.3',
@@ -404,6 +493,11 @@ export async function createBrowserCdpBridge(
         if (request.method === 'Target.detachFromTarget') {
           const sessionId = request.params.sessionId
           if (typeof sessionId === 'string') {
+            if (videoSession === sessionId) {
+              videoSession = null
+              video.stop()
+            }
+
             pageSessions.delete(sessionId)
             browserSessions.delete(sessionId)
             if (primaryPageSession === sessionId) {
@@ -599,6 +693,8 @@ export async function createBrowserCdpBridge(
     })
     socket.once('close', () => {
       if (client === socket) {
+        videoSession = null
+        video.stop()
         client = null
         pageSessions.clear()
         browserSessions.clear()

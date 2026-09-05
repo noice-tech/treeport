@@ -18,7 +18,6 @@ import {
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
-  BrowserFrame,
   BrowserPanel,
   BrowserServerMessage,
   BrowserSessionState,
@@ -40,6 +39,7 @@ import {
   type BrowserPanelConnection
 } from '../../browser-session-client'
 import { useDesktopRuntime } from '../../desktop-runtime'
+import { BrowserVideoDecoder } from '../../browser-video-decoder'
 import { LocalBrowserWebview } from './local-browser-webview'
 
 function parseBrowserAddress(value: string): URL | null {
@@ -217,14 +217,21 @@ export function BrowserPanelWorkspace({
       ) {
         const previousUrl = stateRef.current?.url ?? panel.url
         stateRef.current = message.state
+        if (
+          message.state.viewport.width > 0 &&
+          message.state.viewport.height > 0
+        ) {
+          viewportRef.current = message.state.viewport
+        }
+
         setState(message.state)
 
         if (message.type === 'ready') {
           setAddressFocusRevision((revision) => revision + 1)
+          setFailure(null)
         }
 
         onLoadingChange(panel.id, message.state.loading)
-        setFailure(null)
         setInstallingBrowser(false)
         if (!addressDirtyRef.current) {
           setError(null)
@@ -272,12 +279,21 @@ export function BrowserPanelWorkspace({
 
       onLoadingChange(panel.id, false)
       setInstallingBrowser(false)
-      if (message.type === 'browserUnavailable') {
-        stateRef.current = null
-        setState(null)
+      if (
+        message.type === 'browserUnavailable' ||
+        message.type === 'videoUnavailable'
+      ) {
+        if (message.type === 'browserUnavailable') {
+          stateRef.current = null
+          setState(null)
+        }
+
         setFailure({
           message: message.message,
-          installCommand: message.installCommand
+          installCommand:
+            message.type === 'browserUnavailable'
+              ? message.installCommand
+              : null
         })
         return
       }
@@ -288,40 +304,46 @@ export function BrowserPanelWorkspace({
     [onLoadingChange, panel.id]
   )
 
-  const receiveFrame = useCallback(
-    (frame: BrowserFrame) => {
-      viewportRef.current = { width: frame.width, height: frame.height }
-      const canvas = canvasRef.current
-      const drawing = canvas?.getContext('2d', { alpha: false })
-      if (!canvas || !drawing) {
-        send({ type: 'frameAck', sequence: frame.sequence })
-        return
-      }
-
-      const bytes = frame.data.slice()
-      void createImageBitmap(new Blob([bytes], { type: frame.mimeType }))
-        .then((bitmap) => {
-          if (canvas.width !== frame.width || canvas.height !== frame.height) {
-            canvas.width = frame.width
-            canvas.height = frame.height
-          }
-
-          drawing.drawImage(bitmap, 0, 0, frame.width, frame.height)
-          bitmap.close()
-        })
-        .finally(() => send({ type: 'frameAck', sequence: frame.sequence }))
-    },
-    [send]
-  )
-
   useEffect(() => {
     if (localBrowser) {
       return
     }
 
+    const decoder = new BrowserVideoDecoder(
+      (frame) => {
+        const canvas = canvasRef.current
+        const drawing = canvas?.getContext('2d', { alpha: false })
+        if (!canvas || !drawing) {
+          return
+        }
+
+        if (
+          canvas.width !== frame.displayWidth ||
+          canvas.height !== frame.displayHeight
+        ) {
+          canvas.width = frame.displayWidth
+          canvas.height = frame.displayHeight
+        }
+
+        drawing.drawImage(frame, 0, 0)
+        setError((current) =>
+          current === 'Browser video was interrupted. Reconnecting…'
+            ? null
+            : current
+        )
+      },
+      send,
+      (message, fatal) => {
+        if (fatal) {
+          setFailure({ message, installCommand: null })
+        } else {
+          setError(message)
+        }
+      }
+    )
     const connection = connectBrowserPanel(panel.id, false, {
       message: receiveMessage,
-      frame: receiveFrame
+      frame: (frame) => decoder.receive(frame)
     })
     connectionRef.current = connection
     return () => {
@@ -329,9 +351,10 @@ export function BrowserPanelWorkspace({
         connectionRef.current = null
       }
 
+      decoder.dispose()
       connection.dispose()
     }
-  }, [connectionRevision, localBrowser, panel.id, receiveFrame, receiveMessage])
+  }, [connectionRevision, localBrowser, panel.id, receiveMessage, send])
 
   const setLocalConnection = useCallback(
     (connection: BrowserPanelConnection | null) => {

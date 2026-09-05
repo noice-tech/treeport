@@ -2,7 +2,7 @@
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
-export const BROWSER_PROTOCOL_VERSION = 5
+export const BROWSER_PROTOCOL_VERSION = 6
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
 
@@ -90,6 +90,7 @@ export const browserClientMessageSchema = Schema.Union(
     type: Schema.Literal('setVisible'),
     visible: Schema.Boolean
   }),
+  Schema.Struct({ type: Schema.Literal('requestVideoKeyframe') }),
   Schema.Struct({
     type: Schema.Literal('frameAck'),
     sequence: Schema.Int.pipe(Schema.positive())
@@ -147,6 +148,10 @@ export const browserServerMessageSchema = Schema.Union(
     installCommand: Schema.NullOr(Schema.String)
   }),
   Schema.Struct({
+    type: Schema.Literal('videoUnavailable'),
+    message: Schema.String
+  }),
+  Schema.Struct({
     type: Schema.Literal('browserCrashed'),
     message: Schema.String
   }),
@@ -156,12 +161,30 @@ export type BrowserServerMessage = Schema.Schema.Type<
   typeof browserServerMessageSchema
 >
 
+const browserVideoFields = {
+  mimeType: Schema.Literal('video/vp8'),
+  keyframe: Schema.Boolean,
+  // WebCodecs timestamps use microseconds within the capture session.
+  timestamp: Schema.NonNegativeInt,
+  width: Schema.Int.pipe(Schema.between(1, 3_840)),
+  height: Schema.Int.pipe(Schema.between(1, 2_160))
+}
+
+const browserCaptureMessageSchema = Schema.Struct({
+  frame: Schema.NullOr(
+    Schema.Struct({
+      ...browserVideoFields,
+      data: Schema.String.pipe(
+        Schema.maxLength(Math.ceil(BROWSER_MAX_FRAME_BYTES / 3) * 4)
+      )
+    })
+  ),
+  error: Schema.NullOr(Schema.String.pipe(Schema.maxLength(4_096)))
+})
+
 export const browserFrameMetadataSchema = Schema.Struct({
   sequence: Schema.Int.pipe(Schema.positive()),
-  mimeType: Schema.Literal('image/jpeg'),
-  timestamp: Schema.Number,
-  width: Schema.Int.pipe(Schema.positive()),
-  height: Schema.Int.pipe(Schema.positive()),
+  ...browserVideoFields,
   byteLength: Schema.Int.pipe(Schema.between(0, BROWSER_MAX_FRAME_BYTES))
 })
 export type BrowserFrameMetadata = Schema.Schema.Type<
@@ -189,10 +212,7 @@ const browserFrameDataSchema = Schema.Union(
 
 export const browserFrameSchema = Schema.Struct({
   sequence: Schema.Int.pipe(Schema.positive()),
-  mimeType: Schema.Literal('image/jpeg'),
-  timestamp: Schema.Number,
-  width: Schema.Int.pipe(Schema.positive()),
-  height: Schema.Int.pipe(Schema.positive()),
+  ...browserVideoFields,
   data: browserFrameDataSchema
 })
 export type BrowserFrame = Schema.Schema.Type<typeof browserFrameSchema>
@@ -401,6 +421,18 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
   return Either.isRight(result) ? result.right : null
 }
 
+export function parseBrowserCaptureMessage(payload: string) {
+  if (payload.length > BROWSER_MAX_FRAME_BYTES * 1.4 + 4_096) {
+    return null
+  }
+
+  try {
+    return decodeOrNull(browserCaptureMessageSchema, JSON.parse(payload))
+  } catch {
+    return null
+  }
+}
+
 export function parseBrowserAuth(value: unknown): BrowserAuth | null {
   return decodeOrNull(browserAuthSchema, value)
 }
@@ -438,6 +470,7 @@ export function encodeBrowserFrame(frame: BrowserFrame): Uint8Array {
     JSON.stringify({
       sequence: frame.sequence,
       mimeType: frame.mimeType,
+      keyframe: frame.keyframe,
       timestamp: frame.timestamp,
       width: frame.width,
       height: frame.height,

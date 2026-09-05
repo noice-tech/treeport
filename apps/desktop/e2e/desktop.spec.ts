@@ -11,6 +11,8 @@ import {
   DESKTOP_PROTOCOL_VERSION,
   TreeportRpcs,
   parseBrowserOwnerAuth,
+  parseBrowserCaptureMessage,
+  type BrowserVideoCdpSession,
   parseSocketHandshake,
   parseSocketMessage,
   type BrowserOwnerServerMessage,
@@ -841,24 +843,92 @@ test('controls the local Browser through its exact bridge while another workspac
       const screencast = await connectedBrowser
         .contexts()[0]!
         .newCDPSession(visiblePage)
-      const framePromise = new Promise<{
-        data: string
-        sessionId: number
-        metadata: { deviceWidth: number; deviceHeight: number }
-      }>((resolve) => screencast.once('Page.screencastFrame', resolve))
-      await screencast.send('Page.startScreencast', {
-        format: 'jpeg',
-        quality: 75,
-        everyNthFrame: 1
-      })
-      const frame = await framePromise
-      expect(Buffer.from(frame.data, 'base64').byteLength).toBeGreaterThan(0)
-      expect(frame.metadata.deviceWidth).toBeGreaterThan(0)
-      expect(frame.metadata.deviceHeight).toBeGreaterThan(0)
-      await screencast.send('Page.screencastFrameAck', {
-        sessionId: frame.sessionId
-      })
-      await screencast.send('Page.stopScreencast')
+      // SAFETY: This session connects to the verified Treeport guest bridge.
+      // eslint-disable-next-line anti-slop/no-chained-type-assertions -- The verified private bridge extends Chromium's command table.
+      const video = screencast as unknown as BrowserVideoCdpSession
+      const captured: string[] = []
+      const framePromise = new Promise<string>((resolve) =>
+        video.on('Treeport.videoFrame', ({ payload }) => {
+          captured.push(payload)
+          resolve(payload)
+        })
+      )
+      await video.send('Treeport.startVideo', { width: 1_280, height: 800 })
+      const message = parseBrowserCaptureMessage(await framePromise)
+      expect(message?.error).toBeNull()
+      const frame = message?.frame
+      if (!frame) {
+        throw new Error('Electron did not produce a video frame.')
+      }
+
+      expect(frame.keyframe).toBe(true)
+      // Decode the actual guest video in the viewer, not just a mocked packet.
+      const decoded = await window.evaluate(
+        async (frame) =>
+          new Promise<{ width: number; height: number }>((resolve, reject) => {
+            const decoder = new VideoDecoder({
+              output(value) {
+                resolve({
+                  width: value.displayWidth,
+                  height: value.displayHeight
+                })
+                value.close()
+                decoder.close()
+              },
+              error: reject
+            })
+            decoder.configure({ codec: 'vp8' })
+            decoder.decode(
+              new EncodedVideoChunk({
+                type: 'key',
+                timestamp: frame.timestamp,
+                data: Uint8Array.from(atob(frame.data), (character) =>
+                  character.charCodeAt(0)
+                )
+              })
+            )
+          }),
+        frame
+      )
+      expect(decoded).toEqual({ width: frame.width, height: frame.height })
+      const beforeKeyframe = captured.length
+      await video.send('Treeport.requestVideoKeyframe')
+      await expect
+        .poll(() =>
+          captured
+            .slice(beforeKeyframe)
+            .some(
+              (payload) => parseBrowserCaptureMessage(payload)?.frame?.keyframe
+            )
+        )
+        .toBe(true)
+      // The capture exception must not grant the guest microphone or camera access.
+      expect(
+        await visiblePage.evaluate(() =>
+          navigator.mediaDevices
+            .getUserMedia({ audio: true, video: true })
+            .then(
+              (stream) => {
+                stream.getTracks().forEach((track) => track.stop())
+                return true
+              },
+              () => false
+            )
+        )
+      ).toBe(false)
+      await video.send('Treeport.stopVideo')
+      const beforeRestart = captured.length
+      await video.send('Treeport.startVideo', { width: 1_280, height: 800 })
+      await expect
+        .poll(() =>
+          captured
+            .slice(beforeRestart)
+            .some(
+              (payload) => parseBrowserCaptureMessage(payload)?.frame?.keyframe
+            )
+        )
+        .toBe(true)
+      await video.send('Treeport.stopVideo')
       await screencast.detach()
 
       let controlReleased = false

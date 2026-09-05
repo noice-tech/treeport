@@ -8,7 +8,9 @@ import {
   browserOwnerServerMessageSchema as browserOwnerServerMessageEffectSchema,
   BROWSER_PROTOCOL_VERSION,
   parseBrowserAuth,
-  parseBrowserClientMessage
+  parseBrowserClientMessage,
+  encodeBrowserFrame,
+  decodeBrowserFrame
 } from './browser-protocol.js'
 import { testSchema } from './schema.test-support.js'
 
@@ -102,14 +104,35 @@ describe('hosted browser protocol', () => {
     ).toBe(false)
   })
 
-  it('keeps streamed frames inside the protocol byte limit', () => {
+  it('round-trips video dependencies and rejects invalid or oversized frames', () => {
     const frame = {
       sequence: 1,
-      mimeType: 'image/jpeg' as const,
+      mimeType: 'video/vp8' as const,
+      keyframe: true,
       timestamp: 1,
       width: 1,
       height: 1
     }
+    const keyframe = { ...frame, data: Uint8Array.from([1, 2, 3]) }
+    const delta = {
+      ...keyframe,
+      sequence: 2,
+      keyframe: false,
+      timestamp: 33_334
+    }
+    expect(decodeBrowserFrame(encodeBrowserFrame(keyframe))).toMatchObject(
+      keyframe
+    )
+    expect(decodeBrowserFrame(encodeBrowserFrame(delta))).toMatchObject(delta)
+    expect(
+      decodeBrowserFrame(encodeBrowserFrame(delta).subarray(0, -1))
+    ).toBeNull()
+    expect(
+      decodeBrowserFrame(encodeBrowserFrame({ ...delta, width: 100_000 }))
+    ).toBeNull()
+    expect(
+      decodeBrowserFrame(encodeBrowserFrame({ ...delta, timestamp: Infinity }))
+    ).toBeNull()
     expect(
       browserFrameSchema.safeParse({ ...frame, data: new Uint8Array([1]) })
         .success

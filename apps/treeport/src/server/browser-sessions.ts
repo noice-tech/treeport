@@ -19,7 +19,8 @@ import type {
   BrowserOwnerClientMessage,
   BrowserOwnerServerMessage,
   BrowserServerMessage,
-  BrowserSessionState
+  BrowserSessionState,
+  BrowserVideoCdpSession
 } from '@treeport/shared'
 import {
   BROWSER_MAX_FRAME_BYTES,
@@ -35,12 +36,13 @@ import type { AppConfig, TreeportService } from './core/index'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
 import { networkTelemetry } from './network-telemetry'
 import {
-  LatestBrowserFrameProducer,
   PlaywrightBrowser,
   PlaywrightBrowserHost,
   type BrowserInstallStatus,
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
+
+import { receiveBrowserVideo } from './browser-video'
 
 export interface BrowserTransport {
   id: string
@@ -82,6 +84,7 @@ export interface BrowserSessionBrowser {
   command(message: BrowserClientMessage): Promise<void>
   agentCommand(input: BrowserAgentCommand): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
+  requestVideoKeyframe(): Promise<void>
   requestClose(force: boolean): Promise<boolean>
   close(): Promise<void>
 }
@@ -132,11 +135,12 @@ interface BrowserLocalAutomation {
   browser: PlaywrightConnection
   page: Page
   cdp: CDPSession
-  frameProducer: LatestBrowserFrameProducer
+  video: BrowserVideoCdpSession
   generation: number
   console: string[]
   requests: string[]
   screencasting: boolean
+  captureViewport: { width: number; height: number } | null
   screencastTail: Promise<void>
 }
 
@@ -161,9 +165,8 @@ interface BrowserAttachment {
   transport: BrowserTransport
   visible: boolean
   closing: boolean
-  awaitingFrame: number | null
-  awaitingFrameSentAt: number | null
-  pendingFrame: BrowserFrame | null
+  inFlightFrames: Map<number, number>
+  waitingForKeyframe: boolean
   viewport: { width: number; height: number }
 }
 
@@ -215,7 +218,9 @@ interface BrowserSession {
     'controlled' | 'hasController' | 'controller'
   >
   sequence: number
-  latestFrame: BrowserFrame | null
+  videoError: string | null
+  keyframeRequestedAt: number
+  keyframeTimer: ReturnType<typeof setTimeout> | null
   scheduler: BrowserScheduler
   persistence: BrowserPanelStatePersistence
   agentAttached: boolean
@@ -613,6 +618,32 @@ export class BrowserSessionManager {
     }
   }
 
+  private broadcastVideoUnavailable(
+    session: BrowserSession,
+    message: string
+  ): void {
+    session.videoError = message
+    for (const attachment of session.attachments.values()) {
+      attachment.transport.sendMessage({ type: 'videoUnavailable', message })
+    }
+  }
+
+  private resetVideoDelivery(session: BrowserSession): void {
+    if (session.keyframeTimer) {
+      clearTimeout(session.keyframeTimer)
+      session.keyframeTimer = null
+    }
+
+    session.videoError = null
+    session.keyframeRequestedAt = 0
+    for (const attachment of session.attachments.values()) {
+      attachment.inFlightFrames.clear()
+      attachment.waitingForKeyframe = true
+    }
+    // Sequence numbers remain monotonic across runtime generations. Otherwise
+    // late acknowledgements could release credit for a replacement runtime.
+  }
+
   private openPopup(session: BrowserSession, url: string): void {
     this.service.forkApplicationEffect(
       this.service.panels.openBrowserPanelFromPanel(session.panelId, url).pipe(
@@ -753,7 +784,9 @@ export class BrowserSessionManager {
         viewport: { ...DEFAULT_STATE.viewport }
       },
       sequence: 0,
-      latestFrame: null,
+      videoError: null,
+      keyframeRequestedAt: 0,
+      keyframeTimer: null,
       scheduler: {
         queue: [],
         coalesced: new Map(),
@@ -840,8 +873,21 @@ export class BrowserSessionManager {
 
             void this.openPopup(session, url)
           },
-          navigationError: (message) =>
-            this.broadcastNavigationError(session, message),
+          navigationError: (message, source) => {
+            if (
+              session.browser !== browser ||
+              session.generation !== runtimeGeneration ||
+              session.localOwner
+            ) {
+              return
+            }
+
+            if (source === 'video') {
+              this.broadcastVideoUnavailable(session, message)
+            } else {
+              this.broadcastNavigationError(session, message)
+            }
+          },
           crashed: (message) => {
             if (
               !runtimeReady ||
@@ -999,9 +1045,8 @@ export class BrowserSessionManager {
       transport,
       visible: ticket.visible,
       closing: false,
-      awaitingFrame: null,
-      awaitingFrameSentAt: null,
-      pendingFrame: null,
+      inFlightFrames: new Map(),
+      waitingForKeyframe: true,
       viewport: { ...session.state.viewport }
     }
     session.attachments.set(attachment.id, attachment)
@@ -1053,7 +1098,14 @@ export class BrowserSessionManager {
         })
       }
 
-      this.sendLatestFrame(session, attachment)
+      if (session.videoError) {
+        transport.sendMessage({
+          type: 'videoUnavailable',
+          message: session.videoError
+        })
+      }
+
+      this.prepareVideoViewer(session, attachment)
     } catch (error) {
       attachment.closing = true
       session.attachments.delete(attachment.id)
@@ -1175,8 +1227,7 @@ export class BrowserSessionManager {
 
           if (previousOwner.endpoint !== auth.endpoint) {
             await this.closeLocalAutomation(session)
-            session.latestFrame = null
-            session.sequence = 0
+            this.resetVideoDelivery(session)
           }
 
           previousOwner.transport = transport
@@ -1211,8 +1262,7 @@ export class BrowserSessionManager {
           }
           session.localOwner = owner
           session.controllerId = LOCAL_BROWSER_OWNER_CONTROLLER
-          session.latestFrame = null
-          session.sequence = 0
+          this.resetVideoDelivery(session)
         }
 
         if (!transport.isConnected()) {
@@ -1257,20 +1307,27 @@ export class BrowserSessionManager {
       }
 
       owner.revision = message.revision
+      const resized =
+        session.state.viewport.width !== message.state.viewport.width ||
+        session.state.viewport.height !== message.state.viewport.height
       session.state = message.state
       this.queuePanelState(session, message.state)
       this.broadcastState(session)
 
-      if (message.type === 'ready' && !owner.ready) {
+      const becameReady = message.type === 'ready' && !owner.ready
+      if (becameReady) {
         owner.ready = true
         owner.resolveReady?.()
         owner.resolveReady = null
+      }
+
+      if (becameReady || (resized && owner.ready)) {
         void this.scheduleOperation(
           session,
           () => this.updateScreencast(session),
-          { required: true }
+          { required: true, coalesceKey: `screencast:${session.panelId}` }
         ).catch((cause) =>
-          this.broadcastNavigationError(
+          this.broadcastVideoUnavailable(
             session,
             cause instanceof Error ? cause.message : String(cause)
           )
@@ -1383,8 +1440,7 @@ export class BrowserSessionManager {
     owner.requests.clear()
     await this.closeLocalAutomation(session)
     session.generation += 1
-    session.latestFrame = null
-    session.sequence = 0
+    this.resetVideoDelivery(session)
     if (
       session.controllerId === LOCAL_BROWSER_OWNER_CONTROLLER ||
       session.controllerId === 'agent'
@@ -1499,24 +1555,51 @@ export class BrowserSessionManager {
     owner.retainPaint = retainPaint
   }
 
-  private sendLatestFrame(
+  private prepareVideoViewer(
     session: BrowserSession,
     attachment: BrowserAttachment
   ): void {
-    const frame = session.latestFrame
+    if (!attachment.visible || !attachment.transport.isConnected()) {
+      return
+    }
+
+    attachment.waitingForKeyframe = true
+    // A cached delta frame is not independently decodable. Request a new keyframe
+    // even for a static page; the capture document retains one raw frame for this.
+    this.requestVideoKeyframe(session)
+  }
+
+  private requestVideoKeyframe(session: BrowserSession): void {
     if (
-      !frame ||
-      !attachment.visible ||
-      attachment.awaitingFrame !== null ||
-      !attachment.transport.isConnected()
+      ![...session.attachments.values()].some(
+        (attachment) => attachment.visible && attachment.transport.isConnected()
+      )
     ) {
       return
     }
 
-    if (attachment.transport.sendFrame(frame)) {
-      attachment.awaitingFrame = frame.sequence
-      attachment.awaitingFrameSentAt = Date.now()
+    const delay = 250 - (Date.now() - session.keyframeRequestedAt)
+    if (delay > 0) {
+      session.keyframeTimer ??= setTimeout(() => {
+        session.keyframeTimer = null
+        if (this.sessions.get(session.panelId) === session) {
+          this.requestVideoKeyframe(session)
+        }
+      }, delay)
+      session.keyframeTimer.unref()
+      return
     }
+
+    session.keyframeRequestedAt = Date.now()
+    const operation = session.localOwner
+      ? session.localAutomation?.video.send('Treeport.requestVideoKeyframe')
+      : session.browser?.requestVideoKeyframe()
+    void operation?.catch((cause) =>
+      this.broadcastNavigationError(
+        session,
+        cause instanceof Error ? cause.message : String(cause)
+      )
+    )
   }
 
   private publishFrame(
@@ -1527,28 +1610,31 @@ export class BrowserSessionManager {
       return
     }
 
+    session.videoError = null
     const frame: BrowserFrame = {
       ...value,
       sequence: ++session.sequence
     }
-    session.latestFrame = frame
     for (const attachment of session.attachments.values()) {
       if (!attachment.visible || !attachment.transport.isConnected()) {
         continue
       }
 
-      if (attachment.awaitingFrame !== null) {
-        if (attachment.pendingFrame) {
-          networkTelemetry.droppedNow('browsers', 'coalesced')
-        }
-
-        attachment.pendingFrame = frame
+      if (
+        attachment.inFlightFrames.size >= 8 ||
+        (attachment.waitingForKeyframe && !frame.keyframe)
+      ) {
+        attachment.waitingForKeyframe = true
+        networkTelemetry.droppedNow('browsers', 'coalesced')
         continue
       }
 
       if (attachment.transport.sendFrame(frame)) {
-        attachment.awaitingFrame = frame.sequence
-        attachment.awaitingFrameSentAt = Date.now()
+        attachment.waitingForKeyframe = false
+        attachment.inFlightFrames.set(frame.sequence, Date.now())
+      } else {
+        attachment.waitingForKeyframe = true
+        this.requestVideoKeyframe(session)
       }
     }
   }
@@ -1582,26 +1668,25 @@ export class BrowserSessionManager {
       return
     }
 
+    if (message.type === 'requestVideoKeyframe') {
+      if (attachment.visible) {
+        attachment.waitingForKeyframe = true
+        this.requestVideoKeyframe(session)
+      }
+
+      return
+    }
+
     if (message.type === 'frameAck') {
-      if (attachment.awaitingFrame !== message.sequence) {
+      const sentAt = attachment.inFlightFrames.get(message.sequence)
+      if (sentAt === undefined) {
         return
       }
 
-      attachment.awaitingFrame = null
-      if (attachment.awaitingFrameSentAt !== null) {
-        networkTelemetry.durationNow(
-          'browsers',
-          'ack_lag',
-          Date.now() - attachment.awaitingFrameSentAt
-        )
-      }
-
-      attachment.awaitingFrameSentAt = null
-      const pending = attachment.pendingFrame
-      attachment.pendingFrame = null
-      if (pending && attachment.transport.sendFrame(pending)) {
-        attachment.awaitingFrame = pending.sequence
-        attachment.awaitingFrameSentAt = Date.now()
+      attachment.inFlightFrames.delete(message.sequence)
+      networkTelemetry.durationNow('browsers', 'ack_lag', Date.now() - sentAt)
+      if (attachment.visible && attachment.waitingForKeyframe) {
+        this.requestVideoKeyframe(session)
       }
 
       return
@@ -1609,12 +1694,10 @@ export class BrowserSessionManager {
 
     if (message.type === 'setVisible') {
       attachment.visible = message.visible
+      attachment.inFlightFrames.clear()
+      attachment.waitingForKeyframe = true
       if (message.visible) {
-        this.sendLatestFrame(session, attachment)
-      } else {
-        attachment.awaitingFrame = null
-        attachment.awaitingFrameSentAt = null
-        attachment.pendingFrame = null
+        this.prepareVideoViewer(session, attachment)
       }
 
       this.queueClientOperation(session, attachment, {
@@ -1825,7 +1908,18 @@ export class BrowserSessionManager {
     }
 
     const browser = await session.launch.catch(() => null)
-    await browser?.setScreencasting(visible).catch(() => undefined)
+    if (visible) {
+      session.videoError = null
+    }
+
+    await browser
+      ?.setScreencasting(visible)
+      .catch((cause) =>
+        this.broadcastVideoUnavailable(
+          session,
+          cause instanceof Error ? cause.message : String(cause)
+        )
+      )
   }
 
   private async detachAgent(session: BrowserSession): Promise<void> {
@@ -1852,8 +1946,7 @@ export class BrowserSessionManager {
       session.browser = null
     }
 
-    session.latestFrame = null
-    session.sequence = 0
+    this.resetVideoDelivery(session)
     await fs.rm(session.agentDirectory, { recursive: true, force: true })
     await fs.mkdir(session.agentDirectory, { recursive: true, mode: 0o700 })
     await fs.chmod(session.agentDirectory, 0o700)
@@ -2064,12 +2157,11 @@ export class BrowserSessionManager {
 
     if (current) {
       session.localAutomation = null
-      current.frameProducer.stop()
     }
 
     const launch = (async () => {
       if (current) {
-        await current.cdp.send('Page.stopScreencast').catch(() => undefined)
+        await current.video.send('Treeport.stopVideo').catch(() => undefined)
         await current.cdp.detach().catch(() => undefined)
         await current.browser.close().catch(() => undefined)
       }
@@ -2122,39 +2214,46 @@ export class BrowserSessionManager {
       }
 
       const cdp = await context.newCDPSession(page)
-      const frameProducer = new LatestBrowserFrameProducer(
-        (frame) => {
-          if (
-            session.localOwner === owner &&
-            session.localAutomation?.generation === owner.generation
-          ) {
-            this.publishFrame(session, frame)
-          }
-        },
-        (sessionId) => {
-          void cdp
-            .send('Page.screencastFrameAck', { sessionId })
-            .catch(() => undefined)
+      // SAFETY: The verified exact-guest Electron CDP bridge implements this
+      // private domain. Arbitrary remote CDP endpoints are not accepted here.
+      // eslint-disable-next-line anti-slop/no-chained-type-assertions -- This private Electron domain extends Playwright's fixed Chromium command table.
+      const video = cdp as unknown as BrowserVideoCdpSession
+      video.on('Treeport.videoFrame', ({ payload }) => {
+        if (
+          session.localOwner !== owner ||
+          session.localAutomation?.generation !== owner.generation ||
+          !session.localAutomation.screencasting
+        ) {
+          return
         }
-      )
+
+        receiveBrowserVideo(
+          payload,
+          (frame) => this.publishFrame(session, frame),
+          (message) => {
+            automation.screencasting = false
+            void video.send('Treeport.stopVideo').catch(() => undefined)
+            this.broadcastVideoUnavailable(session, message)
+          }
+        )
+      })
       const automation: BrowserLocalAutomation = {
         browser,
         page,
         cdp,
-        frameProducer,
+        video,
         generation: owner.generation,
         console: [],
         requests: [],
         screencasting: false,
+        captureViewport: null,
         screencastTail: Promise.resolve()
       }
-      cdp.on('Page.screencastFrame', (frame) => frameProducer.receive(frame))
       browser.once('disconnected', () => {
         if (session.localAutomation !== automation) {
           return
         }
 
-        automation.frameProducer.stop()
         automation.screencasting = false
         session.localAutomation = null
         void this.scheduleOperation(
@@ -2207,8 +2306,7 @@ export class BrowserSessionManager {
     session.localAutomation = null
     session.localAutomationLaunch = null
     if (automation) {
-      automation.frameProducer.stop()
-      await automation.cdp.send('Page.stopScreencast').catch(() => undefined)
+      await automation.video.send('Treeport.stopVideo').catch(() => undefined)
       await automation.cdp.detach().catch(() => undefined)
       await automation.browser.close().catch(() => undefined)
     }
@@ -2227,36 +2325,39 @@ export class BrowserSessionManager {
     }
 
     const operation = automation.screencastTail.then(async () => {
+      const width = Math.max(1, session.state.viewport.width || 1_280)
+      const height = Math.max(1, session.state.viewport.height || 800)
       if (
         session.localOwner !== owner ||
         session.localAutomation !== automation ||
-        automation.screencasting === enabled
+        (automation.screencasting === enabled &&
+          (!enabled ||
+            (automation.captureViewport?.width === width &&
+              automation.captureViewport.height === height)))
       ) {
         return
       }
 
+      if (enabled && automation.screencasting) {
+        await automation.video.send('Treeport.stopVideo')
+      }
+
       automation.screencasting = enabled
+      automation.captureViewport = enabled ? { width, height } : null
       if (!enabled) {
-        automation.frameProducer.stop()
-        await automation.cdp.send('Page.stopScreencast').catch(() => undefined)
+        await automation.video.send('Treeport.stopVideo').catch(() => undefined)
         return
       }
 
-      automation.frameProducer.start()
-      const width = Math.max(320, session.state.viewport.width || 1_280)
-      const height = Math.max(200, session.state.viewport.height || 800)
-      await automation.cdp
-        .send('Page.startScreencast', {
-          format: 'jpeg',
-          quality: 75,
-          maxWidth: width,
-          maxHeight: height,
-          everyNthFrame: 1
-        })
+      session.videoError = null
+      await automation.video
+        .send('Treeport.startVideo', { width, height })
         .catch((cause) => {
           automation.screencasting = false
-          automation.frameProducer.stop()
-          throw cause
+          this.broadcastVideoUnavailable(
+            session,
+            cause instanceof Error ? cause.message : String(cause)
+          )
         })
     })
     automation.screencastTail = operation.catch(() => undefined)

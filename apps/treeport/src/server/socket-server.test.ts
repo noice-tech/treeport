@@ -382,7 +382,8 @@ describe('Effect WebSocket real network', () => {
           })
           transport.sendFrame({
             sequence: 1,
-            mimeType: 'image/jpeg',
+            mimeType: 'video/vp8',
+            keyframe: true,
             timestamp: 123,
             width: 800,
             height: 600,
@@ -396,7 +397,8 @@ describe('Effect WebSocket real network', () => {
         if (message.type === 'setVisible' && message.visible) {
           transports.get(connectionId)?.sendFrame({
             sequence: 2,
-            mimeType: 'image/jpeg',
+            mimeType: 'video/vp8',
+            keyframe: false,
             timestamp: 456,
             width: 800,
             height: 600,
@@ -612,7 +614,8 @@ describe('Effect WebSocket real network', () => {
     browser.on('disconnect', disconnected)
     const frame = {
       sequence: 1,
-      mimeType: 'image/jpeg' as const,
+      mimeType: 'video/vp8' as const,
+      keyframe: true,
       timestamp: 123,
       width: 800,
       height: 600,
