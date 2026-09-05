@@ -97,6 +97,16 @@ With a mouse, modifier-click the link.
 
 If a Browser panel has the exact URL in that tree, Treeport selects it instead of opening another panel.
 
+## Recover an unavailable browser
+
+If the browser cannot start or its page process stops, Treeport shows **Browser unavailable**.
+
+Select **Retry** to reopen the page. Unsaved page input can be lost.
+
+Each desktop window can run six local Browser pages. Hidden Browser tabs count toward this limit.
+
+If the window reaches this limit, close another Browser tab. Then, select **Retry** in the unavailable panel.
+
 ## Open a browser panel from the CLI
 
 Open a blank browser panel:

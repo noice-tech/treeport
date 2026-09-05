@@ -65,6 +65,9 @@ type TreeportDesktopBridge = Readonly<{
   onBrowserPopup: (
     listener: (popup: { panelId: string; url: string }) => void
   ) => () => void
+  onBrowserUnavailable: (
+    listener: (failure: { panelId: string; message: string }) => void
+  ) => () => void
   requestAttention: () => void
 }>
 

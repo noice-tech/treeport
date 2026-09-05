@@ -41,7 +41,6 @@ interface BrowserEntry {
   panelId: string | null
   guest: WebContents
   bridge: BrowserCdpBridge | null
-  commandQueue: Promise<void>
   inputLocked: boolean
 }
 
@@ -78,7 +77,6 @@ export function installBrowserWebviewPolicy(options: {
   isTrustedEvent(event: IpcMainEvent | IpcMainInvokeEvent): boolean
 }): BrowserWebviewPolicy {
   const entries = new Map<string, BrowserEntry>()
-  const pendingPanels = new Set<string>()
   const pendingGuests = new Map<number, BrowserEntry>()
 
   const disposeEntry = async (entry: BrowserEntry) => {
@@ -101,19 +99,24 @@ export function installBrowserWebviewPolicy(options: {
       const computer = options.selectedComputer()
       const partition = params.partition ?? webPreferences.partition ?? ''
       const panelId = browserBootstrapPanelId(params.src ?? '') ?? ''
+      const atCapacity = entries.size + pendingGuests.size >= 6
       if (
         !computer?.loopback ||
         partition !== BROWSER_PARTITION ||
         !decodeUnknownOrNull(browserPanelIdSchema, panelId) ||
         entries.has(panelId) ||
-        pendingPanels.has(panelId) ||
-        entries.size + pendingPanels.size >= 6
+        atCapacity
       ) {
         event.preventDefault()
+        options.trustedRenderer.send('native-browser:unavailable', {
+          panelId,
+          message: atCapacity
+            ? 'This desktop window can run six Browser pages. Close another Browser tab, then select Retry.'
+            : 'The desktop app rejected this Browser. Select Retry to reopen it.'
+        })
         return
       }
 
-      pendingPanels.add(panelId)
       delete webPreferences.preload
       webPreferences.partition = partition
       webPreferences.nodeIntegration = false
@@ -133,7 +136,7 @@ export function installBrowserWebviewPolicy(options: {
       !computer?.loopback ||
       guest.hostWebContents !== options.trustedRenderer ||
       guest.session !== session.fromPartition(BROWSER_PARTITION) ||
-      pendingGuests.size >= pendingPanels.size
+      entries.size + pendingGuests.size >= 6
     ) {
       guest.close({ waitForBeforeUnload: false })
       return
@@ -143,7 +146,6 @@ export function installBrowserWebviewPolicy(options: {
       panelId: null,
       guest,
       bridge: null,
-      commandQueue: Promise.resolve(),
       inputLocked: false
     }
     pendingGuests.set(guest.id, entry)
@@ -375,6 +377,8 @@ export function installBrowserWebviewPolicy(options: {
       Menu.buildFromTemplate(template).popup(popupOptions)
     })
     guest.once('destroyed', () => {
+      void entry.bridge?.stop()
+      entry.bridge = null
       pendingGuests.delete(guest.id)
       const panelId = entry.panelId
       if (panelId && entries.get(panelId) === entry) {
@@ -394,10 +398,9 @@ export function installBrowserWebviewPolicy(options: {
         const pending = pendingGuests.get(webContentsId)
         if (
           pending &&
-          pendingPanels.has(panelId) &&
+          browserBootstrapPanelId(pending.guest.getURL()) === panelId &&
           decodeUnknownOrNull(browserPanelIdSchema, panelId) !== null
         ) {
-          pendingPanels.delete(panelId)
           pendingGuests.delete(webContentsId)
           pending.panelId = panelId
           entries.set(panelId, pending)
@@ -446,37 +449,42 @@ export function installBrowserWebviewPolicy(options: {
         }
       }
 
-      let operationError: string | null = null
-      const operation = entry.commandQueue.then(async () => {
-        if (entry.guest.isDestroyed()) {
-          throw new Error('The Browser page is not available.')
-        }
+      // Dispatch immediately: Stop and newer navigations must interrupt loadURL.
+      return Promise.resolve()
+        .then(async () => {
+          if (entry.guest.isDestroyed()) {
+            throw new Error('The Browser page is not available.')
+          }
 
-        if (command.type === 'navigate') {
-          await entry.guest.loadURL(command.url)
-        } else if (
-          command.type === 'back' &&
-          entry.guest.navigationHistory.canGoBack()
-        ) {
-          entry.guest.navigationHistory.goBack()
-        } else if (
-          command.type === 'forward' &&
-          entry.guest.navigationHistory.canGoForward()
-        ) {
-          entry.guest.navigationHistory.goForward()
-        } else if (command.type === 'reload') {
-          entry.guest.reload()
-        } else if (command.type === 'stop') {
-          entry.guest.stop()
-        }
-      })
-      entry.commandQueue = operation.catch((cause) => {
-        operationError = cause instanceof Error ? cause.message : String(cause)
-      })
-      await entry.commandQueue
-      return operationError
-        ? { ok: false, error: operationError }
-        : { ok: true, error: null }
+          if (command.type === 'navigate') {
+            await entry.guest.loadURL(command.url)
+          } else if (
+            command.type === 'back' &&
+            entry.guest.navigationHistory.canGoBack()
+          ) {
+            entry.guest.navigationHistory.goBack()
+          } else if (
+            command.type === 'forward' &&
+            entry.guest.navigationHistory.canGoForward()
+          ) {
+            entry.guest.navigationHistory.goForward()
+          } else if (command.type === 'reload') {
+            entry.guest.reload()
+          } else if (command.type === 'stop') {
+            entry.guest.stop()
+          }
+        })
+        .then(
+          () => ({ ok: true, error: null }),
+          (cause: unknown) => {
+            const error: NodeJS.ErrnoException =
+              cause instanceof Error ? cause : new Error(String(cause))
+            // Chromium aborts the previous load when the user stops or replaces it.
+            return error.code === 'ERR_ABORTED'
+              ? { ok: true, error: null }
+              : { ok: false, error: error.message }
+          }
+        )
     },
     async setInputControl(event, panelId, locked) {
       const entry = entries.get(panelId)
@@ -490,7 +498,6 @@ export function installBrowserWebviewPolicy(options: {
 
       if (locked) {
         entry.inputLocked = true
-        await entry.commandQueue
         if (!options.trustedRenderer.isDestroyed()) {
           options.trustedRenderer.focus()
         }
@@ -555,7 +562,6 @@ export function installBrowserWebviewPolicy(options: {
       }
     },
     disposeAll() {
-      pendingPanels.clear()
       for (const entry of [...entries.values(), ...pendingGuests.values()]) {
         void disposeEntry(entry)
       }

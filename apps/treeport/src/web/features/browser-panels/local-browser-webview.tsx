@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
 import type {
   BrowserClientMessage,
@@ -21,8 +21,11 @@ function browserState(
   loading = webview.isLoading()
 ): BrowserRuntimeState {
   const observedUrl = webview.getURL()
+  const blankPage =
+    observedUrl === 'about:blank' ||
+    observedUrl.startsWith('about:blank#treeport-panel=')
   const currentUrl =
-    loading && observedUrl === 'about:blank' && fallbackUrl !== 'about:blank'
+    loading && blankPage && fallbackUrl !== 'about:blank'
       ? fallbackUrl
       : observedUrl || fallbackUrl
   const url =
@@ -33,7 +36,7 @@ function browserState(
   const bounds = webview.getBoundingClientRect()
   return {
     url,
-    title: webview.getTitle(),
+    title: blankPage ? '' : webview.getTitle(),
     loading,
     canGoBack: webview.canGoBack(),
     canGoForward: webview.canGoForward(),
@@ -71,20 +74,6 @@ export function LocalBrowserWebview({
   const externalControllerRef = useRef<'agent' | 'other' | null>(null)
   const retainPaintRef = useRef(false)
   const takeControlRef = useRef<() => void>(() => undefined)
-  const bindWebview = useCallback(
-    (webview: TreeportBrowserWebview | null) => {
-      webviewRef.current = webview
-      if (webview) {
-        webview.setAttribute('partition', 'persist:treeport-browser')
-        webview.setAttribute('allowpopups', 'true')
-        webview.src = `about:blank#treeport-panel=${encodeURIComponent(
-          panel.id
-        )}`
-      }
-    },
-    [panel.id]
-  )
-
   useEffect(() => {
     const webview = webviewRef.current
     const bridge = window.treeportDesktop
@@ -92,6 +81,7 @@ export function LocalBrowserWebview({
       return
     }
 
+    const abortController = new AbortController()
     let disposed = false
     let registering = false
     let reporting = false
@@ -105,6 +95,19 @@ export function LocalBrowserWebview({
     let reconnectTimer: number | null = null
     let domReady = false
     let hasOwnedRuntime = false
+    let pendingNavigation: Extract<
+      BrowserClientMessage,
+      { type: 'navigate' }
+    > | null = null
+    let commandRevision = 0
+
+    const flushPendingNavigation = () => {
+      const navigation = pendingNavigation
+      pendingNavigation = null
+      if (navigation) {
+        connection.send(navigation)
+      }
+    }
 
     const reportError = (cause: unknown) => {
       if (disposed) {
@@ -117,6 +120,11 @@ export function LocalBrowserWebview({
         installCommand: null
       })
     }
+    const startupTimer = window.setTimeout(() => {
+      reportError(
+        'The Browser did not become ready. Select Retry to reopen it.'
+      )
+    }, 10_000)
     const sessionState = (state: BrowserRuntimeState): BrowserSessionState => ({
       ...state,
       controlled: externalControllerRef.current === null,
@@ -131,7 +139,16 @@ export function LocalBrowserWebview({
         return
       }
 
-      const state = browserState(webview, fallbackUrl, loading)
+      let state: BrowserRuntimeState
+      try {
+        state = browserState(webview, fallbackUrl, loading)
+      } catch (cause) {
+        // A guest can disappear before React receives its crash or cleanup event.
+        reporting = false
+        ready = false
+        reportError(cause)
+        return
+      }
       fallbackUrl = state.url
       onMessage({ type, state: sessionState(state) })
       if (!reportToOwner) {
@@ -254,18 +271,41 @@ export function LocalBrowserWebview({
       }
 
       emitState('controlChanged', false)
+      if (!locked) {
+        flushPendingNavigation()
+      }
+
       return true
     }
     const crashed = () => {
-      const message = 'The local Browser page stopped.'
+      const message =
+        'The local Browser page stopped. Select Retry to reopen it.'
+      ready = false
+      reporting = false
       owner?.sendCrash(message)
       clearRuntimeControl()
-      onMessage({ type: 'browserCrashed', message })
+      reportError(message)
     }
 
     const connection: BrowserPanelConnection = {
       send(message: BrowserClientMessage) {
-        if (disposed || !ready || externalControllerRef.current !== null) {
+        if (disposed) {
+          return
+        }
+
+        if (message.type === 'takeControl') {
+          if (externalControllerRef.current !== null) {
+            owner?.takeControl()
+          }
+
+          return
+        }
+
+        if (!ready || externalControllerRef.current !== null) {
+          if (message.type === 'navigate') {
+            pendingNavigation = message
+          }
+
           return
         }
 
@@ -288,15 +328,26 @@ export function LocalBrowserWebview({
           message.type === 'reload'
         ) {
           startLoading()
-        } else {
-          stopLoading()
         }
 
+        const revision = ++commandRevision
+        const navigationFailed = (cause: unknown) => {
+          if (disposed || revision !== commandRevision) {
+            return
+          }
+
+          loading = false
+          emitState()
+          onMessage({
+            type: 'navigationError',
+            message: cause instanceof Error ? cause.message : String(cause)
+          })
+        }
         void bridge.browserCommand(panel.id, message).then((result) => {
           if (!result.ok && result.error) {
-            onMessage({ type: 'navigationError', message: result.error })
+            navigationFailed(result.error)
           }
-        })
+        }, navigationFailed)
       },
       setVisible() {},
       dispose() {
@@ -305,6 +356,8 @@ export function LocalBrowserWebview({
         }
 
         disposed = true
+        abortController.abort()
+        window.clearTimeout(startupTimer)
         clearRuntimeControl()
         owner?.dispose()
         bridge.disposeBrowser(panel.id)
@@ -317,7 +370,11 @@ export function LocalBrowserWebview({
         return
       }
 
+      const previousOwner = owner
       owner = null
+      ready = false
+      reporting = false
+      previousOwner?.dispose()
       takeControlRef.current = () => undefined
       reportError(cause)
       if (reconnectTimer === null) {
@@ -336,8 +393,13 @@ export function LocalBrowserWebview({
       void (async () => {
         const ownerTicket = await requestLocalBrowserOwnerTicket(
           panel.id,
-          ownerClientIdRef.current
+          ownerClientIdRef.current,
+          abortController.signal
         )
+        if (disposed) {
+          return
+        }
+
         if (!descriptor || descriptorChallenge !== ownerTicket.challenge) {
           descriptor = await bridge.registerBrowser(
             panel.id,
@@ -345,6 +407,10 @@ export function LocalBrowserWebview({
             ownerTicket.challenge
           )
           descriptorChallenge = ownerTicket.challenge
+        }
+
+        if (disposed) {
+          return
         }
 
         if (!descriptor || descriptor.panelId !== panel.id) {
@@ -372,7 +438,8 @@ export function LocalBrowserWebview({
                 queueReconnect('The local Browser owner disconnected.')
               }
             }
-          }
+          },
+          abortController.signal
         )
         if (disposed) {
           connectionOwner.dispose()
@@ -381,39 +448,40 @@ export function LocalBrowserWebview({
 
         owner = connectionOwner
         takeControlRef.current = () => owner?.takeControl()
-        if (hasOwnedRuntime || connectionOwner.resumed) {
-          loading = webview.isLoading()
-          ready = true
-          reporting = true
-          emitState('ready')
-          return
+        // A granted claim starts unlocked; the daemon reapplies external control after ready.
+        if (externalControllerRef.current !== null || retainPaintRef.current) {
+          if (!(await setRuntimeControl('none', false))) {
+            throw new Error(
+              'The Browser could not restore local input control.'
+            )
+          }
         }
 
-        hasOwnedRuntime = true
-        const initialUrl = connectionOwner.initialState.url
-        fallbackUrl = initialUrl
-        loading = initialUrl !== 'about:blank'
-        reporting = true
-        if (initialUrl === 'about:blank') {
-          ready = true
-          emitState('ready')
-          return
-        }
-
-        emitState()
-        const result = await bridge.browserCommand(panel.id, {
-          type: 'navigate',
-          url: initialUrl
-        })
         if (disposed) {
           return
         }
 
-        loading = false
+        // Readiness means commands can run, not that a document finished loading.
+        window.clearTimeout(startupTimer)
         ready = true
+        reporting = true
+        if (hasOwnedRuntime || connectionOwner.resumed) {
+          hasOwnedRuntime = true
+          loading = webview.isLoading()
+          emitState('ready')
+          flushPendingNavigation()
+          return
+        }
+
+        hasOwnedRuntime = true
+        const initialUrl =
+          pendingNavigation?.url ?? connectionOwner.initialState.url
+        pendingNavigation = null
+        fallbackUrl = initialUrl
+        loading = initialUrl !== 'about:blank'
         emitState('ready')
-        if (!result.ok && result.error) {
-          onMessage({ type: 'navigationError', message: result.error })
+        if (initialUrl !== 'about:blank') {
+          connection.send({ type: 'navigate', url: initialUrl })
         }
       })()
         .catch((cause) => {
@@ -465,6 +533,20 @@ export function LocalBrowserWebview({
       }
     })
 
+    const stopUnavailable = bridge.onBrowserUnavailable((failure) => {
+      if (!disposed && failure.panelId === panel.id) {
+        window.clearTimeout(startupTimer)
+        ready = false
+        reporting = false
+        reportError(failure.message)
+      }
+    })
+
+    // Install listeners before starting the guest, including an about:blank guest.
+    webview.setAttribute('partition', 'persist:treeport-browser')
+    webview.setAttribute('allowpopups', 'true')
+    webview.src = `about:blank#treeport-panel=${encodeURIComponent(panel.id)}`
+
     return () => {
       onConnection(null)
       takeControlRef.current = () => undefined
@@ -475,6 +557,7 @@ export function LocalBrowserWebview({
       resizeObserver.disconnect()
       stopBrowserFocus()
       stopPopup()
+      stopUnavailable()
       webview.removeEventListener('focus', focusBrowser)
       webview.removeEventListener('did-start-loading', startLoading)
       webview.removeEventListener('did-stop-loading', stopLoading)
@@ -497,7 +580,7 @@ export function LocalBrowserWebview({
   return (
     <div className="relative size-full">
       <webview
-        ref={bindWebview}
+        ref={webviewRef}
         aria-label="Browser page"
         className={`flex size-full bg-zinc-950 ${
           inputBlocked || externalController ? 'pointer-events-none' : ''

@@ -163,6 +163,8 @@ test('controls the local Browser through its exact bridge while another workspac
   let websocketRequests = 0
   let browserIndex = 0
   let slowBrowserResponse = false
+  let ownerTicketGate: Promise<void> | null = null
+  const stalledResponses = new Set<http.ServerResponse>()
   const ownerTickets = new Map<string, { panelId: string; challenge: string }>()
   const ownerEndpoints = new Map<string, string>()
   const ownerReadyUrls = new Map<string, string>()
@@ -295,6 +297,7 @@ test('controls the local Browser through its exact bridge while another workspac
       /^\/api\/panels\/([^/]+)\/browser-owner-ticket$/
     )
     if (ownerTicketMatch && request.method === 'POST') {
+      await ownerTicketGate
       const ticket = crypto.randomBytes(32).toString('base64url')
       const challenge = crypto.randomBytes(32).toString('base64url')
       ownerTickets.set(ticket, {
@@ -336,6 +339,20 @@ test('controls the local Browser through its exact bridge while another workspac
             document.querySelector('#key').textContent = event.key
           })
         </script>`)
+      return
+    }
+
+    if (url.pathname === '/site/hanging') {
+      response.setHeader('content-type', 'text/html')
+      response.end(`<!doctype html><title>Loading forever</title>
+        <main>The document loaded, but its image never finishes.</main>
+        <img src="/site/stalled-resource">`)
+      return
+    }
+
+    if (url.pathname === '/site/stalled-resource') {
+      stalledResponses.add(response)
+      response.on('close', () => stalledResponses.delete(response))
       return
     }
 
@@ -535,6 +552,7 @@ test('controls the local Browser through its exact bridge while another workspac
             popupRequests += 1
           } else if (value.data.type === 'takeControl') {
             ownerTakeControlRequests += 1
+            void ownerControl.request('none', false)
           }
         })
       }
@@ -908,8 +926,15 @@ test('controls the local Browser through its exact bridge while another workspac
         loads: sessionStorage.loads,
         href: location.href
       }))
+      expect(await ownerControl.request('other', true)).toBe(true)
       ownerSockets.get(browserPanelId)?.close(1012, 'Reconnect required')
       await expect.poll(() => ownerConnectionCounts.get(browserPanelId)).toBe(2)
+      await expect(
+        window.getByRole('button', { name: 'Reload application' })
+      ).toBeEnabled()
+      await expect(
+        window.getByRole('button', { name: 'Take control of Browser' })
+      ).not.toBeVisible()
       await expect
         .poll(() =>
           electronApp!.evaluate(({ webContents }) => {
@@ -1094,6 +1119,8 @@ test('controls the local Browser through its exact bridge while another workspac
       }, `${origin}/site/start`)
     ).toBe('5')
 
+    const ownerTicketRelease = Promise.withResolvers<void>()
+    ownerTicketGate = ownerTicketRelease.promise
     await window.getByRole('button', { name: 'New panel in main tree' }).click()
     await window
       .getByRole('dialog', { name: 'New panel' })
@@ -1101,11 +1128,13 @@ test('controls the local Browser through its exact bridge while another workspac
       .click()
     await expect(window).toHaveURL(/\/panels\/panel_browser_2$/)
     await expect(address).toHaveValue('')
-    await expect
-      .poll(() => ownerReadyUrls.get('panel_browser_2'))
-      .toBe('about:blank')
+    // Enter during startup must retain the latest address, not silently drop it.
+    await address.fill(`${origin}/site/next`)
+    await address.press('Enter')
     await address.fill(`${origin}/site/profile`)
     await address.press('Enter')
+    ownerTicketRelease.resolve()
+    ownerTicketGate = null
     await expect
       .poll(() =>
         electronApp!.evaluate(({ webContents }, targetUrl) => {
@@ -1176,6 +1205,41 @@ test('controls the local Browser through its exact bridge while another workspac
           )?.url
       )
       .toBe(`${origin}/site/profile`)
+    // Submitting an address also takes control back, without a viewport click.
+    expect(
+      await ownerControls.get(browserPanelId)?.request('other', true)
+    ).toBe(true)
+    await address.fill(`${origin}/site/next`)
+    await address.press('Enter')
+    await expect
+      .poll(() => project.worktrees[0]!.panels[0]?.url)
+      .toBe(`${origin}/site/next`)
+    await expect(
+      window.getByRole('button', { name: 'Take control of Browser' })
+    ).not.toBeVisible()
+
+    // A navigation with an unfinished resource must not block Stop or a new URL.
+    await address.fill(`${origin}/site/hanging`)
+    await address.press('Enter')
+    await expect.poll(() => stalledResponses.size).toBe(1)
+    await window.getByRole('button', { name: 'Stop loading' }).click()
+    await expect(
+      window.getByRole('button', { name: 'Reload application' })
+    ).toBeEnabled()
+    await expect.poll(() => stalledResponses.size).toBe(0)
+    await address.fill(`${origin}/site/hanging?again`)
+    await address.press('Enter')
+    await expect.poll(() => stalledResponses.size).toBe(1)
+    await address.fill(`${origin}/site/profile`)
+    await address.press('Enter')
+    await expect
+      .poll(() => project.worktrees[0]!.panels[0]?.url)
+      .toBe(`${origin}/site/profile`)
+    await expect(
+      window.getByRole('button', { name: 'Reload application' })
+    ).toBeEnabled()
+    await expect.poll(() => stalledResponses.size).toBe(0)
+
     const windowSizeBeforeRestart = await electronApp.evaluate(
       ({ BrowserWindow }) => {
         const bounds = BrowserWindow.getAllWindows()[0]?.getNormalBounds()
@@ -1183,6 +1247,8 @@ test('controls the local Browser through its exact bridge while another workspac
       }
     )
     await electronApp.close()
+    // Restoring a slow page must not make toolbar readiness wait for page load.
+    project.worktrees[0]!.panels[0]!.url = `${origin}/site/hanging?restored`
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.', workspaceLink(workspaceUrl)],
       cwd: process.cwd(),
@@ -1202,7 +1268,17 @@ test('controls the local Browser through its exact bridge while another workspac
         })
       )
       .toEqual(windowSizeBeforeRestart)
-    await restartedWindow.getByRole('tab', { name: /, Browser$/ }).click()
+    await restartedWindow
+      .getByRole('tab', { name: /, Browser, loading$/ })
+      .click()
+    await expect.poll(() => stalledResponses.size).toBe(1)
+    await restartedWindow.getByRole('button', { name: 'Stop loading' }).click()
+    await expect.poll(() => stalledResponses.size).toBe(0)
+    const restartedAddress = restartedWindow.getByRole('textbox', {
+      name: 'Application URL'
+    })
+    await restartedAddress.fill(`${origin}/site/profile`)
+    await restartedAddress.press('Enter')
     await expect
       .poll(() =>
         electronApp!.evaluate(({ webContents }, targetUrl) => {
@@ -1219,8 +1295,97 @@ test('controls the local Browser through its exact bridge while another workspac
         }, `${origin}/site/profile`)
       )
       .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
+
+    await electronApp.evaluate(({ webContents }) => {
+      webContents
+        .getAllWebContents()
+        .find((contents) => contents.getType() === 'webview')
+        ?.forcefullyCrashRenderer()
+    })
+    await expect(
+      restartedWindow.getByText('Browser unavailable', { exact: true })
+    ).toBeVisible()
+    await expect(
+      restartedWindow.getByRole('button', { name: 'Reload application' })
+    ).toBeDisabled()
+    await restartedWindow
+      .getByRole('button', { name: 'Retry', exact: true })
+      .click()
+    await expect(
+      restartedWindow.getByRole('button', { name: 'Reload application' })
+    ).toBeEnabled()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          return browser?.executeJavaScript(
+            "document.querySelector('output')?.textContent"
+          )
+        }, `${origin}/site/profile`)
+      )
+      .toBe('panel-two')
+
+    // Native attachment has a six-page limit. Rejection must offer recovery.
+    for (let index = 0; index < 6; index += 1) {
+      await restartedWindow
+        .getByRole('button', { name: 'New panel in main tree' })
+        .click()
+      await restartedWindow
+        .getByRole('dialog', { name: 'New panel' })
+        .getByRole('button', { name: 'Browser, hosted browser' })
+        .click()
+      if (index < 5) {
+        await expect(
+          restartedWindow.getByRole('button', { name: 'Reload application' })
+        ).toBeEnabled()
+      }
+    }
+    await expect(
+      restartedWindow.getByText(
+        'This desktop window can run six Browser pages. Close another Browser tab, then select Retry.'
+      )
+    ).toBeVisible()
+    await expect(
+      restartedWindow.getByRole('button', { name: 'Retry', exact: true })
+    ).toBeEnabled()
+    await restartedWindow
+      .getByRole('button', { name: 'Close Shared profile', exact: true })
+      .click()
+    await restartedWindow
+      .getByRole('button', { name: 'Retry', exact: true })
+      .click()
+    await restartedAddress.fill(`${origin}/site/profile`)
+    await restartedAddress.press('Enter')
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          return browser?.executeJavaScript(
+            "document.querySelector('output')?.textContent"
+          )
+        }, `${origin}/site/profile`)
+      )
+      .toBe('panel-two')
+    await expect(
+      restartedWindow.getByRole('button', { name: 'Reload application' })
+    ).toBeEnabled()
   } finally {
     await electronApp?.close().catch(() => undefined)
+    for (const response of stalledResponses) {
+      response.destroy()
+    }
     await new Promise<void>((resolve) => ownerWebSockets.close(() => resolve()))
     await Effect.runPromise(Scope.close(rpcScope, Exit.void))
     await new Promise<void>((resolve) => server.close(() => resolve()))
