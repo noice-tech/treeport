@@ -320,8 +320,25 @@ test.describe('desktop terminal input and removal', () => {
         'Removing without cleanup can leave project resources behind.'
       )
     ).toBeVisible()
+    mocked.staleNextRemoveWithPreview({
+      warnings: ['1 unstaged change(s) will be lost'],
+      cleanup: {
+        commands: ['Drop database', 'Remove cache'],
+        available: true,
+        unavailableReason: null
+      },
+      confirmationToken: 'c'.repeat(64)
+    })
     await page.getByRole('button', { name: 'Remove without cleanup' }).click()
     await expect.poll(() => mocked.removeRequests()).toBe(3)
+    await expect(
+      page.getByText('Project cleanup will be skipped.')
+    ).toBeVisible()
+    await expect(
+      page.getByText('1 unstaged change(s) will be lost')
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Remove without cleanup' }).click()
+    await expect.poll(() => mocked.removeRequests()).toBe(4)
     expect(mocked.removeRequestBodies().at(-1)).toMatchObject({
       confirmDestructive: true,
       skipCleanup: true

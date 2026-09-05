@@ -65,7 +65,8 @@ export function useWorktreeWorkflows({
   onRemovalNeedsConfirmation: (
     worktree: WorktreeRecord,
     preview: RemovePreview,
-    trigger?: HTMLElement
+    trigger?: HTMLElement,
+    skipCleanup?: boolean
   ) => void
   onRemovalProgress: (
     worktree: WorktreeRecord,
@@ -505,7 +506,12 @@ export function useWorktreeWorkflows({
           }
 
           releaseRemoval(worktree.id)
-          onRemovalNeedsConfirmation(worktree, freshPreview)
+          onRemovalNeedsConfirmation(
+            worktree,
+            freshPreview,
+            undefined,
+            skipCleanup
+          )
           return
         } catch (refreshError) {
           releaseRemoval(worktree.id)
