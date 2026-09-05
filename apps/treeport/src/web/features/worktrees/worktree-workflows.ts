@@ -43,10 +43,11 @@ interface WorktreeCreationRequest {
   treeContext?: TreeContextValues
 }
 
-interface OwnedCreation {
+interface TrackedCreation {
   id: string
   projectId: string
   typedName: string
+  owned: boolean
 }
 
 export function useWorktreeWorkflows({
@@ -100,7 +101,9 @@ export function useWorktreeWorkflows({
     refetchOnReconnect: true,
     refetchOnWindowFocus: true
   })
-  const [ownedCreations, setOwnedCreations] = useState<OwnedCreation[]>([])
+  const [trackedCreations, setTrackedCreations] = useState<TrackedCreation[]>(
+    []
+  )
   const serverPendingWorktrees: PendingWorktreeCreation[] = (
     creationsQuery.data ?? []
   ).flatMap((operation) => {
@@ -113,10 +116,23 @@ export function useWorktreeWorkflows({
       ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
       : []
   })
+  useEffect(() => {
+    setTrackedCreations((current) => {
+      const additions = serverPendingWorktrees.filter(
+        (pending) => !current.some((creation) => creation.id === pending.id)
+      )
+      return additions.length === 0
+        ? current
+        : [
+            ...current,
+            ...additions.map((creation) => ({ ...creation, owned: false }))
+          ]
+    })
+  }, [serverPendingWorktrees])
   const handledCreationsRef = useRef(new Set<string>())
   const focusedCreationsRef = useRef(new Set<string>())
-  const ownedCreationQueries = useQueries({
-    queries: ownedCreations.map((creation) => ({
+  const trackedCreationQueries = useQueries({
+    queries: trackedCreations.map((creation) => ({
       queryKey: ['operation', creation.id] as const,
       queryFn: async () =>
         (
@@ -130,7 +146,7 @@ export function useWorktreeWorkflows({
     }))
   })
   const materializedCreationIds = new Set(
-    ownedCreationQueries.flatMap((query) => {
+    trackedCreationQueries.flatMap((query) => {
       const operation = query.data
       if (operation?.status !== 'completed' || operation.kind !== 'create') {
         return []
@@ -153,7 +169,7 @@ export function useWorktreeWorkflows({
   )
   const pendingWorktrees = [
     ...visibleServerPendingWorktrees,
-    ...ownedCreations
+    ...trackedCreations
       .filter(
         (creation) =>
           !serverPendingIds.has(creation.id) &&
@@ -203,14 +219,24 @@ export function useWorktreeWorkflows({
     onSuccess: (operation, request) => {
       const name =
         operation.kind === 'create' ? operation.request.name : request.typedName
-      setOwnedCreations((current) => [
-        ...current,
-        {
-          id: operation.id,
-          projectId: request.projectId,
-          typedName: name
-        }
-      ])
+      setTrackedCreations((current) => {
+        const tracked = current.find((creation) => creation.id === operation.id)
+        return tracked
+          ? current.map((creation) =>
+              creation.id === operation.id
+                ? { ...creation, typedName: name, owned: true }
+                : creation
+            )
+          : [
+              ...current,
+              {
+                id: operation.id,
+                projectId: request.projectId,
+                typedName: name,
+                owned: true
+              }
+            ]
+      })
       void queryClient.invalidateQueries({ queryKey: ['worktree-creations'] })
     },
     onError: (mutationError, request) => {
@@ -224,7 +250,9 @@ export function useWorktreeWorkflows({
   useEffect(() => {
     for (const pending of pendingWorktrees) {
       if (
-        ownedCreations.some((creation) => creation.id === pending.id) &&
+        trackedCreations.some(
+          (creation) => creation.id === pending.id && creation.owned
+        ) &&
         !focusedCreationsRef.current.has(pending.id)
       ) {
         focusedCreationsRef.current.add(pending.id)
@@ -233,19 +261,35 @@ export function useWorktreeWorkflows({
         })
       }
     }
-  }, [ownedCreations, pendingWorktrees])
+  }, [pendingWorktrees, trackedCreations])
 
   useEffect(() => {
-    ownedCreationQueries.forEach((query, index) => {
+    trackedCreationQueries.forEach((query, index) => {
       const operation = query.data
-      const owned = ownedCreations[index]
+      const tracked = trackedCreations[index]
       if (
         !operation ||
         operation.kind !== 'create' ||
-        !owned ||
-        (operation.status !== 'completed' && operation.status !== 'failed') ||
-        handledCreationsRef.current.has(operation.id)
+        !tracked ||
+        (operation.status !== 'completed' && operation.status !== 'failed')
       ) {
+        return
+      }
+
+      if (!tracked.owned) {
+        if (
+          operation.status === 'failed' ||
+          materializedCreationIds.has(operation.id)
+        ) {
+          setTrackedCreations((current) =>
+            current.filter((creation) => creation.id !== operation.id)
+          )
+        }
+
+        return
+      }
+
+      if (handledCreationsRef.current.has(operation.id)) {
         return
       }
 
@@ -257,7 +301,7 @@ export function useWorktreeWorkflows({
         })
         if (operation.status === 'failed') {
           notifyError(operation.error ?? 'Tree creation failed', {
-            operation: `create tree “${owned.typedName}”`
+            operation: `create tree “${tracked.typedName}”`
           })
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
@@ -269,21 +313,27 @@ export function useWorktreeWorkflows({
 
           if (result?.setupError) {
             notifyError(result.setupError, {
-              operation: `start setup for newly created tree “${owned.typedName}”`
+              operation: `start setup for newly created tree “${tracked.typedName}”`
             })
           } else if (result?.terminalError) {
             notifyError(result.terminalError, {
-              operation: `start a terminal for newly created tree “${owned.typedName}”`
+              operation: `start a terminal for newly created tree “${tracked.typedName}”`
             })
           }
         }
 
-        setOwnedCreations((current) =>
+        setTrackedCreations((current) =>
           current.filter((creation) => creation.id !== operation.id)
         )
       })()
     })
-  }, [ownedCreationQueries, ownedCreations, queryClient, setDrawerOpen])
+  }, [
+    materializedCreationIds,
+    queryClient,
+    setDrawerOpen,
+    trackedCreationQueries,
+    trackedCreations
+  ])
 
   const submitWorktreeCreation = (
     project: ProjectRecord,
