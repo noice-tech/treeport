@@ -2,7 +2,7 @@ import http from 'node:http'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach } from 'vitest'
+import { afterAll, afterEach, beforeAll } from 'vitest'
 import { asc, eq, sql } from 'drizzle-orm'
 import type * as Effect from 'effect/Effect'
 import type { ProjectRecord, WebPanel, WorktreeRecord } from '@treeport/shared'
@@ -27,6 +27,22 @@ import type {
 } from './terminal'
 
 const directories: string[] = []
+let templateDirectory: string
+let databaseTemplate: string
+
+beforeAll(async () => {
+  templateDirectory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'treeport-service-template-')
+  )
+  databaseTemplate = path.join(templateDirectory, 'empty.db')
+  const database = await openDatabase(databaseTemplate)
+  database.close()
+})
+
+afterAll(async () => {
+  await fs.rm(templateDirectory, { recursive: true, force: true })
+})
+
 export const databases: TreeportDatabase[] = []
 export const services: TreeportService[] = []
 
@@ -924,7 +940,10 @@ export async function fixture() {
   const runtime = path.join(root, 'runtime')
   await fs.mkdir(main, { recursive: true })
   const runner = new SystemDouble(main)
-  const database = await openDatabase(path.join(root, 'treeport.db'))
+  // Each test owns a fresh database; migration behavior has its own suite.
+  const databasePath = path.join(root, 'treeport.db')
+  await fs.copyFile(databaseTemplate, databasePath)
+  const database = await openDatabase(databasePath)
   databases.push(database)
   const config: AppConfig = {
     host: '127.0.0.1',

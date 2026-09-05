@@ -29,10 +29,3 @@ export function DesktopRuntimeProvider({
 export function useDesktopRuntime(): DesktopRuntime {
   return useContext(DesktopRuntimeContext)
 }
-
-export function browserRuntimeMode(
-  desktop: boolean,
-  selectedComputerLoopback: boolean
-): 'local' | 'remote' {
-  return desktop && selectedComputerLoopback ? 'local' : 'remote'
-}

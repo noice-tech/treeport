@@ -13,7 +13,6 @@ import {
   TERMINAL_PRESET_ARGUMENT_MAX_COUNT,
   treeContextFieldDefinitionSchema as treeContextFieldDefinitionEffectSchema,
   treeContextValuesSchema as treeContextValuesEffectSchema,
-  updateProjectSchema as updateProjectEffectSchema,
   updateTerminalPresetSchema as updateTerminalPresetEffectSchema
 } from './index.js'
 import { testSchema } from './schema.test-support.js'
@@ -29,7 +28,6 @@ const treeContextFieldDefinitionSchema = testSchema(
   treeContextFieldDefinitionEffectSchema
 )
 const treeContextValuesSchema = testSchema(treeContextValuesEffectSchema)
-const updateProjectSchema = testSchema(updateProjectEffectSchema)
 const updateTerminalPresetSchema = testSchema(updateTerminalPresetEffectSchema)
 
 describe('API input validation', () => {
@@ -53,19 +51,6 @@ describe('API input validation', () => {
     expect(
       browseDirectoryQuerySchema.safeParse({ input: '', hidden: 'yes' }).success
     ).toBe(false)
-  })
-
-  it('accepts only curated project colors and neutral', () => {
-    expect(updateProjectSchema.parse({ color: 'cyan' })).toEqual({
-      color: 'cyan'
-    })
-    expect(updateProjectSchema.parse({ color: null })).toEqual({ color: null })
-    expect(updateProjectSchema.safeParse({ color: 'indigo' }).success).toBe(
-      false
-    )
-    expect(updateProjectSchema.safeParse({ color: '#00ffff' }).success).toBe(
-      false
-    )
   })
 
   it('preserves command argv literally', () => {

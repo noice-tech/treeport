@@ -36,7 +36,7 @@ Treeport development terminals are usually managed by an outer Treeport instance
 - Avoid `try`/`catch` where possible.
 - Prefer a stable object shape with nullable properties over unions that require property-existence checks such as the `in` operator.
 - Do not add backward-compatibility paths for internal changes. For user-facing contracts, preserve compatibility when required; otherwise prefer a deliberate migration or clean change over maintaining legacy behavior.
-- Do not write tests that are really thin and assert strings. Test behavior in critical paths.
+- Do not add or expand tests by default. Add coverage when a change introduces a significant uncovered risk, especially data loss, unauthorized access, terminal continuity, or recovery. Prefer the cheapest test that proves the behavior. Small changes can use existing checks or manual verification.
 
 ## Validation
 

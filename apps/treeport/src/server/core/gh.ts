@@ -15,7 +15,7 @@ const ghPrSchema = z
 
 type GhPrJson = z.infer<typeof ghPrSchema>
 
-export function mapPrState(pr: GhPrJson | null): PrState {
+function mapPrState(pr: GhPrJson | null): PrState {
   if (!pr) {
     return 'no_pr'
   }

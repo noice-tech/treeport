@@ -12,11 +12,13 @@
         "src/preload.ts",
         "src/shell/shell.tsx"
       ],
+      "paths": {
+        "@treeport-web/*": ["../treeport/src/web/*"]
+      },
       "ignoreDependencies": [
         "@electron-forge/maker-dmg",
         "@electron-forge/maker-zip",
-        "@electron-forge/publisher-github",
-        "^@treeport-web/"
+        "@electron-forge/publisher-github"
       ],
       "ignoreBinaries": ["iconutil", "lipo", "plutil"]
     },

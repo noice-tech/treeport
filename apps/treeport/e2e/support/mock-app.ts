@@ -23,7 +23,7 @@ export async function mockApp(
     await installDesktopBridge(page, options.desktopFilePaths ?? {})
   }
 
-  await installMockSockets(page, initialTerminalMetadata, options)
+  await installMockSockets(page, initialTerminalMetadata)
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
@@ -53,7 +53,7 @@ export async function mockApp(
 
   const { state, ...projects } = await createProjectMock(page, options)
   const updates = await createUpdateMock(page, options)
-  const presets = await createPresetMock(page, options)
+  await createPresetMock(page, options)
   const worktrees = await createWorktreeMock(page, state)
   const terminals = await createTerminalMock(page, state)
   const panels = await createPanelMock(page, state, options)
@@ -62,7 +62,6 @@ export async function mockApp(
   return {
     ...projects,
     ...updates,
-    ...presets,
     ...worktrees,
     ...terminals,
     ...panels

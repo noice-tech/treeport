@@ -1,19 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test'
-
-export async function terminalTextPoint(
-  locator: Locator,
-  offset: { x: number; y: number }
-): Promise<{ x: number; y: number }> {
-  let point: { x: number; y: number } | null = null
-  await expect
-    .poll(async () => {
-      const bounds = await locator.boundingBox()
-      point = bounds ? { x: bounds.x + offset.x, y: bounds.y + offset.y } : null
-      return point
-    })
-    .not.toBeNull()
-  return point!
-}
+import { expect, type Page } from '@playwright/test'
 
 export async function openWorktreeContextMenu(
   page: Page,

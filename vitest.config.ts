@@ -1,5 +1,12 @@
 import { defineConfig } from 'vitest/config'
 
+// Tests must not inherit the managing Treeport instance's paths or credentials.
+for (const name of Object.keys(process.env)) {
+  if (name.startsWith('TREEPORT_')) {
+    delete process.env[name]
+  }
+}
+
 export default defineConfig({
   test: {
     include: [
@@ -11,6 +18,7 @@ export default defineConfig({
     ],
     exclude: [
       '**/*.integration.test.ts',
+      '**/*.integration.test.mjs',
       '**/*.real.test.ts',
       '**/node_modules/**'
     ],

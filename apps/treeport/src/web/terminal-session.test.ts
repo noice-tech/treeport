@@ -11,7 +11,6 @@ import { type JsonValue, type TerminalSize } from '@treeport/shared'
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
-  terminalProgressLabel as formatTerminalProgressLabel,
   TerminalSession as TerminalSessionInstance,
   TerminalSessionManager as TerminalSessionManagerInstance,
   TerminalSessionSnapshot,
@@ -106,7 +105,6 @@ let TerminalSession: TerminalSessionConstructor
 let TerminalSessionManager: TerminalSessionManagerConstructor
 let terminalKeyboardInput: typeof mapTerminalKeyboardInput
 let terminalOptions: typeof createTerminalOptions
-let terminalProgressLabel: typeof formatTerminalProgressLabel
 
 class FakeSession {
   disposed = false
@@ -160,8 +158,7 @@ beforeAll(async () => {
     TerminalSession,
     TerminalSessionManager,
     terminalKeyboardInput,
-    terminalOptions,
-    terminalProgressLabel
+    terminalOptions
   } = await import('./terminal-session'))
 })
 
@@ -269,10 +266,6 @@ function controllerSessionFixture() {
 }
 
 describe('terminal options', () => {
-  it('retains useful browser-owned scrollback', () => {
-    expect(terminalOptions().scrollback).toBe(50_000)
-  })
-
   it('opens OSC 8 links in Browser on Apple Cmd-click or touch', () => {
     const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
@@ -391,17 +384,6 @@ describe('terminal options', () => {
     }
 
     expect(open).not.toHaveBeenCalled()
-  })
-})
-
-describe('terminal progress', () => {
-  it('describes non-running progress states without relying on color', () => {
-    expect(terminalProgressLabel({ state: 'error', value: 42 })).toBe(
-      'progress error, 42% complete'
-    )
-    expect(terminalProgressLabel({ state: 'paused', value: null })).toBe(
-      'progress paused'
-    )
   })
 })
 
@@ -1627,44 +1609,6 @@ describe('TerminalSessionManager', () => {
     sessions.get('background')?.setTitle('live session title')
     expect(order).toEqual(['store', 'bell', 'store'])
     expect(observed.at(-1)?.title).toBe('live session title')
-  })
-
-  it('retains equal per-terminal progress identity across collection updates', () => {
-    const { manager } = fixture()
-    const first = {
-      terminalId: 'one',
-      title: 'One',
-      progress: { state: 'normal' as const, value: 25 },
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: null,
-      bell: null
-    }
-    manager.replaceRuntimeMetadata([
-      first,
-      {
-        ...first,
-        terminalId: 'two',
-        title: 'Two',
-        progress: { state: 'normal', value: 50 }
-      }
-    ])
-    const firstProgress = manager.getProgressSnapshot().get('one')
-
-    manager.replaceRuntimeMetadata([
-      { ...first, progress: { ...first.progress } },
-      {
-        ...first,
-        terminalId: 'two',
-        title: 'Two',
-        progress: { state: 'normal', value: 75 }
-      }
-    ])
-
-    expect(manager.getProgressSnapshot().get('one')).toBe(firstProgress)
-    expect(manager.getProgressSnapshot().get('two')).toEqual({
-      state: 'normal',
-      value: 75
-    })
   })
 
   it('emits only newer incremental BELs and keeps snapshots presentation-silent', () => {

@@ -7,14 +7,10 @@ import type {
 } from '@treeport/shared'
 
 export async function createWorktreeMock(page: Page, state: ProjectRecord) {
-  let removePreviewRequests = 0
-  let removePreviewDelayMs = 0
   let removePreviewOverride: Partial<RemovePreview> = {}
   let staleRemovePreview: Partial<RemovePreview> | null = null
   let removeRequests = 0
   const removeRequestBodies: unknown[] = []
-  let removeGate: Promise<void> | null = null
-  let releaseRemove: (() => void) | null = null
   let createGate: Promise<void> | null = null
   let releaseCreate: (() => void) | null = null
   let failCreate = false
@@ -25,13 +21,6 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
     if (pathname.endsWith('/remove-preview')) {
-      removePreviewRequests += 1
-      if (removePreviewDelayMs) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, removePreviewDelayMs)
-        )
-      }
-
       const worktree = state.worktrees[1]!
       await route.fulfill({
         json: {
@@ -148,6 +137,18 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           failCreate = false
           operation.status = 'failed'
           operation.error = 'create failed'
+          await page.evaluate(
+            (operationId) =>
+              window.__eventSource.emit(
+                'create.failed',
+                JSON.stringify({
+                  projectId: 'proj_1',
+                  operationId,
+                  worktreeId: null
+                })
+              ),
+            operation.id
+          )
           return
         }
 
@@ -188,6 +189,18 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           terminalError: null,
           setupError: null
         }
+        await page.evaluate(
+          ({ operationId, worktreeId }) =>
+            window.__eventSource.emit(
+              'create.completed',
+              JSON.stringify({
+                projectId: 'proj_1',
+                operationId,
+                worktreeId
+              })
+            ),
+          { operationId: operation.id, worktreeId: worktree.id }
+        )
       })()
       return
     }
@@ -212,12 +225,6 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
         return
       }
 
-      if (removeGate) {
-        await removeGate
-      }
-
-      removeGate = null
-      releaseRemove = null
       const worktree = state.worktrees[1]!
       removeOperation = {
         id: 'op_1',
@@ -313,12 +320,8 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
   })
 
   return {
-    removePreviewRequests: () => removePreviewRequests,
     setRemovePreview: (value: Partial<RemovePreview>) => {
       removePreviewOverride = value
-    },
-    setRemovePreviewDelay: (value: number) => {
-      removePreviewDelayMs = value
     },
     removeRequests: () => removeRequests,
     removeRequestBodies: () => [...removeRequestBodies],
@@ -372,12 +375,6 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
     },
     staleNextRemoveWithPreview: (value: Partial<RemovePreview>) => {
       staleRemovePreview = value
-    },
-    delayNextRemove: () => {
-      removeGate = new Promise<void>((resolve) => {
-        releaseRemove = resolve
-      })
-      return () => releaseRemove?.()
     },
     delayNextCreate: () => {
       createGate = new Promise<void>((resolve) => {
