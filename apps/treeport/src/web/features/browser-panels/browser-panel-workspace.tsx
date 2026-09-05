@@ -270,10 +270,11 @@ export function BrowserPanelWorkspace({
         return
       }
 
-      pendingNavigationRef.current = null
       onLoadingChange(panel.id, false)
       setInstallingBrowser(false)
       if (message.type === 'browserUnavailable') {
+        stateRef.current = null
+        setState(null)
         setFailure({
           message: message.message,
           installCommand: message.installCommand
@@ -281,6 +282,7 @@ export function BrowserPanelWorkspace({
         return
       }
 
+      pendingNavigationRef.current = null
       setError(message.type === 'closed' ? message.reason : message.message)
     },
     [onLoadingChange, panel.id]
@@ -334,6 +336,10 @@ export function BrowserPanelWorkspace({
   const setLocalConnection = useCallback(
     (connection: BrowserPanelConnection | null) => {
       connectionRef.current = connection
+      const pendingNavigation = pendingNavigationRef.current
+      if (connection && pendingNavigation) {
+        connection.send({ type: 'navigate', url: pendingNavigation.targetUrl })
+      }
     },
     []
   )
@@ -563,7 +569,6 @@ export function BrowserPanelWorkspace({
 
     const targetUrl = parsed.href
     setError(null)
-    setFailure(null)
     addressDirtyRef.current = false
     pendingNavigationRef.current = {
       startUrl: stateRef.current?.url ?? panel.url,

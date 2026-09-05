@@ -12,6 +12,7 @@ import type {
   DesktopBrowserCommandResult,
   DesktopBrowserPopup,
   DesktopBrowserToolbarCommand,
+  DesktopBrowserUnavailable,
   DesktopCommand,
   DesktopFileActionResult,
   DesktopNavigationDirection,
@@ -26,6 +27,8 @@ const desktopBrowserPopupSchema: z.ZodType<DesktopBrowserPopup> =
     panelId: z.string(),
     url: z.string()
   })
+const desktopBrowserUnavailableSchema: z.ZodType<DesktopBrowserUnavailable> =
+  z.strictObject({ panelId: z.string(), message: z.string() })
 const desktopBrowserBridgeDescriptorSchema: z.ZodType<DesktopBrowserBridgeDescriptor> =
   z.strictObject({
     endpoint: z.string().url(),
@@ -205,6 +208,17 @@ const desktopBridge = Object.freeze({
     }
     ipcRenderer.on('native-browser:popup', receive)
     return () => ipcRenderer.removeListener('native-browser:popup', receive)
+  },
+  onBrowserUnavailable(listener: (failure: DesktopBrowserUnavailable) => void) {
+    const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
+      const parsed = desktopBrowserUnavailableSchema.safeParse(value)
+      if (parsed.success) {
+        listener(parsed.data)
+      }
+    }
+    ipcRenderer.on('native-browser:unavailable', receive)
+    return () =>
+      ipcRenderer.removeListener('native-browser:unavailable', receive)
   },
   requestAttention() {
     ipcRenderer.send('bell-attention:request')

@@ -24,6 +24,11 @@ export interface DesktopBrowserPopup {
   url: string
 }
 
+export interface DesktopBrowserUnavailable {
+  panelId: string
+  message: string
+}
+
 export interface DesktopBrowserBridgeDescriptor {
   endpoint: string
   panelId: string

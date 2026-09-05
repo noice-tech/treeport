@@ -2,8 +2,7 @@ import {
   apiErrorBodySchema,
   browserOwnerTicketResponseSchema,
   createProtocolSocket,
-  decodeUnknownOrNull,
-  type ProtocolSocket
+  decodeUnknownOrNull
 } from '@treeport/shared'
 import type {
   BrowserOwnerClientMessage,
@@ -16,6 +15,31 @@ import {
   BROWSER_PROTOCOL_VERSION,
   parseBrowserOwnerServerMessage
 } from '@treeport/shared'
+
+interface LocalBrowserOwnerSocket {
+  connected: boolean
+  emit(event: 'ownerMessage', message: BrowserOwnerClientMessage): void
+  on(
+    event: 'ownerMessage',
+    listener: (message: BrowserOwnerServerMessage) => void
+  ): void
+  on(event: 'disconnect', listener: () => void): void
+  on(event: 'connect_error', listener: (error: Error) => void): void
+  disconnect(): void
+}
+
+type LocalBrowserOwnerSocketFactory = (
+  namespace: string,
+  options: {
+    reconnection: false
+    auth: {
+      ticket: string
+      protocolVersion: typeof BROWSER_PROTOCOL_VERSION
+      endpoint: string
+      challenge: string
+    }
+  }
+) => LocalBrowserOwnerSocket
 
 export interface LocalBrowserOwnerTicket {
   ticket: string
@@ -36,14 +60,16 @@ export interface LocalBrowserOwnerConnection {
 
 export async function requestLocalBrowserOwnerTicket(
   panelId: string,
-  clientId: string
+  clientId: string,
+  signal: AbortSignal
 ): Promise<LocalBrowserOwnerTicket> {
   const response = await fetch(
     `/api/panels/${encodeURIComponent(panelId)}/browser-owner-ticket`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ clientId })
+      body: JSON.stringify({ clientId }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)])
     }
   )
   const body: unknown = await response.json().catch(() => null)
@@ -74,12 +100,15 @@ export function connectLocalBrowserOwner(
     requestClose(force: boolean): Promise<boolean>
     closed(reason: string): void
     disconnected(): void
-  }
+  },
+  signal: AbortSignal,
+  socketFactory: LocalBrowserOwnerSocketFactory = (namespace, options) =>
+    createProtocolSocket<
+      BrowserOwnerServerToClientEvents,
+      BrowserOwnerClientToServerEvents
+    >(namespace, options)
 ): Promise<LocalBrowserOwnerConnection> {
-  const socket: ProtocolSocket<
-    BrowserOwnerServerToClientEvents,
-    BrowserOwnerClientToServerEvents
-  > = createProtocolSocket('/browser-owners', {
+  const socket = socketFactory('/browser-owners', {
     reconnection: false,
     auth: {
       ticket: ownerTicket.ticket,
@@ -99,9 +128,23 @@ export function connectLocalBrowserOwner(
       }
 
       settled = true
+      disposed = true
+      clearTimeout(readyTimer)
+      signal.removeEventListener('abort', abort)
       socket.disconnect()
       reject(cause instanceof Error ? cause : new Error(String(cause)))
     }
+    const abort = () =>
+      rejectBeforeReady(new Error('Browser ownership was canceled.'))
+    const readyTimer = setTimeout(() => {
+      rejectBeforeReady(new Error('The Browser owner did not respond.'))
+    }, 10_000)
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) {
+      abort()
+      return
+    }
+
     socket.on('ownerMessage', (value: BrowserOwnerServerMessage) => {
       const message = parseBrowserOwnerServerMessage(value)
       if (!message) {
@@ -131,6 +174,8 @@ export function connectLocalBrowserOwner(
         }
 
         settled = true
+        clearTimeout(readyTimer)
+        signal.removeEventListener('abort', abort)
         let revision = 0
         const generation = message.generation
         activeGeneration = generation
@@ -238,10 +283,7 @@ export function connectLocalBrowserOwner(
 }
 
 function sendOwnerResult(
-  socket: ProtocolSocket<
-    BrowserOwnerServerToClientEvents,
-    BrowserOwnerClientToServerEvents
-  >,
+  socket: LocalBrowserOwnerSocket,
   message: BrowserOwnerClientMessage
 ): void {
   if (socket.connected) {
