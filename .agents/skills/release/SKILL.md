@@ -33,7 +33,7 @@ If no version was supplied:
 2. Confirm `git`, `gh`, `node`, and `pnpm` are available.
 3. Confirm GitHub authentication and access with `gh auth status` and `gh repo view noice-tech/treeport`.
 4. Confirm the requested tag and GitHub Release do not already exist.
-5. Complete the release review in `apps/docs/internal/documentation.md`.
+5. Review user-visible changes since the prior release. Use the writing documentation skill to update affected public documentation.
 6. Run `pnpm --filter @treeport/docs check`.
 7. Require a clean `main` branch exactly matching `origin/main`.
 

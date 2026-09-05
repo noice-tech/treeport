@@ -11,7 +11,7 @@ Always write documentation in ASD-STE100 Simplified Technical English.
 
 ## Use Simplified Technical English
 
-Apply these rules to public text, internal text, headings, examples, and link text:
+Apply these rules to documentation, headings, examples, and link text:
 
 - Use approved ASD-STE100 words when they keep the technical meaning.
 - Use one word for one meaning.
@@ -46,12 +46,14 @@ When simple text can have two meanings, keep the precise technical term. Then, e
 Select one location for each piece of information:
 
 - Put supported user and integration information in `apps/docs/src/content/docs`.
-- Put architecture decisions, contributor constraints, and repository workflows in `apps/docs/internal`.
 - Put coding-agent instructions in the applicable skill.
-- Put a local implementation constraint in code, a nearby comment, or a behavioral test.
+- Put implementation constraints in code, nearby comments, or behavioral tests.
+- Put repository command instructions in script help.
 - Do not document temporary, clear, or unnecessary implementation information.
 
-Do not copy the same explanation into public and internal documentation.
+Treat code and tests as the source of truth for implementation and architecture. Do not maintain separate internal documentation.
+
+Use issues and pull requests for proposals, trade-offs, and decision history. Keep necessary implementation rationale in relevant code comments.
 
 ## Apply the public contract test
 
@@ -97,7 +99,7 @@ Update public documentation only when an internal change also changes a supporte
 For a review, state one of these conclusions:
 
 - **Public docs required:** Identify the changed user action or interface.
-- **Internal or local documentation required:** Identify the contributor decision or implementation constraint.
+- **Local documentation required:** Identify the necessary code comment, script help, or agent instruction.
 - **No documentation required:** State that no user contract or durable contributor information changed.
 
 ## Keep development mechanisms private
@@ -115,15 +117,10 @@ This rule includes these development-only items:
 
 Put information where its reader will find it:
 
-- Put script instructions in script help or contributor documentation.
+- Put script instructions in script help.
 - Put agent procedures in the applicable skill.
-- Put local invariants in code comments.
+- Put implementation rationale and constraints in relevant code comments.
 - Put behavior guarantees in tests.
-- Put cross-cutting decisions in `apps/docs/internal`.
-
-Do not make an internal document only to list implementation details.
-
-Add one when contributors need durable context that code and tests cannot supply reliably.
 
 ## Describe results, not private mechanisms
 
@@ -142,9 +139,8 @@ Do not tell users to depend on an internal fallback or incidental output.
 ## Use the correct location
 
 - Public product documentation: `apps/docs/src/content/docs`
-- Internal decisions and contributor documentation: `apps/docs/internal`
 - Agent instructions: The applicable skill
-- Local implementation information: Code, comments, scripts, and tests
+- Implementation information: Code, comments, scripts, and tests
 
 Do not add internal documentation to the public Starlight collection or sidebar.
 
@@ -156,7 +152,7 @@ For each public section, complete this sentence:
 
 The answer must identify a supported action or dependency.
 
-If it does not, remove the section. Move it to the correct internal location when necessary.
+If it does not, remove the section. Preserve necessary instructions in code comments, script help, or the applicable skill.
 
 Before completion, verify these conditions:
 

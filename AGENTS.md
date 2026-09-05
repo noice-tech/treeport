@@ -25,7 +25,9 @@ Treeport development terminals are usually managed by an outer Treeport instance
 
 - Keep project documentation in `apps/docs`.
 - Public documentation belongs in `apps/docs/src/content/docs`.
-- Internal documentation, including architectural decisions, belongs in `apps/docs/internal` and must not be added to the public Starlight content collection or sidebar.
+- Treat code and tests as the source of truth for implementation and architecture. Do not maintain separate internal documentation.
+- Keep agent procedures in the applicable skill. Keep implementation constraints in code comments or behavioral tests.
+- Use issues and pull requests for proposals, trade-offs, and decision history.
 
 ## Coding guidelines
 
