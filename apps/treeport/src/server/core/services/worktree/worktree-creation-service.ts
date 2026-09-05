@@ -764,6 +764,8 @@ export class WorktreeCreationService {
                 'Tree setup: no persistent terminal could be started'
             } else {
               const setupOptions: TerminalLaunchOptions = {
+                // Hide the no-op command used to exit after the setup tasks.
+                initialTitle: 'Setup',
                 setup: { tasks: setup.tasks, error: setupError },
                 closeOnSuccess: true
               }
