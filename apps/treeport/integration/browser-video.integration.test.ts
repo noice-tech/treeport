@@ -72,9 +72,8 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
       viewerDecoder.receive = frame => receive({ ...frame, data: new Uint8Array(frame.data) });
     }`)
     await video.start(640, 400)
-    // Native capture startup can exceed the default poll timeout with parallel browsers.
     await expect
-      .poll(() => viewer.evaluate('videoResults.decoded'), { timeout: 10_000 })
+      .poll(() => viewer.evaluate('videoResults.decoded'))
       .toBeGreaterThan(0)
     expect(frames[0]).toMatchObject({ keyframe: true, mimeType: 'video/vp8' })
     await lease.page
