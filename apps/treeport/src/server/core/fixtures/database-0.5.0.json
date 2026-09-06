@@ -1,0 +1,57 @@
+{
+  "version": "0.5.0",
+  "url": "https://registry.npmjs.org/@treeport/treeport/-/treeport-0.5.0.tgz",
+  "integrity": "sha512-t9uuuWcpU5ET/2Qvqnp3NtL0Zadn1u6S5TOdGZd1IZLjRHfxOAvYWzzOwZbsBlpcWd6R3JCAaq1Ib3ACOL8eHA==",
+  "migrations": [
+    {
+      "tag": "0000_public_baseline",
+      "when": 1785230060971,
+      "hash": "c277d04c10fd00adee65b9bbf5a7b74b7ebade60c35c4aca8cacfa03d0fb2be4"
+    },
+    {
+      "tag": "0001_misty_spectrum",
+      "when": 1785577623909,
+      "hash": "8f76bd5882bf924f3c875223acd73f6d21b7a205f8c5833f0d2ca7581b2d373c"
+    },
+    {
+      "tag": "0002_dazzling_princess_powerful",
+      "when": 1785589844379,
+      "hash": "ba800f0429d9437b28692ab5f3ece5d099ac574081880e4f660163c240cbfa73"
+    },
+    {
+      "tag": "0003_yummy_whirlwind",
+      "when": 1785834323406,
+      "hash": "94a33ee04b7e89842358b054eed8d985bc9a229ca7424303a6518e3b63063cdb"
+    },
+    {
+      "tag": "0004_persistent_worktree_creation",
+      "when": 1785920000000,
+      "hash": "f06711469bce44b95fc1b423112aea99a870309e2df6c74cd50115f0d0a198a5"
+    },
+    {
+      "tag": "0005_git_authoritative_worktrees",
+      "when": 1786000000000,
+      "hash": "065aa101f064c910932eecf64e7cc58919b03e858e12aff7c7f84397e231a6c8"
+    },
+    {
+      "tag": "0006_web_panel_launch_input",
+      "when": 1786283200364,
+      "hash": "cc2d761d12444ba5e02029c06b67f9a969ac3dfe4d7ab1bb98de576aa52ffeb5"
+    },
+    {
+      "tag": "0007_dashing_pestilence",
+      "when": 1786533775050,
+      "hash": "cfdd8eee9fe383ac73b0ea98c9adc11b9d9c659b551f34e65aeeb68fd4e27439"
+    },
+    {
+      "tag": "0008_recent_project_visibility",
+      "when": 1786600000000,
+      "hash": "5510d1572bf676d3993d1a88404028be377e4238338d80604c035122df2cb794"
+    },
+    {
+      "tag": "0009_open_folders",
+      "when": 1786800000000,
+      "hash": "ece9473a26a139654daf636a320ae3a78b16f2afd006da71aac9a1d2c29ee7bb"
+    }
+  ]
+}

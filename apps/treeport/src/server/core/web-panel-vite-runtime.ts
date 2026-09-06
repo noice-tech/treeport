@@ -537,6 +537,13 @@ export class WebPanelViteRuntime {
     await Promise.all(
       servers.map(async ({ server }) => {
         await server.waitForRequestsIdle()
+        // Vite's dependency scan can create an optimizer after close() snapshots
+        // the work to cancel. Let scans settle before closing their optimizers.
+        await Promise.all(
+          Object.values(server.environments).map(
+            (environment) => environment.depsOptimizer?.scanProcessing
+          )
+        )
         await server.close()
       })
     )

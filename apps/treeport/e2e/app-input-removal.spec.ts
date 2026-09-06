@@ -269,6 +269,7 @@ test.describe('desktop terminal input and removal', () => {
       page.getByText('Project cleanup failed. Git kept the tree.')
     ).toBeVisible()
     await expect(page.getByText('Cache is in use')).toBeVisible()
+    await expect(page.locator('#worktree-wt_topic')).toBeVisible()
     await page.getByRole('button', { name: 'Retry' }).click()
     await expect(
       page.getByRole('alertdialog', { name: 'Remove tree' })
@@ -329,6 +330,7 @@ test.describe('desktop terminal input and removal', () => {
     })
     mocked.completeRemoval()
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
   })
 
   test('refreshes a stale clean preview and requires confirmation when it becomes dirty', async ({
@@ -358,6 +360,7 @@ test.describe('desktop terminal input and removal', () => {
       page.getByText('1 untracked file(s) will be lost')
     ).toBeVisible()
     expect(mocked.removeRequests()).toBe(1)
+    await expect(page.locator('#worktree-wt_topic')).toBeVisible()
     const secondRemove = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
@@ -372,32 +375,68 @@ test.describe('desktop terminal input and removal', () => {
     await expect.poll(() => mocked.removeRequests()).toBe(2)
   })
 
-  test('restores durable removal progress after refresh and hides the Git-removed worktree', async ({
+  test('silently hides accepted removals across refreshes and restores failed trees with retry', async ({
     page
   }) => {
     const mocked = await mockApp(page)
+    await page.getByRole('button', { name: 'topic', exact: true }).click()
+    await expect(page).toHaveURL(/wt_topic/)
+    let acceptRemoval: () => void = () => {}
+    const acceptance = new Promise<void>((resolve) => {
+      acceptRemoval = resolve
+    })
+    await page.route('**/api/worktrees/wt_topic/remove', async (route) => {
+      await acceptance
+      await route.fallback()
+    })
+    const request = page.waitForRequest('**/api/worktrees/wt_topic/remove')
     const menu = await openWorktreeContextMenu(page, 'topic')
     await menu.getByRole('menuitem', { name: 'Remove tree…' }).click()
+    await request
+    await expect(page.locator('#worktree-wt_topic')).toBeVisible()
+    await expect(page).toHaveURL(/wt_topic/)
+    acceptRemoval()
     await expect.poll(() => mocked.removeRequests()).toBe(1)
 
-    const removingMenu = await openWorktreeContextMenu(page, 'topic')
-    await removingMenu
-      .getByRole('menuitem', { name: 'View removal progress' })
-      .click()
     await expect(
-      page.getByRole('alertdialog', { name: 'Remove topic' })
-    ).toBeVisible()
-    await page.getByRole('button', { name: 'Close' }).click()
+      page.getByRole('button', { name: 'topic', exact: true })
+    ).toHaveCount(0)
+    await expect(page).toHaveURL(/wt_main/)
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
 
     await page.reload()
-    const restoredMenu = await openWorktreeContextMenu(page, 'topic')
-    await restoredMenu
-      .getByRole('menuitem', { name: 'View removal progress' })
-      .click()
+    await expect(page.locator('#worktree-wt_main')).toBeVisible()
+    await expect(page.locator('#worktree-wt_topic')).toHaveCount(0)
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+
+    // A fresh projects snapshot still includes the tree until Git removes it.
+    const pendingRefresh = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/projects'
+    )
+    await page.evaluate(() =>
+      window.__eventSource.emit(
+        'worktree.updated',
+        JSON.stringify({ worktreeId: 'wt_topic' })
+      )
+    )
+    await pendingRefresh
+    await expect(
+      page.getByRole('button', { name: 'topic', exact: true })
+    ).toHaveCount(0)
+
+    mocked.setRemovalCleanup('failed', [], 'Git refused removal')
     await expect(
       page.getByRole('alertdialog', { name: 'Remove topic' })
     ).toBeVisible()
-    await page.getByRole('button', { name: 'Close' }).click()
+    await expect(page.locator('#worktree-wt_topic')).toBeVisible()
+    await page.getByRole('button', { name: 'Retry', exact: true }).click()
+    await page.getByRole('button', { name: 'Remove tree', exact: true }).click()
+    await expect.poll(() => mocked.removeRequests()).toBe(2)
+    await expect(
+      page.getByRole('button', { name: 'topic', exact: true })
+    ).toHaveCount(0)
 
     mocked.completeRemoval()
     const removedRefresh = page.waitForResponse(
@@ -416,5 +455,7 @@ test.describe('desktop terminal input and removal', () => {
       page.getByRole('button', { name: 'topic', exact: true })
     ).toHaveCount(0)
     await expect(page).toHaveURL(/wt_main/)
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
   })
 })

@@ -126,7 +126,6 @@ export interface WorkspaceTreeProps {
     worktree: WorktreeRecord,
     trigger: HTMLElement
   ) => Promise<void>
-  onViewRemoval: (worktree: WorktreeRecord) => void
   onOpenPanelDialog: (
     project: ProjectRecord,
     worktree: WorktreeRecord | null,
@@ -151,7 +150,6 @@ export function WorkspaceTree({
   onReorderTerminals: reorderTerminals,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
-  onViewRemoval: viewRemoval,
   onOpenPanelDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
@@ -322,14 +320,10 @@ export function WorkspaceTree({
                             <ContextMenuItem
                               variant="destructive"
                               disabled={
-                                project.availability.state === 'unavailable'
+                                project.availability.state === 'unavailable' ||
+                                Boolean(pendingRemovals[worktree.id])
                               }
                               onSelect={() => {
-                                if (pendingRemovals[worktree.id]) {
-                                  viewRemoval(worktree)
-                                  return
-                                }
-
                                 void prepareRemoval(
                                   worktree,
                                   document.getElementById(
@@ -342,7 +336,7 @@ export function WorkspaceTree({
                               {project.availability.state === 'unavailable'
                                 ? 'Git repository unavailable'
                                 : pendingRemovals[worktree.id]
-                                  ? 'View removal progress'
+                                  ? 'Preparing removal…'
                                   : 'Remove tree…'}
                             </ContextMenuItem>
                           </ContextMenuGroup>
