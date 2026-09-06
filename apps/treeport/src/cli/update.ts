@@ -14,6 +14,7 @@ import {
   resolvePackagePath
 } from './lifecycle.js'
 import { serviceInstalled, serviceStatus, serviceStop } from './service.js'
+import { humanOutput, type HumanOutput } from './output.js'
 import {
   readUpdateStartupReport,
   type UpdateMigrationState,
@@ -191,6 +192,8 @@ export interface LocalUpdateErrorDetails {
   terminalIds?: string[]
 }
 
+// Also used in API error messages. Keep this representation plain and stable;
+// CLI presentation belongs in output.ts.
 export function formatLocalUpdateError(
   message: string,
   details: {
@@ -238,7 +241,11 @@ export async function confirmLocalUpdate(
   preview: LocalUpdateConfirmation,
   signal: AbortSignal,
   input: NodeJS.ReadableStream = process.stdin,
-  output: NodeJS.WritableStream = process.stderr
+  output: NodeJS.WritableStream = process.stderr,
+  style: HumanOutput = humanOutput(
+    process.env,
+    output === process.stderr && Boolean(process.stderr.isTTY)
+  )
 ): Promise<boolean> {
   if (signal.aborted) {
     return false
@@ -254,18 +261,24 @@ export async function confirmLocalUpdate(
       resolve(false)
     })
     prompt.question(
-      [
-        `Update Treeport ${preview.fromVersion} -> ${preview.toVersion}?`,
-        'Clients can briefly disconnect. Terminal sessions are preserved.',
-        preview.recovery
-          ? 'This also repairs an interrupted update.'
-          : preview.daemonWasRunning
-            ? 'Treeport will stop, update, and restart.'
-            : preview.startRequested
-              ? 'Treeport will start after the update.'
-              : 'Treeport will remain stopped.',
-        'Continue? [y/N] '
-      ].join('\n'),
+      style.blocks(
+        style.heading(
+          `Update Treeport ${preview.fromVersion} -> ${preview.toVersion}?`
+        ),
+        style.indent(
+          [
+            'Clients can briefly disconnect. Terminal sessions are preserved.',
+            preview.recovery
+              ? 'This also repairs an interrupted update.'
+              : preview.daemonWasRunning
+                ? 'Treeport will stop, update, and restart.'
+                : preview.startRequested
+                  ? 'Treeport will start after the update.'
+                  : 'Treeport will remain stopped.'
+          ].join('\n')
+        ),
+        style.action('Continue? [y/N] ')
+      ),
       (answer) => {
         resolve(/^(y|yes)$/i.test(answer.trim()) && !signal.aborted)
         prompt.close()

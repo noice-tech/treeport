@@ -7,6 +7,22 @@ Run `treeport` without a folder or command to show help.
 
 Most identifiers can be exact IDs or paths in a registered project or tree.
 
+## Output format
+
+Human output uses headings, spacing, and status symbols. Color highlights results, warnings, failures, and the next action.
+
+Redirected output is plain unless you force color. Treeport checks standard output and standard error separately.
+
+- Set `NO_COLOR` to disable color. This setting takes priority over `FORCE_COLOR`.
+- Set `FORCE_COLOR=1` to enable color with redirected output. Empty values, `true`, `2`, and `3` also enable color.
+- Set `FORCE_COLOR=0` or `FORCE_COLOR=false` to disable color.
+
+Use `--json` for automation. JSON output does not contain added color codes, even with `FORCE_COLOR`.
+
+Treeport does not change raw terminal capture or log content. These streams can contain color codes from their source.
+
+For command details, run `treeport --help`. For the AI agent usage guide, run `treeport skills`.
+
 ## Show versions and status
 
 Run `treeport -v` or `treeport --version` to print the installed CLI version without a running daemon.

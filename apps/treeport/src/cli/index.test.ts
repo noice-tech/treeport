@@ -134,6 +134,8 @@ interface CliResult {
 function cliEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const environment = { ...process.env }
   for (const name of [
+    'NO_COLOR',
+    'FORCE_COLOR',
     'TREEPORT_API_URL',
     'TREEPORT_MANAGED_API_URL',
     'TREEPORT_DAEMON_RECORD',
@@ -277,6 +279,67 @@ describe('CLI version and status', () => {
     }
   )
 
+  it.each([
+    { stdoutIsTTY: true, stderrIsTTY: false },
+    { stdoutIsTTY: false, stderrIsTTY: true }
+  ])('keeps help and error color on their own streams: %j', async (tty) => {
+    for (const args of [
+      ['--help'],
+      ['service', '--help'],
+      ['--unknown-option']
+    ]) {
+      let stdout = ''
+      let stderr = ''
+      const code = await runCliApplication({
+        args,
+        environment: cliEnvironment({ TERM: 'xterm' }),
+        ...tty,
+        stdout: (value) => {
+          stdout += value
+        },
+        stderr: (value) => {
+          stderr += value
+        }
+      })
+      expect(stdout.includes('\u001b')).toBe(code === 0 && tty.stdoutIsTTY)
+      expect(stderr.includes('\u001b')).toBe(code !== 0 && tty.stderrIsTTY)
+      if (code !== 0) {
+        expect(code).toBe(2)
+        expect(stdout).toBe('')
+        expect(stderr).toContain('unknown option')
+        expect(stderr).toContain('treeport --help')
+        expect(stderr).not.toContain('Commands:')
+        expect(stderr).not.toContain('AI agents')
+      }
+    }
+  })
+
+  it.each([
+    ['version', '--json'],
+    ['status', '--json'],
+    ['context', 'extra', '--json']
+  ])('preserves machine bytes under forced color: %j', async (...args) => {
+    const plain = await runCli([...args])
+    const forced = await runCli([...args], { FORCE_COLOR: '1' })
+    expect(forced).toEqual(plain)
+    expect(forced.stdout + forced.stderr).not.toContain('\u001b')
+  })
+
+  it.each([false, true])(
+    'passes raw daemon/service logs through under forced color (service: %s)',
+    async (installed) => {
+      const raw = '\u001b[31mraw log\u001b[0m\n\n  indented\rno final newline'
+      vi.mocked(service.serviceInstalled).mockResolvedValue(installed)
+      vi.spyOn(lifecycle, 'readDaemonLogs').mockResolvedValue(raw)
+      vi.spyOn(service, 'readServiceLogs').mockResolvedValue(raw)
+      expect(await runCli(['logs'], { FORCE_COLOR: '1' })).toEqual({
+        code: 0,
+        stdout: raw,
+        stderr: ''
+      })
+    }
+  )
+
   it.each([false, true])(
     'preserves detailed version JSON (running: %s)',
     async (healthy) => {
@@ -316,9 +379,9 @@ describe('CLI version and status', () => {
       vi.mocked(lifecycle.daemonStatus).mockResolvedValue(status)
       const human = await runCli(['status'])
       expect(human.code).toBe(0)
-      expect(human.stdout).toContain(`CLI version: ${packageVersion}`)
+      expect(human.stdout).toContain(`CLI version     ${packageVersion}`)
       expect(human.stdout).toContain(
-        `Daemon version: ${version ?? 'unavailable'}`
+        `Daemon version  ${version ?? 'Unavailable'}`
       )
       expect(human.stdout.includes('Version mismatch:')).toBe(
         version !== null && version !== packageVersion
@@ -362,12 +425,15 @@ describe('CLI version and status', () => {
       })
       const human = await runCli(['status'])
       expect(human.code).toBe(0)
-      expect(human.stdout).toContain('Treeport service:')
-      expect(human.stdout).toContain(`CLI version: ${packageVersion}`)
+      expect(human.stdout).toContain('Treeport service')
+      expect(human.stdout).toContain(`CLI version     ${packageVersion}`)
       expect(human.stdout).toContain(
-        `Daemon version: ${healthy ? packageVersion : 'unavailable'}`
+        `Daemon version  ${healthy ? packageVersion : 'Unavailable'}`
       )
       const json = await runCli(['status', '--json'])
+      expect(await runCli(['status', '--json'], { FORCE_COLOR: '1' })).toEqual(
+        json
+      )
       expect(JSON.parse(json.stdout)).toMatchObject({
         cliVersion: packageVersion,
         daemonVersion: healthy ? packageVersion : null,
@@ -1214,19 +1280,20 @@ describe('CLI context and machine output', () => {
     expect(result.code).toBe(0)
     expect(result.stderr).toBe('')
     expect(result.stdout).toContain('Treeport context')
-    expect(result.stdout).toContain('Project:  treeport (proj_context)')
-    expect(result.stdout).toContain('Tree:     agent-tools (wt_context)')
+    expect(result.stdout).toContain('Project   treeport (proj_context)')
+    expect(result.stdout).toContain('Tree      agent-tools (wt_context)')
     expect(result.stdout).toContain('  issue: TREE-123')
     expect(result.stdout).toContain(
       '  brief: Review the cache behavior.\n    Keep the terminal workflow.'
     )
     expect(result.stdout).toContain('  control: \\u001b]2;changed\\u0007')
     expect(result.stdout).not.toContain('\u001b')
-    expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
-    expect(result.stdout).toContain('Lifecycle: managed by Treeport')
+    expect(result.stdout).toContain('Terminal  Pi (term_context) — Running')
+    expect(result.stdout).toContain('Lifecycle  Treeport')
     expect(result.stdout.trimStart().startsWith('{')).toBe(false)
 
     const structured = await runCli(['context', '--json'], {
+      FORCE_COLOR: '1',
       TREEPORT_API_URL: apiUrl,
       TREEPORT_PROJECT_ID: project.id,
       TREEPORT_WORKTREE_ID: worktree.id,
@@ -1260,7 +1327,7 @@ describe('CLI context and machine output', () => {
       TREEPORT_TERMINAL_ID: terminal.id
     })
     expect(external.code).toBe(0)
-    expect(external.stdout).toContain('Lifecycle: externally managed')
+    expect(external.stdout).toContain('Lifecycle  Externally managed')
 
     observedDaemonLifecycle = 'service'
     const supervised = await runCli(['context'], {
@@ -1270,7 +1337,7 @@ describe('CLI context and machine output', () => {
       TREEPORT_TERMINAL_ID: terminal.id
     })
     expect(supervised.code).toBe(0)
-    expect(supervised.stdout).toContain('Lifecycle: managed by the OS service')
+    expect(supervised.stdout).toContain('Lifecycle  OS service')
     observedDaemonLifecycle = 'treeport'
 
     const runtimeDirectory = await mkdtemp(
@@ -1301,7 +1368,7 @@ describe('CLI context and machine output', () => {
     })
     expect(recovered.code).toBe(0)
     expect(recovered.stderr).toBe('')
-    expect(recovered.stdout).toContain(`API:      ${apiUrl}`)
+    expect(recovered.stdout).toContain(`API        ${apiUrl}`)
 
     await writeFile(
       daemonRecordPath,
@@ -1326,7 +1393,7 @@ describe('CLI context and machine output', () => {
     })
     expect(overridden.code).toBe(0)
     expect(overridden.stderr).toBe('')
-    expect(overridden.stdout).toContain(`API:      ${apiUrl}`)
+    expect(overridden.stdout).toContain(`API        ${apiUrl}`)
     await rm(runtimeDirectory, { recursive: true, force: true })
   })
 
@@ -1988,7 +2055,7 @@ describe('CLI context and machine output', () => {
   it('captures terminal output by exact ID and managed dot context', async () => {
     const human = await runCli(
       ['terminal', 'capture', terminal.id, '--lines', '12'],
-      { TREEPORT_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl, FORCE_COLOR: '1' }
     )
     expect(human).toEqual({
       code: 0,

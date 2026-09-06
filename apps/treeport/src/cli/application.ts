@@ -57,7 +57,6 @@ import { OpenWorkspaceError, openWorkspace } from './open.js'
 import {
   LocalUpdateError,
   confirmLocalUpdate,
-  formatLocalUpdateError,
   runLocalUpdate,
   type LocalUpdateOptions
 } from './update.js'
@@ -85,9 +84,15 @@ import {
   serviceRun,
   serviceStart,
   serviceStatus,
-  serviceStop,
-  type ServiceStatus
+  serviceStop
 } from './service.js'
+import {
+  humanOutput,
+  stateName,
+  formatServiceStatus,
+  formatLocalUpdateError,
+  formatLocalUpdateResult
+} from './output.js'
 
 const contextPrefix = 'TREEPORT'
 let configuredApiUrl: string | undefined
@@ -106,6 +111,9 @@ let writeStderr: (value: string) => void = (value) => {
 }
 let requestedExitCode = 0
 let cliEnvironment: NodeJS.ProcessEnv = process.env
+let output = humanOutput()
+let errorOutput = humanOutput()
+let updateProgressShown = false
 
 interface PackageMutationBody {
   source: string
@@ -123,6 +131,8 @@ export interface CliApplicationOptions {
   cwd?: string
   stdout?: (value: string) => void
   stderr?: (value: string) => void
+  stdoutIsTTY?: boolean
+  stderrIsTTY?: boolean
 }
 
 class CliError<Details = undefined> extends Error {
@@ -170,44 +180,6 @@ async function resolveDaemonLifecycle(): Promise<
   }
 
   return (await serviceInstalled()) ? 'service' : 'treeport'
-}
-
-function formatServiceStatus(status: ServiceStatus): string {
-  const mode =
-    status.mode === 'headless'
-      ? 'advanced headless (starts before login)'
-      : status.mode === 'user' && status.manager === 'launchd'
-        ? 'user/login (starts after login)'
-        : status.mode === 'user'
-          ? 'user service'
-          : 'not installed'
-  const lines = [
-    `Treeport service: ${status.state}`,
-    `Mode: ${mode}`,
-    `Manager: ${status.manager ?? 'unsupported'}`,
-    `Starts before login: ${status.enabledAtBoot ? 'yes' : 'no'}`,
-    `Active: ${status.active ? 'yes' : 'no'}`,
-    `Definition: ${status.definitionPath ?? 'not installed'}`
-  ]
-  if (status.daemon?.state) {
-    lines.push(`PID: ${status.daemon.state.pid}`)
-  }
-
-  if (status.issues.length) {
-    lines.push(...status.issues.map((issue) => `Issue: ${issue}`))
-  }
-
-  if (status.administratorCommand) {
-    lines.push(
-      'Administrator action required:',
-      status.administratorCommand,
-      'Then run: treeport service status'
-    )
-  } else if (status.recoveryCommands.length) {
-    lines.push(`Next: ${status.recoveryCommands[0]}`)
-  }
-
-  return lines.join('\n')
 }
 
 async function ensureServiceDaemon(): Promise<{
@@ -1011,19 +983,27 @@ async function main(args: string[]): Promise<void> {
     .usage('[options] [folder] [command]')
     .description('Manage Treeport projects, trees, and terminals.')
     .version(
-      await treeportVersion(),
+      output.heading(await treeportVersion()),
       '-v, --version',
       'show installed CLI version'
     )
     .argument('[folder]', 'folder or folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
     .configureOutput({
+      getOutHasColors: () => output.enabled,
+      getErrHasColors: () => errorOutput.enabled,
       writeOut: writeStdout,
       writeErr: (value) => {
         parserError += value
       }
     })
-    .showHelpAfterError()
+    // Preserve machine error messages, but do not dump the command list on
+    // ordinary human usage errors. Explicit help still lists skills.
+    .showHelpAfterError(jsonOutput)
+    .configureHelp({
+      styleTitle: output.heading,
+      styleCommandText: output.heading
+    })
     .exitOverride()
 
   program.action(async (folder: string | undefined) => {
@@ -1176,7 +1156,7 @@ async function main(args: string[]): Promise<void> {
       }
 
       const result = await serviceStart()
-      print(result, () => formatServiceStatus(result.status))
+      print(result, () => formatServiceStatus(result.status, output))
       if (result.administratorCommand || !result.status.healthy) {
         requestedExitCode = 1
       }
@@ -1196,6 +1176,7 @@ async function main(args: string[]): Promise<void> {
 
     if (options.foreground !== undefined) {
       daemonOptions.foreground = options.foreground
+      daemonOptions.output = output
     }
 
     const result = await daemonUp(daemonOptions)
@@ -1203,7 +1184,12 @@ async function main(args: string[]): Promise<void> {
       return
     }
 
-    print(result, () => `Treeport is running\n${result.apiUrl}`)
+    print(result, () =>
+      output.blocks(
+        output.summary('Treeport is running', 'success'),
+        output.rows([['URL', result.apiUrl]])
+      )
+    )
   })
 
   const stopCommand = program
@@ -1246,7 +1232,7 @@ async function main(args: string[]): Promise<void> {
 
     if (lifecycle === 'service') {
       const result = await serviceStop()
-      print(result, () => formatServiceStatus(result.status))
+      print(result, () => formatServiceStatus(result.status, output))
       if (result.administratorCommand) {
         requestedExitCode = 1
       }
@@ -1256,7 +1242,12 @@ async function main(args: string[]): Promise<void> {
 
     const result = await daemonDown()
     print(result, () =>
-      result.wasRunning ? 'Treeport is stopped' : 'Treeport is already stopped'
+      output.summary(
+        result.wasRunning
+          ? 'Treeport is stopped'
+          : 'Treeport is already stopped',
+        'success'
+      )
     )
   })
 
@@ -1278,7 +1269,7 @@ async function main(args: string[]): Promise<void> {
   serviceEnableCommand.action(async () => {
     const options = serviceEnableCommand.opts<{ headless?: boolean }>()
     const result = await serviceEnable(options.headless ? 'headless' : 'user')
-    print(result, () => formatServiceStatus(result.status))
+    print(result, () => formatServiceStatus(result.status, output))
     if (result.status.state === 'action_required') {
       requestedExitCode = 1
     }
@@ -1290,7 +1281,7 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   serviceStatusCommand.action(async () => {
     const result = await serviceStatus()
-    print(result, () => formatServiceStatus(result))
+    print(result, () => formatServiceStatus(result, output))
     if (
       !['disabled', 'healthy', 'stopped'].includes(result.state) ||
       !result.supported
@@ -1305,7 +1296,7 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   serviceDisableCommand.action(async () => {
     const result = await serviceDisable()
-    print(result, () => formatServiceStatus(result.status))
+    print(result, () => formatServiceStatus(result.status, output))
     if (result.administratorCommand || result.status.state !== 'disabled') {
       requestedExitCode = 1
     }
@@ -1323,7 +1314,12 @@ async function main(args: string[]): Promise<void> {
       request: string
     }>()
     const result = await serviceApply(requestPath)
-    print(result, () => `Applied Treeport service ${result.operation} request.`)
+    print(result, () =>
+      output.summary(
+        `Applied Treeport service ${result.operation} request.`,
+        'success'
+      )
+    )
   })
 
   const remoteCommand = program
@@ -1369,10 +1365,15 @@ async function main(args: string[]): Promise<void> {
     }
 
     const result = await enableTailscaleRemote(remoteOptions)
-    print(
-      result,
-      () =>
-        `Treeport remote access is ${result.alreadyEnabled ? 'already enabled' : 'enabled'}\n${result.url}\nTailscale authenticates each remote user. Access is limited by your Tailscale policy.`
+    print(result, () =>
+      output.blocks(
+        output.summary(
+          `Treeport remote access is ${result.alreadyEnabled ? 'already enabled' : 'enabled'}`,
+          'success'
+        ),
+        output.rows([['URL', result.url]]),
+        'Tailscale authenticates each remote user. Access is limited by your Tailscale policy.'
+      )
     )
   })
 
@@ -1384,12 +1385,22 @@ async function main(args: string[]): Promise<void> {
     const result = await tailscaleRemoteStatus()
     print(result, () => {
       if (!result.configured) {
-        return 'Treeport remote access is disabled'
+        return output.summary('Treeport remote access is disabled')
       }
 
-      return result.active
-        ? `Treeport remote access is enabled\n${result.url}`
-        : `Treeport remote access is unavailable\nExpected: ${result.url}\nThe Tailscale Serve route no longer points to Treeport.`
+      return output.blocks(
+        output.summary(
+          result.active
+            ? 'Treeport remote access is enabled'
+            : 'Treeport remote access is unavailable',
+          result.active ? 'success' : 'warning'
+        ),
+        output.rows([
+          [result.active ? 'URL' : 'Expected URL', result.url ?? 'Unavailable']
+        ]),
+        !result.active &&
+          'The Tailscale Serve route no longer points to Treeport.'
+      )
     })
   })
 
@@ -1401,12 +1412,15 @@ async function main(args: string[]): Promise<void> {
     const result = await disableTailscaleRemote()
     print(result, () => {
       if (result.changedTailscale) {
-        return 'Treeport remote access is disabled'
+        return output.summary('Treeport remote access is disabled', 'success')
       }
 
-      return result.wasEnabled
-        ? 'Treeport remote access is disabled'
-        : 'Treeport remote access was already disabled; the current Tailscale route was left unchanged.'
+      return output.summary(
+        result.wasEnabled
+          ? 'Treeport remote access is disabled'
+          : 'Treeport remote access was already disabled; the current Tailscale route was left unchanged.',
+        'success'
+      )
     })
   })
 
@@ -1450,16 +1464,58 @@ async function main(args: string[]): Promise<void> {
       )
     }
     print(result, () => {
-      const versions = `CLI version: ${cliVersion}\nDaemon version: ${daemonVersion ?? 'unavailable'}${daemonVersion !== null && daemonVersion !== cliVersion ? '\nVersion mismatch: CLI and daemon versions differ' : ''}`
-      if (!status.state) {
-        return `${supervision ? formatServiceStatus(supervision) : 'Treeport is stopped'}\n${versions}`
-      }
-
-      if (!status.running || !status.verified) {
-        return `Treeport is unhealthy (PID ${status.state.pid})\n${versions}\nLogs: ${path.join(status.state.dataDir, 'logs', 'daemon.log')}`
-      }
-
-      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\n${versions}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nTrees: ${result.worktrees}\nTerminals: ${result.terminals}`
+      const healthy = observed.running && observed.verified
+      return output.blocks(
+        output.heading('Treeport status'),
+        output.summary(
+          !observed.state
+            ? 'Treeport is stopped'
+            : healthy
+              ? 'Treeport is running'
+              : 'Treeport is unhealthy',
+          !observed.state ? 'neutral' : healthy ? 'success' : 'failure'
+        ),
+        output.rows([
+          ['CLI version', cliVersion],
+          ['Daemon version', daemonVersion ?? 'Unavailable'],
+          observed.state ? ['URL', observed.state.apiUrl] : null
+        ]),
+        daemonVersion !== null &&
+          daemonVersion !== cliVersion &&
+          output.summary(
+            'Version mismatch: CLI and daemon versions differ',
+            'warning'
+          ),
+        healthy &&
+          output.detail(
+            output.rows([
+              supervision
+                ? null
+                : [
+                    'Lifecycle',
+                    observed.health?.daemonLifecycle === 'external'
+                      ? 'Externally managed'
+                      : observed.health?.daemonLifecycle === 'service'
+                        ? 'OS service'
+                        : 'Treeport'
+                  ],
+              supervision ? null : ['PID', observed.state!.pid],
+              status.verified
+                ? [
+                    'Workspace',
+                    `${result.projects} projects · ${result.worktrees} trees · ${result.terminals} terminals`
+                  ]
+                : null
+            ])
+          ),
+        !healthy &&
+          observed.state !== null &&
+          output.rows([
+            ['PID', observed.state.pid],
+            ['Logs', path.join(observed.state.dataDir, 'logs', 'daemon.log')]
+          ]),
+        supervision !== null && formatServiceStatus(supervision, output)
+      )
     })
   })
 
@@ -1487,12 +1543,25 @@ async function main(args: string[]): Promise<void> {
   doctorCommand.action(async () => {
     const checks = [...(await runDoctor()), await serviceDoctorCheck()]
     print(checks, () =>
-      checks
-        .map(
+      output.blocks(
+        output.heading('Treeport doctor'),
+        output.summary(
+          checks.every((check) => check.ok)
+            ? 'All checks passed'
+            : 'Some checks failed',
+          checks.every((check) => check.ok) ? 'success' : 'failure'
+        ),
+        ...checks.map(
           (check) =>
-            `${check.ok ? 'ok' : 'error'}\t${check.name}\t${check.detail}`
+            `${output.summary(check.name, check.ok ? 'success' : 'failure')}\n${output.indent(
+              check.detail.startsWith('state: ')
+                ? stateName(check.detail.slice('state: '.length))
+                : check.ok
+                  ? output.detail(check.detail)
+                  : check.detail
+            )}`
         )
-        .join('\n')
+      )
     )
     if (checks.some((check) => !check.ok)) {
       requestedExitCode = 1
@@ -1509,9 +1578,20 @@ async function main(args: string[]): Promise<void> {
       cli,
       daemon: status.verified ? (status.health?.version ?? null) : null
     }
-    print(
-      result,
-      () => `CLI: ${result.cli}\nDaemon: ${result.daemon ?? 'not running'}`
+    print(result, () =>
+      output.blocks(
+        output.heading('Treeport version'),
+        output.rows([
+          ['CLI', result.cli],
+          ['Daemon', result.daemon ?? 'Unavailable']
+        ]),
+        result.daemon !== null &&
+          result.daemon !== result.cli &&
+          output.summary(
+            'Version mismatch: CLI and daemon versions differ',
+            'warning'
+          )
+      )
     )
   })
 
@@ -1547,7 +1627,12 @@ async function main(args: string[]): Promise<void> {
         managed: false,
         reason: 'outside_treeport'
       }
-      print(context, () => 'Not running in a Treeport-managed terminal.')
+      print(context, () =>
+        output.blocks(
+          output.heading('Treeport context'),
+          'Not running in a Treeport-managed terminal.'
+        )
+      )
       return
     }
 
@@ -1655,7 +1740,33 @@ async function main(args: string[]): Promise<void> {
                 return `  ${key}: ${first}${rest.length > 0 ? `\n${rest.map((line) => `    ${line}`).join('\n')}` : ''}`
               })
               .join('\n')
-      return `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nTree:     ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nContext:\n${treeContextText}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
+      return output.blocks(
+        output.heading('Treeport context'),
+        output.rows([
+          ['Project', `${context.project.name} (${context.project.id})`],
+          ['Tree', `${context.worktree.name} (${context.worktree.id})`],
+          ['Path', context.worktree.path],
+          [
+            'Terminal',
+            `${context.terminal.name} (${context.terminal.id}) — ${stateName(context.terminal.status)}`
+          ]
+        ]),
+        entries.length > 0 &&
+          `${output.heading('Tree context')}\n${treeContextText}`,
+        output.detail(
+          output.rows([
+            ['API', context.apiUrl],
+            [
+              'Lifecycle',
+              context.daemonLifecycle === 'external'
+                ? 'Externally managed'
+                : context.daemonLifecycle === 'service'
+                  ? 'OS service'
+                  : 'Treeport'
+            ]
+          ])
+        )
+      )
     })
   })
 
@@ -2006,36 +2117,35 @@ async function main(args: string[]): Promise<void> {
         process.stdout.isTTY &&
         process.stderr.isTTY
       ) {
-        selfUpdateOptions.confirm = confirmLocalUpdate
+        selfUpdateOptions.confirm = (preview, signal) =>
+          confirmLocalUpdate(
+            preview,
+            signal,
+            process.stdin,
+            process.stderr,
+            errorOutput
+          )
       }
 
       if (!jsonOutput) {
-        selfUpdateOptions.progress = (message) => writeStderr(`${message}\n`)
-      }
+        selfUpdateOptions.progress = (message) => {
+          if (!updateProgressShown) {
+            writeStderr(`${errorOutput.heading('Treeport update')}\n\n`)
+            updateProgressShown = true
+          }
 
-      const result = await runLocalUpdate(selfUpdateOptions).catch((error) => {
-        if (error instanceof LocalUpdateError) {
-          throw new CliError(
-            jsonOutput
-              ? error.message
-              : formatLocalUpdateError(error.message, error.details),
-            error.exitCode,
-            error.code,
-            error.details
+          writeStderr(
+            `${errorOutput.indent(errorOutput.summary(message, 'warning'))}\n`
           )
         }
+      }
 
-        throw error
-      })
-      print(result, () => {
-        if (result.status === 'current') {
-          return `Treeport ${result.toVersion} is current`
-        }
+      const result = await runLocalUpdate(selfUpdateOptions)
+      if (updateProgressShown) {
+        writeStderr('\n')
+      }
 
-        return result.daemon.restarted
-          ? `Updated Treeport from ${result.fromVersion} to ${result.toVersion} and ${result.daemon.wasRunning ? 'restarted' : 'started'} the ${result.daemon.lifecycle === 'service' ? 'service' : 'daemon'}`
-          : `Updated Treeport from ${result.fromVersion} to ${result.toVersion}; Treeport remains stopped`
-      })
+      print(result, () => formatLocalUpdateResult(result, output))
       return
     }
 
@@ -2048,12 +2158,19 @@ async function main(args: string[]): Promise<void> {
       })
     ).results
     print(results, () =>
-      results
-        .map(
-          (result) =>
-            `${result.status}\t${result.scope}\t${result.source ?? 'packages'}${result.reason ? `\t${result.reason}` : ''}`
+      output.blocks(
+        output.heading('Treeport package update'),
+        ...results.map((result) =>
+          output.blocks(
+            output.summary(
+              `${stateName(result.status)} ${result.source ?? 'packages'}`,
+              result.status === 'skipped' ? 'warning' : 'success'
+            ),
+            output.detail(output.rows([['Scope', stateName(result.scope)]])),
+            result.reason ? output.indent(result.reason) : null
+          )
         )
-        .join('\n')
+      )
     )
   })
 
@@ -2607,12 +2724,23 @@ export async function runCliApplication(
   writeStdout = options.stdout ?? ((value) => process.stdout.write(value))
   writeStderr = options.stderr ?? ((value) => process.stderr.write(value))
   requestedExitCode = 0
+  updateProgressShown = false
+  output = humanOutput(
+    environment,
+    options.stdoutIsTTY ?? (!options.stdout && Boolean(process.stdout.isTTY)),
+    jsonOutput
+  )
+  errorOutput = humanOutput(
+    environment,
+    options.stderrIsTTY ?? (!options.stderr && Boolean(process.stderr.isTTY)),
+    jsonOutput
+  )
 
   try {
     await main([...options.args])
   } catch (error) {
     const cliError =
-      error instanceof CliError
+      error instanceof CliError || error instanceof LocalUpdateError
         ? error
         : new CliError(
             error instanceof Error ? error.message : String(error),
@@ -2631,7 +2759,27 @@ export async function runCliApplication(
 
       writeStderr(`${JSON.stringify(body)}\n`)
     } else {
-      writeStderr(`${cliError.message}\n`)
+      const text =
+        error instanceof LocalUpdateError
+          ? formatLocalUpdateError(
+              error.message,
+              error.details,
+              errorOutput,
+              error.code === 'UPDATE_CANCELLED' ||
+                error.code === 'UPDATE_INTERRUPTED'
+            )
+          : errorOutput.blocks(
+              errorOutput.summary(
+                cliError.code === 'USAGE_ERROR'
+                  ? 'Invalid command'
+                  : 'Command failed',
+                'failure'
+              ),
+              errorOutput.indent(cliError.message.replace(/^error: /, '')),
+              cliError.code === 'USAGE_ERROR' &&
+                errorOutput.next(['treeport --help'])
+            )
+      writeStderr(`${updateProgressShown ? '\n' : ''}${text}\n`)
     }
 
     requestedExitCode = cliError.exitCode

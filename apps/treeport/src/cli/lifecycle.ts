@@ -12,6 +12,7 @@ import {
 } from '@treeport/shared'
 import { z } from 'zod'
 import { assertLoopbackHost } from '../server/core/loopback.js'
+import { humanOutput, type HumanOutput } from './output.js'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8733
@@ -698,6 +699,7 @@ export async function daemonUp(options: {
   host?: string
   port?: number
   foreground?: boolean
+  output?: HumanOutput
 }): Promise<{ alreadyRunning: boolean; apiUrl: string; pid: number }> {
   if (
     options.port !== undefined &&
@@ -805,7 +807,14 @@ export async function daemonUp(options: {
   }
 
   if (options.foreground) {
-    console.log(`Treeport will listen on ${apiUrl}`)
+    const output =
+      options.output ?? humanOutput(process.env, Boolean(process.stdout.isTTY))
+    console.log(
+      output.blocks(
+        output.summary('Treeport is starting', 'warning'),
+        output.rows([['URL', apiUrl]])
+      )
+    )
     const child = spawn(process.execPath, [serverEntry], {
       env: childEnvironment,
       stdio: 'inherit'
