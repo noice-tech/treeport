@@ -1146,6 +1146,7 @@ export async function runLocalUpdate(
     ) {
       recoveringPrevious = true
       if (
+        recoveryOperation.daemonLifecycle === 'service' ||
         recoveryOperation.daemonWasRunning ||
         recoveryOperation.startRequested
       ) {
@@ -1459,7 +1460,14 @@ export async function runLocalUpdate(
     }
 
     await save('stop')
-    if (operation.daemonWasRunning || recoveryOperation) {
+    // A stopped service can still have an in-flight supervisor launch. Await
+    // its shutdown acknowledgement before switching binaries, independently
+    // of whether this transaction should start Treeport afterward.
+    if (
+      operation.daemonLifecycle === 'service' ||
+      operation.daemonWasRunning ||
+      recoveryOperation
+    ) {
       progress('Stopping the Treeport daemon and preserving terminals…')
       await stopUpdateDaemon(operation.daemonLifecycle)
     }
@@ -1691,7 +1699,9 @@ export async function runLocalUpdate(
 
     // Stop service retries before reading evidence or changing the active binary.
     const stopError =
-      operation.daemonWasRunning || operation.startRequested
+      operation.daemonLifecycle === 'service' ||
+      operation.daemonWasRunning ||
+      operation.startRequested
         ? await stopUpdateDaemon(operation.daemonLifecycle).then(
             () => null,
             (cause: unknown) =>
@@ -1711,7 +1721,7 @@ export async function runLocalUpdate(
       ['not_started', 'unchanged'].includes(operation.migrationState)
     if (!rollbackSafe) {
       operation.recoveryAction = stopError
-        ? `Keep the new version installed. Stop the daemon, then inspect the daemon log. Stop failed: ${stopError}`
+        ? `Keep the active version installed. Stop the daemon, then inspect the daemon log. Stop failed: ${stopError}`
         : 'Keep the new version installed. Inspect the daemon log and repair with the same or a newer Treeport release.'
       await save('recovery_required')
       throw new LocalUpdateError(

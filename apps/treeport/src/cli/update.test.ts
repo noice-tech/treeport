@@ -574,25 +574,108 @@ describe('local update contracts', () => {
   )
 
   it.each([false, true])(
-    'preserves a stopped service unless --start=%s',
+    'awaits stopped-service shutdown acknowledgement before activation, with --start=%s',
     async (start) => {
       const fixture = await updateFixture({
         service: true,
         requestedState: 'stopped'
       })
-      expect(
-        await runLocalUpdate({
-          environment: fixture.environment,
-          yes: true,
-          start
+      const stop = fixture.serviceStop.getMockImplementation()!
+      let enter!: () => void
+      let acknowledge!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      const acknowledgement = new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+      fixture.serviceStop.mockImplementationOnce(async () => {
+        // serviceStop must drain a launch that was already
+        // in flight, even when requestedState and daemonStatus say stopped.
+        await fs.writeFile(path.join(fixture.root, 'started'), '1.2.3')
+        enter()
+        await acknowledgement
+        return stop()
+      })
+      const updating = runLocalUpdate({
+        environment: fixture.environment,
+        yes: true,
+        start
+      })
+      try {
+        await Promise.race([
+          entered,
+          updating.then(() => {
+            throw new Error(
+              'Update completed without supervisor acknowledgement'
+            )
+          })
+        ])
+        expect(await fixture.operation()).toMatchObject({
+          phase: 'stop',
+          activated: false
         })
-      ).toMatchObject({
+        await expect(fs.lstat(fixture.current)).rejects.toMatchObject({
+          code: 'ENOENT'
+        })
+        expect(await fs.readlink(fixture.entrypoint)).toBe(
+          path.join(fixture.packageDirectory, 'bin/treeport.mjs')
+        )
+        expect(await fixture.status()).toMatchObject({
+          running: true,
+          health: { version: '1.2.3' }
+        })
+        const events = await fixture.events()
+        expect(events.at(-1)).toMatchObject({
+          command: 'version',
+          phase: 'verify'
+        })
+        expect(events.some((event) => event.command === 'start')).toBe(false)
+      } finally {
+        acknowledge()
+        await updating
+      }
+      expect(await updating).toMatchObject({
         daemon: { wasRunning: false, restarted: start, healthy: start }
       })
-      expect(fixture.serviceStop).not.toHaveBeenCalled()
+      expect(await fixture.status()).toMatchObject({ running: start })
+      expect(fixture.serviceStop).toHaveBeenCalledExactlyOnceWith()
       expect(fixture.down).not.toHaveBeenCalled()
+      expect(
+        (await fixture.events()).filter((event) => event.command === 'start')
+      ).toHaveLength(start ? 1 : 0)
     }
   )
+
+  it('refuses activation or rollback without a stopped-service shutdown acknowledgement', async () => {
+    const fixture = await updateFixture({
+      service: true,
+      requestedState: 'stopped'
+    })
+    fixture.serviceStop.mockRejectedValue(
+      new Error('Supervisor shutdown was not acknowledged')
+    )
+    await expect(
+      runLocalUpdate({ environment: fixture.environment, yes: true })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_RECOVERY_REQUIRED',
+      details: {
+        phase: 'stop',
+        rollback: { attempted: false, safe: false, succeeded: false }
+      }
+    })
+    expect(fixture.serviceStop).toHaveBeenCalledTimes(2)
+    expect(fixture.down).not.toHaveBeenCalled()
+    await expect(fs.lstat(fixture.current)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(await fs.readlink(fixture.entrypoint)).toBe(
+      path.join(fixture.packageDirectory, 'bin/treeport.mjs')
+    )
+    expect(
+      (await fixture.events()).filter((event) => event.command === 'start')
+    ).toEqual([])
+  })
 
   it('restores the intentionally stopped state if an explicit start fails safely', async () => {
     const fixture = await updateFixture({ startFailure: true })
@@ -1128,7 +1211,8 @@ describe('local update progress', () => {
       code: 'UPDATE_RECOVERY_REQUIRED',
       details: { migrationState: 'advanced' }
     })
-    expect(fixture.serviceStop).toHaveBeenCalledOnce()
+    // Both the initial stopped-service update and interrupted recovery quiesce it.
+    expect(fixture.serviceStop).toHaveBeenCalledTimes(2)
     expect(await fs.realpath(fixture.current)).toBe(
       await fs.realpath(fixture.target)
     )
