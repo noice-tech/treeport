@@ -204,6 +204,11 @@ interface HostedTerminalSession extends HostedTerminal {
 
 type PtySpawner = typeof pty.spawn
 
+interface SshAgentDiscovery {
+  platform: NodeJS.Platform
+  launchctlPath: string
+}
+
 /**
  * Detached owner of one PTY and one canonical emulator per terminal.
  *
@@ -225,7 +230,11 @@ export class TerminalHostSessionManager {
     private readonly launcherPath: string,
     private readonly spawnPty: PtySpawner = pty.spawn,
     private readonly terminateProcessTree: ProcessTreeTerminator = terminatePtyProcessTree,
-    private readonly progressStaleMs = TERMINAL_PROGRESS_STALE_MS
+    private readonly progressStaleMs = TERMINAL_PROGRESS_STALE_MS,
+    private readonly sshAgentDiscovery: SshAgentDiscovery = {
+      platform: process.platform,
+      launchctlPath: '/bin/launchctl'
+    }
   ) {
     this.shellIntegrationDir = path.join(
       runtimeDir,
@@ -296,6 +305,48 @@ export class TerminalHostSessionManager {
       )
     )
     inheritedEnvironment.TERM = 'xterm-256color'
+    // Discover on the PTY's host at each launch, not in the client or service
+    // configuration: launchd sockets are login-scoped and this host persists.
+    // Any explicit value (including empty) wins; never replace custom agents.
+    if (
+      this.sshAgentDiscovery.platform === 'darwin' &&
+      inheritedEnvironment.SSH_AUTH_SOCK === undefined &&
+      input.env.SSH_AUTH_SOCK === undefined
+    ) {
+      await execute(
+        this.sshAgentDiscovery.launchctlPath,
+        ['getenv', 'SSH_AUTH_SOCK'],
+        {
+          timeout: 1_000,
+          killSignal: 'SIGKILL',
+          maxBuffer: 4_096
+        }
+      )
+        .then(async ({ stdout }) => {
+          const socket = stdout.trim()
+          // No configured agent is normal, not a terminal launch failure.
+          if (!socket) {
+            return
+          }
+
+          if (
+            !path.isAbsolute(socket) ||
+            /\p{Cc}/u.test(socket) ||
+            !(await fs.stat(socket)).isSocket()
+          ) {
+            throw new Error('Invalid launchd SSH agent socket')
+          }
+
+          inheritedEnvironment.SSH_AUTH_SOCK = socket
+        })
+        .catch(() => {
+          // Do not log subprocess output or environment values.
+          console.warn(
+            '[Treeport terminal host] Could not discover the macOS SSH agent. Continuing without SSH_AUTH_SOCK; check `launchctl getenv SSH_AUTH_SOCK` or set SSH_AUTH_SOCK explicitly for the terminal.'
+          )
+        })
+    }
+
     const directLaunch = integrateShellLaunch(
       input.argv,
       { ...inheritedEnvironment, ...input.env },
