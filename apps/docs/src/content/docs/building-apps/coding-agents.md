@@ -35,9 +35,20 @@ treeport · <tree-name>
 
 Outside a managed terminal, the package adds no instructions, notification, or footer status.
 
-In a managed terminal, the package briefly defines Treeport projects and trees for Pi.
+In a managed terminal, sending a message lets the package add **Treeport context** before that message.
+The context stays hidden in chat. Use `/tree` to inspect it.
+It defines Treeport projects and trees for Pi. It does not start a model request or change the system prompt.
 
-It includes the current project and tree names. It does not include their IDs, paths, or daemon URL.
+Startup, resume, and reload add no context messages.
+The package discovers context during initialization and refreshes its in-memory result while Pi is idle.
+Message submission uses the latest completed result without waiting for the Treeport CLI.
+
+Before your next input while Pi is idle, missing or changed context is appended to the active branch.
+Changes found during a background refresh apply to a later submission.
+Unchanged context is not repeated. Earlier messages stay unchanged, including context messages previously saved as visible.
+Input during a running response does not add context.
+
+The context includes the current project and tree names. It does not include their IDs, paths, or daemon URL.
 
 The package tells Pi to use the `treeport` CLI through its standard Bash tool.
 
