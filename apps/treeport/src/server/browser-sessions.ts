@@ -2023,10 +2023,13 @@ export class BrowserSessionManager {
       session,
       async () => {
         if (session.localOwner) {
-          canClose = await this.requestLocalOwner(session.localOwner, {
-            type: 'closeRequest',
-            force
-          })
+          // Still ask a reachable owner to close its guest, but an explicit
+          // force-close must not depend on a disconnected or stalled owner.
+          canClose =
+            (await this.requestLocalOwner(session.localOwner, {
+              type: 'closeRequest',
+              force
+            })) || force
         } else if (session.launch || session.browser) {
           const browser = await (session.launch ??
             Promise.resolve(session.browser!))

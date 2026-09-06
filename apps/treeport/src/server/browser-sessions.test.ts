@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import http from 'node:http'
 import * as Effect from 'effect/Effect'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z } from 'zod'
 import { BROWSER_PROTOCOL_VERSION } from '@treeport/shared'
 import type {
@@ -963,6 +963,78 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
     await new Promise<void>((resolve) => ownerServer.close(() => resolve()))
   })
+
+  it.each(['disconnected', 'unresponsive'])(
+    'requires force to close a panel when its local owner is %s',
+    async (failure) => {
+      const value = fixture()
+      const ticket = await runEffect(
+        value.manager.issueOwnerTicket('panel_browser', 'desktop-client')
+      )
+      const ownerServer = http.createServer((_request, response) => {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            panelId: 'panel_browser',
+            challenge: ticket.challenge
+          })
+        )
+      })
+      onTestFinished(async () => {
+        vi.useRealTimers()
+        await value.manager.dispose()
+        await new Promise<void>((resolve) => ownerServer.close(() => resolve()))
+      })
+      await new Promise<void>((resolve) =>
+        ownerServer.listen(0, '127.0.0.1', resolve)
+      )
+      const address = z
+        .object({ port: z.number().int().positive() })
+        .parse(ownerServer.address())
+
+      let connected = true
+      const messages: BrowserOwnerServerMessage[] = []
+      await runEffect(
+        value.manager.acceptOwner(
+          {
+            ...ticket,
+            endpoint: `http://127.0.0.1:${address.port}/private/`,
+            protocolVersion: BROWSER_PROTOCOL_VERSION
+          },
+          {
+            id: 'local-owner',
+            isConnected: () => connected,
+            send: (message) => {
+              messages.push(message)
+              return connected
+            },
+            disconnect: () => {
+              connected = false
+            }
+          }
+        )
+      )
+      expect(messages[0]).toMatchObject({ type: 'claimGranted' })
+      if (failure === 'disconnected') {
+        connected = false
+        value.manager.closeOwner('local-owner')
+      }
+
+      vi.useFakeTimers()
+      const normalClose = value.manager.requestPanelClose('panel_browser')
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(normalClose).resolves.toBe(false)
+      const forcedClose = value.manager.requestPanelClose('panel_browser', true)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(forcedClose).resolves.toBe(true)
+      await value.manager.closePanel('panel_browser', 'Browser closed.')
+      expect(messages.at(-1)).toEqual({
+        type: 'closed',
+        reason: 'Browser closed.'
+      })
+      expect(connected).toBe(false)
+    }
+  )
 
   it('uses a page beforeunload request instead of a generic close confirmation', async () => {
     const value = fixture()
