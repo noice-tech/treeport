@@ -406,8 +406,12 @@ describe('update CLI wiring', () => {
       )
       let stderr = ''
       const code = await runCliApplication({
-        args,
-        environment: fixture.environment,
+        args: [...args],
+        environment: {
+          ...fixture.environment,
+          FORCE_COLOR: '1',
+          NO_COLOR: undefined
+        },
         stdout: () => undefined,
         stderr: (value) => {
           stderr += value
@@ -415,6 +419,7 @@ describe('update CLI wiring', () => {
       })
       expect(code).toBe(5)
       if (args.includes('--json')) {
+        expect(stderr).not.toContain('\u001b')
         expect(JSON.parse(stderr)).toMatchObject({
           error: {
             code: 'UPDATE_CONFIRMATION_REQUIRED',
@@ -422,7 +427,7 @@ describe('update CLI wiring', () => {
           }
         })
       } else {
-        expect(stderr).toContain('Re-run with --yes')
+        expect(stderr).toContain('treeport update --yes')
       }
 
       await fixture.unchanged()
@@ -435,15 +440,24 @@ describe('update CLI wiring', () => {
       'http://127.0.0.1:1'
     )
     let stdout = ''
+    let stderr = ''
     const code = await runCliApplication({
       args: ['update', '--yes', '--start', '--json'],
-      environment: fixture.environment,
+      environment: {
+        ...fixture.environment,
+        FORCE_COLOR: '1',
+        NO_COLOR: undefined
+      },
       stdout: (value) => {
         stdout += value
       },
-      stderr: () => undefined
+      stderr: (value) => {
+        stderr += value
+      }
     })
     expect(code).toBe(0)
+    expect(stderr).toBe('')
+    expect(stdout).not.toContain('\u001b')
     expect(JSON.parse(stdout)).toMatchObject({
       status: 'updated',
       daemon: { wasRunning: false, restarted: true, healthy: true }
