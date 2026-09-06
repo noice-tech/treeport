@@ -137,13 +137,6 @@ describe('detached terminal host lifecycle', () => {
         )
       })
 
-    const stopDestructively = async () => {
-      await runCli(['start']).catch(() => undefined)
-      await runCli(['stop', '--terminate-terminals', '--force']).catch(
-        () => undefined
-      )
-    }
-
     try {
       await runCli(['start'])
       const registered = registeredProjectSchema.parse(
@@ -223,9 +216,13 @@ describe('detached terminal host lifecycle', () => {
         method: 'DELETE'
       })
       expect(removed.ok).toBe(true)
-      await stopDestructively()
     } finally {
-      await stopDestructively()
+      // Clean up only here: a second pass would start and stop a new daemon.
+      // Start first so cleanup can also recover terminals after a failed restart.
+      await runCli(['start']).catch(() => undefined)
+      await runCli(['stop', '--terminate-terminals', '--force']).catch(
+        () => undefined
+      )
       const records = await fs.readdir(runtimeDir).catch(() => [])
       for (const name of records.filter(
         (entry) => entry.startsWith('terminal-host-') && entry.endsWith('.json')
