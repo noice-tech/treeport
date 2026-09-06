@@ -594,6 +594,14 @@ test('controls the local Browser through its exact bridge while another workspac
       }
     })
     const window = await electronApp.firstWindow()
+    const identity = await electronApp.evaluate(({ app }) => ({
+      name: app.name,
+      userData: app.getPath('userData')
+    }))
+    expect(identity.name).toBe('Treeport Dev')
+    expect(await fs.realpath(identity.userData)).toBe(
+      await fs.realpath(userData)
+    )
     await expect(
       window.getByRole('heading', {
         name: 'Treeport isn’t available on this computer'
