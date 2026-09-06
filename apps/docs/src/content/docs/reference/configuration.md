@@ -167,6 +167,14 @@ This also works when the listener URL changes.
 
 It refuses partial or old context. It does not infer missing IDs from the current directory.
 
+## SSH agents on macOS
+
+When `SSH_AUTH_SOCK` is absent, new macOS terminals use the SSH agent socket reported by launchd, if available.
+
+Treeport preserves inherited and terminal-specific `SSH_AUTH_SOCK` values, including an empty value. Terminal-specific values take priority.
+
+If Treeport cannot find a valid socket, the terminal still starts. Existing terminals keep their environment.
+
 ## Update the service environment
 
 `treeport service enable` saves the daemon configuration that the operating-system manager requires.
