@@ -219,20 +219,8 @@ export function LocalBrowserWebview({
             : null
       }
 
-      if (retainPaint) {
-        // Electron must focus the guest once after display:none.
-        // The input barrier stays active during this brief preparation.
-        const workspace = webview.closest('section')
-        const workspaceWasInert = workspace?.inert === true
-        if (workspaceWasInert) {
-          workspace.inert = false
-        }
-
-        webview.focus({ preventScroll: true })
-        if (workspaceWasInert) {
-          workspace.inert = true
-        }
-      }
+      // The desktop bridge supplies guest focus emulation and targeted input.
+      // Paint retention must not focus the webview or activate its workspace.
 
       if (!locked && prepareWithInputLocked) {
         const unlocked = await bridge
@@ -261,6 +249,8 @@ export function LocalBrowserWebview({
         ) {
           webview.focus({ preventScroll: true })
         } else if (
+          (document.activeElement === webview ||
+            document.activeElement === document.body) &&
           previousExternalFocus?.isConnected &&
           !previousExternalFocus.closest('[inert]')
         ) {

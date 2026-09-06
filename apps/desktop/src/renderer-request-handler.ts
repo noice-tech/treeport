@@ -1,5 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
+import type * as Cause from 'effect/Cause'
 
 const contentTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -24,29 +26,30 @@ export interface RendererRequestHandlerOptions {
   forward(request: Request): Promise<Response>
 }
 
-async function rendererFiles(
+function rendererFiles(
   directory: string,
   relativeDirectory = ''
-): Promise<Map<string, string>> {
-  const files = new Map<string, string>()
-  const entries = await readdir(path.join(directory, relativeDirectory), {
-    withFileTypes: true
-  }).catch(() => [])
-  for (const entry of entries) {
-    const relativePath = path.posix.join(relativeDirectory, entry.name)
-    if (entry.isDirectory()) {
-      for (const [urlPath, filePath] of await rendererFiles(
-        directory,
-        relativePath
-      )) {
-        files.set(urlPath, filePath)
+): Effect.Effect<Map<string, string>, Cause.UnknownException> {
+  return Effect.gen(function* () {
+    const files = new Map<string, string>()
+    const entries = yield* Effect.tryPromise(() =>
+      readdir(path.join(directory, relativeDirectory), { withFileTypes: true })
+    )
+    for (const entry of entries) {
+      const relativePath = path.posix.join(relativeDirectory, entry.name)
+      if (entry.isDirectory()) {
+        for (const [urlPath, filePath] of yield* rendererFiles(
+          directory,
+          relativePath
+        )) {
+          files.set(urlPath, filePath)
+        }
+      } else if (entry.isFile()) {
+        files.set(`/${relativePath}`, path.join(directory, relativePath))
       }
-    } else if (entry.isFile()) {
-      files.set(`/${relativePath}`, path.join(directory, relativePath))
     }
-  }
-
-  return files
+    return files
+  })
 }
 
 function requestPath(url: URL): string | null {
@@ -56,7 +59,6 @@ function requestPath(url: URL): string | null {
   } catch {
     return null
   }
-
   if (
     decoded.includes('\\') ||
     decoded.split('/').some((segment) => segment === '..' || segment === '.')
@@ -77,80 +79,94 @@ function isDocumentRequest(request: Request): boolean {
   )
 }
 
-export async function createRendererRequestHandler(
+export function createRendererRequestHandler(
   options: RendererRequestHandlerOptions
-): Promise<(request: Request) => Promise<Response>> {
-  const files = options.developmentServerUrl
-    ? new Map<string, string>()
-    : await rendererFiles(options.rendererDirectory)
-  const indexPath = files.get('/index.html') ?? null
-
-  const localFileResponse = async (filePath: string) => {
-    const content = await readFile(filePath)
-    return new Response(new Uint8Array(content), {
-      headers: {
-        'content-type':
-          contentTypes.get(path.extname(filePath).toLowerCase()) ??
-          'application/octet-stream',
-        'cache-control': 'no-store'
-      }
-    })
-  }
-
-  return async (request) => {
-    const url = new URL(request.url)
-    const backendOrigin = options.selectedBackendOrigin()
-    const privateApplicationRequest = url.protocol === 'treeport-app:'
-    const selectedBackendRequest =
-      backendOrigin !== null && url.origin === backendOrigin
-    if (!privateApplicationRequest && !selectedBackendRequest) {
-      return options.forward(request)
-    }
-
-    const pathname = requestPath(url)
-    if (!pathname) {
-      return new Response('Not found', { status: 404 })
-    }
-
-    if (
-      selectedBackendRequest &&
-      (pathname === '/api' || pathname.startsWith('/api/'))
-    ) {
-      return options.forward(request)
-    }
-
-    if (options.developmentServerUrl) {
-      const developmentUrl = new URL(
-        isDocumentRequest(request) ? '/' : `${pathname}${url.search}`,
-        options.developmentServerUrl
+) {
+  return Effect.gen(function* () {
+    const files = options.developmentServerUrl
+      ? new Map<string, string>()
+      : yield* rendererFiles(options.rendererDirectory)
+    const indexPath = files.get('/index.html') ?? null
+    const forward = (request: Request) =>
+      Effect.tryPromise((signal) =>
+        options.forward(
+          new Request(request, {
+            signal: AbortSignal.any([request.signal, signal])
+          })
+        )
       )
-      const requestInit: RequestInit & { duplex?: 'half' } = {
-        method: request.method,
-        headers: request.headers
-      }
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
-        requestInit.body = request.body
-        if (request.body) {
-          requestInit.duplex = 'half'
+    const localFileResponse = (filePath: string, head: boolean) =>
+      Effect.gen(function* () {
+        const content = yield* Effect.tryPromise((signal) =>
+          readFile(filePath, { signal })
+        )
+        return new Response(head ? null : new Uint8Array(content), {
+          headers: {
+            'content-type':
+              contentTypes.get(path.extname(filePath).toLowerCase()) ??
+              'application/octet-stream',
+            'cache-control': 'no-store'
+          }
+        })
+      })
+    return (request: Request) =>
+      Effect.gen(function* () {
+        const url = new URL(request.url)
+        const backendOrigin = options.selectedBackendOrigin()
+        const privateApplicationRequest = url.protocol === 'treeport-app:'
+        const selectedBackendRequest =
+          backendOrigin !== null && url.origin === backendOrigin
+        if (!privateApplicationRequest && !selectedBackendRequest) {
+          return yield* forward(request)
         }
-      }
 
-      return options.forward(new Request(developmentUrl, requestInit))
-    } else {
-      const filePath = files.get(pathname)
-      if ((request.method === 'GET' || request.method === 'HEAD') && filePath) {
-        return localFileResponse(filePath)
-      }
+        const pathname = requestPath(url)
+        if (!pathname) {
+          return new Response('Not found', { status: 404 })
+        }
 
-      if (isDocumentRequest(request) && indexPath) {
-        return localFileResponse(indexPath)
-      }
-    }
+        if (
+          selectedBackendRequest &&
+          (pathname === '/api' || pathname.startsWith('/api/'))
+        ) {
+          return yield* forward(request)
+        }
 
-    if (privateApplicationRequest) {
-      return new Response('Not found', { status: 404 })
-    }
+        if (options.developmentServerUrl) {
+          const developmentUrl = new URL(
+            isDocumentRequest(request) ? '/' : `${pathname}${url.search}`,
+            options.developmentServerUrl
+          )
+          const requestInit: RequestInit & { duplex?: 'half' } = {
+            method: request.method,
+            headers: request.headers,
+            signal: request.signal
+          }
+          if (request.method !== 'GET' && request.method !== 'HEAD') {
+            requestInit.body = request.body
+            if (request.body) {
+              requestInit.duplex = 'half'
+            }
+          }
 
-    return options.forward(request)
-  }
+          return yield* forward(new Request(developmentUrl, requestInit))
+        }
+
+        const filePath = files.get(pathname)
+        if (
+          (request.method === 'GET' || request.method === 'HEAD') &&
+          filePath
+        ) {
+          return yield* localFileResponse(filePath, request.method === 'HEAD')
+        }
+
+        if (isDocumentRequest(request) && indexPath) {
+          return yield* localFileResponse(indexPath, request.method === 'HEAD')
+        }
+
+        return privateApplicationRequest
+          ? new Response('Not found', { status: 404 })
+          : yield* forward(request)
+      })
+  })
 }

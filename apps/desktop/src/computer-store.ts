@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
 import { z } from 'zod'
 import type { ComputerSummary, SavedComputer } from './desktop-contract'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
@@ -72,11 +73,12 @@ const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
 
     computers.push(computer)
   }
-
-  const { selectedComputerId } = result.data
   const settings: DesktopSettings = { version: 1, computers }
-  if (selectedComputerId && ids.has(selectedComputerId)) {
-    settings.selectedComputerId = selectedComputerId
+  if (
+    result.data.selectedComputerId &&
+    ids.has(result.data.selectedComputerId)
+  ) {
+    settings.selectedComputerId = result.data.selectedComputerId
   }
 
   return settings
@@ -88,132 +90,139 @@ export function computerName(computer: SavedComputer): string {
   }
 
   const url = new URL(computer.origin)
-  if (isLoopbackUrl(url)) {
-    return 'This computer'
-  }
-
-  return computer.advertisedHostname || url.hostname
+  return isLoopbackUrl(url)
+    ? 'This computer'
+    : computer.advertisedHostname || url.hostname
 }
 
 export class ComputerStore {
-  private settings: DesktopSettings
-  private mutationQueue: Promise<void> = Promise.resolve()
+  private readonly mutations = Effect.unsafeMakeSemaphore(1)
 
   private constructor(
     private readonly filePath: string,
-    settings: DesktopSettings
-  ) {
-    this.settings = settings
-  }
+    private settings: DesktopSettings
+  ) {}
 
-  static async load(
+  static load(
     filePath: string,
     seedOrigin: string,
     options: { synchronizeSelectedLoopback?: boolean } = {}
-  ): Promise<ComputerStore> {
-    const contents = await fs.readFile(filePath, 'utf8').catch((error) => {
-      if (
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
-        return null
-      }
+  ) {
+    return Effect.gen(function* () {
+      const contents = yield* Effect.tryPromise(() =>
+        fs.readFile(filePath, 'utf8')
+      ).pipe(
+        Effect.catchAll((error) => {
+          const code = z.object({ code: z.string() }).safeParse(error.cause)
+          return code.success && code.data.code === 'ENOENT'
+            ? Effect.succeed(null)
+            : Effect.fail(error)
+        })
+      )
+      if (contents !== null) {
+        const parsed = yield* Effect.try(() =>
+          parseSettings(JSON.parse(contents))
+        ).pipe(Effect.catchAll(() => Effect.succeed(null)))
+        if (parsed) {
+          const store = new ComputerStore(filePath, parsed)
+          const selected = store.selectedComputer
+          if (
+            options.synchronizeSelectedLoopback &&
+            selected &&
+            isLoopbackUrl(new URL(selected.origin))
+          ) {
+            const { origin } = yield* Effect.try(() =>
+              parseComputerUrl(seedOrigin)
+            )
+            if (selected.origin !== origin) {
+              const existing = store.findByOrigin(origin, selected.id)
+              if (existing) {
+                yield* store.select(existing.id)
+              } else {
+                const update: ComputerUpdateInput = { origin }
+                if (selected.nameOverride) {
+                  update.nameOverride = selected.nameOverride
+                }
 
-      throw error
-    })
-
-    if (contents !== null) {
-      const parsed = await Promise.resolve()
-        .then(() => JSON.parse(contents))
-        .then(parseSettings)
-        .catch(() => null)
-      if (parsed) {
-        const store = new ComputerStore(filePath, parsed)
-        const selected = store.selectedComputer
-        if (
-          options.synchronizeSelectedLoopback &&
-          selected &&
-          isLoopbackUrl(new URL(selected.origin))
-        ) {
-          const origin = parseComputerUrl(seedOrigin).origin
-          if (selected.origin !== origin) {
-            const existing = store.findByOrigin(origin, selected.id)
-            if (existing) {
-              await store.select(existing.id)
-            } else {
-              const update: ComputerUpdateInput = { origin }
-              if (selected.nameOverride) {
-                update.nameOverride = selected.nameOverride
+                yield* store.update(selected.id, update)
               }
-
-              await store.update(selected.id, update)
             }
           }
+
+          return store
         }
 
-        return store
+        const invalidPath = `${filePath}.invalid-${Date.now()}`
+        yield* Effect.tryPromise(() => fs.rename(filePath, invalidPath))
+        yield* Effect.logError(
+          `Invalid desktop settings moved to ${invalidPath}`
+        )
       }
 
-      const invalidPath = `${filePath}.invalid-${Date.now()}`
-      await fs.rename(filePath, invalidPath)
-      console.error(
-        `[Treeport] Invalid desktop settings moved to ${invalidPath}`
-      )
-    }
-
-    const origin = parseComputerUrl(seedOrigin).origin
-    const now = new Date().toISOString()
-    const computer: SavedComputer = {
-      id: crypto.randomUUID(),
-      origin,
-      createdAt: now,
-      lastSelectedAt: now
-    }
-    const store = new ComputerStore(filePath, {
-      version: 1,
-      selectedComputerId: computer.id,
-      computers: [computer]
-    })
-    await store.persist()
-    return store
-  }
-
-  private async persist(): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true })
-    const temporaryPath = `${this.filePath}.${process.pid}.${crypto.randomUUID()}.tmp`
-    await fs.writeFile(
-      temporaryPath,
-      `${JSON.stringify(this.settings, null, 2)}\n`,
-      {
-        mode: 0o600
+      const { origin } = yield* Effect.try(() => parseComputerUrl(seedOrigin))
+      const now = new Date().toISOString()
+      const computer: SavedComputer = {
+        id: crypto.randomUUID(),
+        origin,
+        createdAt: now,
+        lastSelectedAt: now
       }
-    )
-    await fs.rename(temporaryPath, this.filePath)
+      const store = new ComputerStore(filePath, {
+        version: 1,
+        selectedComputerId: computer.id,
+        computers: [computer]
+      })
+      yield* store.persist(store.settings)
+      return store
+    })
   }
 
-  private enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
-    const result = this.mutationQueue.then(() => {
-      const previousSettings = structuredClone(this.settings)
-      return mutation().then(
-        (value) => value,
-        (error) => {
-          this.settings = previousSettings
-          throw error
-        }
+  private persist(settings: DesktopSettings) {
+    return Effect.gen(this, function* () {
+      yield* Effect.tryPromise(() =>
+        fs.mkdir(path.dirname(this.filePath), { recursive: true })
       )
-    })
-    this.mutationQueue = result.then(
-      () => undefined,
-      () => undefined
+      const temporaryPath = `${this.filePath}.${process.pid}.${crypto.randomUUID()}.tmp`
+      yield* Effect.tryPromise(() =>
+        fs.writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, {
+          mode: 0o600
+        })
+      ).pipe(
+        Effect.zipRight(
+          Effect.tryPromise(() => fs.rename(temporaryPath, this.filePath))
+        ),
+        Effect.onError(() =>
+          Effect.tryPromise(() => fs.rm(temporaryPath, { force: true })).pipe(
+            Effect.catchAll((error) =>
+              Effect.logError(
+                'Could not remove temporary desktop settings',
+                error
+              )
+            )
+          )
+        )
+      )
+    }).pipe(Effect.uninterruptible)
+  }
+
+  // Waiters are interruptible. Once admitted, commit the file before publishing
+  // the draft in memory, even during shutdown. Failed writes never leak state.
+  private mutate<A>(mutation: (draft: DesktopSettings) => A) {
+    return this.mutations.withPermits(1)(
+      Effect.uninterruptible(
+        Effect.gen(this, function* () {
+          const draft = structuredClone(this.settings)
+          const result = yield* Effect.try(() => mutation(draft))
+          yield* this.persist(draft)
+          this.settings = draft
+          return result
+        })
+      )
     )
-    return result
   }
 
   get selectedComputer(): SavedComputer | undefined {
-    return this.settings.computers.find(
-      (computer) => computer.id === this.settings.selectedComputerId
-    )
+    return this.getComputer(this.settings.selectedComputerId ?? '')
   }
 
   getComputer(id: string): SavedComputer | undefined {
@@ -250,10 +259,12 @@ export class ComputerStore {
     )
   }
 
-  async add(origin: string): Promise<SavedComputer> {
-    return this.enqueueMutation(async () => {
+  add(origin: string) {
+    return this.mutate((draft) => {
       const normalizedOrigin = parseComputerUrl(origin).origin
-      if (this.findByOrigin(normalizedOrigin)) {
+      if (
+        draft.computers.some((computer) => computer.origin === normalizedOrigin)
+      ) {
         throw new Error('That computer is already saved.')
       }
 
@@ -264,39 +275,38 @@ export class ComputerStore {
         createdAt: now,
         lastSelectedAt: now
       }
-      this.settings.computers.push(computer)
-      this.settings.selectedComputerId = computer.id
-      await this.persist()
+      draft.computers.push(computer)
+      draft.selectedComputerId = computer.id
       return computer
     })
   }
 
-  async select(id: string): Promise<boolean> {
-    return this.enqueueMutation(async () => {
-      const computer = this.getComputer(id)
+  select(id: string) {
+    return this.mutate((draft) => {
+      const computer = draft.computers.find((candidate) => candidate.id === id)
       if (!computer) {
         return false
       }
 
       computer.lastSelectedAt = new Date().toISOString()
-      this.settings.selectedComputerId = id
-      await this.persist()
+      draft.selectedComputerId = id
       return true
     })
   }
 
-  async update(
-    id: string,
-    input: ComputerUpdateInput
-  ): Promise<{ computer: SavedComputer; originChanged: boolean } | null> {
-    return this.enqueueMutation(async () => {
-      const computer = this.getComputer(id)
+  update(id: string, input: ComputerUpdateInput) {
+    return this.mutate((draft) => {
+      const computer = draft.computers.find((candidate) => candidate.id === id)
       if (!computer) {
         return null
       }
 
       const origin = parseComputerUrl(input.origin).origin
-      if (this.findByOrigin(origin, id)) {
+      if (
+        draft.computers.some(
+          (candidate) => candidate.origin === origin && candidate.id !== id
+        )
+      ) {
         throw new Error('That computer is already saved.')
       }
 
@@ -313,13 +323,12 @@ export class ComputerStore {
         delete computer.advertisedHostname
       }
 
-      await this.persist()
       return { computer, originChanged }
     })
   }
 
-  async rememberHostname(id: string, hostname: string): Promise<void> {
-    return this.enqueueMutation(async () => {
+  rememberHostname(id: string, hostname: string) {
+    return Effect.suspend(() => {
       const computer = this.getComputer(id)
       const normalized = hostname.trim()
       if (
@@ -327,44 +336,37 @@ export class ComputerStore {
         !normalized ||
         computer.advertisedHostname === normalized
       ) {
-        return
+        return Effect.void
       }
 
-      computer.advertisedHostname = normalized
-      await this.persist()
+      return this.mutate((draft) => {
+        const candidate = draft.computers.find((value) => value.id === id)
+        if (candidate) {
+          candidate.advertisedHostname = normalized
+        }
+      })
     })
   }
 
-  async remove(id: string): Promise<{ selectedChanged: boolean }> {
-    return this.enqueueMutation(async () => {
-      const wasSelected = this.settings.selectedComputerId === id
-      this.settings.computers = this.settings.computers.filter(
-        (computer) => computer.id !== id
-      )
+  remove(id: string) {
+    return this.mutate((draft) => {
+      const wasSelected = draft.selectedComputerId === id
+      draft.computers = draft.computers.filter((computer) => computer.id !== id)
       if (wasSelected) {
-        const local = this.settings.computers
-          .filter((computer) => isLoopbackUrl(new URL(computer.origin)))
-          .sort((left, right) =>
-            (right.lastSelectedAt ?? '').localeCompare(
-              left.lastSelectedAt ?? ''
-            )
-          )[0]
+        const recent = [...draft.computers].sort((left, right) =>
+          (right.lastSelectedAt ?? '').localeCompare(left.lastSelectedAt ?? '')
+        )
         const replacement =
-          local ??
-          [...this.settings.computers].sort((left, right) =>
-            (right.lastSelectedAt ?? '').localeCompare(
-              left.lastSelectedAt ?? ''
-            )
-          )[0]
+          recent.find((computer) => isLoopbackUrl(new URL(computer.origin))) ??
+          recent[0]
         if (replacement) {
           replacement.lastSelectedAt = new Date().toISOString()
-          this.settings.selectedComputerId = replacement.id
+          draft.selectedComputerId = replacement.id
         } else {
-          delete this.settings.selectedComputerId
+          delete draft.selectedComputerId
         }
       }
 
-      await this.persist()
       return { selectedChanged: wasSelected }
     })
   }

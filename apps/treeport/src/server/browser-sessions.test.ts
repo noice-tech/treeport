@@ -720,13 +720,13 @@ describe('Browser sessions', () => {
     await vi.waitFor(() =>
       expect(ownerMessages.at(-1)).toMatchObject({
         type: 'runtimeControl',
-        controller: 'none',
+        controller: 'agent',
         retainPaint: true
       })
     )
     expect(observer.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
-      state: { controlled: false, controller: 'other' }
+      state: { controlled: false, controller: 'agent' }
     })
     expect(browsers).toHaveLength(1)
     await expect(
@@ -736,6 +736,20 @@ describe('Browser sessions', () => {
     await expect(beforeReadyAgent).resolves.toBe(
       '- button "Local target" [ref=e1]'
     )
+    const controlTransitions = ownerMessages.filter(
+      (message) => message.type === 'runtimeControl'
+    )
+    await expect(
+      runEffect(
+        value.manager.agentCommand('panel_browser', {
+          command: 'snapshot',
+          args: []
+        })
+      )
+    ).resolves.toBe('- button "Local target" [ref=e1]')
+    expect(
+      ownerMessages.filter((message) => message.type === 'runtimeControl')
+    ).toEqual(controlTransitions)
     expect(automationRequests).toBe(0)
     await vi.waitFor(() =>
       expect(localBrowser.cdp.commands).toContainEqual(
@@ -1063,7 +1077,7 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
   })
 
-  it('queues a user takeover until an agent command releases control', async () => {
+  it('queues a user takeover until an agent command finishes', async () => {
     let finishAgent!: () => void
     const runAgentCli = vi
       .fn<BrowserAgentCliRunner>()
@@ -1157,6 +1171,46 @@ describe('Browser sessions', () => {
       deltaX: 100,
       deltaY: -200
     })
+    expect(client.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controller: 'you', controlled: true }
+    })
+    await value.manager.dispose()
+  })
+
+  it('retains agent ownership between commands and releases it after a failure', async () => {
+    const runAgentCli = vi
+      .fn<BrowserAgentCliRunner>()
+      .mockResolvedValue('snapshot')
+      .mockResolvedValueOnce('attached')
+      .mockResolvedValueOnce('snapshot')
+      .mockRejectedValueOnce(new Error('Browser disconnected'))
+    const value = fixture(runAgentCli)
+    const client = value.transport('client')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
+    )
+    await runEffect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    )
+    expect(client.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controller: 'agent', controlled: false }
+    })
+    await expect(
+      runEffect(
+        value.manager.agentCommand('panel_browser', {
+          command: 'snapshot',
+          args: []
+        })
+      )
+    ).rejects.toThrow('Browser disconnected')
     expect(client.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
       state: { controller: 'you', controlled: true }
