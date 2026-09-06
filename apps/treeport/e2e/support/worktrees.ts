@@ -227,7 +227,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
 
       const worktree = state.worktrees[1]!
       removeOperation = {
-        id: 'op_1',
+        id: `op_remove_${removeRequests}`,
         kind: 'remove',
         projectId: worktree.projectId,
         worktreeId: worktree.id,

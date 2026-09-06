@@ -878,12 +878,21 @@ export class WorktreeRemovalService {
               })
             )
             yield* invalidateProjectsSnapshot()
-            return { operationId, preview }
+            return { operationId, preview, skipCleanup }
           })
         ).pipe(
           Effect.onError(() => locks.release({ worktreeIds: [worktreeId] }))
         )
 
+        yield* Effect.logInfo('Tree removal accepted').pipe(
+          Effect.annotateLogs({
+            operationId: accepted.operationId,
+            worktreeId,
+            name: accepted.preview.name,
+            path: accepted.preview.path,
+            skipCleanup: accepted.skipCleanup
+          })
+        )
         const backgroundRemoval = worktreeMutations
           .enqueue(
             worktree.projectId,
@@ -966,9 +975,22 @@ export class WorktreeRemovalService {
               `)
             )
           ),
+          Effect.zipRight(
+            Effect.logInfo('Tree removal phase changed').pipe(
+              Effect.annotateLogs({ phase })
+            )
+          ),
           Effect.asVoid
         )
 
+      yield* Effect.logInfo('Tree removal executing').pipe(
+        Effect.annotateLogs({
+          name: preview.name,
+          path: preview.path,
+          phase: request.phase,
+          resumed: operation.status === 'running'
+        })
+      )
       yield* Effect.promise(() =>
         database.db.run(sql`
           UPDATE operations SET status='running',error=NULL,updated_at=${now()}
@@ -1394,6 +1416,13 @@ export class WorktreeRemovalService {
             WHERE id=${operationId}
           `)
         )
+        yield* cleanupWarning
+          ? Effect.logWarning(
+              'Tree removal completed with residual files'
+            ).pipe(
+              Effect.annotateLogs({ warning: cleanupWarning, residualPath })
+            )
+          : Effect.logInfo('Tree removal completed')
         yield* Effect.sync(() =>
           events.publish('remove.completed', {
             operationId,
@@ -1430,6 +1459,15 @@ export class WorktreeRemovalService {
                 WHERE id=${operationId}
               `)
             )
+            yield* Effect.logWarning(
+              'Tree removal cleanup failed after Git removal'
+            ).pipe(
+              Effect.annotateLogs({
+                warning,
+                phase: request.phase,
+                residualPath: preview.path
+              })
+            )
             yield* Effect.sync(() =>
               events.publish('remove.completed', {
                 operationId,
@@ -1452,6 +1490,11 @@ export class WorktreeRemovalService {
                 WHERE id=${operationId}
               `)
             )
+            yield* Effect.logError(
+              'Tree removal failed; Git kept the tree'
+            ).pipe(
+              Effect.annotateLogs({ error: message, phase: request.phase })
+            )
             yield* Effect.sync(() =>
               events.publish('remove.failed', {
                 operationId,
@@ -1467,7 +1510,8 @@ export class WorktreeRemovalService {
         Effect.flatMap(MutationLocks, (locks) =>
           locks.release({ worktreeIds: [lockedWorktreeId] })
         )
-      )
+      ),
+      Effect.annotateLogs({ operationId, worktreeId: lockedWorktreeId })
     )
   }
 
