@@ -86,7 +86,9 @@ export function useWorktreeRemovals() {
   return {
     operations,
     hiddenWorktreeIds,
-    ready: !activeQuery.isPending,
+    // A failed initial fetch must not hide the workspace again on each retry:
+    // that would unmount live terminals and Browser guests during an outage.
+    ready: activeQuery.isFetched,
     trackRemoval: (operation: RemoveOperationRecord) => {
       queryClient.setQueryData(['operation', operation.id], operation)
       setTracked((current) => [...current, operation])
