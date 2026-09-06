@@ -84,8 +84,11 @@ describe('release preparation', () => {
         '{\n  "name": "@treeport/pi",\n  "version": "0.1.0"\n}\n'
       )
       const fakePnpm = path.join(bin, 'pnpm')
-      writeFileSync(fakePnpm, '#!/bin/sh\nexit 0\n')
+      writeFileSync(fakePnpm, '#!/bin/sh\n[ "$*" = "ci:local" ]\n')
       chmodSync(fakePnpm, 0o755)
+      const fakeGh = path.join(bin, 'gh')
+      writeFileSync(fakeGh, "#!/bin/sh\nprintf '[[]]\\n'\n")
+      chmodSync(fakeGh, 0o755)
 
       git(['add', '.'])
       git(['commit', '-m', 'Initial version'])
@@ -126,6 +129,27 @@ describe('release preparation', () => {
       expect(
         git(['--git-dir', remote, 'rev-parse', 'refs/tags/v0.1.0^{}'])
       ).toBe(releaseCommit)
+
+      const repeatedRelease = spawnSync(
+        process.execPath,
+        ['scripts/prepare-release.mjs', '0.1.0'],
+        { cwd: repository, encoding: 'utf8', env: environment }
+      )
+      expect(repeatedRelease.status).toBe(1)
+      expect(repeatedRelease.stderr).toContain('Tag already exists locally')
+      expect(git(['rev-parse', 'HEAD'])).toBe(releaseCommit)
+
+      const verifyTag = (tag) =>
+        spawnSync(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `import { verifySource } from './scripts/release-utils.mjs'; verifySource('${tag}')`
+          ],
+          { cwd: repository, encoding: 'utf8', env: environment }
+        )
+      expect(verifyTag('v0.1.0').status).toBe(0)
 
       const nextRelease = spawnSync(
         process.execPath,
@@ -171,6 +195,13 @@ describe('release preparation', () => {
       expect(
         git(['--git-dir', remote, 'rev-parse', 'refs/tags/v0.2.0^{}'])
       ).toBe(git(['rev-parse', 'HEAD']))
+
+      const oldTag = verifyTag('v0.1.0')
+      expect(oldTag.status).toBe(1)
+      expect(oldTag.stderr).toContain('must point to the current main commit')
+      expect(git(['rev-list', '-n', '1', 'v0.1.0'])).toBe(releaseCommit)
+      writeFileSync(path.join(repository, 'uncommitted'), 'dirty')
+      expect(verifyTag('v0.2.0').stderr).toContain('Working tree must be clean')
     } finally {
       rmSync(temporaryDirectory, { recursive: true, force: true })
     }

@@ -38,6 +38,15 @@ Treeport development terminals are usually managed by an outer Treeport instance
 - Do not add backward-compatibility paths for internal changes. For user-facing contracts, preserve compatibility when required; otherwise prefer a deliberate migration or clean change over maintaining legacy behavior.
 - Do not add or expand tests by default. Add coverage when a change introduces a significant uncovered risk, especially data loss, unauthorized access, terminal continuity, or recovery. Prefer the cheapest test that proves the behavior. Small changes can use existing checks or manual verification.
 
+## Releases
+
+- Use the release skill for release operations.
+- Run `pnpm release:prepare --help` and `pnpm release:desktop --help` for maintainer command instructions.
+- Build and publish desktop releases locally on a configured Mac. GitHub hosts downloads; it does not build releases.
+- Keep npm publication as an explicit user action. Agents must not run `pnpm release:publish`.
+- Never move release tags or overwrite uploaded assets to recover a failed release.
+- Keep maintainer procedures in script help and the release skill, not public documentation.
+
 ## Validation
 
 - Use the smallest relevant check while developing.

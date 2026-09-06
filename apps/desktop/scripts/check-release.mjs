@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync
+} from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractFile, listPackage } from '@electron/asar'
@@ -19,14 +27,20 @@ const desktopDirectory = path.resolve(
 const packageManifest = JSON.parse(
   readFileSync(path.join(desktopDirectory, 'package.json'), 'utf8')
 )
-const [version = packageManifest.version, outputArgument = 'out', ...extra] =
-  process.argv.slice(2)
+const [
+  version = packageManifest.version,
+  outputArgument = 'out',
+  teamId,
+  ...extra
+] = process.argv.slice(2)
 if (
   extra.length > 0 ||
+  !teamId ||
+  !/^[A-Z0-9]{10}$/.test(teamId) ||
   !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
 ) {
   throw new Error(
-    'Usage: node scripts/check-release.mjs [X.Y.Z] [forge-output-directory]'
+    'Usage: node scripts/check-release.mjs <X.Y.Z> <forge-output-directory> <Apple-Team-ID>'
   )
 }
 
@@ -44,10 +58,16 @@ const visit = (directory) => {
 visit(outputDirectory)
 
 const expectedBase = `Treeport-${version}-darwin-universal`
-const dmgFiles = paths.filter((entry) => entry.endsWith(`${expectedBase}.dmg`))
-const zipFiles = paths.filter((entry) => entry.endsWith(`${expectedBase}.zip`))
+const dmgFiles = paths.filter((entry) => entry.endsWith('.dmg'))
+const zipFiles = paths.filter((entry) => entry.endsWith('.zip'))
 const apps = paths.filter((entry) => entry.endsWith(`${path.sep}Treeport.app`))
-if (dmgFiles.length !== 1 || zipFiles.length !== 1 || apps.length !== 1) {
+if (
+  dmgFiles.length !== 1 ||
+  zipFiles.length !== 1 ||
+  apps.length !== 1 ||
+  path.basename(dmgFiles[0]) !== `${expectedBase}.dmg` ||
+  path.basename(zipFiles[0]) !== `${expectedBase}.zip`
+) {
   throw new Error(
     `Expected one universal app, DMG, and ZIP; found ${apps.length} app(s), ${dmgFiles.length} DMG(s), and ${zipFiles.length} ZIP(s)`
   )
@@ -164,6 +184,78 @@ for (const [fuse, expected] of expectedFuses) {
   }
 }
 
+// Verify the distributed copies, not only Forge's loose application. Comparing
+// every file also binds the ZIP/DMG to the version, architecture and fuse checks.
+const temporary = mkdtempSync(path.join(os.tmpdir(), 'treeport-release-check-'))
+const mount = path.join(temporary, 'dmg')
+const extracted = path.join(temporary, 'zip')
+mkdirSync(mount)
+mkdirSync(extracted)
+let mounted = false
+try {
+  execFileSync('ditto', ['-x', '-k', zipFiles[0], extracted])
+  execFileSync('hdiutil', [
+    'attach',
+    '-readonly',
+    '-nobrowse',
+    '-noautoopen',
+    '-mountpoint',
+    mount,
+    dmgFiles[0]
+  ])
+  mounted = true
+  for (const copy of [
+    path.join(extracted, 'Treeport.app'),
+    path.join(mount, 'Treeport.app')
+  ]) {
+    execFileSync('diff', ['-qr', appPath, copy])
+  }
+  for (const signed of [
+    appPath,
+    path.join(extracted, 'Treeport.app'),
+    path.join(mount, 'Treeport.app'),
+    dmgFiles[0]
+  ]) {
+    execFileSync('codesign', ['--verify', '--deep', '--strict', signed])
+    const identity = spawnSync(
+      'codesign',
+      ['--display', '--verbose=4', signed],
+      { encoding: 'utf8' }
+    )
+    if (
+      identity.status !== 0 ||
+      !identity.stderr.split('\n').includes(`TeamIdentifier=${teamId}`) ||
+      !identity.stderr.includes('Authority=Developer ID Application:')
+    ) {
+      throw new Error(
+        'Artifact is not signed with the expected Developer ID team'
+      )
+    }
+
+    execFileSync('xcrun', ['stapler', 'validate', signed])
+    if (signed.endsWith('.app')) {
+      execFileSync('spctl', ['--assess', '--type', 'execute', signed])
+    }
+  }
+  execFileSync(
+    process.execPath,
+    [
+      path.join(desktopDirectory, 'scripts/smoke-release.mjs'),
+      path.join(extracted, 'Treeport.app'),
+      version
+    ],
+    { stdio: 'inherit' }
+  )
+} finally {
+  // If detach fails, leave the mount and report the failure. Never recurse into
+  // a mounted volume during cleanup.
+  if (mounted) {
+    execFileSync('hdiutil', ['detach', mount])
+  }
+
+  rmSync(temporary, { recursive: true, force: true })
+}
+
 console.log(
-  `Verified Treeport ${version}: universal app, DMG, ZIP, package boundary, and Electron fuses`
+  `Verified Treeport ${version}: signed/notarized universal app, DMG, ZIP, package boundary, Electron fuses, and isolated launch`
 )

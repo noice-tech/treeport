@@ -13,9 +13,7 @@ const execute = promisify(execFile)
 const releaseBuild = process.env.TREEPORT_DESKTOP_RELEASE === '1'
 const releaseEnvironment = {
   signingIdentity: process.env.TREEPORT_MAC_SIGNING_IDENTITY?.trim(),
-  appleApiKey: process.env.APPLE_API_KEY_PATH?.trim(),
-  appleApiKeyId: process.env.APPLE_API_KEY_ID?.trim(),
-  appleApiIssuer: process.env.APPLE_API_ISSUER?.trim()
+  keychainProfile: process.env.TREEPORT_NOTARY_PROFILE?.trim()
 }
 
 if (releaseBuild) {
@@ -30,9 +28,7 @@ if (releaseBuild) {
 }
 
 const notarizationCredentials = {
-  appleApiKey: releaseEnvironment.appleApiKey ?? '',
-  appleApiKeyId: releaseEnvironment.appleApiKeyId ?? '',
-  appleApiIssuer: releaseEnvironment.appleApiIssuer ?? ''
+  keychainProfile: releaseEnvironment.keychainProfile ?? ''
 }
 
 const packagerConfig: NonNullable<ForgeConfig['packagerConfig']> = {
@@ -80,24 +76,8 @@ const config: ForgeConfig = {
       platforms: ['darwin']
     }
   ],
-  publishers: releaseBuild
-    ? [
-        {
-          name: '@electron-forge/publisher-github',
-          config: {
-            repository: {
-              owner: 'noice-tech',
-              name: 'treeport'
-            },
-            tagPrefix: 'v',
-            draft: true,
-            prerelease: false,
-            generateReleaseNotes: true,
-            force: true
-          }
-        }
-      ]
-    : [],
+  // scripts/desktop-release.mjs owns publication. Forge only builds artifacts.
+  publishers: [],
   hooks: {
     packageAfterCopy: async (_config, buildPath) => {
       await cp(

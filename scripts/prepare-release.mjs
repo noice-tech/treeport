@@ -1,175 +1,141 @@
 #!/usr/bin/env node
 
+import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import {
   compareVersions,
   fail,
   git,
-  githubRepositoryFromUrl,
   parseVersion,
-  run
+  readRelease,
+  releaseManifestPaths,
+  run,
+  verifySource
 } from './release-utils.mjs'
 
-const githubRepository = 'noice-tech/treeport'
-const [version, ...extraArguments] = process.argv.slice(2)
-if (!version || extraArguments.length > 0) {
-  fail('Usage: pnpm release:prepare <X.Y.Z>')
+const help = `Usage: pnpm release:prepare <X.Y.Z>
+
+Run from clean main, exactly matching origin/main in noice-tech/treeport.
+Synchronize versions, run pnpm ci:local, commit, tag, and atomically push.
+This command does not build desktop artifacts or publish GitHub/npm releases.
+After preparation, run pnpm release:desktop X.Y.Z on your Mac.
+Read pnpm release:desktop --help for local Apple credential setup first.
+
+An existing local or remote tag is never changed. For an already-pushed tag,
+use release:desktop only if that tag still points to current clean main.
+On check failure, inspect and restore the version edits before retrying.
+On push failure, inspect origin and the local commit/tag before retrying the
+reported atomic push. Do not delete or recreate a release tag.`
+const [version, ...extra] = process.argv.slice(2)
+if (version === '--help' && !extra.length) {
+  console.log(help)
+  process.exit(0)
 }
 
-const requestedVersion = parseVersion(version)
-if (!requestedVersion) {
+if (!version || extra.length) {
+  fail(help)
+}
+
+const requested = parseVersion(version)
+if (!requested) {
   fail(
     `Invalid version: ${version}. Expected canonical X.Y.Z without leading zeroes`
   )
 }
 
-const originUrl = git(['config', '--get', 'remote.origin.url'])
-if (githubRepositoryFromUrl(originUrl) !== githubRepository) {
-  fail(
-    `origin must be the canonical ${githubRepository} repository; found ${originUrl}`
-  )
-}
-
-if (git(['rev-parse', '--abbrev-ref', 'HEAD']) !== 'main') {
-  fail('Release preparation must run from main')
-}
-
-if (git(['status', '--porcelain'])) {
-  fail('Working tree must be clean before preparing a release')
-}
-
-try {
-  git(['fetch', 'origin', 'main'], { stdio: 'inherit' })
-} catch {
-  fail('Could not fetch origin/main; release preparation stopped')
-}
-if (
-  git(['rev-parse', 'HEAD']) !== git(['rev-parse', 'refs/remotes/origin/main'])
-) {
-  fail('Local main must exactly match origin/main before preparing a release')
-}
-
-const packageManifestPath = 'apps/treeport/package.json'
-const desktopManifestPath = 'apps/desktop/package.json'
-const panelSdkManifestPath = 'packages/panel-sdk/package.json'
-const piManifestPath = 'packages/pi/package.json'
-const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
-const panelSdkManifest = JSON.parse(readFileSync(panelSdkManifestPath, 'utf8'))
-const piManifest = JSON.parse(readFileSync(piManifestPath, 'utf8'))
-const currentVersion = parseVersion(packageManifest.version)
-if (!currentVersion) {
-  fail(
-    `The current package version is not canonical: ${packageManifest.version}`
-  )
-}
-
-for (const manifest of [panelSdkManifest, piManifest]) {
-  if (manifest.version !== packageManifest.version) {
+const head = verifySource()
+const manifests = releaseManifestPaths.map((file) =>
+  JSON.parse(readFileSync(file, 'utf8'))
+)
+for (const manifest of manifests) {
+  const current = parseVersion(manifest.version)
+  if (!current) {
     fail(
-      `${manifest.name} (${manifest.version}) and ${packageManifest.name} (${packageManifest.version}) must have the same version`
+      `The current ${manifest.name} version is not canonical: ${manifest.version}`
+    )
+  }
+
+  if (compareVersions(requested, current) < 0) {
+    fail(
+      `Requested version ${version} must not be lower than ${manifest.version}`
     )
   }
 }
-
-if (compareVersions(requestedVersion, currentVersion) < 0) {
-  fail(
-    `Requested version ${version} must not be lower than ${packageManifest.version}`
-  )
+for (const manifest of manifests.slice(2)) {
+  if (manifest.version !== manifests[0].version) {
+    fail(`${manifest.name} and ${manifests[0].name} must have the same version`)
+  }
 }
-
-const desktopManifest = JSON.parse(readFileSync(desktopManifestPath, 'utf8'))
-const currentDesktopVersion = parseVersion(desktopManifest.version)
-if (!currentDesktopVersion) {
-  fail(
-    `The current desktop version is not canonical: ${desktopManifest.version}`
-  )
-}
-
-if (compareVersions(requestedVersion, currentDesktopVersion) < 0) {
-  fail(
-    `Requested version ${version} must not be lower than desktop ${desktopManifest.version}`
-  )
-}
-
 const tag = `v${version}`
-try {
-  git(['show-ref', '--verify', '--quiet', `refs/tags/${tag}`])
-  fail(`Tag already exists locally: ${tag}`)
-} catch (error) {
-  if (error.status !== 1) {
-    throw error
+for (const [args, absentStatus, location] of [
+  [['show-ref', '--verify', '--quiet', `refs/tags/${tag}`], 1, 'locally'],
+  [
+    ['ls-remote', '--exit-code', '--tags', 'origin', `refs/tags/${tag}`],
+    2,
+    'on origin'
+  ]
+]) {
+  const result = spawnSync('git', args, { encoding: 'utf8' })
+  if (result.status === 0) {
+    fail(`Tag already exists ${location}: ${tag}`)
+  }
+
+  if (result.status !== absentStatus) {
+    fail(`Could not check tag ${tag} ${location}; stopped`)
   }
 }
-try {
-  git(['ls-remote', '--exit-code', '--tags', 'origin', `refs/tags/${tag}`])
-  fail(`Tag already exists on origin: ${tag}`)
-} catch (error) {
-  if (error.status !== 2) {
-    throw error
-  }
+if (readRelease(tag)) {
+  fail(`GitHub Release already exists: ${tag}`)
 }
 
 const expectedFiles = []
-if (packageManifest.version !== version) {
-  packageManifest.version = version
-  expectedFiles.push(packageManifestPath)
-  writeFileSync(
-    packageManifestPath,
-    `${JSON.stringify(packageManifest, null, 2)}\n`
-  )
-}
+for (const [index, file] of releaseManifestPaths.entries()) {
+  if (manifests[index].version === version) {
+    continue
+  }
 
-if (desktopManifest.version !== version) {
-  expectedFiles.push(desktopManifestPath)
-  desktopManifest.version = version
-  writeFileSync(
-    desktopManifestPath,
-    `${JSON.stringify(desktopManifest, null, 2)}\n`
-  )
+  manifests[index].version = version
+  expectedFiles.push(file)
+  writeFileSync(file, `${JSON.stringify(manifests[index], null, 2)}\n`)
 }
-
-if (panelSdkManifest.version !== version) {
-  expectedFiles.push(panelSdkManifestPath)
-  panelSdkManifest.version = version
-  writeFileSync(
-    panelSdkManifestPath,
-    `${JSON.stringify(panelSdkManifest, null, 2)}\n`
-  )
-}
-
-if (piManifest.version !== version) {
-  expectedFiles.push(piManifestPath)
-  piManifest.version = version
-  writeFileSync(piManifestPath, `${JSON.stringify(piManifest, null, 2)}\n`)
-}
-
 try {
-  run('pnpm', ['check'], { stdio: 'inherit' })
+  run('pnpm', ['ci:local'], { stdio: 'inherit' })
 } catch {
   fail(
     `Repository checks failed. Release files remain updated to ${version}; fix the failure or restore them before retrying.`
   )
 }
-
-expectedFiles.sort()
-const changedFiles = new Set([
-  ...git(['diff', '--name-only']).split('\n').filter(Boolean),
-  ...git(['diff', '--cached', '--name-only']).split('\n').filter(Boolean),
-  ...git(['ls-files', '--others', '--exclude-standard'])
-    .split('\n')
-    .filter(Boolean)
-])
-const actualFiles = [...changedFiles].sort()
-if (
-  actualFiles.length !== expectedFiles.length ||
-  actualFiles.some((file, index) => file !== expectedFiles[index])
-) {
+const actualFiles = [
+  ...new Set(
+    [
+      ...git(['diff', '--name-only']).split('\n'),
+      ...git(['diff', '--cached', '--name-only']).split('\n'),
+      ...git(['ls-files', '--others', '--exclude-standard']).split('\n')
+    ].filter(Boolean)
+  )
+].sort()
+if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles.sort())) {
   fail(
-    `Release preparation expected only these files to change: ${expectedFiles.join(', ')}. Found: ${actualFiles.join(', ') || 'none'}`
+    `Expected only version files to change: ${expectedFiles.join(', ')}. Found: ${actualFiles.join(', ') || 'none'}`
   )
 }
 
-git(['add', '--all'])
+git(['fetch', 'origin', 'main'], { stdio: 'inherit' })
+if (
+  git(['rev-parse', 'HEAD']) !== head ||
+  git(['rev-parse', 'origin/main']) !== head
+) {
+  fail('main changed during checks; inspect the version edits before retrying')
+}
+
+if (readRelease(tag)) {
+  fail(`GitHub Release appeared during checks: ${tag}; stopped`)
+}
+
+if (expectedFiles.length) {
+  git(['add', '--', ...expectedFiles])
+}
+
 git(['commit', '--allow-empty', '-m', `Release ${version}`], {
   stdio: 'inherit'
 })
@@ -181,10 +147,7 @@ try {
     `Atomic push failed. The release commit and tag remain local. Inspect origin before retrying \`git push --atomic origin main ${tag}\`.`
   )
 }
-
-console.log(`\nPrepared and pushed ${tag}. Nothing has been published to npm.`)
-console.log('\nNext:')
 console.log(
-  `  1. Wait for the desktop-release workflow to publish the single GitHub Release for ${tag}.`
+  `\nPrepared and pushed ${tag}. Nothing has been published to GitHub Releases or npm.`
 )
-console.log(`  2. Run: pnpm release:publish ${version}`)
+console.log(`Next, on your Mac: pnpm release:desktop ${version}`)

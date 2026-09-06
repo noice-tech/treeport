@@ -14,6 +14,7 @@
     "check": "pnpm knip && turbo run fmt:check lint typecheck test:unit test:integration:run test:desktop --ui=stream && turbo run test:package --ui=stream && pnpm --filter @treeport/docs build",
     "ci:local": "bash scripts/ci-local.sh",
     "release:prepare": "node scripts/prepare-release.mjs",
+    "release:desktop": "node scripts/desktop-release.mjs",
     "release:publish": "node scripts/publish-release.mjs",
     "signoff": "bash scripts/signoff.sh",
     "start": "node scripts/start.mjs",

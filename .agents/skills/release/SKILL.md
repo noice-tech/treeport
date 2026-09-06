@@ -1,95 +1,125 @@
 ---
 name: release
-description: Prepare a stable Treeport release, push its release commit and tag, and wait for CI to publish the single GitHub Release with desktop artifacts. Use when asked to cut, prepare, make, or create a Treeport release. Stops before npm publication so the user can publish from their machine.
-compatibility: Repository-specific to noice-tech/treeport. Requires git, gh, Node.js 24, pnpm 11, network access, and permission to push releases.
+description: Prepare a stable Treeport release and build, verify, and publish its desktop artifacts locally on a Mac. Use when asked to cut, prepare, make, or create a Treeport release. Leave npm publication to the user.
+compatibility: Repository-specific to noice-tech/treeport. Requires macOS, an Apple Developer ID identity, a notarization Keychain profile, git, gh, Node.js 24, pnpm 11, and release permission.
 ---
 
 # Release Treeport
 
-Prepare one stable Treeport release and wait for its desktop workflow to publish exactly one GitHub Release. Leave npm publication to the user.
+Publish one stable GitHub Release from a local Mac. GitHub hosts the files; GitHub Actions does not build releases.
 
 ## Boundaries
 
 - Work only in `noice-tech/treeport` from the repository root.
-- Never run `pnpm release:publish`, `npm publish`, or a package-level publish command.
-- Do not manually edit release versions, create the release commit, create the tag, or push them. `pnpm release:prepare` owns those operations and validation.
-- Use canonical `X.Y.Z` versions only.
-- Treat `release:prepare` as irreversible because it atomically pushes `main` and the tag. Obtain confirmation of the exact version unless the user supplied it in the current request.
+- Leave npm publication to the user. Never run `release:publish`, `npm publish`, or package-level publication.
+- Let `release:prepare` change versions, create the commit and tag, and push them.
+- Let `release:desktop` create, upload, and publish the single GitHub Release.
+- Never create a second release or overwrite an asset manually.
+- Never move, replace, or delete a release tag.
+- Never access or export signing secrets. Ask the user to configure the local Keychain.
+- Run one release operator at a time. Do not rerun a legacy desktop CI job.
+- Obtain confirmation of the exact canonical `X.Y.Z` version unless the current request supplies it.
+- Treat preparation and desktop publication as remote mutations. Do not run either command for an implementation-only request.
 
 ## Choose the version
 
-If the user supplied `X.Y.Z`, verify that it is not lower than `apps/treeport/package.json`'s current version. An equal version is valid when preparing an initial or already-versioned release whose tag and GitHub Release do not exist yet.
+If the user supplies a version, compare it with the package versions. Do not use a lower version.
 
-If no version was supplied:
+An equal version is valid for preparation only when neither the tag nor the GitHub Release exists.
 
-1. Read `apps/treeport/package.json` and find the latest `vX.Y.Z` tag.
-2. Inspect commits and the diff from that tag through `HEAD`.
-3. Recommend a SemVer bump: breaking behavior is major, backward-compatible functionality is minor, and fixes or maintenance are patch.
-4. Ask the user to confirm the exact version.
+If the user does not supply a version:
 
-## Preflight
+1. Read `apps/treeport/package.json` and find the latest stable tag.
+2. Inspect commits and changes since that tag.
+3. Recommend a SemVer version for the user-visible changes.
+4. Ask the user to confirm the version.
 
-1. Confirm the repository root and that `origin` is `noice-tech/treeport`.
-2. Confirm `git`, `gh`, `node`, and `pnpm` are available.
-3. Confirm GitHub authentication and access with `gh auth status` and `gh repo view noice-tech/treeport`.
-4. Confirm the requested tag and GitHub Release do not already exist.
-5. Review user-visible changes since the prior release. Use the writing documentation skill to update affected public documentation.
-6. Run `pnpm --filter @treeport/docs check`.
-7. Require a clean `main` branch exactly matching `origin/main`.
+## Check prerequisites
 
-Stop when the documentation does not match a supported release workflow. Do not work around failed checks, authentication failures, a dirty tree, another branch, divergence, or version conflicts.
+1. Read `pnpm release:prepare --help` and `pnpm release:desktop --help`.
+2. Confirm that the user configured the signing identity and notarization Keychain profile on this Mac.
+3. Confirm that the signing team matches the existing desktop release team.
+4. Confirm GitHub authentication and repository access with `gh auth status` and `gh repo view noice-tech/treeport`.
+5. Require clean `main` exactly matching `origin/main`.
+6. Review user-visible changes with the writing-docs skill. Update affected public documentation before preparation.
 
-## Prepare the release
+The scripts validate versions, source, tags, and release state. Do not repeat their checks with alternate publication commands.
 
-Set `version` to the confirmed version and `tag` to `v${version}`. Run:
+## Prepare a new release
 
-```bash
-pnpm release:prepare "$version"
+Run the confirmed version:
+
+```sh
+pnpm release:prepare X.Y.Z
 ```
 
-This updates the npm package, desktop client, and panel SDK versions when needed. It runs the complete repository checks. It commits `Release X.Y.Z`, creates an annotated tag, and atomically pushes `main` and the tag. It uses an empty release commit when each version is aligned. It does not publish to npm.
+Preparation synchronizes all four release manifests and runs `pnpm ci:local`.
+It creates an annotated tag and atomically pushes the release commit and tag.
+It creates an empty release commit when the versions already match.
+It does not build artifacts or publish a GitHub Release.
 
-If it fails, stop and preserve the state for diagnosis. Follow the recovery instructions from the script rather than rerunning blindly.
+If checks fail, preserve and inspect the version edits. Fix the failure or restore those edits before retrying.
 
-## Wait for and verify the GitHub Release
+If the atomic push fails, inspect local and remote refs. Follow the script's recovery instruction only after that review.
 
-The pushed tag triggers `.github/workflows/desktop-release.yml`. Never run `gh release create`: CI creates one draft release, attaches the signed/notarized universal DMG and updater ZIP, verifies them, and publishes that same release.
+## Build and publish locally
 
-Find the workflow run for the exact release commit and wait for it:
+Run on the configured Mac:
 
-```bash
-sha="$(git rev-list -n 1 "$tag")"
-run_id="$(gh run list \
-  --repo noice-tech/treeport \
-  --workflow desktop-release.yml \
-  --commit "$sha" \
-  --json databaseId \
-  --jq '.[0].databaseId')"
-test -n "$run_id"
-gh run watch "$run_id" --repo noice-tech/treeport --exit-status
+```sh
+pnpm release:desktop X.Y.Z
 ```
 
-If the workflow fails, stop and report the run URL. Do not create a replacement release manually. After it succeeds, verify the single published release and both exact assets:
+The command requires the tag to match current clean `main` and `origin/main`.
+It runs the local gate again because it also supports an independently prepared tag.
+It builds a signed and notarized universal application, DMG, and updater ZIP.
+It verifies both distributed application copies, signatures, tickets, signing team, package contents, fuses, and an isolated launch.
 
-```bash
-gh release view "$tag" \
-  --repo noice-tech/treeport \
-  --json assets,isDraft,isPrerelease,tagName,url
-```
+The command records source and artifact digests in `apps/desktop/out/release-receipt.json`.
+It creates or reuses one stable draft release and uploads only missing assets.
+It downloads each asset and compares its SHA-256 digest before publishing that same release.
+It then verifies the public updater feed for both Mac architectures.
 
-For version `X.Y.Z`, require exactly:
+The release contains exactly:
 
 - `Treeport-X.Y.Z-darwin-universal.dmg`
 - `Treeport-X.Y.Z-darwin-universal.zip`
 
-Verify that the tag is correct, the release is published and stable, and the local and remote tags point to the current `main` commit.
+## Recover an interrupted publication
+
+Preserve `apps/desktop/out`, including the build receipt. Read the script error before another command.
+
+If the source, tag, signing team, and artifact bytes are unchanged, run:
+
+```sh
+pnpm release:desktop X.Y.Z --resume
+```
+
+Resume verifies the artifacts again. It uploads missing assets without replacing existing assets.
+It verifies identical bytes for each existing asset. It does not rebuild the application.
+
+If publication succeeded but the updater check failed, resume treats the published release as read-only.
+A missing receipt, conflicting asset, changed source, or incomplete upload requires maintainer review.
+Never delete assets automatically to make a retry pass.
+
+Before any upload, a failed build can be rebuilt without `--resume` if no receipt exists.
+Archive the output before a new version. Remove a stale lock only after confirming that its owner exited.
+
+### An existing unpublished tag
+
+Skip preparation only when the tag still matches current clean `main` and the checkout contains this workflow.
+Without a previous local receipt, start a normal desktop build only if the release is absent or an empty stable draft.
+
+If `main` has advanced, stop. Do not build newer code under the old tag.
+Ask the maintainer to choose a new version or separately review release tooling for the exact tagged source.
+The normal workflow has no old-tag override.
 
 ## Finish
 
-Report the version and GitHub Release URL, state that npm publication has not happened, and give the user the only remaining command:
+Report the version, GitHub Release URL, artifact verification, and updater check result.
+State that npm publication has not happened.
+Give the user this manual command, but do not run it:
 
-```bash
+```sh
 pnpm release:publish X.Y.Z
 ```
-
-Never run that command for the user.
