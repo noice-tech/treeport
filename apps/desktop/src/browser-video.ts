@@ -1,10 +1,18 @@
 import crypto from 'node:crypto'
 import { BrowserWindow, session, type WebContents } from 'electron'
 import { BROWSER_VIDEO_CAPTURE_SOURCE } from '@treeport/shared'
+import * as Effect from 'effect/Effect'
+import * as Scope from 'effect/Scope'
+import { DesktopRuntime } from './desktop-runtime'
 
 const captureGrants = new WeakMap<
   WebContents,
-  { helper: WebContents; origin: string; starting: boolean }
+  {
+    helper: WebContents
+    origin: string
+    starting: boolean
+    capture: DesktopRuntime
+  }
 >()
 
 export function permitsBrowserVideoCapture(
@@ -17,9 +25,8 @@ export function permitsBrowserVideoCapture(
     details.securityOrigin && URL.canParse(details.securityOrigin)
       ? new URL(details.securityOrigin).origin
       : null
-  // Electron asks the SOURCE guest's permission handler for tab capture. This
-  // exception is only for its registered helper during getUserMedia. Ordinary
-  // guest camera/microphone requests and all other origins remain denied.
+  // Electron asks the SOURCE guest's permission handler for tab capture. Only
+  // the exact registered helper may capture, during its initial getUserMedia.
   return (
     !!grant &&
     grant.starting &&
@@ -33,156 +40,192 @@ export function permitsBrowserVideoCapture(
 
 export class ElectronBrowserVideo {
   private helper: BrowserWindow | null = null
-  private readonly partition = `treeport-video-${crypto.randomUUID()}`
+  private capture: DesktopRuntime | null = null
 
-  constructor(private readonly guest: WebContents) {}
+  constructor(
+    private readonly guest: WebContents,
+    private readonly runtime: DesktopRuntime
+  ) {}
 
-  async start(
-    width: number,
-    height: number,
-    publish: (payload: string) => void
-  ): Promise<void> {
-    if (this.helper) {
-      return
-    }
-
-    const origin = `https://${crypto.randomUUID()}.treeport-video.invalid`
-    // This in-memory session serves one trusted, empty document. It cannot load
-    // external content and does not share the guest's permission policy or data.
-    const captureSession = session.fromPartition(this.partition)
-    captureSession.protocol.handle(
-      'https',
-      (request) =>
-        new Response(
-          request.url === `${origin}/`
-            ? '<!doctype html><title>Treeport Browser capture</title>'
-            : '',
-          {
-            status: request.url === `${origin}/` ? 200 : 403,
-            headers: {
-              'content-type': 'text/html',
-              'content-security-policy': "default-src 'none'; script-src 'none'"
-            }
-          }
-        )
-    )
-    const helper = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        session: captureSession,
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-        backgroundThrottling: false
+  start(width: number, height: number, publish: (payload: string) => void) {
+    return Effect.gen(this, function* () {
+      if (this.helper) {
+        return
       }
-    })
-    this.helper = helper
-    const grant = { helper: helper.webContents, origin, starting: true }
-    captureGrants.set(this.guest, grant)
-    // Electron's tab-source checks supply an empty requestingOrigin. Authorize
-    // the exact helper WebContents and its committed, locally served document.
-    captureSession.setPermissionCheckHandler(
-      (contents, permission) =>
-        contents === helper.webContents &&
-        permission === 'media' &&
-        contents.getURL() === `${origin}/`
-    )
-    captureSession.setPermissionRequestHandler(
-      (contents, permission, callback) =>
-        callback(
-          contents === helper.webContents &&
+
+      const capture = new DesktopRuntime(this.runtime)
+      this.capture = capture
+      yield* Effect.gen(this, function* () {
+        const origin = `https://${crypto.randomUUID()}.treeport-video.invalid`
+        const captureSession = session.fromPartition(
+          `treeport-video-${crypto.randomUUID()}`
+        )
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            captureSession.protocol.handle(
+              'https',
+              (request) =>
+                new Response(
+                  request.url === `${origin}/`
+                    ? '<!doctype html><title>Treeport Browser capture</title>'
+                    : '',
+                  {
+                    status: request.url === `${origin}/` ? 200 : 403,
+                    headers: {
+                      'content-type': 'text/html',
+                      'content-security-policy':
+                        "default-src 'none'; script-src 'none'"
+                    }
+                  }
+                )
+            )
+          ),
+          () =>
+            Effect.sync(() => {
+              captureSession.protocol.unhandle('https')
+              captureSession.setPermissionCheckHandler(() => false)
+              captureSession.setPermissionRequestHandler(
+                (_contents, _permission, callback) => callback(false)
+              )
+            })
+        )
+        const helper = yield* Effect.acquireRelease(
+          Effect.sync(
+            () =>
+              new BrowserWindow({
+                show: false,
+                webPreferences: {
+                  session: captureSession,
+                  nodeIntegration: false,
+                  contextIsolation: true,
+                  sandbox: true,
+                  webSecurity: true,
+                  backgroundThrottling: false
+                }
+              })
+          ),
+          (helper) =>
+            Effect.sync(() => {
+              if (captureGrants.get(this.guest)?.capture === capture) {
+                captureGrants.delete(this.guest)
+              }
+
+              if (this.helper === helper) {
+                this.helper = null
+              }
+
+              if (this.capture === capture) {
+                this.capture = null
+              }
+
+              if (!helper.isDestroyed()) {
+                helper.destroy()
+              }
+            })
+        )
+        this.helper = helper
+        const grant = {
+          helper: helper.webContents,
+          origin,
+          starting: true,
+          capture
+        }
+        captureGrants.set(this.guest, grant)
+        captureSession.setPermissionCheckHandler(
+          (contents, permission) =>
+            contents === helper.webContents &&
             permission === 'media' &&
             contents.getURL() === `${origin}/`
         )
-    )
-    helper.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-    helper.webContents.on('will-navigate', (event) => event.preventDefault())
-    helper.webContents.once('render-process-gone', () => {
-      if (this.helper === helper) {
-        this.stop()
-        publish(
-          JSON.stringify({
-            frame: null,
-            error: 'Browser video capture crashed. Select Retry to restart it.'
-          })
+        captureSession.setPermissionRequestHandler(
+          (contents, permission, callback) =>
+            callback(
+              contents === helper.webContents &&
+                permission === 'media' &&
+                contents.getURL() === `${origin}/`
+            )
         )
-      }
-    })
-    helper.once('closed', () => {
-      if (captureGrants.get(this.guest) === grant) {
-        captureGrants.delete(this.guest)
-      }
+        helper.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+        helper.webContents.on('will-navigate', (event) =>
+          event.preventDefault()
+        )
+        const lost = () => {
+          if (this.capture !== capture) {
+            return
+          }
 
-      captureSession.protocol.unhandle('https')
-      captureSession.setPermissionCheckHandler(() => false)
-      captureSession.setPermissionRequestHandler(
-        (_contents, _permission, callback) => callback(false)
-      )
-      if (this.helper === helper) {
-        this.helper = null
-        publish(
-          JSON.stringify({
-            frame: null,
-            error: 'Browser video capture stopped. Reconnect to restart it.'
-          })
-        )
-      }
-    })
-    await (async () => {
-      await helper.loadURL(`${origin}/`)
-      helper.webContents.debugger.attach('1.3')
-      await helper.webContents.debugger.sendCommand('Runtime.enable')
-      await helper.webContents.debugger.sendCommand('Runtime.addBinding', {
-        name: '__treeportVideoFrame'
-      })
-      helper.webContents.debugger.on('message', (_event, method, params) => {
-        if (
-          this.helper !== helper ||
-          method !== 'Runtime.bindingCalled' ||
-          params.name !== '__treeportVideoFrame'
-        ) {
-          return
+          publish(
+            JSON.stringify({
+              frame: null,
+              error: 'Browser video capture stopped. Reconnect to restart it.'
+            })
+          )
+          this.runtime.fork(this.stop)
         }
-
-        publish(params.payload)
-        void helper.webContents.debugger
-          .sendCommand('Runtime.evaluate', {
-            expression: 'globalThis.__treeportVideo?.acknowledge()'
+        helper.webContents.once('render-process-gone', lost)
+        helper.once('closed', lost)
+        yield* Effect.tryPromise(() => helper.loadURL(`${origin}/`))
+        helper.webContents.debugger.attach('1.3')
+        yield* Effect.tryPromise(() =>
+          helper.webContents.debugger.sendCommand('Runtime.enable')
+        )
+        yield* Effect.tryPromise(() =>
+          helper.webContents.debugger.sendCommand('Runtime.addBinding', {
+            name: '__treeportVideoFrame'
           })
-          .catch(() => undefined)
-      })
-      const sourceId = this.guest.getMediaSourceId(helper.webContents)
-      const error: string | null = await helper.webContents
-        .executeJavaScript(`(async () => {
-        globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(${JSON.stringify(sourceId)}, ${width}, ${height}, globalThis.__treeportVideoFrame);
-        return null;
-      })().catch(error => error.name + ': ' + error.message)`)
-      grant.starting = false
-      if (error) {
-        throw new Error(error)
-      }
-    })().catch((error) => {
-      this.stop()
-      throw error
+        )
+        helper.webContents.debugger.on('message', (_event, method, params) => {
+          if (
+            this.helper !== helper ||
+            method !== 'Runtime.bindingCalled' ||
+            params.name !== '__treeportVideoFrame'
+          ) {
+            return
+          }
+
+          publish(params.payload)
+          capture.fork(
+            Effect.tryPromise(() =>
+              helper.webContents.debugger.sendCommand('Runtime.evaluate', {
+                expression: 'globalThis.__treeportVideo?.acknowledge()'
+              })
+            )
+          )
+        })
+        const sourceId = this.guest.getMediaSourceId(helper.webContents)
+        const error: string | null = yield* Effect.tryPromise(() =>
+          helper.webContents.executeJavaScript(`(async () => {
+          globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(${JSON.stringify(sourceId)}, ${width}, ${height}, globalThis.__treeportVideoFrame);
+          return null;
+        })().catch(error => error.name + ': ' + error.message)`)
+        )
+        grant.starting = false
+        if (error) {
+          return yield* Effect.fail(new Error(error))
+        }
+      }).pipe(
+        Scope.extend(capture.scope),
+        Effect.timeout('10 seconds'),
+        Effect.onError(() => capture.close)
+      )
     })
   }
 
-  async requestKeyframe(): Promise<void> {
-    await this.helper?.webContents.debugger.sendCommand('Runtime.evaluate', {
-      expression: 'globalThis.__treeportVideo?.requestKeyframe()'
-    })
-  }
-
-  stop(): void {
+  readonly requestKeyframe = Effect.suspend(() => {
     const helper = this.helper
-    this.helper = null
-    if (captureGrants.get(this.guest)?.helper === helper?.webContents) {
-      captureGrants.delete(this.guest)
-    }
+    return helper
+      ? Effect.tryPromise(() =>
+          helper.webContents.debugger.sendCommand('Runtime.evaluate', {
+            expression: 'globalThis.__treeportVideo?.requestKeyframe()'
+          })
+        ).pipe(Effect.asVoid)
+      : Effect.void
+  })
 
-    if (helper && !helper.isDestroyed()) {
-      helper.destroy()
-    }
-  }
+  readonly stop = Effect.suspend(() => {
+    const capture = this.capture
+    this.capture = null
+    this.helper = null
+    return capture?.close ?? Effect.void
+  })
 }

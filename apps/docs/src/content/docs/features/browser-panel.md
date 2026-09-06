@@ -156,7 +156,13 @@ Take a new snapshot after navigation or a runtime change.
 
 For a local desktop connection, commands control the live Electron `<webview>` page.
 
-Commands continue while you select another Treeport workspace. Treeport does not select the Browser panel during background control.
+Commands continue while you select another Treeport workspace.
+
+Commands that inspect or interact with an existing page do not open the side panel or select a Browser tab.
+
+Your current desktop control keeps keyboard focus.
+
+Agent control continues between successful commands. To take control, click or tap the browser viewport.
 
 For other connections, commands control the streamed Playwright page.
 

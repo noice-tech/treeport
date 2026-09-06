@@ -2519,6 +2519,7 @@ export class BrowserSessionManager {
           })
       const previousController = session.controllerId
       let agentControlled = false
+      let completed = false
       try {
         if (localOwner) {
           await this.updateScreencast(session, 'agent')
@@ -2532,7 +2533,10 @@ export class BrowserSessionManager {
 
         session.controllerId = 'agent'
         agentControlled = true
-        this.broadcastState(session, 'controlChanged')
+        if (previousController !== 'agent') {
+          this.broadcastState(session, 'controlChanged')
+        }
+
         if (localOwner) {
           result = await this.executeLocalAgentCommand(
             session,
@@ -2569,6 +2573,7 @@ export class BrowserSessionManager {
         }
 
         await this.waitForPanelState(session)
+        completed = true
       } catch (cause) {
         if (!localOwner) {
           session.agentAttached = false
@@ -2576,7 +2581,10 @@ export class BrowserSessionManager {
 
         throw cause
       } finally {
-        if (agentControlled) {
+        // Ownership spans commands, not HTTP requests. A successful command
+        // keeps the same owner until explicit takeover, close or runtime loss.
+        // On failure, restore human control instead of leaving a stale lock.
+        if (agentControlled && !completed) {
           if (localOwner && session.localOwner === localOwner) {
             const nextController =
               previousController && previousController !== 'agent'

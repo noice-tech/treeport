@@ -26,6 +26,9 @@ import type {
 } from './desktop-contract'
 
 import { permitsBrowserVideoCapture } from './browser-video'
+import * as Effect from 'effect/Effect'
+import * as Scope from 'effect/Scope'
+import { DesktopRuntime } from './desktop-runtime'
 
 const BROWSER_PARTITION = 'persist:treeport-browser'
 
@@ -44,6 +47,8 @@ interface BrowserEntry {
   guest: WebContents
   bridge: BrowserCdpBridge | null
   inputLocked: boolean
+  runtime: DesktopRuntime
+  registrations: Effect.Semaphore
 }
 
 export interface BrowserWebviewPolicy {
@@ -52,27 +57,28 @@ export interface BrowserWebviewPolicy {
     panelId: string,
     webContentsId: number,
     challenge: string
-  ): Promise<DesktopBrowserBridgeDescriptor | null>
+  ): Effect.Effect<DesktopBrowserBridgeDescriptor | null, unknown>
   command(
     event: IpcMainInvokeEvent,
     panelId: string,
     command: DesktopBrowserToolbarCommand
-  ): Promise<DesktopBrowserCommandResult>
+  ): Effect.Effect<DesktopBrowserCommandResult>
   setInputControl(
     event: IpcMainInvokeEvent,
     panelId: string,
     locked: boolean
-  ): Promise<boolean>
+  ): Effect.Effect<boolean>
   requestClose(
     event: IpcMainInvokeEvent,
     panelId: string,
     force: boolean
-  ): Promise<boolean>
-  dispose(event: IpcMainEvent, panelId: string): void
-  disposeAll(): void
+  ): Effect.Effect<boolean>
+  dispose(event: IpcMainEvent, panelId: string): Effect.Effect<void>
+  disposeAll(): Effect.Effect<void>
 }
 
 export function installBrowserWebviewPolicy(options: {
+  runtime: DesktopRuntime
   window: BrowserWindow
   trustedRenderer: WebContents
   selectedComputer(): { loopback: boolean } | null
@@ -81,19 +87,16 @@ export function installBrowserWebviewPolicy(options: {
   const entries = new Map<string, BrowserEntry>()
   const pendingGuests = new Map<number, BrowserEntry>()
 
-  const disposeEntry = async (entry: BrowserEntry) => {
-    if (entry.panelId && entries.get(entry.panelId) === entry) {
-      entries.delete(entry.panelId)
-    }
+  const disposeEntry = (entry: BrowserEntry) =>
+    Effect.gen(function* () {
+      if (entry.panelId && entries.get(entry.panelId) === entry) {
+        entries.delete(entry.panelId)
+      }
 
-    pendingGuests.delete(entry.guest.id)
+      pendingGuests.delete(entry.guest.id)
 
-    await entry.bridge?.stop()
-    entry.bridge = null
-    if (!entry.guest.isDestroyed()) {
-      entry.guest.close({ waitForBeforeUnload: false })
-    }
-  }
+      yield* entry.runtime.close
+    })
 
   options.trustedRenderer.on(
     'will-attach-webview',
@@ -148,8 +151,26 @@ export function installBrowserWebviewPolicy(options: {
       panelId: null,
       guest,
       bridge: null,
-      inputLocked: false
+      inputLocked: false,
+      runtime: new DesktopRuntime(options.runtime),
+      registrations: Effect.unsafeMakeSemaphore(1)
     }
+    Effect.runSync(
+      Scope.addFinalizer(
+        entry.runtime.scope,
+        Effect.sync(() => {
+          pendingGuests.delete(guest.id)
+          if (entry.panelId && entries.get(entry.panelId) === entry) {
+            entries.delete(entry.panelId)
+          }
+
+          entry.bridge = null
+          if (!guest.isDestroyed()) {
+            guest.close({ waitForBeforeUnload: false })
+          }
+        })
+      )
+    )
     pendingGuests.set(guest.id, entry)
     const refreshErrorPage = (
       errorDescription: string,
@@ -204,7 +225,9 @@ export function installBrowserWebviewPolicy(options: {
         document.body.replaceChildren(main)
         return true
       })()`
-      void guest.executeJavaScript(script).catch(() => undefined)
+      entry.runtime.fork(
+        Effect.tryPromise(() => guest.executeJavaScript(script))
+      )
     }
 
     guest.on(
@@ -264,6 +287,12 @@ export function installBrowserWebviewPolicy(options: {
       }
     })
     guest.on('before-input-event', (event, input) => {
+      // Agent/remote page shortcuts must not invoke Treeport's native menu
+      // commands (for example Ctrl+W must not close a workspace panel).
+      if (entry.inputLocked) {
+        return
+      }
+
       const commandModifier =
         process.platform === 'darwin' ? input.meta : input.control
       const key = input.key.toLowerCase()
@@ -380,87 +409,111 @@ export function installBrowserWebviewPolicy(options: {
       Menu.buildFromTemplate(template).popup(popupOptions)
     })
     guest.once('destroyed', () => {
-      void entry.bridge?.stop()
-      entry.bridge = null
-      pendingGuests.delete(guest.id)
-      const panelId = entry.panelId
-      if (panelId && entries.get(panelId) === entry) {
-        entries.delete(panelId)
-      }
+      options.runtime.fork(disposeEntry(entry))
     })
   })
 
   return {
-    async register(event, panelId, webContentsId, challenge) {
-      if (!options.isTrustedEvent(event)) {
-        return null
-      }
+    register(event, panelId, webContentsId, challenge) {
+      return Effect.gen(function* () {
+        if (!options.isTrustedEvent(event) || options.runtime.isClosed) {
+          return null
+        }
 
-      let entry = entries.get(panelId)
-      if (!entry) {
-        const pending = pendingGuests.get(webContentsId)
+        let entry = entries.get(panelId)
+        if (!entry) {
+          const pending = pendingGuests.get(webContentsId)
+          if (
+            pending &&
+            browserBootstrapPanelId(pending.guest.getURL()) === panelId &&
+            decodeUnknownOrNull(browserPanelIdSchema, panelId) !== null
+          ) {
+            pendingGuests.delete(webContentsId)
+            pending.panelId = panelId
+            entries.set(panelId, pending)
+            entry = pending
+          }
+        }
+
         if (
-          pending &&
-          browserBootstrapPanelId(pending.guest.getURL()) === panelId &&
-          decodeUnknownOrNull(browserPanelIdSchema, panelId) !== null
+          !entry ||
+          entry.guest.id !== webContentsId ||
+          entry.guest.hostWebContents !== options.trustedRenderer ||
+          entry.guest.isDestroyed()
         ) {
-          pendingGuests.delete(webContentsId)
-          pending.panelId = panelId
-          entries.set(panelId, pending)
-          entry = pending
+          return null
         }
-      }
 
-      if (
-        !entry ||
-        entry.guest.id !== webContentsId ||
-        entry.guest.hostWebContents !== options.trustedRenderer ||
-        entry.guest.isDestroyed()
-      ) {
-        return null
-      }
+        const registered = entry
+        return yield* registered.registrations.withPermits(1)(
+          Effect.gen(function* () {
+            // Validate after admission, not only before waiting for a replacement.
+            if (
+              registered.runtime.isClosed ||
+              entries.get(panelId) !== registered ||
+              registered.guest.isDestroyed()
+            ) {
+              return null
+            }
 
-      const previousBridge = entry.bridge
-      entry.bridge = null
-      await previousBridge?.stop()
-      const bridge = await createBrowserCdpBridge(entry.guest, {
-        panelId,
-        challenge
+            const previousBridge = registered.bridge
+            registered.bridge = null
+            if (previousBridge) {
+              yield* previousBridge.stop
+            }
+
+            const bridge = yield* createBrowserCdpBridge(
+              registered.guest,
+              { panelId, challenge },
+              registered.runtime,
+              () => registered.inputLocked
+            )
+            if (
+              registered.runtime.isClosed ||
+              entries.get(panelId) !== registered ||
+              registered.guest.isDestroyed()
+            ) {
+              yield* bridge.stop
+              return null
+            }
+
+            registered.bridge = bridge
+            return bridge.descriptor
+          })
+        )
       })
-      if (entries.get(panelId) !== entry || entry.guest.isDestroyed()) {
-        await bridge.stop()
-        return null
-      }
-
-      entry.bridge = bridge
-      return bridge.descriptor
     },
-    async command(event, panelId, command) {
-      const entry = entries.get(panelId)
-      if (
-        !options.isTrustedEvent(event) ||
-        !entry ||
-        entry.guest.isDestroyed()
-      ) {
-        return { ok: false, error: 'The Browser page is not available.' }
-      }
-
-      if (entry.inputLocked) {
-        return {
-          ok: false,
-          error: 'Another Treeport client controls this Browser.'
+    command(event, panelId, command) {
+      return Effect.gen(function* () {
+        const entry = entries.get(panelId)
+        if (
+          !options.isTrustedEvent(event) ||
+          !entry ||
+          entry.guest.isDestroyed()
+        ) {
+          return { ok: false, error: 'The Browser page is not available.' }
         }
-      }
 
-      // Dispatch immediately: Stop and newer navigations must interrupt loadURL.
-      return Promise.resolve()
-        .then(async () => {
-          if (entry.guest.isDestroyed()) {
-            throw new Error('The Browser page is not available.')
+        if (entry.inputLocked) {
+          return {
+            ok: false,
+            error: 'Another Treeport client controls this Browser.'
+          }
+        }
+
+        // Dispatch immediately: Stop and newer navigations must interrupt loadURL.
+        return yield* Effect.gen(function* () {
+          if (entry.runtime.isClosed || entry.guest.isDestroyed()) {
+            return yield* Effect.fail(
+              new Error('The Browser page is not available.')
+            )
           }
 
           if (command.type === 'navigate') {
-            await entry.guest.loadURL(command.url)
+            yield* Effect.tryPromise({
+              try: () => entry.guest.loadURL(command.url),
+              catch: (cause) => cause
+            })
           } else if (
             command.type === 'back' &&
             entry.guest.navigationHistory.canGoBack()
@@ -476,99 +529,95 @@ export function installBrowserWebviewPolicy(options: {
           } else if (command.type === 'stop') {
             entry.guest.stop()
           }
-        })
-        .then(
-          () => ({ ok: true, error: null }),
-          (cause: unknown) => {
-            const error: NodeJS.ErrnoException =
-              cause instanceof Error ? cause : new Error(String(cause))
-            // Chromium aborts the previous load when the user stops or replaces it.
-            return error.code === 'ERR_ABORTED'
-              ? { ok: true, error: null }
-              : { ok: false, error: error.message }
-          }
+        }).pipe(
+          Effect.match({
+            onSuccess: () => ({ ok: true, error: null }),
+            onFailure: (cause: unknown) => {
+              const error: NodeJS.ErrnoException =
+                cause instanceof Error ? cause : new Error(String(cause))
+              // Chromium aborts the previous load when the user stops or replaces it.
+              return error.code === 'ERR_ABORTED'
+                ? { ok: true, error: null }
+                : { ok: false, error: error.message }
+            }
+          })
         )
-    },
-    async setInputControl(event, panelId, locked) {
-      const entry = entries.get(panelId)
-      if (
-        !options.isTrustedEvent(event) ||
-        !entry ||
-        entry.guest.isDestroyed()
-      ) {
-        return false
-      }
-
-      if (locked) {
-        entry.inputLocked = true
-        if (!options.trustedRenderer.isDestroyed()) {
-          options.trustedRenderer.focus()
-        }
-      } else {
-        entry.inputLocked = false
-      }
-
-      return entries.get(panelId) === entry && !entry.guest.isDestroyed()
-    },
-    async requestClose(event, panelId, force) {
-      if (!options.isTrustedEvent(event)) {
-        return false
-      }
-
-      const entry = entries.get(panelId)
-      if (!entry || entry.guest.isDestroyed()) {
-        return true
-      }
-
-      const canClose = await new Promise<boolean>((resolve) => {
-        let timer: ReturnType<typeof setTimeout> | null = null
-        const cleanup = () => {
-          entry.guest.removeListener('destroyed', closed)
-          entry.guest.removeListener('will-prevent-unload', prevented)
-          if (timer) {
-            clearTimeout(timer)
-          }
-        }
-        const finish = (result: boolean) => {
-          cleanup()
-          resolve(result)
-        }
-        const closed = () => finish(true)
-        const prevented = (closeEvent: Electron.Event) => {
-          if (force) {
-            closeEvent.preventDefault()
-          } else {
-            finish(false)
-          }
-        }
-        entry.guest.once('destroyed', closed)
-        entry.guest.once('will-prevent-unload', prevented)
-        timer = setTimeout(() => finish(false), 5_000)
-        timer.unref()
-        entry.guest.close({ waitForBeforeUnload: true })
       })
-      if (canClose) {
-        void entry.bridge?.stop()
-        entry.bridge = null
-      }
+    },
+    setInputControl(event, panelId, locked) {
+      return Effect.sync(() => {
+        const entry = entries.get(panelId)
+        if (
+          !options.isTrustedEvent(event) ||
+          !entry ||
+          entry.guest.isDestroyed()
+        ) {
+          return false
+        }
 
-      return canClose
+        entry.inputLocked = locked
+        return entries.get(panelId) === entry && !entry.guest.isDestroyed()
+      })
+    },
+    requestClose(event, panelId, force) {
+      return Effect.gen(function* () {
+        if (!options.isTrustedEvent(event)) {
+          return false
+        }
+
+        const entry = entries.get(panelId)
+        if (!entry || entry.guest.isDestroyed()) {
+          return true
+        }
+
+        return yield* Effect.async<boolean>((resume) => {
+          const cleanup = () => {
+            entry.guest.removeListener('destroyed', closed)
+            entry.guest.removeListener('will-prevent-unload', prevented)
+          }
+          const closed = () => {
+            cleanup()
+            resume(Effect.succeed(true))
+          }
+          const prevented = (closeEvent: Electron.Event) => {
+            if (force) {
+              closeEvent.preventDefault()
+            } else {
+              cleanup()
+              resume(Effect.succeed(false))
+            }
+          }
+          entry.guest.once('destroyed', closed)
+          entry.guest.once('will-prevent-unload', prevented)
+          entry.guest.close({ waitForBeforeUnload: true })
+          return Effect.sync(cleanup)
+        }).pipe(
+          Effect.timeoutTo({
+            duration: '5 seconds',
+            onTimeout: () => false,
+            onSuccess: (closed) => closed
+          })
+        )
+      })
     },
     dispose(event, panelId) {
-      if (!options.isTrustedEvent(event)) {
-        return
-      }
+      return Effect.suspend(() => {
+        if (!options.isTrustedEvent(event)) {
+          return Effect.void
+        }
 
-      const entry = entries.get(panelId)
-      if (entry) {
-        void disposeEntry(entry)
-      }
+        const entry = entries.get(panelId)
+        return entry ? disposeEntry(entry) : Effect.void
+      })
     },
     disposeAll() {
-      for (const entry of [...entries.values(), ...pendingGuests.values()]) {
-        void disposeEntry(entry)
-      }
-      pendingGuests.clear()
+      return Effect.suspend(() =>
+        Effect.forEach(
+          [...entries.values(), ...pendingGuests.values()],
+          disposeEntry,
+          { concurrency: 'unbounded', discard: true }
+        )
+      )
     }
   }
 }

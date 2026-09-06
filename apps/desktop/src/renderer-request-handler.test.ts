@@ -2,7 +2,20 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createRendererRequestHandler } from './renderer-request-handler'
+import * as Effect from 'effect/Effect'
+import {
+  createRendererRequestHandler as createHandlerEffect,
+  type RendererRequestHandlerOptions
+} from './renderer-request-handler'
+
+const createRendererRequestHandler = (options: RendererRequestHandlerOptions) =>
+  Effect.runPromise(
+    createHandlerEffect(options).pipe(
+      Effect.map(
+        (handler) => (request: Request) => Effect.runPromise(handler(request))
+      )
+    )
+  )
 
 const temporaryDirectories: string[] = []
 

@@ -854,7 +854,9 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
       }
 
       expect(ownerControl.generation).toBe(1)
+      await sidePanelToggle.focus()
       expect(await ownerControl.request('agent', true)).toBe(true)
+      await expect(sidePanelToggle).toBeFocused()
       await test.step('capture and decode real video with restricted permissions', async () => {
         const screencast = await connectedBrowser
           .contexts()[0]!
@@ -954,10 +956,38 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
 
       const runtimeBeforeReconnect =
         await test.step('interact through the hidden exact bridge and take control back', async () => {
+          await sidePanelToggle.focus()
           await visiblePage.goto(`${origin}/site/next`)
           await visiblePage
             .getByRole('textbox', { name: 'Name' })
             .fill('Background')
+          await expect(
+            visiblePage.getByRole('textbox', { name: 'Name' })
+          ).toHaveValue('Background')
+          await visiblePage.getByRole('textbox', { name: 'Name' }).press('End')
+          await visiblePage.getByRole('textbox', { name: 'Name' }).press('!')
+          await expect(
+            visiblePage.getByRole('textbox', { name: 'Name' })
+          ).toHaveValue('Background!')
+          await visiblePage
+            .getByRole('textbox', { name: 'Name' })
+            .press('ControlOrMeta+A')
+          await visiblePage
+            .getByRole('textbox', { name: 'Name' })
+            .press('Backspace')
+          await expect(
+            visiblePage.getByRole('textbox', { name: 'Name' })
+          ).toHaveValue('')
+          await visiblePage
+            .getByRole('textbox', { name: 'Name' })
+            .fill('Background')
+          await visiblePage
+            .getByRole('textbox', { name: 'Name' })
+            .press('Enter')
+          await expect(visiblePage.locator('output').first()).toHaveText(
+            'Background'
+          )
+          await expect(sidePanelToggle).toBeFocused()
           await visiblePage.getByRole('button', { name: 'Submit' }).click()
           // Verify from Electron by guest ID, not through the same bridge under test.
           await expect
@@ -988,6 +1018,8 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
               `${origin}/site/start?decoy`
             )
           ).toEqual({ hits: '0', loads: '1' })
+          await expect(sidePanelToggle).toBeFocused()
+          await expect(browserTab).not.toBeVisible()
           const runtime = await visiblePage.evaluate(() => ({
             loads: sessionStorage.nextLoads,
             href: location.href,
@@ -1379,6 +1411,75 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
         window.getByRole('button', { name: 'Reload application' })
       ).toBeEnabled()
       await expect.poll(() => stalledResponses.size).toBe(0)
+    })
+
+    await test.step('serialize bridge replacement and clean up registration during disposal', async () => {
+      const result = await window.evaluate(
+        async ({ panelId, challenges }) => {
+          const element = document.querySelector(
+            'webview[aria-label="Browser page"]'
+          )
+          // SAFETY: Electron installs getWebContentsId on native webview elements.
+          const guest = element as HTMLElement & { getWebContentsId(): number }
+          const id = guest.getWebContentsId()
+          const descriptors = await Promise.all(
+            challenges.map((challenge) =>
+              window.treeportDesktop!.registerBrowser(panelId, id, challenge)
+            )
+          )
+          return { id, descriptors }
+        },
+        {
+          panelId: browserPanelId,
+          challenges: [crypto.randomUUID(), crypto.randomUUID()]
+        }
+      )
+      const [first, second] = result.descriptors
+      expect(first).not.toBeNull()
+      expect(second).not.toBeNull()
+      expect(
+        await fetch(`${first!.endpoint}identity`).then(
+          (response) => response.ok,
+          () => false
+        )
+      ).toBe(false)
+      expect(
+        await fetch(`${second!.endpoint}identity`).then((response) =>
+          response.json()
+        )
+      ).toMatchObject({ panelId: browserPanelId, challenge: second!.challenge })
+      const pending = await window.evaluate(
+        async ({ panelId, id, challenge }) => {
+          const registration = window
+            .treeportDesktop!.registerBrowser(panelId, id, challenge)
+            .catch(() => null)
+          window.treeportDesktop!.disposeBrowser(panelId)
+          return registration
+        },
+        {
+          panelId: browserPanelId,
+          id: result.id,
+          challenge: crypto.randomUUID()
+        }
+      )
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(
+            ({ webContents }, id) => !!webContents.fromId(id),
+            result.id
+          )
+        )
+        .toBe(false)
+      for (const descriptor of [second, pending]) {
+        if (descriptor) {
+          expect(
+            await fetch(`${descriptor.endpoint}identity`).then(
+              (response) => response.ok,
+              () => false
+            )
+          ).toBe(false)
+        }
+      }
     })
 
     const restartedWindow =

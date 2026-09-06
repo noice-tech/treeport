@@ -23,6 +23,10 @@ import {
 } from 'electron'
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app'
 import { z } from 'zod'
+import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
+import * as Stream from 'effect/Stream'
+import { DesktopRuntime } from './desktop-runtime'
 import { checkHealth, watchBackendHealth } from './backend-connection'
 import { ComputerStore } from './computer-store'
 import { MINIMUM_SUPPORTED_BACKEND_VERSION } from './desktop-contract'
@@ -148,13 +152,15 @@ let windowState: WindowState | null = null
 let store: ComputerStore | null = null
 let connection: ConnectionState = { status: 'empty' }
 let connectionGeneration = 0
-let connectionAbort: AbortController | null = null
+const desktopRuntime = new DesktopRuntime()
+let windowRuntime: DesktopRuntime | null = null
+let connectionFiber: Fiber.RuntimeFiber<void> | null = null
 let fullscreen = false
 let updateReady = desktopUpdateReady
 let updateError: string | null = null
-let stopAutomaticUpdates: (() => void) | null = null
+let installUpdateOnQuit = false
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
-let workspaceTargetQueue: Promise<void> = Promise.resolve()
+const workspaceTargets = Effect.unsafeMakeSemaphore(1)
 let terminalSelectionActive = false
 let browserWebviews: BrowserWebviewPolicy | null = null
 
@@ -174,20 +180,25 @@ function rendererDevelopmentServerUrl(): string | null {
   }
 }
 
-async function installRendererRequestRouting(): Promise<void> {
+const installRendererRequestRouting = Effect.gen(function* () {
   const rendererSession = session.fromPartition(RENDERER_PARTITION)
-  const handler = await createRendererRequestHandler({
+  const handler = yield* createRendererRequestHandler({
     rendererDirectory: path.join(dirname, '../renderer/main_window'),
     developmentServerUrl: rendererDevelopmentServerUrl(),
     selectedBackendOrigin: selectedOrigin,
     forward: (request) => fetch(request)
   })
-  await Promise.all([
-    rendererSession.protocol.handle('http', handler),
-    rendererSession.protocol.handle('https', handler),
-    rendererSession.protocol.handle('treeport-app', handler)
-  ])
-}
+  for (const scheme of ['http', 'https', 'treeport-app']) {
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        rendererSession.protocol.handle(scheme, (request) =>
+          desktopRuntime.run(handler(request))
+        )
+      ),
+      () => Effect.sync(() => rendererSession.protocol.unhandle(scheme))
+    )
+  }
+})
 
 function navigationState(): DesktopNavigationState {
   const renderer = mainWindow?.webContents
@@ -298,14 +309,17 @@ function requestBellAttention(): void {
   }
 }
 
-function disposeBrowserWebviews(): void {
-  browserWebviews?.disposeAll()
+const disposeBrowserWebviews = Effect.gen(function* () {
+  if (browserWebviews) {
+    yield* browserWebviews.disposeAll()
+  }
+
   if (terminalSelectionActive) {
     setTerminalSelectionActive(false)
   }
 
   broadcastState()
-}
+})
 
 function navigateRendererHistory(direction: DesktopNavigationDirection): void {
   const renderer = mainWindow?.webContents
@@ -401,7 +415,9 @@ function installRendererSecurity(renderer: WebContents): void {
     if (URL.canParse(targetUrl)) {
       const targetProtocol = new URL(targetUrl).protocol
       if (targetProtocol === 'http:' || targetProtocol === 'https:') {
-        void shell.openExternal(targetUrl)
+        windowRuntime?.fork(
+          Effect.tryPromise(() => shell.openExternal(targetUrl))
+        )
       }
     }
   })
@@ -409,7 +425,7 @@ function installRendererSecurity(renderer: WebContents): void {
     if (URL.canParse(url)) {
       const targetProtocol = new URL(url).protocol
       if (targetProtocol === 'http:' || targetProtocol === 'https:') {
-        void shell.openExternal(url)
+        windowRuntime?.fork(Effect.tryPromise(() => shell.openExternal(url)))
       }
     }
 
@@ -433,19 +449,22 @@ function installRendererSecurity(renderer: WebContents): void {
       return
     }
 
-    const verification = new AbortController()
-    void checkHealth(origin, verification.signal).then((health) => {
-      if (
-        !health &&
-        connection.status === 'ready' &&
-        selectedOrigin() === origin
-      ) {
-        void connectSelected({
-          unavailableImmediately: true,
-          unavailableMessage: `The connection to ${origin} was lost.`
-        })
-      }
-    })
+    windowRuntime?.fork(
+      Effect.gen(function* () {
+        const health = yield* checkHealth(origin)
+        if (
+          !health &&
+          connection.status === 'ready' &&
+          selectedOrigin() === origin &&
+          mainWindow?.webContents === renderer
+        ) {
+          connectSelected({
+            unavailableImmediately: true,
+            unavailableMessage: `The connection to ${origin} was lost.`
+          })
+        }
+      })
+    )
   })
 }
 
@@ -484,132 +503,143 @@ const nativeBrowserInputControlSchema = nativeBrowserPanelSchema.extend({
   locked: z.boolean()
 })
 
-async function connectSelected(
+function connectSelected(
   options: {
     unavailableImmediately?: boolean
     unavailableMessage?: string
     url?: string
   } = {}
-): Promise<void> {
+): void {
+  const runtime = windowRuntime
+  if (!runtime) {
+    return
+  }
+
   const computer = store?.selectedComputer
   const generation = ++connectionGeneration
-  connectionAbort?.abort()
-  const abortController = new AbortController()
-  connectionAbort = abortController
-  disposeBrowserWebviews()
-
-  if (!computer) {
-    connection = { status: 'empty' }
-    broadcastState()
-    const renderer = mainWindow?.webContents
-    if (renderer && !renderer.getURL().startsWith('treeport-app://')) {
-      void renderer.loadURL(PRIVATE_RENDERER_URL).catch((error) => {
-        console.error('[Treeport] Could not load desktop renderer', error)
-      })
-    }
-
-    return
-  }
-
-  const currentRendererUrl = mainWindow?.webContents.getURL() ?? ''
-  const requestedUrl =
-    options.url &&
-    URL.canParse(options.url) &&
-    new URL(options.url).origin === computer.origin
-      ? options.url
-      : URL.canParse(currentRendererUrl) &&
-          new URL(currentRendererUrl).origin === computer.origin
-        ? currentRendererUrl
-        : computer.origin
-  const unavailableMessage =
-    options.unavailableMessage ??
-    `The desktop app could not reach ${computer.origin}.`
-  let unavailableVisible = options.unavailableImmediately ?? false
-  connection = unavailableVisible
-    ? {
-        status: 'unavailable',
-        computerId: computer.id,
-        message: unavailableMessage
-      }
-    : { status: 'connecting', computerId: computer.id }
-  broadcastState()
-  const renderer = mainWindow?.webContents
-  if (renderer && renderer.getURL() !== requestedUrl) {
-    void renderer.loadURL(requestedUrl).catch((error) => {
-      console.error('[Treeport] Could not load desktop renderer', error)
-    })
-  }
-
-  for await (const health of watchBackendHealth(
-    computer.origin,
-    abortController.signal
-  )) {
-    if (generation !== connectionGeneration || abortController.signal.aborted) {
-      return
-    }
-
-    if (!health) {
-      if (!unavailableVisible) {
-        unavailableVisible = true
-        connection = {
-          status: 'unavailable',
-          computerId: computer.id,
-          message: unavailableMessage
-        }
-        broadcastState()
+  const previous = connectionFiber
+  connectionFiber = runtime.fork(
+    Effect.gen(function* () {
+      if (previous) {
+        yield* Fiber.interrupt(previous)
       }
 
-      continue
-    }
-
-    if (health.hostname && store) {
-      await store.rememberHostname(computer.id, health.hostname)
-      if (
-        generation !== connectionGeneration ||
-        abortController.signal.aborted
-      ) {
+      if (generation !== connectionGeneration) {
         return
       }
-    }
 
-    const serverVersion = health.version
-    if (desktopReleaseVersion) {
-      const desktopRelease = parseReleaseVersion(desktopReleaseVersion)
-      const serverRelease = serverVersion
-        ? parseReleaseVersion(serverVersion)
-        : null
-      const reason =
-        !desktopRelease || !serverRelease
-          ? 'unknown-version'
-          : compareReleaseVersions(
-                serverRelease,
-                minimumSupportedBackendRelease
-              ) < 0
-            ? 'backend-outdated'
-            : compareReleaseVersions(serverRelease, desktopRelease) > 0
-              ? 'desktop-outdated'
+      yield* disposeBrowserWebviews
+      if (generation !== connectionGeneration) {
+        return
+      }
+
+      if (!computer) {
+        connection = { status: 'empty' }
+        broadcastState()
+        const renderer = mainWindow?.webContents
+        if (renderer && !renderer.getURL().startsWith('treeport-app://')) {
+          runtime.fork(
+            Effect.tryPromise(() => renderer.loadURL(PRIVATE_RENDERER_URL))
+          )
+        }
+
+        return
+      }
+
+      const currentRendererUrl = mainWindow?.webContents.getURL() ?? ''
+      const requestedUrl =
+        options.url &&
+        URL.canParse(options.url) &&
+        new URL(options.url).origin === computer.origin
+          ? options.url
+          : URL.canParse(currentRendererUrl) &&
+              new URL(currentRendererUrl).origin === computer.origin
+            ? currentRendererUrl
+            : computer.origin
+      const unavailableMessage =
+        options.unavailableMessage ??
+        `The desktop app could not reach ${computer.origin}.`
+      let unavailableVisible = options.unavailableImmediately ?? false
+      connection = unavailableVisible
+        ? {
+            status: 'unavailable',
+            computerId: computer.id,
+            message: unavailableMessage
+          }
+        : { status: 'connecting', computerId: computer.id }
+      broadcastState()
+      const renderer = mainWindow?.webContents
+      if (renderer && renderer.getURL() !== requestedUrl) {
+        runtime.fork(Effect.tryPromise(() => renderer.loadURL(requestedUrl)))
+      }
+
+      yield* Stream.runForEach(watchBackendHealth(computer.origin), (health) =>
+        Effect.gen(function* () {
+          if (generation !== connectionGeneration) {
+            return
+          }
+
+          if (!health) {
+            if (!unavailableVisible) {
+              unavailableVisible = true
+              connection = {
+                status: 'unavailable',
+                computerId: computer.id,
+                message: unavailableMessage
+              }
+              broadcastState()
+            }
+
+            return
+          }
+
+          if (health.hostname && store) {
+            yield* store.rememberHostname(computer.id, health.hostname)
+            if (generation !== connectionGeneration) {
+              return
+            }
+          }
+
+          const serverVersion = health.version
+          if (desktopReleaseVersion) {
+            const desktopRelease = parseReleaseVersion(desktopReleaseVersion)
+            const serverRelease = serverVersion
+              ? parseReleaseVersion(serverVersion)
               : null
-      if (reason) {
-        connection = {
-          status: 'incompatible',
-          computerId: computer.id,
-          serverVersion,
-          reason
-        }
-        broadcastState()
-        return
-      }
-    }
+            const reason =
+              !desktopRelease || !serverRelease
+                ? 'unknown-version'
+                : compareReleaseVersions(
+                      serverRelease,
+                      minimumSupportedBackendRelease
+                    ) < 0
+                  ? 'backend-outdated'
+                  : compareReleaseVersions(serverRelease, desktopRelease) > 0
+                    ? 'desktop-outdated'
+                    : null
+            if (reason) {
+              connection = {
+                status: 'incompatible',
+                computerId: computer.id,
+                serverVersion,
+                reason
+              }
+              broadcastState()
+              return
+            }
+          }
 
-    connection = {
-      status: 'ready',
-      computerId: computer.id,
-      serverVersion: serverVersion ?? 'unknown',
-      url: requestedUrl
-    }
-    broadcastState()
-    return
-  }
+          connection = {
+            status: 'ready',
+            computerId: computer.id,
+            serverVersion: serverVersion ?? 'unknown',
+            url: requestedUrl
+          }
+          broadcastState()
+        })
+      )
+    })
+  )
 }
 
 function rendererWindowPreferences(): Electron.WebPreferences {
@@ -758,27 +788,27 @@ function installMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-async function loadWindowState(): Promise<WindowState | null> {
+const loadWindowState = Effect.gen(function* () {
   const filePath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
-  const contents = await fs.readFile(filePath, 'utf8').catch((error) => {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-      return null
-    }
-
-    throw error
-  })
+  const contents = yield* Effect.tryPromise(() =>
+    fs.readFile(filePath, 'utf8')
+  ).pipe(
+    Effect.catchAll((error) => {
+      const parsed = z.object({ code: z.string() }).safeParse(error.cause)
+      return parsed.success && parsed.data.code === 'ENOENT'
+        ? Effect.succeed(null)
+        : Effect.fail(error)
+    })
+  )
   if (contents === null) {
     return null
   }
 
-  return Promise.resolve()
-    .then(() => JSON.parse(contents))
-    .then((value) => {
-      const parsed = windowStateSchema.safeParse(value)
-      return parsed.success ? parsed.data : null
-    })
-    .catch(() => null)
-}
+  return yield* Effect.try(() => {
+    const parsed = windowStateSchema.safeParse(JSON.parse(contents))
+    return parsed.success ? parsed.data : null
+  }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+})
 
 function restoredWindowBounds(): WindowState['bounds'] | null {
   if (!windowState) {
@@ -898,9 +928,12 @@ function createWindow(url?: string): BrowserWindow {
     window.maximize()
   }
 
+  const runtime = new DesktopRuntime(desktopRuntime)
   mainWindow = window
+  windowRuntime = runtime
   installRendererSecurity(window.webContents)
   browserWebviews = installBrowserWebviewPolicy({
+    runtime,
     window,
     trustedRenderer: window.webContents,
     selectedComputer: () => {
@@ -925,13 +958,16 @@ function createWindow(url?: string): BrowserWindow {
   window.on('focus', stopBellAttention)
   window.on('close', () => {
     persistWindowState(window)
-    disposeBrowserWebviews()
   })
   window.on('closed', () => {
     stopBellAttention()
     if (mainWindow === window) {
       mainWindow = null
       browserWebviews = null
+      windowRuntime = null
+      connectionFiber = null
+      connectionGeneration += 1
+      desktopRuntime.fork(runtime.close)
     }
   })
   window.webContents.once('did-finish-load', () => broadcastState())
@@ -951,103 +987,112 @@ function registerIpc(): void {
   ipcMain.handle('shell:get-state', (event) =>
     isTrustedRendererEvent(event) ? shellState() : null
   )
-  ipcMain.handle('shell:select-computer', async (event, id) => {
-    const parsedId = z.string().safeParse(id)
-    if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
-      return false
-    }
+  ipcMain.handle('shell:select-computer', (event, id) =>
+    desktopRuntime.run(
+      Effect.gen(function* () {
+        const parsedId = z.string().safeParse(id)
+        if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
+          return false
+        }
 
-    const selected = await store.select(parsedId.data)
-    if (selected) {
-      void connectSelected()
-    }
+        const selected = yield* store.select(parsedId.data)
+        if (selected) {
+          void connectSelected()
+        }
 
-    return selected
-  })
-  ipcMain.handle('shell:add-computer', async (event, input) => {
-    const parsedInput = z.string().safeParse(input)
-    if (!isTrustedRendererEvent(event) || !parsedInput.success || !store) {
-      return { ok: false, error: 'Could not save the computer.' }
-    }
+        return selected
+      })
+    )
+  )
+  ipcMain.handle('shell:add-computer', (event, input) =>
+    desktopRuntime.run(
+      Effect.gen(function* () {
+        const parsedInput = z.string().safeParse(input)
+        if (!isTrustedRendererEvent(event) || !parsedInput.success || !store) {
+          return { ok: false, error: 'Could not save the computer.' }
+        }
 
-    let origin: string
-    try {
-      origin = parseComputerUrl(parsedInput.data).origin
-    } catch (error) {
-      return mutationError(error)
-    }
-    const duplicate = store.findByOrigin(origin)
-    if (duplicate) {
-      return {
-        ok: false,
-        error: `That URL is already saved as ${store.summaries().find((item) => item.id === duplicate.id)?.name ?? 'a computer'}.`,
-        duplicateId: duplicate.id
-      }
-    }
+        const { origin } = yield* Effect.try(() =>
+          parseComputerUrl(parsedInput.data)
+        )
+        const duplicate = store.findByOrigin(origin)
+        if (duplicate) {
+          return {
+            ok: false,
+            error: `That URL is already saved as ${store.summaries().find((item) => item.id === duplicate.id)?.name ?? 'a computer'}.`,
+            duplicateId: duplicate.id
+          }
+        }
 
-    try {
-      await store.add(origin)
-      void connectSelected()
-      return { ok: true }
-    } catch (error) {
-      return mutationError(error)
-    }
-  })
-  ipcMain.handle('shell:update-computer', async (event, value) => {
-    if (!isTrustedRendererEvent(event) || !store) {
-      return { ok: false, error: 'Could not save the computer.' }
-    }
+        yield* store.add(origin)
+        connectSelected()
+        return { ok: true }
+      }).pipe(
+        Effect.catchAll((error) => Effect.succeed(mutationError(error.cause)))
+      )
+    )
+  )
+  ipcMain.handle('shell:update-computer', (event, value) =>
+    desktopRuntime.run(
+      Effect.gen(function* () {
+        if (!isTrustedRendererEvent(event) || !store) {
+          return { ok: false, error: 'Could not save the computer.' }
+        }
 
-    const parsed = computerUpdateSchema.safeParse(value)
-    if (!parsed.success) {
-      return { ok: false, error: 'Could not save the computer.' }
-    }
+        const parsed = computerUpdateSchema.safeParse(value)
+        if (!parsed.success) {
+          return { ok: false, error: 'Could not save the computer.' }
+        }
 
-    const update: ComputerUpdate = {
-      id: parsed.data.id,
-      origin: parsed.data.origin
-    }
-    if (parsed.data.nameOverride !== undefined) {
-      update.nameOverride = parsed.data.nameOverride
-    }
+        const update: ComputerUpdate = {
+          id: parsed.data.id,
+          origin: parsed.data.origin
+        }
+        if (parsed.data.nameOverride !== undefined) {
+          update.nameOverride = parsed.data.nameOverride
+        }
 
-    try {
-      const result = await store.update(update.id, update)
-      if (!result) {
-        return { ok: false, error: 'That computer no longer exists.' }
-      }
+        const result = yield* store.update(update.id, update)
+        if (!result) {
+          return { ok: false, error: 'That computer no longer exists.' }
+        }
 
-      if (result.originChanged && store.selectedComputer?.id === update.id) {
-        void connectSelected()
-      } else {
-        broadcastState()
-      }
+        if (result.originChanged && store.selectedComputer?.id === update.id) {
+          void connectSelected()
+        } else {
+          broadcastState()
+        }
 
-      return { ok: true }
-    } catch (error) {
-      return mutationError(error)
-    }
-  })
-  ipcMain.handle('shell:remove-computer', async (event, id) => {
-    const parsedId = z.string().safeParse(id)
-    if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
-      return false
-    }
+        return { ok: true }
+      }).pipe(
+        Effect.catchAll((error) => Effect.succeed(mutationError(error.cause)))
+      )
+    )
+  )
+  ipcMain.handle('shell:remove-computer', (event, id) =>
+    desktopRuntime.run(
+      Effect.gen(function* () {
+        const parsedId = z.string().safeParse(id)
+        if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
+          return false
+        }
 
-    const computerId = parsedId.data
-    if (!store.getComputer(computerId)) {
-      return false
-    }
+        const computerId = parsedId.data
+        if (!store.getComputer(computerId)) {
+          return false
+        }
 
-    const result = await store.remove(computerId)
-    if (result.selectedChanged) {
-      void connectSelected()
-    } else {
-      broadcastState()
-    }
+        const result = yield* store.remove(computerId)
+        if (result.selectedChanged) {
+          void connectSelected()
+        } else {
+          broadcastState()
+        }
 
-    return true
-  })
+        return true
+      })
+    )
+  )
   ipcMain.on('shell:retry-connection', (event) => {
     if (isTrustedRendererEvent(event)) {
       void connectSelected()
@@ -1059,22 +1104,27 @@ function registerIpc(): void {
     }
 
     if (updateError) {
-      void dialog
-        .showMessageBox({
-          type: 'error',
-          title: 'Desktop update failed',
-          message: 'Treeport could not install the desktop update.',
-          detail: `${updateError}\nThe backend has not been changed. Install the latest desktop application manually, or wait for the next automatic check.`,
-          buttons: ['Installation instructions', 'Dismiss'],
-          cancelId: 1
-        })
-        .then(({ response }) => {
+      desktopRuntime.fork(
+        Effect.gen(function* () {
+          const { response } = yield* Effect.tryPromise(() =>
+            dialog.showMessageBox({
+              type: 'error',
+              title: 'Desktop update failed',
+              message: 'Treeport could not install the desktop update.',
+              detail: `${updateError}\nThe backend has not been changed. Install the latest desktop application manually, or wait for the next automatic check.`,
+              buttons: ['Installation instructions', 'Dismiss'],
+              cancelId: 1
+            })
+          )
           if (response === 0) {
-            return shell.openExternal(
-              'https://treeport.app/getting-started/installation/'
+            yield* Effect.tryPromise(() =>
+              shell.openExternal(
+                'https://treeport.app/getting-started/installation/'
+              )
             )
           }
         })
+      )
       return
     }
 
@@ -1088,7 +1138,8 @@ function registerIpc(): void {
       return
     }
 
-    autoUpdater.quitAndInstall()
+    installUpdateOnQuit = true
+    app.quit()
   })
   ipcMain.on('shell:navigate-history', (event, direction) => {
     const parsed = z.enum(['back', 'forward']).safeParse(direction)
@@ -1108,29 +1159,39 @@ function registerIpc(): void {
   })
   ipcMain.handle('shell:open-installation-docs', (event) => {
     if (isTrustedRendererEvent(event)) {
-      return shell.openExternal(
-        'https://treeport.app/getting-started/installation/'
+      return desktopRuntime.run(
+        Effect.tryPromise(() =>
+          shell.openExternal(
+            'https://treeport.app/getting-started/installation/'
+          )
+        )
       )
     }
   })
 
-  ipcMain.handle('open-file-url', async (event, value) => {
-    if (!isTrustedRendererEvent(event)) {
-      return 'rejected'
-    }
+  ipcMain.handle('open-file-url', (event, value) =>
+    desktopRuntime.run(
+      Effect.gen(function* () {
+        if (!isTrustedRendererEvent(event)) {
+          return 'rejected'
+        }
 
-    const filePath = filePathFromUrl(value)
-    const origin = selectedOrigin()
-    if (!filePath || !origin) {
-      return 'rejected'
-    }
+        const filePath = filePathFromUrl(value)
+        const origin = selectedOrigin()
+        if (!filePath || !origin) {
+          return 'rejected'
+        }
 
-    if (!isLoopbackUrl(new URL(origin))) {
-      return 'rejected'
-    }
+        if (!isLoopbackUrl(new URL(origin))) {
+          return 'rejected'
+        }
 
-    return (await shell.openPath(filePath)) === '' ? 'opened' : 'rejected'
-  })
+        return (yield* Effect.tryPromise(() => shell.openPath(filePath))) === ''
+          ? 'opened'
+          : 'rejected'
+      })
+    )
+  )
   ipcMain.handle('terminal-file:resolve-source-path', (event, value) => {
     const parsedPath = localSourcePathSchema.safeParse(value)
     return isTrustedRendererEvent(event) && parsedPath.success
@@ -1154,11 +1215,13 @@ function registerIpc(): void {
   ipcMain.handle('native-browser:register', (event, value) => {
     const parsed = nativeBrowserRegisterSchema.safeParse(value)
     return parsed.success && browserWebviews
-      ? browserWebviews.register(
-          event,
-          parsed.data.panelId,
-          parsed.data.webContentsId,
-          parsed.data.challenge
+      ? desktopRuntime.run(
+          browserWebviews.register(
+            event,
+            parsed.data.panelId,
+            parsed.data.webContentsId,
+            parsed.data.challenge
+          )
         )
       : null
   })
@@ -1170,30 +1233,40 @@ function registerIpc(): void {
       })
       .safeParse(value)
     return parsed.success && browserWebviews
-      ? browserWebviews.command(event, parsed.data.panelId, parsed.data.command)
+      ? desktopRuntime.run(
+          browserWebviews.command(
+            event,
+            parsed.data.panelId,
+            parsed.data.command
+          )
+        )
       : { ok: false, error: 'The Browser command was rejected.' }
   })
   ipcMain.handle('native-browser:set-input-control', (event, value) => {
     const parsed = nativeBrowserInputControlSchema.safeParse(value)
     return parsed.success && browserWebviews
-      ? browserWebviews.setInputControl(
-          event,
-          parsed.data.panelId,
-          parsed.data.locked
+      ? desktopRuntime.run(
+          browserWebviews.setInputControl(
+            event,
+            parsed.data.panelId,
+            parsed.data.locked
+          )
         )
       : false
   })
-  ipcMain.handle('native-browser:request-close', async (event, value) => {
+  ipcMain.handle('native-browser:request-close', (event, value) => {
     const parsed = nativeBrowserCloseSchema.safeParse(value)
     if (!parsed.success) {
       return false
     }
 
     return browserWebviews
-      ? browserWebviews.requestClose(
-          event,
-          parsed.data.panelId,
-          parsed.data.force
+      ? desktopRuntime.run(
+          browserWebviews.requestClose(
+            event,
+            parsed.data.panelId,
+            parsed.data.force
+          )
         )
       : true
   })
@@ -1203,7 +1276,9 @@ function registerIpc(): void {
       return
     }
 
-    browserWebviews?.dispose(event, parsed.data.panelId)
+    if (browserWebviews) {
+      desktopRuntime.fork(browserWebviews.dispose(event, parsed.data.panelId))
+    }
   })
   ipcMain.on('terminal-selection:set-active', (event, active) => {
     const parsedActive = z.boolean().safeParse(active)
@@ -1225,35 +1300,37 @@ function registerIpc(): void {
   })
 }
 
-async function openWorkspaceTarget(target: WorkspaceTarget): Promise<void> {
-  const currentStore = store
-  if (!currentStore) {
-    pendingWorkspaceTarget = target
-    return
-  }
-
-  const existing = currentStore.findByOrigin(target.origin)
-  if (existing) {
-    await currentStore.select(existing.id)
-  } else {
-    await currentStore.add(target.origin)
-  }
-
-  const existingWindow = mainWindow
-  const window = existingWindow ?? createWindow(target.url)
-
-  if (existingWindow) {
-    void connectSelected({ url: target.url })
-  }
-
-  if (!desktopE2e) {
-    if (window.isMinimized()) {
-      window.restore()
+function openWorkspaceTarget(target: WorkspaceTarget) {
+  return Effect.gen(function* () {
+    const currentStore = store
+    if (!currentStore) {
+      pendingWorkspaceTarget = target
+      return
     }
 
-    window.show()
-    window.focus()
-  }
+    const existing = currentStore.findByOrigin(target.origin)
+    if (existing) {
+      yield* currentStore.select(existing.id)
+    } else {
+      yield* currentStore.add(target.origin)
+    }
+
+    const existingWindow = mainWindow
+    const window = existingWindow ?? createWindow(target.url)
+
+    if (existingWindow) {
+      void connectSelected({ url: target.url })
+    }
+
+    if (!desktopE2e) {
+      if (window.isMinimized()) {
+        window.restore()
+      }
+
+      window.show()
+      window.focus()
+    }
+  })
 }
 
 function queueWorkspaceTarget(target: WorkspaceTarget): void {
@@ -1262,11 +1339,9 @@ function queueWorkspaceTarget(target: WorkspaceTarget): void {
     return
   }
 
-  workspaceTargetQueue = workspaceTargetQueue
-    .then(() => openWorkspaceTarget(target))
-    .catch((error) => {
-      console.error('[Treeport] Could not open workspace link', error)
-    })
+  desktopRuntime.fork(
+    workspaceTargets.withPermits(1)(openWorkspaceTarget(target))
+  )
 }
 
 function receiveWorkspaceLink(
@@ -1313,18 +1388,18 @@ if (!hasSingleInstanceLock) {
   })
 
   registerIpc()
-  void app
-    .whenReady()
-    .then(async () => {
+  desktopRuntime.fork(
+    Effect.gen(function* () {
+      yield* Effect.tryPromise(() => app.whenReady())
       if (!app.isPackaged && process.platform === 'darwin') {
         app.dock?.setIcon(
           path.join(app.getAppPath(), 'assets/treeport-dev-icon.png')
         )
       }
 
-      await installRendererRequestRouting()
-      windowState = await loadWindowState()
-      store = await ComputerStore.load(
+      yield* installRendererRequestRouting
+      windowState = yield* loadWindowState
+      store = yield* ComputerStore.load(
         path.join(app.getPath('userData'), 'computers.json'),
         seedComputerUrl,
         { synchronizeSelectedLoopback: !app.isPackaged }
@@ -1333,7 +1408,7 @@ if (!hasSingleInstanceLock) {
       const startupTarget = pendingWorkspaceTarget
       pendingWorkspaceTarget = null
       if (startupTarget) {
-        await openWorkspaceTarget(startupTarget)
+        yield* openWorkspaceTarget(startupTarget)
       } else {
         createWindow()
       }
@@ -1362,7 +1437,9 @@ if (!hasSingleInstanceLock) {
           updateInterval: '10 minutes',
           notifyUser: false
         })
-        stopAutomaticUpdates = updater.stopUpdates
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => updater.stopUpdates())
+        )
       }
 
       app.on('activate', () => {
@@ -1370,15 +1447,39 @@ if (!hasSingleInstanceLock) {
           createWindow()
         }
       })
-    })
-    .catch((error) => {
-      console.error('[Treeport] Could not start desktop app', error)
-      app.quit()
-    })
+    }).pipe(
+      Effect.catchAllCause((cause) =>
+        Effect.logError(cause).pipe(Effect.andThen(() => app.quit()))
+      )
+    )
+  )
 
-  app.on('before-quit', () => {
-    stopAutomaticUpdates?.()
-    connectionAbort?.abort()
+  let quitReady = false
+  let quitting = false
+  app.on('before-quit', (event) => {
+    if (quitReady) {
+      return
+    }
+
+    event.preventDefault()
+    if (quitting) {
+      return
+    }
+
+    quitting = true
+    // Do not close the root from one of its own fibers: closing joins children.
+    void Effect.runPromiseExit(desktopRuntime.close).then((exit) => {
+      if (exit._tag === 'Failure') {
+        console.error('[Treeport] Desktop shutdown failed', exit.cause)
+      }
+
+      quitReady = true
+      if (installUpdateOnQuit) {
+        autoUpdater.quitAndInstall()
+      } else {
+        app.quit()
+      }
+    })
   })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
