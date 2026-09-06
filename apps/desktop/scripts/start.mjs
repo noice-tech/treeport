@@ -1,6 +1,11 @@
 import { api } from '@electron-forge/core'
 import net from 'node:net'
 import { z } from 'zod'
+import { prepareDevelopmentApp } from './prepare-dev-app.mjs'
+
+if (process.platform === 'darwin') {
+  await prepareDevelopmentApp()
+}
 
 if (!process.env.TREEPORT_DESKTOP_RENDERER_PORT?.trim()) {
   process.env.TREEPORT_DESKTOP_RENDERER_PORT = String(

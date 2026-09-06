@@ -133,6 +133,13 @@ if (desktopE2e && developmentUserData) {
   app.setPath('userData', path.resolve(developmentUserData))
 }
 
+if (!app.isPackaged) {
+  // Renaming the app must not move existing computers, cookies, or window state.
+  const userData = app.getPath('userData')
+  app.setName('Treeport Dev')
+  app.setPath('userData', userData)
+}
+
 nativeTheme.themeSource = 'dark'
 
 const defaultComputerUrl = app.isPackaged
@@ -909,6 +916,11 @@ function createWindow(url?: string): BrowserWindow {
     webPreferences: rendererWindowPreferences()
   }
 
+  if (!app.isPackaged) {
+    options.title = app.name
+    options.icon = path.join(app.getAppPath(), 'assets/treeport-dev-icon.png')
+  }
+
   if (restoredBounds) {
     options.x = restoredBounds.x
     options.y = restoredBounds.y
@@ -1341,6 +1353,12 @@ if (!hasSingleInstanceLock) {
   void app
     .whenReady()
     .then(async () => {
+      if (!app.isPackaged && process.platform === 'darwin') {
+        app.dock?.setIcon(
+          path.join(app.getAppPath(), 'assets/treeport-dev-icon.png')
+        )
+      }
+
       await installRendererRequestRouting()
       windowState = await loadWindowState()
       store = await ComputerStore.load(
