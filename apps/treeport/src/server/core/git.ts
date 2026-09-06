@@ -1,7 +1,13 @@
 import crypto from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { DirtyState, GitDiff } from '@treeport/shared'
+import type {
+  DirtyState,
+  GitDiff,
+  GitDiffImage,
+  GitDiffImageRequest
+} from '@treeport/shared'
 import type { CommandRunner } from './command'
 import { ExternalCommandError, runChecked } from './command'
 
@@ -686,6 +692,149 @@ export class GitAdapter {
       '-z'
     ])
     return [...new Set(result.stdout.split('\0').filter(Boolean))].sort()
+  }
+
+  async diffImage(
+    cwd: string,
+    input: GitDiffImageRequest
+  ): Promise<GitDiffImage> {
+    const mimeTypes = new Map([
+      ['.png', 'image/png'],
+      ['.jpg', 'image/jpeg'],
+      ['.jpeg', 'image/jpeg'],
+      ['.gif', 'image/gif'],
+      ['.webp', 'image/webp'],
+      ['.svg', 'image/svg+xml'],
+      ['.avif', 'image/avif'],
+      ['.bmp', 'image/bmp'],
+      ['.ico', 'image/x-icon']
+    ])
+    const mimeType = mimeTypes.get(path.extname(input.path).toLowerCase())
+    if (!mimeType) {
+      throw new Error('This file type does not support image previews')
+    }
+
+    if (
+      !input.path ||
+      input.path.includes('\\') ||
+      input.path.includes('\0') ||
+      path.isAbsolute(input.path) ||
+      input.path
+        .split('/')
+        .some(
+          (part) =>
+            !part ||
+            part === '.' ||
+            part === '..' ||
+            part.toLowerCase() === '.git'
+        )
+    ) {
+      throw new Error('Image path must be a relative path inside the tree')
+    }
+
+    const maxBytes = 5 * 1024 * 1024
+    let bytes: Buffer
+    if (input.commit !== null) {
+      if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.commit)) {
+        throw new Error('Image revision must be a full Git commit ID')
+      }
+
+      const entry = await this.checked(cwd, [
+        '--literal-pathspecs',
+        'ls-tree',
+        '-z',
+        `${input.commit}^{commit}`,
+        '--',
+        input.path
+      ])
+      // Read only regular blobs, never symlink targets or submodule contents.
+      const match = /^(100644|100755) blob ([a-f0-9]+)\t/.exec(entry.stdout)
+      if (!match) {
+        throw new Error(
+          'The image does not exist as a regular file at this revision'
+        )
+      }
+
+      const size = await this.checked(cwd, ['cat-file', '-s', match[2]!])
+      if (Number(size.stdout.trim()) > maxBytes) {
+        throw new Error('Image previews are limited to 5 MiB')
+      }
+
+      const result = await runChecked(this.runner, {
+        executable: this.executable,
+        args: ['cat-file', 'blob', match[2]!],
+        cwd,
+        timeoutMs: 10_000,
+        maxStdoutBytes: maxBytes,
+        stdoutEncoding: 'base64'
+      })
+      bytes = Buffer.from(result.stdout, 'base64')
+    } else {
+      // Match diff visibility: tracked or untracked, but not ignored files.
+      if (!(await this.worktreeFiles(cwd)).includes(input.path)) {
+        throw new Error('The image is not a visible repository file')
+      }
+
+      const root = await fs.realpath(cwd)
+      const candidate = path.join(root, input.path)
+      const canonical = await fs.realpath(candidate)
+      const relative = path.relative(root, canonical)
+      if (
+        relative.startsWith(`..${path.sep}`) ||
+        relative === '..' ||
+        path.isAbsolute(relative)
+      ) {
+        throw new Error('Image path must stay inside the tree')
+      }
+
+      if (canonical !== candidate || !(await fs.lstat(candidate)).isFile()) {
+        throw new Error('Only regular files support image previews')
+      }
+
+      const handle = await fs.open(
+        canonical,
+        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK
+      )
+      try {
+        const stat = await handle.stat()
+        if (!stat.isFile()) {
+          throw new Error('Only regular files support image previews')
+        }
+
+        if (stat.size > maxBytes) {
+          throw new Error('Image previews are limited to 5 MiB')
+        }
+
+        // Bound the read even if the file grows after stat().
+        const buffer = Buffer.alloc(maxBytes + 1)
+        let length = 0
+        while (length < buffer.length) {
+          const { bytesRead } = await handle.read(
+            buffer,
+            length,
+            buffer.length - length,
+            null
+          )
+          if (bytesRead === 0) {
+            break
+          }
+
+          length += bytesRead
+        }
+        if (length > maxBytes) {
+          throw new Error('Image previews are limited to 5 MiB')
+        }
+
+        bytes = buffer.subarray(0, length)
+      } finally {
+        await handle.close()
+      }
+    }
+
+    return {
+      dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
+      byteLength: bytes.length
+    }
   }
 
   async worktreeDiff(cwd: string, defaultBranch: string): Promise<GitDiff> {

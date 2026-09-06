@@ -329,6 +329,53 @@ main {
 .file-diff.selected {
   outline-color: #71717a;
 }
+.image-diff {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #3f3f46;
+  border-top: 0;
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: #18181b;
+}
+.image-preview {
+  min-width: 0;
+  margin: 0;
+}
+.image-preview figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
+.image-preview figcaption span {
+  color: #a1a1aa;
+}
+.image-preview-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 10rem;
+  padding: 1rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.25rem;
+  background: repeating-conic-gradient(#27272a 0% 25%, #3f3f46 0% 50%) 0 0 / 20px 20px;
+}
+.image-preview-canvas img {
+  display: block;
+  max-width: 100%;
+  max-height: 32rem;
+  object-fit: contain;
+}
+.image-preview-canvas p {
+  padding: 0.5rem;
+  background: #18181b;
+  color: #d4d4d8;
+  overflow-wrap: anywhere;
+}
 .outdated-comments {
   display: grid;
   gap: 0.5rem;

@@ -164,6 +164,13 @@ export function WebPanelWorkspace({
             param: { panelId: panel.id }
           })
         ).then((result) => result.diff)
+      } else if (method === 'diff.image') {
+        request = parseResponse(
+          rpc.api.panels[':panelId'].diff.image.$post({
+            param: { panelId: panel.id },
+            json: { path: message.path, commit: message.commit }
+          })
+        )
       } else if (method === 'network.listeners') {
         request = parseResponse(
           rpc.api.panels[':panelId'].network.listeners.$get({

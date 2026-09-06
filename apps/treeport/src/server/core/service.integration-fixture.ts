@@ -247,6 +247,9 @@ export function integrationService(
     getWebPanelDiff: run(
       application.panels.getWebPanelDiff.bind(application.panels)
     ),
+    getWebPanelDiffImage: run(
+      application.panels.getWebPanelDiffImage.bind(application.panels)
+    ),
     getWebPanelListeners: run(
       application.panels.getWebPanelListeners.bind(application.panels)
     ),

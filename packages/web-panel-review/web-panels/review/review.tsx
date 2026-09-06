@@ -8,7 +8,8 @@ import { FileTree, useFileTree } from '@pierre/trees/react'
 import {
   treeport,
   type GitDiff,
-  type GitDiffChangeSets
+  type GitDiffChangeSets,
+  type GitDiffImage
 } from '@treeport/panel-sdk'
 import {
   useCallback,
@@ -48,6 +49,7 @@ interface FindMatch extends SearchableLine {
 }
 
 interface LoadedReview {
+  baseCommit: string
   summary: string
   generatedAt: string
   files: FileDiffMetadata[]
@@ -425,6 +427,99 @@ function CommentEditor({
   )
 }
 
+function ImagePreview({
+  path,
+  commit,
+  label
+}: {
+  path: string
+  commit: string | null
+  label: string
+}) {
+  const container = useRef<HTMLElement>(null)
+  const [result, setResult] = useState<{
+    image: GitDiffImage | null
+    error: string | null
+  }>({ image: null, error: null })
+  const [dimensions, setDimensions] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          return
+        }
+
+        observer.disconnect()
+        void treeport.diffImage({ path, commit }).then(
+          (image) => {
+            if (active) {
+              setResult({ image, error: null })
+            }
+          },
+          (reason) => {
+            if (active) {
+              setResult({
+                image: null,
+                error:
+                  reason instanceof Error ? reason.message : 'Could not read image'
+              })
+            }
+          }
+        )
+      },
+      { rootMargin: '300px' }
+    )
+    if (container.current) {
+      observer.observe(container.current)
+    }
+
+    return () => {
+      active = false
+      observer.disconnect()
+    }
+  }, [commit, path])
+
+  return (
+    <figure className="image-preview" ref={container}>
+      <figcaption>
+        <strong>{label}</strong>
+        {result.image && (
+          <span>
+            {dimensions ? `${dimensions} · ` : ''}
+            {(result.image.byteLength / 1024).toFixed(1)} KiB
+          </span>
+        )}
+      </figcaption>
+      <div className="image-preview-canvas">
+        {result.error ? (
+          <p role="status">Preview unavailable: {result.error}</p>
+        ) : result.image ? (
+          <img
+            src={result.image.dataUrl}
+            alt={`${label}: ${path}`}
+            decoding="async"
+            onLoad={(event) =>
+              setDimensions(
+                `${event.currentTarget.naturalWidth} × ${event.currentTarget.naturalHeight}`
+              )
+            }
+            onError={() =>
+              setResult({
+                image: null,
+                error: 'The browser could not decode this image'
+              })
+            }
+          />
+        ) : (
+          <p role="status">Loading image…</p>
+        )}
+      </div>
+    </figure>
+  )
+}
+
 function ReviewApp() {
   const [loaded, setLoaded] = useState<LoadedReview | null>(null)
   const loadedRef = useRef(loaded)
@@ -439,6 +534,7 @@ function ReviewApp() {
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set())
   const viewedFilesRef = useRef(viewedFiles)
   viewedFilesRef.current = viewedFiles
+  const [imageSources, setImageSources] = useState<Set<string>>(new Set())
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const collapsedFilesRef = useRef(collapsedFiles)
   collapsedFilesRef.current = collapsedFiles
@@ -675,6 +771,7 @@ function ReviewApp() {
       fileStateLoaded.current = true
 
       const nextLoaded = {
+        baseCommit: diff.baseCommit,
         summary: context
           ? `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`
           : loadedRef.current!.summary,
@@ -818,6 +915,7 @@ function ReviewApp() {
       const index = (requestedIndex + findMatches.length) % findMatches.length
       const match = findMatches[index]!
       setActiveFindMatch(index)
+      setImageSources((current) => new Set(current).add(match.file))
       setCollapsed(match.file, false)
       setSelectedFile(match.file)
       requestAnimationFrame(() => {
@@ -840,6 +938,7 @@ function ReviewApp() {
     setActiveFindMatch(findMatches.length ? 0 : -1)
     if (findMatches.length) {
       const match = findMatches[0]!
+      setImageSources((current) => new Set(current).add(match.file))
       setCollapsed(match.file, false)
       setSelectedFile(match.file)
       requestAnimationFrame(() => {
@@ -892,6 +991,7 @@ function ReviewApp() {
   const navigateToComment = useCallback(
     (comment: ReviewComment) => {
       setCollapsed(comment.file, false)
+      setImageSources((current) => new Set(current).add(comment.file))
       setActiveCommentId(comment.id)
       setSelectedFile(comment.file)
       setSelectedLines({
@@ -1350,6 +1450,12 @@ function ReviewApp() {
                   metadata: comment
                 }))
               const collapsed = collapsedFiles.has(fileDiff.name)
+              const isImage = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
+                fileDiff.name
+              )
+              const showImage = isImage && (
+                fileDiff.hunks.length === 0 || !imageSources.has(fileDiff.name)
+              )
               return (
                 <section
                   key={fileDiff.name}
@@ -1368,7 +1474,7 @@ function ReviewApp() {
                       theme: 'pierre-dark',
                       diffStyle: 'unified',
                       overflow: 'wrap',
-                      collapsed,
+                      collapsed: collapsed || showImage,
                       unsafeCSS: DIFF_CSS,
                       enableGutterUtility: true,
                       lineHoverHighlight: 'both',
@@ -1427,27 +1533,50 @@ function ReviewApp() {
                       </button>
                     )}
                     renderHeaderMetadata={() => (
-                      <label className="file-viewed">
-                        <input
-                          type="checkbox"
-                          checked={viewedFiles.has(fileDiff.name)}
-                          aria-label={`Viewed ${fileDiff.name}`}
-                          onChange={(event) => {
-                            const checked = event.target.checked
-                            const next = new Set(viewedFiles)
-                            if (checked) {
-                              next.add(fileDiff.name)
-                            } else {
-                              next.delete(fileDiff.name)
-                            }
+                      <>
+                        {isImage && fileDiff.hunks.length > 0 && (
+                          <button
+                            type="button"
+                            aria-label={`${showImage ? 'Show source for' : 'Show image for'} ${fileDiff.name}`}
+                            onClick={() => {
+                              setImageSources((current) => {
+                                const next = new Set(current)
+                                if (showImage) {
+                                  next.add(fileDiff.name)
+                                } else {
+                                  next.delete(fileDiff.name)
+                                }
 
-                            setViewedFiles(next)
-                            setCollapsed(fileDiff.name, checked)
-                            void persistViewed(next)
-                          }}
-                        />
-                        Viewed
-                      </label>
+                                return next
+                              })
+                              setCollapsed(fileDiff.name, false)
+                            }}
+                          >
+                            {showImage ? 'Source' : 'Image'}
+                          </button>
+                        )}
+                        <label className="file-viewed">
+                          <input
+                            type="checkbox"
+                            checked={viewedFiles.has(fileDiff.name)}
+                            aria-label={`Viewed ${fileDiff.name}`}
+                            onChange={(event) => {
+                              const checked = event.target.checked
+                              const next = new Set(viewedFiles)
+                              if (checked) {
+                                next.add(fileDiff.name)
+                              } else {
+                                next.delete(fileDiff.name)
+                              }
+
+                              setViewedFiles(next)
+                              setCollapsed(fileDiff.name, checked)
+                              void persistViewed(next)
+                            }}
+                          />
+                          Viewed
+                        </label>
+                      </>
                     )}
                     renderAnnotation={(annotation) => {
                       const comment = annotation.metadata
@@ -1467,6 +1596,26 @@ function ReviewApp() {
                       )
                     }}
                   />
+                  {showImage && !collapsed && (
+                    <div className="image-diff">
+                      {fileDiff.type !== 'new' && (
+                        <ImagePreview
+                          key={`before:${loaded!.baseCommit}:${fileDiff.prevName ?? fileDiff.name}`}
+                          path={fileDiff.prevName ?? fileDiff.name}
+                          commit={loaded!.baseCommit}
+                          label="Before"
+                        />
+                      )}
+                      {fileDiff.type !== 'deleted' && (
+                        <ImagePreview
+                          key={`after:${fileDiff.name}:${fileDiff.newObjectId ?? loaded!.generatedAt}`}
+                          path={fileDiff.name}
+                          commit={null}
+                          label="After"
+                        />
+                      )}
+                    </div>
+                  )}
                 </section>
               )
             })

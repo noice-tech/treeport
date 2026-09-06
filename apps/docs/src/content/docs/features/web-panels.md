@@ -224,6 +224,20 @@ Sets can overlap. For example, a committed file with a local edit appears in the
 
 Use `unified` to show the final diff. Use `changeSets` to organize the files.
 
+Use `treeport.diffImage({ path, commit })` to read a repository image for a diff preview.
+
+Set `commit` to the full `diff.baseCommit` value for the previous image. Set it to `null` for the current working-tree image.
+
+For a renamed file, use its previous path with the previous commit.
+
+The result contains `dataUrl` and `byteLength`. Use `dataUrl` only as an `<img>` source, not as HTML or a page URL.
+
+Supported file types are PNG, JPEG, GIF, WebP, SVG, AVIF, BMP, and ICO. Browser support determines which images can display.
+
+Each image can have a maximum size of 5 MiB. Treeport rejects symbolic links and paths outside the tree.
+
+Current images must be tracked files or non-ignored untracked files. A folder project does not support this call.
+
 `treeport.shortcuts.onFind(handler)` sends `Cmd/Ctrl+F` to the panel. It returns a function that removes the handler.
 
 `treeport.storage` is durable JSON key-value storage for one panel instance.
