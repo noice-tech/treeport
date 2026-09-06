@@ -6,6 +6,7 @@ import {
 } from '@treeport/shared'
 import type {
   BrowserPanel,
+  GitDiffImageRequest,
   JsonValue,
   OpenBrowserPanelResult,
   OpenWebPanelResult,
@@ -905,6 +906,36 @@ export class PanelService {
       return yield* Effect.promise(() =>
         git.worktreeDiff(worktree.path, context.project.defaultBranch!)
       )
+    })
+  }
+
+  getWebPanelDiffImage(panelId: string, input: GitDiffImageRequest) {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+
+    return Effect.gen(function* () {
+      const git = yield* GitPort
+      const context = yield* getWebPanelContext(panelId)
+      if (context.project.kind !== 'repository') {
+        return yield* Effect.fail(
+          new DomainError(
+            'GIT_NOT_AVAILABLE',
+            'Git images are not available for a folder project',
+            409
+          )
+        )
+      }
+
+      const worktree = yield* requireAvailableWorktree(context.panel.worktreeId)
+      return yield* Effect.tryPromise({
+        try: () => git.diffImage(worktree.path, input),
+        catch: (reason) =>
+          new DomainError(
+            'GIT_IMAGE_UNAVAILABLE',
+            reason instanceof Error ? reason.message : 'Could not read image',
+            422
+          )
+      })
     })
   }
 

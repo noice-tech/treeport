@@ -26,9 +26,20 @@ const panelRequestFields = {
   source: panelMessageSourceSchema,
   id: Schema.String
 }
+export const gitDiffImageRequestSchema = Schema.Struct({
+  path: Schema.String,
+  commit: Schema.NullOr(
+    Schema.String.pipe(Schema.pattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
+  )
+})
 export const panelRequestMessageSchema = Schema.Union(
   Schema.Struct({ ...panelRequestFields, method: Schema.Literal('context') }),
   Schema.Struct({ ...panelRequestFields, method: Schema.Literal('diff') }),
+  Schema.Struct({
+    ...panelRequestFields,
+    method: Schema.Literal('diff.image'),
+    ...gitDiffImageRequestSchema.fields
+  }),
   Schema.Struct({
     ...panelRequestFields,
     method: Schema.Literal('network.listeners')

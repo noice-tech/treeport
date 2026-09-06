@@ -84,6 +84,19 @@ export interface GitDiff {
   changeSets: GitDiffChangeSets
 }
 
+/** An image in the working tree, or at a full Git commit ID. */
+export interface GitDiffImageRequest {
+  path: string
+  /** null selects the current working-tree file. */
+  commit: string | null
+}
+
+/** Bounded image contents. Render dataUrl only as an image, not as HTML. */
+export interface GitDiffImage {
+  dataUrl: string
+  byteLength: number
+}
+
 /** A listening TCP socket attributed to the current tree. */
 export interface WorktreeListener {
   pid: number
@@ -189,6 +202,8 @@ export interface TreeportPanelSdk {
   context(): Promise<WebPanelContext>
   /** Return the combined tree diff and its Git-layer file groups. */
   diff(): Promise<GitDiff>
+  /** Read a repository image (maximum 5 MiB) for a diff preview. */
+  diffImage(input: GitDiffImageRequest): Promise<GitDiffImage>
   /** Listening TCP sockets conservatively attributed to this tree. */
   readonly network: {
     listeners(): Promise<WorktreeListenerDiscovery>
@@ -303,6 +318,7 @@ function call<Result>(
   method:
     | 'context'
     | 'diff'
+    | 'diff.image'
     | 'network.listeners'
     | 'files.list'
     | 'files.read'
@@ -371,6 +387,8 @@ export const treeport: TreeportPanelSdk = Object.freeze({
   }),
   context: () => call<WebPanelContext>('context'),
   diff: () => call<GitDiff>('diff'),
+  diffImage: (input: GitDiffImageRequest) =>
+    call<GitDiffImage>('diff.image', { ...input }),
   network: Object.freeze({
     listeners: () => call<WorktreeListenerDiscovery>('network.listeners')
   }),

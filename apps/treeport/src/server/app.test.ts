@@ -443,6 +443,10 @@ function fixture(webDist = '/missing') {
       path: input.path,
       revision: 'revision-2'
     })),
+    getWebPanelDiffImage: vi.fn(async () => ({
+      dataUrl: 'data:image/png;base64,iVBORw==',
+      byteLength: 4
+    })),
     getWebPanelDiff: vi.fn(async () => ({
       baseRef: 'origin/trunk',
       baseCommit: 'base',
@@ -999,6 +1003,20 @@ describe('HTTP API validation', () => {
       200
     )
     expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
+    const image = await app.request('/api/panels/panel_review/diff/image', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'image.png', commit: null })
+    })
+    expect(image.status).toBe(200)
+    expect(await image.json()).toEqual({
+      dataUrl: 'data:image/png;base64,iVBORw==',
+      byteLength: 4
+    })
+    expect(service.getWebPanelDiffImage).toHaveBeenCalledWith('panel_review', {
+      path: 'image.png',
+      commit: null
+    })
 
     expect(
       await (await app.request('/api/panels/panel_review/files')).json()

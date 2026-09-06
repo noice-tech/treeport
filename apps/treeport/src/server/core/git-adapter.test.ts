@@ -27,6 +27,101 @@ class FakeRunner implements CommandRunner {
 }
 
 describe('GitAdapter', () => {
+  it('reads bounded image bytes from commits and visible working-tree files without following symlinks', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport images '))
+    temporary.push(root)
+    const runner = new SpawnCommandRunner()
+    const adapter = new GitAdapter(runner)
+    const git = (args: string[]) =>
+      runChecked(runner, {
+        executable: 'git',
+        args,
+        cwd: root,
+        timeoutMs: 10_000
+      })
+    await git(['init', '--initial-branch=main'])
+    await git(['config', 'user.email', 'treeport@example.com'])
+    await git(['config', 'user.name', 'Treeport Test'])
+    const original = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0xfe])
+    const changed = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0x80, 0x81])
+    const file = 'image [1] café.png'
+    await fs.writeFile(path.join(root, file), original)
+    await fs.writeFile(path.join(root, 'deleted.png'), original)
+    await fs.writeFile(
+      path.join(root, 'large.png'),
+      Buffer.alloc(5 * 1024 * 1024 + 1)
+    )
+    await fs.writeFile(path.join(root, '.gitignore'), 'ignored.png\n')
+    await fs.symlink(file, path.join(root, 'link.png'))
+    await git(['add', '.'])
+    await git(['commit', '-m', 'images'])
+    const commit = (await git(['rev-parse', 'HEAD'])).stdout.trim()
+    await fs.writeFile(path.join(root, file), changed)
+    await fs.unlink(path.join(root, 'deleted.png'))
+    await fs.writeFile(path.join(root, 'new.PNG'), changed)
+    await fs.writeFile(path.join(root, 'ignored.png'), original)
+    await fs.symlink(os.tmpdir(), path.join(root, 'outside.png'))
+    await fs.mkdir(path.join(root, 'directory'))
+    await fs.writeFile(path.join(root, 'directory', 'image.png'), original)
+    await git(['add', 'directory/image.png'])
+    await fs.rename(path.join(root, 'directory'), path.join(root, 'moved'))
+    await fs.symlink('moved', path.join(root, 'directory'))
+
+    expect(await adapter.diffImage(root, { path: file, commit })).toEqual({
+      dataUrl: `data:image/png;base64,${original.toString('base64')}`,
+      byteLength: original.length
+    })
+    expect(await adapter.diffImage(root, { path: file, commit: null })).toEqual(
+      {
+        dataUrl: `data:image/png;base64,${changed.toString('base64')}`,
+        byteLength: changed.length
+      }
+    )
+    expect(
+      (await adapter.diffImage(root, { path: 'deleted.png', commit }))
+        .byteLength
+    ).toBe(original.length)
+    expect(
+      (await adapter.diffImage(root, { path: 'new.PNG', commit: null }))
+        .byteLength
+    ).toBe(changed.length)
+    await expect(
+      adapter.diffImage(root, { path: 'link.png', commit: null })
+    ).rejects.toThrow('regular')
+    await expect(
+      adapter.diffImage(root, { path: 'directory/image.png', commit: null })
+    ).rejects.toThrow('regular')
+    await fs.rename(path.join(root, file), path.join(root, 'renamed.png'))
+    await git(['add', '-A'])
+    expect(
+      (await adapter.diffImage(root, { path: 'renamed.png', commit: null }))
+        .byteLength
+    ).toBe(changed.length)
+    expect(
+      (await adapter.diffImage(root, { path: file, commit })).byteLength
+    ).toBe(original.length)
+
+    for (const input of [
+      { path: '../outside.png', commit: null },
+      { path: path.join(root, 'renamed.png'), commit: null },
+      { path: '.git/hidden.png', commit: null },
+      { path: ':(glob)*.png', commit },
+      { path: 'renamed.png', commit: '--help' },
+      { path: 'ignored.png', commit: null },
+      { path: 'link.png', commit },
+      { path: 'outside.png', commit: null },
+      { path: '.gitignore', commit },
+      { path: 'missing.png', commit }
+    ]) {
+      await expect(adapter.diffImage(root, input)).rejects.toThrow()
+    }
+    for (const revision of [commit, null]) {
+      await expect(
+        adapter.diffImage(root, { path: 'large.png', commit: revision })
+      ).rejects.toThrow('5 MiB')
+    }
+  })
+
   it('shares one durable local identity across worktrees but not clones', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport identity '))
     temporary.push(root)

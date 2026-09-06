@@ -95,6 +95,8 @@ import {
   worktreeResponseSchema,
   worktreesResponseSchema,
   gitDiffResponseSchema,
+  gitDiffImageRequestSchema,
+  gitDiffImageSchema,
   hasDataResponseSchema,
   listenerDiscoveryResponseSchema,
   okResponseSchema,
@@ -1337,6 +1339,20 @@ export function createApp({
             service.panels.getWebPanelDiff(params.panelId!)
           )
         })
+      })
+    ),
+    route(
+      'POST',
+      '/api/panels/:panelId/diff/image',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(gitDiffImageRequestSchema)
+        return jsonContractResponse(
+          gitDiffImageSchema,
+          yield* operation(() =>
+            service.panels.getWebPanelDiffImage(params.panelId!, body)
+          )
+        )
       })
     ),
     route(

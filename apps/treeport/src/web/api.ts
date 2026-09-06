@@ -6,6 +6,7 @@ import {
   decodeUnknownOrNull,
   directoryBrowseResponseSchema,
   gitDiffResponseSchema,
+  gitDiffImageSchema,
   hasDataResponseSchema,
   listenerDiscoveryResponseSchema,
   okResponseSchema,
@@ -38,6 +39,8 @@ import type {
   ViewerIdentity,
   DirectoryBrowseResponse,
   GitDiff,
+  GitDiffImage,
+  GitDiffImageRequest,
   JsonValue,
   OpenBrowserPanelResult,
   OpenWebPanelResult,
@@ -467,6 +470,18 @@ export const rpc = {
             )
         },
         diff: {
+          image: {
+            $post: ({
+              param,
+              json
+            }: RequestInput<{ panelId: string }, GitDiffImageRequest>) =>
+              endpoint<GitDiffImage>(
+                'POST',
+                `/api/panels/${id(param.panelId)}/diff/image`,
+                gitDiffImageSchema,
+                { json }
+              )
+          },
           $get: ({ param }: RequestInput<{ panelId: string }>) =>
             endpoint<{ diff: GitDiff }>(
               'GET',

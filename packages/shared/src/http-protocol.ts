@@ -478,6 +478,10 @@ export const webPanelContextSchema = Schema.Struct({
     head: nullableStringSchema
   })
 })
+export const gitDiffImageSchema = Schema.Struct({
+  dataUrl: Schema.String,
+  byteLength: Schema.Number
+})
 export const gitDiffSchema = Schema.Struct({
   baseRef: Schema.String,
   baseCommit: Schema.String,

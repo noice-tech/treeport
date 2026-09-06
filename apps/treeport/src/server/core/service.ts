@@ -116,6 +116,7 @@ type PanelApi = Pick<
   | 'getPanelListeners'
   | 'getWebPanelContext'
   | 'getWebPanelDiff'
+  | 'getWebPanelDiffImage'
   | 'getWebPanelListeners'
   | 'getWebPanelStorage'
   | 'hasWebPanelStorage'

@@ -19,6 +19,8 @@ export interface CommandRequest {
   timeoutMs?: number
   killGraceMs?: number
   maxStdoutBytes?: number
+  /** Encode binary stdout without a lossy UTF-8 conversion. */
+  stdoutEncoding?: 'utf8' | 'base64'
   maxStderrBytes?: number
 }
 
@@ -332,7 +334,9 @@ function runCommandEffect(
 
             resume(
               Effect.succeed({
-                stdout: Buffer.concat(resource.stdout).toString('utf8'),
+                stdout: Buffer.concat(resource.stdout).toString(
+                  request.stdoutEncoding ?? 'utf8'
+                ),
                 stderr: Buffer.concat(resource.stderr).toString('utf8'),
                 exitCode: code ?? 1
               })
