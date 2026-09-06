@@ -5,9 +5,15 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { readLocalUpdateProgress, runLocalUpdate } from './update'
+import { PassThrough } from 'node:stream'
+import {
+  confirmLocalUpdate,
+  readLocalUpdateProgress,
+  runLocalUpdate
+} from './update'
 import * as lifecycle from './lifecycle'
 import * as service from './service'
+import { runCliApplication } from './application'
 
 // These contracts run the updater and all of its filesystem operations. Only npm,
 // package discovery, daemon/service control and inventory responses are controlled.
@@ -17,6 +23,8 @@ async function updateFixture(
     latest?: string
     running?: boolean
     service?: boolean
+    serviceMode?: 'user' | 'headless'
+    requestedState?: 'running' | 'stopped'
     packFailure?: boolean
     badIntegrity?: boolean
     installFailure?: boolean
@@ -187,8 +195,12 @@ async function updateFixture(
   const serviceState: service.ServiceStatus = {
     supported: true,
     manager: 'launchd',
-    mode: 'user',
-    state: 'healthy',
+    mode: options.serviceMode ?? 'user',
+    state: options.running
+      ? 'healthy'
+      : options.requestedState === 'stopped'
+        ? 'stopped'
+        : 'unhealthy',
     installed: true,
     enabledAtBoot: false,
     active: true,
@@ -197,7 +209,7 @@ async function updateFixture(
     definitionMatches: true,
     environmentMatches: true,
     entrypointMatches: true,
-    requestedState: 'running',
+    requestedState: options.requestedState ?? 'running',
     definitionPath: path.join(root, 'service.plist'),
     entrypoint,
     daemon: null,
@@ -330,7 +342,394 @@ async function updateFixture(
   }
 }
 
+describe('update confirmation prompt', () => {
+  it.each(['yes', 'no', 'eof', 'abort'] as const)(
+    'handles %s without hanging',
+    async (answer) => {
+      const input = new PassThrough()
+      const output = new PassThrough()
+      let text = ''
+      output.on('data', (chunk) => {
+        text += chunk.toString()
+      })
+      const controller = new AbortController()
+      const result = confirmLocalUpdate(
+        {
+          fromVersion: '1.2.3',
+          toVersion: '1.2.4',
+          daemonWasRunning: true,
+          startRequested: false,
+          recovery: false
+        },
+        controller.signal,
+        input,
+        output
+      )
+      if (answer === 'abort') {
+        controller.abort()
+      } else if (answer === 'eof') {
+        input.end()
+      } else {
+        input.write(`${answer}\n`)
+      }
+
+      expect(await result).toBe(answer === 'yes')
+      expect(text).toContain('1.2.3 -> 1.2.4')
+      expect(text).toContain(
+        'Clients can briefly disconnect. Terminal sessions are preserved.'
+      )
+      input.destroy()
+      output.destroy()
+    }
+  )
+})
+
+describe('update CLI wiring', () => {
+  it.each([{ args: ['update', '--json'] }, { args: ['update'] }])(
+    'requires consent without prompting: %j',
+    async ({ args }) => {
+      const tty = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: false,
+        configurable: true
+      })
+      onTestFinished(() => {
+        if (tty) {
+          Object.defineProperty(process.stdin, 'isTTY', tty)
+        } else {
+          Reflect.deleteProperty(process.stdin, 'isTTY')
+        }
+      })
+      const fixture = await updateFixture({ running: true })
+      vi.spyOn(lifecycle, 'resolveLocalApiUrl').mockResolvedValue(
+        'http://127.0.0.1:1'
+      )
+      let stderr = ''
+      const code = await runCliApplication({
+        args,
+        environment: fixture.environment,
+        stdout: () => undefined,
+        stderr: (value) => {
+          stderr += value
+        }
+      })
+      expect(code).toBe(5)
+      if (args.includes('--json')) {
+        expect(JSON.parse(stderr)).toMatchObject({
+          error: {
+            code: 'UPDATE_CONFIRMATION_REQUIRED',
+            details: { fromVersion: '1.2.3', toVersion: '1.2.4' }
+          }
+        })
+      } else {
+        expect(stderr).toContain('Re-run with --yes')
+      }
+
+      await fixture.unchanged()
+    }
+  )
+
+  it('wires --yes and --start to a verified self-update in JSON mode', async () => {
+    const fixture = await updateFixture()
+    vi.spyOn(lifecycle, 'resolveLocalApiUrl').mockResolvedValue(
+      'http://127.0.0.1:1'
+    )
+    let stdout = ''
+    const code = await runCliApplication({
+      args: ['update', '--yes', '--start', '--json'],
+      environment: fixture.environment,
+      stdout: (value) => {
+        stdout += value
+      },
+      stderr: () => undefined
+    })
+    expect(code).toBe(0)
+    expect(JSON.parse(stdout)).toMatchObject({
+      status: 'updated',
+      daemon: { wasRunning: false, restarted: true, healthy: true }
+    })
+  })
+
+  it.each([
+    { flags: ['--packages', '--start'] },
+    { flags: ['npm:example', '--yes'] }
+  ])(
+    'rejects self-update flags with package updates: %j',
+    async ({ flags }) => {
+      const fixture = await updateFixture()
+      vi.spyOn(lifecycle, 'resolveLocalApiUrl').mockResolvedValue(
+        'http://127.0.0.1:1'
+      )
+      const code = await runCliApplication({
+        args: ['update', ...flags],
+        environment: fixture.environment,
+        stdout: () => undefined,
+        stderr: () => undefined
+      })
+      expect(code).toBe(2)
+      expect(fixture.inventory).not.toHaveBeenCalled()
+      expect(await fixture.events()).toEqual([])
+    }
+  )
+})
+
 describe('local update contracts', () => {
+  it.each(['decline', 'interrupt'] as const)(
+    'leaves daemon and installed version unchanged on confirmation %s',
+    async (decision) => {
+      const fixture = await updateFixture({ running: true })
+      const confirm = vi.fn(async (preview, signal: AbortSignal) => {
+        expect(preview).toMatchObject({
+          fromVersion: '1.2.3',
+          toVersion: '1.2.4',
+          daemonWasRunning: true
+        })
+        expect(fixture.down).not.toHaveBeenCalled()
+        if (decision === 'interrupt') {
+          process.emit('SIGINT')
+          expect(signal.aborted).toBe(true)
+          return true
+        }
+
+        return false
+      })
+      await expect(
+        runLocalUpdate({ environment: fixture.environment, confirm })
+      ).rejects.toMatchObject({ code: 'UPDATE_CANCELLED', exitCode: 130 })
+      expect(confirm).toHaveBeenCalledOnce()
+      await fixture.unchanged()
+    }
+  )
+
+  it('requires explicit non-interactive consent before any disruption', async () => {
+    const fixture = await updateFixture({ running: true })
+    await expect(
+      runLocalUpdate({ environment: fixture.environment })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_CONFIRMATION_REQUIRED',
+      exitCode: 5,
+      details: { fromVersion: '1.2.3', toVersion: '1.2.4' }
+    })
+    await fixture.unchanged()
+  })
+
+  it('cancels during staging without changing the daemon or installation', async () => {
+    const fixture = await updateFixture({ running: true })
+    await expect(
+      runLocalUpdate({
+        environment: fixture.environment,
+        yes: true,
+        progress: (message) => {
+          if (message.startsWith('Downloading')) {
+            process.emit('SIGTERM')
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: 'UPDATE_INTERRUPTED' })
+    await fixture.unchanged()
+  })
+
+  it('accepts interactive consent and verifies before stopping', async () => {
+    const fixture = await updateFixture({ running: true })
+    const confirm = vi.fn(async () => true)
+    expect(
+      await runLocalUpdate({ environment: fixture.environment, confirm })
+    ).toMatchObject({ status: 'updated', daemon: { healthy: true } })
+    expect(confirm).toHaveBeenCalledOnce()
+    const commands = (await fixture.events()).map((event) => event.command)
+    expect(commands.indexOf('version')).toBeLessThan(commands.indexOf('stop'))
+  })
+
+  it('does not prompt for the current version, even with --start', async () => {
+    const fixture = await updateFixture({ latest: '1.2.3' })
+    const confirm = vi.fn(async () => false)
+    expect(
+      await runLocalUpdate({
+        environment: fixture.environment,
+        confirm,
+        start: true
+      })
+    ).toMatchObject({ status: 'current', daemon: { restarted: false } })
+    expect(confirm).not.toHaveBeenCalled()
+    await fixture.unchanged()
+  })
+
+  it.each(['user', 'headless'] as const)(
+    'restarts an intended-running unhealthy %s service without administrator action',
+    async (serviceMode) => {
+      const fixture = await updateFixture({ service: true, serviceMode })
+      expect(
+        await runLocalUpdate({ environment: fixture.environment, yes: true })
+      ).toMatchObject({
+        daemon: {
+          wasRunning: true,
+          restarted: true,
+          healthy: true,
+          lifecycle: 'service'
+        }
+      })
+      expect(fixture.serviceStop).toHaveBeenCalledOnce()
+      expect(fixture.down).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([false, true])(
+    'awaits stopped-service shutdown acknowledgement before activation, with --start=%s',
+    async (start) => {
+      const fixture = await updateFixture({
+        service: true,
+        requestedState: 'stopped'
+      })
+      const stop = fixture.serviceStop.getMockImplementation()!
+      let enter!: () => void
+      let acknowledge!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      const acknowledgement = new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+      fixture.serviceStop.mockImplementationOnce(async () => {
+        // serviceStop must drain a launch that was already
+        // in flight, even when requestedState and daemonStatus say stopped.
+        await fs.writeFile(path.join(fixture.root, 'started'), '1.2.3')
+        enter()
+        await acknowledgement
+        return stop()
+      })
+      const updating = runLocalUpdate({
+        environment: fixture.environment,
+        yes: true,
+        start
+      })
+      try {
+        await Promise.race([
+          entered,
+          updating.then(() => {
+            throw new Error(
+              'Update completed without supervisor acknowledgement'
+            )
+          })
+        ])
+        expect(await fixture.operation()).toMatchObject({
+          phase: 'stop',
+          activated: false
+        })
+        await expect(fs.lstat(fixture.current)).rejects.toMatchObject({
+          code: 'ENOENT'
+        })
+        expect(await fs.readlink(fixture.entrypoint)).toBe(
+          path.join(fixture.packageDirectory, 'bin/treeport.mjs')
+        )
+        expect(await fixture.status()).toMatchObject({
+          running: true,
+          health: { version: '1.2.3' }
+        })
+        const events = await fixture.events()
+        expect(events.at(-1)).toMatchObject({
+          command: 'version',
+          phase: 'verify'
+        })
+        expect(events.some((event) => event.command === 'start')).toBe(false)
+      } finally {
+        acknowledge()
+        await updating
+      }
+      expect(await updating).toMatchObject({
+        daemon: { wasRunning: false, restarted: start, healthy: start }
+      })
+      expect(await fixture.status()).toMatchObject({ running: start })
+      expect(fixture.serviceStop).toHaveBeenCalledExactlyOnceWith()
+      expect(fixture.down).not.toHaveBeenCalled()
+      expect(
+        (await fixture.events()).filter((event) => event.command === 'start')
+      ).toHaveLength(start ? 1 : 0)
+    }
+  )
+
+  it('refuses activation or rollback without a stopped-service shutdown acknowledgement', async () => {
+    const fixture = await updateFixture({
+      service: true,
+      requestedState: 'stopped'
+    })
+    fixture.serviceStop.mockRejectedValue(
+      new Error('Supervisor shutdown was not acknowledged')
+    )
+    await expect(
+      runLocalUpdate({ environment: fixture.environment, yes: true })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_RECOVERY_REQUIRED',
+      details: {
+        phase: 'stop',
+        rollback: { attempted: false, safe: false, succeeded: false }
+      }
+    })
+    expect(fixture.serviceStop).toHaveBeenCalledTimes(2)
+    expect(fixture.down).not.toHaveBeenCalled()
+    await expect(fs.lstat(fixture.current)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(await fs.readlink(fixture.entrypoint)).toBe(
+      path.join(fixture.packageDirectory, 'bin/treeport.mjs')
+    )
+    expect(
+      (await fixture.events()).filter((event) => event.command === 'start')
+    ).toEqual([])
+  })
+
+  it('restores the intentionally stopped state if an explicit start fails safely', async () => {
+    const fixture = await updateFixture({ startFailure: true })
+    await expect(
+      runLocalUpdate({
+        environment: fixture.environment,
+        yes: true,
+        start: true
+      })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_ROLLED_BACK',
+      details: { rollback: { succeeded: true } }
+    })
+    expect(
+      (await fixture.events()).filter((event) => event.command === 'start')
+    ).toHaveLength(1)
+    expect(await fixture.status()).toMatchObject({ running: false })
+    expect(await fs.realpath(fixture.current)).toBe(
+      await fs.realpath(fixture.prefix)
+    )
+  })
+
+  it('surfaces legacy service migration instructions before staging or stopping', async () => {
+    const fixture = await updateFixture({
+      running: true,
+      service: true,
+      serviceMode: 'headless'
+    })
+    const before = await fixture.serviceStatus()
+    fixture.serviceStatus.mockResolvedValue({
+      ...before,
+      administratorCommand: 'controlled migration command'
+    })
+    await expect(
+      runLocalUpdate({ environment: fixture.environment, yes: true })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED',
+      details: { recovery: 'controlled migration command' }
+    })
+    await fixture.unchanged()
+  })
+
+  it('refuses a service intention change during staging', async () => {
+    const fixture = await updateFixture({ running: true, service: true })
+    const before = await fixture.serviceStatus()
+    fixture.serviceStatus
+      .mockResolvedValueOnce(before)
+      .mockResolvedValue({ ...before, requestedState: 'stopped' })
+    await expect(
+      runLocalUpdate({ environment: fixture.environment, yes: true })
+    ).rejects.toMatchObject({ code: 'UPDATE_SERVICE_NOT_READY' })
+    await fixture.unchanged()
+  })
+
   it('is a current-version no-op: no install, activation or daemon restart', async () => {
     const fixture = await updateFixture({ latest: '1.2.3', running: true })
     expect(
@@ -394,7 +793,7 @@ describe('local update contracts', () => {
     async (failure) => {
       const fixture = await updateFixture({ running: true, ...failure })
       await expect(
-        runLocalUpdate({ environment: fixture.environment })
+        runLocalUpdate({ environment: fixture.environment, yes: true })
       ).rejects.toMatchObject({
         code: 'UPDATE_STAGING_FAILED',
         details: { phase: 'stage' }
@@ -429,7 +828,7 @@ describe('local update contracts', () => {
     async (failure) => {
       const fixture = await updateFixture({ running: true, ...failure })
       await expect(
-        runLocalUpdate({ environment: fixture.environment })
+        runLocalUpdate({ environment: fixture.environment, yes: true })
       ).rejects.toMatchObject({
         code: 'UPDATE_VERIFICATION_FAILED',
         details: { phase: 'verify' }
@@ -442,7 +841,10 @@ describe('local update contracts', () => {
     'stages, verifies, stops, switches and restarts with preserved inventory (service=%s)',
     async (service) => {
       const fixture = await updateFixture({ running: true, service })
-      const result = await runLocalUpdate({ environment: fixture.environment })
+      const result = await runLocalUpdate({
+        environment: fixture.environment,
+        yes: true
+      })
       expect(result).toMatchObject({
         status: 'updated',
         fromVersion: '1.2.3',
@@ -556,7 +958,7 @@ describe('local update contracts', () => {
         service ? fixture.down : fixture.serviceStop
       ).not.toHaveBeenCalled()
       if (service) {
-        expect(fixture.serviceStatus).toHaveBeenCalledTimes(2)
+        expect(fixture.serviceStatus).toHaveBeenCalledTimes(3)
       }
 
       await expect(fs.access(download)).rejects.toMatchObject({
@@ -602,7 +1004,7 @@ describe('local update contracts', () => {
         evidence
       })
       await expect(
-        runLocalUpdate({ environment: fixture.environment })
+        runLocalUpdate({ environment: fixture.environment, yes: true })
       ).rejects.toMatchObject({
         code: 'UPDATE_ROLLED_BACK',
         details: {
@@ -656,7 +1058,7 @@ describe('local update contracts', () => {
         stopFailure: evidence === 'stop-failure'
       })
       await expect(
-        runLocalUpdate({ environment: fixture.environment })
+        runLocalUpdate({ environment: fixture.environment, yes: true })
       ).rejects.toMatchObject({
         code: 'UPDATE_RECOVERY_REQUIRED',
         details: {
@@ -688,6 +1090,24 @@ describe('local update contracts', () => {
     }
   )
 
+  it('does not report a successful rollback when terminal recovery fails', async () => {
+    const fixture = await updateFixture({
+      running: true,
+      startFailure: true,
+      missingTerminal: true
+    })
+    await expect(
+      runLocalUpdate({ environment: fixture.environment, yes: true })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_ROLLBACK_FAILED',
+      details: { rollback: { attempted: true, safe: true, succeeded: false } }
+    })
+    expect(await fixture.operation()).toMatchObject({
+      phase: 'recovery_required',
+      rollbackSucceeded: false
+    })
+  })
+
   it('does not report terminal preservation when a session is missing after restart', async () => {
     const fixture = await updateFixture({
       running: true,
@@ -695,7 +1115,7 @@ describe('local update contracts', () => {
       evidence: 'advanced'
     })
     await expect(
-      runLocalUpdate({ environment: fixture.environment })
+      runLocalUpdate({ environment: fixture.environment, yes: true })
     ).rejects.toMatchObject({
       code: 'UPDATE_RECOVERY_REQUIRED',
       details: {
@@ -712,6 +1132,99 @@ describe('local update contracts', () => {
 })
 
 describe('local update progress', () => {
+  it('requires consent for interrupted recovery and verifies the restored daemon and terminals', async () => {
+    const fixture = await updateFixture()
+    await runLocalUpdate({ environment: fixture.environment })
+    const interrupted = {
+      ...(await fixture.operation()),
+      phase: 'activate',
+      daemonWasRunning: true,
+      terminalIds: ['terminal']
+    }
+    const operationPath = path.join(fixture.updateDirectory, 'operation.json')
+    await fs.writeFile(operationPath, JSON.stringify(interrupted))
+    const before = await fs.readFile(operationPath, 'utf8')
+    await expect(
+      runLocalUpdate({
+        environment: fixture.environment,
+        confirm: async () => false
+      })
+    ).rejects.toMatchObject({ code: 'UPDATE_CANCELLED' })
+    expect(await fs.readFile(operationPath, 'utf8')).toBe(before)
+    expect(await fs.realpath(fixture.current)).toBe(
+      await fs.realpath(fixture.target)
+    )
+    expect(fixture.down).not.toHaveBeenCalled()
+    await expect(
+      runLocalUpdate({ environment: fixture.environment, yes: true })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_ROLLED_BACK',
+      details: { rollback: { succeeded: true } }
+    })
+    expect(await fixture.status()).toMatchObject({
+      verified: true,
+      health: { version: '1.2.3' }
+    })
+    expect(fixture.inventory).toHaveBeenCalledOnce()
+    expect(await fixture.operation()).toMatchObject({
+      phase: 'complete',
+      rollbackSucceeded: true
+    })
+  })
+
+  it('rechecks migration evidence after stopping an interrupted service before rollback', async () => {
+    const fixture = await updateFixture({
+      service: true,
+      requestedState: 'stopped'
+    })
+    await runLocalUpdate({ environment: fixture.environment })
+    const interrupted = {
+      ...(await fixture.operation()),
+      phase: 'activate',
+      daemonWasRunning: true
+    }
+    await fs.writeFile(
+      path.join(fixture.updateDirectory, 'operation.json'),
+      JSON.stringify(interrupted)
+    )
+    const confirm = async () => {
+      await fs.writeFile(
+        path.join(fixture.updateDirectory, 'startup-report.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          operationId: interrupted.operationId,
+          targetVersion: interrupted.toVersion,
+          instanceId: null,
+          migrationState: 'advanced',
+          ready: false,
+          error: null,
+          logPath: '/controlled/log',
+          snapshotPaths: [],
+          updatedAt: new Date().toISOString()
+        })
+      )
+      return true
+    }
+    await expect(
+      runLocalUpdate({ environment: fixture.environment, confirm })
+    ).rejects.toMatchObject({
+      code: 'UPDATE_RECOVERY_REQUIRED',
+      details: { migrationState: 'advanced' }
+    })
+    // Both the initial stopped-service update and interrupted recovery quiesce it.
+    expect(fixture.serviceStop).toHaveBeenCalledTimes(2)
+    expect(await fs.realpath(fixture.current)).toBe(
+      await fs.realpath(fixture.target)
+    )
+    expect(
+      (await fixture.events()).filter((event) => event.command === 'start')
+    ).toEqual([])
+    expect(await fixture.operation()).toMatchObject({
+      phase: 'recovery_required',
+      migrationState: 'advanced'
+    })
+  })
+
   it('refuses an interrupted rollback without startup evidence and leaves the active package intact', async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-interrupted-update-')
@@ -819,7 +1332,7 @@ describe('local update progress', () => {
           JSON.parse(await fs.readFile(manifestPath, 'utf8')).version
         ).toBe('1.2.3')
       }
-      expect(stop).toHaveBeenCalledTimes(3)
+      expect(stop).not.toHaveBeenCalled()
     } finally {
       vi.restoreAllMocks()
       await fs.rm(root, { recursive: true, force: true })

@@ -56,6 +56,7 @@ import { extractJsonOutput } from './args.js'
 import { OpenWorkspaceError, openWorkspace } from './open.js'
 import {
   LocalUpdateError,
+  confirmLocalUpdate,
   formatLocalUpdateError,
   runLocalUpdate,
   type LocalUpdateOptions
@@ -1951,11 +1952,24 @@ async function main(args: string[]): Promise<void> {
     .description('Update Treeport or explicitly update configured packages')
     .argument('[source]', 'one configured npm: source')
     .option('--packages', 'update every eligible configured package')
+    .option('-y, --yes', 'approve the Treeport self-update without prompting')
+    .option('--start', 'start Treeport after a self-update if it was stopped')
     .option('--json', 'emit machine-readable JSON')
   updatePackagesCommand.action(async (source: string | undefined) => {
-    const options = updatePackagesCommand.opts<{ packages?: boolean }>()
+    const options = updatePackagesCommand.opts<{
+      packages?: boolean
+      yes?: boolean
+      start?: boolean
+    }>()
     if (source && options.packages) {
       throw new CliError('Specify a package source or --packages, not both.', 2)
+    }
+
+    if ((source || options.packages) && (options.yes || options.start)) {
+      throw new CliError(
+        '--yes and --start apply only to Treeport self-updates.',
+        2
+      )
     }
 
     if (!source && !options.packages) {
@@ -1968,8 +1982,19 @@ async function main(args: string[]): Promise<void> {
       }
 
       const selfUpdateOptions: LocalUpdateOptions = {
-        environment: cliEnvironment
+        environment: cliEnvironment,
+        yes: options.yes ?? false,
+        start: options.start ?? false
       }
+      if (
+        !jsonOutput &&
+        process.stdin.isTTY &&
+        process.stdout.isTTY &&
+        process.stderr.isTTY
+      ) {
+        selfUpdateOptions.confirm = confirmLocalUpdate
+      }
+
       if (!jsonOutput) {
         selfUpdateOptions.progress = (message) => writeStderr(`${message}\n`)
       }
@@ -1993,8 +2018,8 @@ async function main(args: string[]): Promise<void> {
           return `Treeport ${result.toVersion} is current`
         }
 
-        return result.daemon.wasRunning
-          ? `Updated Treeport from ${result.fromVersion} to ${result.toVersion} and restarted the ${result.daemon.lifecycle === 'service' ? 'service' : 'daemon'}`
+        return result.daemon.restarted
+          ? `Updated Treeport from ${result.fromVersion} to ${result.toVersion} and ${result.daemon.wasRunning ? 'restarted' : 'started'} the ${result.daemon.lifecycle === 'service' ? 'service' : 'daemon'}`
           : `Updated Treeport from ${result.fromVersion} to ${result.toVersion}; Treeport remains stopped`
       })
       return

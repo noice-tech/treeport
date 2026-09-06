@@ -38,7 +38,35 @@ For normal backend updates, run:
 treeport update
 ```
 
-An intentionally stopped daemon stays stopped. A running daemon restarts through its existing lifecycle.
+Treeport shows the current and target versions before it asks for confirmation. Clients can disconnect briefly. Terminal sessions continue.
+
+If you decline or cancel, the installed version and daemon remain unchanged.
+
+Treeport downloads and checks the release before it stops the daemon. It then installs the release, restarts, and checks recovery.
+
+An intentionally stopped daemon stays stopped. A service configured to run restarts even if it was unhealthy before the update.
+
+To start an intentionally stopped daemon after an update, run:
+
+```sh
+treeport update --start
+```
+
+If the installed version is current, the command changes nothing. This includes commands with `--start`.
+
+For automation, approve the update explicitly:
+
+```sh
+treeport update --yes --json
+```
+
+JSON output and non-interactive commands never ask for confirmation. Without `--yes`, an update that needs daemon control returns `UPDATE_CONFIRMATION_REQUIRED` with exit code 5.
+
+Declining or cancelling confirmation returns `UPDATE_CANCELLED` with exit code 130. A current-version result does not require approval.
+
+The `--yes` and `--start` options apply only to self-updates. Do not combine them with a package source or `--packages`.
+
+If Treeport reports a required service migration, complete its recovery instruction before the update. The updater does not request administrator access.
 
 ### Upgrade from the old tmux terminal runtime
 

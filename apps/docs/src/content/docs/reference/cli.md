@@ -53,7 +53,7 @@ treeport status
 treeport logs [--lines <count>]
 treeport doctor
 treeport version
-treeport update [--json]
+treeport update [--yes] [--start] [--json]
 
 treeport service enable [--headless]
 treeport service status
@@ -122,7 +122,19 @@ Run lifecycle commands on the computer that runs Treeport.
 
 These commands include `start`, `stop`, `update`, `service`, `status`, `logs`, `doctor`, and `remote`.
 
-Bare `treeport update` resolves and verifies the latest stable npm release before it stops the local daemon. It preserves hosted terminals and an enabled service. It restarts the same lifecycle only when the daemon was running before the update. The command does not use `sudo` and refuses remote, external, development, and non-writable installations.
+Bare `treeport update` shows the current and target versions and asks for confirmation. Clients can disconnect briefly. Hosted terminals continue.
+
+Treeport downloads and verifies the release before it stops the local daemon. It preserves an enabled service and restarts its existing lifecycle.
+
+An intentionally stopped daemon stays stopped unless you specify `--start`. A service configured to run restarts even if it was unhealthy.
+
+Use `--yes` to approve a self-update without confirmation. JSON output and non-interactive commands never ask for confirmation.
+
+Without `--yes`, an update that needs daemon control returns `UPDATE_CONFIRMATION_REQUIRED` with exit code 5. Declining or cancelling confirmation returns `UPDATE_CANCELLED` with exit code 130.
+
+A current-version result changes nothing and does not require approval, even with `--start`.
+
+The command does not use `sudo` and refuses remote, external, development, and non-writable installations.
 
 With `--json`, update success has stable `schemaVersion`, `operationId`, `status`, `phase`, `fromVersion`, `toVersion`, `installation`, `daemon`, `terminals`, and `rollback` fields. `status` is `current` or `updated`. Update errors identify the failed phase, rollback safety, and the next safe action. Normal text output also includes available failure details, daemon log paths, and pre-migration snapshot paths.
 
@@ -138,6 +150,8 @@ Stable update refusal codes are:
 - `UPDATE_DOWNGRADE_REFUSED`
 - `UPDATE_DAEMON_OWNERSHIP_FAILED`
 - `UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED`
+- `UPDATE_SERVICE_NOT_READY`
+- `UPDATE_CONFIRMATION_REQUIRED`
 
 Stable execution and recovery codes are:
 
@@ -146,6 +160,7 @@ Stable execution and recovery codes are:
 - `UPDATE_STAGING_FAILED`
 - `UPDATE_VERIFICATION_FAILED`
 - `UPDATE_INTERRUPTED`
+- `UPDATE_CANCELLED`
 - `UPDATE_HEALTH_VERIFICATION_FAILED`
 - `UPDATE_TERMINAL_VERIFICATION_FAILED`
 - `UPDATE_ROLLED_BACK`
