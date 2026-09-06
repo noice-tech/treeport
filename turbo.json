@@ -53,7 +53,8 @@
     },
     "//#test:integration:run": {
       "dependsOn": ["@treeport/treeport#build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["PLAYWRIGHT_BROWSERS_PATH"]
     }
   }
 }

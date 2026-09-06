@@ -115,57 +115,40 @@ afterEach(async () => {
   )
 })
 
-it('preserves user startup and reports complete zsh and Bash command lifecycles', async () => {
-  const zsh = await available('zsh')
-  const bash = await available('bash')
-  const fish = await available('fish')
-  if (!zsh || !bash) {
-    return
-  }
+it.for([
+  { shell: 'zsh', startup: '.zshrc', coverage: 'required' },
+  { shell: 'bash', startup: '.bash_profile', coverage: 'required' },
+  { shell: 'fish', startup: '.config/fish/config.fish', coverage: 'optional' }
+])(
+  'preserves user startup and reports the complete $shell command lifecycle ($coverage)',
+  // Each shell can use two ten-second output waits, plus PTY startup and cleanup.
+  { timeout: 30_000 },
+  async ({ shell, startup, coverage }, context) => {
+    const executable = await available(shell)
+    if (!executable && coverage === 'optional') {
+      context.skip(
+        'Optional fish coverage: install fish and put it on PATH to enable it.'
+      )
+    }
 
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-shell-title-'))
-  temporary.push(root)
-  const integration = path.join(root, 'integration')
-  await prepareShellIntegration(integration)
+    expect(
+      executable,
+      `Integration tests require ${shell}. Install ${shell} and put it on PATH, then run pnpm test:integration again.`
+    ).not.toBeNull()
 
-  const zshHome = path.join(root, 'zsh-home')
-  await fs.mkdir(zshHome)
-  await fs.writeFile(
-    path.join(zshHome, '.zshrc'),
-    "printf 'treeport-user-zsh-startup\\n'\n"
-  )
-  await verifyCommandLifecycle(
-    zsh,
-    zshHome,
-    integration,
-    'treeport-user-zsh-startup'
-  )
-
-  const bashHome = path.join(root, 'bash-home')
-  await fs.mkdir(bashHome)
-  await fs.writeFile(
-    path.join(bashHome, '.bash_profile'),
-    "printf 'treeport-user-bash-startup\\n'\n"
-  )
-  await verifyCommandLifecycle(
-    bash,
-    bashHome,
-    integration,
-    'treeport-user-bash-startup'
-  )
-
-  if (fish) {
-    const fishHome = path.join(root, 'fish-home')
-    await fs.mkdir(path.join(fishHome, '.config', 'fish'), { recursive: true })
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-shell-title-')
+    )
+    temporary.push(root)
+    const integration = path.join(root, 'integration')
+    await prepareShellIntegration(integration)
+    const home = path.join(root, `${shell}-home`)
+    await fs.mkdir(path.dirname(path.join(home, startup)), { recursive: true })
+    const startupMarker = `treeport-user-${shell}-startup`
     await fs.writeFile(
-      path.join(fishHome, '.config', 'fish', 'config.fish'),
-      "printf 'treeport-user-fish-startup\\n'\n"
+      path.join(home, startup),
+      `printf '${startupMarker}\\n'\n`
     )
-    await verifyCommandLifecycle(
-      fish,
-      fishHome,
-      integration,
-      'treeport-user-fish-startup'
-    )
+    await verifyCommandLifecycle(executable!, home, integration, startupMarker)
   }
-})
+)

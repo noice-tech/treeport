@@ -4,29 +4,21 @@ import os from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { chromium } from 'playwright'
-import { expect, it } from 'vitest'
+import { expect, it, onTestFinished } from 'vitest'
 import type { BrowserFrame } from '@treeport/shared'
 import { PlaywrightBrowserHost } from '../src/server/playwright-browser'
 import { PlaywrightBrowserVideo } from '../src/server/browser-video'
 import { BrowserVideoDecoder } from '../src/web/browser-video-decoder'
+import { prepareChromiumCache } from '../src/server/chromium.test-support'
 
+// Chromium startup, native capture, and decoder synchronization need a longer budget.
 it('decodes native tab video through navigation, resize, static-page joins, and capture restart', async () => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-native-video-')
   )
-  let revision = path.dirname(chromium.executablePath())
-  while (!path.basename(revision).startsWith('chromium-')) {
-    const parent = path.dirname(revision)
-    if (parent === revision) {
-      throw new Error('Could not locate the Chromium cache.')
-    }
-
-    revision = parent
-  }
-  const host = new PlaywrightBrowserHost(
-    path.dirname(revision),
-    path.join(root, 'profile')
-  )
+  onTestFinished(() => fs.rm(root, { recursive: true, force: true }))
+  const cachePath = await prepareChromiumCache(root)
+  const host = new PlaywrightBrowserHost(cachePath, path.join(root, 'profile'))
   const viewerBrowser = await chromium.launch({
     channel: 'chromium',
     headless: true
@@ -134,6 +126,5 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
     await viewerBrowser.close()
     await host.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))
-    await fs.rm(root, { recursive: true, force: true })
   }
-})
+}, 120_000)
