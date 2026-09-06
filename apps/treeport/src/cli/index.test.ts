@@ -35,6 +35,7 @@ import type {
 } from '@treeport/shared'
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -43,6 +44,8 @@ import {
   vi
 } from 'vitest'
 import { runCliApplication } from './application.js'
+import * as lifecycle from './lifecycle.js'
+import * as service from './service.js'
 
 const execute = promisify(execFile)
 const repositoryRoot = path.resolve(
@@ -202,6 +205,176 @@ describe('CLI executable', () => {
 
     await rm(developmentRoot, { recursive: true, force: true })
   })
+})
+
+describe('CLI version and status', () => {
+  const stopped = {
+    running: false,
+    verified: false,
+    state: null,
+    health: null
+  }
+  const running = {
+    running: true,
+    verified: true,
+    state: {
+      pid: 123,
+      instanceId: 'version-test',
+      version: 'stale-record-version',
+      apiUrl: 'http://127.0.0.1:1',
+      dataDir: '/isolated/treeport',
+      startedAt: timestamp,
+      installationMethod: 'npm',
+      daemonLifecycle: 'treeport' as const
+    },
+    health: {
+      ok: true as const,
+      version: packageVersion,
+      protocolVersion: 1,
+      hostname: 'version-test',
+      pid: 123,
+      instanceId: 'version-test',
+      installationMethod: 'npm',
+      daemonLifecycle: 'treeport' as const,
+      url: 'http://127.0.0.1:1'
+    }
+  }
+
+  beforeEach(() => {
+    // Keep version/status checks away from inherited daemon and service state.
+    vi.spyOn(lifecycle, 'resolveLocalApiUrl').mockResolvedValue(
+      'http://127.0.0.1:1'
+    )
+    vi.spyOn(lifecycle, 'daemonStatus').mockResolvedValue(stopped)
+    vi.spyOn(service, 'serviceInstalled').mockResolvedValue(false)
+    vi.spyOn(service, 'serviceStatus').mockRejectedValue(
+      new Error('Unexpected service inspection')
+    )
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      Response.json({ projects: [project] })
+    )
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each(['-v', '--version'])(
+    '%s prints only the CLI version without inspecting the daemon',
+    async (flag) => {
+      vi.mocked(lifecycle.daemonStatus).mockRejectedValue(
+        new Error('Daemon unavailable')
+      )
+      const result = await runCli([flag])
+      expect(result).toEqual({
+        code: 0,
+        stdout: `${packageVersion}\n`,
+        stderr: ''
+      })
+      expect(lifecycle.daemonStatus).not.toHaveBeenCalled()
+      expect(service.serviceInstalled).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([false, true])(
+    'preserves detailed version JSON (running: %s)',
+    async (healthy) => {
+      vi.mocked(lifecycle.daemonStatus).mockResolvedValue(
+        healthy ? running : stopped
+      )
+      const result = await runCli(['version', '--json'])
+      expect(result.code).toBe(0)
+      expect(JSON.parse(result.stdout)).toEqual({
+        cli: packageVersion,
+        daemon: healthy ? packageVersion : null
+      })
+    }
+  )
+
+  it.each([
+    { name: 'stopped', status: stopped, version: null },
+    { name: 'running', status: running, version: packageVersion },
+    {
+      name: 'mismatched',
+      status: { ...running, health: { ...running.health, version: '0.0.1' } },
+      version: '0.0.1'
+    },
+    {
+      name: 'unhealthy',
+      status: { ...running, running: false, verified: false, health: null },
+      version: null
+    },
+    {
+      name: 'unverified',
+      status: { ...running, verified: false },
+      version: null
+    }
+  ])(
+    'shows CLI and verified daemon versions when $name',
+    async ({ status, version }) => {
+      vi.mocked(lifecycle.daemonStatus).mockResolvedValue(status)
+      const human = await runCli(['status'])
+      expect(human.code).toBe(0)
+      expect(human.stdout).toContain(`CLI version: ${packageVersion}`)
+      expect(human.stdout).toContain(
+        `Daemon version: ${version ?? 'unavailable'}`
+      )
+      expect(human.stdout.includes('Version mismatch:')).toBe(
+        version !== null && version !== packageVersion
+      )
+      const json = await runCli(['status', '--json'])
+      expect(json.code).toBe(0)
+      expect(JSON.parse(json.stdout)).toMatchObject({
+        ...status,
+        cliVersion: packageVersion,
+        daemonVersion: version,
+        service: null,
+        projects: status.verified ? 1 : 0
+      })
+    }
+  )
+
+  it.each([false, true])(
+    'shows versions with service supervision (running: %s)',
+    async (healthy) => {
+      vi.mocked(service.serviceInstalled).mockResolvedValue(true)
+      vi.mocked(service.serviceStatus).mockResolvedValue({
+        supported: true,
+        manager: 'launchd',
+        mode: 'headless',
+        state: healthy ? 'healthy' : 'stopped',
+        installed: true,
+        enabledAtBoot: true,
+        active: healthy,
+        healthy,
+        rebootReady: true,
+        definitionMatches: true,
+        environmentMatches: true,
+        entrypointMatches: true,
+        requestedState: healthy ? 'running' : 'stopped',
+        definitionPath: '/isolated/service.plist',
+        entrypoint: '/isolated/treeport',
+        daemon: healthy ? running : stopped,
+        issues: [],
+        recoveryCommands: [],
+        administratorCommand: null
+      })
+      const human = await runCli(['status'])
+      expect(human.code).toBe(0)
+      expect(human.stdout).toContain('Treeport service:')
+      expect(human.stdout).toContain(`CLI version: ${packageVersion}`)
+      expect(human.stdout).toContain(
+        `Daemon version: ${healthy ? packageVersion : 'unavailable'}`
+      )
+      const json = await runCli(['status', '--json'])
+      expect(JSON.parse(json.stdout)).toMatchObject({
+        cliVersion: packageVersion,
+        daemonVersion: healthy ? packageVersion : null,
+        service: { installed: true, healthy }
+      })
+    }
+  )
 })
 
 describe('CLI context and machine output', () => {
