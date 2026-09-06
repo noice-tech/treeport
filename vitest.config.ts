@@ -19,7 +19,6 @@ export default defineConfig({
     exclude: [
       '**/*.integration.test.ts',
       '**/*.integration.test.mjs',
-      '**/*.real.test.ts',
       '**/node_modules/**'
     ],
     environment: 'node',

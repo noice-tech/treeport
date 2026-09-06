@@ -4,15 +4,23 @@ import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { chromium } from 'playwright'
+import { prepareChromiumCache } from './chromium.test-support'
 import { PlaywrightBrowser, PlaywrightBrowserHost } from './playwright-browser'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
-  await Promise.all(cleanup.splice(0).map((dispose) => dispose()))
-})
+  for (const dispose of cleanup.splice(0).reverse()) {
+    await dispose()
+  }
+}, 120_000)
 
+// Multiple browser launches and profile flushes need more than the suite default.
 it('shares durable browser data across panels and browser runtime replacement', async () => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'treeport-playwright-browser-')
+  )
+  cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
+  const cachePath = await prepareChromiumCache(root)
   const server = http.createServer((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8')
     response.end(`<!doctype html><title>Start</title>
@@ -37,19 +45,15 @@ it('shares durable browser data across panels and browser runtime replacement', 
       )
   )
 
-  let browserRevision = path.dirname(chromium.executablePath())
-  while (!path.basename(browserRevision).startsWith('chromium-')) {
-    const parent = path.dirname(browserRevision)
-    if (parent === browserRevision) {
-      throw new Error('Could not locate the Playwright browser cache')
-    }
-
-    browserRevision = parent
-  }
-  const cachePath = path.dirname(browserRevision)
-  await expect(PlaywrightBrowser.status(cachePath)).resolves.toMatchObject({
+  const browserRevision = (await fs.readdir(cachePath)).find((entry) =>
+    entry.startsWith('chromium-')
+  )
+  await expect(
+    PlaywrightBrowser.status(cachePath),
+    'Chromium must launch. Check launchError below; install system libraries with: pnpm --filter @treeport/treeport exec playwright install-deps chromium'
+  ).resolves.toMatchObject({
     installed: true,
-    browserRevision: path.basename(browserRevision),
+    browserRevision,
     channel: 'chromium',
     launchReady: true,
     launchError: null
@@ -60,9 +64,6 @@ it('shares durable browser data across panels and browser runtime replacement', 
     )
   ).toEqual([])
 
-  const root = await fs.mkdtemp(
-    path.join(os.tmpdir(), 'treeport-playwright-browser-')
-  )
   const profilePath = path.join(root, 'browser-profile')
   await Promise.all(
     ['panel-one', 'panel-two', 'replacement-panel'].map((directory) =>
@@ -103,7 +104,6 @@ it('shares durable browser data across panels and browser runtime replacement', 
     await browser.close()
     await secondBrowser.close()
     await host.close()
-    await fs.rm(root, { recursive: true, force: true })
   })
   await Promise.all([browser.launch(), secondBrowser.launch()])
   await browser.setScreencasting(true)
@@ -203,6 +203,10 @@ it('shares durable browser data across panels and browser runtime replacement', 
       }
     }
   )
+  cleanup.push(async () => {
+    await replacementBrowser.close()
+    await replacementHost.close()
+  })
   await replacementBrowser.launch()
   await replacementBrowser.command({ type: 'navigate', url: `${origin}/` })
   await expect(
@@ -210,4 +214,4 @@ it('shares durable browser data across panels and browser runtime replacement', 
   ).resolves.toContain('signed-in login=signed-in')
   await replacementBrowser.close()
   await replacementHost.close()
-})
+}, 120_000)
