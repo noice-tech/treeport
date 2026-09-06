@@ -11,6 +11,7 @@
   "include": [
     "src/cli/**/*.ts",
     "src/server/**/*.ts",
+    "src/server/**/*.json",
     "src/duration.ts",
     "drizzle.config.ts",
     "tsdown.config.ts",
