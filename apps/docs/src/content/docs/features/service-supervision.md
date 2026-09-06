@@ -57,7 +57,11 @@ An administrator can run the printed command from a different account.
 
 The LaunchDaemon starts Treeport as the data owner. The backend does not run as the root user.
 
-Treeport can also print an administrator command after start, stop, or disable operations in advanced headless mode.
+Normal start and stop operations do not need administrator approval after installation.
+
+The stop command keeps Treeport stopped, including after a reboot. Run `treeport start` to start it again.
+
+Removal of the system startup integration still needs administrator approval.
 
 Administrator requests expire. If a request expires, run the original Treeport command again.
 
@@ -67,9 +71,17 @@ Normal service commands do not select advanced headless mode automatically.
 
 Treeport identifies an existing system LaunchDaemon as advanced headless mode.
 
-Status, start, stop, and disable operations continue to use the protected administrator approval process.
+Older headless installations need a one-time administrator migration before normal start and stop operations.
 
-A package update does not rewrite the system definition when its stable Treeport entrypoint is still valid.
+To keep startup before login:
+
+1. Run `treeport service enable --headless` as the Treeport data owner.
+2. Complete the administrator action that Treeport prints.
+3. Run `treeport service status`.
+
+The migration keeps headless mode. It does not select user/login mode.
+
+After migration, release changes do not require a new system startup definition.
 
 To migrate to user/login mode:
 
@@ -114,7 +126,7 @@ treeport start
 treeport stop
 ```
 
-These commands use the operating-system service manager.
+These commands control the installed service. In headless mode, the system startup integration stays loaded when the daemon stops.
 
 The stop command prevents an immediate automatic restart. It keeps automatic startup enabled.
 
@@ -175,7 +187,7 @@ launchd and systemd restart Treeport after an unexpected daemon exit.
 
 The Treeport ownership lock continues to permit only one daemon for each data directory.
 
-The service manager stops only the API daemon process. Treeport's detached terminal host and terminal children continue to run.
+Service stop affects only the API daemon. Treeport's detached terminal host and terminal children continue to run.
 
 Terminals connect again when the replacement daemon is healthy.
 
@@ -197,7 +209,7 @@ treeport update
 
 A running service stops and starts through its existing operating-system manager. The service stays enabled, keeps its selected mode and definition, and adopts the preserved hosted terminals. An intentionally stopped service stays stopped.
 
-Normal macOS user service updates do not need administrator access. Stop an advanced headless service with the administrator action before you update it.
+Normal macOS service updates do not need administrator access. Older headless installations first need the one-time startup integration migration.
 
 If startup fails, Treeport stops service retries before it checks rollback safety. It restores the previous version only with evidence that migration did not advance.
 
