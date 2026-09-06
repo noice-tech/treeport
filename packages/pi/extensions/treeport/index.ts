@@ -1,8 +1,12 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+import type {
+  ExtensionAPI,
+  ExtensionContext
+} from '@earendil-works/pi-coding-agent'
 import { Type, type Static } from 'typebox'
 import { runTreeportJson } from './treeport-cli.ts'
 
 const CONTEXT_TIMEOUT_MS = 5_000
+const CONTEXT_REFRESH_MS = 30_000
 
 interface ManagedContext {
   project: {
@@ -106,126 +110,243 @@ function managedContext(value: ContextOutput): ManagedContext | null {
 }
 
 export default function treeportExtension(pi: ExtensionAPI): void {
-  let guidance: string | null = null
   let badgeVisible = false
+  let guidance: string | null = null
+  let lastWarning: string | null = null
+  let refreshTimer: ReturnType<typeof setInterval> | null = null
+  let lifecycle: AbortController | null = null
+  let refreshing = false
 
-  pi.on('session_start', async (_event, sessionContext) => {
-    guidance = null
-    let detectedValue: ContextOutput
-    try {
-      detectedValue = await runTreeportJson(pi, ['context'], ContextSchema, {
-        cwd: sessionContext.cwd,
-        signal: undefined,
-        timeout: CONTEXT_TIMEOUT_MS
-      })
-    } catch {
-      const injectedIds = [
-        process.env.TREEPORT_PROJECT_ID,
-        process.env.TREEPORT_WORKTREE_ID,
-        process.env.TREEPORT_TERMINAL_ID
-      ].some((value) => Boolean(value?.trim()))
-      if (injectedIds && sessionContext.hasUI) {
-        sessionContext.ui.notify(
-          'Treeport context is unavailable. The Treeport integration is inactive.',
-          'warning'
-        )
-      }
-
-      return
+  const warn = (sessionContext: ExtensionContext, message: string) => {
+    if (sessionContext.hasUI && lastWarning !== message) {
+      sessionContext.ui.notify(message, 'warning')
     }
 
-    if (detectedValue.managed === false) {
-      return
-    }
+    lastWarning = message
+  }
 
-    const detected = managedContext(detectedValue)
-    if (!detected) {
-      const injectedIds = [
-        process.env.TREEPORT_PROJECT_ID,
-        process.env.TREEPORT_WORKTREE_ID,
-        process.env.TREEPORT_TERMINAL_ID
-      ].some((value) => Boolean(value?.trim()))
-      if (injectedIds && sessionContext.hasUI) {
-        sessionContext.ui.notify(
-          'Treeport context is invalid. The Treeport integration is inactive.',
-          'warning'
-        )
-      }
-
-      return
-    }
-
-    let browserCommandsAvailable = true
-    try {
-      await runTreeportJson(pi, ['browser', 'status'], BrowserStatusSchema, {
-        cwd: sessionContext.cwd,
-        signal: undefined,
-        timeout: CONTEXT_TIMEOUT_MS
-      })
-    } catch {
-      browserCommandsAvailable = false
-    }
-
-    const guidanceLines = [
-      'Treeport context:',
-      browserCommandsAvailable
-        ? 'Treeport is a worktree-first workspace for projects, trees, persistent terminals, and browser tabs.'
-        : 'Treeport is a worktree-first workspace for projects, trees, and persistent terminals.',
-      'A project is a registered repository or folder. A tree is its main checkout or a linked Git worktree.',
-      `This session runs in project ${JSON.stringify(
-        detected.project.name
-      )} and tree ${JSON.stringify(detected.worktree.name)}.`,
-      'Use the `treeport` CLI through bash for Treeport operations. Use `--json` when you must parse a result.',
-      'Use bash directly for finite commands that Pi must await.',
-      'For a persistent process, run `treeport terminal create --worktree . --name <name> -- <program> <arg> ...`.',
-      'Pass the child program and its arguments after `--`. Do not use an implicit shell command string.',
-      'Observe persistent terminals with `treeport terminal inspect`, `treeport terminal capture`, or `treeport terminal wait`.',
-      'Do not poll through repeated model calls. Sleep and capture in one bash call, such as `sleep 5; treeport terminal capture <id>`.',
-      '`treeport terminal wait --until idle` observes OSC progress. It is not a readiness check and can return immediately.',
-      'Delete a terminal only when the user asks to stop or close its process. Never delete this Pi session terminal.',
-      'A side quest is independent work in another persistent terminal. Use `treeport terminal create` here or `treeport spawn` for another tree.',
-      ...(browserCommandsAvailable
-        ? [
-            'Use `treeport browser` commands for visible browser tabs. Take a new snapshot after navigation or a runtime change.',
-            'Leave browser tabs open for user inspection. Do not install Chromium without user approval.',
-            'Do not put secrets in browser URLs or command arguments.'
-          ]
-        : []),
-      'Use `treeport <area> <command> --help` for exact syntax. Do not load the Treeport skill for these routine operations.'
-    ]
-    guidance = guidanceLines.join('\n')
-
-    if (!browserCommandsAvailable && sessionContext.hasUI) {
-      sessionContext.ui.notify(
-        'Treeport browser commands are unavailable in this session.',
-        'warning'
-      )
-    }
-
-    if (sessionContext.hasUI) {
-      sessionContext.ui.setStatus(
-        'treeport',
-        sessionContext.ui.theme.fg(
-          'accent',
-          `treeport · ${detected.worktree.name}`
-        )
-      )
-      badgeVisible = true
-    }
-  })
-
-  pi.on('before_agent_start', (event) => {
-    if (!guidance) {
-      return
-    }
-
-    return { systemPrompt: `${event.systemPrompt}\n\n${guidance}` }
-  })
-
-  pi.on('session_shutdown', (_event, sessionContext) => {
+  const clearBadge = (sessionContext: ExtensionContext) => {
     if (badgeVisible) {
       sessionContext.ui.setStatus('treeport', undefined)
       badgeVisible = false
     }
+  }
+
+  const refreshContext = async (sessionContext: ExtensionContext) => {
+    const currentLifecycle = lifecycle
+    if (
+      !currentLifecycle ||
+      currentLifecycle.signal.aborted ||
+      refreshing ||
+      !sessionContext.isIdle()
+    ) {
+      return
+    }
+
+    refreshing = true
+    const signal = currentLifecycle.signal
+    try {
+      let detectedValue: ContextOutput
+      try {
+        detectedValue = await runTreeportJson(pi, ['context'], ContextSchema, {
+          cwd: sessionContext.cwd,
+          signal,
+          timeout: CONTEXT_TIMEOUT_MS
+        })
+      } catch {
+        if (signal.aborted) {
+          return
+        }
+
+        guidance = null
+        clearBadge(sessionContext)
+        const injectedIds = [
+          process.env.TREEPORT_PROJECT_ID,
+          process.env.TREEPORT_WORKTREE_ID,
+          process.env.TREEPORT_TERMINAL_ID
+        ].some((value) => Boolean(value?.trim()))
+        if (injectedIds && sessionContext.hasUI) {
+          warn(
+            sessionContext,
+            'Treeport context is unavailable. The Treeport integration is inactive.'
+          )
+        }
+
+        return
+      }
+
+      if (signal.aborted) {
+        return
+      }
+
+      if (detectedValue.managed === false) {
+        guidance = null
+        lastWarning = null
+        clearBadge(sessionContext)
+        return
+      }
+
+      const detected = managedContext(detectedValue)
+      if (!detected) {
+        guidance = null
+        clearBadge(sessionContext)
+        const injectedIds = [
+          process.env.TREEPORT_PROJECT_ID,
+          process.env.TREEPORT_WORKTREE_ID,
+          process.env.TREEPORT_TERMINAL_ID
+        ].some((value) => Boolean(value?.trim()))
+        if (injectedIds && sessionContext.hasUI) {
+          warn(
+            sessionContext,
+            'Treeport context is invalid. The Treeport integration is inactive.'
+          )
+        }
+
+        return
+      }
+
+      let browserCommandsAvailable = true
+      try {
+        await runTreeportJson(pi, ['browser', 'status'], BrowserStatusSchema, {
+          cwd: sessionContext.cwd,
+          signal,
+          timeout: CONTEXT_TIMEOUT_MS
+        })
+      } catch {
+        browserCommandsAvailable = false
+      }
+
+      // Shutdown/reload invalidates this snapshot, even if the CLI ignores abort.
+      if (signal.aborted) {
+        return
+      }
+
+      const guidanceLines = [
+        'Treeport context:',
+        browserCommandsAvailable
+          ? 'Treeport is a worktree-first workspace for projects, trees, persistent terminals, and browser tabs.'
+          : 'Treeport is a worktree-first workspace for projects, trees, and persistent terminals.',
+        'A project is a registered repository or folder. A tree is its main checkout or a linked Git worktree.',
+        `This session runs in project ${JSON.stringify(
+          detected.project.name
+        )} and tree ${JSON.stringify(detected.worktree.name)}.`,
+        'Use the `treeport` CLI through bash for Treeport operations. Use `--json` when you must parse a result.',
+        'Use bash directly for finite commands that Pi must await.',
+        'For a persistent process, run `treeport terminal create --worktree . --name <name> -- <program> <arg> ...`.',
+        'Pass the child program and its arguments after `--`. Do not use an implicit shell command string.',
+        'Observe persistent terminals with `treeport terminal inspect`, `treeport terminal capture`, or `treeport terminal wait`.',
+        'Do not poll through repeated model calls. Sleep and capture in one bash call, such as `sleep 5; treeport terminal capture <id>`.',
+        '`treeport terminal wait --until idle` observes OSC progress. It is not a readiness check and can return immediately.',
+        'Delete a terminal only when the user asks to stop or close its process. Never delete this Pi session terminal.',
+        'A side quest is independent work in another persistent terminal. Use `treeport terminal create` here or `treeport spawn` for another tree.',
+        ...(browserCommandsAvailable
+          ? [
+              'Use `treeport browser` commands for visible browser tabs. Take a new snapshot after navigation or a runtime change.',
+              'Leave browser tabs open for user inspection. Do not install Chromium without user approval.',
+              'Do not put secrets in browser URLs or command arguments.'
+            ]
+          : []),
+        'Use `treeport <area> <command> --help` for exact syntax. Do not load the Treeport skill for these routine operations.'
+      ]
+      // Publish the complete snapshot atomically. Discovery never edits history,
+      // including when a user submits while these CLI calls are in flight.
+      guidance = guidanceLines.join('\n')
+
+      if (!browserCommandsAvailable) {
+        warn(
+          sessionContext,
+          'Treeport browser commands are unavailable in this session.'
+        )
+      } else {
+        lastWarning = null
+      }
+
+      if (sessionContext.hasUI) {
+        sessionContext.ui.setStatus(
+          'treeport',
+          sessionContext.ui.theme.fg(
+            'accent',
+            `treeport · ${detected.worktree.name}`
+          )
+        )
+        badgeVisible = true
+      }
+    } finally {
+      if (lifecycle === currentLifecycle) {
+        refreshing = false
+      }
+    }
+  }
+
+  pi.on('session_start', async (_event, sessionContext) => {
+    if (refreshTimer) {
+      clearInterval(refreshTimer)
+    }
+
+    lifecycle?.abort()
+    const startedLifecycle = new AbortController()
+    lifecycle = startedLifecycle
+    refreshTimer = null
+    guidance = null
+    refreshing = false
+    lastWarning = null
+    // Warm the cache during initialization, without adding a transcript entry.
+    await refreshContext(sessionContext)
+    if (startedLifecycle.signal.aborted) {
+      return
+    }
+
+    refreshTimer = setInterval(() => {
+      void refreshContext(sessionContext)
+    }, CONTEXT_REFRESH_MS)
+    refreshTimer.unref()
+  })
+
+  pi.on('agent_settled', (_event, sessionContext) => {
+    // Do not move the CLI delay to Pi's completion/idle notification either.
+    void refreshContext(sessionContext)
+  })
+
+  // Submission is the opt-in. Input runs before the user message is appended;
+  // startup, reload, and merely browsing /tree must not create new entries.
+  pi.on('input', (_event, sessionContext) => {
+    // Never await discovery here. Use the last completed snapshot; a background
+    // refresh can only affect a later submission, not this request's prefix.
+    if (guidance && sessionContext.isIdle()) {
+      // Compare the latest context on this branch, not all entries or process state.
+      // A -> B -> A needs an update even though A already exists earlier in history.
+      const previous = sessionContext.sessionManager
+        .getBranch()
+        .filter(
+          (entry) =>
+            entry.type === 'custom_message' &&
+            entry.customType === 'treeport-context'
+        )
+        .pop()
+      if (
+        previous?.type !== 'custom_message' ||
+        previous.content !== guidance
+      ) {
+        // Hidden in chat, retained in /tree and model context. Never rewrite older
+        // entries (including their display flag) or insert at the conversation top.
+        pi.sendMessage(
+          { customType: 'treeport-context', content: guidance, display: false },
+          { triggerTurn: false }
+        )
+      }
+    }
+
+    return { action: 'continue' }
+  })
+
+  pi.on('session_shutdown', (_event, sessionContext) => {
+    if (refreshTimer) {
+      clearInterval(refreshTimer)
+    }
+
+    refreshTimer = null
+    lifecycle?.abort()
+    guidance = null
+    clearBadge(sessionContext)
   })
 }

@@ -1,8 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  SessionManager,
+  type ExtensionAPI
+} from '@earendil-works/pi-coding-agent'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import treeportExtension from './index.ts'
 
 const managed = {
@@ -54,12 +57,20 @@ interface ExecCall {
 }
 
 function harness(
-  execute: (
-    call: ExecCall
-  ) =>
+  execute: (call: ExecCall) =>
     | { stdout: string; stderr: string; code: number; killed: boolean }
-    | Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>
+    | Promise<{
+        stdout: string
+        stderr: string
+        code: number
+        killed: boolean
+      }>,
+  sessionManager = SessionManager.inMemory('/repo/pi-extension')
 ) {
+  const sent: Array<{
+    message: Parameters<ExtensionAPI['sendMessage']>[0]
+    options: Parameters<ExtensionAPI['sendMessage']>[1]
+  }> = []
   const handlers = new Map<string, Array<(event: any, context: any) => any>>()
   const tools: string[] = []
   const execCalls: ExecCall[] = []
@@ -90,7 +101,19 @@ function harness(
     registerMessageRenderer: notUsed,
     registerMarkdownTransformer: notUsed,
     registerEntryRenderer: notUsed,
-    sendMessage: notUsed,
+    sendMessage(
+      message: Parameters<ExtensionAPI['sendMessage']>[0],
+      options: Parameters<ExtensionAPI['sendMessage']>[1]
+    ) {
+      sent.push({ message, options })
+      expect(options).toEqual({ triggerTurn: false })
+      sessionManager.appendCustomMessageEntry(
+        message.customType,
+        message.content,
+        message.display,
+        message.details
+      )
+    },
     sendUserMessage: notUsed,
     appendEntry: notUsed,
     setSessionName: notUsed,
@@ -119,6 +142,8 @@ function harness(
   const context = {
     cwd: '/repo/pi-extension',
     hasUI: true,
+    isIdle: () => true,
+    sessionManager,
     ui: uiFixture
   }
 
@@ -130,7 +155,16 @@ function harness(
     return results
   }
 
-  return { emit, execCalls, notifications, statuses, tools }
+  return {
+    emit,
+    execCalls,
+    notifications,
+    statuses,
+    tools,
+    sent,
+    sessionManager,
+    context
+  }
 }
 
 function success<T>(value: T) {
@@ -146,7 +180,15 @@ function commandArgs(call: ExecCall): string[] {
   return call.args.filter((value) => value !== '--json')
 }
 
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.stubEnv('TREEPORT_CLI_ENTRYPOINT', '')
+  vi.stubEnv('TREEPORT_DAEMON_RECORD', '')
+})
+
 afterEach(() => {
+  vi.clearAllTimers()
+  vi.useRealTimers()
   vi.unstubAllEnvs()
 })
 
@@ -165,7 +207,9 @@ describe('Treeport Pi extension', () => {
     expect(outside.notifications).toEqual([])
     expect(
       await outside.emit('before_agent_start', { systemPrompt: 'Base prompt' })
-    ).toEqual([undefined])
+    ).toEqual([])
+    await outside.emit('input')
+    expect(outside.sent).toEqual([])
 
     const missing = harness(() => ({
       stdout: '',
@@ -180,6 +224,15 @@ describe('Treeport Pi extension', () => {
     vi.stubEnv('TREEPORT_PROJECT_ID', 'project-1')
     vi.stubEnv('TREEPORT_WORKTREE_ID', 'tree-1')
     vi.stubEnv('TREEPORT_TERMINAL_ID', 'terminal-parent')
+    await missing.emit('session_start', { reason: 'reload' })
+    expect(missing.sent).toEqual([])
+    expect(missing.notifications).toEqual([
+      {
+        message:
+          'Treeport context is unavailable. The Treeport integration is inactive.',
+        type: 'warning'
+      }
+    ])
     const invalid = harness(() =>
       success({
         ...managed,
@@ -195,6 +248,401 @@ describe('Treeport Pi extension', () => {
         type: 'warning'
       }
     ])
+  })
+
+  it('waits for submission, hides context from chat, and deduplicates across fresh extension instances', async () => {
+    const execute = (call: ExecCall) =>
+      success(
+        commandArgs(call)[0] === 'context'
+          ? managed
+          : { installed: false, launchReady: false }
+      )
+    const runtime = harness(execute)
+    for (const reason of ['startup', 'reload', 'resume', 'new', 'fork']) {
+      await runtime.emit('session_start', { reason })
+      expect(runtime.sent).toEqual([])
+      expect(runtime.sessionManager.getEntries()).toEqual([])
+    }
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(1)
+    expect(runtime.sent[0]).toMatchObject({
+      message: { customType: 'treeport-context', display: false },
+      options: { triggerTurn: false }
+    })
+    expect(runtime.sent[0]?.message.content).toMatch(/^Treeport context:/)
+    // Browser commands are useful even before Chromium is installed.
+    expect(runtime.sent[0]?.message.content).toContain('treeport browser')
+    await runtime.emit('input')
+    runtime.sessionManager.appendMessage({
+      role: 'user',
+      content: 'Hello',
+      timestamp: 1
+    })
+    const messages = runtime.sessionManager.buildSessionContext().messages
+    expect(messages.map((message) => message.role)).toEqual(['custom', 'user'])
+    expect(runtime.sessionManager.getTree()[0]?.entry).toMatchObject({
+      type: 'custom_message',
+      customType: 'treeport-context',
+      display: false
+    })
+    const history = structuredClone(runtime.sessionManager.getEntries())
+
+    for (const reason of ['resume', 'reload', 'fork']) {
+      const restored = harness(execute, runtime.sessionManager)
+      await restored.emit('session_start', { reason })
+      await restored.emit('input')
+      expect(restored.sent).toEqual([])
+      expect(runtime.sessionManager.getEntries()).toEqual(history)
+    }
+  })
+
+  it('appends changed context before input without rewriting history, including A -> B -> A', async () => {
+    let name = managed.worktree.name
+    let browserAvailable = true
+    const runtime = harness((call) => {
+      if (commandArgs(call)[0] === 'context') {
+        return success({ ...managed, worktree: { ...managed.worktree, name } })
+      }
+
+      if (!browserAvailable) {
+        throw new Error('Browser capability unavailable')
+      }
+
+      return success({ installed: true, launchReady: true })
+    })
+    await runtime.emit('session_start')
+    await runtime.emit('input')
+    runtime.sessionManager.appendMessage({
+      role: 'user',
+      content: 'First',
+      timestamp: 1
+    })
+    const original = structuredClone(runtime.sessionManager.getEntries())
+    for (const nextName of ['renamed', managed.worktree.name]) {
+      name = nextName
+      const beforeReload = structuredClone(runtime.sessionManager.getEntries())
+      await runtime.emit('session_start', { reason: 'reload' })
+      expect(runtime.sessionManager.getEntries()).toEqual(beforeReload)
+      await runtime.emit('input')
+      runtime.sessionManager.appendMessage({
+        role: 'user',
+        content: nextName,
+        timestamp: 2
+      })
+    }
+    expect(runtime.sent).toHaveLength(3)
+    expect(runtime.sent[2]?.message).toEqual(runtime.sent[0]?.message)
+    expect(
+      runtime.sessionManager.getEntries().slice(0, original.length)
+    ).toEqual(original)
+    expect(
+      runtime.sessionManager
+        .buildSessionContext()
+        .messages.map((message) => message.role)
+    ).toEqual(['custom', 'user', 'custom', 'user', 'custom', 'user'])
+
+    browserAvailable = false
+    await runtime.emit('agent_settled')
+    await vi.advanceTimersByTimeAsync(0)
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(4)
+    expect(runtime.sent[3]?.message.content).not.toContain('treeport browser')
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(4)
+  })
+
+  it('does not inject while browsing branches and checks only the active branch at input', async () => {
+    const runtime = harness((call) =>
+      success(
+        commandArgs(call)[0] === 'context'
+          ? managed
+          : { installed: true, launchReady: true }
+      )
+    )
+    const sm = runtime.sessionManager
+    const root = sm.appendMessage({
+      role: 'user',
+      content: 'Older session',
+      timestamp: 1
+    })
+    await runtime.emit('session_start', { reason: 'resume' })
+    await runtime.emit('input')
+    const contextLeaf = sm.getLeafId()!
+    const history = structuredClone(sm.getEntries())
+    for (let i = 0; i < 3; i++) {
+      sm.branch(root)
+      await runtime.emit('session_tree')
+      sm.branch(contextLeaf)
+      await runtime.emit('session_tree')
+      await runtime.emit('input')
+    }
+    expect(sm.getEntries()).toEqual(history)
+    expect(runtime.sent).toHaveLength(1)
+
+    sm.branch(root)
+    await runtime.emit('session_tree')
+    expect(sm.getEntries()).toEqual(history)
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(2)
+    expect(sm.getEntries().slice(0, history.length)).toEqual(history)
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(2)
+  })
+
+  it('only appends when Treeport is discovered in the middle of an existing conversation', async () => {
+    let managedSession = false
+    const runtime = harness((call) =>
+      success(
+        commandArgs(call)[0] === 'context'
+          ? managedSession
+            ? managed
+            : { managed: false, reason: 'outside_treeport' }
+          : { installed: true, launchReady: true }
+      )
+    )
+    const sm = runtime.sessionManager
+    await runtime.emit('session_start')
+    await runtime.emit('input')
+    sm.appendMessage({ role: 'user', content: 'Already working', timestamp: 1 })
+    sm.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Existing answer' }],
+      api: 'openai-completions',
+      provider: 'mock',
+      model: 'mock',
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      stopReason: 'stop',
+      timestamp: 2
+    })
+    const history = structuredClone(sm.getEntries())
+    const prefix = structuredClone(sm.buildSessionContext().messages)
+    const leaf = sm.getLeafId()
+    managedSession = true
+    await runtime.emit('session_start', { reason: 'reload' })
+    expect(sm.getEntries()).toEqual(history)
+    await runtime.emit('input')
+    expect(sm.getEntries().slice(0, history.length)).toEqual(history)
+    expect(sm.getLeafEntry()).toMatchObject({
+      type: 'custom_message',
+      customType: 'treeport-context',
+      parentId: leaf,
+      display: false
+    })
+    sm.appendMessage({ role: 'user', content: 'Continue', timestamp: 3 })
+    expect(sm.buildSessionContext().messages.slice(0, prefix.length)).toEqual(
+      prefix
+    )
+    expect(
+      sm.buildSessionContext().messages.map((message) => message.role)
+    ).toEqual(['user', 'assistant', 'custom', 'user'])
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(1)
+  })
+
+  it('does not rewrite or duplicate previously visible context to hide it', async () => {
+    const execute = (call: ExecCall) =>
+      success(
+        commandArgs(call)[0] === 'context'
+          ? managed
+          : { installed: true, launchReady: true }
+      )
+    const original = harness(execute)
+    await original.emit('session_start')
+    await original.emit('input')
+    const guidance = original.sent[0]?.message.content
+    if (!guidance) {
+      throw new Error('Missing fixture guidance')
+    }
+
+    const sm = SessionManager.inMemory('/repo/pi-extension')
+    sm.appendCustomMessageEntry('treeport-context', guidance, true)
+    const history = structuredClone(sm.getEntries())
+    const resumed = harness(execute, sm)
+    await resumed.emit('session_start', { reason: 'reload' })
+    await resumed.emit('input')
+    expect(resumed.sent).toEqual([])
+    expect(sm.getEntries()).toEqual(history)
+  })
+
+  it('leaves running turns alone and refreshes in the background while idle', async () => {
+    const runtime = harness((call) =>
+      success(
+        commandArgs(call)[0] === 'context'
+          ? managed
+          : { installed: true, launchReady: true }
+      )
+    )
+    runtime.context.isIdle = () => false
+    await runtime.emit('session_start')
+    await runtime.emit('input')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(runtime.execCalls).toEqual([])
+    expect(runtime.sent).toEqual([])
+    runtime.context.isIdle = () => true
+    await runtime.emit('agent_settled')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runtime.sent).toEqual([])
+    const calls = runtime.execCalls.length
+    await runtime.emit('input')
+    expect(runtime.execCalls).toHaveLength(calls)
+    expect(runtime.sent).toHaveLength(1)
+  })
+
+  it('submits immediately from cache during slow refresh and appends updates only on later input', async () => {
+    let slow = false
+    let release = () => {}
+    let started = () => {}
+    const refreshStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const pending = new Promise<ReturnType<typeof success>>((resolve) => {
+      release = () =>
+        resolve(
+          success({
+            ...managed,
+            worktree: { ...managed.worktree, name: 'updated' }
+          })
+        )
+    })
+    const runtime = harness((call) => {
+      if (commandArgs(call)[0] === 'context') {
+        if (slow) {
+          started()
+          return pending
+        }
+
+        return success(managed)
+      }
+
+      return success({ installed: true, launchReady: true })
+    })
+    await runtime.emit('session_start')
+    expect(runtime.sent).toEqual([])
+    slow = true
+    await runtime.emit('agent_settled')
+    await refreshStarted
+    const calls = runtime.execCalls.length
+    // Single-flight: another idle refresh does not launch a second CLI process.
+    await runtime.emit('agent_settled')
+    // This resolves while the discovery promise above is still unresolved.
+    await runtime.emit('input')
+    expect(runtime.execCalls).toHaveLength(calls)
+    expect(runtime.sent[0]?.message.content).toContain('"pi-extension"')
+    runtime.sessionManager.appendMessage({
+      role: 'user',
+      content: 'Continue',
+      timestamp: 1
+    })
+    const history = structuredClone(runtime.sessionManager.getEntries())
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runtime.sessionManager.getEntries()).toEqual(history)
+    expect(runtime.sent).toHaveLength(1)
+    const refreshedCalls = runtime.execCalls.length
+    await runtime.emit('input')
+    expect(runtime.execCalls).toHaveLength(refreshedCalls)
+    expect(runtime.sent).toHaveLength(2)
+    expect(runtime.sent[1]?.message.content).toContain('"updated"')
+    expect(
+      runtime.sessionManager.getEntries().slice(0, history.length)
+    ).toEqual(history)
+  })
+
+  it('refreshes while idle without transcript changes and cancels late results on shutdown', async () => {
+    let name = 'original'
+    let slow = false
+    let release = () => {}
+    let started = () => {}
+    const refreshStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const pending = new Promise<ReturnType<typeof success>>((resolve) => {
+      release = () =>
+        resolve(
+          success({
+            ...managed,
+            worktree: { ...managed.worktree, name: 'too-late' }
+          })
+        )
+    })
+    const runtime = harness((call) => {
+      if (commandArgs(call)[0] === 'context') {
+        if (slow) {
+          started()
+          return pending
+        }
+
+        return success({ ...managed, worktree: { ...managed.worktree, name } })
+      }
+
+      return success({ installed: true, launchReady: true })
+    })
+    await runtime.emit('session_start')
+    name = 'idle-update'
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(runtime.execCalls).toHaveLength(4)
+    expect(runtime.sent).toEqual([])
+    await runtime.emit('input')
+    expect(runtime.sent[0]?.message.content).toContain('"idle-update"')
+    slow = true
+    await runtime.emit('agent_settled')
+    await refreshStarted
+    const signal = runtime.execCalls.at(-1)?.options.signal
+    expect(signal?.aborted).toBe(false)
+    const history = structuredClone(runtime.sessionManager.getEntries())
+    await runtime.emit('session_shutdown')
+    const statuses = structuredClone(runtime.statuses)
+    expect(signal?.aborted).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    await runtime.emit('input')
+    const calls = runtime.execCalls.length
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(runtime.execCalls).toHaveLength(calls)
+    expect(runtime.sessionManager.getEntries()).toEqual(history)
+    expect(runtime.statuses).toEqual(statuses)
+    expect(runtime.statuses.at(-1)).toEqual({
+      key: 'treeport',
+      text: undefined
+    })
+    expect(runtime.notifications).toEqual([])
+  })
+
+  it('persists guidance without UI and leaves history untouched if Treeport becomes unavailable', async () => {
+    let available = true
+    const runtime = harness((call) => {
+      if (!available) {
+        throw new Error('CLI unavailable')
+      }
+
+      return success(
+        commandArgs(call)[0] === 'context'
+          ? managed
+          : { installed: false, launchReady: false }
+      )
+    })
+    runtime.context.hasUI = false
+    await runtime.emit('session_start')
+    expect(runtime.sent).toEqual([])
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(1)
+    expect(runtime.statuses).toEqual([])
+    expect(runtime.notifications).toEqual([])
+    const history = structuredClone(runtime.sessionManager.getEntries())
+    available = false
+    await runtime.emit('agent_settled')
+    await vi.advanceTimersByTimeAsync(0)
+    await runtime.emit('input')
+    expect(runtime.sessionManager.getEntries()).toEqual(history)
+    expect(runtime.notifications).toEqual([])
   })
 
   it('adds stable CLI guidance and the badge only in a managed session', async () => {
@@ -232,46 +680,35 @@ describe('Treeport Pi extension', () => {
       text: 'treeport · pi-extension'
     })
 
-    const [promptChange] = await runtime.emit('before_agent_start', {
-      systemPrompt: 'Base prompt'
-    })
-    expect(promptChange.systemPrompt).toContain(
+    expect(
+      await runtime.emit('before_agent_start', {
+        systemPrompt: 'Base prompt'
+      })
+    ).toEqual([])
+    expect(runtime.sent).toEqual([])
+    await runtime.emit('input')
+    const guidance = runtime.sent[0]?.message.content
+    expect(guidance).toContain(
       'Treeport is a worktree-first workspace for projects, trees, persistent terminals, and browser tabs.'
     )
-    expect(promptChange.systemPrompt).toContain(
-      'This session runs in project "Treeport" and tree "pi-extension".'
-    )
-    expect(promptChange.systemPrompt).toContain(
-      'Use the `treeport` CLI through bash for Treeport operations.'
-    )
-    expect(promptChange.systemPrompt).toContain(
-      'treeport terminal create --worktree . --name <name> -- <program> <arg> ...'
-    )
-    expect(promptChange.systemPrompt).toContain(
-      'sleep 5; treeport terminal capture <id>'
-    )
-    expect(promptChange.systemPrompt).toContain(
-      'It is not a readiness check and can return immediately.'
-    )
-    expect(promptChange.systemPrompt).toContain(
-      'Never delete this Pi session terminal.'
-    )
-    expect(promptChange.systemPrompt).toContain(
-      'Use `treeport terminal create` here or `treeport spawn` for another tree.'
-    )
-    expect(promptChange.systemPrompt).toContain(
-      'Use `treeport browser` commands for visible browser tabs.'
-    )
-    expect(promptChange.systemPrompt).toContain(
+    for (const instruction of [
+      'This session runs in project "Treeport" and tree "pi-extension".',
+      'Use the `treeport` CLI through bash for Treeport operations.',
+      'treeport terminal create --worktree . --name <name> -- <program> <arg> ...',
+      'sleep 5; treeport terminal capture <id>',
+      'It is not a readiness check and can return immediately.',
+      'Never delete this Pi session terminal.',
+      'Use `treeport terminal create` here or `treeport spawn` for another tree.',
+      'Use `treeport browser` commands for visible browser tabs.',
       'Do not load the Treeport skill for these routine operations.'
-    )
-    expect(promptChange.systemPrompt).not.toContain('project-1')
-    expect(promptChange.systemPrompt).not.toContain('/repo/pi-extension')
+    ]) {
+      expect(guidance).toContain(instruction)
+    }
+    expect(guidance).not.toContain('project-1')
+    expect(guidance).not.toContain('/repo/pi-extension')
 
-    const [repeatedPromptChange] = await runtime.emit('before_agent_start', {
-      systemPrompt: 'Base prompt'
-    })
-    expect(repeatedPromptChange).toEqual(promptChange)
+    await runtime.emit('input')
+    expect(runtime.sent).toHaveLength(1)
 
     await runtime.emit('session_shutdown', { reason: 'quit' })
     expect(runtime.statuses.at(-1)).toEqual({
@@ -300,14 +737,12 @@ describe('Treeport Pi extension', () => {
       message: 'Treeport browser commands are unavailable in this session.',
       type: 'warning'
     })
-    const [oldCliPrompt] = await oldCli.emit('before_agent_start', {
-      systemPrompt: 'Base prompt'
-    })
-    expect(oldCliPrompt.systemPrompt).toContain(
-      'projects, trees, and persistent terminals.'
-    )
-    expect(oldCliPrompt.systemPrompt).not.toContain('browser tabs')
-    expect(oldCliPrompt.systemPrompt).not.toContain('treeport browser')
+    expect(oldCli.sent).toEqual([])
+    await oldCli.emit('input')
+    const oldGuidance = oldCli.sent[0]?.message.content
+    expect(oldGuidance).toContain('projects, trees, and persistent terminals.')
+    expect(oldGuidance).not.toContain('browser tabs')
+    expect(oldGuidance).not.toContain('treeport browser')
 
     await rm(developmentRoot, { recursive: true, force: true })
   })
