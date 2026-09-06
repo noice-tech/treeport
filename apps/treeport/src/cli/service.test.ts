@@ -12,6 +12,7 @@ import {
   launchdLocation,
   serializeLaunchdDefinition,
   serializeSystemdDefinition,
+  serviceHealthState,
   storedServiceMode,
   userLaunchdCommands
 } from './service.js'
@@ -19,6 +20,38 @@ import {
 const execute = promisify(execFile)
 
 describe('OS service definitions', () => {
+  it('distinguishes stopped intent from an unhealthy daemon under an active supervisor', () => {
+    const status = {
+      actionRequired: false,
+      stale: false,
+      healthy: false,
+      installed: true,
+      requestedState: 'running' as const,
+      daemonRunning: false,
+      managerActive: true,
+      supervised: true
+    }
+    expect(serviceHealthState(status)).toBe('unhealthy')
+    expect(serviceHealthState({ ...status, requestedState: 'stopped' })).toBe(
+      'stopped'
+    )
+    expect(
+      serviceHealthState({
+        ...status,
+        requestedState: 'stopped',
+        daemonRunning: true,
+        healthy: true
+      })
+    ).toBe('unhealthy')
+    expect(
+      serviceHealthState({ ...status, healthy: true, daemonRunning: true })
+    ).toBe('healthy')
+    expect(serviceHealthState({ ...status, stale: true })).toBe('stale')
+    expect(serviceHealthState({ ...status, actionRequired: true })).toBe(
+      'action_required'
+    )
+  })
+
   it('uses a per-user LaunchAgent for the normal macOS service lifecycle', () => {
     const home = '/Users/tree port'
     const location = launchdLocation({ uid: 501, home, mode: 'user' })

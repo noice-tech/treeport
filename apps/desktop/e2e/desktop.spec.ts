@@ -43,10 +43,6 @@ function workspaceLink(url: string): string {
   return link.href
 }
 
-interface PlaywrightAiPage {
-  ariaSnapshot(options: { mode: 'ai' }): Promise<string>
-}
-
 interface BrowserPanelFixture {
   id: string
   kind: 'browser'
@@ -136,7 +132,7 @@ function projectFixture() {
   }
 }
 
-test('controls the local Browser through its exact bridge while another workspace is selected', async () => {
+test('preserves native Browser isolation, ownership and runtime continuity', async () => {
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-browser-')
   )
@@ -164,7 +160,6 @@ test('controls the local Browser through its exact bridge while another workspac
   let ownerTakeControlRequests = 0
   let websocketRequests = 0
   let browserIndex = 0
-  let slowBrowserResponse = false
   let ownerTicketGate: Promise<void> | null = null
   const stalledResponses = new Set<http.ServerResponse>()
   const ownerTickets = new Map<string, { panelId: string; challenge: string }>()
@@ -368,10 +363,6 @@ test('controls the local Browser through its exact bridge while another workspac
     }
 
     if (url.pathname === '/site/start') {
-      if (slowBrowserResponse) {
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-
       response.setHeader('content-type', 'text/html')
       response.end(`<!doctype html>
         <title>Browser start</title>
@@ -443,9 +434,9 @@ test('controls the local Browser through its exact bridge while another workspac
         initialized = true
         ownerTickets.delete(auth.ticket)
         ownerEndpoints.set(ticket.panelId, auth.endpoint)
-        const panel = project.worktrees[0]!.panels.find(
-          (candidate) => candidate.id === ticket.panelId
-        )!
+        const panel = project.worktrees
+          .flatMap((worktree) => worktree.panels)
+          .find((candidate) => candidate.id === ticket.panelId)!
         let revision = -1
         const generation = 1
         const pendingControlRequests = new Map<
@@ -545,7 +536,30 @@ test('controls the local Browser through its exact bridge while another workspac
               .parse(value.data)
             if (state.revision > revision) {
               revision = state.revision
-              Object.assign(panel, state.state, { updatedAt: '2026-01-02' })
+              // Match panel-service persistence: normalize metadata and publish only changes.
+              const url = state.state.url
+              const title =
+                state.state.title.trim().slice(0, 256) ||
+                (url === 'about:blank' ? 'Browser' : new URL(url).host)
+              if (panel.url !== url || panel.title !== title) {
+                Object.assign(panel, {
+                  url,
+                  title,
+                  updatedAt: new Date().toISOString()
+                })
+                Effect.runSync(
+                  PubSub.publish(rpcEvents, {
+                    _tag: 'ProductEvent',
+                    event: {
+                      id: crypto.randomUUID(),
+                      type: 'panel.updated',
+                      at: panel.updatedAt,
+                      data: { worktreeId: panel.worktreeId, panelId: panel.id }
+                    }
+                  })
+                )
+              }
+
               if (value.data.type === 'ready') {
                 ownerReadyUrls.set(panel.id, state.state.url)
               }
@@ -577,48 +591,47 @@ test('controls the local Browser through its exact bridge while another workspac
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
+    topicWorktree.panels.push({
+      ...project.worktrees[0]!.panels[0]!,
+      id: 'panel_decoy',
+      worktreeId: 'wt_topic',
+      url: `${origin}/site/start?decoy`
+    })
     browserIndex = 1
     const workspaceUrl = `${origin}/projects/proj_1/worktrees/wt_main`
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
-    )
 
-    electronApp = await electron.launch({
-      args: [`--user-data-dir=${userData}`, '.', workspaceLink(workspaceUrl)],
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        TREEPORT_DESKTOP_E2E: '1',
-        TREEPORT_DESKTOP_USER_DATA: '',
-        TREEPORT_DESKTOP_URL: origin
-      }
-    })
-    const window = await electronApp.firstWindow()
-    const identity = await electronApp.evaluate(({ app }) => ({
-      name: app.name,
-      userData: app.getPath('userData')
-    }))
-    expect(identity.name).toBe('Treeport Dev')
-    expect(await fs.realpath(identity.userData)).toBe(
-      await fs.realpath(userData)
-    )
-    await expect(
-      window.getByRole('heading', {
-        name: 'Treeport isn’t available on this computer'
+    const window = await test.step('connect to a ready backend', async () => {
+      electronApp = await electron.launch({
+        args: [`--user-data-dir=${userData}`, '.', workspaceLink(workspaceUrl)],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          TREEPORT_DESKTOP_E2E: '1',
+          TREEPORT_DESKTOP_USER_DATA: '',
+          TREEPORT_DESKTOP_URL: origin
+        }
       })
-    ).toBeVisible({ timeout: 8_000 })
-
-    await new Promise<void>((resolve) =>
-      server.listen(port, '127.0.0.1', resolve)
-    )
-    await expect(
-      window.getByRole('button', { name: 'Connected computer: This computer' })
-    ).toBeVisible({ timeout: 8_000 })
-    await expect(
-      window.getByRole('button', { name: /^main tree/ })
-    ).toBeVisible()
-    expect(applicationDocumentRequests).toBe(0)
-    await expect.poll(() => websocketRequests).toBeGreaterThan(0)
+      const window = await electronApp.firstWindow()
+      const identity = await electronApp.evaluate(({ app }) => ({
+        name: app.name,
+        userData: app.getPath('userData')
+      }))
+      expect(identity.name).toBe('Treeport Dev')
+      expect(await fs.realpath(identity.userData)).toBe(
+        await fs.realpath(userData)
+      )
+      await expect(
+        window.getByRole('button', {
+          name: 'Connected computer: This computer'
+        })
+      ).toBeVisible({ timeout: 8_000 })
+      await expect(
+        window.getByRole('button', { name: /^main tree/ })
+      ).toBeVisible()
+      expect(applicationDocumentRequests).toBe(0)
+      await expect.poll(() => websocketRequests).toBeGreaterThan(0)
+      return window
+    })
 
     const pressTreeShortcut = (keyCode: '[' | ']') =>
       electronApp!.evaluate(({ BrowserWindow }, shortcut) => {
@@ -638,52 +651,95 @@ test('controls the local Browser through its exact bridge while another workspac
           modifiers
         })
       }, keyCode)
-    await pressTreeShortcut(']')
-    await expect(window).toHaveURL(
-      /\/worktrees\/wt_topic\/terminals\/term_topic$/
-    )
-    await pressTreeShortcut('[')
-    await expect(window).toHaveURL(
-      /\/worktrees\/wt_main\/terminals\/term_shell$/
-    )
+    await test.step('attach a second guest in another worktree', async () => {
+      await pressTreeShortcut(']')
+      await expect(window).toHaveURL(
+        /\/worktrees\/wt_topic\/terminals\/term_topic$/
+      )
+      await window.getByRole('button', { name: 'Toggle side panel' }).click()
+      await window.getByRole('tab', { name: /, Browser$/ }).click()
+      await expect
+        .poll(() => ownerReadyUrls.get('panel_decoy'))
+        .toBe(`${origin}/site/start?decoy`)
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(
+            ({ webContents }, url) =>
+              webContents
+                .getAllWebContents()
+                .find(
+                  (guest) =>
+                    guest.getType() === 'webview' && guest.getURL() === url
+                )
+                ?.executeJavaScript('sessionStorage.loads'),
+            `${origin}/site/start?decoy`
+          )
+        )
+        .toBe('1')
+      // A selected Browser route opens its panel on metadata refresh. Leave that
+      // route before hiding, so delayed title events cannot reopen the decoy.
+      await window.getByRole('button', { name: /^Topic Shell/ }).click()
+      await expect(window).toHaveURL(
+        /\/worktrees\/wt_topic\/terminals\/term_topic$/
+      )
+      await window.getByRole('button', { name: 'Toggle side panel' }).click()
+      await expect(
+        window.getByRole('button', { name: 'Toggle side panel' })
+      ).toHaveAttribute('aria-expanded', 'false')
+      await pressTreeShortcut('[')
+      await expect(window).toHaveURL(
+        /\/worktrees\/wt_main\/terminals\/term_shell$/
+      )
+    })
 
-    await window.getByRole('button', { name: 'Toggle side panel' }).click()
     const browserTab = window.getByRole('tab', { name: /, Browser$/ })
-    await browserTab.click()
-
     const address = window.getByRole('textbox', { name: 'Application URL' })
-    await expect(address).toHaveValue(`${origin}/site/start`)
-    await expect
-      .poll(() => ownerReadyUrls.get(browserPanelId))
-      .toBe(`${origin}/site/start`)
-    await expect(
-      window.getByRole('tab', { name: 'Browser start, Browser' })
-    ).toBeVisible({ timeout: 10_000 })
     const sidePanelToggle = window.getByRole('button', {
       name: 'Toggle side panel'
     })
-    await sidePanelToggle.click()
-    await expect(browserTab).not.toBeVisible()
-    await sidePanelToggle.click()
-    await expect(browserTab).toBeVisible()
-    expect(
-      await electronApp.evaluate(({ webContents }, targetUrl) => {
-        const browser = webContents
-          .getAllWebContents()
-          .find(
-            (contents) =>
-              contents.getType() === 'webview' &&
-              contents.getURL() === targetUrl
-          )
-        return browser?.getLastWebPreferences()
-      }, `${origin}/site/start`)
-    ).toMatchObject({
-      nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true
-    })
+    const primaryGuestId =
+      await test.step('attach intended guest and receive metadata', async () => {
+        await sidePanelToggle.click()
+        await browserTab.click()
+        await expect(address).toHaveValue(`${origin}/site/start`)
+        await expect
+          .poll(() => ownerReadyUrls.get(browserPanelId))
+          .toBe(`${origin}/site/start`)
+        // Metadata should arrive through panel.updated, not the five-second poll.
+        await expect(
+          window.getByRole('tab', { name: 'Browser start, Browser' })
+        ).toBeVisible({ timeout: 2_000 })
+        expect(
+          await electronApp.evaluate(({ webContents }, targetUrl) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
+            return browser?.getLastWebPreferences()
+          }, `${origin}/site/start`)
+        ).toMatchObject({
+          nodeIntegration: false,
+          nodeIntegrationInSubFrames: false,
+          contextIsolation: true,
+          sandbox: true,
+          webSecurity: true
+        })
+        const id = await electronApp!.evaluate(
+          ({ webContents }, url) =>
+            webContents
+              .getAllWebContents()
+              .find(
+                (guest) =>
+                  guest.getType() === 'webview' && guest.getURL() === url
+              )?.id,
+          `${origin}/site/start`
+        )
+        expect(id).toBeDefined()
+        return id!
+      })
 
     const endpoint = await expect
       .poll(() => ownerEndpoints.get(browserPanelId))
@@ -691,101 +747,460 @@ test('controls the local Browser through its exact bridge while another workspac
       .then(() => ownerEndpoints.get(browserPanelId)!)
     const connectedBrowser = await chromium.connectOverCDP(endpoint)
     try {
+      // Playwright API over Treeport's custom CDP bridge, not Playwright CLI.
+      expect(connectedBrowser.contexts()).toHaveLength(1)
+      expect(connectedBrowser.contexts()[0]!.pages()).toHaveLength(1)
       const visiblePage = connectedBrowser.contexts()[0]!.pages()[0]!
-      await visiblePage.locator('#hit').focus()
-      await visiblePage.keyboard.press(
-        process.platform === 'darwin' ? 'Meta+L' : 'Control+L'
-      )
-      await expect(address).toBeFocused()
-      await expect(address).toHaveJSProperty('selectionStart', 0)
-      await expect(address).toHaveJSProperty(
-        'selectionEnd',
-        `${origin}/site/start`.length
-      )
-
-      await address.fill(`${origin}/site/next`)
-      await address.press('Enter')
-      await expect(address).not.toBeFocused()
-      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/next`)
-      await expect
-        .poll(() => visiblePage.evaluate(() => document.hasFocus()))
-        .toBe(true)
-      await window.keyboard.press('x')
-      await expect
-        .poll(() => visiblePage.locator('#key').textContent())
-        .toBe('x')
-      await visiblePage.goBack()
-      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
-      await expect(address).toHaveValue(`${origin}/site/start`)
-
-      expect(
-        await electronApp.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
-            )
-          browser?.sendInputEvent({
-            type: 'keyDown',
-            keyCode: 'f',
-            modifiers: [process.platform === 'darwin' ? 'meta' : 'control']
-          })
-          return browser !== undefined
-        }, `${origin}/site/start`)
-      ).toBe(true)
-      const findInput = window.getByRole('textbox', { name: 'Find in page' })
-      await expect(findInput).toBeVisible()
-      await findInput.focus()
-      expect(
-        await electronApp.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
-            )
-          if (!browser) {
-            return false
-          }
-
-          process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = ''
-          browser.on('found-in-page', (_event, result) => {
-            process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = String(
-              result.matches
-            )
-          })
-          return true
-        }, `${origin}/site/start`)
-      ).toBe(true)
-      await findInput.fill('Browser target')
-      await expect
-        .poll(() =>
-          electronApp!.evaluate(
-            () => process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES
-          )
+      expect(visiblePage.url()).toBe(`${origin}/site/start`)
+      await test.step('route native location and find shortcuts across guest focus', async () => {
+        await visiblePage.locator('#hit').focus()
+        await visiblePage.keyboard.press(
+          process.platform === 'darwin' ? 'Meta+L' : 'Control+L'
         )
-        .toBe('1')
-      await findInput.press('Escape')
-      await expect(findInput).toHaveCount(0)
-      await expect
-        .poll(() => visiblePage.evaluate(() => document.hasFocus()))
-        .toBe(true)
+        await expect(address).toBeFocused()
+        await expect(address).toHaveJSProperty('selectionStart', 0)
+        await expect(address).toHaveJSProperty(
+          'selectionEnd',
+          `${origin}/site/start`.length
+        )
 
-      // SAFETY: Playwright 1.61 implements its CLI reference snapshot through this internal mode.
-      const snapshotPage = visiblePage as PlaywrightAiPage
-      const snapshot = await snapshotPage.ariaSnapshot({ mode: 'ai' })
-      const targetRef = snapshot.match(
-        /button "Browser target" \[ref=([^\]]+)\]/
-      )?.[1]
-      const nextRef = snapshot.match(/link "Next page" \[ref=([^\]]+)\]/)?.[1]
-      if (!targetRef || !nextRef) {
-        throw new Error(`Browser target refs were missing:\n${snapshot}`)
+        await address.fill(`${origin}/site/next`)
+        await address.press('Enter')
+        await expect(address).not.toBeFocused()
+        await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/next`)
+        await expect
+          .poll(() => visiblePage.evaluate(() => document.hasFocus()))
+          .toBe(true)
+        await window.keyboard.press('x')
+        await expect
+          .poll(() => visiblePage.locator('#key').textContent())
+          .toBe('x')
+        await visiblePage.goBack()
+        await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
+        await expect(address).toHaveValue(`${origin}/site/start`)
+
+        expect(
+          await electronApp.evaluate(({ webContents }, targetUrl) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
+            browser?.sendInputEvent({
+              type: 'keyDown',
+              keyCode: 'f',
+              modifiers: [process.platform === 'darwin' ? 'meta' : 'control']
+            })
+            return browser !== undefined
+          }, `${origin}/site/start`)
+        ).toBe(true)
+        const findInput = window.getByRole('textbox', { name: 'Find in page' })
+        await expect(findInput).toBeVisible()
+        await findInput.focus()
+        expect(
+          await electronApp.evaluate(({ webContents }, targetUrl) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
+            if (!browser) {
+              return false
+            }
+
+            process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = ''
+            browser.on('found-in-page', (_event, result) => {
+              process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = String(
+                result.matches
+              )
+            })
+            return true
+          }, `${origin}/site/start`)
+        ).toBe(true)
+        await findInput.fill('Browser target')
+        await expect
+          .poll(() =>
+            electronApp!.evaluate(
+              () => process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES
+            )
+          )
+          .toBe('1')
+        await findInput.press('Escape')
+        await expect(findInput).toHaveCount(0)
+        await expect
+          .poll(() => visiblePage.evaluate(() => document.hasFocus()))
+          .toBe(true)
+      })
+
+      await window.getByRole('button', { name: /^Shell/ }).click()
+      await expect(window).toHaveURL(
+        /\/worktrees\/wt_main\/terminals\/term_shell$/
+      )
+      await sidePanelToggle.click()
+      await expect(sidePanelToggle).toHaveAttribute('aria-expanded', 'false')
+      await expect(browserTab).not.toBeVisible()
+      await pressTreeShortcut(']')
+      await expect(window).toHaveURL(
+        /\/worktrees\/wt_topic\/terminals\/term_topic$/
+      )
+      await expect(browserTab).not.toBeVisible()
+      const ownerControl = ownerControls.get(browserPanelId)
+      if (!ownerControl) {
+        throw new Error('The local Browser owner control was not ready.')
       }
 
-      await visiblePage.locator(`aria-ref=${targetRef}`).click()
+      expect(ownerControl.generation).toBe(1)
+      expect(await ownerControl.request('agent', true)).toBe(true)
+      await test.step('capture and decode real video with restricted permissions', async () => {
+        const screencast = await connectedBrowser
+          .contexts()[0]!
+          .newCDPSession(visiblePage)
+        // SAFETY: This session connects to the verified Treeport guest bridge.
+        // eslint-disable-next-line anti-slop/no-chained-type-assertions -- The verified private bridge extends Chromium's command table.
+        const video = screencast as unknown as BrowserVideoCdpSession
+        const captured: string[] = []
+        const framePromise = new Promise<string>((resolve) =>
+          video.on('Treeport.videoFrame', ({ payload }) => {
+            captured.push(payload)
+            resolve(payload)
+          })
+        )
+        await video.send('Treeport.startVideo', { width: 1_280, height: 800 })
+        const message = parseBrowserCaptureMessage(await framePromise)
+        expect(message?.error).toBeNull()
+        const frame = message?.frame
+        if (!frame) {
+          throw new Error('Electron did not produce a video frame.')
+        }
+
+        expect(frame.keyframe).toBe(true)
+        // Decode the actual guest video in the viewer, not just a mocked packet.
+        const decoded = await window.evaluate(
+          async (frame) =>
+            new Promise<{ width: number; height: number }>(
+              (resolve, reject) => {
+                const decoder = new VideoDecoder({
+                  output(value) {
+                    resolve({
+                      width: value.displayWidth,
+                      height: value.displayHeight
+                    })
+                    value.close()
+                    decoder.close()
+                  },
+                  error: reject
+                })
+                decoder.configure({ codec: 'vp8' })
+                decoder.decode(
+                  new EncodedVideoChunk({
+                    type: 'key',
+                    timestamp: frame.timestamp,
+                    data: Uint8Array.from(atob(frame.data), (character) =>
+                      character.charCodeAt(0)
+                    )
+                  })
+                )
+              }
+            ),
+          frame
+        )
+        expect(decoded).toEqual({ width: frame.width, height: frame.height })
+        const beforeKeyframe = captured.length
+        await video.send('Treeport.requestVideoKeyframe')
+        await expect
+          .poll(() =>
+            captured
+              .slice(beforeKeyframe)
+              .some(
+                (payload) =>
+                  parseBrowserCaptureMessage(payload)?.frame?.keyframe
+              )
+          )
+          .toBe(true)
+        // The capture exception must not grant the guest microphone or camera access.
+        expect(
+          await visiblePage.evaluate(() =>
+            navigator.mediaDevices
+              .getUserMedia({ audio: true, video: true })
+              .then(
+                (stream) => {
+                  stream.getTracks().forEach((track) => track.stop())
+                  return true
+                },
+                () => false
+              )
+          )
+        ).toBe(false)
+        await video.send('Treeport.stopVideo')
+        const beforeRestart = captured.length
+        await video.send('Treeport.startVideo', { width: 1_280, height: 800 })
+        await expect
+          .poll(() =>
+            captured
+              .slice(beforeRestart)
+              .some(
+                (payload) =>
+                  parseBrowserCaptureMessage(payload)?.frame?.keyframe
+              )
+          )
+          .toBe(true)
+        await video.send('Treeport.stopVideo')
+        await screencast.detach()
+      })
+
+      const runtimeBeforeReconnect =
+        await test.step('interact through the hidden exact bridge and take control back', async () => {
+          await visiblePage.goto(`${origin}/site/next`)
+          await visiblePage
+            .getByRole('textbox', { name: 'Name' })
+            .fill('Background')
+          await visiblePage.getByRole('button', { name: 'Submit' }).click()
+          // Verify from Electron by guest ID, not through the same bridge under test.
+          await expect
+            .poll(() =>
+              electronApp!.evaluate(
+                ({ webContents }, id) =>
+                  webContents
+                    .fromId(id)
+                    ?.executeJavaScript(
+                      `document.querySelector('output')?.textContent`
+                    ),
+                primaryGuestId
+              )
+            )
+            .toBe('Background')
+          expect(
+            await electronApp!.evaluate(
+              ({ webContents }, url) =>
+                webContents
+                  .getAllWebContents()
+                  .find(
+                    (guest) =>
+                      guest.getType() === 'webview' && guest.getURL() === url
+                  )
+                  ?.executeJavaScript(
+                    '({ hits: sessionStorage.hits, loads: sessionStorage.loads })'
+                  ),
+              `${origin}/site/start?decoy`
+            )
+          ).toEqual({ hits: '0', loads: '1' })
+          const runtime = await visiblePage.evaluate(() => ({
+            loads: sessionStorage.nextLoads,
+            href: location.href,
+            output: document.querySelector('output')?.textContent
+          }))
+          expect(await ownerControl.request('none', false)).toBe(true)
+          await expect(window).toHaveURL(
+            /\/worktrees\/wt_topic\/terminals\/term_topic$/
+          )
+          await expect(browserTab).not.toBeVisible()
+          await pressTreeShortcut('[')
+          await sidePanelToggle.click()
+          await browserTab.click()
+          expect(
+            await window
+              .locator('webview[aria-label="Browser page"]:visible')
+              .evaluate((element) => {
+                // SAFETY: Electron installs this method on the native webview element.
+                const guest = element as HTMLElement & {
+                  getWebContentsId(): number
+                }
+                return guest.getWebContentsId()
+              })
+          ).toBe(primaryGuestId)
+          await expect
+            .poll(() => visiblePage.locator('output').first().textContent())
+            .toBe('Background')
+          expect(await ownerControl.request('other', true)).toBe(true)
+          await window
+            .getByRole('button', { name: 'Take control of Browser' })
+            .click()
+          await expect.poll(() => ownerTakeControlRequests).toBe(1)
+          expect(await ownerControl.request('none', false)).toBe(true)
+          await expect(
+            window.getByRole('button', { name: 'Take control of Browser' })
+          ).not.toBeVisible()
+          expect(
+            await visiblePage.evaluate(() => ({
+              loads: sessionStorage.nextLoads,
+              href: location.href,
+              output: document.querySelector('output')?.textContent
+            }))
+          ).toEqual(runtime)
+          return runtime
+        })
+
+      await test.step('reconnect owner without replacing or reloading the guest', async () => {
+        expect(await ownerControl.request('other', true)).toBe(true)
+        ownerSockets.get(browserPanelId)?.close(1012, 'Reconnect required')
+        await expect
+          .poll(() => ownerConnectionCounts.get(browserPanelId))
+          .toBe(2)
+        await expect(
+          window.getByRole('button', { name: 'Reload application' })
+        ).toBeEnabled()
+        await expect(
+          window.getByRole('button', { name: 'Take control of Browser' })
+        ).not.toBeVisible()
+        await expect
+          .poll(() =>
+            electronApp!.evaluate(({ webContents }, id) => {
+              return webContents.fromId(id)?.executeJavaScript(`({
+              loads: sessionStorage.nextLoads,
+              href: location.href,
+              output: document.querySelector('output')?.textContent
+            })`)
+            }, primaryGuestId)
+          )
+          .toEqual(runtimeBeforeReconnect)
+        await expect(address).toHaveValue(`${origin}/site/next`)
+      })
+      await test.step('reload through the native toolbar without an artificial delay', async () => {
+        await window.getByRole('button', { name: 'Reload application' }).click()
+        await expect
+          .poll(() =>
+            electronApp!.evaluate(
+              ({ webContents }, id) =>
+                webContents
+                  .fromId(id)
+                  ?.executeJavaScript('sessionStorage.nextLoads'),
+              primaryGuestId
+            )
+          )
+          .toBe(String(Number(runtimeBeforeReconnect.loads) + 1))
+        await expect(address).toHaveValue(`${origin}/site/next`)
+      })
+    } finally {
+      await connectedBrowser.close()
+    }
+
+    await test.step('route native popup and focus while shielding modal input', async () => {
+      await address.fill(`${origin}/site/start`)
+      await address.press('Enter')
+      await expect(
+        window.getByRole('button', { name: 'Reload application' })
+      ).toBeVisible()
+      const runtimeBeforeModal = await electronApp!.evaluate(
+        ({ webContents }, id) =>
+          webContents
+            .fromId(id)
+            ?.executeJavaScript(
+              '({ hits: sessionStorage.hits, loads: sessionStorage.loads })'
+            ),
+        primaryGuestId
+      )
+      await window.evaluate(() => {
+        // SAFETY: The test installs this cross-process probe on its own window.
+        const scope = window as typeof window & {
+          __browserFocuses?: string[]
+          __browserPopups?: unknown[]
+        }
+        scope.__browserFocuses = []
+        scope.__browserPopups = []
+        window.treeportDesktop?.onBrowserFocus((panelId) => {
+          scope.__browserFocuses?.push(panelId)
+        })
+        window.treeportDesktop?.onBrowserPopup((popup) => {
+          scope.__browserPopups?.push(popup)
+        })
+      })
+      const webviewBounds = await window
+        .locator('webview[aria-label="Browser page"]:visible')
+        .boundingBox()
+      if (!webviewBounds) {
+        throw new Error('Browser page did not expose bounds')
+      }
+
+      await window.getByRole('button', { name: /^Shell/ }).click()
+      await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
+      const openEvent: NetworkProductEvent = {
+        id: crypto.randomUUID(),
+        type: 'panel.open_requested',
+        at: new Date().toISOString(),
+        data: {
+          worktreeId: 'wt_main',
+          panelId: browserPanelId,
+          panel: project.worktrees[0]!.panels.find(
+            (candidate) => candidate.id === browserPanelId
+          )!,
+          sourceTerminalId: 'term_shell',
+          sourcePanelId: null
+        }
+      }
+      Effect.runSync(
+        PubSub.publish(rpcEvents, { _tag: 'ProductEvent', event: openEvent })
+      )
+      await expect(window).toHaveURL(/\/panels\/panel_browser_1$/)
+      await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
+      await window.mouse.click(webviewBounds.x + 20, webviewBounds.y + 20)
+      await expect
+        .poll(() =>
+          window.evaluate(() => {
+            // SAFETY: The test installed this cross-process probe above.
+            const scope = window as typeof window & {
+              __browserFocuses?: string[]
+            }
+            return scope.__browserFocuses ?? []
+          })
+        )
+        .toContain('panel_browser_1')
+      await expect
+        .poll(() =>
+          window.evaluate(() => {
+            // SAFETY: The test installed this cross-process probe above.
+            const scope = window as typeof window & {
+              __browserPopups?: unknown[]
+            }
+            return scope.__browserPopups?.length ?? 0
+          })
+        )
+        .toBe(1)
+      await expect.poll(() => popupRequests).toBe(1)
+      await electronApp.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send(
+          'desktop-command',
+          'select-tab-1'
+        )
+      })
+      await expect(window).toHaveURL(/\/panels\/panel_browser_1$/)
+
+      await window
+        .getByRole('button', { name: 'New panel in main tree' })
+        .click()
+      const newPanel = window.getByRole('dialog', { name: 'New panel' })
+      await expect(newPanel).toBeVisible()
+      await window.mouse.click(
+        webviewBounds.x + webviewBounds.width - 16,
+        webviewBounds.y + webviewBounds.height - 16
+      )
+      expect(
+        await electronApp.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          return browser?.executeJavaScript(
+            `({ hits: sessionStorage.hits, loads: sessionStorage.loads })`
+          )
+        }, `${origin}/site/start`)
+      ).toEqual(runtimeBeforeModal)
+      await window.keyboard.press('Escape')
+      await expect(newPanel).not.toBeVisible()
+      await window.evaluate(
+        () =>
+          new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      )
+      await window.mouse.click(
+        webviewBounds.x + webviewBounds.width - 16,
+        webviewBounds.y + webviewBounds.height - 16
+      )
       await expect
         .poll(() =>
           electronApp!.evaluate(({ webContents }, targetUrl) => {
@@ -799,667 +1214,340 @@ test('controls the local Browser through its exact bridge while another workspac
             return browser?.executeJavaScript('sessionStorage.hits')
           }, `${origin}/site/start`)
         )
-        .toBe('1')
+        .toBe(String(Number(runtimeBeforeModal.hits) + 1))
 
-      await visiblePage.locator(`aria-ref=${nextRef}`).click()
+      await electronApp.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]?.setSize(1100, 720)
+      })
       await expect
         .poll(() =>
-          electronApp!.evaluate(({ webContents }) =>
-            webContents
-              .getAllWebContents()
-              .find((contents) => contents.getType() === 'webview')
-              ?.getURL()
-          )
-        )
-        .toBe(`${origin}/site/next`)
-      await expect(address).toHaveValue(`${origin}/site/next`)
-      const nextSnapshot = await snapshotPage.ariaSnapshot({ mode: 'ai' })
-      const inputRef = nextSnapshot.match(
-        /textbox "Name" \[ref=([^\]]+)\]/
-      )?.[1]
-      if (!inputRef) {
-        throw new Error(`Name ref was missing:\n${nextSnapshot}`)
-      }
-
-      await visiblePage.locator(`aria-ref=${inputRef}`).fill('Treeport')
-      await visiblePage.keyboard.press('Enter')
-      await expect
-        .poll(() =>
-          electronApp!.evaluate(({ webContents }) => {
+          electronApp!.evaluate(({ webContents }, targetUrl) => {
             const browser = webContents
               .getAllWebContents()
-              .find((contents) => contents.getType() === 'webview')
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
             return browser?.executeJavaScript(
-              `document.querySelector('output')?.textContent`
+              `document.querySelector('#size')?.textContent`
             )
-          })
+          }, `${origin}/site/start`)
         )
-        .toBe('Treeport')
-      expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
-      const nextPageLoads = await visiblePage.evaluate(
-        () => sessionStorage.nextLoads
-      )
+        .toBe('Compact page')
+
       await window.getByRole('button', { name: /^Shell/ }).click()
-      await expect(window).toHaveURL(/\/terminals\/term_shell$/)
-      const ownerControl = ownerControls.get(browserPanelId)
-      if (!ownerControl) {
-        throw new Error('The local Browser owner control was not ready.')
-      }
-
-      expect(ownerControl.generation).toBe(1)
-      expect(await ownerControl.request('agent', true)).toBe(true)
-      const screencast = await connectedBrowser
-        .contexts()[0]!
-        .newCDPSession(visiblePage)
-      // SAFETY: This session connects to the verified Treeport guest bridge.
-      // eslint-disable-next-line anti-slop/no-chained-type-assertions -- The verified private bridge extends Chromium's command table.
-      const video = screencast as unknown as BrowserVideoCdpSession
-      const captured: string[] = []
-      const framePromise = new Promise<string>((resolve) =>
-        video.on('Treeport.videoFrame', ({ payload }) => {
-          captured.push(payload)
-          resolve(payload)
-        })
-      )
-      await video.send('Treeport.startVideo', { width: 1_280, height: 800 })
-      const message = parseBrowserCaptureMessage(await framePromise)
-      expect(message?.error).toBeNull()
-      const frame = message?.frame
-      if (!frame) {
-        throw new Error('Electron did not produce a video frame.')
-      }
-
-      expect(frame.keyframe).toBe(true)
-      // Decode the actual guest video in the viewer, not just a mocked packet.
-      const decoded = await window.evaluate(
-        async (frame) =>
-          new Promise<{ width: number; height: number }>((resolve, reject) => {
-            const decoder = new VideoDecoder({
-              output(value) {
-                resolve({
-                  width: value.displayWidth,
-                  height: value.displayHeight
-                })
-                value.close()
-                decoder.close()
-              },
-              error: reject
-            })
-            decoder.configure({ codec: 'vp8' })
-            decoder.decode(
-              new EncodedVideoChunk({
-                type: 'key',
-                timestamp: frame.timestamp,
-                data: Uint8Array.from(atob(frame.data), (character) =>
-                  character.charCodeAt(0)
-                )
-              })
-            )
-          }),
-        frame
-      )
-      expect(decoded).toEqual({ width: frame.width, height: frame.height })
-      const beforeKeyframe = captured.length
-      await video.send('Treeport.requestVideoKeyframe')
-      await expect
-        .poll(() =>
-          captured
-            .slice(beforeKeyframe)
-            .some(
-              (payload) => parseBrowserCaptureMessage(payload)?.frame?.keyframe
-            )
-        )
-        .toBe(true)
-      // The capture exception must not grant the guest microphone or camera access.
-      expect(
-        await visiblePage.evaluate(() =>
-          navigator.mediaDevices
-            .getUserMedia({ audio: true, video: true })
-            .then(
-              (stream) => {
-                stream.getTracks().forEach((track) => track.stop())
-                return true
-              },
-              () => false
-            )
-        )
-      ).toBe(false)
-      await video.send('Treeport.stopVideo')
-      const beforeRestart = captured.length
-      await video.send('Treeport.startVideo', { width: 1_280, height: 800 })
-      await expect
-        .poll(() =>
-          captured
-            .slice(beforeRestart)
-            .some(
-              (payload) => parseBrowserCaptureMessage(payload)?.frame?.keyframe
-            )
-        )
-        .toBe(true)
-      await video.send('Treeport.stopVideo')
-      await screencast.detach()
-
-      let controlReleased = false
-      try {
-        const backgroundSnapshot = await snapshotPage.ariaSnapshot({
-          mode: 'ai'
-        })
-        const backgroundInputRef = backgroundSnapshot.match(
-          /textbox "Name".*\[ref=([^\]]+)\]/
-        )?.[1]
-        const backgroundSubmitRef = backgroundSnapshot.match(
-          /button "Submit".*\[ref=([^\]]+)\]/
-        )?.[1]
-        if (!backgroundInputRef || !backgroundSubmitRef) {
-          throw new Error(
-            `Background form refs were missing:\n${backgroundSnapshot}`
-          )
-        }
-
-        await visiblePage
-          .locator(`aria-ref=${backgroundInputRef}`)
-          .fill('Background')
-        await visiblePage.locator(`aria-ref=${backgroundSubmitRef}`).click()
-        await expect
-          .poll(() => visiblePage.locator('output').first().textContent())
-          .toBe('Background')
-        await visiblePage.keyboard.press('Escape')
-        await expect
-          .poll(() => visiblePage.locator('#key').textContent())
-          .toBe('Escape')
-        expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
-        await expect(window).toHaveURL(/\/terminals\/term_shell$/)
-      } finally {
-        controlReleased = await ownerControl.request('none', false)
-      }
-      expect(controlReleased).toBe(true)
-
       await browserTab.click()
-      await expect
-        .poll(() => visiblePage.locator('output').first().textContent())
-        .toBe('Background')
-      expect(await ownerControl.request('other', true)).toBe(true)
+      expect(
+        await electronApp.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          return browser?.executeJavaScript('sessionStorage.loads')
+        }, `${origin}/site/start`)
+      ).toBe(runtimeBeforeModal.loads)
+    })
+
+    await test.step('queue startup navigation and share profile across panel closure', async () => {
+      const ownerTicketRelease = Promise.withResolvers<void>()
+      ownerTicketGate = ownerTicketRelease.promise
       await window
-        .getByRole('button', { name: 'Take control of Browser' })
+        .getByRole('button', { name: 'New panel in main tree' })
         .click()
-      await expect.poll(() => ownerTakeControlRequests).toBe(1)
-      expect(await ownerControl.request('none', false)).toBe(true)
-      await expect(
-        window.getByRole('button', { name: 'Take control of Browser' })
-      ).not.toBeVisible()
-      expect(await visiblePage.evaluate(() => sessionStorage.nextLoads)).toBe(
-        nextPageLoads
-      )
-      await visiblePage.goBack()
-      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
-      await expect(address).toHaveValue(`${origin}/site/start`)
-      await visiblePage.goForward()
-      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/next`)
-      await expect(address).toHaveValue(`${origin}/site/next`)
-      await visiblePage.reload()
-      await expect.poll(() => visiblePage.title()).toBe('Browser next')
-      await visiblePage.goto(`${origin}/site/start`)
-      await expect(address).toHaveValue(`${origin}/site/start`)
-      const runtimeBeforeReconnect = await visiblePage.evaluate(() => ({
-        loads: sessionStorage.loads,
-        href: location.href
-      }))
-      expect(await ownerControl.request('other', true)).toBe(true)
-      ownerSockets.get(browserPanelId)?.close(1012, 'Reconnect required')
-      await expect.poll(() => ownerConnectionCounts.get(browserPanelId)).toBe(2)
-      await expect(
-        window.getByRole('button', { name: 'Reload application' })
-      ).toBeEnabled()
-      await expect(
-        window.getByRole('button', { name: 'Take control of Browser' })
-      ).not.toBeVisible()
+      await window
+        .getByRole('dialog', { name: 'New panel' })
+        .getByRole('button', { name: 'Browser, hosted browser' })
+        .click()
+      await expect(window).toHaveURL(/\/panels\/panel_browser_2$/)
+      await expect(address).toHaveValue('')
+      // Enter during startup must retain the latest address, not silently drop it.
+      // Do not wait for navigation while startup is gated; verify it after release.
+      await address.fill(`${origin}/site/next`)
+      await address.press('Enter', { noWaitAfter: true })
+      await address.fill(`${origin}/site/profile`)
+      await address.press('Enter', { noWaitAfter: true })
+      ownerTicketRelease.resolve()
+      ownerTicketGate = null
       await expect
         .poll(() =>
-          electronApp!.evaluate(({ webContents }) => {
+          electronApp!.evaluate(({ webContents }, targetUrl) => {
             const browser = webContents
               .getAllWebContents()
-              .find((contents) => contents.getType() === 'webview')
-            return browser?.executeJavaScript(`({
-              loads: sessionStorage.loads,
-              href: location.href
-            })`)
-          })
-        )
-        .toEqual(runtimeBeforeReconnect)
-      await expect(address).toHaveValue(`${origin}/site/start`)
-    } finally {
-      await connectedBrowser.close()
-    }
-
-    slowBrowserResponse = true
-    await window.getByRole('button', { name: 'Reload application' }).click()
-    await expect(
-      window.getByRole('button', { name: 'Stop loading' })
-    ).toBeVisible()
-    await expect(
-      window.getByRole('button', { name: 'Reload application' })
-    ).toBeVisible()
-    slowBrowserResponse = false
-
-    await window.evaluate(() => {
-      // SAFETY: The test installs this cross-process probe on its own window.
-      const scope = window as typeof window & {
-        __browserFocuses?: string[]
-        __browserPopups?: unknown[]
-      }
-      scope.__browserFocuses = []
-      scope.__browserPopups = []
-      window.treeportDesktop?.onBrowserFocus((panelId) => {
-        scope.__browserFocuses?.push(panelId)
-      })
-      window.treeportDesktop?.onBrowserPopup((popup) => {
-        scope.__browserPopups?.push(popup)
-      })
-    })
-    const webviewBounds = await window
-      .locator('webview[aria-label="Browser page"]')
-      .boundingBox()
-    if (!webviewBounds) {
-      throw new Error('Browser page did not expose bounds')
-    }
-
-    await window.getByRole('button', { name: /^Shell/ }).click()
-    await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
-    const openEvent: NetworkProductEvent = {
-      id: crypto.randomUUID(),
-      type: 'panel.open_requested',
-      at: new Date().toISOString(),
-      data: {
-        worktreeId: 'wt_main',
-        panelId: browserPanelId,
-        panel: project.worktrees[0]!.panels.find(
-          (candidate) => candidate.id === browserPanelId
-        )!,
-        sourceTerminalId: 'term_shell',
-        sourcePanelId: null
-      }
-    }
-    Effect.runSync(
-      PubSub.publish(rpcEvents, { _tag: 'ProductEvent', event: openEvent })
-    )
-    await expect(window).toHaveURL(/\/panels\/panel_browser_1$/)
-    await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
-    await window.mouse.click(webviewBounds.x + 20, webviewBounds.y + 20)
-    await expect
-      .poll(() =>
-        window.evaluate(() => {
-          // SAFETY: The test installed this cross-process probe above.
-          const scope = window as typeof window & {
-            __browserFocuses?: string[]
-          }
-          return scope.__browserFocuses ?? []
-        })
-      )
-      .toContain('panel_browser_1')
-    await expect
-      .poll(() =>
-        window.evaluate(() => {
-          // SAFETY: The test installed this cross-process probe above.
-          const scope = window as typeof window & {
-            __browserPopups?: unknown[]
-          }
-          return scope.__browserPopups?.length ?? 0
-        })
-      )
-      .toBe(1)
-    await expect.poll(() => popupRequests).toBe(1)
-    await electronApp.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.webContents.send(
-        'desktop-command',
-        'select-tab-1'
-      )
-    })
-    await expect(window).toHaveURL(/\/panels\/panel_browser_1$/)
-
-    await window.getByRole('button', { name: 'New panel in main tree' }).click()
-    const newPanel = window.getByRole('dialog', { name: 'New panel' })
-    await expect(newPanel).toBeVisible()
-    await window.mouse.click(
-      webviewBounds.x + webviewBounds.width - 16,
-      webviewBounds.y + webviewBounds.height - 16
-    )
-    expect(
-      await electronApp.evaluate(({ webContents }, targetUrl) => {
-        const browser = webContents
-          .getAllWebContents()
-          .find(
-            (contents) =>
-              contents.getType() === 'webview' &&
-              contents.getURL() === targetUrl
-          )
-        return browser?.executeJavaScript(
-          `({ hits: sessionStorage.hits, loads: sessionStorage.loads })`
-        )
-      }, `${origin}/site/start`)
-    ).toEqual({ hits: '1', loads: '5' })
-    await window.keyboard.press('Escape')
-    await expect(newPanel).not.toBeVisible()
-    await window.evaluate(
-      () =>
-        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    )
-    await window.mouse.click(
-      webviewBounds.x + webviewBounds.width - 16,
-      webviewBounds.y + webviewBounds.height - 16
-    )
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
-            )
-          return browser?.executeJavaScript('sessionStorage.hits')
-        }, `${origin}/site/start`)
-      )
-      .toBe('2')
-
-    await electronApp.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.setSize(1100, 720)
-    })
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
-            )
-          return browser?.executeJavaScript(
-            `document.querySelector('#size')?.textContent`
-          )
-        }, `${origin}/site/start`)
-      )
-      .toBe('Compact page')
-
-    await window.getByRole('button', { name: /^Shell/ }).click()
-    await browserTab.click()
-    expect(
-      await electronApp.evaluate(({ webContents }, targetUrl) => {
-        const browser = webContents
-          .getAllWebContents()
-          .find(
-            (contents) =>
-              contents.getType() === 'webview' &&
-              contents.getURL() === targetUrl
-          )
-        return browser?.executeJavaScript('sessionStorage.loads')
-      }, `${origin}/site/start`)
-    ).toBe('5')
-
-    const ownerTicketRelease = Promise.withResolvers<void>()
-    ownerTicketGate = ownerTicketRelease.promise
-    await window.getByRole('button', { name: 'New panel in main tree' }).click()
-    await window
-      .getByRole('dialog', { name: 'New panel' })
-      .getByRole('button', { name: 'Browser, hosted browser' })
-      .click()
-    await expect(window).toHaveURL(/\/panels\/panel_browser_2$/)
-    await expect(address).toHaveValue('')
-    // Enter during startup must retain the latest address, not silently drop it.
-    // Do not wait for navigation while startup is gated; verify it after release.
-    await address.fill(`${origin}/site/next`)
-    await address.press('Enter', { noWaitAfter: true })
-    await address.fill(`${origin}/site/profile`)
-    await address.press('Enter', { noWaitAfter: true })
-    ownerTicketRelease.resolve()
-    ownerTicketGate = null
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
-            )
-          return browser?.executeJavaScript(`(() => {
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
+            return browser?.executeJavaScript(`(() => {
             localStorage.login = 'panel-two'
             document.cookie = 'login=panel-two; Max-Age=3600; SameSite=Lax'
             document.querySelector('output').textContent = localStorage.login
             return { login: localStorage.login, cookie: document.cookie }
           })()`)
-        }, `${origin}/site/profile`)
-      )
-      .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
+          }, `${origin}/site/profile`)
+        )
+        .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
 
-    await electronApp.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.webContents.send(
-        'desktop-command',
-        'close-panel'
-      )
-    })
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(
-          ({ webContents }, targetUrl) =>
-            webContents
+      await electronApp.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send(
+          'desktop-command',
+          'close-panel'
+        )
+      })
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(
+            ({ webContents }, targetUrl) =>
+              webContents
+                .getAllWebContents()
+                .some(
+                  (contents) =>
+                    contents.getType() === 'webview' &&
+                    contents.getURL() === targetUrl
+                ),
+            `${origin}/site/profile`
+          )
+        )
+        .toBe(false)
+
+      await window.getByRole('tab', { name: /, Browser$/ }).click()
+      await address.fill(`${origin}/site/profile`)
+      await address.press('Enter')
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(({ webContents }, targetUrl) => {
+            const browser = webContents
               .getAllWebContents()
-              .some(
+              .find(
                 (contents) =>
                   contents.getType() === 'webview' &&
                   contents.getURL() === targetUrl
-              ),
-          `${origin}/site/profile`
-        )
-      )
-      .toBe(false)
-
-    await window.getByRole('tab', { name: /, Browser$/ }).click()
-    await address.fill(`${origin}/site/profile`)
-    await address.press('Enter')
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
+              )
+            return browser?.executeJavaScript(
+              `({ login: localStorage.login, cookie: document.cookie })`
             )
-          return browser?.executeJavaScript(
-            `({ login: localStorage.login, cookie: document.cookie })`
-          )
-        }, `${origin}/site/profile`)
-      )
-      .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
+          }, `${origin}/site/profile`)
+        )
+        .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
 
-    await expect
-      .poll(
-        () =>
-          project.worktrees[0]!.panels.find(
-            (panel) => panel.id === browserPanelId
-          )?.url
-      )
-      .toBe(`${origin}/site/profile`)
-    // Submitting an address also takes control back, without a viewport click.
-    expect(
-      await ownerControls.get(browserPanelId)?.request('other', true)
-    ).toBe(true)
-    await address.fill(`${origin}/site/next`)
-    await address.press('Enter')
-    await expect
-      .poll(() => project.worktrees[0]!.panels[0]?.url)
-      .toBe(`${origin}/site/next`)
-    await expect(
-      window.getByRole('button', { name: 'Take control of Browser' })
-    ).not.toBeVisible()
-
-    // A navigation with an unfinished resource must not block Stop or a new URL.
-    await address.fill(`${origin}/site/hanging`)
-    await address.press('Enter')
-    await expect.poll(() => stalledResponses.size).toBe(1)
-    await window.getByRole('button', { name: 'Stop loading' }).click()
-    await expect(
-      window.getByRole('button', { name: 'Reload application' })
-    ).toBeEnabled()
-    await expect.poll(() => stalledResponses.size).toBe(0)
-    await address.fill(`${origin}/site/hanging?again`)
-    await address.press('Enter')
-    await expect.poll(() => stalledResponses.size).toBe(1)
-    await address.fill(`${origin}/site/profile`)
-    await address.press('Enter')
-    await expect
-      .poll(() => project.worktrees[0]!.panels[0]?.url)
-      .toBe(`${origin}/site/profile`)
-    await expect(
-      window.getByRole('button', { name: 'Reload application' })
-    ).toBeEnabled()
-    await expect.poll(() => stalledResponses.size).toBe(0)
-
-    const windowSizeBeforeRestart = await electronApp.evaluate(
-      ({ BrowserWindow }) => {
-        const bounds = BrowserWindow.getAllWindows()[0]?.getNormalBounds()
-        return bounds ? { width: bounds.width, height: bounds.height } : null
-      }
-    )
-    await electronApp.close()
-    // Restoring a slow page must not make toolbar readiness wait for page load.
-    project.worktrees[0]!.panels[0]!.url = `${origin}/site/hanging?restored`
-    electronApp = await electron.launch({
-      args: [`--user-data-dir=${userData}`, '.', workspaceLink(workspaceUrl)],
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        TREEPORT_DESKTOP_E2E: '1',
-        TREEPORT_DESKTOP_USER_DATA: '',
-        TREEPORT_DESKTOP_URL: origin
-      }
+      await expect
+        .poll(
+          () =>
+            project.worktrees[0]!.panels.find(
+              (panel) => panel.id === browserPanelId
+            )?.url
+        )
+        .toBe(`${origin}/site/profile`)
     })
-    const restartedWindow = await electronApp.firstWindow()
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ BrowserWindow }) => {
-          const bounds = BrowserWindow.getAllWindows()[0]?.getNormalBounds()
-          return bounds ? { width: bounds.width, height: bounds.height } : null
+
+    await test.step('take over navigation and interrupt unfinished loads', async () => {
+      // Submitting an address also takes control back, without a viewport click.
+      expect(
+        await ownerControls.get(browserPanelId)?.request('other', true)
+      ).toBe(true)
+      await address.fill(`${origin}/site/next`)
+      await address.press('Enter')
+      await expect
+        .poll(() => project.worktrees[0]!.panels[0]?.url)
+        .toBe(`${origin}/site/next`)
+      await expect(
+        window.getByRole('button', { name: 'Take control of Browser' })
+      ).not.toBeVisible()
+
+      // A navigation with an unfinished resource must not block Stop or a new URL.
+      await address.fill(`${origin}/site/hanging`)
+      await address.press('Enter')
+      await expect.poll(() => stalledResponses.size).toBe(1)
+      await window.getByRole('button', { name: 'Stop loading' }).click()
+      await expect(
+        window.getByRole('button', { name: 'Reload application' })
+      ).toBeEnabled()
+      await expect.poll(() => stalledResponses.size).toBe(0)
+      await address.fill(`${origin}/site/hanging?again`)
+      await address.press('Enter')
+      await expect.poll(() => stalledResponses.size).toBe(1)
+      await address.fill(`${origin}/site/profile`)
+      await address.press('Enter')
+      await expect
+        .poll(() => project.worktrees[0]!.panels[0]?.url)
+        .toBe(`${origin}/site/profile`)
+      await expect(
+        window.getByRole('button', { name: 'Reload application' })
+      ).toBeEnabled()
+      await expect.poll(() => stalledResponses.size).toBe(0)
+    })
+
+    const restartedWindow =
+      await test.step('restart Electron and restore profile and window bounds', async () => {
+        const windowSizeBeforeRestart = await electronApp.evaluate(
+          ({ BrowserWindow }) => {
+            const bounds = BrowserWindow.getAllWindows()[0]?.getNormalBounds()
+            return bounds
+              ? { width: bounds.width, height: bounds.height }
+              : null
+          }
+        )
+        await electronApp.close()
+        // Restoring a slow page must not make toolbar readiness wait for page load.
+        project.worktrees[0]!.panels[0]!.url = `${origin}/site/hanging?restored`
+        electronApp = await electron.launch({
+          args: [
+            `--user-data-dir=${userData}`,
+            '.',
+            workspaceLink(workspaceUrl)
+          ],
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            TREEPORT_DESKTOP_E2E: '1',
+            TREEPORT_DESKTOP_USER_DATA: '',
+            TREEPORT_DESKTOP_URL: origin
+          }
         })
-      )
-      .toEqual(windowSizeBeforeRestart)
-    await restartedWindow
-      .getByRole('tab', { name: /, Browser, loading$/ })
-      .click()
-    await expect.poll(() => stalledResponses.size).toBe(1)
-    await restartedWindow.getByRole('button', { name: 'Stop loading' }).click()
-    await expect.poll(() => stalledResponses.size).toBe(0)
+        const restartedWindow = await electronApp.firstWindow()
+        await expect
+          .poll(() =>
+            electronApp!.evaluate(({ BrowserWindow }) => {
+              const bounds = BrowserWindow.getAllWindows()[0]?.getNormalBounds()
+              return bounds
+                ? { width: bounds.width, height: bounds.height }
+                : null
+            })
+          )
+          .toEqual(windowSizeBeforeRestart)
+        await restartedWindow
+          .getByRole('tab', { name: /, Browser, loading$/ })
+          .click()
+        await expect.poll(() => stalledResponses.size).toBe(1)
+        await restartedWindow
+          .getByRole('button', { name: 'Stop loading' })
+          .click()
+        await expect.poll(() => stalledResponses.size).toBe(0)
+        const restartedAddress = restartedWindow.getByRole('textbox', {
+          name: 'Application URL'
+        })
+        await restartedAddress.fill(`${origin}/site/profile`)
+        await restartedAddress.press('Enter')
+        await expect
+          .poll(() =>
+            electronApp!.evaluate(({ webContents }, targetUrl) => {
+              const browser = webContents
+                .getAllWebContents()
+                .find(
+                  (contents) =>
+                    contents.getType() === 'webview' &&
+                    contents.getURL() === targetUrl
+                )
+              return browser?.executeJavaScript(
+                `({ login: localStorage.login, cookie: document.cookie })`
+              )
+            }, `${origin}/site/profile`)
+          )
+          .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
+
+        return restartedWindow
+      })
     const restartedAddress = restartedWindow.getByRole('textbox', {
       name: 'Application URL'
     })
-    await restartedAddress.fill(`${origin}/site/profile`)
-    await restartedAddress.press('Enter')
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
-            )
-          return browser?.executeJavaScript(
-            `({ login: localStorage.login, cookie: document.cookie })`
-          )
-        }, `${origin}/site/profile`)
-      )
-      .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
 
-    await electronApp.evaluate(({ webContents }) => {
-      webContents
-        .getAllWebContents()
-        .find((contents) => contents.getType() === 'webview')
-        ?.forcefullyCrashRenderer()
+    await test.step('recover a crashed native renderer', async () => {
+      await electronApp!.evaluate(({ webContents }, targetUrl) => {
+        webContents
+          .getAllWebContents()
+          .find(
+            (contents) =>
+              contents.getType() === 'webview' &&
+              contents.getURL() === targetUrl
+          )
+          ?.forcefullyCrashRenderer()
+      }, `${origin}/site/profile`)
+      await expect(
+        restartedWindow.getByText('Browser unavailable', { exact: true })
+      ).toBeVisible()
+      await expect(
+        restartedWindow.getByRole('button', { name: 'Reload application' })
+      ).toBeDisabled()
+      await restartedWindow
+        .getByRole('button', { name: 'Retry', exact: true })
+        .click()
+      await expect(
+        restartedWindow.getByRole('button', { name: 'Reload application' })
+      ).toBeEnabled()
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(({ webContents }, targetUrl) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
+            return browser?.executeJavaScript(
+              "document.querySelector('output')?.textContent"
+            )
+          }, `${origin}/site/profile`)
+        )
+        .toBe('panel-two')
     })
-    await expect(
-      restartedWindow.getByText('Browser unavailable', { exact: true })
-    ).toBeVisible()
-    await expect(
-      restartedWindow.getByRole('button', { name: 'Reload application' })
-    ).toBeDisabled()
-    await restartedWindow
-      .getByRole('button', { name: 'Retry', exact: true })
-      .click()
-    await expect(
-      restartedWindow.getByRole('button', { name: 'Reload application' })
-    ).toBeEnabled()
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
-            )
-          return browser?.executeJavaScript(
-            "document.querySelector('output')?.textContent"
-          )
-        }, `${origin}/site/profile`)
-      )
-      .toBe('panel-two')
 
-    // Native attachment has a six-page limit. Rejection must offer recovery.
-    for (let index = 0; index < 6; index += 1) {
-      await restartedWindow
-        .getByRole('button', { name: 'New panel in main tree' })
-        .click()
-      await restartedWindow
-        .getByRole('dialog', { name: 'New panel' })
-        .getByRole('button', { name: 'Browser, hosted browser' })
-        .click()
-      if (index < 5) {
-        await expect(
-          restartedWindow.getByRole('button', { name: 'Reload application' })
-        ).toBeEnabled()
+    await test.step('reject native capacity overflow and recover after closing a guest', async () => {
+      // Native attachment has a six-page limit. Rejection must offer recovery.
+      for (let index = 0; index < 6; index += 1) {
+        await restartedWindow
+          .getByRole('button', { name: 'New panel in main tree' })
+          .click()
+        await restartedWindow
+          .getByRole('dialog', { name: 'New panel' })
+          .getByRole('button', { name: 'Browser, hosted browser' })
+          .click()
+        if (index < 5) {
+          await expect(
+            restartedWindow.getByRole('button', { name: 'Reload application' })
+          ).toBeEnabled()
+        }
       }
-    }
-    await expect(
-      restartedWindow.getByText(
-        'This desktop window can run six Browser pages. Close another Browser tab, then select Retry.'
-      )
-    ).toBeVisible()
-    await expect(
-      restartedWindow.getByRole('button', { name: 'Retry', exact: true })
-    ).toBeEnabled()
-    await restartedWindow
-      .getByRole('button', { name: 'Close Shared profile', exact: true })
-      .click()
-    await restartedWindow
-      .getByRole('button', { name: 'Retry', exact: true })
-      .click()
-    await restartedAddress.fill(`${origin}/site/profile`)
-    await restartedAddress.press('Enter')
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find(
-              (contents) =>
-                contents.getType() === 'webview' &&
-                contents.getURL() === targetUrl
+      await expect(
+        restartedWindow.getByText(
+          'This desktop window can run six Browser pages. Close another Browser tab, then select Retry.'
+        )
+      ).toBeVisible()
+      await expect(
+        restartedWindow.getByRole('button', { name: 'Retry', exact: true })
+      ).toBeEnabled()
+      await restartedWindow
+        .getByRole('button', { name: 'Close Shared profile', exact: true })
+        .click()
+      await restartedWindow
+        .getByRole('button', { name: 'Retry', exact: true })
+        .click()
+      await restartedAddress.fill(`${origin}/site/profile`)
+      await restartedAddress.press('Enter')
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(({ webContents }, targetUrl) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
+            return browser?.executeJavaScript(
+              "document.querySelector('output')?.textContent"
             )
-          return browser?.executeJavaScript(
-            "document.querySelector('output')?.textContent"
-          )
-        }, `${origin}/site/profile`)
-      )
-      .toBe('panel-two')
-    await expect(
-      restartedWindow.getByRole('button', { name: 'Reload application' })
-    ).toBeEnabled()
+          }, `${origin}/site/profile`)
+        )
+        .toBe('panel-two')
+      await expect(
+        restartedWindow.getByRole('button', { name: 'Reload application' })
+      ).toBeEnabled()
+    })
   } finally {
     await electronApp?.close().catch(() => undefined)
     for (const response of stalledResponses) {
@@ -1477,11 +1565,19 @@ test('guides version updates and reconnects to a supported backend', async () =>
     path.join(os.tmpdir(), 'treeport-electron-incompatible-')
   )
   const health: CompatibilityHealthFixture = { version: '0.4.0' }
+  let rejectHealth = false
+  let rejectedHealthRequests = 0
   let applicationRequests = 0
   let updateRequests = 0
   let remoteUpdateRequests = 0
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
+      if (rejectHealth) {
+        rejectedHealthRequests += 1
+        response.destroy()
+        return
+      }
+
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({
@@ -1565,13 +1661,23 @@ test('guides version updates and reconnects to a supported backend', async () =>
       })
     ).toBeVisible()
 
-    health.version = MINIMUM_SUPPORTED_BACKEND_VERSION
-    await window.getByRole('button', { name: 'Retry' }).click()
-    await expect(
-      window.getByText('Open project', { exact: true })
-    ).toBeVisible()
-    expect(applicationRequests).toBeGreaterThan(0)
-    await expect.poll(() => updateRequests).toBeGreaterThan(0)
+    await test.step('retry a real failed health request without another user action', async () => {
+      health.version = MINIMUM_SUPPORTED_BACKEND_VERSION
+      rejectHealth = true
+      await window.getByRole('button', { name: 'Retry' }).click()
+      await expect.poll(() => rejectedHealthRequests).toBeGreaterThan(0)
+      expect(
+        (await window.evaluate(() => window.treeportShell.getState()))
+          .connection.status
+      ).toBe('connecting')
+      expect(applicationRequests).toBe(0)
+      rejectHealth = false
+      await expect(
+        window.getByText('Open project', { exact: true })
+      ).toBeVisible()
+      expect(applicationRequests).toBeGreaterThan(0)
+      await expect.poll(() => updateRequests).toBeGreaterThan(0)
+    })
 
     await electronApp.evaluate(({ autoUpdater, dialog, clipboard }) => {
       dialog.showMessageBox = async (options) => {
