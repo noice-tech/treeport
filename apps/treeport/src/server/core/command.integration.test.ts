@@ -240,7 +240,7 @@ describe('SpawnCommandRunner', () => {
         executable: process.execPath,
         args: [
           '-e',
-          `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)`
+          `process.on('SIGTERM', () => {}); require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`
         ],
         killGraceMs: 100
       })
