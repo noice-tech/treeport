@@ -33,7 +33,15 @@ import type {
   WebPanel,
   WorktreeRecord
 } from '@treeport/shared'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi
+} from 'vitest'
 import { runCliApplication } from './application.js'
 
 const execute = promisify(execFile)
@@ -1917,7 +1925,10 @@ describe('CLI context and machine output', () => {
 
   it('times out with exit 4 and aborts an in-flight status refresh', async () => {
     eventScenario = 'slow-refresh'
-    const result = await runCli(
+    // Keep the deadline beyond request setup, then expire it only once the
+    // second inspection is in flight. CI scheduling must not choose the phase.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const pending = runCli(
       [
         'terminal',
         'wait',
@@ -1925,11 +1936,20 @@ describe('CLI context and machine output', () => {
         '--until',
         'working',
         '--timeout',
-        '50ms',
+        '30s',
         '--json'
       ],
       { TREEPORT_API_URL: apiUrl }
     )
+    try {
+      await vi.waitFor(() => expect(inspectionRequests).toBe(2), {
+        timeout: 5_000
+      })
+    } finally {
+      await vi.advanceTimersByTimeAsync(30_000)
+      vi.useRealTimers()
+    }
+    const result = await pending
 
     expect(result.code).toBe(4)
     expect(result.stdout).toBe('')
@@ -1939,7 +1959,7 @@ describe('CLI context and machine output', () => {
         details: {
           terminalId: terminal.id,
           until: 'working',
-          timeoutMs: 50,
+          timeoutMs: 30_000,
           lastObservation: { metadata: { progress: null } }
         }
       }

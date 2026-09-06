@@ -127,7 +127,14 @@ describe('detached terminal host lifecycle', () => {
     const runCli = (args: string[]) =>
       execute(process.execPath, [treeportCli, ...args], {
         env: environment,
-        timeout: 15_000
+        // Startup itself waits up to 15 seconds after its preflight. Allow it
+        // to report failure instead of killing the CLI at the same deadline.
+        timeout: 30_000
+      }).catch((error: Error & { stdout?: string; stderr?: string }) => {
+        throw new Error(
+          `${error.message}\n${error.stdout ?? ''}\n${error.stderr ?? ''}`,
+          { cause: error }
+        )
       })
 
     const stopDestructively = async () => {
@@ -167,7 +174,7 @@ describe('detached terminal host lifecycle', () => {
       )
       const terminalId = created.terminal.id
       // At 20 lines per second, 200 lines can omit the startup marker during
-      // a slow restart. Capture enough history for the full 45-second test.
+      // a slow restart. Capture enough history for the full 90-second test.
       const captureUrl = `${apiUrl}/api/terminals/${terminalId}/capture?lines=2000`
       await waitFor(async () => {
         const capture = captureSchema.parse(
@@ -231,7 +238,7 @@ describe('detached terminal host lifecycle', () => {
         }
       }
     }
-  }, 45_000)
+  }, 90_000)
 
   it('kills detached descendants when a hosted terminal is removed', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-host-tree-'))
