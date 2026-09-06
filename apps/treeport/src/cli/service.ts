@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
+import { serviceSupervisorSource } from './service-supervisor.js'
 import { assertLoopbackHost } from '../server/core/loopback.js'
 import {
   daemonDown,
@@ -36,6 +37,8 @@ type ServiceState =
 
 interface ServiceRecord {
   schemaVersion: 1
+  supervisorVersion: 1 | null
+  supervisorRequestId: string | null
   manager: ServiceManager
   mode: ServiceMode
   platform: string
@@ -154,6 +157,8 @@ export interface SystemdDefinition {
 
 const serviceRecordSchema: z.ZodType<StoredServiceRecord> = z.strictObject({
   schemaVersion: z.literal(1),
+  supervisorVersion: z.literal(1).nullable().default(null),
+  supervisorRequestId: z.string().uuid().nullable().default(null),
   manager: z.enum(['launchd', 'systemd']),
   mode: z.enum(['user', 'headless']).optional(),
   platform: z.string(),
@@ -722,13 +727,17 @@ function definitionForRecord(record: ServiceRecord): string {
       createLaunchdDefinition({
         label: record.definitionName,
         mode: record.mode,
-        runnerPath: servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
-          .runnerPath,
+        runnerPath:
+          servicePaths({ TREEPORT_DATA_DIR: record.dataDir }).runnerPath +
+          (record.supervisorVersion ? '-supervised' : ''),
         username: record.username,
         group: record.group,
-        environment: record.environment,
+        // The system definition must not capture a release or shell environment.
+        environment: record.supervisorVersion
+          ? { HOME: record.home }
+          : record.environment,
         home: record.home,
-        logPath: record.logPath
+        logPath: record.supervisorVersion ? '/dev/null' : record.logPath
       })
     )
   }
@@ -743,6 +752,11 @@ function definitionForRecord(record: ServiceRecord): string {
 }
 
 function runnerSource(record: ServiceRecord): string {
+  if (record.supervisorVersion) {
+    const locations = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
+    return `#!/bin/sh\nexec ${shellQuote(record.runtimeExecutable!)} ${shellQuote(path.join(locations.directory, 'supervisor.mjs'))} ${shellQuote(locations.recordPath)} ${record.uid} >> ${shellQuote(record.logPath)} 2>&1\n`
+  }
+
   return `#!/bin/sh
 set -u
 entrypoint=${shellQuote(record.cliEntrypoint)}
@@ -769,10 +783,66 @@ export function storedServiceMode(input: {
   return input.mode ?? (input.manager === 'launchd' ? 'headless' : 'user')
 }
 
+export async function assertServiceDirectory(
+  directory: string,
+  uid: number
+): Promise<void> {
+  for (let current = directory; ; current = path.dirname(current)) {
+    const metadata = await fs.lstat(current)
+    if (
+      !metadata.isDirectory() ||
+      (metadata.uid !== uid && metadata.uid !== 0) ||
+      ((metadata.mode & 0o022) !== 0 &&
+        !(metadata.uid === 0 && metadata.mode & 0o1000))
+    ) {
+      throw new Error(`Unsafe Treeport service directory: ${current}`)
+    }
+
+    if (current === path.dirname(current)) {
+      break
+    }
+  }
+}
+
 async function readServiceRecord(
   recordPath: string
 ): Promise<ServiceRecord | null> {
+  const metadata = await fs
+    .lstat(recordPath)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') {
+        return null
+      }
+
+      throw error
+    })
+  if (!metadata) {
+    return null
+  }
+
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    (metadata.mode & 0o077) !== 0
+  ) {
+    throw new Error('Refusing an unsafe Treeport service record.')
+  }
+
+  await assertServiceDirectory(path.dirname(recordPath), metadata.uid)
   const record = await readJson(recordPath, serviceRecordSchema)
+  if (
+    record &&
+    (!metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      metadata.uid !== record.uid ||
+      (metadata.mode & 0o077) !== 0 ||
+      (process.getuid?.() !== 0 && process.getuid?.() !== record.uid))
+  ) {
+    throw new Error(
+      'Refusing an unsafe or foreign-owned Treeport service record.'
+    )
+  }
+
   if (!record) {
     return null
   }
@@ -788,10 +858,20 @@ async function currentRecord(): Promise<ServiceRecord | null> {
 }
 
 async function saveRecord(record: ServiceRecord): Promise<void> {
-  await writeJson(
-    servicePaths({ TREEPORT_DATA_DIR: record.dataDir }).recordPath,
-    record
-  )
+  if (process.getuid?.() !== record.uid || record.uid === 0) {
+    throw new Error(
+      'Run service lifecycle commands as the non-root Treeport data owner.'
+    )
+  }
+
+  const locations = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
+  await assertServiceDirectory(locations.directory, record.uid)
+  await writeJson(locations.recordPath, {
+    ...record,
+    // Do not migrate unrelated login/systemd records during routine updates.
+    supervisorVersion: record.supervisorVersion ?? undefined,
+    supervisorRequestId: record.supervisorRequestId ?? undefined
+  })
 }
 
 async function managerState(record: ServiceRecord): Promise<{
@@ -923,6 +1003,41 @@ export async function serviceInstalled(): Promise<boolean> {
   )
 }
 
+export function serviceHealthState(input: {
+  actionRequired: boolean
+  stale: boolean
+  healthy: boolean
+  installed: boolean
+  requestedState: ServiceRequestedState
+  daemonRunning: boolean
+  managerActive: boolean
+  supervised: boolean
+}): ServiceState {
+  if (input.actionRequired) {
+    return 'action_required'
+  }
+
+  if (input.stale) {
+    return 'stale'
+  }
+
+  if (input.installed && input.requestedState === 'stopped') {
+    return input.daemonRunning ? 'unhealthy' : 'stopped'
+  }
+
+  if (input.healthy) {
+    return 'healthy'
+  }
+
+  // A persistent supervisor remains active even when its daemon fails. Do not
+  // mask that failure as indefinitely "starting" based on launchctl alone.
+  if (input.installed && input.managerActive && !input.supervised) {
+    return 'starting'
+  }
+
+  return input.installed ? 'unhealthy' : 'disabled'
+}
+
 export async function serviceStatus(): Promise<ServiceStatus> {
   const manager = managerForPlatform()
   const record = await currentRecord()
@@ -1030,7 +1145,8 @@ export async function serviceStatus(): Promise<ServiceStatus> {
   const invokedEntrypoint = currentEntrypoint()
   const entrypointMatches = Boolean(
     entrypointExists &&
-    (invokedEntrypoint === null ||
+    (record.supervisorVersion !== null ||
+      invokedEntrypoint === null ||
       path.resolve(invokedEntrypoint) === path.resolve(record.cliEntrypoint))
   )
   const currentEnvironment = createServiceEnvironment({
@@ -1050,7 +1166,9 @@ export async function serviceStatus(): Promise<ServiceStatus> {
     installationMethod: record.installationMethod
   })
   const environmentMatches =
-    fingerprint(currentEnvironment) === record.environmentHash
+    fingerprint(
+      record.supervisorVersion ? record.environment : currentEnvironment
+    ) === record.environmentHash
   const healthy = Boolean(
     daemon.verified &&
     daemon.health?.daemonLifecycle === 'service' &&
@@ -1077,6 +1195,17 @@ export async function serviceStatus(): Promise<ServiceStatus> {
     record.manager === 'launchd' && record.mode === 'headless'
       ? 'treeport service enable --headless'
       : 'treeport service enable'
+  const needsMigration =
+    record.manager === 'launchd' &&
+    record.mode === 'headless' &&
+    !record.supervisorVersion
+  if (needsMigration) {
+    issues.push(
+      'This headless installation needs a one-time administrator migration. Run `treeport service enable --headless`; routine start and stop then need no administrator.'
+    )
+    recoveryCommands.push(repairCommand)
+  }
+
   if (record.manager !== manager) {
     issues.push(
       `The service record uses ${record.manager}, but this host requires ${manager}.`
@@ -1139,27 +1268,25 @@ export async function serviceStatus(): Promise<ServiceStatus> {
   }
 
   const stale =
+    needsMigration ||
     record.manager !== manager ||
     !definitionMatches ||
     !environmentMatches ||
     !entrypointMatches ||
     (definitionPresent && !installed) ||
     managerStatus.managerIssue !== null
-  const state: ServiceState =
-    record.pendingAdministratorRequestId ||
-    (record.manager === 'systemd' && installed && !managerStatus.lingering)
-      ? 'action_required'
-      : stale
-        ? 'stale'
-        : healthy
-          ? 'healthy'
-          : installed && record.requestedState === 'stopped'
-            ? 'stopped'
-            : installed && managerStatus.active
-              ? 'starting'
-              : installed
-                ? 'unhealthy'
-                : 'disabled'
+  const state = serviceHealthState({
+    actionRequired:
+      Boolean(record.pendingAdministratorRequestId) ||
+      (record.manager === 'systemd' && installed && !managerStatus.lingering),
+    stale,
+    healthy,
+    installed,
+    requestedState: record.requestedState,
+    daemonRunning: daemon.running,
+    managerActive: managerStatus.active,
+    supervised: record.supervisorVersion !== null
+  })
 
   return {
     supported: true,
@@ -1285,6 +1412,8 @@ async function prepareRecord(requestedMode: ServiceMode): Promise<{
 
   const base: ServiceRecord = {
     schemaVersion: 1,
+    supervisorVersion: manager === 'launchd' && mode === 'headless' ? 1 : null,
+    supervisorRequestId: null,
     manager,
     mode,
     platform: process.platform,
@@ -1323,6 +1452,8 @@ async function writeServiceFiles(
   definition: string
 ): Promise<void> {
   const locations = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
+  await fs.mkdir(locations.directory, { recursive: true, mode: 0o700 })
+  await assertServiceDirectory(locations.directory, record.uid)
   await fs.mkdir(path.dirname(record.logPath), {
     recursive: true,
     mode: 0o700
@@ -1334,10 +1465,18 @@ async function writeServiceFiles(
     })
   }
 
-  await fs.writeFile(locations.runnerPath, runnerSource(record), {
-    mode: 0o700
-  })
-  await fs.chmod(locations.runnerPath, 0o700)
+  if (record.supervisorVersion) {
+    await fs.writeFile(
+      path.join(locations.directory, 'supervisor.mjs'),
+      serviceSupervisorSource(),
+      { mode: 0o600 }
+    )
+  }
+
+  const runnerPath =
+    locations.runnerPath + (record.supervisorVersion ? '-supervised' : '')
+  await fs.writeFile(runnerPath, runnerSource(record), { mode: 0o700 })
+  await fs.chmod(runnerPath, 0o700)
   if (record.manager === 'launchd' && record.mode === 'headless') {
     await fs.writeFile(locations.stagedDefinitionPath, definition, {
       mode: 0o600
@@ -1382,7 +1521,8 @@ async function prepareAdministratorRequest(
     group: record.group,
     home: record.home,
     serviceRecordPath: locations.recordPath,
-    runnerPath: locations.runnerPath,
+    runnerPath:
+      locations.runnerPath + (record.supervisorVersion ? '-supervised' : ''),
     definitionName: record.definitionName,
     definitionPath: record.definitionPath,
     stagedDefinitionPath: locations.stagedDefinitionPath,
@@ -1588,8 +1728,24 @@ export async function serviceStart(): Promise<ServiceActionResult> {
   }
 
   const current = await serviceStatus()
-  if (current.state === 'healthy') {
+  if (current.state === 'healthy' && record.requestedState === 'running') {
     return { status: current, changed: false, administratorCommand: null }
+  }
+
+  if (
+    record.manager === 'launchd' &&
+    record.mode === 'headless' &&
+    !record.supervisorVersion
+  ) {
+    throw new Error(
+      'This headless service needs a one-time administrator migration. Run `treeport service enable --headless` first.'
+    )
+  }
+
+  if (record.supervisorVersion && !current.active) {
+    throw new Error(
+      'The headless supervisor is not loaded. Run `treeport service enable --headless` to repair the startup integration with administrator approval.'
+    )
   }
 
   if (current.administratorCommand) {
@@ -1611,17 +1767,18 @@ export async function serviceStart(): Promise<ServiceActionResult> {
   const next = {
     ...record,
     requestedState: 'running' as const,
+    supervisorRequestId: record.supervisorVersion ? crypto.randomUUID() : null,
     pendingAdministratorRequestId: null,
     updatedAt: new Date().toISOString()
   }
   await saveRecord(next)
   if (record.manager === 'launchd') {
     if (record.mode === 'headless') {
-      const prepared = await prepareAdministratorRequest(next, 'start')
+      await waitForService(next)
       return {
         status: await serviceStatus(),
         changed: true,
-        administratorCommand: prepared.command
+        administratorCommand: null
       }
     }
 
@@ -1682,24 +1839,72 @@ export async function serviceStop(): Promise<ServiceActionResult> {
   }
 
   const current = await serviceStatus()
-  if (current.state === 'stopped') {
+  if (
+    record.manager === 'launchd' &&
+    record.mode === 'headless' &&
+    !record.supervisorVersion
+  ) {
+    throw new Error(
+      'This headless service needs a one-time administrator migration. Run `treeport service enable --headless` first, or `treeport service disable` for administrator-approved removal.'
+    )
+  }
+
+  // Even an already stopped daemon needs the supervisor acknowledgement: a
+  // concurrent spawn must finish before an updater can switch the active release.
+  if (current.state === 'stopped' && !record.supervisorVersion) {
     return { status: current, changed: false, administratorCommand: null }
   }
 
   const next = {
     ...record,
     requestedState: 'stopped' as const,
+    supervisorRequestId: record.supervisorVersion ? crypto.randomUUID() : null,
     pendingAdministratorRequestId: null,
     updatedAt: new Date().toISOString()
   }
   await saveRecord(next)
   if (record.manager === 'launchd') {
     if (record.mode === 'headless') {
-      const prepared = await prepareAdministratorRequest(next, 'stop')
+      if (current.active) {
+        const statePath = path.join(
+          servicePaths({ TREEPORT_DATA_DIR: record.dataDir }).directory,
+          'supervisor.json'
+        )
+        const deadline = Date.now() + 15_000
+        let stopped = false
+        while (Date.now() < deadline) {
+          const acknowledgement = await readJson(
+            statePath,
+            z.object({
+              requestedState: z.enum(['running', 'stopped']),
+              requestId: z.string().nullable(),
+              childPid: z.number().nullable()
+            })
+          )
+          if (
+            acknowledgement?.requestedState === 'stopped' &&
+            acknowledgement.requestId === next.supervisorRequestId &&
+            acknowledgement.childPid === null
+          ) {
+            stopped = true
+            break
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        if (!stopped) {
+          throw new Error(
+            `Treeport supervisor did not confirm shutdown. Stopped intent is preserved; inspect ${record.logPath} before updating.`
+          )
+        }
+      }
+
+      // Uses the existing PID/instance ownership checks, never a process group.
+      await daemonDown()
       return {
         status: await serviceStatus(),
         changed: true,
-        administratorCommand: prepared.command
+        administratorCommand: null
       }
     }
 
@@ -1871,7 +2076,7 @@ export async function serviceApply(requestPath: string): Promise<{
     throw new Error('The service apply request is invalid.')
   }
 
-  if (metadata.uid !== request.uid) {
+  if (request.uid <= 0 || metadata.uid !== request.uid) {
     throw new Error(
       'The service apply request owner does not match its target user.'
     )
@@ -1943,14 +2148,52 @@ export async function serviceApply(requestPath: string): Promise<{
     throw new Error('Treeport service apply lost root privileges.')
   }
 
+  const locations = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
+  const location = launchdLocation({
+    uid: record.uid,
+    home: record.home,
+    mode: 'headless'
+  })
+  const groupId = await runCommand(await executablePath('id'), [
+    '-g',
+    record.username
+  ])
+  const groupName = await primaryGroup(record.username)
+  if (
+    groupId.code !== 0 ||
+    Number(groupId.stdout.trim()) !== record.gid ||
+    record.gid !== request.gid ||
+    groupName !== record.group ||
+    record.group !== request.group ||
+    request.definitionName !== location.name ||
+    request.definitionPath !== location.path ||
+    request.serviceRecordPath !== locations.recordPath ||
+    request.runnerPath !==
+      locations.runnerPath + (record.supervisorVersion ? '-supervised' : '') ||
+    request.stagedDefinitionPath !== locations.stagedDefinitionPath ||
+    requestPath !== path.join(locations.requestsDirectory, `${request.id}.json`)
+  ) {
+    throw new Error(
+      'The administrator request has an unsafe account or installation path.'
+    )
+  }
+
+  await assertServiceDirectory(locations.requestsDirectory, record.uid)
+  if (request.operation === 'start' || request.operation === 'stop') {
+    throw new Error(
+      'Legacy administrator start/stop requests are no longer supported. Run `treeport service enable --headless` for the one-time startup integration migration.'
+    )
+  }
+
   const launchctl = await executablePath('launchctl')
   const target = `system/${request.definitionName}`
   if (request.operation === 'enable') {
-    const staged = await fs.readFile(request.stagedDefinitionPath, 'utf8')
+    // Never install user-supplied XML as root. Generate the exact allowlisted
+    // definition, with launchd UserName/GroupName and no privileged log opens.
+    const definition = definitionForRecord(record)
     if (
-      fingerprint(staged) !== request.definitionHash ||
-      !staged.includes(`<string>${xml(request.username)}</string>`) ||
-      !staged.includes(`<string>${xml(request.runnerPath)}</string>`)
+      !record.supervisorVersion ||
+      fingerprint(definition) !== request.definitionHash
     ) {
       throw new Error(
         'The staged LaunchDaemon definition does not match the approved request.'
@@ -1958,7 +2201,7 @@ export async function serviceApply(requestPath: string): Promise<{
     }
 
     const temporaryPath = `${request.definitionPath}.${process.pid}.tmp`
-    await fs.copyFile(request.stagedDefinitionPath, temporaryPath)
+    await fs.writeFile(temporaryPath, definition, { mode: 0o644, flag: 'wx' })
     await fs.chown(temporaryPath, 0, 0)
     await fs.chmod(temporaryPath, 0o644)
     await fs.rename(temporaryPath, request.definitionPath)
@@ -1976,29 +2219,6 @@ export async function serviceApply(requestPath: string): Promise<{
     if (bootstrapped.code !== 0) {
       throw commandError('launchctl bootstrap', bootstrapped)
     }
-  } else if (request.operation === 'start') {
-    const enabled = await runCommand(launchctl, ['enable', target])
-    if (enabled.code !== 0) {
-      throw commandError('launchctl enable', enabled)
-    }
-
-    const active = await runCommand(launchctl, ['print', target])
-    const started =
-      active.code === 0
-        ? await runCommand(launchctl, ['kickstart', target])
-        : await runCommand(launchctl, [
-            'bootstrap',
-            'system',
-            request.definitionPath
-          ])
-    if (started.code !== 0) {
-      throw commandError('launchctl start', started)
-    }
-  } else if (request.operation === 'stop') {
-    const stopped = await runCommand(launchctl, ['bootout', target])
-    if (stopped.code !== 0 && !stopped.stderr.includes('No such process')) {
-      throw commandError('launchctl bootout', stopped)
-    }
   } else {
     const installed = await fs
       .readFile(request.definitionPath, 'utf8')
@@ -2013,7 +2233,12 @@ export async function serviceApply(requestPath: string): Promise<{
     await fs.rm(request.definitionPath, { force: true })
   }
 
-  if (request.operation === 'enable' || request.operation === 'start') {
+  // All remaining writes are in user-controlled paths. Permanently drop root
+  // first, so symlink races cannot turn bookkeeping into privileged file writes.
+  process.setgroups!([])
+  process.setgid!(request.gid)
+  process.setuid!(request.uid)
+  if (request.operation === 'enable') {
     await waitForService(record)
   }
 
@@ -2024,16 +2249,14 @@ export async function serviceApply(requestPath: string): Promise<{
       force: true
     })
   } else {
-    await writeJson(request.serviceRecordPath, {
-      ...record,
-      requestedState:
-        request.operation === 'stop'
-          ? ('stopped' as const)
-          : ('running' as const),
-      pendingAdministratorRequestId: null,
-      updatedAt: new Date().toISOString()
-    })
-    await fs.chown(request.serviceRecordPath, request.uid, request.gid)
+    const latest = await readServiceRecord(request.serviceRecordPath)
+    if (latest?.pendingAdministratorRequestId === request.id) {
+      await writeJson(request.serviceRecordPath, {
+        ...latest,
+        pendingAdministratorRequestId: null,
+        updatedAt: new Date().toISOString()
+      })
+    }
   }
 
   return { operation: request.operation, applied: true }
@@ -2056,12 +2279,23 @@ export async function serviceRun(): Promise<void> {
     )
   }
 
-  await writeJson(recordPath, {
-    ...record,
-    requestedState: 'running',
-    pendingAdministratorRequestId: null,
-    updatedAt: new Date().toISOString()
-  })
+  if (record.supervisorVersion) {
+    // A concurrent stop wins even when this child was spawned before the intent changed.
+    if (record.requestedState === 'stopped') {
+      return
+    }
+  } else {
+    // Login/user managers still own their start intent, including after reboot.
+    await writeJson(recordPath, {
+      ...record,
+      supervisorVersion: undefined,
+      supervisorRequestId: undefined,
+      requestedState: 'running',
+      pendingAdministratorRequestId: null,
+      updatedAt: new Date().toISOString()
+    })
+  }
+
   const [version, serverEntry, webDist] = await Promise.all([
     treeportVersion(),
     resolvePackagePath('dist', 'node', 'server', 'index.js'),
