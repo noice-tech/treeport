@@ -1265,10 +1265,11 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
       await expect(window).toHaveURL(/\/panels\/panel_browser_2$/)
       await expect(address).toHaveValue('')
       // Enter during startup must retain the latest address, not silently drop it.
+      // Do not wait for navigation while startup is gated; verify it after release.
       await address.fill(`${origin}/site/next`)
-      await address.press('Enter')
+      await address.press('Enter', { noWaitAfter: true })
       await address.fill(`${origin}/site/profile`)
-      await address.press('Enter')
+      await address.press('Enter', { noWaitAfter: true })
       ownerTicketRelease.resolve()
       ownerTicketGate = null
       await expect

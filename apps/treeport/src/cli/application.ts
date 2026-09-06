@@ -1010,6 +1010,11 @@ async function main(args: string[]): Promise<void> {
     .name('treeport')
     .usage('[options] [folder] [command]')
     .description('Manage Treeport projects, trees, and terminals.')
+    .version(
+      await treeportVersion(),
+      '-v, --version',
+      'show installed CLI version'
+    )
     .argument('[folder]', 'folder or folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
     .configureOutput({
@@ -1410,13 +1415,23 @@ async function main(args: string[]): Promise<void> {
     .description('Show local daemon status')
     .option('--json', 'emit machine-readable JSON')
   statusCommand.action(async () => {
-    const status = await daemonStatus()
+    const [cliVersion, status] = await Promise.all([
+      treeportVersion(),
+      daemonStatus()
+    ])
     const supervision = (await serviceInstalled())
       ? await serviceStatus()
       : null
+    const observed = supervision?.daemon ?? status
+    const daemonVersion =
+      observed.running && observed.verified
+        ? (observed.health?.version ?? null)
+        : null
     const projectList = status.verified ? await projects() : []
     const result = {
       ...status,
+      cliVersion,
+      daemonVersion,
       service: supervision,
       projects: projectList.length,
       worktrees: projectList.reduce(
@@ -1435,17 +1450,16 @@ async function main(args: string[]): Promise<void> {
       )
     }
     print(result, () => {
+      const versions = `CLI version: ${cliVersion}\nDaemon version: ${daemonVersion ?? 'unavailable'}${daemonVersion !== null && daemonVersion !== cliVersion ? '\nVersion mismatch: CLI and daemon versions differ' : ''}`
       if (!status.state) {
-        return supervision
-          ? formatServiceStatus(supervision)
-          : 'Treeport is stopped'
+        return `${supervision ? formatServiceStatus(supervision) : 'Treeport is stopped'}\n${versions}`
       }
 
       if (!status.running || !status.verified) {
-        return `Treeport is unhealthy (PID ${status.state.pid})\nLogs: ${path.join(status.state.dataDir, 'logs', 'daemon.log')}`
+        return `Treeport is unhealthy (PID ${status.state.pid})\n${versions}\nLogs: ${path.join(status.state.dataDir, 'logs', 'daemon.log')}`
       }
 
-      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nTrees: ${result.worktrees}\nTerminals: ${result.terminals}`
+      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\n${versions}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nTrees: ${result.worktrees}\nTerminals: ${result.terminals}`
     })
   })
 

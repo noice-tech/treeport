@@ -7,6 +7,19 @@ Run `treeport` without a folder or command to show help.
 
 Most identifiers can be exact IDs or paths in a registered project or tree.
 
+## Show versions and status
+
+Run `treeport -v` or `treeport --version` to print the installed CLI version without a running daemon.
+
+Run `treeport version` to show both CLI and daemon versions.
+With `--json`, this command reports `cli` and `daemon`. The `daemon` value is `null` when Treeport cannot verify the daemon.
+
+Run `treeport status` to show local daemon status, CLI version, and verified daemon version.
+The command identifies version differences. It shows the daemon version as unavailable when the daemon is stopped or cannot be verified.
+Service supervision does not change these version fields.
+
+With `--json`, status includes `cliVersion` and nullable `daemonVersion` fields with the existing status fields.
+
 ## Open a folder
 
 ```sh
