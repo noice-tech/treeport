@@ -7,6 +7,7 @@ import type {
   Dialog,
   Page
 } from 'playwright'
+import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
@@ -334,7 +335,7 @@ export class PlaywrightBrowser {
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
       ) {
-        this.updateState({ loading: true })
+        this.updateState({ url: request.url(), loading: true })
       }
     })
     page.on('requestfailed', (request) => {
@@ -386,9 +387,18 @@ export class PlaywrightBrowser {
       Omit<BrowserSessionState, 'controlled' | 'hasController' | 'controller'>
     >
   ): void {
+    const observedUrl = patch.url ?? this.stateValue.url
+    // Chromium error pages are not navigable protocol URLs. Keep the last
+    // supported address (including a failed navigation's target) for recovery.
+    const url =
+      observedUrl === 'about:blank' ||
+      decodeUnknownOrNull(browserUrlSchema, observedUrl) !== null
+        ? observedUrl
+        : this.stateValue.url
     this.stateValue = {
       ...this.stateValue,
       ...patch,
+      url,
       viewport: patch.viewport ?? this.stateValue.viewport
     }
     this.callbacks.state(this.stateValue)
