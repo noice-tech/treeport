@@ -1,8 +1,4 @@
-import type {
-  RemoveOperationRecord,
-  RemovePreview,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { RemoveOperationRecord, RemovePreview } from '@treeport/shared'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,6 +10,7 @@ import {
   AlertDialogTitle
 } from '../../components/ui/alert-dialog'
 import { Button } from '../../components/ui/button'
+import type { RemovalWorktree } from './worktree-workflows'
 
 export function RemoveWorktreeDialog({
   worktree,
@@ -27,23 +24,23 @@ export function RemoveWorktreeDialog({
   onSkipCleanup,
   onRetry
 }: {
-  worktree: WorktreeRecord | null
+  worktree: RemovalWorktree | null
   preview: RemovePreview | null
   operation: RemoveOperationRecord | null
   skipCleanup: boolean
   busy: boolean
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
-  onConfirm: (worktree: WorktreeRecord, preview: RemovePreview) => void
-  onSkipCleanup: (worktree: WorktreeRecord, preview: RemovePreview) => void
-  onRetry: (worktree: WorktreeRecord) => void
+  onConfirm: (worktree: RemovalWorktree, preview: RemovePreview) => void
+  onSkipCleanup: (worktree: RemovalWorktree, preview: RemovePreview) => void
+  onRetry: (worktree: RemovalWorktree) => void
 }) {
   const destructive = Boolean(preview?.warnings.length) || skipCleanup
   const name = preview?.name ?? worktree?.name
-  const branch = preview?.branch ?? worktree?.branch
-  const detached = preview?.detached ?? worktree?.detached
-  const head = preview?.head ?? worktree?.head
-  const worktreePath = preview?.path ?? worktree?.path
+  const branch = preview?.branch
+  const detached = preview?.detached
+  const head = preview?.head
+  const worktreePath = preview?.path
   const removalFailed = operation?.status === 'failed'
   const removalCompleted = operation?.status === 'completed'
   const cleanup = operation?.request.cleanupCommands

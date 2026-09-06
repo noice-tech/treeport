@@ -50,7 +50,11 @@ import {
 } from './features/terminals/terminal-workspace'
 import { CreateWorktreeDialog } from './features/worktrees/create-worktree-dialog'
 import { RemoveWorktreeDialog } from './features/worktrees/remove-worktree-dialog'
-import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows'
+import {
+  useWorktreeWorkflows,
+  type RemovalWorktree
+} from './features/worktrees/worktree-workflows'
+import { useWorktreeRemovals } from './features/worktrees/use-worktree-removals'
 import { useSidebar } from './components/ui/sidebar'
 import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync'
 import { notifyError } from './features/notifications/error-notifications'
@@ -94,7 +98,7 @@ type AppDialog =
   | { type: 'presets' }
   | {
       type: 'remove'
-      worktree: WorktreeRecord
+      worktree: RemovalWorktree
       preview: RemovePreview
       operation: RemoveOperationRecord | null
       skipCleanup: boolean
@@ -136,15 +140,26 @@ function WorkspaceApp() {
   const queryClient = useQueryClient()
   const location = useLocation()
   const projectsQuery = useQuery(projectsQueryOptions)
-  const projects = projectsQuery.data ?? []
+  const removals = useWorktreeRemovals()
+  const projects = useMemo(
+    () =>
+      (projectsQuery.data ?? []).map((project) => ({
+        ...project,
+        worktrees: project.worktrees.filter(
+          (worktree) => !removals.hiddenWorktreeIds.has(worktree.id)
+        )
+      })),
+    [projectsQuery.data, removals.hiddenWorktreeIds]
+  )
   const presetsQuery = useQuery(terminalPresetsQueryOptions)
   const presets = presetsQuery.data ?? []
   const storedResumePath = localStorage.getItem(
     LAST_WORKSPACE_ROUTE_STORAGE_KEY
   )
-  const workspaceResolution = projectsQuery.data
-    ? resolveWorkspaceRoute(projects, location.pathname, storedResumePath)
-    : null
+  const workspaceResolution =
+    projectsQuery.data && removals.ready
+      ? resolveWorkspaceRoute(projects, location.pathname, storedResumePath)
+      : null
   const selectedProject = workspaceResolution?.selection.project ?? null
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
   const selectedTerminal =
@@ -1096,10 +1111,10 @@ function WorkspaceApp() {
     prepareRemoval,
     confirmRemoval,
     removeWithoutCleanup,
-    viewRemoval,
     retryRemoval
   } = useWorktreeWorkflows({
     projects,
+    removals,
     setDrawerOpen: (open) => {
       if (open) {
         setDrawerOpen(true)
@@ -1477,7 +1492,6 @@ function WorkspaceApp() {
           onReorderTerminals={reorderTerminals}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
-          onViewRemoval={viewRemoval}
           onOpenPanelDialog={(project, worktree, trigger) =>
             openDialog(
               {

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { toast } from 'sonner'
 import {
   useMutation,
   useQueries,
@@ -6,7 +7,6 @@ import {
   useQueryClient
 } from '@tanstack/react-query'
 import type {
-  OperationRecord,
   ProjectRecord,
   RemoveOperationRecord,
   RemovePreview,
@@ -19,6 +19,9 @@ import { errorDetails } from '../../error-message'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import { notifyError } from '../notifications/error-notifications'
+import type { useWorktreeRemovals } from './use-worktree-removals'
+
+export type RemovalWorktree = Pick<WorktreeRecord, 'id' | 'name'>
 
 export type RemovalStage = 'checking' | 'removing'
 
@@ -52,6 +55,7 @@ interface TrackedCreation {
 
 export function useWorktreeWorkflows({
   projects,
+  removals,
   setDrawerOpen,
   onWorktreeSubmitted,
   onRemovalNeedsConfirmation,
@@ -60,16 +64,17 @@ export function useWorktreeWorkflows({
   selectedTerminalId
 }: {
   projects: ProjectRecord[]
+  removals: ReturnType<typeof useWorktreeRemovals>
   setDrawerOpen: (open: boolean) => void
   onWorktreeSubmitted: () => void
   onRemovalNeedsConfirmation: (
-    worktree: WorktreeRecord,
+    worktree: RemovalWorktree,
     preview: RemovePreview,
     trigger?: HTMLElement,
     skipCleanup?: boolean
   ) => void
   onRemovalProgress: (
-    worktree: WorktreeRecord,
+    worktree: RemovalWorktree,
     preview: RemovePreview,
     operation: RemoveOperationRecord,
     open: boolean
@@ -84,18 +89,6 @@ export function useWorktreeWorkflows({
       (
         await parseResponse(
           rpc.api.operations.$get({ query: { kind: 'create' } })
-        )
-      ).operations,
-    refetchInterval: 2_000,
-    refetchOnReconnect: true,
-    refetchOnWindowFocus: true
-  })
-  const removalsQuery = useQuery({
-    queryKey: ['worktree-removals'],
-    queryFn: async () =>
-      (
-        await parseResponse(
-          rpc.api.operations.$get({ query: { kind: 'remove' } })
         )
       ).operations,
     refetchInterval: 2_000,
@@ -181,11 +174,14 @@ export function useWorktreeWorkflows({
   const [localPendingRemovals, setLocalPendingRemovals] = useState<
     Record<string, RemovalStage>
   >({})
-  const pendingRemovals = (removalsQuery.data ?? []).reduce<
+  const pendingRemovals = removals.operations.reduce<
     Record<string, RemovalStage>
   >(
     (current, operation) => {
-      if (operation.kind === 'remove' && operation.request.preview) {
+      if (
+        (operation.status === 'pending' || operation.status === 'running') &&
+        operation.request.preview
+      ) {
         current[operation.request.preview.worktreeId] = 'removing'
       }
 
@@ -194,6 +190,62 @@ export function useWorktreeWorkflows({
     { ...localPendingRemovals }
   )
   const removalGuardsRef = useRef(new Set<string>())
+  const shownRemovalsRef = useRef(new Map<string, RemoveOperationRecord>())
+  /* eslint-disable react-you-might-not-need-an-effect/no-pass-data-to-parent -- External operation updates drive progress and failure dialogs, including after refresh. */
+  useEffect(() => {
+    for (const operation of removals.operations) {
+      const preview = operation.request.preview
+      if (
+        !preview ||
+        shownRemovalsRef.current.get(operation.id) === operation
+      ) {
+        continue
+      }
+
+      const previous = shownRemovalsRef.current.get(operation.id)
+      shownRemovalsRef.current.set(operation.id, operation)
+      const worktree = { id: preview.worktreeId, name: preview.name }
+      const id = `remove-${operation.id}`
+      const action = {
+        label: 'Review failure',
+        onClick: (event: MouseEvent<HTMLButtonElement>) => {
+          event.preventDefault()
+          onRemovalProgress(worktree, preview, operation, true)
+        }
+      }
+      if (operation.status === 'pending' || operation.status === 'running') {
+        continue
+      }
+
+      if (previous?.status === operation.status) {
+        continue
+      }
+
+      void queryClient.invalidateQueries({ queryKey: ['worktree-removals'] })
+      void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+      if (operation.status === 'failed') {
+        toast.error(`Couldn’t remove tree “${preview.name}”`, {
+          id,
+          description: operation.error ?? 'Git kept the tree.',
+          duration: Infinity,
+          action
+        })
+        onRemovalProgress(worktree, preview, operation, true)
+      } else {
+        const cleanup = operation.result?.cleanup
+        if (cleanup?.status === 'preserved') {
+          toast.error(`Couldn’t finish cleanup for “${preview.name}”`, {
+            id,
+            description: cleanup.warning,
+            duration: Infinity
+          })
+        }
+
+        onRemovalDismiss(worktree.id)
+      }
+    }
+  }, [removals.operations, onRemovalProgress, onRemovalDismiss, queryClient])
+  /* eslint-enable react-you-might-not-need-an-effect/no-pass-data-to-parent */
 
   const createWorktree = useMutation({
     mutationFn: (request: WorktreeCreationRequest) => {
@@ -409,7 +461,7 @@ export function useWorktreeWorkflows({
   }
 
   const submitRemoval = async (
-    worktree: WorktreeRecord,
+    worktree: RemovalWorktree,
     preview: RemovePreview,
     confirmDestructive: boolean,
     staleRetriesRemaining: number,
@@ -433,44 +485,18 @@ export function useWorktreeWorkflows({
         throw new Error('Tree removal returned an unexpected operation')
       }
 
-      let operation: RemoveOperationRecord = acceptedOperation
-
-      // Cleanup output is persisted in the operation; routine removal stays quiet.
-      onRemovalDismiss(worktree.id)
-      await queryClient.invalidateQueries({
-        queryKey: ['worktree-removals']
-      })
-      while (operation.status === 'pending' || operation.status === 'running') {
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        const latest: OperationRecord = (
-          await parseResponse(
-            rpc.api.operations[':operationId'].$get({
-              param: { operationId: operation.id }
-            })
-          )
-        ).operation
-        if (latest.kind !== 'remove') {
-          throw new Error('Tree removal returned an unexpected operation')
+      removals.trackRemoval(acceptedOperation)
+      for (const previous of removals.operations) {
+        if (
+          previous.status === 'failed' &&
+          previous.request.preview?.worktreeId === worktree.id
+        ) {
+          toast.dismiss(`remove-${previous.id}`)
         }
-
-        operation = latest
-        onRemovalProgress(worktree, preview, operation, false)
       }
-
-      await queryClient.invalidateQueries({
-        queryKey: ['worktree-removals']
-      })
       releaseRemoval(worktree.id)
-      if (operation.status === 'failed') {
-        onRemovalProgress(worktree, preview, operation, true)
-        return
-      }
-
       onRemovalDismiss(worktree.id)
-      void queryClient.invalidateQueries(
-        { queryKey: projectsQueryKey },
-        { cancelRefetch: false }
-      )
+      void queryClient.invalidateQueries({ queryKey: ['worktree-removals'] })
     } catch (error) {
       if (
         errorDetails(error).code === 'REMOVE_PREVIEW_STALE' &&
@@ -554,7 +580,10 @@ export function useWorktreeWorkflows({
     }
   }
 
-  const confirmRemoval = (worktree: WorktreeRecord, preview: RemovePreview) => {
+  const confirmRemoval = (
+    worktree: RemovalWorktree,
+    preview: RemovePreview
+  ) => {
     if (removalGuardsRef.current.has(worktree.id)) {
       return
     }
@@ -564,7 +593,7 @@ export function useWorktreeWorkflows({
   }
 
   const removeWithoutCleanup = (
-    worktree: WorktreeRecord,
+    worktree: RemovalWorktree,
     preview: RemovePreview
   ) => {
     if (removalGuardsRef.current.has(worktree.id)) {
@@ -575,18 +604,7 @@ export function useWorktreeWorkflows({
     void submitRemoval(worktree, preview, true, 1, true)
   }
 
-  const viewRemoval = (worktree: WorktreeRecord) => {
-    const operation = (removalsQuery.data ?? []).find(
-      (candidate): candidate is RemoveOperationRecord =>
-        candidate.kind === 'remove' &&
-        candidate.request.preview?.worktreeId === worktree.id
-    )
-    if (operation?.request.preview) {
-      onRemovalProgress(worktree, operation.request.preview, operation, true)
-    }
-  }
-
-  const retryRemoval = async (worktree: WorktreeRecord): Promise<void> => {
+  const retryRemoval = async (worktree: RemovalWorktree): Promise<void> => {
     if (removalGuardsRef.current.has(worktree.id)) {
       return
     }
@@ -618,7 +636,6 @@ export function useWorktreeWorkflows({
     prepareRemoval,
     confirmRemoval,
     removeWithoutCleanup,
-    viewRemoval,
     retryRemoval
   }
 }

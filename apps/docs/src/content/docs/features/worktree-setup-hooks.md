@@ -151,13 +151,23 @@ It waits for setup and reports the first setup error. It then tries to create th
 
 Treeport runs cleanup commands in their listed order.
 
-Treeport stops all tree terminals before it starts cleanup. The linked tree stays available while cleanup runs.
+Treeport stops all tree terminals before it starts cleanup.
+
+After Treeport accepts removal, the web interface hides the tree. Removal continues in the background, including after a page refresh.
+
+Successful removal does not show a notification. Treeport reports removal errors and incomplete cleanup.
+
+Use `treeport logs` to inspect removal phases and results. Log entries include the operation ID.
+
+If removal fails, the tree returns to the sidebar. Review the error and select **Retry** to try again.
 
 Treeport removes the Git worktree only after all cleanup commands succeed.
 
 A start error, timeout, signal, or nonzero exit stops cleanup. Treeport keeps the Git worktree and its files.
 
-The CLI and web interface show each completed command and its output. Treeport limits saved output and keeps its end.
+The CLI shows completed cleanup commands and their output. If removal fails, the web interface shows the saved output.
+
+Treeport limits saved output and keeps its end.
 
 If Treeport restarts, it does not repeat commands with a saved successful result. It repeats an interrupted command because its result is not known.
 
