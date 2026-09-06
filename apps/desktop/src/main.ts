@@ -1,13 +1,7 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
-import {
-  browserUrlSchema,
-  decodeUnknownOrNull,
-  desktopHealthResponseSchema,
-  type DesktopHealthResponse
-} from '@treeport/shared'
+import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
 import {
   app,
   autoUpdater,
@@ -29,6 +23,7 @@ import {
 } from 'electron'
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app'
 import { z } from 'zod'
+import { checkHealth, watchBackendHealth } from './backend-connection'
 import { ComputerStore } from './computer-store'
 import { MINIMUM_SUPPORTED_BACKEND_VERSION } from './desktop-contract'
 import type {
@@ -489,22 +484,6 @@ const nativeBrowserInputControlSchema = nativeBrowserPanelSchema.extend({
   locked: z.boolean()
 })
 
-async function checkHealth(
-  origin: string,
-  signal: AbortSignal
-): Promise<DesktopHealthResponse | null> {
-  const response = await fetch(new URL('/api/health', origin).toString(), {
-    redirect: 'error',
-    signal: AbortSignal.any([signal, AbortSignal.timeout(1_500)])
-  }).catch(() => null)
-  if (!response?.ok) {
-    return null
-  }
-
-  const body = await response.json().catch(() => null)
-  return decodeUnknownOrNull(desktopHealthResponseSchema, body)
-}
-
 async function connectSelected(
   options: {
     unavailableImmediately?: boolean
@@ -561,32 +540,16 @@ async function connectSelected(
     })
   }
 
-  const startedAt = Date.now()
-  const retryDelays = [0, 250, 500, 1_000, 2_000]
-  let attempt = 0
-  while (
-    !abortController.signal.aborted &&
-    generation === connectionGeneration
-  ) {
-    const retryDelay = retryDelays[Math.min(attempt, retryDelays.length - 1)]!
-    if (retryDelay > 0) {
-      await delay(retryDelay, undefined, {
-        signal: abortController.signal
-      }).catch(() => undefined)
-    }
-
-    if (abortController.signal.aborted || generation !== connectionGeneration) {
-      return
-    }
-
-    const health = await checkHealth(computer.origin, abortController.signal)
+  for await (const health of watchBackendHealth(
+    computer.origin,
+    abortController.signal
+  )) {
     if (generation !== connectionGeneration || abortController.signal.aborted) {
       return
     }
 
     if (!health) {
-      attempt += 1
-      if (!unavailableVisible && Date.now() - startedAt >= 3_000) {
+      if (!unavailableVisible) {
         unavailableVisible = true
         connection = {
           status: 'unavailable',
