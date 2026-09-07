@@ -7,10 +7,11 @@ for (const name of Object.keys(process.env)) {
   }
 }
 
-// Keep files parallel. `check` runs integration after unit/desktop checks so
-// browser decoding and subprocess readiness do not compete with those workers.
+// Browser decoding and subprocess readiness share host resources. Run files
+// serially so host load cannot starve native browser and terminal boundaries.
 export default defineConfig({
   test: {
+    fileParallelism: false,
     include: [
       'apps/**/*.integration.test.ts',
       'scripts/**/*.integration.test.mjs'

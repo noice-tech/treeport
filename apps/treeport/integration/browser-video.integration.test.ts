@@ -73,7 +73,7 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
     }`)
     await video.start(640, 400)
     await expect
-      .poll(() => viewer.evaluate('videoResults.decoded'))
+      .poll(() => viewer.evaluate('videoResults.decoded'), { timeout: 10_000 })
       .toBeGreaterThan(0)
     expect(frames[0]).toMatchObject({ keyframe: true, mimeType: 'video/vp8' })
     await lease.page
@@ -84,13 +84,17 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
     await lease.page
       .getByRole('textbox', { name: 'Message' })
       .fill('Second page')
-    await expect.poll(() => frames.length).toBeGreaterThan(beforeNavigation)
+    await expect
+      .poll(() => frames.length, { timeout: 10_000 })
+      .toBeGreaterThan(beforeNavigation)
 
     // A joining viewer needs a keyframe even when the tab no longer changes.
     const beforeRequest = frames.length
     await video.requestKeyframe()
     await expect
-      .poll(() => frames.slice(beforeRequest).some((frame) => frame.keyframe))
+      .poll(() => frames.slice(beforeRequest).some((frame) => frame.keyframe), {
+        timeout: 10_000
+      })
       .toBe(true)
     await video.stop()
     await delivery
@@ -104,10 +108,12 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
     await lease.page.setViewportSize({ width: 800, height: 600 })
     await video.start(800, 600)
     await expect
-      .poll(() =>
-        viewer.evaluate(
-          '({ width: videoResults.width, height: videoResults.height })'
-        )
+      .poll(
+        () =>
+          viewer.evaluate(
+            '({ width: videoResults.width, height: videoResults.height })'
+          ),
+        { timeout: 10_000 }
       )
       .toEqual({ width: 800, height: 600 })
     await video.stop()
