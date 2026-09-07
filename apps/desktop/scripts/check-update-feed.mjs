@@ -13,10 +13,11 @@ if (
 }
 
 const expectedUrl = `https://github.com/noice-tech/treeport/releases/download/v${version}/Treeport-${version}-darwin-universal.zip`
+const propagationTimeoutMinutes = 20
 await Promise.all(
   ['darwin-arm64', 'darwin-x64'].map(async (platform) => {
     const url = `https://update.electronjs.org/noice-tech/treeport/${platform}/0.0.0`
-    const deadline = Date.now() + 10 * 60_000
+    const deadline = Date.now() + propagationTimeoutMinutes * 60_000
     let observed = null
     do {
       const response = await fetch(url, {
@@ -34,7 +35,7 @@ await Promise.all(
       await delay(15_000)
     } while (Date.now() < deadline)
     throw new Error(
-      `${url} did not advertise ${version} within ten minutes. Last response: ${JSON.stringify(observed)}`
+      `${url} did not advertise ${version} within ${propagationTimeoutMinutes} minutes. Last response: ${JSON.stringify(observed)}`
     )
   })
 )

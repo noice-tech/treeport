@@ -80,21 +80,41 @@ jobs:
       - name: Run repository checks
         run: pnpm check
 
-      - name: Ensure the tag has at most one unpublished release
+      - name: Inspect the release state
         run: |
           gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
           node <<'NODE'
+          const fs = require('node:fs')
           const pages = require(`${process.env.RUNNER_TEMP}/releases.json`)
           const matches = pages.flat().filter((release) => release.tag_name === process.env.TAG)
           if (matches.length > 1) {
             throw new Error(`Found ${matches.length} GitHub Releases for ${process.env.TAG}`)
           }
-          if (matches[0] && !matches[0].draft) {
-            throw new Error(`GitHub Release ${process.env.TAG} is already published`)
+          const release = matches[0]
+          if (!release || release.draft) {
+            process.exit(0)
           }
+          if (release.prerelease) {
+            throw new Error(`GitHub Release ${process.env.TAG} is a prerelease`)
+          }
+          const expected = [
+            `Treeport-${process.env.RELEASE_VERSION}-darwin-universal.dmg`,
+            `Treeport-${process.env.RELEASE_VERSION}-darwin-universal.zip`
+          ].sort()
+          const assets = release.assets.map((asset) => asset.name).sort()
+          if (assets.length !== expected.length || assets.some((name, index) => name !== expected[index])) {
+            throw new Error(`Unexpected published release assets: ${assets.join(', ') || 'none'}`)
+          }
+          const invalid = release.assets.find((asset) => asset.state !== 'uploaded' || asset.size <= 0)
+          if (invalid) {
+            throw new Error(`Published release asset is incomplete: ${invalid.name}`)
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, 'RELEASE_ALREADY_PUBLISHED=1\n')
+          console.log(`Reusing published GitHub Release ${process.env.TAG}`)
           NODE
 
       - name: Import Apple signing and notarization credentials
+        if: env.RELEASE_ALREADY_PUBLISHED != '1'
         run: |
           for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
             if [ -z "${!name}" ]; then
@@ -142,10 +162,12 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build signed and notarized universal artifacts
+        if: env.RELEASE_ALREADY_PUBLISHED != '1'
         working-directory: apps/desktop
         run: pnpm exec electron-forge publish --dry-run --platform darwin --arch universal
 
       - name: Validate packaged application and artifacts
+        if: env.RELEASE_ALREADY_PUBLISHED != '1'
         working-directory: apps/desktop
         run: |
           pnpm check:release "$RELEASE_VERSION" out
@@ -159,10 +181,12 @@ jobs:
           pnpm smoke:release "$APP_PATH" "$RELEASE_VERSION"
 
       - name: Upload artifacts to the single draft release
+        if: env.RELEASE_ALREADY_PUBLISHED != '1'
         working-directory: apps/desktop
         run: pnpm exec electron-forge publish --from-dry-run
 
       - name: Verify and publish the draft release
+        if: env.RELEASE_ALREADY_PUBLISHED != '1'
         run: |
           gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$RUNNER_TEMP/releases-after-upload.json"
           node <<'NODE'
