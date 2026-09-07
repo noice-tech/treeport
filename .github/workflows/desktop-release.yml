@@ -74,6 +74,9 @@ jobs:
       - name: Ensure tmux is available
         run: command -v tmux >/dev/null || brew install tmux
 
+      - name: Install Playwright Chromium
+        run: pnpm --filter @treeport/treeport exec playwright install chromium
+
       - name: Run repository checks
         run: pnpm check
 

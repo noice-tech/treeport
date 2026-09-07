@@ -1828,13 +1828,9 @@ test('guides version updates and reconnects to a supported backend', async () =>
         return originalFetch(request)
       }
     }, `http://127.0.0.1:${port}`)
-    await window.evaluate(async () => {
-      const result = await window.treeportShell.addComputer(
-        'https://fixture.example.ts.net'
-      )
-      if (!result.ok) {
-        throw new Error(result.error)
-      }
+    await window.evaluate(() => {
+      // Navigation can destroy this renderer before the successful IPC reply.
+      void window.treeportShell.addComputer('https://fixture.example.ts.net')
     })
     await expect(window).toHaveURL('https://fixture.example.ts.net/')
     await expect(

@@ -188,6 +188,13 @@ export function LocalBrowserWebview({
       const previousController = externalControllerRef.current
       const previousRetainPaint = retainPaintRef.current
       const locked = controller !== 'none'
+      const previousFocus =
+        locked &&
+        previousController === null &&
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== webview
+          ? document.activeElement
+          : null
       const prepareWithInputLocked = locked || retainPaint
       const prepared = await bridge
         .setBrowserInputControl(panel.id, prepareWithInputLocked)
@@ -212,11 +219,15 @@ export function LocalBrowserWebview({
       }
 
       if (locked && previousController === null) {
-        previousExternalFocus =
-          document.activeElement instanceof HTMLElement &&
-          document.activeElement !== webview
-            ? document.activeElement
-            : null
+        previousExternalFocus = previousFocus
+        if (
+          (document.activeElement === webview ||
+            document.activeElement === document.body) &&
+          previousFocus?.isConnected &&
+          !previousFocus.closest('[inert]')
+        ) {
+          previousFocus.focus({ preventScroll: true })
+        }
       }
 
       // The desktop bridge supplies guest focus emulation and targeted input.
