@@ -518,6 +518,13 @@ export class PlaywrightBrowser {
     }
 
     if (message.type === 'resize') {
+      if (
+        this.state.viewport.width === message.width &&
+        this.state.viewport.height === message.height
+      ) {
+        return
+      }
+
       const wasScreencasting = this.screencasting
       if (wasScreencasting) {
         await this.setScreencasting(false)

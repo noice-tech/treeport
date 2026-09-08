@@ -83,6 +83,8 @@ it('connects the Browser workspace directly and preserves command and frame cont
     },
     () => (socketCount++ === 0 ? socket : reconnectedSocket)
   )
+  connection.send({ type: 'resize', width: 900, height: 600 })
+  connection.send({ type: 'resize', width: 280, height: 180 })
   connection.send({ type: 'navigate', url: 'https://example.com/' })
   await vi.waitFor(() => expect(socket.hasHandler('frame')).toBe(true))
   expect(fetch).toHaveBeenCalledWith(
@@ -132,6 +134,11 @@ it('connects the Browser workspace directly and preserves command and frame cont
     visible: true
   })
   expect(socket.emit).toHaveBeenNthCalledWith(2, 'command', {
+    type: 'resize',
+    width: 280,
+    height: 180
+  })
+  expect(socket.emit).toHaveBeenNthCalledWith(3, 'command', {
     type: 'navigate',
     url: 'https://example.com/'
   })
@@ -146,10 +153,10 @@ it('connects the Browser workspace directly and preserves command and frame cont
   )
   expect(fetch).toHaveBeenCalledTimes(2)
   reconnectedSocket.emitServer('message', ready)
-  expect(reconnectedSocket.emit).toHaveBeenCalledExactlyOnceWith('command', {
-    type: 'setVisible',
-    visible: true
-  })
+  expect(reconnectedSocket.emit.mock.calls).toEqual([
+    ['command', { type: 'setVisible', visible: true }],
+    ['command', { type: 'resize', width: 280, height: 180 }]
+  ])
 
   connection.dispose()
   expect(reconnectedSocket.emit).toHaveBeenLastCalledWith('command', {
