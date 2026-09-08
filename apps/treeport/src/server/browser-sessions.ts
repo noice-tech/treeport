@@ -3,7 +3,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { z } from 'zod'
 import * as Effect from 'effect/Effect'
 import * as Deferred from 'effect/Deferred'
 import * as Exit from 'effect/Exit'
@@ -48,6 +47,8 @@ import {
 } from './playwright-browser'
 
 import { receiveBrowserVideo } from './browser-video'
+import { BrowserContainer } from './browser-container'
+import { usesBrowserContainer } from './browser-runtime'
 
 export interface BrowserTransport {
   id: string
@@ -247,10 +248,6 @@ const LOCAL_BROWSER_OWNER_CONTROLLER = 'local-owner'
 const attachmentController = (clientId: string) => `attachment:${clientId}`
 const MAX_BROWSER_SCHEDULED_OPERATIONS = 64
 const MAX_BROWSER_REGULAR_OPERATIONS = 46
-const playwrightPackageSchema = z.object({
-  bin: z.object({ playwright: z.string() }).optional()
-})
-
 const defaultBrowserFactory: BrowserSessionBrowserFactory = (
   host,
   workspacePath,
@@ -300,10 +297,16 @@ export class BrowserSessionManager {
       return chromium.connectOverCDP(endpoint, { timeout: 10_000 })
     }
   ) {
-    this.cachePath = path.join(config.cacheDir, 'playwright')
+    this.cachePath = path.join(config.cacheDir, 'browser')
     this.browserHost = new PlaywrightBrowserHost(
-      this.cachePath,
-      path.join(config.dataDir, 'browser-profile')
+      // Keep the system browser profile separate from retired bundled Chromium.
+      path.join(
+        config.dataDir,
+        usesBrowserContainer()
+          ? 'browser-profile-container'
+          : 'browser-profile-chrome'
+      ),
+      this.cachePath
     )
     this.unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'panel.removed') {
@@ -1190,7 +1193,10 @@ export class BrowserSessionManager {
       transport.sendMessage({
         type: 'browserUnavailable',
         message: error instanceof Error ? error.message : String(error),
-        installCommand: session.localOwner ? null : 'treeport browser install'
+        installCommand:
+          !session.localOwner && usesBrowserContainer()
+            ? 'treeport browser install'
+            : null
       })
       // Failed launch cleanup belongs to the consumer; overload or shutdown
       // must not close a shared runtime from this attachment's Promise handler.
@@ -1552,7 +1558,9 @@ export class BrowserSessionManager {
             runtimeError instanceof Error
               ? runtimeError.message
               : String(runtimeError),
-          installCommand: 'treeport browser install'
+          installCommand: usesBrowserContainer()
+            ? 'treeport browser install'
+            : null
         })
       }
       await this.closePlaywrightRuntime(session).catch(() => undefined)
@@ -2736,67 +2744,28 @@ export class BrowserSessionManager {
   }
 
   async install(): Promise<string> {
-    if (this.installing) {
-      return this.installing
+    if (!usesBrowserContainer()) {
+      throw new Error(
+        'Install Google Chrome on this computer. Treeport uses it directly without Docker.'
+      )
     }
 
-    this.installing = (async () => {
-      const require = createRequire(import.meta.url)
-      const packageJsonPath = require.resolve('playwright/package.json')
-      const packageJson = playwrightPackageSchema.parse(
-        JSON.parse(await fs.readFile(packageJsonPath, 'utf8'))
+    if (!this.installing) {
+      this.installing = new BrowserContainer(
+        this.browserHost.profilePath,
+        this.cachePath
       )
-      const cli = path.join(
-        path.dirname(packageJsonPath),
-        packageJson.bin?.playwright ?? 'cli.js'
-      )
-      return new Promise<string>((resolve, reject) => {
-        const child = spawn(
-          process.execPath,
-          [cli, 'install', 'chromium', '--no-shell'],
-          {
-            env: {
-              ...process.env,
-              PLAYWRIGHT_BROWSERS_PATH: this.cachePath
-            },
-            stdio: ['ignore', 'pipe', 'pipe']
-          }
+        .install()
+        .then(
+          () =>
+            'Browser image is ready. Open Browser to start it. Restart Treeport to apply updates to an already-running browser.'
         )
-        let output = ''
-        child.stdout.on('data', (data) => (output += String(data)))
-        child.stderr.on('data', (data) => (output += String(data)))
-        child.once('error', reject)
-        child.once('exit', (code) => {
-          if (code === 0) {
-            resolve(output.trim() || 'Chromium installed.')
-          } else {
-            reject(new Error(output.trim() || `Playwright exited with ${code}`))
-          }
+        .finally(() => {
+          this.installing = null
         })
-      })
-    })()
-    try {
-      return await this.installing
-    } finally {
-      this.installing = null
-    }
-  }
-
-  async remove(): Promise<void> {
-    if (this.installing) {
-      throw new Error('Wait for the Browser installation to finish.')
     }
 
-    if (
-      this.browserHost.started ||
-      [...this.sessions.values()].some(
-        (session) => session.browser !== null || session.launch !== null
-      )
-    ) {
-      throw new Error('Close daemon-owned Browser before you remove Chromium.')
-    }
-
-    await fs.rm(this.cachePath, { recursive: true, force: true })
+    return this.installing
   }
 
   dispose(): Promise<void> {

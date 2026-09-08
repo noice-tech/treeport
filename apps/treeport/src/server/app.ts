@@ -17,8 +17,8 @@ import {
   browseDirectoryQuerySchema,
   browserAgentCommandSchema,
   browserAgentResponseSchema,
-  browserInstallResponseSchema,
   browserInstallStatusSchema,
+  browserInstallResponseSchema,
   browserOwnerTicketRequestSchema,
   browserOwnerTicketResponseSchema,
   browserTicketRequestSchema,
@@ -548,26 +548,6 @@ export function createApp({
     ),
 
     route(
-      'GET',
-      '/api/browser/status',
-      Effect.gen(function* () {
-        if (!browserSessions) {
-          return yield* Effect.fail(
-            new DomainError(
-              'BROWSER_UNAVAILABLE',
-              'Hosted browser service is unavailable',
-              503
-            )
-          )
-        }
-
-        return jsonContractResponse(
-          browserInstallStatusSchema,
-          yield* operation(() => browserSessions.status())
-        )
-      })
-    ),
-    route(
       'POST',
       '/api/browser/install',
       Effect.gen(function* () {
@@ -587,8 +567,8 @@ export function createApp({
       })
     ),
     route(
-      'DELETE',
-      '/api/browser/install',
+      'GET',
+      '/api/browser/status',
       Effect.gen(function* () {
         if (!browserSessions) {
           return yield* Effect.fail(
@@ -600,8 +580,10 @@ export function createApp({
           )
         }
 
-        yield* operation(() => browserSessions.remove())
-        return jsonContractResponse(okResponseSchema, { ok: true })
+        return jsonContractResponse(
+          browserInstallStatusSchema,
+          yield* operation(() => browserSessions.status())
+        )
       })
     ),
     route(

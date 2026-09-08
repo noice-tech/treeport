@@ -4,7 +4,6 @@ import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { prepareChromiumCache } from './chromium.test-support'
 import { PlaywrightBrowser, PlaywrightBrowserHost } from './playwright-browser'
 
 const cleanup: Array<() => Promise<void>> = []
@@ -20,7 +19,7 @@ it('shares durable browser data across panels and browser runtime replacement', 
     path.join(os.tmpdir(), 'treeport-playwright-browser-')
   )
   cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
-  const cachePath = await prepareChromiumCache(root)
+  const cachePath = path.join(root, 'cache')
   const server = http.createServer((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8')
     response.end(`<!doctype html><title>Start</title>
@@ -45,16 +44,11 @@ it('shares durable browser data across panels and browser runtime replacement', 
       )
   )
 
-  const browserRevision = (await fs.readdir(cachePath)).find((entry) =>
-    entry.startsWith('chromium-')
-  )
   await expect(
     PlaywrightBrowser.status(cachePath),
-    'Chromium must launch. Check launchError below; install system libraries with: pnpm --filter @treeport/treeport exec playwright install-deps chromium'
+    'A system Chrome or Chromium must launch with its sandbox enabled.'
   ).resolves.toMatchObject({
     installed: true,
-    browserRevision,
-    channel: 'chromium',
     launchReady: true,
     launchError: null
   })
@@ -70,7 +64,7 @@ it('shares durable browser data across panels and browser runtime replacement', 
       fs.mkdir(path.join(root, directory))
     )
   )
-  const host = new PlaywrightBrowserHost(cachePath, profilePath)
+  const host = new PlaywrightBrowserHost(profilePath)
   const states: Array<{ url: string; title: string }> = []
   const popups: string[] = []
   let frames = 0
@@ -185,9 +179,17 @@ it('shares durable browser data across panels and browser runtime replacement', 
   await expect(browser.requestClose(true)).resolves.toBe(true)
   await browser.close()
   await secondBrowser.close()
+  expect(host.started).toBe(true)
+  const reopened = await host.openPage()
+  await reopened.page.goto(origin)
+  expect(await reopened.page.locator('output').textContent()).toContain(
+    'signed-in login=signed-in'
+  )
+  await host.closePage(reopened.page)
+  await host.close()
   expect(host.started).toBe(false)
 
-  const replacementHost = new PlaywrightBrowserHost(cachePath, profilePath)
+  const replacementHost = new PlaywrightBrowserHost(profilePath)
   const replacementBrowser = new PlaywrightBrowser(
     replacementHost,
     path.join(root, 'replacement-panel'),

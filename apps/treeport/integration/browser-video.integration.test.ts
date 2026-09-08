@@ -3,13 +3,11 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { chromium } from 'playwright'
 import { expect, it, onTestFinished } from 'vitest'
 import type { BrowserFrame } from '@treeport/shared'
 import { PlaywrightBrowserHost } from '../src/server/playwright-browser'
 import { PlaywrightBrowserVideo } from '../src/server/browser-video'
 import { BrowserVideoDecoder } from '../src/web/browser-video-decoder'
-import { prepareChromiumCache } from '../src/server/chromium.test-support'
 
 // Chromium startup, native capture, and decoder synchronization need a longer budget.
 it('decodes native tab video through navigation, resize, static-page joins, and capture restart', async () => {
@@ -17,13 +15,11 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
     path.join(os.tmpdir(), 'treeport-native-video-')
   )
   onTestFinished(() => fs.rm(root, { recursive: true, force: true }))
-  const cachePath = await prepareChromiumCache(root)
-  const host = new PlaywrightBrowserHost(cachePath, path.join(root, 'profile'))
-  const viewerBrowser = await chromium.launch({
-    channel: 'chromium',
-    headless: true
-  })
-  const viewer = await viewerBrowser.newPage()
+  const host = new PlaywrightBrowserHost(path.join(root, 'profile'))
+  const viewerHost = new PlaywrightBrowserHost(
+    path.join(root, 'viewer-profile')
+  )
+  const { page: viewer } = await viewerHost.openPage()
   const server = http.createServer((_request, response) => {
     response.setHeader('content-type', 'text/html')
     response.end(
@@ -75,7 +71,10 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
     await expect
       .poll(() => viewer.evaluate('videoResults.decoded'), { timeout: 10_000 })
       .toBeGreaterThan(0)
-    expect(frames[0]).toMatchObject({ keyframe: true, mimeType: 'video/vp8' })
+    expect(frames[0]).toMatchObject({
+      keyframe: true,
+      mimeType: 'image/jpeg'
+    })
     await lease.page
       .getByRole('textbox', { name: 'Message' })
       .fill('First page')
@@ -129,7 +128,7 @@ it('decodes native tab video through navigation, resize, static-page joins, and 
   } finally {
     await video?.stop()
     await delivery.catch(() => undefined)
-    await viewerBrowser.close()
+    await viewerHost.close()
     await host.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }

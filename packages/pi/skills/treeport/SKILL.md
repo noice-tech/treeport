@@ -141,7 +141,7 @@ The Browser primitive has one live runtime for each browser tab.
 
 Electron owns the visible `<webview>` page for a local desktop connection.
 
-Playwright controls managed Chromium for a web or remote desktop connection.
+Playwright controls native Chrome on macOS or a browser-only Docker container on Linux for a web or remote desktop connection.
 
 Never attach Treeport to a personal browser profile.
 
@@ -177,15 +177,19 @@ Snapshot references belong to one runtime generation.
 
 Take a new snapshot after navigation or a runtime change.
 
-A local desktop owner does not need managed Chromium.
+A local desktop owner does not need the daemon browser.
 
-If no local owner exists, check managed Chromium before daemon automation:
+If no local owner exists, check the browser runtime before daemon automation:
 
 ```sh
 treeport browser status
 ```
 
-Ask the user before you run `treeport browser install`.
+Ask the user before you run `treeport browser install`. On Linux, this builds or updates the browser container image.
+
+On macOS, use installed Chrome directly. Do not install Docker for a Mac browser.
+
+For a native Linux browser, set `TREEPORT_BROWSER_EXECUTABLE` to its absolute path when starting the daemon.
 
 Leave the browser tab open so the user can inspect the result.
 

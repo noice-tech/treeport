@@ -139,7 +139,17 @@ Authorized web and remote desktop clients can stream and control this page.
 
 The page can reach sites that are available from the desktop computer.
 
-When no local desktop owns the page, Playwright controls Chromium on the daemon computer.
+When no local desktop owns the page, Playwright controls Chrome or Chromium on the daemon computer.
+
+On macOS, it uses native Chrome. On Linux, it normally uses a browser-only Docker container with the browser sandbox enabled.
+
+The Linux container uses host networking. Its loopback debugging endpoint and host-local services are accessible to trusted processes on that host.
+
+Do not expose the debugging endpoint publicly. Docker access gives the Treeport service user extensive host privileges.
+
+Everyone with browser access shares the profile's signed-in accounts. This includes agents with browser control.
+
+Protect the Treeport data directory and its backups as credentials. Site policies can still expire or revoke shared logins.
 
 That page can reach sites that are available from the daemon computer.
 

@@ -222,7 +222,8 @@ type MutableSchemaType<Value> = Value extends readonly (infer Item)[]
 async function request<S extends Schema.Schema<any, any, never>>(
   pathname: string,
   schema: S,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs = 90_000
 ): Promise<MutableSchemaType<Schema.Schema.Type<S>>> {
   const controller = new AbortController()
   const externalSignal = options.signal
@@ -233,7 +234,7 @@ async function request<S extends Schema.Schema<any, any, never>>(
     externalSignal?.addEventListener('abort', abort, { once: true })
   }
 
-  const timeout = setTimeout(abort, 90_000)
+  const timeout = setTimeout(abort, timeoutMs)
   try {
     const headers = new Headers({ accept: 'application/json' })
     if (options.body) {
@@ -1772,7 +1773,7 @@ async function main(args: string[]): Promise<void> {
 
   const browserCommand = program
     .command('browser')
-    .description('Manage Browser and its hosted Chromium')
+    .description('Manage Browser and its hosted runtime')
   browserCommand.action(() => {
     writeStdout(browserCommand.helpInformation())
   })
@@ -1810,13 +1811,14 @@ async function main(args: string[]): Promise<void> {
 
   const browserInstallCommand = browserCommand
     .command('install')
-    .description('Install the Chromium build used by Browser')
+    .description('Set up or update the Linux browser container image')
     .option('--json', 'emit machine-readable JSON')
   browserInstallCommand.action(async () => {
     const result = await request(
       '/api/browser/install',
       browserInstallResponseSchema,
-      { method: 'POST' }
+      { method: 'POST' },
+      660_000
     )
     print(result, () => result.message)
   })
@@ -1833,19 +1835,8 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `${result.installed ? 'Chromium is installed' : 'Chromium is not installed'}\nLaunch ready: ${result.launchReady ? 'yes' : 'no'}\nPlaywright: ${result.playwrightVersion}\nBrowser: ${result.channel} ${result.browserRevision}\nExecutable: ${result.executablePath}${result.launchError ? `\nLaunch error: ${result.launchError}` : ''}`
+        `${result.installed ? 'Browser is installed' : 'Browser is not installed'}\nLaunch ready: ${result.launchReady ? 'yes' : 'no'}\nPlaywright: ${result.playwrightVersion}\nBrowser: ${result.channel} ${result.browserRevision}\nExecutable: ${result.executablePath}${result.launchError ? `\nLaunch error: ${result.launchError}` : ''}`
     )
-  })
-
-  const browserRemoveCommand = browserCommand
-    .command('remove')
-    .description("Remove Treeport's hosted Chromium build")
-    .option('--json', 'emit machine-readable JSON')
-  browserRemoveCommand.action(async () => {
-    await request('/api/browser/install', okResponseSchema, {
-      method: 'DELETE'
-    })
-    print({ removed: true }, () => 'Removed Treeport hosted Chromium')
   })
 
   const browserListCommand = browserCommand

@@ -16,10 +16,9 @@ import type {
   BrowserSessionState
 } from '@treeport/shared'
 
-import {
-  PlaywrightBrowserVideo,
-  prepareBrowserVideoExtension
-} from './browser-video'
+import { PlaywrightBrowserVideo } from './browser-video'
+import { browserRuntime } from './browser-runtime'
+import { BrowserContainer } from './browser-container'
 
 export interface PlaywrightBrowserCallbacks {
   state(
@@ -39,7 +38,7 @@ export interface BrowserInstallStatus {
   executablePath: string
   playwrightVersion: string
   browserRevision: string
-  channel: 'chromium'
+  channel: 'chromium' | 'chrome' | 'docker'
   launchReady: boolean
   launchError: string | null
 }
@@ -55,6 +54,7 @@ interface PlaywrightBrowserLease {
 export class PlaywrightBrowserHost {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
+  private container: BrowserContainer | null = null
   private readonly pages = new Set<Page>()
   private readonly lifecycle = Effect.unsafeMakeSemaphore(1)
   private pendingOpens = 0
@@ -63,8 +63,11 @@ export class PlaywrightBrowserHost {
   private readonly closingPages = new Map<Page, Promise<void>>()
 
   constructor(
-    private readonly cachePath: string,
-    readonly profilePath: string
+    readonly profilePath: string,
+    private readonly cachePath = path.join(
+      path.dirname(profilePath),
+      'browser-runtime'
+    )
   ) {}
 
   get started(): boolean {
@@ -102,16 +105,48 @@ export class PlaywrightBrowserHost {
       if (!context || !browser?.isConnected()) {
         await fs.mkdir(this.profilePath, { recursive: true, mode: 0o700 })
         await fs.chmod(this.profilePath, 0o700)
-        process.env.PLAYWRIGHT_BROWSERS_PATH = this.cachePath
         const { chromium } = await import('playwright')
-        context = await chromium.launchPersistentContext(this.profilePath, {
-          channel: 'chromium',
-          headless: true,
-          acceptDownloads: false,
-          viewport: DEFAULT_VIEWPORT,
-          args: await prepareBrowserVideoExtension(this.cachePath)
-        })
-        browser = context.browser()
+        const runtime = await browserRuntime()
+        if (runtime.channel === 'docker') {
+          const container = new BrowserContainer(
+            this.profilePath,
+            this.cachePath
+          )
+          this.container = container
+          browser = await container
+            .start()
+            .then((endpoint) =>
+              chromium.connectOverCDP(endpoint, { timeout: 15_000 })
+            )
+            .catch(async (error) => {
+              await container.stop()
+              this.container = null
+              throw error
+            })
+          context = browser.contexts()[0] ?? null
+          if (!context) {
+            await browser.close()
+            await container.stop()
+            this.container = null
+            throw new Error(
+              'The Browser container did not expose its shared profile.'
+            )
+          }
+
+          const cdp = await browser.newBrowserCDPSession()
+          await cdp.send('Browser.setDownloadBehavior', { behavior: 'deny' })
+          await cdp.detach()
+        } else {
+          context = await chromium.launchPersistentContext(this.profilePath, {
+            executablePath: runtime.executablePath,
+            chromiumSandbox: true,
+            headless: true,
+            acceptDownloads: false,
+            viewport: DEFAULT_VIEWPORT
+          })
+          browser = context.browser()
+        }
+
         if (!browser) {
           await context.close()
           throw new Error(
@@ -156,14 +191,7 @@ export class PlaywrightBrowserHost {
     const result = this.schedule(async () => {
       this.pages.delete(page)
       await page.close().catch(() => undefined)
-      if (this.pages.size > 0 || !this.context) {
-        return
-      }
-
-      const context = this.context
-      this.context = null
-      this.browser = null
-      await context.close().catch(() => undefined)
+      // Shared login sessions outlive individual tabs and viewer connections.
     }).finally(() => {
       this.closingPages.delete(page)
     })
@@ -179,10 +207,23 @@ export class PlaywrightBrowserHost {
     this.closing = true
     this.closeOperation = this.schedule(async () => {
       const context = this.context
+      const browser = this.browser
+      const container = this.container
       this.context = null
       this.browser = null
+      this.container = null
       this.pages.clear()
-      await context?.close().catch(() => undefined)
+      if (container) {
+        // Closing a CDP connection alone does not stop Chrome or flush its profile.
+        await browser
+          ?.newBrowserCDPSession()
+          .then((cdp) => cdp.send('Browser.close'))
+          .catch(() => undefined)
+        await browser?.close().catch(() => undefined)
+        await container.stop()
+      } else {
+        await context?.close().catch(() => undefined)
+      }
     })
     return this.closeOperation
   }
@@ -220,40 +261,49 @@ export class PlaywrightBrowser {
   ) {}
 
   static async status(cachePath: string): Promise<BrowserInstallStatus> {
-    process.env.PLAYWRIGHT_BROWSERS_PATH = cachePath
-    const [{ chromium }, packageJson] = await Promise.all([
-      import('playwright'),
-      import('playwright/package.json', { with: { type: 'json' } })
-    ])
-    const executablePath = chromium.executablePath()
-    const installed = await fs.access(executablePath).then(
-      () => true,
-      () => false
-    )
-    const browserRevision = executablePath
-      .split(/[/\\]/u)
-      .find((part) => part.startsWith('chromium-'))
-    let launchReady = false
+    const packageJson = await import('playwright/package.json', {
+      with: { type: 'json' }
+    })
+    const { executablePath, channel } = await browserRuntime()
     let launchError: string | null = null
+    const installed =
+      channel === 'docker'
+        ? await new BrowserContainer(path.join(cachePath, 'status'), cachePath)
+            .installed()
+            .catch((error) => {
+              launchError =
+                error instanceof Error ? error.message : String(error)
+              return false
+            })
+        : await fs.access(executablePath, fs.constants.X_OK).then(
+            () => true,
+            () => false
+          )
+    let browserRevision = 'unknown'
+    let launchReady = false
+    if (!installed && !launchError) {
+      launchError =
+        channel === 'docker'
+          ? 'Select Set up browser or run treeport browser install.'
+          : 'Install Google Chrome on the daemon host, or set TREEPORT_BROWSER_EXECUTABLE to its absolute path.'
+    }
+
     if (installed) {
+      await fs.mkdir(cachePath, { recursive: true })
       const statusProfile = await fs.mkdtemp(
         path.join(cachePath, '.launch-status-')
       )
-      const context = await chromium
-        .launchPersistentContext(statusProfile, {
-          channel: 'chromium',
-          headless: true,
-          acceptDownloads: false
+      const host = new PlaywrightBrowserHost(statusProfile, cachePath)
+      await host
+        .openPage()
+        .then((lease) => {
+          browserRevision = lease.browser.version()
+          launchReady = true
         })
         .catch((error) => {
           launchError = error instanceof Error ? error.message : String(error)
-          return null
         })
-      if (context) {
-        launchReady = true
-        await context.close()
-      }
-
+      await host.close()
       await fs.rm(statusProfile, { recursive: true, force: true })
     }
 
@@ -261,8 +311,8 @@ export class PlaywrightBrowser {
       installed,
       executablePath,
       playwrightVersion: String(packageJson.default.version),
-      browserRevision: browserRevision ?? 'unknown',
-      channel: 'chromium',
+      browserRevision,
+      channel,
       launchReady,
       launchError
     }
