@@ -5,6 +5,11 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { z } from 'zod'
 import * as Effect from 'effect/Effect'
+import * as Deferred from 'effect/Deferred'
+import * as Exit from 'effect/Exit'
+import * as Queue from 'effect/Queue'
+import * as Scope from 'effect/Scope'
+import * as Data from 'effect/Data'
 import type {
   Browser as PlaywrightConnection,
   CDPSession,
@@ -126,10 +131,7 @@ interface BrowserOwnerTicket {
   expiresAt: number
 }
 
-interface BrowserOwnerRequest {
-  resolve(value: boolean): void
-  timer: ReturnType<typeof setTimeout>
-}
+type BrowserOwnerRequest = Deferred.Deferred<boolean>
 
 interface BrowserLocalAutomation {
   browser: PlaywrightConnection
@@ -141,7 +143,6 @@ interface BrowserLocalAutomation {
   requests: string[]
   screencasting: boolean
   captureViewport: { width: number; height: number } | null
-  screencastTail: Promise<void>
 }
 
 interface BrowserLocalOwner {
@@ -154,8 +155,7 @@ interface BrowserLocalOwner {
   ready: boolean
   controller: 'agent' | 'other' | 'none'
   retainPaint: boolean
-  readyPromise: Promise<void>
-  resolveReady: (() => void) | null
+  readiness: Deferred.Deferred<void>
   requests: Map<string, BrowserOwnerRequest>
 }
 
@@ -170,25 +170,34 @@ interface BrowserAttachment {
   viewport: { width: number; height: number }
 }
 
-interface BrowserScheduledCompletion {
-  resolve(): void
-  reject(error: Error): void
-}
+class BrowserSchedulingError extends Data.TaggedError(
+  'BrowserSchedulingError'
+)<{
+  message: string
+  reason: 'overload' | 'closing' | 'operation'
+}> {}
 
 interface BrowserScheduledOperation {
   coalesceKey: string | null
   message: BrowserClientMessage | null
   execute(message: BrowserClientMessage | null): Promise<void>
-  completions: BrowserScheduledCompletion[]
+  completion: Deferred.Deferred<void, BrowserSchedulingError>
+  result: Promise<void> | null
   required: boolean
 }
 
-type BrowserScheduledInput = Omit<BrowserScheduledOperation, 'completions'>
+type BrowserScheduledInput = Omit<
+  BrowserScheduledOperation,
+  'completion' | 'result'
+>
 
 interface BrowserScheduler {
-  queue: BrowserScheduledOperation[]
-  coalesced: Map<string, BrowserScheduledOperation>
-  running: boolean
+  queue: Queue.Queue<BrowserScheduledOperation>
+  scope: Scope.CloseableScope
+  pending: Set<BrowserScheduledOperation>
+  tail: BrowserScheduledOperation | null
+  active: BrowserScheduledOperation | null
+  controlKey: string | null
   accepting: boolean
 }
 
@@ -229,6 +238,7 @@ interface BrowserSession {
   crashMessage: string | null
   closing: boolean
   closeOperation: Promise<void> | null
+  closeReason: string
 }
 
 const MAX_BROWSER_ATTACHMENTS = 8
@@ -275,6 +285,8 @@ export class BrowserSessionManager {
   >()
   private readonly unsubscribe: () => void
   private installing: Promise<string> | null = null
+  private disposing: Promise<void> | null = null
+  private disposed = false
 
   constructor(
     private readonly service: BrowserSessionService,
@@ -433,102 +445,99 @@ export class BrowserSessionManager {
 
   private enqueueOperation(
     session: BrowserSession,
-    operation: BrowserScheduledOperation,
-    allowWhenClosing = false
-  ): boolean {
+    input: BrowserScheduledInput
+  ): BrowserScheduledOperation | null {
     const scheduler = session.scheduler
-    if (!scheduler.accepting && !allowWhenClosing) {
-      return false
+    if (!scheduler.accepting) {
+      return null
     }
 
-    if (operation.coalesceKey) {
-      const existing = scheduler.coalesced.get(operation.coalesceKey)
-      if (existing) {
-        if (
-          existing.message?.type === 'wheel' &&
-          operation.message?.type === 'wheel'
-        ) {
-          existing.message = {
-            type: 'wheel',
-            deltaX: Math.max(
-              -10_000,
-              Math.min(
-                10_000,
-                existing.message.deltaX + operation.message.deltaX
-              )
-            ),
-            deltaY: Math.max(
-              -10_000,
-              Math.min(
-                10_000,
-                existing.message.deltaY + operation.message.deltaY
-              )
-            )
-          }
-        } else {
-          existing.message = operation.message
+    // Only adjacent operations commute. In particular, moving the pointer can
+    // change the wheel target, and a resize must not cross a button transition.
+    const existing = scheduler.tail
+    if (input.coalesceKey && existing?.coalesceKey === input.coalesceKey) {
+      if (
+        existing.message?.type === 'wheel' &&
+        input.message?.type === 'wheel'
+      ) {
+        existing.message = {
+          type: 'wheel',
+          deltaX: existing.message.deltaX + input.message.deltaX,
+          deltaY: existing.message.deltaY + input.message.deltaY
         }
-
-        existing.execute = operation.execute
-        existing.completions.push(...operation.completions)
-        existing.required ||= operation.required
-        networkTelemetry.droppedNow('browsers', 'coalesced')
-        return true
+      } else {
+        existing.message = input.message
       }
+
+      existing.execute = input.execute
+      networkTelemetry.droppedNow('browsers', 'coalesced')
+      return existing
     }
 
     if (
-      scheduler.queue.length >= MAX_BROWSER_SCHEDULED_OPERATIONS ||
-      (!operation.required &&
-        scheduler.queue.length >= MAX_BROWSER_REGULAR_OPERATIONS)
+      scheduler.pending.size >=
+      (input.required
+        ? MAX_BROWSER_SCHEDULED_OPERATIONS
+        : MAX_BROWSER_REGULAR_OPERATIONS)
     ) {
       networkTelemetry.droppedNow('browsers', 'dropped')
-      return false
+      return null
     }
 
-    scheduler.queue.push(operation)
+    const operation: BrowserScheduledOperation = {
+      ...input,
+      completion: Effect.runSync(Deferred.make<void, BrowserSchedulingError>()),
+      result: null
+    }
+    // Never fork producers waiting for capacity. The dropping queue's false
+    // return is an explicit admission failure, not permission to lose input.
+    if (!Queue.unsafeOffer(scheduler.queue, operation)) {
+      networkTelemetry.droppedNow('browsers', 'dropped')
+      return null
+    }
+
+    scheduler.pending.add(operation)
+    scheduler.tail = operation
+    if (input.coalesceKey?.startsWith('take-control:')) {
+      scheduler.controlKey = input.coalesceKey
+    } else if (
+      !input.message ||
+      !['wheel', 'pointer', 'resize', 'find'].includes(input.message.type)
+    ) {
+      scheduler.controlKey = null
+    }
+
     this.operationQueuedAt.set(operation, Date.now())
-    networkTelemetry.queueDepthNow('browsers', scheduler.queue.length)
-
-    if (operation.coalesceKey) {
-      scheduler.coalesced.set(operation.coalesceKey, operation)
-    }
-
-    this.runScheduler(session)
-    return true
+    networkTelemetry.queueDepthNow('browsers', scheduler.pending.size)
+    return operation
   }
 
   private scheduleOperation(
     session: BrowserSession,
     execute: () => Promise<void>,
-    options: {
-      coalesceKey?: string
-      required?: boolean
-      allowWhenClosing?: boolean
-    } = {}
+    options: { required?: boolean } = {}
   ): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const accepted = this.enqueueOperation(
-        session,
-        {
-          coalesceKey: options.coalesceKey ?? null,
-          message: null,
-          execute: () => execute(),
-          completions: [{ resolve, reject }],
-          required: options.required ?? false
-        },
-        options.allowWhenClosing
-      )
-      if (!accepted) {
-        reject(
-          new Error(
-            session.scheduler.accepting
-              ? 'The Browser command queue is full.'
-              : 'The Browser session is closing.'
-          )
-        )
-      }
+    const operation = this.enqueueOperation(session, {
+      coalesceKey: null,
+      message: null,
+      execute,
+      required: options.required ?? false
     })
+    if (!operation) {
+      return Promise.reject(
+        new BrowserSchedulingError({
+          reason: session.scheduler.accepting ? 'overload' : 'closing',
+          message: session.scheduler.accepting
+            ? 'The Browser command queue is full.'
+            : 'The Browser session is closing.'
+        })
+      )
+    }
+
+    // Only admitted callers allocate an await fiber. Fire-and-forget input and
+    // coalesced notifications never accumulate waiters or Promise listeners.
+    operation.result = Effect.runPromise(Deferred.await(operation.completion))
+    return operation.result
   }
 
   private queueClientOperation(
@@ -536,7 +545,7 @@ export class BrowserSessionManager {
     attachment: BrowserAttachment,
     operation: BrowserScheduledInput
   ): void {
-    if (!this.enqueueOperation(session, { ...operation, completions: [] })) {
+    if (!this.enqueueOperation(session, operation)) {
       attachment.transport.sendMessage({
         type: 'navigationError',
         message: session.scheduler.accepting
@@ -546,66 +555,85 @@ export class BrowserSessionManager {
     }
   }
 
-  private runScheduler(session: BrowserSession): void {
+  private runScheduler(session: BrowserSession): Effect.Effect<never> {
     const scheduler = session.scheduler
-    if (scheduler.running) {
-      return
-    }
+    return Effect.forever(
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(this, function* () {
+          const operation = yield* restore(Queue.take(scheduler.queue))
+          // Admission remains tracked until execution, including direct Queue
+          // handoff to a consumer that has not resumed yet when shutdown starts.
+          if (!scheduler.pending.delete(operation)) {
+            return
+          }
 
-    scheduler.running = true
-    void (async () => {
-      while (scheduler.queue.length > 0) {
-        const operation = scheduler.queue.shift()!
-        networkTelemetry.queueDepthNow('browsers', scheduler.queue.length)
-        const queuedAt = this.operationQueuedAt.get(operation)
-        this.operationQueuedAt.delete(operation)
-        if (queuedAt !== undefined) {
-          networkTelemetry.durationNow(
-            'browsers',
-            'queue_wait',
-            Date.now() - queuedAt
+          scheduler.active = operation
+          if (scheduler.tail === operation) {
+            scheduler.tail = null
+          }
+
+          if (scheduler.controlKey === operation.coalesceKey) {
+            scheduler.controlKey = null
+          }
+
+          networkTelemetry.queueDepthNow('browsers', scheduler.pending.size)
+          const queuedAt = this.operationQueuedAt.get(operation)
+          this.operationQueuedAt.delete(operation)
+          if (queuedAt !== undefined) {
+            networkTelemetry.durationNow(
+              'browsers',
+              'queue_wait',
+              Date.now() - queuedAt
+            )
+          }
+
+          const started = Date.now()
+          // Playwright promises are not abortable. Keep the consumer occupied
+          // through actual settlement, including during scope closure. A timeout
+          // here would permit stale work to overlap recovery or resource release.
+          const result = yield* Effect.exit(
+            Effect.tryPromise({
+              try: () => operation.execute(operation.message),
+              catch: (cause) =>
+                new BrowserSchedulingError({
+                  reason: 'operation',
+                  message:
+                    cause instanceof Error ? cause.message : String(cause)
+                })
+            })
           )
-        }
-
-        if (operation.coalesceKey) {
-          scheduler.coalesced.delete(operation.coalesceKey)
-        }
-
-        const started = Date.now()
-        try {
-          await operation.execute(operation.message)
-          for (const completion of operation.completions) {
-            completion.resolve()
+          yield* Deferred.done(operation.completion, result)
+          if (Exit.isFailure(result) && !operation.result) {
+            this.broadcastNavigationError(session, String(result.cause))
           }
-        } catch (cause) {
-          const error =
-            cause instanceof Error ? cause : new Error(String(cause))
-          for (const completion of operation.completions) {
-            completion.reject(error)
-          }
-        } finally {
+
+          scheduler.active = null
           networkTelemetry.durationNow(
             'browsers',
             'operation',
             Date.now() - started
           )
-        }
-      }
-      scheduler.running = false
-    })()
+        })
+      )
+    )
   }
 
   private stopScheduler(session: BrowserSession, reason: string): void {
-    session.scheduler.accepting = false
-    const error = new Error(reason)
-    for (const operation of session.scheduler.queue.splice(0)) {
+    const scheduler = session.scheduler
+    scheduler.accepting = false
+    const error = new BrowserSchedulingError({
+      reason: 'closing',
+      message: reason
+    })
+    Effect.runSync(Queue.takeAll(scheduler.queue))
+    for (const operation of scheduler.pending) {
       this.operationQueuedAt.delete(operation)
       networkTelemetry.droppedNow('browsers', 'dropped')
-      for (const completion of operation.completions) {
-        completion.reject(error)
-      }
+      Deferred.unsafeDone(operation.completion, Effect.fail(error))
     }
-    session.scheduler.coalesced.clear()
+    scheduler.pending.clear()
+    scheduler.tail = null
+    scheduler.controlKey = null
     networkTelemetry.queueDepthNow('browsers', 0)
   }
 
@@ -788,9 +816,12 @@ export class BrowserSessionManager {
       keyframeRequestedAt: 0,
       keyframeTimer: null,
       scheduler: {
-        queue: [],
-        coalesced: new Map(),
-        running: false,
+        queue: Effect.runSync(Queue.dropping(MAX_BROWSER_SCHEDULED_OPERATIONS)),
+        scope: Effect.runSync(Scope.make()),
+        pending: new Set(),
+        tail: null,
+        active: null,
+        controlKey: null,
         accepting: true
       },
       persistence: {
@@ -805,8 +836,20 @@ export class BrowserSessionManager {
       agentProcess: null,
       crashMessage: null,
       closing: false,
-      closeOperation: null
+      closeOperation: null,
+      closeReason: 'Browser closed.'
     }
+    await Effect.runPromise(
+      Effect.gen(this, function* () {
+        yield* Effect.addFinalizer(() =>
+          Queue.shutdown(session.scheduler.queue)
+        )
+        yield* Effect.addFinalizer(() =>
+          this.destroySession(session, session.closeReason)
+        )
+        yield* Effect.forkScoped(this.runScheduler(session))
+      }).pipe(Scope.extend(session.scheduler.scope))
+    )
     this.sessions.set(panelId, session)
     return session
   }
@@ -941,14 +984,16 @@ export class BrowserSessionManager {
       this.queuePanelState(session, session.state)
       this.broadcastState(session)
       return browser
-    })()
-    session.launch = launch
-    void launch.catch(() => {
-      if (session.launch === launch) {
+    })().catch(async (cause) => {
+      if (session.generation === runtimeGeneration) {
+        await session.browser?.close().catch(() => undefined)
         session.launch = null
         session.browser = null
       }
+
+      throw cause
     })
+    session.launch = launch
     return launch
   }
 
@@ -960,8 +1005,26 @@ export class BrowserSessionManager {
     panelId: string
   ): Effect.Effect<BrowserSession, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
+      if (this.disposed) {
+        return yield* Effect.fail(
+          new BrowserSchedulingError({
+            reason: 'closing',
+            message: 'Treeport is shutting down.'
+          })
+        )
+      }
+
       const authorized =
         yield* this.service.panels.authorizeBrowserPanel(panelId)
+      if (this.disposed) {
+        return yield* Effect.fail(
+          new BrowserSchedulingError({
+            reason: 'closing',
+            message: 'Treeport is shutting down.'
+          })
+        )
+      }
+
       const existing = this.sessions.get(panelId)
       if (existing) {
         return existing
@@ -1052,19 +1115,18 @@ export class BrowserSessionManager {
     session.attachments.set(attachment.id, attachment)
 
     try {
-      if (!session.localOwner) {
-        await this.browserFor(session)
-      }
-
-      if (!transport.isConnected()) {
-        this.close(attachment.id)
-        return attachment.id
-      }
-
       await this.scheduleOperation(
         session,
         async () => {
-          if (attachment.closing) {
+          if (attachment.closing || !transport.isConnected()) {
+            return
+          }
+
+          if (!session.localOwner) {
+            await this.browserFor(session)
+          }
+
+          if (attachment.closing || !transport.isConnected()) {
             return
           }
 
@@ -1086,6 +1148,11 @@ export class BrowserSessionManager {
         },
         { required: true }
       )
+      if (attachment.closing || !transport.isConnected()) {
+        this.close(attachment.id)
+        return attachment.id
+      }
+
       transport.sendMessage({
         type: 'ready',
         state: this.stateFor(session, attachment)
@@ -1125,9 +1192,8 @@ export class BrowserSessionManager {
         message: error instanceof Error ? error.message : String(error),
         installCommand: session.localOwner ? null : 'treeport browser install'
       })
-      if (!session.localOwner) {
-        await this.closePlaywrightRuntime(session).catch(() => undefined)
-      }
+      // Failed launch cleanup belongs to the consumer; overload or shutdown
+      // must not close a shared runtime from this attachment's Promise handler.
     }
     return attachment.id
   }
@@ -1207,10 +1273,7 @@ export class BrowserSessionManager {
           return
         }
 
-        let resolveReady: (() => void) | null = null
-        const readyPromise = new Promise<void>((resolve) => {
-          resolveReady = resolve
-        })
+        const readiness = Effect.runSync(Deferred.make<void>())
         const resumed = previousOwner?.clientId === ticket.clientId
         if (resumed) {
           networkTelemetry.reconnectNow('browser-owners')
@@ -1218,10 +1281,9 @@ export class BrowserSessionManager {
 
         let owner: BrowserLocalOwner
         if (previousOwner) {
-          previousOwner.resolveReady?.()
+          Deferred.unsafeDone(previousOwner.readiness, Effect.void)
           for (const request of previousOwner.requests.values()) {
-            clearTimeout(request.timer)
-            request.resolve(false)
+            Deferred.unsafeDone(request, Effect.succeed(false))
           }
           previousOwner.requests.clear()
 
@@ -1241,8 +1303,7 @@ export class BrowserSessionManager {
           previousOwner.ready = false
           previousOwner.controller = 'none'
           previousOwner.retainPaint = false
-          previousOwner.readyPromise = readyPromise
-          previousOwner.resolveReady = resolveReady
+          previousOwner.readiness = readiness
           owner = previousOwner
         } else {
           await this.closePlaywrightRuntime(session)
@@ -1256,8 +1317,7 @@ export class BrowserSessionManager {
             ready: false,
             controller: 'none',
             retainPaint: false,
-            readyPromise,
-            resolveReady,
+            readiness,
             requests: new Map()
           }
           session.localOwner = owner
@@ -1317,21 +1377,30 @@ export class BrowserSessionManager {
       const becameReady = message.type === 'ready' && !owner.ready
       if (becameReady) {
         owner.ready = true
-        owner.resolveReady?.()
-        owner.resolveReady = null
+        Deferred.unsafeDone(owner.readiness, Effect.void)
       }
 
       if (becameReady || (resized && owner.ready)) {
-        void this.scheduleOperation(
-          session,
-          () => this.updateScreencast(session),
-          { required: true, coalesceKey: `screencast:${session.panelId}` }
-        ).catch((cause) =>
+        const accepted = this.enqueueOperation(session, {
+          coalesceKey: `screencast:${session.panelId}`,
+          message: null,
+          required: true,
+          execute: () =>
+            this.updateScreencast(session).catch((cause) =>
+              this.broadcastVideoUnavailable(
+                session,
+                cause instanceof Error ? cause.message : String(cause)
+              )
+            )
+        })
+        if (!accepted) {
           this.broadcastVideoUnavailable(
             session,
-            cause instanceof Error ? cause.message : String(cause)
+            session.scheduler.accepting
+              ? 'The Browser command queue is full. Wait and try again.'
+              : 'The Browser session is closing.'
           )
-        )
+        }
       }
 
       return
@@ -1394,11 +1463,13 @@ export class BrowserSessionManager {
     }
 
     owner.requests.delete(message.requestId)
-    clearTimeout(request.timer)
-    request.resolve(
-      message.type === 'runtimeControlResult'
-        ? message.accepted
-        : message.canClose
+    Deferred.unsafeDone(
+      request,
+      Effect.succeed(
+        message.type === 'runtimeControlResult'
+          ? message.accepted
+          : message.canClose
+      )
     )
   }
 
@@ -1412,11 +1483,9 @@ export class BrowserSessionManager {
     }
 
     owner.ready = false
-    owner.resolveReady?.()
-    owner.resolveReady = null
+    Deferred.unsafeDone(owner.readiness, Effect.void)
     for (const request of owner.requests.values()) {
-      clearTimeout(request.timer)
-      request.resolve(false)
+      Deferred.unsafeDone(request, Effect.succeed(false))
     }
     owner.requests.clear()
   }
@@ -1431,11 +1500,9 @@ export class BrowserSessionManager {
 
     session.localOwner = null
     owner.ready = false
-    owner.resolveReady?.()
-    owner.resolveReady = null
+    Deferred.unsafeDone(owner.readiness, Effect.void)
     for (const request of owner.requests.values()) {
-      clearTimeout(request.timer)
-      request.resolve(false)
+      Deferred.unsafeDone(request, Effect.succeed(false))
     }
     owner.requests.clear()
     await this.closeLocalAutomation(session)
@@ -1507,25 +1574,35 @@ export class BrowserSessionManager {
     }
 
     const requestId = crypto.randomUUID()
-    return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        owner.requests.delete(requestId)
-        resolve(false)
-      }, 5_000)
-      timer.unref()
-      owner.requests.set(requestId, { resolve, timer })
-      if (
-        !owner.transport.send({
-          ...message,
-          generation: owner.generation,
-          requestId
-        })
-      ) {
-        clearTimeout(timer)
-        owner.requests.delete(requestId)
-        resolve(false)
-      }
-    })
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* Deferred.make<boolean>()
+        owner.requests.set(requestId, result)
+        if (
+          !owner.transport.send({
+            ...message,
+            generation: owner.generation,
+            requestId
+          })
+        ) {
+          return false
+        }
+
+        return yield* Deferred.await(result).pipe(
+          Effect.timeoutTo({
+            duration: '5 seconds',
+            onSuccess: (accepted) => accepted,
+            onTimeout: () => false
+          })
+        )
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            owner.requests.delete(requestId)
+          })
+        )
+      )
+    )
   }
 
   private async setLocalOwnerRuntimeControl(
@@ -1701,7 +1778,7 @@ export class BrowserSessionManager {
       }
 
       this.queueClientOperation(session, attachment, {
-        coalesceKey: `screencast:${session.panelId}`,
+        coalesceKey: null,
         message: null,
         execute: async () => {
           const previousController = session.controllerId
@@ -1771,6 +1848,20 @@ export class BrowserSessionManager {
     }
 
     if (message.type === 'takeControl') {
+      const scheduler = session.scheduler
+      const key = `take-control:${attachment.id}`
+      const viewport = attachment.viewport
+      if (
+        scheduler.accepting &&
+        (scheduler.controlKey === key ||
+          (!scheduler.active &&
+            scheduler.pending.size === 0 &&
+            session.controllerId === attachmentController(attachment.clientId)))
+      ) {
+        networkTelemetry.droppedNow('browsers', 'coalesced')
+        return
+      }
+
       this.queueClientOperation(session, attachment, {
         coalesceKey: `take-control:${attachment.id}`,
         message: null,
@@ -1795,7 +1886,7 @@ export class BrowserSessionManager {
               await this.updateScreencast(session, nextController)
             } else {
               const browser = await this.browserFor(session)
-              await browser.command({ type: 'resize', ...attachment.viewport })
+              await browser.command({ type: 'resize', ...viewport })
             }
 
             session.controllerId = nextController
@@ -1958,42 +2049,58 @@ export class BrowserSessionManager {
     await fs.chmod(session.agentDirectory, 0o700)
   }
 
-  private async destroySession(
+  private destroySession(
     session: BrowserSession,
     reason: string
-  ): Promise<void> {
-    await this.waitForPanelState(session)
-    if (session.localOwner) {
-      const owner = session.localOwner
-      session.localOwner = null
-      owner.resolveReady?.()
-      owner.resolveReady = null
-      await this.closeLocalAutomation(session)
-      for (const request of owner.requests.values()) {
-        clearTimeout(request.timer)
-        request.resolve(false)
-      }
-      owner.requests.clear()
-      owner.transport.send({ type: 'closed', reason })
-      owner.transport.disconnect()
-    }
+  ): Effect.Effect<void> {
+    return Effect.scoped(
+      Effect.gen(this, function* () {
+        // Each owned resource is released even if an earlier release fails.
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            this.resetVideoDelivery(session)
+            if (this.sessions.get(session.panelId) === session) {
+              this.sessions.delete(session.panelId)
+            }
 
-    if (session.launch || session.browser) {
-      await this.closePlaywrightRuntime(session)
-    } else {
-      await this.detachAgent(session)
-    }
+            const owner = session.localOwner
+            session.localOwner = null
+            if (owner) {
+              Deferred.unsafeDone(owner.readiness, Effect.void)
+              for (const request of owner.requests.values()) {
+                Deferred.unsafeDone(request, Effect.succeed(false))
+              }
+              owner.requests.clear()
+              owner.transport.send({ type: 'closed', reason })
+              owner.transport.disconnect()
+            }
 
-    await fs.rm(session.agentDirectory, { recursive: true, force: true })
-    if (this.sessions.get(session.panelId) === session) {
-      this.sessions.delete(session.panelId)
-    }
-
-    for (const attachment of session.attachments.values()) {
-      attachment.closing = true
-      attachment.transport.sendMessage({ type: 'closed', reason })
-      attachment.transport.disconnect()
-    }
+            for (const attachment of session.attachments.values()) {
+              attachment.closing = true
+              attachment.transport.sendMessage({ type: 'closed', reason })
+              attachment.transport.disconnect()
+            }
+            session.attachments.clear()
+          })
+        )
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() =>
+            fs.rm(session.agentDirectory, { recursive: true, force: true })
+          )
+        )
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() =>
+            session.launch || session.browser
+              ? this.closePlaywrightRuntime(session)
+              : this.detachAgent(session)
+          )
+        )
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() => this.closeLocalAutomation(session))
+        )
+        yield* Effect.promise(() => this.waitForPanelState(session))
+      })
+    )
   }
 
   close(connectionId: string): void {
@@ -2069,10 +2176,22 @@ export class BrowserSessionManager {
     session.closing = true
     this.stopScheduler(session, reason)
     session.agentProcess?.kill('SIGTERM')
-    const closeOperation = this.scheduleOperation(
-      session,
-      () => this.destroySession(session, reason),
-      { required: true, allowWhenClosing: true }
+    if (session.localOwner) {
+      this.closeOwner(session.localOwner.transport.id)
+    }
+
+    session.closeReason = reason
+    if (session.scheduler.active) {
+      Deferred.unsafeDone(
+        session.scheduler.active.completion,
+        Effect.fail(
+          new BrowserSchedulingError({ reason: 'closing', message: reason })
+        )
+      )
+    }
+
+    const closeOperation = Effect.runPromise(
+      Scope.close(session.scheduler.scope, Exit.void)
     )
     session.closeOperation = closeOperation
     return closeOperation
@@ -2176,26 +2295,17 @@ export class BrowserSessionManager {
       }
 
       if (!owner.ready) {
-        let readinessTimer: ReturnType<typeof setTimeout> | null = null
-        await Promise.race([
-          owner.readyPromise,
-          new Promise<void>((_resolve, reject) => {
-            readinessTimer = setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    'The visible local Browser did not become ready within 15 seconds.'
-                  )
-                ),
-              15_000
-            )
-            readinessTimer.unref()
-          })
-        ]).finally(() => {
-          if (readinessTimer) {
-            clearTimeout(readinessTimer)
-          }
-        })
+        await Effect.runPromise(
+          Deferred.await(owner.readiness).pipe(
+            Effect.timeoutFail({
+              duration: '15 seconds',
+              onTimeout: () =>
+                new Error(
+                  'The visible local Browser did not become ready within 15 seconds.'
+                )
+            })
+          )
+        )
       }
 
       if (
@@ -2255,8 +2365,7 @@ export class BrowserSessionManager {
         console: [],
         requests: [],
         screencasting: false,
-        captureViewport: null,
-        screencastTail: Promise.resolve()
+        captureViewport: null
       }
       browser.once('disconnected', () => {
         if (session.localAutomation !== automation) {
@@ -2333,44 +2442,41 @@ export class BrowserSessionManager {
       return
     }
 
-    const operation = automation.screencastTail.then(async () => {
-      const width = Math.max(1, session.state.viewport.width || 1_280)
-      const height = Math.max(1, session.state.viewport.height || 800)
-      if (
-        session.localOwner !== owner ||
-        session.localAutomation !== automation ||
-        (automation.screencasting === enabled &&
-          (!enabled ||
-            (automation.captureViewport?.width === width &&
-              automation.captureViewport.height === height)))
-      ) {
-        return
-      }
+    // The session consumer owns screencast ordering, including stop/start pairs.
+    const width = Math.max(1, session.state.viewport.width || 1_280)
+    const height = Math.max(1, session.state.viewport.height || 800)
+    if (
+      session.localOwner !== owner ||
+      session.localAutomation !== automation ||
+      (automation.screencasting === enabled &&
+        (!enabled ||
+          (automation.captureViewport?.width === width &&
+            automation.captureViewport.height === height)))
+    ) {
+      return
+    }
 
-      if (enabled && automation.screencasting) {
-        await automation.video.send('Treeport.stopVideo')
-      }
+    if (enabled && automation.screencasting) {
+      await automation.video.send('Treeport.stopVideo')
+    }
 
-      automation.screencasting = enabled
-      automation.captureViewport = enabled ? { width, height } : null
-      if (!enabled) {
-        await automation.video.send('Treeport.stopVideo').catch(() => undefined)
-        return
-      }
+    automation.screencasting = enabled
+    automation.captureViewport = enabled ? { width, height } : null
+    if (!enabled) {
+      await automation.video.send('Treeport.stopVideo').catch(() => undefined)
+      return
+    }
 
-      session.videoError = null
-      await automation.video
-        .send('Treeport.startVideo', { width, height })
-        .catch((cause) => {
-          automation.screencasting = false
-          this.broadcastVideoUnavailable(
-            session,
-            cause instanceof Error ? cause.message : String(cause)
-          )
-        })
-    })
-    automation.screencastTail = operation.catch(() => undefined)
-    await operation
+    session.videoError = null
+    await automation.video
+      .send('Treeport.startVideo', { width, height })
+      .catch((cause) => {
+        automation.screencasting = false
+        this.broadcastVideoUnavailable(
+          session,
+          cause instanceof Error ? cause.message : String(cause)
+        )
+      })
   }
 
   private async executeLocalClientCommand(
@@ -2693,7 +2799,17 @@ export class BrowserSessionManager {
     await fs.rm(this.cachePath, { recursive: true, force: true })
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposing) {
+      return this.disposing
+    }
+
+    this.disposed = true
+    this.disposing = this.disposeSessions()
+    return this.disposing
+  }
+
+  private async disposeSessions(): Promise<void> {
     this.unsubscribe()
     this.tickets.clear()
     this.ownerTickets.clear()
@@ -2702,11 +2818,21 @@ export class BrowserSessionManager {
         creation.catch(() => null)
       )
     )
-    await Promise.all(
-      [...this.sessions.keys()].map((panelId) =>
-        this.closePanel(panelId, 'Treeport is shutting down.')
+    await Effect.runPromise(
+      Effect.all(
+        [...this.sessions.keys()].map((panelId) =>
+          Effect.promise(() =>
+            this.closePanel(panelId, 'Treeport is shutting down.')
+          ).pipe(Effect.exit)
+        ),
+        { concurrency: 'unbounded' }
+      ).pipe(
+        Effect.flatMap((results) =>
+          Effect.forEach(results, (result) => result)
+        ),
+        Effect.asVoid,
+        Effect.ensuring(Effect.promise(() => this.browserHost.close()))
       )
     )
-    await this.browserHost.close()
   }
 }

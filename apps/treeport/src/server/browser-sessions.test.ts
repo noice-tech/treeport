@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import http from 'node:http'
 import * as Effect from 'effect/Effect'
+import * as Deferred from 'effect/Deferred'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z } from 'zod'
 import { BROWSER_PROTOCOL_VERSION } from '@treeport/shared'
@@ -69,7 +70,7 @@ class FakeBrowser implements BrowserSessionBrowser {
       this.callbacks.state(this.state)
     }
   }
-  async agentCommand(input: BrowserAgentCommand) {
+  async agentCommand(input: BrowserAgentCommand): Promise<string> {
     return input.command
   }
   async setScreencasting(value: boolean) {
@@ -1077,19 +1078,101 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
   })
 
-  it('queues a user takeover until an agent command finishes', async () => {
-    let finishAgent!: () => void
-    const runAgentCli = vi
-      .fn<BrowserAgentCliRunner>()
-      .mockResolvedValue('detached')
-      .mockResolvedValueOnce('attached')
-      .mockImplementationOnce(
-        () =>
-          new Promise<string>((resolve) => {
-            finishAgent = () => resolve('snapshot')
-          })
+  it('accumulates scroll bursts without crossing pointer, resize, key or controller boundaries', async () => {
+    const value = fixture()
+    const first = value.transport('first')
+    const second = value.transport('second')
+    for (const client of [first, second]) {
+      await runEffect(
+        value.manager.accept(
+          await runEffect(
+            value.manager.issueTicket('panel_browser', client.transport.id)
+          ),
+          client.transport
+        )
       )
-    const value = fixture(runAgentCli)
+    }
+    const browser = browsers[0]!
+    const gate = Effect.runSync(Deferred.make<string>())
+    vi.spyOn(browser, 'agentCommand').mockImplementationOnce(() =>
+      Effect.runPromise(Deferred.await(gate))
+    )
+    const agent = runEffect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    )
+    await vi.waitFor(() => expect(browser.agentCommand).toHaveBeenCalledOnce())
+    browser.commands.length = 0
+    value.manager.message('first', { type: 'takeControl' })
+    for (let index = 0; index < 1_000; index += 1) {
+      value.manager.message('first', { type: 'takeControl' })
+      value.manager.message('first', { type: 'wheel', deltaX: 20, deltaY: -30 })
+    }
+    value.manager.message('first', {
+      type: 'pointer',
+      phase: 'move',
+      x: 1,
+      y: 2
+    })
+    const boundary: BrowserClientMessage[] = [
+      { type: 'pointer', phase: 'move', x: 10, y: 20 },
+      { type: 'wheel', deltaX: 0, deltaY: 40 },
+      { type: 'pointer', phase: 'down', x: 10, y: 20, button: 'left' },
+      { type: 'resize', width: 800, height: 600 },
+      { type: 'pointer', phase: 'up', x: 10, y: 20, button: 'left' },
+      { type: 'resize', width: 900, height: 700 },
+      { type: 'key', phase: 'down', key: 'Shift' },
+      { type: 'wheel', deltaX: 0, deltaY: 50 },
+      { type: 'key', phase: 'up', key: 'Shift' }
+    ]
+    for (const message of boundary) {
+      value.manager.message('first', message)
+    }
+    value.manager.message('second', { type: 'takeControl' })
+    value.manager.message('first', { type: 'wheel', deltaX: 0, deltaY: 999 })
+    value.manager.message('first', { type: 'takeControl' })
+    value.manager.message('first', { type: 'wheel', deltaX: 0, deltaY: 60 })
+    expect(browser.commands).toEqual([])
+    Effect.runSync(Deferred.succeed(gate, 'snapshot'))
+    await agent
+    await vi.waitFor(() =>
+      expect(browser.commands.at(-1)).toEqual({
+        type: 'wheel',
+        deltaX: 0,
+        deltaY: 60
+      })
+    )
+    expect(browser.commands).toEqual([
+      { type: 'resize', width: 1_280, height: 800 },
+      { type: 'wheel', deltaX: 20_000, deltaY: -30_000 },
+      ...boundary,
+      { type: 'resize', width: 1_280, height: 800 },
+      { type: 'resize', width: 900, height: 700 },
+      { type: 'wheel', deltaX: 0, deltaY: 60 }
+    ])
+    expect(first.messages).toContainEqual({
+      type: 'navigationError',
+      message: 'Take control before you interact with this browser.'
+    })
+    expect(first.messages).not.toContainEqual({
+      type: 'navigationError',
+      message: 'The Browser command queue is full. Wait and try again.'
+    })
+    browser.commands.length = 0
+    value.manager.message('first', { type: 'takeControl' })
+    value.manager.message('first', { type: 'wheel', deltaX: 0, deltaY: 42 })
+    await vi.waitFor(() =>
+      expect(browser.commands).toEqual([
+        { type: 'wheel', deltaX: 0, deltaY: 42 }
+      ])
+    )
+    await value.manager.dispose()
+  })
+
+  it('rejects overload immediately and settles callers on shutdown without overlapping in-flight work', async () => {
+    const value = fixture()
     const client = value.transport('client')
     await runEffect(
       value.manager.accept(
@@ -1097,105 +1180,135 @@ describe('Browser sessions', () => {
         client.transport
       )
     )
-
-    const agent = runEffect(
+    const browser = browsers[0]!
+    const gate = Effect.runSync(Deferred.make<string>())
+    vi.spyOn(browser, 'agentCommand').mockImplementationOnce(() =>
+      Effect.runPromise(Deferred.await(gate))
+    )
+    const active = runEffect(
       value.manager.agentCommand('panel_browser', {
         command: 'snapshot',
         args: []
       })
+    ).catch((error: Error) => error.message)
+    await vi.waitFor(() => expect(browser.agentCommand).toHaveBeenCalledOnce())
+    const pending = Array.from({ length: 60 }, () =>
+      runEffect(
+        value.manager.agentCommand('panel_browser', {
+          command: 'snapshot',
+          args: []
+        })
+      ).catch((error: Error) => error.message)
     )
-    await vi.waitFor(() =>
-      expect(client.messages.at(-1)).toMatchObject({
-        type: 'controlChanged',
-        state: { controller: 'agent', controlled: false }
-      })
-    )
-    value.manager.message('client', { type: 'takeControl' })
-    for (let index = 0; index < 100; index += 1) {
-      value.manager.message('client', { type: 'takeControl' })
-      value.manager.message('client', {
-        type: 'pointer',
-        phase: 'move',
-        x: index,
-        y: index + 1
-      })
-      value.manager.message('client', {
-        type: 'wheel',
-        deltaX: 1,
-        deltaY: -2
-      })
-    }
-    value.manager.message('client', {
-      type: 'pointer',
-      phase: 'down',
-      x: 20,
-      y: 30,
-      button: 'left'
-    })
-    expect(client.messages).not.toContainEqual({
-      type: 'navigationError',
-      message: 'The Browser command queue is full. Wait and try again.'
-    })
-    for (let index = 0; index < 60; index += 1) {
-      value.manager.message('client', {
-        type: 'key',
-        phase: 'down',
-        key: `Key${index}`
-      })
-    }
-    expect(browsers[0]!.commands).toEqual([])
+    await expect(pending.at(-1)).resolves.toContain('queue is full')
+    value.manager.message('client', { type: 'key', phase: 'up', key: 'Shift' })
     expect(client.messages).toContainEqual({
       type: 'navigationError',
       message: 'The Browser command queue is full. Wait and try again.'
     })
-
-    finishAgent()
-    await expect(agent).resolves.toBe('snapshot')
-    await vi.waitFor(() =>
-      expect(browsers[0]!.commands).toContainEqual({
-        type: 'pointer',
-        phase: 'down',
-        x: 20,
-        y: 30,
-        button: 'left'
-      })
-    )
-    expect(browsers[0]!.commands[0]).toEqual({
-      type: 'resize',
-      width: 1_280,
-      height: 800
+    const closeRequest = value.manager
+      .requestPanelClose('panel_browser')
+      .catch((error: Error) => error.message)
+    let closed = false
+    const closing = value.manager.dispose().then(() => {
+      closed = true
     })
-    expect(browsers[0]!.commands).toContainEqual({
-      type: 'pointer',
-      phase: 'move',
-      x: 99,
-      y: 100
-    })
-    expect(browsers[0]!.commands).toContainEqual({
-      type: 'wheel',
-      deltaX: 100,
-      deltaY: -200
-    })
-    expect(client.messages.at(-1)).toMatchObject({
-      type: 'controlChanged',
-      state: { controller: 'you', controlled: true }
-    })
-    const resizeCount = browsers[0]!.commands.filter(
-      (command) => command.type === 'resize'
-    ).length
-    value.manager.message('client', { type: 'takeControl' })
-    value.manager.message('client', { type: 'wheel', deltaX: 0, deltaY: 42 })
-    await vi.waitFor(() =>
-      expect(browsers[0]!.commands).toContainEqual({
-        type: 'wheel',
-        deltaX: 0,
-        deltaY: 42
-      })
-    )
-    expect(
-      browsers[0]!.commands.filter((command) => command.type === 'resize')
-    ).toHaveLength(resizeCount)
+    await expect(active).resolves.toContain('shutting down')
+    await expect(pending[0]).resolves.toContain('shutting down')
+    await expect(closeRequest).resolves.toContain('shutting down')
+    expect(closed).toBe(false)
+    expect(browser.closes).toBe(0)
+    expect(browser.agentCommand).toHaveBeenCalledOnce()
+    Effect.runSync(Deferred.succeed(gate, 'late completion'))
+    await closing
+    await Promise.all(pending)
+    expect(browser.closes).toBe(1)
+    expect(client.disconnects).toBe(1)
+    expect(browser.agentCommand).toHaveBeenCalledOnce()
     await value.manager.dispose()
+    expect(browser.closes).toBe(1)
+  })
+
+  it('owns initial launch until settlement when shutdown races an attachment', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    const gate = Effect.runSync(Deferred.make<void>())
+    const launch = vi
+      .spyOn(FakeBrowser.prototype, 'launch')
+      .mockImplementationOnce(() => Effect.runPromise(Deferred.await(gate)))
+    onTestFinished(() => {
+      launch.mockRestore()
+    })
+    const attaching = runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
+    )
+    await vi.waitFor(() => expect(launch).toHaveBeenCalledOnce())
+    const closing = value.manager.dispose()
+    await attaching
+    expect(browsers[0]!.closes).toBe(0)
+    Effect.runSync(Deferred.succeed(gate, undefined))
+    await closing
+    expect(browsers[0]!.closes).toBe(1)
+    expect(client.messages.some((message) => message.type === 'ready')).toBe(
+      false
+    )
+  })
+
+  it('settles a direct queue handoff when closing before the consumer resumes', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
+    )
+    const request = value.manager
+      .requestPanelClose('panel_browser')
+      .catch((error: Error) => error.message)
+    const close = value.manager.closePanel(
+      'panel_browser',
+      'closed immediately'
+    )
+    await expect(request).resolves.toContain('closed immediately')
+    await close
+    expect(browsers[0]!.closeRequests).toEqual([])
+    expect(browsers[0]!.closes).toBe(1)
+    await value.manager.dispose()
+  })
+
+  it('releases a partially launched runtime before retrying', async () => {
+    const value = fixture()
+    vi.spyOn(FakeBrowser.prototype, 'launch').mockRejectedValueOnce(
+      new Error('launch failed')
+    )
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    const first = value.transport('first')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'first')),
+        first.transport
+      )
+    )
+    expect(browsers[0]!.closes).toBe(1)
+    const second = value.transport('second')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'second')),
+        second.transport
+      )
+    )
+    expect(browsers).toHaveLength(2)
+    expect(second.messages).toContainEqual(
+      expect.objectContaining({ type: 'ready' })
+    )
+    await value.manager.dispose()
+    expect(browsers[1]!.closes).toBe(1)
   })
 
   it('retains agent ownership between commands and releases it after a failure', async () => {

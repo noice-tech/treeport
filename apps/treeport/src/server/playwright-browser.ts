@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
 import type {
   Browser,
   BrowserContext,
@@ -55,7 +56,11 @@ export class PlaywrightBrowserHost {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private readonly pages = new Set<Page>()
-  private operation: Promise<void> = Promise.resolve()
+  private readonly lifecycle = Effect.unsafeMakeSemaphore(1)
+  private pendingOpens = 0
+  private closing = false
+  private closeOperation: Promise<void> | null = null
+  private readonly closingPages = new Map<Page, Promise<void>>()
 
   constructor(
     private readonly cachePath: string,
@@ -67,15 +72,29 @@ export class PlaywrightBrowserHost {
   }
 
   private schedule<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.operation.then(operation)
-    this.operation = result.then(
-      () => undefined,
-      () => undefined
+    // A permit is held until the underlying Playwright promise settles, even
+    // if the caller goes away. Interruption cannot cancel Chromium operations.
+    return Effect.runPromise(
+      this.lifecycle
+        .withPermits(1)(
+          Effect.tryPromise({ try: operation, catch: (cause) => cause })
+        )
+        .pipe(Effect.uninterruptible)
     )
-    return result
   }
 
   openPage(): Promise<PlaywrightBrowserLease> {
+    if (this.closing || this.pendingOpens >= 64) {
+      return Promise.reject(
+        new Error(
+          this.closing
+            ? 'The hosted browser is closing.'
+            : 'Too many hosted browser pages are opening. Wait and try again.'
+        )
+      )
+    }
+
+    this.pendingOpens += 1
     return this.schedule(async () => {
       let context = this.context
       let browser = this.browser
@@ -118,11 +137,23 @@ export class PlaywrightBrowserHost {
           : await context.newPage()
       this.pages.add(page)
       return { browser, context, page }
+    }).finally(() => {
+      this.pendingOpens -= 1
     })
   }
 
   closePage(page: Page): Promise<void> {
-    return this.schedule(async () => {
+    const pending = this.closingPages.get(page)
+    if (pending) {
+      return pending
+    }
+
+    if (!this.pages.has(page)) {
+      return Promise.resolve()
+    }
+
+    // Release work is admitted once per owned lease, never once per request.
+    const result = this.schedule(async () => {
       this.pages.delete(page)
       await page.close().catch(() => undefined)
       if (this.pages.size > 0 || !this.context) {
@@ -133,17 +164,27 @@ export class PlaywrightBrowserHost {
       this.context = null
       this.browser = null
       await context.close().catch(() => undefined)
+    }).finally(() => {
+      this.closingPages.delete(page)
     })
+    this.closingPages.set(page, result)
+    return result
   }
 
   close(): Promise<void> {
-    return this.schedule(async () => {
+    if (this.closeOperation) {
+      return this.closeOperation
+    }
+
+    this.closing = true
+    this.closeOperation = this.schedule(async () => {
       const context = this.context
       this.context = null
       this.browser = null
       this.pages.clear()
       await context?.close().catch(() => undefined)
     })
+    return this.closeOperation
   }
 }
 
@@ -154,7 +195,6 @@ export class PlaywrightBrowser {
   private cdp: CDPSession | null = null
   private video: PlaywrightBrowserVideo | null = null
   private screencasting = false
-  private screencastTail: Promise<void> = Promise.resolve()
   private closing = false
   private dialogHandler: ((dialog: Dialog) => void) | null = null
   private readonly consoleMessages: string[] = []
@@ -444,33 +484,25 @@ export class PlaywrightBrowser {
   }
 
   async setScreencasting(enabled: boolean): Promise<void> {
-    const operation = this.screencastTail.then(async () => {
-      const page = this.page
-      const video = this.video
-      if (
-        !page ||
-        page.isClosed() ||
-        !video ||
-        enabled === this.screencasting
-      ) {
-        return
-      }
+    // Commands, resize stop/start pairs and cleanup share the session consumer.
+    const page = this.page
+    const video = this.video
+    if (!page || page.isClosed() || !video || enabled === this.screencasting) {
+      return
+    }
 
-      this.screencasting = enabled
-      if (!enabled) {
-        await video.stop()
-        return
-      }
+    this.screencasting = enabled
+    if (!enabled) {
+      await video.stop()
+      return
+    }
 
-      await video
-        .start(this.stateValue.viewport.width, this.stateValue.viewport.height)
-        .catch((error) => {
-          this.screencasting = false
-          throw error
-        })
-    })
-    this.screencastTail = operation.catch(() => undefined)
-    return operation
+    await video
+      .start(this.stateValue.viewport.width, this.stateValue.viewport.height)
+      .catch((error) => {
+        this.screencasting = false
+        throw error
+      })
   }
 
   async command(message: BrowserClientMessage): Promise<void> {
@@ -706,7 +738,13 @@ export class PlaywrightBrowser {
         page.once('close', closeHandler)
         page.on('dialog', dialogHandler)
         timer = setTimeout(
-          () => reject(new Error('The page did not finish closing.')),
+          // runBeforeUnload does not cancel on timeout. Keep the session
+          // occupied until close or dismissal, rather than race fresh commands
+          // against a close that Chromium may still complete later.
+          () =>
+            this.callbacks.navigationError(
+              'The page has not finished closing. Browser commands are waiting for it to close or dismiss its beforeunload dialog.'
+            ),
           5_000
         )
         timer.unref()
@@ -740,13 +778,12 @@ export class PlaywrightBrowser {
 
     this.closing = true
     await this.setScreencasting(false).catch(() => undefined)
-    await this.video?.stop()
+    await this.video?.stop().catch(() => undefined)
     if (this.titleTimer) {
       clearInterval(this.titleTimer)
       this.titleTimer = null
     }
 
-    await this.screencastTail
     const page = this.page
 
     if (page) {
