@@ -5,8 +5,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
-  type PointerEvent,
-  type WheelEvent
+  type PointerEvent
 } from 'react'
 import {
   ArrowLeftIcon,
@@ -417,7 +416,7 @@ export function BrowserPanelWorkspace({
     if (!localBrowser) {
       connectionRef.current?.setVisible(active && !inputBlocked)
     }
-  }, [active, inputBlocked, localBrowser])
+  }, [active, connectionRevision, inputBlocked, localBrowser])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -426,11 +425,8 @@ export function BrowserPanelWorkspace({
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null
+    let viewport: { width: number; height: number } | null = null
     const observer = new ResizeObserver(([entry]) => {
-      if (timer) {
-        clearTimeout(timer)
-      }
-
       if (
         !entry ||
         entry.contentRect.width <= 0 ||
@@ -439,19 +435,23 @@ export function BrowserPanelWorkspace({
         return
       }
 
-      timer = setTimeout(() => {
-        const viewport = {
-          width: Math.max(
-            320,
-            Math.min(3_840, Math.round(entry.contentRect.width))
-          ),
-          height: Math.max(
-            200,
-            Math.min(2_160, Math.round(entry.contentRect.height))
-          )
+      viewport = {
+        width: Math.max(
+          1,
+          Math.min(3_840, Math.round(entry.contentRect.width))
+        ),
+        height: Math.max(
+          1,
+          Math.min(2_160, Math.round(entry.contentRect.height))
+        )
+      }
+      // Throttle rather than debounce so dragging a divider keeps resizing.
+      // Input coordinates continue using the server's confirmed viewport.
+      timer ??= setTimeout(() => {
+        timer = null
+        if (viewport) {
+          send({ type: 'resize', ...viewport })
         }
-        viewportRef.current = viewport
-        send({ type: 'resize', ...viewport })
       }, 100)
     })
     observer.observe(canvas)
@@ -461,7 +461,7 @@ export function BrowserPanelWorkspace({
         clearTimeout(timer)
       }
     }
-  }, [active, localBrowser, send])
+  }, [active, connectionRevision, localBrowser, send])
 
   /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
@@ -640,11 +640,35 @@ export function BrowserPanelWorkspace({
     send({ type: 'key', phase, key: event.key })
   }
 
-  const wheel = (event: WheelEvent<HTMLCanvasElement>) => {
-    event.preventDefault()
-    send({ type: 'takeControl' })
-    send({ type: 'wheel', deltaX: event.deltaX, deltaY: event.deltaY })
-  }
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (localBrowser || !canvas || !active || inputBlocked) {
+      return
+    }
+
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault()
+      if (!stateRef.current?.controlled) {
+        send({ type: 'takeControl' })
+      }
+
+      const unit =
+        event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? canvas.clientHeight
+            : 1
+      send({
+        type: 'wheel',
+        deltaX: Math.max(-10_000, Math.min(10_000, event.deltaX * unit)),
+        deltaY: Math.max(-10_000, Math.min(10_000, event.deltaY * unit))
+      })
+    }
+    // React's delegated wheel listener is passive and cannot prevent the
+    // containing workspace from scrolling along with the streamed page.
+    canvas.addEventListener('wheel', wheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', wheel)
+  }, [active, inputBlocked, localBrowser, send])
 
   const candidates = new Map<string, { url: URL; listener: WorktreeListener }>()
   for (const listener of listeners?.listeners ?? []) {
@@ -1047,7 +1071,6 @@ export function BrowserPanelWorkspace({
               }
             }}
             onContextMenu={(event) => event.preventDefault()}
-            onWheel={wheel}
             onKeyDown={(event) => key(event, 'down')}
             onKeyUp={(event) => key(event, 'up')}
             onPaste={(event) => {

@@ -1772,7 +1772,7 @@ export class BrowserSessionManager {
 
     if (message.type === 'takeControl') {
       this.queueClientOperation(session, attachment, {
-        coalesceKey: null,
+        coalesceKey: `take-control:${attachment.id}`,
         message: null,
         execute: async () => {
           if (
@@ -1784,6 +1784,12 @@ export class BrowserSessionManager {
 
           const previousController = session.controllerId
           const nextController = attachmentController(attachment.clientId)
+          // Input bursts request control repeatedly; ownership already held
+          // must not resize the page or restart its video stream.
+          if (previousController === nextController) {
+            return
+          }
+
           try {
             if (session.localOwner) {
               await this.updateScreencast(session, nextController)

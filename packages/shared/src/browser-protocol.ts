@@ -54,8 +54,8 @@ export const browserClientMessageSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal('stop') }),
   Schema.Struct({
     type: Schema.Literal('resize'),
-    width: Schema.Int.pipe(Schema.between(320, 3_840)),
-    height: Schema.Int.pipe(Schema.between(200, 2_160))
+    width: Schema.Int.pipe(Schema.between(1, 3_840)),
+    height: Schema.Int.pipe(Schema.between(1, 2_160))
   }),
   Schema.Struct({
     type: Schema.Literal('pointer'),

@@ -74,6 +74,7 @@ export function connectBrowserPanel(
   let connecting = false
   let socket: BrowserPanelSocket | null = null
   const pendingCommands: BrowserClientMessage[] = []
+  let viewport: Extract<BrowserClientMessage, { type: 'resize' }> | null = null
 
   const reportError = (cause: unknown) => {
     handlers.message({
@@ -152,6 +153,12 @@ export function connectBrowserPanel(
         type: 'setVisible',
         visible: currentVisible
       })
+      // A new attachment starts with the server viewport, not this panel's.
+      // Replay layout even when no ResizeObserver notification follows reconnect.
+      if (viewport) {
+        connectedSocket.emit('command', viewport)
+      }
+
       while (pendingCommands.length) {
         connectedSocket.emit('command', pendingCommands.shift()!)
       }
@@ -196,6 +203,15 @@ export function connectBrowserPanel(
     send(value) {
       const command = parseBrowserClientMessage(value)
       if (!command || disposed) {
+        return
+      }
+
+      if (command.type === 'resize') {
+        viewport = command
+        if (socket?.connected && ready) {
+          socket.emit('command', command)
+        }
+
         return
       }
 

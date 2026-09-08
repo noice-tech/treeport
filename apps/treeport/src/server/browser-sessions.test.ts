@@ -1112,6 +1112,7 @@ describe('Browser sessions', () => {
     )
     value.manager.message('client', { type: 'takeControl' })
     for (let index = 0; index < 100; index += 1) {
+      value.manager.message('client', { type: 'takeControl' })
       value.manager.message('client', {
         type: 'pointer',
         phase: 'move',
@@ -1130,6 +1131,10 @@ describe('Browser sessions', () => {
       x: 20,
       y: 30,
       button: 'left'
+    })
+    expect(client.messages).not.toContainEqual({
+      type: 'navigationError',
+      message: 'The Browser command queue is full. Wait and try again.'
     })
     for (let index = 0; index < 60; index += 1) {
       value.manager.message('client', {
@@ -1175,6 +1180,21 @@ describe('Browser sessions', () => {
       type: 'controlChanged',
       state: { controller: 'you', controlled: true }
     })
+    const resizeCount = browsers[0]!.commands.filter(
+      (command) => command.type === 'resize'
+    ).length
+    value.manager.message('client', { type: 'takeControl' })
+    value.manager.message('client', { type: 'wheel', deltaX: 0, deltaY: 42 })
+    await vi.waitFor(() =>
+      expect(browsers[0]!.commands).toContainEqual({
+        type: 'wheel',
+        deltaX: 0,
+        deltaY: 42
+      })
+    )
+    expect(
+      browsers[0]!.commands.filter((command) => command.type === 'resize')
+    ).toHaveLength(resizeCount)
     await value.manager.dispose()
   })
 
