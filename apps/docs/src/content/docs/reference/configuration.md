@@ -25,7 +25,17 @@ Environment variables replace listener preferences. They cannot enable a non-loo
 | `TREEPORT_GH_PATH`       | `gh`                       | Optional GitHub CLI executable or path.                |
 | `TREEPORT_API_URL`       | `http://<host>:<port>`     | Daemon URL for managed terminals and callbacks.        |
 
-Treeport expands `~` and `~/…` in path variables.
+Treeport expands `~` and `~/…` in the path variables above.
+
+### Select the browser runtime
+
+By default, macOS uses installed Google Chrome. Linux uses a Treeport-managed browser-only Docker container.
+
+Set `TREEPORT_BROWSER_EXECUTABLE` to an absolute executable path to use a native browser instead. This variable does not expand `~`.
+
+The native browser must support Chromium's debugging protocol. Restart Treeport after changing this variable.
+
+See [browser host setup](/features/browser-panel/#prepare-the-browser-host) for Docker setup, persistent storage, and browser updates.
 
 ### Find the default data directory
 

@@ -86,7 +86,7 @@ The package adds browser guidance only when the Treeport CLI and daemon support 
 
 The browser tab stays open after the task. You can inspect or control the same page.
 
-Pi must get your approval before it installs managed Chromium.
+Pi must get your approval before it sets up the Linux browser container or installs a native browser.
 
 ### Start a side quest
 
@@ -119,7 +119,7 @@ The package tells Pi to follow these rules:
 - delete a terminal only when you ask Pi to stop or close its process;
 - never delete the terminal that hosts the Pi session;
 - never poll terminal output through repeated model calls;
-- never install Chromium without your approval;
+- never set up or install a browser without your approval;
 - never put secrets in browser URLs or command arguments.
 
 Remove the package when you no longer need it:

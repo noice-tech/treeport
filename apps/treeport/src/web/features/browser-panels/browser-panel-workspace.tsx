@@ -131,11 +131,11 @@ export function BrowserPanelWorkspace({
   const [findOpen, setFindOpen] = useState(false)
   const [findValue, setFindValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [installingBrowser, setInstallingBrowser] = useState(false)
   const [failure, setFailure] = useState<{
     message: string
     installCommand: string | null
   } | null>(null)
-  const [installingBrowser, setInstallingBrowser] = useState(false)
   const [listeners, setListeners] = useState<WorktreeListenerDiscovery | null>(
     null
   )
@@ -231,7 +231,6 @@ export function BrowserPanelWorkspace({
         }
 
         onLoadingChange(panel.id, message.state.loading)
-        setInstallingBrowser(false)
         if (!addressDirtyRef.current) {
           setError(null)
         }
@@ -277,7 +276,6 @@ export function BrowserPanelWorkspace({
       }
 
       onLoadingChange(panel.id, false)
-      setInstallingBrowser(false)
       if (
         message.type === 'browserUnavailable' ||
         message.type === 'videoUnavailable'
@@ -1096,6 +1094,12 @@ export function BrowserPanelWorkspace({
           >
             <strong className="text-zinc-50">Browser unavailable</strong>
             <span>{failure.message}</span>
+            {failure.installCommand ? (
+              <span>
+                Setup downloads and builds the browser container. This can take
+                several minutes.
+              </span>
+            ) : null}
             <div className="flex items-center gap-2">
               {failure.installCommand ? (
                 <Button
@@ -1104,11 +1108,8 @@ export function BrowserPanelWorkspace({
                   onClick={() => {
                     setInstallingBrowser(true)
                     void parseResponse(rpc.api.browser.install.$post())
-                      .then(() => {
-                        setConnectionRevision((value) => value + 1)
-                      })
-                      .catch((cause) => {
-                        setInstallingBrowser(false)
+                      .then(() => setConnectionRevision((value) => value + 1))
+                      .catch((cause) =>
                         setFailure((current) =>
                           current
                             ? {
@@ -1116,24 +1117,15 @@ export function BrowserPanelWorkspace({
                                 message:
                                   cause instanceof Error
                                     ? cause.message
-                                    : 'Could not install Chromium.'
+                                    : 'Could not set up the browser.'
                               }
                             : null
                         )
-                      })
+                      )
+                      .finally(() => setInstallingBrowser(false))
                   }}
                 >
-                  {installingBrowser ? (
-                    <>
-                      <ArrowPathIcon
-                        className="animate-spin"
-                        data-icon="inline-start"
-                      />
-                      Installing Chromium…
-                    </>
-                  ) : (
-                    'Install Chromium'
-                  )}
+                  {installingBrowser ? 'Setting up browser…' : 'Set up browser'}
                 </Button>
               ) : null}
               <Button

@@ -17,7 +17,7 @@ A local desktop connection can open the page in an Electron `<webview>`.
 
 Web and remote desktop clients stream this Electron page while its desktop connection stays open.
 
-If no local desktop owns the page, Playwright controls Chromium on the daemon computer.
+If no local desktop owns the page, Playwright controls Chrome or Chromium on the daemon computer.
 
 The toolbar and `treeport browser` commands control the same live page.
 
@@ -33,34 +33,75 @@ For a Playwright runtime, page requests come from the daemon computer.
 
 Thus, `localhost` identifies the computer that runs the authoritative runtime.
 
-## Install Chromium for remote use
+## Prepare the browser host
 
-A web or remote desktop client requires managed Chromium when no local Electron runtime is active.
+### macOS
 
-An active local Electron runtime does not require managed Chromium.
+Install Google Chrome in `/Applications`. Treeport uses Chrome directly, including on a Mac mini. Docker is not required.
 
-If Chromium is not available, select **Install Chromium** on the **Browser unavailable** page.
+### Linux and VPS hosts
 
-Treeport downloads the compatible Chromium build. The browser panel opens again when the installation is complete.
+Treeport runs on the host. Only its browser runs in a Docker container.
 
-To install Chromium before you open a browser panel, use this command:
+Install rootful Docker on the host. Run Treeport as a non-root service user with access to the local Docker daemon.
+
+Docker access gives that user extensive host privileges. Do not grant it to untrusted users.
+
+Open a Browser panel. Select **Set up browser** when prompted.
+
+Setup builds a local image with distribution Chromium, its libraries, and fonts. It can take several minutes and requires internet access.
+
+The same image recipe supports x86-64 and ARM64 Linux hosts. It does not use Chrome for Testing.
+
+You can also start setup from the CLI:
 
 ```sh
 treeport browser install
 ```
 
-Check or remove the installation:
+After setup, Treeport starts and reconnects to the browser automatically. Treeport does not download an image when you open a panel.
+
+The container uses host networking, so browser `localhost` reaches services on the VPS.
+
+Its debugging endpoint listens on loopback only. Treeport does not publish a debugging port on external network interfaces.
+
+Treeport supplies a non-root user and a seccomp policy for the browser sandbox. Host security restrictions can still prevent startup.
+
+Remote Docker contexts and rootless Docker are not supported. The Docker daemon and Treeport must use the same host filesystem.
+
+To use an existing native browser instead, set `TREEPORT_BROWSER_EXECUTABLE` to its absolute path before starting Treeport.
+
+### Check and maintain the browser
+
+Check the installation and test browser startup:
 
 ```sh
 treeport browser status
-treeport browser remove
 ```
 
-On Linux, an installation error can identify missing operating-system libraries.
+Treeport runs the browser headless. A VPS does not need a display, Xvfb, or a desktop environment.
 
-Install these libraries as an administrator. Then, run the Treeport command again.
+Run Treeport as a dedicated non-root user. The browser sandbox must work under the host's kernel and security policy.
 
-Treeport does not request administrator access.
+Treeport does not disable the sandbox if startup fails. Use the `launchError` from `status` to correct missing libraries or sandbox restrictions.
+
+Keep the Treeport data directory on a persistent volume owned by the service user. Keep the same user identity across restarts.
+
+Use graceful service shutdown. Do not run two daemon instances against the same data directory.
+
+The shared profile stays in Treeport's data directory, outside the container. Container replacement does not remove it.
+
+For a Linux container, run `treeport browser install` again to rebuild with current distribution security updates.
+
+For native Chrome, use the operating system's browser update mechanism. Restart Treeport after either type of update.
+
+The previous `browser remove` command is no longer available. Treeport never removes a native browser installation.
+
+Native Chrome, the Linux container, and the previous bundled Chromium use separate profiles to prevent incompatible browser versions from changing existing data.
+
+Switching between these runtimes requires a new login. Existing profile data remains unchanged.
+
+Headless Chrome can still be identified as automated. Some websites can reject logins from automated browsers or server IP addresses.
 
 ## Open a page
 
@@ -178,7 +219,11 @@ Cookies, local storage, and login state are available to other browser panels on
 
 Treeport keeps this data when you close a panel or restart Treeport.
 
-Treeport also keeps this data when it replaces the managed browser runtime.
+The daemon browser stays running when you close its last tab. Persistent site data survives browser restarts; session-only data might not.
+
+Everyone with browser access shares its signed-in accounts, including agents with browser control. Use company accounts, not personal accounts.
+
+Sites can expire or revoke a login at any time.
 
 Treeport does not use, import, or attach to a personal browser profile.
 

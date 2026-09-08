@@ -46,6 +46,41 @@ export class BrowserVideoDecoder {
       return
     }
 
+    if (frame.mimeType === 'image/jpeg') {
+      this.lastSequence = frame.sequence
+      void createImageBitmap(
+        new Blob([new Uint8Array(frame.data)], { type: 'image/jpeg' })
+      )
+        .then((bitmap) => {
+          try {
+            if (!this.disposed && this.lastSequence === frame.sequence) {
+              const decoded = new VideoFrame(bitmap, {
+                timestamp: frame.timestamp
+              })
+              try {
+                this.draw(decoded)
+                this.failures = 0
+              } finally {
+                decoded.close()
+              }
+            }
+          } finally {
+            bitmap.close()
+          }
+        })
+        .catch((error) => {
+          if (!this.disposed) {
+            this.recover(
+              error instanceof Error ? error : new Error(String(error))
+            )
+          }
+        })
+        .finally(() =>
+          this.send({ type: 'frameAck', sequence: frame.sequence })
+        )
+      return
+    }
+
     // eslint-disable-next-line anti-slop/no-runtime-typeof -- WebCodecs availability is a browser capability, not a protocol shape check.
     if (typeof VideoDecoder === 'undefined') {
       this.send({ type: 'frameAck', sequence: frame.sequence })

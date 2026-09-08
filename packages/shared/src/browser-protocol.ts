@@ -162,7 +162,7 @@ export type BrowserServerMessage = Schema.Schema.Type<
 >
 
 const browserVideoFields = {
-  mimeType: Schema.Literal('video/vp8'),
+  mimeType: Schema.Literal('video/vp8', 'image/jpeg'),
   keyframe: Schema.Boolean,
   // WebCodecs timestamps use microseconds within the capture session.
   timestamp: Schema.NonNegativeInt,

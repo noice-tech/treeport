@@ -314,7 +314,6 @@ Treeport separately handles residual files that it can identify safely.
 ```sh
 treeport browser install [--json]
 treeport browser status [--json]
-treeport browser remove [--json]
 treeport browser open [url] --worktree <id-or-path-or-dot> [--json]
 treeport browser list [--json]
 
@@ -331,11 +330,15 @@ treeport browser network [--panel <panel-id>] [--json]
 treeport browser screenshot [--panel <panel-id>] [--json]
 ```
 
-`install` downloads the compatible Chromium build to the Treeport cache.
+On Linux, `install` builds or updates the browser-only Docker image. Docker must be installed and accessible to the non-root Treeport service user.
 
-`status` reports whether managed Chromium is ready.
+On macOS, install Google Chrome directly. Docker and `browser install` are not required.
 
-Before you use `remove`, close all browser panels that use managed Chromium.
+`status` reports the selected runtime, browser version, and startup errors. It starts an isolated browser to check launch readiness.
+
+`browser remove` is no longer available. Browser profiles remain in the Treeport data directory.
+
+See [browser host setup](/features/browser-panel/#prepare-the-browser-host) for requirements and native Linux overrides.
 
 `open` creates a browser panel. Omit the URL to open a blank page.
 

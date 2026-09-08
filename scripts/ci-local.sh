@@ -14,12 +14,12 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     '  pnpm test:web          Browser UI workflows; not part of this gate.' \
     '  pnpm test:desktop      Electron workflows; builds prerequisites.' \
     '' \
-    'Integration tests require zsh and Bash on PATH, plus compatible Playwright Chromium.' \
+    'Integration tests require zsh and Bash on PATH, plus a configured browser runtime.' \
     'Fish coverage is optional and is reported as skipped when fish is absent.' \
-    'To install Chromium, run: pnpm --filter @treeport/treeport exec playwright install chromium' \
-    'For Linux browser libraries, run: pnpm --filter @treeport/treeport exec playwright install-deps chromium' \
-    'Set PLAYWRIGHT_BROWSERS_PATH if you use a custom Playwright browser cache.' \
-    'This script does not install Chromium or system dependencies.'
+    'On macOS, install Google Chrome in /Applications.' \
+    'On Linux, set up the browser container with treeport browser install.' \
+    'Alternatively, set TREEPORT_BROWSER_EXECUTABLE to an absolute Chrome/Chromium executable path.' \
+    'Browser sandbox support is required. This script does not install browsers or system dependencies.'
   exit 0
 fi
 
