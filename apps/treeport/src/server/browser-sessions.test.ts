@@ -285,6 +285,48 @@ function fixture(
 beforeEach(() => browsers.splice(0))
 
 describe('Browser sessions', () => {
+  it('keeps one JPEG in flight and sends the latest pending image on acknowledgement', async () => {
+    const value = fixture()
+    const viewer = value.transport('viewer')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket('panel_browser', 'client-viewer')
+        ),
+        viewer.transport
+      )
+    )
+    const browser = browsers[0]!
+    const publish = (timestamp: number) =>
+      browser.callbacks.frame({
+        mimeType: 'image/jpeg',
+        keyframe: true,
+        timestamp,
+        width: 800,
+        height: 600,
+        data: new Uint8Array([timestamp])
+      })
+    publish(1)
+    publish(2)
+    publish(3)
+    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1])
+    const keyframeRequests = browser.keyframeRequests
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[0]!.sequence
+    })
+    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3])
+    expect(browser.keyframeRequests).toBe(keyframeRequests)
+    publish(4)
+    value.manager.message('viewer', { type: 'setVisible', visible: false })
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[1]!.sequence
+    })
+    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3])
+    await value.manager.dispose()
+  })
+
   it('authorizes one-use attachment tickets, shares control, and drops stale frames', async () => {
     const value = fixture()
     const first = value.transport('first')
@@ -361,7 +403,10 @@ describe('Browser sessions', () => {
     publish(13)
     expect(second.frames).toHaveLength(8)
     publish(14, true)
-    expect(second.frames.at(-1)).toMatchObject({ sequence: 14, keyframe: true })
+    expect(second.frames.at(-1)).toMatchObject({
+      sequence: 14,
+      keyframe: true
+    })
     value.manager.message('late-observer', {
       type: 'setVisible',
       visible: false
@@ -1112,7 +1157,11 @@ describe('Browser sessions', () => {
     value.manager.message('first', { type: 'takeControl' })
     for (let index = 0; index < 1_000; index += 1) {
       value.manager.message('first', { type: 'takeControl' })
-      value.manager.message('first', { type: 'wheel', deltaX: 20, deltaY: -30 })
+      value.manager.message('first', {
+        type: 'wheel',
+        deltaX: 20,
+        deltaY: -30
+      })
     }
     value.manager.message('first', {
       type: 'pointer',
@@ -1206,6 +1255,22 @@ describe('Browser sessions', () => {
     )
     await expect(pending.at(-1)).resolves.toContain('queue is full')
     value.manager.message('client', { type: 'key', phase: 'up', key: 'Shift' })
+    value.manager.message('client', {
+      type: 'pointer',
+      phase: 'up',
+      x: 10,
+      y: 10,
+      button: 'left'
+    })
+    expect(client.messages).not.toContainEqual({
+      type: 'navigationError',
+      message: 'The Browser command queue is full. Wait and try again.'
+    })
+    value.manager.message('client', {
+      type: 'key',
+      phase: 'down',
+      key: 'Shift'
+    })
     expect(client.messages).toContainEqual({
       type: 'navigationError',
       message: 'The Browser command queue is full. Wait and try again.'
