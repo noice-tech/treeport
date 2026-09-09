@@ -75,6 +75,30 @@ export class PanelService {
     )
   }
 
+  private requireBrowserWorktree(
+    worktreeId: string
+  ): PanelEffect<WorktreeRecord> {
+    return Effect.gen(function* () {
+      const store = yield* ProjectStore
+      const observations = yield* ProjectObservationOperations
+      const worktree = yield* store.getWorktree(worktreeId)
+      if (worktree.prunable) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WORKTREE_UNAVAILABLE',
+            'Git reports this worktree as prunable',
+            409
+          )
+        )
+      }
+
+      // Browser creation, owner tickets, and owner claims each reach this check.
+      // Verify the target identity without reconciling every tree in the project
+      // or waiting behind unrelated project observations. Do not cache authorization.
+      return yield* observations.verifyWorktreeLaunchTarget(worktree)
+    }).pipe(Effect.withSpan('treeport.browser.verify_worktree'))
+  }
+
   private getProject(projectId: string): PanelEffect<ProjectRecord> {
     return Effect.flatMap(ProjectStore, (store) => store.getProject(projectId))
   }
@@ -224,7 +248,7 @@ export class PanelService {
     worktreeId: string,
     requestedUrl?: string
   ): PanelEffect<BrowserPanel> {
-    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const requireAvailableWorktree = this.requireBrowserWorktree.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -408,7 +432,7 @@ export class PanelService {
   }
 
   getBrowserPanel(panelId: string): PanelEffect<BrowserPanel> {
-    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const requireAvailableWorktree = this.requireBrowserWorktree.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
