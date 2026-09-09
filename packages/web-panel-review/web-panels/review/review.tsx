@@ -714,7 +714,9 @@ function ReviewApp() {
       const parsedFiles = diff.unified
         ? [
             ...new Map(
-              parsePatchFiles(diff.unified)
+              // Without a revision prefix, the renderer caches by filename
+              // and can reuse stale content when that file changes.
+              parsePatchFiles(diff.unified, crypto.randomUUID())
                 .flatMap((patch) => patch.files)
                 .map((file) => [file.name, file])
             ).values()
