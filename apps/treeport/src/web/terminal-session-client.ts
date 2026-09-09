@@ -1,499 +1,173 @@
-import { FitAddon } from '@xterm/addon-fit'
-import { ImageAddon } from '@xterm/addon-image'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { Terminal } from '@xterm/xterm'
-import * as Cause from 'effect/Cause'
-import * as Data from 'effect/Data'
+import { makeTimers } from './terminal-session-client/timers'
+import { makeRender } from './terminal-session-client/render'
+import { makeTransfers } from './terminal-session-client/transfers'
+import { makeLayout } from './terminal-session-client/layout'
+import { makeConnection } from './terminal-session-client/connection'
+import { makeBrowser } from './terminal-session-client/browser'
+import { makeHost } from './terminal-session-client/host'
+import { makeProtocol } from './terminal-session-client/protocol'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
-import * as Fiber from 'effect/Fiber'
-import * as Queue from 'effect/Queue'
 import * as Scope from 'effect/Scope'
-import * as Schema from 'effect/Schema'
-import { parseResponse, rpc } from './api'
+import { createProtocolSocket, type TerminalSize } from '@treeport/shared'
 import {
-  createProtocolSocket,
-  decodeUnknownOrNull,
-  type ProtocolSocket,
-  type ProtocolSocketOptions
-} from '@treeport/shared'
-import { errorMessage } from './error-message'
-import {
-  restoreTerminalSnapshotLinks,
-  TERMINAL_FONT_SIZE,
-  terminalKeyboardInput,
-  terminalOptions,
-  trackTerminalScrolling,
-  trackTerminalSelection
-} from './terminal-browser'
-import {
-  parseTerminalServerEvent,
-  TERMINAL_MAX_INPUT_BYTES,
-  TERMINAL_MAX_UPLOAD_BYTES,
-  TERMINAL_PROTOCOL_VERSION,
-  type TerminalClientToServerEvents,
-  type TerminalServerEvent,
-  type TerminalProtocolInput,
-  type TerminalSize,
-  type TerminalServerToClientEvents
-} from '@treeport/shared'
+  TerminalSessionState,
+  type TerminalSessionSnapshot,
+  type TerminalSocketFactory,
+  type ArrowDirection,
+  normalizeTerminalDimensions
+} from './terminal-session-client/state'
 
-type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
-export type TerminalSocketFactory = (
-  namespace: string,
-  options: ProtocolSocketOptions
-) => ProtocolSocket<TerminalServerToClientEvents, TerminalClientToServerEvents>
-export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
-export type TerminalFileTransfer = {
-  state: 'uploading' | 'error'
-  message: string
-}
-
-const TERMINAL_MAX_FILES_PER_TRANSFER = 8
-const BROWSER_LOCAL_FILE_PATH_SCHEMA = Schema.String.pipe(
-  Schema.maxLength(16_384),
-  Schema.startsWith('/'),
-  Schema.filter((filePath) =>
-    Array.from(filePath).every((character) => {
-      const codePoint = character.codePointAt(0)!
-      return codePoint > 31 && codePoint !== 127
-    })
-  )
-)
-const LOOPBACK_BROWSER_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
-const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
-const TERMINAL_MIN_COLS = 2
-const TERMINAL_MAX_COLS = 1_000
-const TERMINAL_MIN_ROWS = 2
-const TERMINAL_MAX_ROWS = 500
-const TERMINAL_RESIZE_SETTLE_MS = 150
-const IOS_BROWSER_TOOLBAR_CLEARANCE = 44
-
-function normalizeTerminalDimensions(
-  dimensions: TerminalSize,
-  fallback: TerminalSize = { cols: 100, rows: 30 }
-): TerminalSize {
-  return {
-    cols: Number.isFinite(dimensions.cols)
-      ? Math.min(
-          TERMINAL_MAX_COLS,
-          Math.max(TERMINAL_MIN_COLS, Math.trunc(dimensions.cols))
-        )
-      : fallback.cols,
-    rows: Number.isFinite(dimensions.rows)
-      ? Math.min(
-          TERMINAL_MAX_ROWS,
-          Math.max(TERMINAL_MIN_ROWS, Math.trunc(dimensions.rows))
-        )
-      : fallback.rows
-  }
-}
-
-export interface TerminalSessionSnapshot {
-  phase: ConnectionPhase
-  degraded: boolean
-  controller: boolean
-  controlPending: boolean
-  title: string | null
-  bellActive: boolean
-  bellSerial: number
-  exitSerial: number
-  fileTransfer: TerminalFileTransfer | null
-  hasSelection: boolean
-  hoveredLink: string | null
-  pasteRequestSerial: number
-  error: string | null
-}
-
-const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
-  phase: 'closed',
-  degraded: false,
-  controller: false,
-  controlPending: false,
-  title: null,
-  bellActive: false,
-  bellSerial: 0,
-  exitSerial: 0,
-  fileTransfer: null,
-  hasSelection: false,
-  hoveredLink: null,
-  pasteRequestSerial: 0,
-  error: null
-}
-
-let fallbackClientId: string | null = null
-function getClientId(): string {
-  if (fallbackClientId) {
-    return fallbackClientId
-  }
-
-  try {
-    const stored = sessionStorage.getItem('treeport-terminal-client-id')
-    if (stored) {
-      sessionStorage.setItem('treeport-terminal-client-id', stored)
-      return (fallbackClientId = stored)
-    }
-  } catch {
-    // Storage can be unavailable in private browsing modes.
-  }
-
-  const bytes = new Uint8Array(16)
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes)
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256)
-    }
-  }
-
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))
-  const created = `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`
-
-  try {
-    sessionStorage.setItem('treeport-terminal-client-id', created)
-  } catch {
-    // The in-memory ID still keeps reconnects stable for this page load.
-  }
-  return (fallbackClientId = created)
-}
-
-const TERMINAL_CURSOR_RESTORE_DELAY_MS = 50
-const TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS = 250
-
-class TerminalRenderError extends Data.TaggedError('TerminalRenderError')<{
-  readonly message: string
-}> {}
-
-class TerminalTransferError extends Data.TaggedError('TerminalTransferError')<{
-  readonly message: string
-}> {}
-
-type SessionTimer =
-  | 'degraded'
-  | 'bell'
-  | 'fileTransfer'
-  | 'cursorRestore'
-  | 'resizeSettle'
-type FileTransferRequest = {
-  readonly files: File[]
-  readonly streamId: string | null
-  readonly generation: number
-}
-type RenderOperation = {
-  readonly epoch: number
-  readonly effect: Effect.Effect<void, TerminalRenderError>
-}
-
-// The class is the synchronous React/xterm adapter. Async work belongs to this
-// session's scope, not to a mount: hidden pooled sessions must keep rendering.
+// The synchronous React/xterm adapter composes session-owned Effect services.
+// Unmount detaches a host; only dispose closes the scope and stops rendering.
 export class TerminalSession {
-  readonly terminalId: string
-  private readonly listeners = new Set<() => void>()
-  private snapshotValue: TerminalSessionSnapshot = DEFAULT_SNAPSHOT
-  private terminal: Terminal | null = null
-  private fitAddon: FitAddon | null = null
-  private wrapper: HTMLDivElement | null = null
-  private host: HTMLElement | null = null
-  private resizeObserver: ResizeObserver | null = null
-  private keyboardViewportCleanup: (() => void) | null = null
-  private desktopLocalFilePasteCleanup: (() => void) | null = null
-  private socket: ProtocolSocket<
-    TerminalServerToClientEvents,
-    TerminalClientToServerEvents
-  > | null = null
+  private readonly state: TerminalSessionState
   private readonly scope = Effect.runSync(Scope.make())
-  private readonly timers = new Map<
-    SessionTimer,
-    Fiber.RuntimeFiber<void, never>
-  >()
-  private readonly renderFiber: Fiber.RuntimeFiber<void, never>
-  private readonly renderQueue = Effect.runSync(
-    Queue.bounded<RenderOperation>(1_024)
-  )
-  private readonly fileTransferQueue = Effect.runSync(
-    Queue.bounded<FileTransferRequest>(8)
-  )
-  private cursorRestoreStartedAt: number | null = null
-  private resizeFrame: number | null = null
-  private disposed = false
-  private opened = false
-  private ready = false
-  private reconnectAllowed = true
-  private streamId: string | null = null
-  private controllerGeneration = 0
-  private controlRequestGeneration: number | null = null
-  private canonicalCols = 100
-  private canonicalRows = 30
-  private canonicalRevision = 0
-  private appliedRevision = 0
-  private proposedDimensions: { cols: number; rows: number } | null = null
-  private resizePending = false
-  private queryAuthorityActive = false
-  private resizeIntentDirty = false
-  private resizeQuietElapsed = false
-  private resizeIntentGeneration = 0
-  private renderEpoch = 0
-  private renderFailed = false
-  private pendingTerminalWrites = 0
-  private focusAfterRender = false
-  private expectedSequence = 1
-  private lastParsedSequence = 0
-  private readonly parsedSequences = new Set<number>()
-  private selectionDragCancel: (() => void) | null = null
-  private pendingPaste = ''
-  private inputModifiers: {
-    ctrl: boolean
-    alt: boolean
-    onConsumed: () => void
-  } | null = null
-  private lastBellAt = 0
-  private wakeListenersAttached = false
-  private readonly reconnectWhenOnline = () => this.reconnectImmediately()
-  private readonly reconnectWhenVisible = () => {
-    if (document.visibilityState === 'visible') {
-      this.reconnectImmediately()
-    }
-  }
+  private readonly services
 
   constructor(
-    terminalId: string,
-    private readonly createSocket: TerminalSocketFactory = createProtocolSocket
+    readonly terminalId: string,
+    createSocket: TerminalSocketFactory = createProtocolSocket
   ) {
-    this.terminalId = terminalId
-    const render = Effect.forever(
-      Effect.gen(this, function* () {
-        const operation = yield* Queue.take(this.renderQueue)
-        if (
-          !this.disposed &&
-          !this.renderFailed &&
-          operation.epoch === this.renderEpoch
-        ) {
-          yield* operation.effect
-        }
-      })
-    ).pipe(
-      Effect.catchAllCause((cause) =>
-        Effect.sync(() => {
-          if (!Cause.isInterruptedOnly(cause)) {
-            this.failRendering(Cause.squash(cause))
-          }
-        })
-      ),
-      Effect.ensuring(Queue.shutdown(this.renderQueue))
-    )
-    const transfers = Effect.forever(
-      Effect.gen(this, function* () {
-        const request = yield* Queue.take(this.fileTransferQueue)
-        yield* this.transferFiles(request).pipe(
-          Effect.catchAllCause((cause) =>
+    const state = (this.state = new TerminalSessionState(terminalId))
+    this.services = Effect.runSync(
+      Scope.extend(
+        Effect.gen(this, function* () {
+          // Register first: clear references only after every service has released
+          // its resources, even if an addon disposer fails.
+          yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
-              if (!this.disposed && !Cause.isInterruptedOnly(cause)) {
-                this.showFileTransferError(errorMessage(Cause.squash(cause)))
-              }
+              state.terminal = null
+              state.fitAddon = null
+              state.wrapper = null
+              state.host = null
+              state.socket = null
+              state.selectionDragCancel = null
+              state.pendingPaste = ''
+              state.inputModifiers = null
+              state.listeners.clear()
             })
           )
-        )
-      })
-    ).pipe(Effect.ensuring(Queue.shutdown(this.fileTransferQueue)))
-    this.renderFiber = Effect.runSync(Effect.forkIn(render, this.scope))
-    Effect.runSync(Effect.forkIn(transfers, this.scope))
-
-    // Register independently: one failing browser/addon disposer must not skip
-    // the remaining resources. Registered after workers, these synchronous
-    // finalizers run before scope closure waits for fiber interruption.
-    for (const release of [
-      () => {
-        this.terminal = null
-        this.fitAddon = null
-        this.wrapper = null
-        this.host = null
-        this.socket = null
-        this.resizeObserver = null
-        this.selectionDragCancel = null
-        this.keyboardViewportCleanup = null
-        this.desktopLocalFilePasteCleanup = null
-        this.pendingPaste = ''
-        this.inputModifiers = null
-        this.listeners.clear()
-      },
-      () => this.terminal?.dispose(),
-      () => this.wrapper?.remove(),
-      () => this.socket?.removeAllListeners(),
-      () => this.socket?.disconnect(),
-      () => this.desktopLocalFilePasteCleanup?.(),
-      () => this.keyboardViewportCleanup?.(),
-      () => {
-        if (this.wakeListenersAttached) {
-          window.removeEventListener('online', this.reconnectWhenOnline)
-          document.removeEventListener(
-            'visibilitychange',
-            this.reconnectWhenVisible
+          const timers = yield* makeTimers(state, {
+            failRendering: (...args) => render.failRendering(...args)
+          })
+          const render = yield* makeRender(state, {
+            failProtocol: (...args) => connection.failProtocol(...args),
+            send: (...args) => connection.send(...args),
+            stopWithError: (...args) => connection.stopWithError(...args)
+          })
+          const transfers = yield* makeTransfers(state, {
+            canInput: (...args) => connection.canInput(...args),
+            cancelTimer: timers.cancelTimer,
+            clearSelection: (...args) => this.clearSelection(...args),
+            focus: (...args) => this.focus(...args),
+            scheduleTimer: timers.scheduleTimer,
+            update: (...args) => this.update(...args)
+          })
+          const layout = yield* makeLayout(state, {
+            cancelTimer: timers.cancelTimer,
+            failRendering: render.failRendering,
+            scheduleTimer: timers.scheduleTimer,
+            send: (...args) => connection.send(...args)
+          })
+          // Finalizers run in reverse: detach the host and disconnect the
+          // socket before disposing xterm, then interrupt the async workers.
+          const browser = yield* makeBrowser(state, {
+            hasTimer: timers.hasTimer,
+            canInput: (...args) => connection.canInput(...args),
+            cancelTimer: timers.cancelTimer,
+            clearSelection: (...args) => this.clearSelection(...args),
+            handleBell: (...args) => this.handleBell(...args),
+            pasteFiles: (...args) => this.pasteFiles(...args),
+            pasteResolvedFilePaths: transfers.pasteResolvedFilePaths,
+            requestControl: (...args) => this.requestControl(...args),
+            scheduleTimer: timers.scheduleTimer,
+            send: (...args) => connection.send(...args),
+            update: (...args) => this.update(...args),
+            updateSelectionState: (...args) =>
+              this.updateSelectionState(...args)
+          })
+          const connection: Effect.Effect.Success<
+            ReturnType<typeof makeConnection>
+          > = yield* makeConnection(
+            state,
+            {
+              hasTimer: timers.hasTimer,
+              cancelControllerResizeIntent: layout.cancelControllerResizeIntent,
+              cancelTimer: timers.cancelTimer,
+              fit: layout.fit,
+              handleServerEvent: (...args) =>
+                protocol.handleServerEvent(...args),
+              scheduleTimer: timers.scheduleTimer,
+              setTerminalScrolling: browser.setTerminalScrolling,
+              update: (...args) => this.update(...args)
+            },
+            createSocket
           )
-          this.wakeListenersAttached = false
-        }
-      },
-      () => this.resizeObserver?.disconnect(),
-      () => this.selectionDragCancel?.(),
-      () => this.clearTimers()
-    ]) {
-      Effect.runSync(Scope.addFinalizer(this.scope, Effect.sync(release)))
-    }
+          const host = yield* makeHost(state, {
+            cancelControllerResizeIntent: layout.cancelControllerResizeIntent,
+            connect: connection.connect,
+            failRendering: render.failRendering,
+            openTerminal: browser.openTerminal,
+            reconnectImmediately: connection.reconnectImmediately,
+            scheduleFit: layout.scheduleFit,
+            update: (...args) => this.update(...args)
+          })
+          const protocol = yield* makeProtocol(state, {
+            applyCanonicalDimensions: layout.applyCanonicalDimensions,
+            cancelControllerResizeIntent: layout.cancelControllerResizeIntent,
+            clearDegraded: connection.clearDegraded,
+            drainTerminalWrites: render.drainTerminalWrites,
+            enqueueRender: render.enqueueRender,
+            failProtocol: connection.failProtocol,
+            flushControllerResize: layout.flushControllerResize,
+            focus: (...args) => this.focus(...args),
+            handleOutput: render.handleOutput,
+            scheduleFit: layout.scheduleFit,
+            send: connection.send,
+            setTerminalScrolling: browser.setTerminalScrolling,
+            stopWithError: connection.stopWithError,
+            update: (...args) => this.update(...args),
+            writeTerminal: render.writeTerminal
+          })
+          return {
+            timers,
+            render,
+            transfers,
+            layout,
+            connection,
+            browser,
+            host,
+            protocol
+          }
+        }),
+        this.scope
+      )
+    )
   }
 
-  getSnapshot = (): TerminalSessionSnapshot => this.snapshotValue
+  getSnapshot = (): TerminalSessionSnapshot => this.state.snapshotValue
+
+  subscribe = (listener: () => void): (() => void) => {
+    if (this.state.disposed) {
+      return () => undefined
+    }
+
+    this.state.listeners.add(listener)
+    return () => this.state.listeners.delete(listener)
+  }
 
   getInitialSize(): TerminalSize | null {
-    if (!this.host || !this.terminal) {
+    if (!this.state.host || !this.state.terminal) {
       return null
     }
 
     return normalizeTerminalDimensions(
-      this.proposedDimensions ?? {
-        cols: this.terminal.cols,
-        rows: this.terminal.rows
+      this.state.proposedDimensions ?? {
+        cols: this.state.terminal.cols,
+        rows: this.state.terminal.rows
       }
     )
-  }
-
-  subscribe = (listener: () => void): (() => void) => {
-    if (this.disposed) {
-      return () => undefined
-    }
-
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-
-  mount(host: HTMLElement): void {
-    if (this.disposed) {
-      return
-    }
-
-    this.host = host
-    if (!this.wrapper) {
-      this.wrapper = document.createElement('div')
-      this.wrapper.className = 'terminal-session-host h-full min-h-0 min-w-0'
-    }
-
-    host.appendChild(this.wrapper)
-    this.socket?.manager.reconnection(true)
-    if (!this.opened) {
-      const opened = Effect.runSyncExit(Effect.sync(() => this.openTerminal()))
-      if (Exit.isFailure(opened)) {
-        this.failRendering(Cause.squash(opened.cause))
-        return
-      }
-    }
-
-    this.keyboardViewportCleanup?.()
-    this.keyboardViewportCleanup = null
-    const isIOS =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-    const viewport = window.visualViewport
-    const appFrame = document.querySelector<HTMLElement>('.app-frame')
-    if (isIOS && viewport && appFrame) {
-      // WebKit leaves the layout viewport unchanged when the software keyboard
-      // opens. Size and position the application against the visual viewport
-      // instead of scrolling the document between the cursor and accessory row.
-      let viewportFrame: number | null = null
-      const syncKeyboardViewport = () => {
-        if (viewportFrame !== null) {
-          window.cancelAnimationFrame(viewportFrame)
-        }
-
-        viewportFrame = window.requestAnimationFrame(() => {
-          viewportFrame = null
-          const textarea = this.wrapper?.querySelector<HTMLTextAreaElement>(
-            '.xterm-helper-textarea'
-          )
-          const keyboardOpen =
-            document.activeElement === textarea &&
-            viewport.height < document.documentElement.clientHeight - 100
-          if (!keyboardOpen) {
-            appFrame.style.removeProperty('--app-visual-viewport-height')
-            appFrame.style.removeProperty('--app-visual-viewport-offset-top')
-            return
-          }
-
-          const standalone =
-            window.matchMedia('(display-mode: standalone)').matches ||
-            Boolean(
-              // SAFETY: The terminal protocol and xterm contracts establish this asserted value.
-              (navigator as Navigator & { standalone?: boolean }).standalone
-            )
-          const browserToolbarGap = standalone
-            ? 0
-            : IOS_BROWSER_TOOLBAR_CLEARANCE
-          appFrame.style.setProperty(
-            '--app-visual-viewport-height',
-            `${Math.max(0, viewport.height - browserToolbarGap)}px`
-          )
-          appFrame.style.setProperty(
-            '--app-visual-viewport-offset-top',
-            `${viewport.offsetTop}px`
-          )
-        })
-      }
-      viewport.addEventListener('resize', syncKeyboardViewport)
-      viewport.addEventListener('scroll', syncKeyboardViewport)
-      syncKeyboardViewport()
-      this.keyboardViewportCleanup = () => {
-        viewport.removeEventListener('resize', syncKeyboardViewport)
-        viewport.removeEventListener('scroll', syncKeyboardViewport)
-        if (viewportFrame !== null) {
-          window.cancelAnimationFrame(viewportFrame)
-        }
-
-        appFrame.style.removeProperty('--app-visual-viewport-height')
-        appFrame.style.removeProperty('--app-visual-viewport-offset-top')
-      }
-    }
-
-    this.resizeObserver?.disconnect()
-    this.resizeObserver = new ResizeObserver(() => this.scheduleFit())
-    this.resizeObserver.observe(host)
-    if (!this.wakeListenersAttached) {
-      window.addEventListener('online', this.reconnectWhenOnline)
-      document.addEventListener('visibilitychange', this.reconnectWhenVisible)
-      this.wakeListenersAttached = true
-    }
-
-    this.scheduleFit()
-    if (!this.socket && this.opened) {
-      this.connect()
-    } else {
-      this.reconnectImmediately()
-    }
-  }
-
-  unmount(host: HTMLElement): void {
-    if (this.host !== host) {
-      return
-    }
-
-    this.resizeObserver?.disconnect()
-    this.resizeObserver = null
-    this.socket?.manager.reconnection(false)
-    if (this.wakeListenersAttached) {
-      window.removeEventListener('online', this.reconnectWhenOnline)
-      document.removeEventListener(
-        'visibilitychange',
-        this.reconnectWhenVisible
-      )
-      this.wakeListenersAttached = false
-    }
-
-    this.keyboardViewportCleanup?.()
-    this.keyboardViewportCleanup = null
-    this.cancelControllerResizeIntent(false)
-    this.selectionDragCancel?.()
-    this.wrapper?.remove()
-    this.host = null
-    this.update({ hoveredLink: null })
-    this.focusAfterRender = false
   }
 
   focus(options: { requestControl?: boolean } = {}): void {
@@ -501,71 +175,71 @@ export class TerminalSession {
       this.requestControl()
     }
 
-    if (this.wrapper?.style.visibility === 'hidden') {
-      this.focusAfterRender = true
+    if (this.state.wrapper?.style.visibility === 'hidden') {
+      this.state.focusAfterRender = true
       return
     }
 
-    this.focusAfterRender = false
-    this.terminal?.focus()
+    this.state.focusAfterRender = false
+    this.state.terminal?.focus()
   }
 
   requestControl(): void {
     if (
-      !this.ready ||
-      !this.socket?.connected ||
-      this.snapshotValue.controller ||
-      this.controlRequestGeneration === this.controllerGeneration
+      !this.state.ready ||
+      !this.state.socket?.connected ||
+      this.state.snapshotValue.controller ||
+      this.state.controlRequestGeneration === this.state.controllerGeneration
     ) {
       return
     }
 
     const dimensions = normalizeTerminalDimensions(
-      this.proposedDimensions ?? {
-        cols: this.canonicalCols,
-        rows: this.canonicalRows
+      this.state.proposedDimensions ?? {
+        cols: this.state.canonicalCols,
+        rows: this.state.canonicalRows
       }
     )
-    this.controlRequestGeneration = this.controllerGeneration
+    this.state.controlRequestGeneration = this.state.controllerGeneration
     this.update({ controlPending: true })
-    this.send('take_control', {
-      generation: this.controllerGeneration,
+    this.services.connection.send('take_control', {
+      generation: this.state.controllerGeneration,
       ...dimensions
     })
   }
 
   retry(): void {
-    if (this.disposed || this.ready) {
+    if (this.state.disposed || this.state.ready) {
       return
     }
 
-    if (this.renderFailed) {
+    if (this.state.renderFailed) {
       // A rejected render queue must never be reused. Reloading reconstructs
       // xterm, its DOM listeners, and the queue before reconnecting.
       window.location.reload()
       return
     }
 
-    this.reconnectAllowed = true
+    this.state.reconnectAllowed = true
     this.update({ error: null, phase: 'connecting', degraded: false })
-    if (this.socket) {
-      this.socket.connect()
+    if (this.state.socket) {
+      this.state.socket.connect()
     } else {
-      this.connect()
+      this.services.connection.connect()
     }
   }
 
   setInputModifiers(ctrl: boolean, alt: boolean, onConsumed: () => void): void {
-    this.inputModifiers = ctrl || alt ? { ctrl, alt, onConsumed } : null
+    this.state.inputModifiers = ctrl || alt ? { ctrl, alt, onConsumed } : null
   }
 
   sendText(data: string, options: { focus?: boolean } = {}): void {
     this.requestControl()
     this.clearSelection()
 
-    if (this.canInput()) {
-      this.send('input', {
-        generation: this.controllerGeneration,
+    if (this.services.connection.canInput()) {
+      this.services.connection.send('input', {
+        generation: this.state.controllerGeneration,
         data
       })
     }
@@ -576,16 +250,16 @@ export class TerminalSession {
   }
 
   pasteText(data: string): void {
-    if (!data || this.disposed) {
+    if (!data || this.state.disposed) {
       return
     }
 
     this.requestControl()
     this.clearSelection()
-    if (this.canInput()) {
-      this.terminal?.paste(data)
+    if (this.services.connection.canInput()) {
+      this.state.terminal?.paste(data)
     } else {
-      this.pendingPaste += data
+      this.state.pendingPaste += data
     }
 
     this.focus()
@@ -597,7 +271,7 @@ export class TerminalSession {
     }
 
     this.requestControl()
-    this.queueFileTransfer(files)
+    this.services.transfers.queueFileTransfer(files)
   }
 
   sendArrow(
@@ -606,13 +280,15 @@ export class TerminalSession {
     options: { focus?: boolean } = {}
   ): void {
     const final = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
-    const prefix = this.terminal?.modes.applicationCursorKeysMode
+    const prefix = this.state.terminal?.modes.applicationCursorKeysMode
       ? '\u001bO'
       : '\u001b['
     this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`, options)
   }
 
-  async copyText(text = this.terminal?.getSelection() ?? ''): Promise<void> {
+  async copyText(
+    text = this.state.terminal?.getSelection() ?? ''
+  ): Promise<void> {
     if (!text) {
       return
     }
@@ -647,25 +323,25 @@ export class TerminalSession {
   }
 
   clearSelection(): void {
-    if (!this.terminal?.hasSelection?.()) {
+    if (!this.state.terminal?.hasSelection?.()) {
       return
     }
 
-    this.terminal.clearSelection()
+    this.state.terminal.clearSelection()
     this.updateSelectionState()
   }
 
   dispose(): void {
-    if (this.disposed) {
+    if (this.state.disposed) {
       return
     }
 
-    this.disposed = true
-    this.renderEpoch += 1
-    this.ready = false
-    this.reconnectAllowed = false
-    // Closing interrupts queue consumers, callback waits, uploads and sleeps.
-    // xterm itself cannot cancel a submitted write; callbacks are epoch-fenced.
+    this.state.disposed = true
+    this.state.renderEpoch += 1
+    this.state.ready = false
+    this.state.reconnectAllowed = false
+    // Scope closure interrupts callback waits, uploads and sleeps. Submitted
+    // xterm writes cannot be cancelled and remain epoch-fenced.
     Effect.runFork(
       Scope.close(this.scope, Exit.void).pipe(
         Effect.catchAllCause((cause) =>
@@ -675,1309 +351,20 @@ export class TerminalSession {
     )
   }
 
-  private openTerminal(): void {
-    if (!this.wrapper || this.opened) {
-      return
-    }
-
-    const options = terminalOptions(this.terminalId, (hoveredLink) =>
-      this.update({ hoveredLink })
-    )
-    const terminal = new Terminal(options)
-    // Own xterm before loading addons so partial initialization is disposable.
-    this.terminal = terminal
-    const fitAddon = new FitAddon()
-    terminal.loadAddon(fitAddon)
-    terminal.loadAddon(
-      new ImageAddon({
-        iipSupport: false,
-        kittySupport: true,
-        sixelSupport: false,
-        storageLimit: 64
-      })
-    )
-    terminal.loadAddon(
-      new WebLinksAddon(options.linkHandler.activate, {
-        hover: options.linkHandler.hover,
-        leave: options.linkHandler.leave
-      })
-    )
-    terminal.open(this.wrapper)
-    terminal.onSelectionChange(() => this.updateSelectionState())
-    terminal.onRender(() => {
-      // xterm puts the block cursor and glyph on one span. Remove only the
-      // cursor class so ANSI foreground colors remain unchanged.
-      if (this.wrapper?.classList.contains('terminal-scrolling')) {
-        this.hideTerminalCursor()
-      }
-    })
-    terminal.onWriteParsed(() => {
-      if (this.timers.has('cursorRestore')) {
-        this.scheduleTerminalCursorRestore()
-      }
-    })
-    this.selectionDragCancel = trackTerminalSelection(this.wrapper, terminal, {
-      requestControl: () => this.requestControl()
-    })
-    this.wrapper.addEventListener('click', () => this.requestControl(), true)
-    this.wrapper.addEventListener(
-      'keydown',
-      (event) => {
-        const key = event.key.toLowerCase()
-        const modifierOnly = [
-          'alt',
-          'altgraph',
-          'control',
-          'meta',
-          'shift'
-        ].includes(key)
-        const mappedInput = terminalKeyboardInput(
-          event,
-          terminal.modes.applicationCursorKeysMode
-        )
-        const browserOwnedMetaShortcut = event.metaKey && mappedInput === null
-        const copyOrPasteShortcut =
-          event.ctrlKey && event.shiftKey && (key === 'c' || key === 'v')
-        if (
-          !modifierOnly &&
-          !browserOwnedMetaShortcut &&
-          !copyOrPasteShortcut
-        ) {
-          this.clearSelection()
-          this.requestControl()
-        }
-      },
-      true
-    )
-    const expandWheelInput = trackTerminalScrolling(
-      this.wrapper,
-      terminal,
-      () => undefined,
-      () => {
-        this.requestControl()
-        this.clearSelection()
-      },
-      () => {
-        this.requestControl()
-        this.update({
-          pasteRequestSerial: this.snapshotValue.pasteRequestSerial + 1
-        })
-      }
-    )
-    const wrapper = this.wrapper
-    this.desktopLocalFilePasteCleanup =
-      window.treeportDesktop?.onLocalFilePaste?.((paths) => {
-        if (!this.wrapper?.contains(document.activeElement)) {
-          return
-        }
-
-        this.requestControl()
-        this.pasteResolvedFilePaths(paths)
-      }) ?? null
-    const transfersFiles = (transfer: DataTransfer | null) =>
-      Boolean(
-        transfer &&
-        (Array.from(transfer.types).includes('Files') ||
-          Array.from(transfer.items).some((item) => item.kind === 'file'))
-      )
-    const filesFromTransfer = (transfer: DataTransfer | null): File[] => {
-      const files = Array.from(transfer?.files ?? [])
-      if (files.length) {
-        return files
-      }
-
-      return Array.from(transfer?.items ?? []).flatMap((item) => {
-        const file = item.kind === 'file' ? item.getAsFile() : null
-        return file ? [file] : []
-      })
-    }
-    wrapper.addEventListener('dragover', (event) => {
-      if (!transfersFiles(event.dataTransfer)) {
-        return
-      }
-
-      this.requestControl()
-      event.preventDefault()
-      event.dataTransfer!.dropEffect = 'copy'
-      wrapper.classList.add('terminal-file-drag')
-    })
-    wrapper.addEventListener('dragleave', (event) => {
-      if (
-        !(event.relatedTarget instanceof Node) ||
-        !wrapper.contains(event.relatedTarget)
-      ) {
-        wrapper.classList.remove('terminal-file-drag')
-      }
-    })
-    wrapper.addEventListener('drop', (event) => {
-      if (!transfersFiles(event.dataTransfer)) {
-        return
-      }
-
-      event.preventDefault()
-      event.stopPropagation()
-      wrapper.classList.remove('terminal-file-drag')
-      this.pasteFiles(filesFromTransfer(event.dataTransfer))
-    })
-    wrapper.addEventListener(
-      'paste',
-      (event) => {
-        const files = filesFromTransfer(event.clipboardData)
-        if (!files.length) {
-          return
-        }
-
-        event.preventDefault()
-        event.stopPropagation()
-        this.pasteFiles(files)
-      },
-      true
-    )
-    this.fitAddon = fitAddon
-    this.opened = true
-    terminal.attachCustomKeyEventHandler((event) => {
-      const input = terminalKeyboardInput(
-        event,
-        terminal.modes.applicationCursorKeysMode
-      )
-      if (input === null) {
-        return true
-      }
-
-      event.preventDefault()
-      event.stopPropagation()
-      terminal.input(input, true)
-      return false
-    })
-    terminal.onData((data) => {
-      if (this.canInput()) {
-        data = expandWheelInput(data)
-        const modifiers = this.inputModifiers
-        if (modifiers) {
-          this.inputModifiers = null
-
-          if (modifiers.ctrl && data.length === 1) {
-            data = String.fromCharCode(data.toUpperCase().charCodeAt(0) & 31)
-          }
-
-          if (modifiers.alt) {
-            data = `\u001b${data}`
-          }
-
-          modifiers.onConsumed()
-        }
-
-        this.send('input', {
-          generation: this.controllerGeneration,
-          data
-        })
-      }
-    })
-    terminal.onBinary((data) => {
-      if (this.canInput()) {
-        this.send('binary', {
-          generation: this.controllerGeneration,
-          data
-        })
-      }
-    })
-    terminal.onTitleChange((title) =>
-      this.update({ title: title.trim().slice(0, 256) })
-    )
-    terminal.onScroll(() =>
-      this.setTerminalScrolling(
-        terminal.buffer.active.viewportY < terminal.buffer.active.baseY
-      )
-    )
-    terminal.onBell(() => this.handleBell())
-  }
-
-  private queueFileTransfer(files: File[]): void {
-    if (this.disposed) {
-      return
-    }
-
-    // Validate before retaining Files in the bounded queue.
-    if (files.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
-      this.showFileTransferError(
-        `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
-      )
-      return
-    }
-
-    if (files.some((file) => file.size > TERMINAL_MAX_UPLOAD_BYTES)) {
-      this.showFileTransferError(
-        `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`
-      )
-      return
-    }
-
-    if (
-      !Queue.unsafeOffer(this.fileTransferQueue, {
-        files: [...files],
-        streamId: this.streamId,
-        generation: this.controllerGeneration
-      })
-    ) {
-      this.showFileTransferError(
-        'Too many pending file transfers; wait for an upload to finish'
-      )
-    }
-  }
-
-  private transferFiles(
-    request: FileTransferRequest
-  ): Effect.Effect<void, TerminalTransferError> {
-    return Effect.gen(this, function* () {
-      const { files, streamId, generation } = request
-      if (!files.length || this.disposed) {
-        return
-      }
-
-      if (!this.ready || !this.snapshotValue.controller) {
-        return yield* new TerminalTransferError({
-          message: this.snapshotValue.controlPending
-            ? 'taking control; try again in a moment'
-            : 'interact with the terminal to take control first'
-        })
-      }
-
-      if (!this.canInput()) {
-        return yield* new TerminalTransferError({
-          message: 'Wait for the terminal resize to finish'
-        })
-      }
-
-      if (
-        streamId !== this.streamId ||
-        generation !== this.controllerGeneration
-      ) {
-        return yield* new TerminalTransferError({
-          message: 'Terminal control changed before the upload started'
-        })
-      }
-
-      this.cancelTimer('fileTransfer')
-      const desktopBridge = window.treeportDesktop
-      const sourcePaths = yield* Effect.forEach(
-        files,
-        (file) => {
-          if (desktopBridge?.getPathForFile) {
-            return Effect.tryPromise(
-              async () => desktopBridge.getPathForFile?.(file) ?? null
-            ).pipe(Effect.orElseSucceed(() => null))
-          }
-
-          if (LOOPBACK_BROWSER_HOSTNAMES.has(window.location.hostname)) {
-            // SAFETY: Privileged browser platforms can add this read-only File capability.
-            const platformFile = file as File & { readonly path?: string }
-            return Effect.succeed(
-              decodeUnknownOrNull(
-                BROWSER_LOCAL_FILE_PATH_SCHEMA,
-                platformFile.path
-              )
-            )
-          }
-
-          return Effect.succeed(null)
-        },
-        { concurrency: TERMINAL_MAX_FILES_PER_TRANSFER }
-      )
-
-      const uploadCount = sourcePaths.filter((filePath) => !filePath).length
-      if (uploadCount > 0) {
-        this.update({
-          fileTransfer: {
-            state: 'uploading',
-            message: `Uploading ${uploadCount === 1 ? 'file' : `${uploadCount} files`}…`
-          }
-        })
-      }
-
-      const paths: string[] = []
-      for (const [index, file] of files.entries()) {
-        const sourcePath = sourcePaths[index]
-        if (sourcePath) {
-          paths.push(sourcePath)
-          continue
-        }
-
-        const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
-        const headers = new Headers({
-          'content-type': file.type || 'application/octet-stream'
-        })
-        if (extension) {
-          headers.set('x-treeport-file-extension', extension.toLowerCase())
-        }
-
-        const result = yield* Effect.tryPromise({
-          try: (signal) =>
-            parseResponse(
-              rpc.api.terminals[':terminalId'].files.$post(
-                { param: { terminalId: this.terminalId } },
-                { init: { body: file, headers, signal } }
-              )
-            ),
-          catch: (cause) =>
-            new TerminalTransferError({ message: errorMessage(cause) })
-        })
-        paths.push(result.file.path)
-      }
-
-      // Losing and reacquiring control during an upload is not permission to
-      // paste into a different stream or controller generation.
-      if (
-        streamId !== this.streamId ||
-        generation !== this.controllerGeneration
-      ) {
-        return yield* new TerminalTransferError({
-          message: 'Terminal control was lost during the upload'
-        })
-      }
-
-      this.pasteResolvedFilePaths(
-        paths,
-        'Terminal control was lost during the upload'
-      )
-    }).pipe(
-      Effect.timeoutFail({
-        duration: '2 minutes',
-        onTimeout: () =>
-          new TerminalTransferError({ message: 'File transfer timed out' })
-      })
-    )
-  }
-
-  private pasteResolvedFilePaths(paths: string[], controlError?: string): void {
-    if (!paths.length || this.disposed) {
-      return
-    }
-
-    if (paths.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
-      this.showFileTransferError(
-        `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
-      )
-      return
-    }
-
-    if (!this.ready || !this.snapshotValue.controller) {
-      this.showFileTransferError(
-        controlError ??
-          (this.snapshotValue.controlPending
-            ? 'taking control; try again in a moment'
-            : 'interact with the terminal to take control first')
-      )
-      return
-    }
-
-    if (!this.canInput()) {
-      this.showFileTransferError('Wait for the terminal resize to finish')
-      return
-    }
-
-    const input = paths
-      .map((filePath) =>
-        /^[A-Za-z0-9_+,./:@%=-]+$/u.test(filePath)
-          ? filePath
-          : `'${filePath.replaceAll("'", "'\\''")}'`
-      )
-      .join(' ')
-    if (
-      new TextEncoder().encode(input).byteLength >
-      TERMINAL_MAX_INPUT_BYTES - 32
-    ) {
-      this.showFileTransferError('The file paths are too long')
-      return
-    }
-
-    this.clearSelection()
-    this.terminal?.paste(input)
-    this.focus()
-    this.update({ fileTransfer: null })
-  }
-
-  private showFileTransferError(message: string): void {
-    this.cancelTimer('fileTransfer')
-
-    this.update({
-      fileTransfer: {
-        state: 'error',
-        message: `Couldn’t paste file: ${message}`
-      }
-    })
-    this.scheduleTimer(
-      'fileTransfer',
-      () => {
-        this.update({ fileTransfer: null })
-      },
-      6_000
-    )
-  }
-
-  private hideTerminalCursor(): void {
-    this.terminal?.element
-      ?.querySelector('.xterm-cursor')
-      ?.classList.remove('xterm-cursor')
-  }
-
-  private scheduleTerminalCursorRestore(): void {
-    // Wait for terminal writes to settle before restoring the live cursor.
-    this.cancelTimer('cursorRestore')
-
-    this.cursorRestoreStartedAt ??= Date.now()
-    const remainingDelay = Math.max(
-      0,
-      TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS -
-        (Date.now() - this.cursorRestoreStartedAt)
-    )
-    this.scheduleTimer(
-      'cursorRestore',
-      () => {
-        this.cursorRestoreStartedAt = null
-        if (
-          !this.wrapper ||
-          (this.terminal &&
-            this.terminal.buffer.active.viewportY <
-              this.terminal.buffer.active.baseY)
-        ) {
-          return
-        }
-
-        this.wrapper.classList.remove('terminal-scrolling')
-        this.terminal?.refresh(0, this.terminal.rows - 1)
-      },
-      Math.min(TERMINAL_CURSOR_RESTORE_DELAY_MS, remainingDelay)
-    )
-  }
-
-  private setTerminalScrolling(scrolling: boolean): void {
-    if (!this.wrapper) {
-      return
-    }
-
-    if (scrolling) {
-      this.cancelTimer('cursorRestore')
-
-      this.cursorRestoreStartedAt = null
-
-      this.wrapper.classList.add('terminal-scrolling')
-      this.hideTerminalCursor()
-      return
-    }
-
-    if (this.wrapper.classList.contains('terminal-scrolling')) {
-      this.scheduleTerminalCursorRestore()
-    }
-  }
-
-  private reconnectImmediately(): void {
-    if (
-      !this.host ||
-      this.disposed ||
-      !this.reconnectAllowed ||
-      this.ready ||
-      this.socket?.connected
-    ) {
-      return
-    }
-
-    const staleSocket = this.socket
-    if (staleSocket) {
-      staleSocket.disconnect()
-      staleSocket.removeAllListeners()
-      if (this.socket === staleSocket) {
-        this.socket = null
-      }
-    }
-
-    if (this.opened) {
-      this.connect()
-    }
-  }
-
-  private connect(): void {
-    if (this.disposed || !this.reconnectAllowed || this.socket) {
-      return
-    }
-
-    this.ready = false
-    this.controlRequestGeneration = null
-    this.update({
-      phase: 'connecting',
-      controller: false,
-      controlPending: false,
-      error: null
-    })
-    this.startDegradedTimer()
-    const socket = this.createSocket('/terminals', {
-      autoConnect: false,
-      reconnection: true,
-      reconnectionDelay: 100,
-      reconnectionDelayMax: 1_000,
-      randomizationFactor: 0.2,
-      query: { terminalProtocol: String(TERMINAL_PROTOCOL_VERSION) },
-      authorize: () => {
-        const dimensions = normalizeTerminalDimensions(
-          this.proposedDimensions ?? {
-            cols: this.terminal?.cols ?? 100,
-            rows: this.terminal?.rows ?? 30
-          }
-        )
-        return {
-          terminalId: this.terminalId,
-          clientId: getClientId(),
-          ...dimensions
-        }
-      }
-    })
-    this.socket = socket
-    socket.on('connect', () => {
-      if (this.socket !== socket) {
-        return
-      }
-
-      this.fit()
-    })
-    const receive = (
-      event: TerminalServerEvent,
-      value: TerminalProtocolInput
-    ) => {
-      if (this.socket === socket && !this.disposed && this.reconnectAllowed) {
-        this.handleServerEvent(event, value)
-      }
-    }
-    socket.on('ready', (value) => receive('ready', value))
-    socket.on('dimensions', (value) => receive('dimensions', value))
-    socket.on('output', (value) => receive('output', value))
-    socket.on('title', (value) => receive('title', value))
-    socket.on('progress', (value) => receive('progress', value))
-    socket.on('control', (value) => receive('control', value))
-    socket.on('query_authority', (value) => receive('query_authority', value))
-    socket.on('exit', (value) => receive('exit', value))
-    socket.on('terminal_error', (value) => receive('terminal_error', value))
-    socket.on('connect_error', (error) => {
-      if (this.socket !== socket || !this.reconnectAllowed) {
-        return
-      }
-
-      this.controlRequestGeneration = null
-      this.update({
-        phase: 'reconnecting',
-        controller: false,
-        controlPending: false,
-        error: `Terminal connection failed: ${error.message}`
-      })
-    })
-    socket.on('disconnect', (reason) => {
-      if (this.socket !== socket) {
-        return
-      }
-
-      const connected = this.ready
-      this.renderEpoch += 1
-      this.ready = false
-      this.streamId = null
-      this.selectionDragCancel?.()
-      this.setTerminalScrolling(false)
-      this.controllerGeneration = 0
-      this.controlRequestGeneration = null
-      this.queryAuthorityActive = false
-
-      this.cancelControllerResizeIntent()
-      if (!this.reconnectAllowed) {
-        this.clearDegraded()
-      }
-
-      this.update({
-        phase:
-          this.reconnectAllowed && !this.disposed ? 'reconnecting' : 'closed',
-        controller: false,
-        controlPending: false,
-        hasSelection: false,
-        degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
-        error:
-          !connected && !this.snapshotValue.error
-            ? `Terminal connection closed: ${reason}`
-            : this.snapshotValue.error
-      })
-    })
-    socket.manager.on('reconnect_attempt', () => {
-      if (this.socket === socket && this.reconnectAllowed) {
-        this.controlRequestGeneration = null
-        this.startDegradedTimer()
-        this.update({
-          phase: 'reconnecting',
-          controller: false,
-          controlPending: false
-        })
-      }
-    })
-    socket.connect()
-  }
-
-  private handleServerEvent(
-    event: TerminalServerEvent,
-    value: TerminalProtocolInput
-  ): void {
-    if (this.disposed || this.renderFailed) {
-      return
-    }
-
-    if (event === 'ready') {
-      const message = parseTerminalServerEvent('ready', value)
-      if (!message) {
-        this.failProtocol('The terminal server sent an invalid ready event')
-        return
-      }
-
-      this.cancelControllerResizeIntent()
-      this.controlRequestGeneration = null
-      const dimensions = { cols: message.cols, rows: message.rows }
-      const revision = message.revision
-      this.streamId = message.streamId
-      this.controllerGeneration = message.generation
-      this.canonicalCols = dimensions.cols
-      this.canonicalRows = dimensions.rows
-      this.canonicalRevision = revision
-      this.appliedRevision = 0
-      this.expectedSequence = 1
-      this.lastParsedSequence = 0
-      this.parsedSequences.clear()
-      this.selectionDragCancel?.()
-      this.setTerminalScrolling(false)
-      this.ready = true
-      this.renderEpoch += 1
-      const epoch = this.renderEpoch
-      this.queryAuthorityActive = false
-
-      if (this.wrapper) {
-        this.focusAfterRender ||= this.wrapper.contains(document.activeElement)
-        this.wrapper.style.visibility = 'hidden'
-      }
-
-      this.enqueueRender(
-        epoch,
-        Effect.gen(this, function* () {
-          yield* this.drainTerminalWrites()
-          if (this.disposed || epoch !== this.renderEpoch) {
-            return
-          }
-
-          this.terminal?.reset()
-          this.applyCanonicalDimensions(
-            dimensions.cols,
-            dimensions.rows,
-            revision,
-            true
-          )
-          if (this.terminal) {
-            yield* this.writeTerminal(message.snapshot)
-            if (this.disposed || epoch !== this.renderEpoch) {
-              return
-            }
-
-            restoreTerminalSnapshotLinks(this.terminal, message.snapshotLinks)
-          }
-
-          if (this.wrapper && epoch === this.renderEpoch) {
-            this.wrapper.style.visibility = ''
-            if (this.focusAfterRender && this.host) {
-              this.focus()
-            }
-          }
-
-          this.clearDegraded()
-          this.update({
-            phase: 'ready',
-            // A control event can supersede ready while xterm parses its snapshot.
-            controller:
-              this.controllerGeneration === message.generation
-                ? message.controller
-                : this.snapshotValue.controller,
-            controlPending: false,
-            hasSelection: false,
-            error: null
-          })
-          if (
-            message.controller &&
-            this.controllerGeneration === message.generation
-          ) {
-            this.scheduleFit()
-            this.send('query_authority', {
-              generation: message.generation,
-              transitionId: null
-            })
-          }
-        })
-      )
-      return
-    }
-
-    if (event === 'dimensions') {
-      const message = parseTerminalServerEvent('dimensions', value)
-      if (!message) {
-        this.failProtocol('The terminal server sent invalid dimensions')
-        return
-      }
-
-      if (message.revision <= this.canonicalRevision) {
-        return
-      }
-
-      this.canonicalCols = message.cols
-      this.canonicalRows = message.rows
-      this.canonicalRevision = message.revision
-      this.resizePending = false
-      const epoch = this.renderEpoch
-      this.enqueueRender(
-        epoch,
-        Effect.gen(this, function* () {
-          yield* this.drainTerminalWrites()
-          if (this.disposed || epoch !== this.renderEpoch) {
-            return
-          }
-
-          this.applyCanonicalDimensions(
-            message.cols,
-            message.rows,
-            message.revision
-          )
-          this.flushControllerResize()
-        })
-      )
-      return
-    }
-
-    if (event === 'output') {
-      const message = parseTerminalServerEvent('output', value)
-      if (!message) {
-        this.failProtocol('The terminal server sent invalid output')
-        return
-      }
-
-      this.handleOutput(message.streamId, message.sequence, message.data)
-      return
-    }
-
-    if (event === 'title') {
-      const message = parseTerminalServerEvent('title', value)
-      if (!message) {
-        this.failProtocol('The terminal server sent an invalid title')
-        return
-      }
-
-      this.update({ title: message.title.trim().slice(0, 256) })
-      return
-    }
-
-    if (event === 'progress') {
-      if (!parseTerminalServerEvent('progress', value)) {
-        this.failProtocol('The terminal server sent invalid progress')
-      }
-
-      // Product-event metadata remains the web progress authority.
-      return
-    }
-
-    if (event === 'control') {
-      const message = parseTerminalServerEvent('control', value)
-      if (!message) {
-        this.failProtocol('The terminal server sent invalid controller state')
-        return
-      }
-
-      const controllerChanged =
-        message.controller !== this.snapshotValue.controller ||
-        message.generation !== this.controllerGeneration
-      if (controllerChanged) {
-        this.cancelControllerResizeIntent()
-      }
-
-      this.controllerGeneration = message.generation
-      this.controlRequestGeneration = null
-      this.update({
-        controller: message.controller,
-        controlPending: false
-      })
-
-      if (controllerChanged && !message.controller) {
-        this.selectionDragCancel?.()
-      }
-
-      if (controllerChanged) {
-        this.queryAuthorityActive = false
-
-        if (message.controller) {
-          const epoch = this.renderEpoch
-          this.enqueueRender(
-            epoch,
-            Effect.gen(this, function* () {
-              yield* this.drainTerminalWrites()
-              if (
-                !this.disposed &&
-                epoch === this.renderEpoch &&
-                this.snapshotValue.controller &&
-                this.controllerGeneration === message.generation
-              ) {
-                this.send('query_authority', {
-                  generation: message.generation,
-                  transitionId: null
-                })
-              }
-            })
-          )
-        }
-      }
-
-      if (message.controller && this.pendingPaste) {
-        const pendingPaste = this.pendingPaste
-        this.pendingPaste = ''
-        this.terminal?.paste(pendingPaste)
-      }
-
-      if (controllerChanged) {
-        this.scheduleFit()
-      }
-
-      return
-    }
-
-    if (event === 'query_authority') {
-      const message = parseTerminalServerEvent('query_authority', value)
-      if (!message) {
-        this.failProtocol(
-          'The terminal server sent invalid query authority state'
-        )
-        return
-      }
-
-      if (
-        !this.snapshotValue.controller ||
-        message.generation !== this.controllerGeneration
-      ) {
-        return
-      }
-
-      this.queryAuthorityActive = message.active
-
-      if (message.transitionId) {
-        const transitionId = message.transitionId
-        const epoch = this.renderEpoch
-        this.enqueueRender(
-          epoch,
-          Effect.gen(this, function* () {
-            yield* this.drainTerminalWrites()
-            if (
-              !this.disposed &&
-              epoch === this.renderEpoch &&
-              this.snapshotValue.controller &&
-              this.controllerGeneration === message.generation
-            ) {
-              this.send('query_authority', {
-                generation: message.generation,
-                transitionId
-              })
-            }
-          })
-        )
-      }
-
-      return
-    }
-
-    if (event === 'exit') {
-      if (!parseTerminalServerEvent('exit', value)) {
-        this.failProtocol('The terminal server sent an invalid exit event')
-        return
-      }
-
-      this.update({ exitSerial: this.snapshotValue.exitSerial + 1 })
-      return
-    }
-
-    const message = parseTerminalServerEvent('terminal_error', value)
-    if (!message) {
-      this.failProtocol('The terminal server sent an invalid error event')
-      return
-    }
-
-    this.reconnectAllowed = message.retryable
-    this.terminal?.writeln(`\r\n\x1b[31m${message.message}\x1b[0m`)
-    if (message.retryable) {
-      this.controlRequestGeneration = null
-      this.update({ controlPending: false, error: message.message })
-    } else {
-      this.stopWithError(message.message)
-      this.socket?.disconnect()
-    }
-  }
-
-  private handleOutput(streamId: string, sequence: number, data: string): void {
-    if (
-      !this.ready ||
-      streamId !== this.streamId ||
-      sequence !== this.expectedSequence
-    ) {
-      this.failProtocol('Terminal output arrived out of order')
-      return
-    }
-
-    this.expectedSequence += 1
-    const epoch = this.renderEpoch
-    this.enqueueRender(
-      epoch,
-      Effect.sync(() => {
-        const terminal = this.terminal
-        if (!terminal) {
-          return
-        }
-
-        this.pendingTerminalWrites += 1
-        terminal.write(data, () => {
-          this.pendingTerminalWrites = Math.max(
-            0,
-            this.pendingTerminalWrites - 1
-          )
-          if (
-            this.ready &&
-            epoch === this.renderEpoch &&
-            streamId === this.streamId
-          ) {
-            this.parsedSequences.add(sequence)
-            while (this.parsedSequences.delete(this.lastParsedSequence + 1)) {
-              this.lastParsedSequence += 1
-            }
-            this.send('output_ack', {
-              streamId,
-              sequence: this.lastParsedSequence
-            })
-          }
-        })
-      })
-    )
-  }
-
-  private writeTerminal(
-    data: string
-  ): Effect.Effect<void, TerminalRenderError> {
-    return Effect.async<void>((resume) => {
-      const terminal = this.terminal
-      if (!terminal) {
-        resume(Effect.void)
-        return
-      }
-
-      // Submission cannot be cancelled in xterm. Even after interruption its
-      // callback must decrement the count so a later epoch can drain safely.
-      this.pendingTerminalWrites += 1
-      terminal.write(data, () => {
-        this.pendingTerminalWrites = Math.max(0, this.pendingTerminalWrites - 1)
-        resume(Effect.void)
-      })
-    }).pipe(
-      Effect.timeoutFail({
-        duration: '30 seconds',
-        onTimeout: () =>
-          new TerminalRenderError({
-            message: 'xterm did not finish parsing within 30 seconds'
-          })
-      })
-    )
-  }
-
-  private drainTerminalWrites(): Effect.Effect<void, TerminalRenderError> {
-    // Empty writes preserve FIFO parse boundaries without serializing every
-    // output chunk into a separate xterm rendering cycle.
-    return Effect.suspend(() =>
-      this.pendingTerminalWrites === 0 ? Effect.void : this.writeTerminal('')
-    )
-  }
-
-  private enqueueRender(
-    epoch: number,
-    effect: Effect.Effect<void, TerminalRenderError>
-  ): void {
-    if (this.disposed || this.renderFailed) {
-      return
-    }
-
-    // Never drop output or let an unresponsive parser grow memory indefinitely.
-    if (!Queue.unsafeOffer(this.renderQueue, { epoch, effect })) {
-      this.failRendering(
-        new TerminalRenderError({
-          message: 'Terminal render queue capacity exceeded'
-        })
-      )
-    }
-  }
-
-  private applyCanonicalDimensions(
-    cols: number,
-    rows: number,
-    revision: number,
-    queueControllerResize = false
-  ): void {
-    if (!this.terminal || revision <= this.appliedRevision) {
-      return
-    }
-
-    this.terminal.resize(cols, rows)
-    this.appliedRevision = revision
-    if (this.wrapper) {
-      this.wrapper.dataset.terminalCols = String(cols)
-      this.wrapper.dataset.terminalRows = String(rows)
-      this.wrapper.dataset.terminalRevision = String(revision)
-    }
-
-    if (revision === this.canonicalRevision) {
-      this.fit(queueControllerResize)
-    }
-  }
-
-  private canInput(): boolean {
-    return (
-      this.ready &&
-      this.snapshotValue.controller &&
-      this.queryAuthorityActive &&
-      !this.resizePending &&
-      this.appliedRevision === this.canonicalRevision
-    )
-  }
-
-  private send<E extends keyof TerminalClientToServerEvents>(
-    event: E,
-    payload: Parameters<TerminalClientToServerEvents[E]>[0]
-  ): void {
-    if (!this.socket?.connected || !this.ready) {
-      return
-    }
-
-    if (
-      event === 'output_ack' ||
-      event === 'resize' ||
-      event === 'take_control' ||
-      event === 'query_authority'
-    ) {
-      // SAFETY: The generic event selects its matching protocol payload.
-      const emit = this.socket.emit.bind(this.socket) as (
-        event: E,
-        payload: Parameters<TerminalClientToServerEvents[E]>[0]
-      ) => void
-      emit(event, payload)
-      return
-    }
-
-    // SAFETY: The generic event selects its matching protocol payload.
-    const emit = this.socket.volatile.emit.bind(this.socket.volatile) as (
-      event: E,
-      payload: Parameters<TerminalClientToServerEvents[E]>[0]
-    ) => void
-    emit(event, payload)
-  }
-
-  private scheduleFit(): void {
-    if (this.resizeFrame !== null) {
-      cancelAnimationFrame(this.resizeFrame)
-    }
-
-    this.resizeFrame = requestAnimationFrame(() => {
-      this.resizeFrame = null
-      this.fit(true)
-    })
-  }
-
-  private queueControllerResizeIntent(): void {
-    this.cancelTimer('resizeSettle')
-
-    this.resizeIntentDirty = true
-    this.resizeQuietElapsed = false
-    this.resizeIntentGeneration = this.controllerGeneration
-    this.scheduleTimer(
-      'resizeSettle',
-      () => {
-        this.resizeQuietElapsed = true
-        this.flushControllerResize()
-      },
-      TERMINAL_RESIZE_SETTLE_MS
-    )
-  }
-
-  private flushControllerResize(): void {
-    const proposed = this.proposedDimensions
-    if (
-      !this.resizeIntentDirty ||
-      !this.resizeQuietElapsed ||
-      !proposed ||
-      !this.host ||
-      !this.ready ||
-      !this.socket?.connected ||
-      !this.snapshotValue.controller ||
-      this.resizeIntentGeneration !== this.controllerGeneration ||
-      this.appliedRevision !== this.canonicalRevision ||
-      this.resizePending
-    ) {
-      return
-    }
-
-    if (
-      proposed.cols === this.canonicalCols &&
-      proposed.rows === this.canonicalRows
-    ) {
-      this.resizeIntentDirty = false
-      this.resizeQuietElapsed = false
-      return
-    }
-
-    this.resizeIntentDirty = false
-    this.resizeQuietElapsed = false
-    this.resizePending = true
-
-    this.send('resize', {
-      generation: this.controllerGeneration,
-      cols: proposed.cols,
-      rows: proposed.rows
-    })
-  }
-
-  private cancelControllerResizeIntent(clearPending = true): void {
-    this.cancelTimer('resizeSettle')
-
-    if (clearPending) {
-      this.resizePending = false
-    }
-
-    this.resizeIntentDirty = false
-    this.resizeQuietElapsed = false
-    this.resizeIntentGeneration = 0
-    this.proposedDimensions = null
-  }
-
-  private fit(queueControllerResize = false): void {
-    const result = Effect.runSyncExit(
-      Effect.sync(() => {
-        if (this.disposed || !this.host || !this.fitAddon || !this.terminal) {
-          return
-        }
-
-        if (!this.ready) {
-          this.terminal.options.fontSize = TERMINAL_FONT_SIZE
-          this.fitAddon.fit()
-          if (
-            this.terminal.cols >= TERMINAL_MIN_COLS &&
-            this.terminal.rows >= TERMINAL_MIN_ROWS
-          ) {
-            this.proposedDimensions = normalizeTerminalDimensions({
-              cols: this.terminal.cols,
-              rows: this.terminal.rows
-            })
-          }
-
-          return
-        }
-
-        if (this.appliedRevision !== this.canonicalRevision) {
-          return
-        }
-
-        this.terminal.options.fontSize = TERMINAL_FONT_SIZE
-        const proposedDimensions = this.fitAddon.proposeDimensions()
-        if (
-          !proposedDimensions ||
-          !Number.isFinite(proposedDimensions.cols) ||
-          !Number.isFinite(proposedDimensions.rows) ||
-          proposedDimensions.cols < TERMINAL_MIN_COLS ||
-          proposedDimensions.rows < TERMINAL_MIN_ROWS
-        ) {
-          if (this.snapshotValue.controller) {
-            this.cancelControllerResizeIntent(false)
-          }
-
-          return
-        }
-
-        const proposed = normalizeTerminalDimensions(proposedDimensions)
-        this.proposedDimensions = proposed
-        if (this.snapshotValue.controller) {
-          if (!queueControllerResize) {
-            return
-          }
-
-          if (
-            !this.resizePending &&
-            proposed.cols === this.canonicalCols &&
-            proposed.rows === this.canonicalRows
-          ) {
-            this.cancelTimer('resizeSettle')
-
-            this.resizeIntentDirty = false
-            this.resizeQuietElapsed = false
-            return
-          }
-
-          this.queueControllerResizeIntent()
-          return
-        }
-
-        const scale = Math.min(
-          1,
-          proposed.cols / this.canonicalCols,
-          proposed.rows / this.canonicalRows
-        )
-        this.terminal.options.fontSize = Math.max(
-          TERMINAL_MIN_VIEWER_FONT_SIZE,
-          Math.floor(TERMINAL_FONT_SIZE * scale * 100) / 100
-        )
-        if (
-          this.terminal.cols !== this.canonicalCols ||
-          this.terminal.rows !== this.canonicalRows
-        ) {
-          this.terminal.resize(this.canonicalCols, this.canonicalRows)
-        }
-      })
-    )
-    if (Exit.isFailure(result)) {
-      // Missing dimensions are represented above; actual xterm/FitAddon
-      // defects close the session instead of masquerading as a hidden host.
-      this.failRendering(Cause.squash(result.cause))
-    }
-  }
-
-  private startDegradedTimer(): void {
-    if (this.timers.has('degraded')) {
-      return
-    }
-
-    this.scheduleTimer(
-      'degraded',
-      () => {
-        if (!this.ready) {
-          this.update({ degraded: true })
-        }
-      },
-      500
-    )
-  }
-
-  private clearDegraded(): void {
-    this.cancelTimer('degraded')
-
-    this.update({ degraded: false })
-  }
-
   private handleBell(): void {
     const now = Date.now()
-    if (now - this.lastBellAt < 1_000) {
+    if (now - this.state.lastBellAt < 1_000) {
       return
     }
 
-    this.lastBellAt = now
-    this.cancelTimer('bell')
+    this.state.lastBellAt = now
+    this.services.timers.cancelTimer('bell')
 
     this.update({
       bellActive: true,
-      bellSerial: this.snapshotValue.bellSerial + 1
+      bellSerial: this.state.snapshotValue.bellSerial + 1
     })
-    this.scheduleTimer(
+    this.services.timers.scheduleTimer(
       'bell',
       () => {
         this.update({ bellActive: false })
@@ -1986,122 +373,32 @@ export class TerminalSession {
     )
   }
 
-  private failRendering(cause: unknown): void {
-    if (this.renderFailed || this.disposed) {
-      return
-    }
-
-    this.renderFailed = true
-    const detail = (
-      cause instanceof Error ? cause.message : String(cause)
-    ).trim()
-    this.reconnectAllowed = false
-    this.stopWithError(
-      detail
-        ? `Terminal rendering failed: ${detail.slice(0, 500)}`
-        : 'Terminal rendering failed'
-    )
-    Effect.runSync(Queue.shutdown(this.renderQueue))
-    Effect.runSync(Fiber.interruptFork(this.renderFiber))
-    this.socket?.disconnect()
-  }
-
-  private failProtocol(message: string): void {
-    this.reconnectAllowed = false
-    this.stopWithError(message)
-    this.socket?.disconnect()
-  }
-
-  private stopWithError(message: string): void {
-    this.renderEpoch += 1
-    this.ready = false
-    this.clearDegraded()
-    this.controlRequestGeneration = null
-    this.update({
-      error: message,
-      phase: 'closed',
-      degraded: false,
-      controller: false,
-      controlPending: false
-    })
-  }
-
   private updateSelectionState(): void {
     this.update({
-      hasSelection: Boolean(this.terminal?.hasSelection())
+      hasSelection: Boolean(this.state.terminal?.hasSelection())
     })
   }
 
   private update(patch: Partial<TerminalSessionSnapshot>): void {
-    if (this.disposed) {
+    if (this.state.disposed) {
       return
     }
 
-    this.snapshotValue = { ...this.snapshotValue, ...patch }
-    this.listeners.forEach((listener) => listener())
+    this.state.snapshotValue = { ...this.state.snapshotValue, ...patch }
+    this.state.listeners.forEach((listener) => listener())
   }
 
-  private cancelTimer(key: SessionTimer): void {
-    const fiber = this.timers.get(key)
-    this.timers.delete(key)
-    if (fiber) {
-      Effect.runSync(Fiber.interruptFork(fiber))
-    }
+  mount(host: HTMLElement): void {
+    this.services.host.mount(host)
   }
-
-  private scheduleTimer(
-    key: SessionTimer,
-    callback: () => void,
-    delay: number
-  ): void {
-    this.cancelTimer(key)
-    if (this.disposed) {
-      return
-    }
-
-    const fiber = Effect.runSync(
-      Effect.forkIn(
-        Effect.sleep(delay).pipe(
-          Effect.andThen(
-            Effect.sync(() => {
-              if (this.timers.get(key) !== fiber) {
-                return
-              }
-
-              this.timers.delete(key)
-              if (!this.disposed) {
-                callback()
-              }
-            })
-          ),
-          Effect.catchAllCause((cause) =>
-            Effect.sync(() => {
-              if (!Cause.isInterruptedOnly(cause)) {
-                this.failRendering(Cause.squash(cause))
-              }
-            })
-          )
-        ),
-        this.scope
-      )
-    )
-    this.timers.set(key, fiber)
-  }
-
-  private clearTimers(): void {
-    for (const key of this.timers.keys()) {
-      this.cancelTimer(key)
-    }
-    if (this.resizeFrame !== null) {
-      cancelAnimationFrame(this.resizeFrame)
-    }
-
-    this.cursorRestoreStartedAt = null
-    this.resizeFrame = null
-    this.resizePending = false
-    this.resizeIntentDirty = false
-    this.resizeQuietElapsed = false
-    this.resizeIntentGeneration = 0
-    this.proposedDimensions = null
+  unmount(host: HTMLElement): void {
+    this.services.host.unmount(host)
   }
 }
+
+export type {
+  ArrowDirection,
+  TerminalFileTransfer,
+  TerminalSessionSnapshot,
+  TerminalSocketFactory
+} from './terminal-session-client/state'

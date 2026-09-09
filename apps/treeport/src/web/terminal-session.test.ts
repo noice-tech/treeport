@@ -19,15 +19,23 @@ import type {
 } from './terminal-session'
 
 interface TerminalSessionTestAccess {
-  terminal: object
-  fitAddon: { proposeDimensions: () => TerminalSize | undefined }
-  appliedRevision: number
-  proposedDimensions: unknown
-  connect(): void
-  fit(queueControllerResize?: boolean): void
-  canInput(): boolean
-  handleServerEvent(event: string, value: JsonValue): void
-  enqueueRender(epoch: number, operation: Effect.Effect<void>): void
+  state: {
+    terminal: object
+    fitAddon: { proposeDimensions: () => TerminalSize | undefined }
+    appliedRevision: number
+    proposedDimensions: unknown
+  }
+  services: {
+    connection: {
+      connect(): void
+      canInput(): boolean
+    }
+    protocol: { handleServerEvent(event: string, value: JsonValue): void }
+    layout: { fit(queueControllerResize?: boolean): void }
+    render: {
+      enqueueRender(epoch: number, operation: Effect.Effect<void>): void
+    }
+  }
 }
 
 function testAccess<Value extends object, Fixture extends object = object>(
@@ -217,7 +225,7 @@ function controllerSessionFixture() {
   const host = testAccess<HTMLElement>({})
   const resize = vi.fn()
   const session = createTerminalSession('terminal-one')
-  Object.assign(session, {
+  Object.assign(terminalSessionTestAccess(session).state, {
     socket,
     ready: true,
     host,
@@ -256,20 +264,26 @@ function controllerSessionFixture() {
   })
   const measure = (dimensions: { cols: number; rows: number }) => {
     proposal = dimensions
-    terminalSessionTestAccess(session).fit(true)
+    terminalSessionTestAccess(session).services.layout.fit(true)
   }
   const dimensions = (cols: number, rows: number, revision: number) => {
-    terminalSessionTestAccess(session).handleServerEvent('dimensions', {
-      cols,
-      rows,
-      revision
-    })
+    terminalSessionTestAccess(session).services.protocol.handleServerEvent(
+      'dimensions',
+      {
+        cols,
+        rows,
+        revision
+      }
+    )
   }
   const control = (controller: boolean, generation: number) => {
-    terminalSessionTestAccess(session).handleServerEvent('control', {
-      controller,
-      generation
-    })
+    terminalSessionTestAccess(session).services.protocol.handleServerEvent(
+      'control',
+      {
+        controller,
+        generation
+      }
+    )
   }
   return { control, dimensions, host, measure, resize, session, socket }
 }
@@ -512,13 +526,13 @@ describe('TerminalSession', () => {
       setItem
     })
     const session = createTerminalSession('terminal-one')
-    terminalSessionTestAccess(session).terminal = {
+    terminalSessionTestAccess(session).state.terminal = {
       cols: 5_000,
       rows: 1,
       options: { disableStdin: false },
       dispose: vi.fn()
     }
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     expect(socketClient.create).toHaveBeenCalledWith(
       '/terminals',
       expect.objectContaining({
@@ -556,7 +570,7 @@ describe('TerminalSession', () => {
     const session = createTerminalSession('terminal-one')
     const host = testAccess<HTMLElement>({ appendChild: vi.fn() })
     const wrapper = { remove: vi.fn() }
-    Object.assign(session, {
+    Object.assign(terminalSessionTestAccess(session).state, {
       socket,
       ready: true,
       opened: true,
@@ -597,7 +611,7 @@ describe('TerminalSession', () => {
     const clearSelection = [vi.fn(), vi.fn()]
     const selected = [true, true]
     for (const [index, session] of [firstSession, secondSession].entries()) {
-      terminalSessionTestAccess(session).terminal = {
+      terminalSessionTestAccess(session).state.terminal = {
         reset: vi.fn(() => {
           content[index] = ''
         }),
@@ -615,7 +629,7 @@ describe('TerminalSession', () => {
         },
         dispose: vi.fn()
       }
-      terminalSessionTestAccess(session).connect()
+      terminalSessionTestAccess(session).services.connection.connect()
     }
     for (const [index, socket] of [firstSocket, secondSocket].entries()) {
       socket.emitServer('ready', {
@@ -669,8 +683,8 @@ describe('TerminalSession', () => {
       allowProposedApi: true
     })
     terminal.onData((data) => session.sendText(data, { focus: false }))
-    terminalSessionTestAccess(session).terminal = terminal
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).state.terminal = terminal
+    terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -789,7 +803,7 @@ describe('TerminalSession', () => {
     const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const reset = vi.fn()
-    terminalSessionTestAccess(session).terminal = {
+    terminalSessionTestAccess(session).state.terminal = {
       reset,
       resize: vi.fn(),
       options: { fontSize: 14 },
@@ -798,7 +812,7 @@ describe('TerminalSession', () => {
       },
       dispose: vi.fn()
     }
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -862,7 +876,7 @@ describe('TerminalSession', () => {
     const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const resize = vi.fn()
-    terminalSessionTestAccess(session).terminal = {
+    terminalSessionTestAccess(session).state.terminal = {
       reset: vi.fn(),
       resize,
       options: { fontSize: 14 },
@@ -871,7 +885,7 @@ describe('TerminalSession', () => {
       },
       dispose: vi.fn()
     }
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -918,7 +932,7 @@ describe('TerminalSession', () => {
     const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const reset = vi.fn()
-    terminalSessionTestAccess(session).terminal = {
+    terminalSessionTestAccess(session).state.terminal = {
       reset,
       resize: vi.fn(),
       options: { fontSize: 14 },
@@ -927,7 +941,7 @@ describe('TerminalSession', () => {
       },
       dispose: vi.fn()
     }
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -995,10 +1009,11 @@ describe('TerminalSession', () => {
   it('refits as a viewer when takeover dimensions arrive before control loss', async () => {
     const { control, dimensions, resize, session, socket } =
       controllerSessionFixture()
-    terminalSessionTestAccess(session).fitAddon.proposeDimensions = () => ({
-      cols: 60,
-      rows: 20
-    })
+    terminalSessionTestAccess(session).state.fitAddon.proposeDimensions =
+      () => ({
+        cols: 60,
+        rows: 20
+      })
 
     dimensions(120, 40, 2)
     await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
@@ -1008,7 +1023,7 @@ describe('TerminalSession', () => {
 
     expect(
       testAccess<{ options: { fontSize: number } }>(
-        terminalSessionTestAccess(session).terminal
+        terminalSessionTestAccess(session).state.terminal
       ).options.fontSize
     ).toBe(7)
     expect(resize).toHaveBeenLastCalledWith(120, 40)
@@ -1020,7 +1035,7 @@ describe('TerminalSession', () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    terminalSessionTestAccess(session).terminal = {
+    terminalSessionTestAccess(session).state.terminal = {
       reset: () => {
         throw new Error('reset failed')
       },
@@ -1028,7 +1043,7 @@ describe('TerminalSession', () => {
       options: { fontSize: 14 },
       dispose: vi.fn()
     }
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -1047,7 +1062,10 @@ describe('TerminalSession', () => {
       })
     )
     const sentinel = vi.fn()
-    terminalSessionTestAccess(session).enqueueRender(1, Effect.sync(sentinel))
+    terminalSessionTestAccess(session).services.render.enqueueRender(
+      1,
+      Effect.sync(sentinel)
+    )
     await Promise.resolve()
     await Promise.resolve()
     expect(sentinel).not.toHaveBeenCalled()
@@ -1068,14 +1086,14 @@ describe('TerminalSession', () => {
       const session = createTerminalSession('terminal-one')
       const callbacks: Array<() => void> = []
       const dispose = vi.fn()
-      terminalSessionTestAccess(session).terminal = {
+      terminalSessionTestAccess(session).state.terminal = {
         reset: vi.fn(),
         resize: vi.fn(),
         options: { fontSize: 14 },
         dispose,
         write: (_data: string, callback: () => void) => callbacks.push(callback)
       }
-      terminalSessionTestAccess(session).connect()
+      terminalSessionTestAccess(session).services.connection.connect()
       socket.emitServer('ready', {
         connectionId: 'connection-1',
         streamId: 'stream-1',
@@ -1118,7 +1136,7 @@ describe('TerminalSession', () => {
     const dispose = vi.fn()
     const remove = vi.fn()
     const disconnect = vi.fn()
-    Object.assign(session, {
+    Object.assign(terminalSessionTestAccess(session).state, {
       terminal: { dispose },
       wrapper: { remove },
       socket: { disconnect, removeAllListeners: vi.fn() },
@@ -1131,6 +1149,9 @@ describe('TerminalSession', () => {
     await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
     expect(remove).toHaveBeenCalledOnce()
     expect(disconnect).toHaveBeenCalledOnce()
+    expect(disconnect.mock.invocationCallOrder[0]).toBeLessThan(
+      dispose.mock.invocationCallOrder[0]!
+    )
     session.dispose()
     expect(dispose).toHaveBeenCalledOnce()
     log.mockRestore()
@@ -1141,10 +1162,10 @@ describe('TerminalSession', () => {
     const second = new FakeProtocolSocket()
     socketClient.create.mockReturnValueOnce(first).mockReturnValueOnce(second)
     const session = createTerminalSession('terminal-one')
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     first.disconnect()
-    Object.assign(session, { socket: null })
-    terminalSessionTestAccess(session).connect()
+    Object.assign(terminalSessionTestAccess(session).state, { socket: null })
+    terminalSessionTestAccess(session).services.connection.connect()
     first.emitServer('title', { title: 'stale' })
     first.emitServer('output', {
       streamId: 'stale',
@@ -1160,7 +1181,10 @@ describe('TerminalSession', () => {
   it('fails closed instead of dropping renders when the bounded queue fills', () => {
     const session = createTerminalSession('terminal-one')
     for (let index = 0; index < 1_026; index += 1) {
-      terminalSessionTestAccess(session).enqueueRender(0, Effect.never)
+      terminalSessionTestAccess(session).services.render.enqueueRender(
+        0,
+        Effect.never
+      )
     }
     expect(session.getSnapshot()).toMatchObject({
       phase: 'closed',
@@ -1172,11 +1196,14 @@ describe('TerminalSession', () => {
 
   it('aborts an in-flight upload and never starts queued uploads after disposal', async () => {
     const { session } = controllerSessionFixture()
-    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
-      generation: 4,
-      active: true,
-      transitionId: null
-    })
+    terminalSessionTestAccess(session).services.protocol.handleServerEvent(
+      'query_authority',
+      {
+        generation: 4,
+        active: true,
+        transitionId: null
+      }
+    )
     vi.stubGlobal('location', { hostname: 'remote.example' })
     const signals: AbortSignal[] = []
     const request = vi.fn((_input: RequestInfo | URL, init: RequestInit) => {
@@ -1198,11 +1225,14 @@ describe('TerminalSession', () => {
 
   it('continues the ordered transfer worker after an upload fails', async () => {
     const { session } = controllerSessionFixture()
-    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
-      generation: 4,
-      active: true,
-      transitionId: null
-    })
+    terminalSessionTestAccess(session).services.protocol.handleServerEvent(
+      'query_authority',
+      {
+        generation: 4,
+        active: true,
+        transitionId: null
+      }
+    )
     vi.stubGlobal('location', { hostname: 'remote.example' })
     const request = vi
       .fn()
@@ -1210,7 +1240,7 @@ describe('TerminalSession', () => {
       .mockResolvedValueOnce(Response.json({ file: { path: '/tmp/two.txt' } }))
     vi.stubGlobal('fetch', request)
     const paste = vi.fn()
-    Object.assign(terminalSessionTestAccess(session).terminal, { paste })
+    Object.assign(terminalSessionTestAccess(session).state.terminal, { paste })
     session.pasteFiles([new File(['one'], 'one.txt')])
     session.pasteFiles([new File(['two'], 'two.txt')])
     await vi.waitFor(() =>
@@ -1223,11 +1253,14 @@ describe('TerminalSession', () => {
 
   it('does not paste an upload after losing and reacquiring control', async () => {
     const { session, control } = controllerSessionFixture()
-    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
-      generation: 4,
-      active: true,
-      transitionId: null
-    })
+    terminalSessionTestAccess(session).services.protocol.handleServerEvent(
+      'query_authority',
+      {
+        generation: 4,
+        active: true,
+        transitionId: null
+      }
+    )
     vi.stubGlobal('location', { hostname: 'remote.example' })
     let finish: (response: Response) => void = () => undefined
     const request = vi.fn(
@@ -1238,7 +1271,7 @@ describe('TerminalSession', () => {
     )
     vi.stubGlobal('fetch', request)
     const paste = vi.fn()
-    Object.assign(terminalSessionTestAccess(session).terminal, { paste })
+    Object.assign(terminalSessionTestAccess(session).state.terminal, { paste })
     session.pasteFiles([new File(['one'], 'one.txt')])
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
     control(false, 5)
@@ -1258,7 +1291,7 @@ describe('TerminalSession', () => {
     const socket = new FakeProtocolSocket()
     socket.connected = true
     const session = createTerminalSession('terminal-one')
-    Object.assign(session, {
+    Object.assign(terminalSessionTestAccess(session).state, {
       socket,
       ready: true,
       host: {},
@@ -1277,7 +1310,7 @@ describe('TerminalSession', () => {
       appliedRevision: 1
     })
 
-    terminalSessionTestAccess(session).fit()
+    terminalSessionTestAccess(session).services.layout.fit()
 
     expect(session.getSnapshot()).toMatchObject({
       phase: 'closed',
@@ -1307,7 +1340,9 @@ describe('TerminalSession', () => {
     })
     session.sendText('blocked during resize')
     expect(socket.volatile.emit).not.toHaveBeenCalled()
-    expect(terminalSessionTestAccess(session).canInput()).toBe(false)
+    expect(
+      terminalSessionTestAccess(session).services.connection.canInput()
+    ).toBe(false)
     expect(resize).not.toHaveBeenCalled()
     session.dispose()
   })
@@ -1323,7 +1358,7 @@ describe('TerminalSession', () => {
     await vi.advanceTimersByTimeAsync(100)
     dimensions(120, 40, 2)
     await vi.advanceTimersByTimeAsync(0)
-    expect(terminalSessionTestAccess(session).appliedRevision).toBe(2)
+    expect(terminalSessionTestAccess(session).state.appliedRevision).toBe(2)
     expect(socket.emit).toHaveBeenCalledTimes(1)
 
     await vi.advanceTimersByTimeAsync(49)
@@ -1388,7 +1423,7 @@ describe('TerminalSession', () => {
     const session = createTerminalSession('terminal-one')
     let completeSnapshotWrite: (() => void) | null = null
     const focus = vi.fn()
-    terminalSessionTestAccess(session).terminal = {
+    terminalSessionTestAccess(session).state.terminal = {
       cols: 80,
       rows: 24,
       options: { fontSize: 14 },
@@ -1400,7 +1435,7 @@ describe('TerminalSession', () => {
       focus,
       dispose: vi.fn()
     }
-    Object.assign(session, {
+    Object.assign(terminalSessionTestAccess(session).state, {
       wrapper: {
         style: { visibility: '' },
         dataset: {},
@@ -1419,7 +1454,7 @@ describe('TerminalSession', () => {
       },
       focusAfterRender: true
     })
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -1457,17 +1492,20 @@ describe('TerminalSession', () => {
     const { measure, session, socket } = controllerSessionFixture()
 
     measure({ cols: 120, rows: 40 })
-    terminalSessionTestAccess(session).handleServerEvent('ready', {
-      connectionId: 'connection-2',
-      streamId: 'stream-2',
-      generation: 5,
-      controller: false,
-      reset: 'full',
-      cols: 100,
-      rows: 30,
-      revision: 2,
-      snapshot: ''
-    })
+    terminalSessionTestAccess(session).services.protocol.handleServerEvent(
+      'ready',
+      {
+        connectionId: 'connection-2',
+        streamId: 'stream-2',
+        generation: 5,
+        controller: false,
+        reset: 'full',
+        cols: 100,
+        rows: 30,
+        revision: 2,
+        snapshot: ''
+      }
+    )
     await vi.advanceTimersByTimeAsync(150)
 
     expect(socket.emit).not.toHaveBeenCalled()
@@ -1488,7 +1526,7 @@ describe('TerminalSession', () => {
 
   it('waits for query authority after clearing a pending resize on takeover', () => {
     const session = createTerminalSession('terminal-one')
-    Object.assign(session, {
+    Object.assign(terminalSessionTestAccess(session).state, {
       ready: true,
       resizePending: true,
       canonicalRevision: 1,
@@ -1510,18 +1548,27 @@ describe('TerminalSession', () => {
       }
     })
     const handleControl =
-      terminalSessionTestAccess(session).handleServerEvent.bind(session)
+      terminalSessionTestAccess(
+        session
+      ).services.protocol.handleServerEvent.bind(session)
 
     handleControl('control', { generation: 5, controller: false })
     handleControl('control', { generation: 6, controller: true })
 
-    expect(terminalSessionTestAccess(session).canInput()).toBe(false)
-    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
-      generation: 6,
-      transitionId: null,
-      active: true
-    })
-    expect(terminalSessionTestAccess(session).canInput()).toBe(true)
+    expect(
+      terminalSessionTestAccess(session).services.connection.canInput()
+    ).toBe(false)
+    terminalSessionTestAccess(session).services.protocol.handleServerEvent(
+      'query_authority',
+      {
+        generation: 6,
+        transitionId: null,
+        active: true
+      }
+    )
+    expect(
+      terminalSessionTestAccess(session).services.connection.canInput()
+    ).toBe(true)
     session.dispose()
   })
 
@@ -1529,7 +1576,7 @@ describe('TerminalSession', () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     session.requestControl()
     expect(socket.emit).not.toHaveBeenCalled()
 
@@ -1544,7 +1591,7 @@ describe('TerminalSession', () => {
       revision: 1,
       snapshot: ''
     })
-    terminalSessionTestAccess(session).proposedDimensions = {
+    terminalSessionTestAccess(session).state.proposedDimensions = {
       cols: 5_000,
       rows: 1
     }
@@ -1585,7 +1632,7 @@ describe('TerminalSession', () => {
     socketClient.create.mockReturnValue(socket)
     const focus = vi.fn()
     const session = createTerminalSession('terminal-one')
-    Object.assign(session, {
+    Object.assign(terminalSessionTestAccess(session).state, {
       terminal: {
         cols: 100,
         rows: 30,
@@ -1596,7 +1643,7 @@ describe('TerminalSession', () => {
         dispose: vi.fn()
       }
     })
-    terminalSessionTestAccess(session).connect()
+    terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
