@@ -114,7 +114,6 @@ export class WebPanelViteRuntime {
       middlewareMode: true,
       headers: {
         'access-control-allow-origin': '*',
-        'cache-control': 'no-store',
         'x-content-type-options': 'nosniff'
       },
       fs: {
@@ -144,7 +143,18 @@ export class WebPanelViteRuntime {
       plugins: [
         react({
           babel: { babelrc: false, configFile: false }
-        })
+        }),
+        {
+          name: 'treeport-panel-dev-maps',
+          apply: 'serve',
+          enforce: 'post',
+          // Inline maps dwarf executable dependency code on every panel mount.
+          // An empty map resets the transform map chain without changing code.
+          // Production build maps are unaffected.
+          transform(code) {
+            return { code, map: { mappings: '' } }
+          }
+        }
       ],
       css: { postcss: { plugins: [] } },
       resolve: {
@@ -526,7 +536,8 @@ export class WebPanelViteRuntime {
     })
 
     response.setHeader('access-control-allow-origin', '*')
-    response.setHeader('cache-control', 'no-store')
+    // Let Vite select no-cache for source files and immutable caching for
+    // versioned optimized dependencies; don't override both with no-store.
     response.setHeader('x-content-type-options', 'nosniff')
     response.setHeader(
       'content-security-policy',

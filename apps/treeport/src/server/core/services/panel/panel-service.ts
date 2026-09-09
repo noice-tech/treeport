@@ -593,13 +593,9 @@ export class PanelService {
       this.effectiveWebPanelDefinitions.bind(this)
     const requireWebPanelPermissions =
       this.requireWebPanelPermissions.bind(this)
-    const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
-    const invalidateProjectsSnapshot =
-      this.invalidateProjectsSnapshot.bind(this)
+    const createValidatedWebPanel = this.createValidatedWebPanel.bind(this)
 
     return Effect.gen(function* () {
-      const database = yield* DatabasePort
-      const events = yield* EventBusPort
       const worktree = yield* requireAvailableWorktree(worktreeId)
       const definition = (yield* effectiveWebPanelDefinitions(worktreeId)).find(
         (candidate) => candidate.id === definitionId
@@ -615,6 +611,25 @@ export class PanelService {
       }
 
       yield* requireWebPanelPermissions(worktreeId, definition)
+      return yield* createValidatedWebPanel(worktree, definition, launch)
+    })
+  }
+
+  // Only called after worktree availability, definition resolution, and permission
+  // validation in this operation. Do not repeat project observation on creation.
+  private createValidatedWebPanel(
+    worktree: WorktreeRecord,
+    definition: WebPanelDefinition,
+    launch: WebPanelLaunch
+  ): PanelEffect<WebPanel> {
+    const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const worktreeId = worktree.id
+      const definitionId = definition.id
       const normalized = yield* normalizeWebPanelLaunch(worktree, launch)
       const timestamp = now()
       const panel: WebPanel = {
@@ -663,7 +678,7 @@ export class PanelService {
       this.effectiveWebPanelDefinitions.bind(this)
     const requireWebPanelPermissions =
       this.requireWebPanelPermissions.bind(this)
-    const createWebPanel = this.createWebPanel.bind(this)
+    const createValidatedWebPanel = this.createValidatedWebPanel.bind(this)
     const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
@@ -700,7 +715,7 @@ export class PanelService {
 
       if (newInstance) {
         return finish({
-          panel: yield* createWebPanel(worktreeId, definitionId, launch),
+          panel: yield* createValidatedWebPanel(worktree, definition, launch),
           created: true,
           reused: false
         })
@@ -721,7 +736,7 @@ export class PanelService {
       ).pipe(Effect.withSpan('treeport.web_panel.open.lookup'))
       if (!existing) {
         return finish({
-          panel: yield* createWebPanel(worktreeId, definitionId, launch),
+          panel: yield* createValidatedWebPanel(worktree, definition, launch),
           created: true,
           reused: false
         })
