@@ -5,6 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { PlaywrightBrowser, PlaywrightBrowserHost } from './playwright-browser'
+import { browserCursor } from './browser-cursor'
+import { parseBrowserServerMessage } from '@treeport/shared'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -12,6 +14,51 @@ afterEach(async () => {
     await dispose()
   }
 }, 120_000)
+
+it('reads native cursor keywords through shadow roots and frames without forwarding URLs', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-cursor-'))
+  cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
+  const host = new PlaywrightBrowserHost(root)
+  cleanup.push(() => host.close())
+  const { page } = await host.openPage()
+  await page.setContent(`<!doctype html>
+    <a href="#">Link</a><input aria-label="Text">
+    <div id="shadow"></div>
+    <iframe sandbox style="border: 6px solid; transform: scale(.8); transform-origin: top left" srcdoc="<div style='cursor: ew-resize'>Resize</div>"></iframe>
+    <div id="custom" style="cursor: url(data:image/png;base64,AA==), crosshair">Custom</div>
+    <div id="plain">Plain</div>
+  `)
+  await page.locator('#shadow').evaluate((element) => {
+    element.attachShadow({ mode: 'open' }).innerHTML =
+      '<button style="cursor: grab">Grab</button>'
+  })
+  for (const [target, expected] of [
+    [page.getByRole('link'), 'pointer'],
+    [page.getByRole('textbox'), 'text'],
+    [page.getByRole('button', { name: 'Grab' }), 'grab'],
+    [page.frameLocator('iframe').getByText('Resize'), 'ew-resize'],
+    [page.locator('#custom'), 'crosshair'],
+    [page.locator('#plain'), 'auto']
+  ] as const) {
+    const bounds = (await target.boundingBox())!
+    const point = {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2
+    }
+    await page.mouse.move(point.x, point.y)
+    const message = { type: 'cursor', cursor: await browserCursor(page, point) }
+    expect(parseBrowserServerMessage(message)).toEqual({
+      type: 'cursor',
+      cursor: expected
+    })
+  }
+  expect(
+    parseBrowserServerMessage({
+      type: 'cursor',
+      cursor: 'url(http://localhost/private), pointer'
+    })
+  ).toBeNull()
+})
 
 // Multiple browser launches and profile flushes need more than the suite default.
 it('shares durable browser data across panels and browser runtime replacement', async () => {

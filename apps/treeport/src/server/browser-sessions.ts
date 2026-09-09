@@ -47,6 +47,7 @@ import {
 } from './playwright-browser'
 
 import { receiveBrowserVideo } from './browser-video'
+import { browserCursor } from './browser-cursor'
 import { BrowserContainer } from './browser-container'
 import { usesBrowserContainer } from './browser-runtime'
 
@@ -88,6 +89,7 @@ export interface BrowserSessionBrowser {
   >
   launch(): Promise<void>
   command(message: BrowserClientMessage): Promise<void>
+  cursor(point: { x: number; y: number }): ReturnType<typeof browserCursor>
   agentCommand(input: BrowserAgentCommand): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
   requestVideoKeyframe(): Promise<void>
@@ -168,6 +170,7 @@ interface BrowserAttachment {
   closing: boolean
   inFlightFrames: Map<number, number>
   pendingJpeg: BrowserFrame | null
+  cursorPoint: { x: number; y: number } | null
   waitingForKeyframe: boolean
   viewport: { width: number; height: number }
 }
@@ -1117,6 +1120,7 @@ export class BrowserSessionManager {
       closing: false,
       inFlightFrames: new Map(),
       pendingJpeg: null,
+      cursorPoint: null,
       waitingForKeyframe: true,
       viewport: { ...session.state.viewport }
     }
@@ -1987,6 +1991,28 @@ export class BrowserSessionManager {
             await browser.command(queuedMessage)
             this.queuePanelState(session, browser.state)
             await this.waitForPanelState(session)
+          }
+
+          if (queuedMessage.type === 'pointer') {
+            attachment.cursorPoint = { x: queuedMessage.x, y: queuedMessage.y }
+          }
+
+          if (
+            attachment.cursorPoint &&
+            (queuedMessage.type === 'pointer' || queuedMessage.type === 'wheel')
+          ) {
+            const cursor = await (
+              localOwner
+                ? browserCursor(
+                    (await this.ensureLocalAutomation(session, localOwner))
+                      .page,
+                    attachment.cursorPoint
+                  )
+                : (await this.browserFor(session)).cursor(
+                    attachment.cursorPoint
+                  )
+            ).catch(() => 'default' as const)
+            attachment.transport.sendMessage({ type: 'cursor', cursor })
           }
         } catch (cause) {
           attachment.transport.sendMessage({

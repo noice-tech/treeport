@@ -63,6 +63,10 @@ class FakeBrowser implements BrowserSessionBrowser {
     browsers.push(this)
   }
   async launch() {}
+  async cursor() {
+    return 'default' as const
+  }
+
   async command(message: BrowserClientMessage) {
     this.commands.push(message)
     if (message.type === 'navigate') {
