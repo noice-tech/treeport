@@ -112,6 +112,14 @@ export function BrowserPanelWorkspace({
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
   const pointerActiveRef = useRef(false)
+  const touchRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    x: number
+    y: number
+    scrolling: boolean
+  } | null>(null)
   const addressPointerSelectAllRef = useRef(false)
   const addressDirtyRef = useRef(false)
   const autoFocusAddressRef = useRef(panel.url === 'about:blank')
@@ -414,6 +422,8 @@ export function BrowserPanelWorkspace({
     if (!localBrowser) {
       connectionRef.current?.setVisible(active && !inputBlocked)
     }
+
+    touchRef.current = null
   }, [active, connectionRevision, inputBlocked, localBrowser])
 
   useEffect(() => {
@@ -1019,10 +1029,56 @@ export function BrowserPanelWorkspace({
           <canvas
             ref={canvasRef}
             tabIndex={0}
-            className="block size-full bg-zinc-950 object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
+            className="block size-full touch-pinch-zoom select-none bg-zinc-950 object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
             aria-label="Browser viewport. Streamed page content is not available to assistive technology."
             onFocus={onFocusSurface}
             onPointerMove={(event) => {
+              if (event.pointerType === 'touch') {
+                const touch = touchRef.current
+                if (!touch || touch.pointerId !== event.pointerId) {
+                  return
+                }
+
+                // Wait for a deliberate swipe before scrolling; a tap must not
+                // press a link (or start a drag) until the finger is lifted.
+                if (!touch.scrolling) {
+                  if (
+                    Math.hypot(
+                      event.clientX - touch.startX,
+                      event.clientY - touch.startY
+                    ) < 8
+                  ) {
+                    return
+                  }
+
+                  touch.scrolling = true
+                  // Wheel input targets the remote cursor, including nested
+                  // scrollers. Keep it at the gesture's starting point.
+                  send({
+                    type: 'pointer',
+                    phase: 'move',
+                    x: touch.x,
+                    y: touch.y
+                  })
+                }
+
+                const position = point(event)
+                send({
+                  type: 'wheel',
+                  deltaX: Math.max(
+                    -10_000,
+                    Math.min(10_000, touch.x - position.x)
+                  ),
+                  deltaY: Math.max(
+                    -10_000,
+                    Math.min(10_000, touch.y - position.y)
+                  )
+                })
+                touch.x = position.x
+                touch.y = position.y
+                return
+              }
+
               if (!stateRef.current?.controlled && !pointerActiveRef.current) {
                 return
               }
@@ -1030,10 +1086,27 @@ export function BrowserPanelWorkspace({
               send({ type: 'pointer', phase: 'move', ...point(event) })
             }}
             onPointerDown={(event) => {
+              if (event.pointerType === 'touch' && !event.isPrimary) {
+                touchRef.current = null
+                return
+              }
+
               event.preventDefault()
               onFocusSurface()
-              event.currentTarget.focus()
+              event.currentTarget.focus({ preventScroll: true })
               event.currentTarget.setPointerCapture(event.pointerId)
+              if (event.pointerType === 'touch') {
+                touchRef.current = {
+                  pointerId: event.pointerId,
+                  startX: event.clientX,
+                  startY: event.clientY,
+                  ...point(event),
+                  scrolling: false
+                }
+                send({ type: 'takeControl' })
+                return
+              }
+
               pointerActiveRef.current = true
               send({ type: 'takeControl' })
               send({
@@ -1045,6 +1118,35 @@ export function BrowserPanelWorkspace({
             }}
             onPointerUp={(event) => {
               event.preventDefault()
+              if (event.pointerType === 'touch') {
+                const touch = touchRef.current
+                if (touch?.pointerId === event.pointerId) {
+                  touchRef.current = null
+                  if (!touch.scrolling) {
+                    send({
+                      type: 'pointer',
+                      phase: 'down',
+                      x: touch.x,
+                      y: touch.y,
+                      button: 'left'
+                    })
+                    send({
+                      type: 'pointer',
+                      phase: 'up',
+                      x: touch.x,
+                      y: touch.y,
+                      button: 'left'
+                    })
+                  }
+                }
+
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId)
+                }
+
+                return
+              }
+
               send({
                 type: 'pointer',
                 phase: 'up',
@@ -1056,7 +1158,17 @@ export function BrowserPanelWorkspace({
                 event.currentTarget.releasePointerCapture(event.pointerId)
               }
             }}
+            onLostPointerCapture={(event) => {
+              if (touchRef.current?.pointerId === event.pointerId) {
+                touchRef.current = null
+              }
+            }}
             onPointerCancel={(event) => {
+              if (event.pointerType === 'touch') {
+                touchRef.current = null
+                return
+              }
+
               send({
                 type: 'pointer',
                 phase: 'up',
