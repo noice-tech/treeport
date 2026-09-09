@@ -1,6 +1,6 @@
 const terminalCorrelations = new Map<string, string>()
 
-function browserTracingEnabled(): boolean {
+export function browserTracingEnabled(): boolean {
   return globalThis.localStorage?.getItem('treeport.trace') === 'jsonl'
 }
 
@@ -38,6 +38,7 @@ export function browserTrace(
     JSON.stringify({
       type: 'treeport.browser.trace',
       timestamp: new Date().toISOString(),
+      monotonicMs: performance.now(),
       event,
       correlationId,
       attributes

@@ -859,14 +859,18 @@ describe('HTTP API validation', () => {
       '/api/terminals/term_1/browser-panels/open',
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          'x-request-id': 'link-click-1'
+        },
         body: JSON.stringify({ url: 'http://localhost:4173/' })
       }
     )
     expect(terminalBrowser.status).toBe(201)
     expect(service.openBrowserPanelFromTerminal).toHaveBeenCalledWith(
       'term_1',
-      'http://localhost:4173/'
+      'http://localhost:4173/',
+      'link-click-1'
     )
 
     expect(

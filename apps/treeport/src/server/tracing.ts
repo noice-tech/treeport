@@ -37,6 +37,7 @@ const SAFE_ATTRIBUTE_NAMES = new Set([
   'http.response.status_code',
   'network.protocol',
   'url.path',
+  'treeport.browser.panel_reused',
   'treeport.channel',
   'treeport.client.id',
   'treeport.connection.id',

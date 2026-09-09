@@ -1,6 +1,12 @@
 import type { Terminal } from '@xterm/xterm'
 import type { TerminalProgress, TerminalSnapshotLink } from '@treeport/shared'
 
+import {
+  browserTrace,
+  browserTracingEnabled,
+  newBrowserCorrelationId
+} from './agent-tracing'
+
 export const TERMINAL_FONT_SIZE = 14
 
 const TERMINAL_TOUCH_ROWS_PER_WHEEL = 1
@@ -184,14 +190,38 @@ function activateTerminalLink(
     terminalId &&
     (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:')
   ) {
+    const requestId = browserTracingEnabled() ? newBrowserCorrelationId() : null
+    const startedAt = performance.now()
+    const headers = new Headers({ 'content-type': 'application/json' })
+    if (requestId) {
+      headers.set('x-request-id', requestId)
+      browserTrace('browser.open.click', requestId, { terminalId })
+    }
+
     void fetch(
       `/api/terminals/${encodeURIComponent(terminalId)}/browser-panels/open`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
         body: JSON.stringify({ url })
       }
-    ).catch(() => undefined)
+    ).then(
+      (response) => {
+        if (requestId) {
+          browserTrace('browser.open.response', requestId, {
+            status: response.status,
+            elapsedMs: performance.now() - startedAt
+          })
+        }
+      },
+      () => {
+        if (requestId) {
+          browserTrace('browser.open.failed', requestId, {
+            elapsedMs: performance.now() - startedAt
+          })
+        }
+      }
+    )
   }
 }
 
