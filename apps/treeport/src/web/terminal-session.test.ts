@@ -8,6 +8,7 @@ import {
   vi
 } from 'vitest'
 import { type JsonValue, type TerminalSize } from '@treeport/shared'
+import * as Effect from 'effect/Effect'
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
@@ -26,7 +27,7 @@ interface TerminalSessionTestAccess {
   fit(queueControllerResize?: boolean): void
   canInput(): boolean
   handleServerEvent(event: string, value: JsonValue): void
-  enqueueRender(epoch: number, operation: () => void): void
+  enqueueRender(epoch: number, operation: Effect.Effect<void>): void
 }
 
 function testAccess<Value extends object, Fixture extends object = object>(
@@ -65,6 +66,12 @@ class FakeProtocolSocket {
 
   on(event: string, listener: (value: any) => void): this {
     this.handlers.set(event, [...(this.handlers.get(event) ?? []), listener])
+    return this
+  }
+
+  removeAllListeners(): this {
+    this.handlers.clear()
+    this.managerHandlers.clear()
     return this
   }
 
@@ -1040,7 +1047,7 @@ describe('TerminalSession', () => {
       })
     )
     const sentinel = vi.fn()
-    terminalSessionTestAccess(session).enqueueRender(1, sentinel)
+    terminalSessionTestAccess(session).enqueueRender(1, Effect.sync(sentinel))
     await Promise.resolve()
     await Promise.resolve()
     expect(sentinel).not.toHaveBeenCalled()
@@ -1050,6 +1057,200 @@ describe('TerminalSession', () => {
     session.retry()
     expect(reload).toHaveBeenCalledOnce()
     expect(socket.connected).toBe(false)
+    session.dispose()
+  })
+
+  it.each(['disconnect', 'dispose', 'timeout'] as const)(
+    'fences late snapshot completion after %s',
+    async (action) => {
+      const socket = new FakeProtocolSocket()
+      socketClient.create.mockReturnValue(socket)
+      const session = createTerminalSession('terminal-one')
+      const callbacks: Array<() => void> = []
+      const dispose = vi.fn()
+      terminalSessionTestAccess(session).terminal = {
+        reset: vi.fn(),
+        resize: vi.fn(),
+        options: { fontSize: 14 },
+        dispose,
+        write: (_data: string, callback: () => void) => callbacks.push(callback)
+      }
+      terminalSessionTestAccess(session).connect()
+      socket.emitServer('ready', {
+        connectionId: 'connection-1',
+        streamId: 'stream-1',
+        generation: 1,
+        controller: true,
+        reset: 'full',
+        cols: 100,
+        rows: 30,
+        revision: 1,
+        snapshot: ''
+      })
+      await vi.waitFor(() => expect(callbacks).toHaveLength(1))
+      if (action === 'disconnect') {
+        socket.disconnect()
+      } else if (action === 'dispose') {
+        session.dispose()
+      } else {
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(session.getSnapshot().error).toContain('did not finish parsing')
+      }
+
+      const snapshot = session.getSnapshot()
+      const listener = vi.fn()
+      session.subscribe(listener)
+      callbacks[0]!()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(session.getSnapshot()).toBe(snapshot)
+      expect(listener).not.toHaveBeenCalled()
+      expect(socket.emit).not.toHaveBeenCalledWith(
+        'query_authority',
+        expect.anything()
+      )
+      session.dispose()
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
+    }
+  )
+
+  it('releases all scoped resources even if a browser disposer throws', async () => {
+    const session = createTerminalSession('terminal-one')
+    const dispose = vi.fn()
+    const remove = vi.fn()
+    const disconnect = vi.fn()
+    Object.assign(session, {
+      terminal: { dispose },
+      wrapper: { remove },
+      socket: { disconnect, removeAllListeners: vi.fn() },
+      selectionDragCancel: () => {
+        throw new Error('selection cleanup failed')
+      }
+    })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    session.dispose()
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
+    expect(remove).toHaveBeenCalledOnce()
+    expect(disconnect).toHaveBeenCalledOnce()
+    session.dispose()
+    expect(dispose).toHaveBeenCalledOnce()
+    log.mockRestore()
+  })
+
+  it('ignores events from a replaced socket', () => {
+    const first = new FakeProtocolSocket()
+    const second = new FakeProtocolSocket()
+    socketClient.create.mockReturnValueOnce(first).mockReturnValueOnce(second)
+    const session = createTerminalSession('terminal-one')
+    terminalSessionTestAccess(session).connect()
+    first.disconnect()
+    Object.assign(session, { socket: null })
+    terminalSessionTestAccess(session).connect()
+    first.emitServer('title', { title: 'stale' })
+    first.emitServer('output', {
+      streamId: 'stale',
+      sequence: 100,
+      data: 'stale'
+    })
+    expect(session.getSnapshot().title).toBe(null)
+    expect(session.getSnapshot().error).toBe(null)
+    expect(second.connected).toBe(true)
+    session.dispose()
+  })
+
+  it('fails closed instead of dropping renders when the bounded queue fills', () => {
+    const session = createTerminalSession('terminal-one')
+    for (let index = 0; index < 1_026; index += 1) {
+      terminalSessionTestAccess(session).enqueueRender(0, Effect.never)
+    }
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'closed',
+      error:
+        'Terminal rendering failed: Terminal render queue capacity exceeded'
+    })
+    session.dispose()
+  })
+
+  it('aborts an in-flight upload and never starts queued uploads after disposal', async () => {
+    const { session } = controllerSessionFixture()
+    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
+      generation: 4,
+      active: true,
+      transitionId: null
+    })
+    vi.stubGlobal('location', { hostname: 'remote.example' })
+    const signals: AbortSignal[] = []
+    const request = vi.fn((_input: RequestInfo | URL, init: RequestInit) => {
+      signals.push(init.signal!)
+      return new Promise<Response>(() => undefined)
+    })
+    vi.stubGlobal('fetch', request)
+    session.pasteFiles([new File(['one'], 'one.txt')])
+    session.pasteFiles([new File(['two'], 'two.txt')])
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    session.dispose()
+    const snapshot = session.getSnapshot()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(signals[0]!.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(request).toHaveBeenCalledOnce()
+    expect(session.getSnapshot()).toBe(snapshot)
+  })
+
+  it('continues the ordered transfer worker after an upload fails', async () => {
+    const { session } = controllerSessionFixture()
+    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
+      generation: 4,
+      active: true,
+      transitionId: null
+    })
+    vi.stubGlobal('location', { hostname: 'remote.example' })
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('upload failed'))
+      .mockResolvedValueOnce(Response.json({ file: { path: '/tmp/two.txt' } }))
+    vi.stubGlobal('fetch', request)
+    const paste = vi.fn()
+    Object.assign(terminalSessionTestAccess(session).terminal, { paste })
+    session.pasteFiles([new File(['one'], 'one.txt')])
+    session.pasteFiles([new File(['two'], 'two.txt')])
+    await vi.waitFor(() =>
+      expect(paste).toHaveBeenCalledExactlyOnceWith('/tmp/two.txt')
+    )
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(session.getSnapshot().fileTransfer).toBe(null)
+    session.dispose()
+  })
+
+  it('does not paste an upload after losing and reacquiring control', async () => {
+    const { session, control } = controllerSessionFixture()
+    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
+      generation: 4,
+      active: true,
+      transitionId: null
+    })
+    vi.stubGlobal('location', { hostname: 'remote.example' })
+    let finish: (response: Response) => void = () => undefined
+    const request = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve
+        })
+    )
+    vi.stubGlobal('fetch', request)
+    const paste = vi.fn()
+    Object.assign(terminalSessionTestAccess(session).terminal, { paste })
+    session.pasteFiles([new File(['one'], 'one.txt')])
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    control(false, 5)
+    control(true, 6)
+    finish(Response.json({ file: { path: '/tmp/one.txt' } }))
+    await vi.waitFor(() =>
+      expect(session.getSnapshot().fileTransfer).toMatchObject({
+        state: 'error',
+        message: expect.stringContaining('control was lost')
+      })
+    )
+    expect(paste).not.toHaveBeenCalled()
     session.dispose()
   })
 
