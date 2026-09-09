@@ -17,6 +17,7 @@ import {
   type InlineConfig,
   type ViteDevServer
 } from 'vite'
+import { untracedPromiseSpan, type PromiseSpan } from '../tracing'
 import type { AppConfig } from './config'
 import { DomainError } from './domain'
 import {
@@ -234,26 +235,32 @@ export class WebPanelViteRuntime {
   }
 
   private async compiledDirectory(
-    source: ResolvedWebPanelSource
+    source: ResolvedWebPanelSource,
+    trace: PromiseSpan
   ): Promise<{ hash: string; directory: string }> {
-    const hash = await this.hashSource(source)
+    const hash = await trace('treeport.web_panel.runtime.hash', () =>
+      this.hashSource(source)
+    )
     const parent = path.join(this.config.cacheDir, 'web-panels', COMPILER_ABI)
     const directory = path.join(parent, hash)
     const metadata = path.join(directory, BUILD_METADATA)
     if (
-      await fs
-        .readFile(metadata, 'utf8')
-        .then((value) => {
-          // SAFETY: This module writes the cache metadata with a hash field.
-          return JSON.parse(value) as { hash?: string }
-        })
-        .then((value) => value.hash === hash)
-        .catch(() => false)
+      await trace('treeport.web_panel.runtime.cache_lookup', () =>
+        fs
+          .readFile(metadata, 'utf8')
+          .then((value) => {
+            // SAFETY: This module writes the cache metadata with a hash field.
+            return JSON.parse(value) as { hash?: string }
+          })
+          .then((value) => value.hash === hash)
+          .catch(() => false)
+      )
     ) {
       return { hash, directory }
     }
 
     let pending = this.builds.get(hash)
+    const buildPending = Boolean(pending)
     if (!pending) {
       pending = (async () => {
         await fs.mkdir(parent, { recursive: true, mode: 0o700 })
@@ -268,7 +275,9 @@ export class WebPanelViteRuntime {
             root: await fs.realpath(source.root),
             packageRoot: await fs.realpath(source.packageRoot)
           }
-          await build(this.viteConfig(buildSource, './', { outDir: temporary }))
+          await trace('treeport.web_panel.runtime.build', () =>
+            build(this.viteConfig(buildSource, './', { outDir: temporary }))
+          )
           await fs.writeFile(
             path.join(temporary, BUILD_METADATA),
             `${JSON.stringify({ hash, compilerAbi: COMPILER_ABI })}\n`
@@ -290,7 +299,16 @@ export class WebPanelViteRuntime {
         .catch(() => undefined)
     }
 
-    return { hash, directory: await pending }
+    return {
+      hash,
+      directory: await trace(
+        'treeport.web_panel.runtime.build_wait',
+        () => pending!,
+        {
+          'treeport.web_panel.build_pending': buildPending
+        }
+      )
+    }
   }
 
   private errorPage(source: ResolvedWebPanelSource, cause: unknown): string {
@@ -307,7 +325,10 @@ export class WebPanelViteRuntime {
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Panel build failed</title><style>body{font-family:system-ui,sans-serif;margin:2rem;line-height:1.5}pre{white-space:pre-wrap;background:#f4f4f5;padding:1rem;border-radius:.5rem}</style></head><body><h1>Web panel could not be compiled</h1><p><strong>${escapeHtml(source.definitionId)}</strong>${source.packageSource ? ` from ${escapeHtml(source.packageSource)}` : ''}</p><p>Stage: ${stage}</p><pre>${escapeHtml(diagnostic)}</pre><p>For a local panel package, install its <code>node_modules</code>. Put browser runtime imports in <code>dependencies</code>, not <code>devDependencies</code>.</p></body></html>`
   }
 
-  private async developmentServer(source: ResolvedWebPanelSource): Promise<{
+  private async developmentServer(
+    source: ResolvedWebPanelSource,
+    trace: PromiseSpan
+  ): Promise<{
     base: string
     server: ViteDevServer
   }> {
@@ -336,8 +357,10 @@ export class WebPanelViteRuntime {
     const previousUpgradeListeners = new Set(
       this.httpServer.listeners('upgrade')
     )
-    const server = await createServer(
-      this.viteConfig(developmentSource, base, { server: this.httpServer })
+    const server = await trace('treeport.web_panel.runtime.vite_start', () =>
+      createServer(
+        this.viteConfig(developmentSource, base, { server: this.httpServer! })
+      )
     )
     const addedUpgradeListeners = this.httpServer
       .listeners('upgrade')
@@ -367,7 +390,8 @@ export class WebPanelViteRuntime {
   async resolve(
     source: ResolvedWebPanelSource,
     requestedPath: string,
-    logicalBase: string
+    logicalBase: string,
+    trace: PromiseSpan = untracedPromiseSpan
   ): Promise<WebPanelAssetResolution> {
     try {
       if (requestedPath && !requestedPath.startsWith(IMMUTABLE_PREFIX)) {
@@ -384,7 +408,10 @@ export class WebPanelViteRuntime {
       }
 
       if (source.development) {
-        const development = await this.developmentServer(source)
+        const development = await trace(
+          'treeport.web_panel.runtime.development_server',
+          () => this.developmentServer(source, trace)
+        )
         const relative = requestedPath || source.entry
 
         return {
@@ -397,7 +424,9 @@ export class WebPanelViteRuntime {
 
       const immutable = requestedPath.startsWith(IMMUTABLE_PREFIX)
       if (!immutable) {
-        const compiled = await this.compiledDirectory(source)
+        const compiled = await trace('treeport.web_panel.runtime.compile', () =>
+          this.compiledDirectory(source, trace)
+        )
         return {
           kind: 'redirect',
           location: `${logicalBase}${IMMUTABLE_PREFIX}${compiled.hash}/${requestedPath || source.entry}`,

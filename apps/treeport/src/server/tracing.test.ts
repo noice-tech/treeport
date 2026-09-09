@@ -2,12 +2,13 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
-import { afterEach, describe, expect, it } from 'vitest'
-import { makeTracingLayer } from './tracing'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { currentPromiseSpan, makeTracingLayer } from './tracing'
 
 const directories: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(
     directories
       .splice(0)
@@ -22,6 +23,7 @@ describe('agent trace export', () => {
     )
     directories.push(directory)
     const tracePath = path.join(directory, 'trace.jsonl')
+    vi.stubEnv('TREEPORT_TRACE', 'jsonl')
 
     await Effect.runPromise(
       Effect.scoped(
@@ -29,6 +31,20 @@ describe('agent trace export', () => {
           yield* Effect.annotateCurrentSpan({
             'treeport.request.id': 'request-1',
             'unsafe.secret': 'do-not-export'
+          })
+          const trace = yield* currentPromiseSpan
+          const originalError = new Error('private-build-diagnostic')
+          yield* Effect.promise(async () => {
+            await expect(
+              trace(
+                'treeport.test.promise',
+                () => Promise.reject(originalError),
+                {
+                  'treeport.web_panel.build_pending': false,
+                  'unsafe.secret': 'do-not-export'
+                }
+              )
+            ).rejects.toBe(originalError)
           })
           yield* Effect.void.pipe(
             Effect.withSpan('treeport.test.child', {
@@ -59,7 +75,14 @@ describe('agent trace export', () => {
       (record) => record.name === 'treeport.test.child'
     )
 
-    expect(records).toHaveLength(2)
+    expect(records).toHaveLength(3)
+    expect(
+      records.find((record) => record.name === 'treeport.test.promise')
+    ).toMatchObject({
+      traceId: parent.traceId,
+      parentSpanId: parent.spanId,
+      attributes: { 'treeport.web_panel.build_pending': false }
+    })
     expect(parent).toMatchObject({
       type: 'treeport.trace.span',
       service: 'treeport',

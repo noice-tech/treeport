@@ -997,7 +997,8 @@ describe('HTTP API validation', () => {
         cwd: 'packages/preview'
       },
       false,
-      'term_1'
+      'term_1',
+      opened.headers.get('x-request-id')
     )
 
     expect((await app.request('/api/panels/panel_review/context')).status).toBe(

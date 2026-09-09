@@ -10,6 +10,7 @@ import {
 import { parseResponse, rpc, treeFilesRpc } from '../../api'
 import { errorDescription, errorDetails } from '../../error-message'
 import { cn } from '../../lib/utils'
+import { traceWebPanelOpen } from '../../web-panel-open-tracing'
 
 export function WebPanelWorkspace({
   panel,
@@ -38,6 +39,12 @@ export function WebPanelWorkspace({
   const [loadedPanelRevision, setLoadedPanelRevision] = useState<string | null>(
     null
   )
+
+  useEffect(() => {
+    traceWebPanelOpen(panel.id, 'web_panel.open.frame_mounted', {
+      reloadRevision
+    })
+  }, [panel.id, reloadRevision])
 
   useEffect(() => {
     onTitleChange(panel.id, null)
@@ -151,6 +158,8 @@ export function WebPanelWorkspace({
       }
 
       const { method } = message
+      const startedAt = performance.now()
+      traceWebPanelOpen(panel.id, 'web_panel.sdk.request', { method })
       let request: Promise<unknown>
       if (method === 'context') {
         request = parseResponse(
@@ -234,12 +243,23 @@ export function WebPanelWorkspace({
       }
 
       void request.then(
-        (value) =>
+        (value) => {
+          traceWebPanelOpen(panel.id, 'web_panel.sdk.response', {
+            method,
+            durationMs: performance.now() - startedAt,
+            ok: true
+          })
           panelWindow?.postMessage(
             { source: 'treeport-host-v1', id: message.id, ok: true, value },
             '*'
-          ),
+          )
+        },
         (error) => {
+          traceWebPanelOpen(panel.id, 'web_panel.sdk.response', {
+            method,
+            durationMs: performance.now() - startedAt,
+            ok: false
+          })
           const details = errorDetails(error)
           panelWindow?.postMessage(
             {
@@ -284,6 +304,10 @@ export function WebPanelWorkspace({
             loadedPanelRevision === panelRevision ? 'opacity-100' : 'opacity-0'
           )}
           onLoad={() => {
+            // Load also fires for error documents; this is not panel/data readiness.
+            traceWebPanelOpen(panel.id, 'web_panel.open.iframe_load', {
+              reloadRevision
+            })
             panelWindowRef.current = frameRef.current?.contentWindow ?? null
             setLoadedPanelRevision(panelRevision)
           }}
