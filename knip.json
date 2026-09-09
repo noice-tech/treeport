@@ -5,6 +5,13 @@
     ".": {
       "ignoreDependencies": ["@treeport/treeport"]
     },
+    "apps/treeport": {
+      "ignoreDependencies": [
+        "@effect/opentelemetry",
+        "@opentelemetry/sdk-trace-base",
+        "@opentelemetry/sdk-trace-node"
+      ]
+    },
     "apps/desktop": {
       "entry": [
         "forge.config.ts",

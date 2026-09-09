@@ -391,18 +391,31 @@ importers:
 
   packages/shared:
     dependencies:
+      '@effect/opentelemetry':
+        specifier: ^0.64.0
+        version: 0.64.0(@effect/platform@0.97.1(effect@3.22.1))(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@3.22.1)
       '@effect/platform':
         specifier: ^0.97.1
         version: 0.97.1(effect@3.22.1)
       '@effect/rpc':
         specifier: ^0.76.2
         version: 0.76.2(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
+      '@opentelemetry/sdk-trace-base':
+        specifier: ^2.11.0
+        version: 2.11.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace-node':
+        specifier: ^2.11.0
+        version: 2.11.0(@opentelemetry/api@1.9.1)
       '@treeport/panel-sdk':
         specifier: workspace:*
         version: link:../panel-sdk
       effect:
         specifier: ^3.22.1
         version: 3.22.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.9
+        version: 24.13.3
 
   packages/web-panel-files:
     dependencies:

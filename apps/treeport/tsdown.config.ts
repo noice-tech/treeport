@@ -54,6 +54,8 @@ export default defineConfig({
   },
   deps: {
     neverBundle: true,
+    // Shared is private and bundled. Its tracing SDK imports stay external,
+    // so the npm package must also declare them (see knip ignoreDependencies).
     alwaysBundle: ['@treeport/shared']
   }
 })
