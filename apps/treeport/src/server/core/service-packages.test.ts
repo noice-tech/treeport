@@ -712,6 +712,17 @@ describe('TreeportService with injected command adapters', () => {
       details: { permissions: ['same-origin'] }
     })
     await expect(
+      service.openWebPanel(worktree.id, definition.id)
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSION_REQUIRED' })
+    await expect(
+      service.openWebPanel(
+        worktree.id,
+        definition.id,
+        { input: null, cwd: null },
+        true
+      )
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSION_REQUIRED' })
+    await expect(
       service.setWebPanelPermissionGrant(worktree.id, definition.id, true, [])
     ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSIONS_CHANGED' })
 

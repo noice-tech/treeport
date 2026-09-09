@@ -222,7 +222,7 @@ describe('WebPanelViteRuntime', () => {
         }
       )
       expect(response.headers.get('access-control-allow-origin')).toBe('*')
-      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.headers.get('cache-control')).toBe('no-cache')
       expect(
         response.headers
           .get('content-security-policy')
@@ -240,6 +240,12 @@ describe('WebPanelViteRuntime', () => {
         ])
       )
       await expect(response.text()).resolves.toContain('@vite/client')
+      const moduleResponse = await fetch(new URL('panel.tsx', response.url))
+      expect(moduleResponse.status).toBe(200)
+      expect(moduleResponse.headers.get('cache-control')).toBe('no-cache')
+      const moduleCode = await moduleResponse.text()
+      expect(moduleCode).not.toContain('sourceMappingURL=data:')
+      expect(moduleCode).toContain('treeport.version')
 
       const untrustedReferrerResponse = await fetch(
         `http://127.0.0.1:${address.data.port}${resolution.location}`,

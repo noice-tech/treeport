@@ -22,6 +22,7 @@ import type {
 import { and, asc, desc, eq, ne } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
+import { currentPromiseSpan } from '../../../tracing'
 import {
   browserPanels,
   webPanels,
@@ -72,7 +73,7 @@ export class PanelService {
   ): PanelEffect<WorktreeRecord> {
     return Effect.flatMap(ProjectObservationOperations, (observations) =>
       observations.requireAvailableWorktree(worktreeId, allowPrunable)
-    )
+    ).pipe(Effect.withSpan('treeport.panel.verify_worktree'))
   }
 
   private requireBrowserWorktree(
@@ -118,7 +119,9 @@ export class PanelService {
   effectiveWebPanelDefinitions(
     worktreeId: string
   ): PanelEffect<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
-    return this.definitions.effectiveWebPanelDefinitions(worktreeId)
+    return this.definitions
+      .effectiveWebPanelDefinitions(worktreeId)
+      .pipe(Effect.withSpan('treeport.web_panel.definitions'))
   }
 
   webPanelPermissionSourceKey(
@@ -159,7 +162,9 @@ export class PanelService {
     worktreeId: string,
     definition: WebPanelDefinition
   ): PanelEffect<void> {
-    return this.definitions.requireWebPanelPermissions(worktreeId, definition)
+    return this.definitions
+      .requireWebPanelPermissions(worktreeId, definition)
+      .pipe(Effect.withSpan('treeport.web_panel.permissions'))
   }
 
   reorderPanels(
@@ -588,13 +593,9 @@ export class PanelService {
       this.effectiveWebPanelDefinitions.bind(this)
     const requireWebPanelPermissions =
       this.requireWebPanelPermissions.bind(this)
-    const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
-    const invalidateProjectsSnapshot =
-      this.invalidateProjectsSnapshot.bind(this)
+    const createValidatedWebPanel = this.createValidatedWebPanel.bind(this)
 
     return Effect.gen(function* () {
-      const database = yield* DatabasePort
-      const events = yield* EventBusPort
       const worktree = yield* requireAvailableWorktree(worktreeId)
       const definition = (yield* effectiveWebPanelDefinitions(worktreeId)).find(
         (candidate) => candidate.id === definitionId
@@ -610,6 +611,25 @@ export class PanelService {
       }
 
       yield* requireWebPanelPermissions(worktreeId, definition)
+      return yield* createValidatedWebPanel(worktree, definition, launch)
+    })
+  }
+
+  // Only called after worktree availability, definition resolution, and permission
+  // validation in this operation. Do not repeat project observation on creation.
+  private createValidatedWebPanel(
+    worktree: WorktreeRecord,
+    definition: WebPanelDefinition,
+    launch: WebPanelLaunch
+  ): PanelEffect<WebPanel> {
+    const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const worktreeId = worktree.id
+      const definitionId = definition.id
       const normalized = yield* normalizeWebPanelLaunch(worktree, launch)
       const timestamp = now()
       const panel: WebPanel = {
@@ -635,13 +655,14 @@ export class PanelService {
           createdAt: panel.createdAt,
           updatedAt: panel.updatedAt
         })
-      )
+      ).pipe(Effect.withSpan('treeport.web_panel.create.persist'))
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('panel.created', { worktreeId, panelId: panel.id })
       })
+      yield* Effect.annotateCurrentSpan({ 'treeport.panel.id': panel.id })
       return panel
-    })
+    }).pipe(Effect.withSpan('treeport.web_panel.create'))
   }
 
   openWebPanel(
@@ -649,14 +670,15 @@ export class PanelService {
     definitionId: string,
     launch: WebPanelLaunch = { input: null, cwd: null },
     newInstance = false,
-    sourceTerminalId: string | null = null
+    sourceTerminalId: string | null = null,
+    requestId: string | null = null
   ): PanelEffect<OpenWebPanelResult> {
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
     const requireWebPanelPermissions =
       this.requireWebPanelPermissions.bind(this)
-    const createWebPanel = this.createWebPanel.bind(this)
+    const createValidatedWebPanel = this.createValidatedWebPanel.bind(this)
     const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
@@ -685,14 +707,15 @@ export class PanelService {
           panelId: result.panel.id,
           panel: result.panel,
           sourceTerminalId,
-          sourcePanelId: null
+          sourcePanelId: null,
+          requestId
         })
         return result
       }
 
       if (newInstance) {
         return finish({
-          panel: yield* createWebPanel(worktreeId, definitionId, launch),
+          panel: yield* createValidatedWebPanel(worktree, definition, launch),
           created: true,
           reused: false
         })
@@ -710,10 +733,10 @@ export class PanelService {
           )
           .orderBy(desc(webPanels.createdAt), desc(webPanels.id))
           .limit(1)
-      )
+      ).pipe(Effect.withSpan('treeport.web_panel.open.lookup'))
       if (!existing) {
         return finish({
-          panel: yield* createWebPanel(worktreeId, definitionId, launch),
+          panel: yield* createValidatedWebPanel(worktree, definition, launch),
           created: true,
           reused: false
         })
@@ -735,7 +758,7 @@ export class PanelService {
             updatedAt
           })
           .where(eq(webPanels.id, existing.id))
-      )
+      ).pipe(Effect.withSpan('treeport.web_panel.open.persist'))
       const panel = mapWebPanel(
         {
           ...existing,
@@ -752,7 +775,16 @@ export class PanelService {
         events.publish('panel.updated', { worktreeId, panelId: panel.id })
       })
       return finish({ panel, created: false, reused: true })
-    })
+    }).pipe(
+      Effect.tap((result) =>
+        Effect.annotateCurrentSpan({
+          'treeport.panel.id': result.panel.id,
+          'treeport.worktree.id': worktreeId,
+          'treeport.web_panel.reused': result.reused
+        })
+      ),
+      Effect.withSpan('treeport.web_panel.open')
+    )
   }
 
   deleteWebPanel(
@@ -1182,6 +1214,7 @@ export class PanelService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const webPanelRuntime = yield* WebPanelRuntimePort
+      yield* Effect.annotateCurrentSpan({ 'treeport.panel.id': panelId })
       const [panel] = yield* Effect.promise(() =>
         database.db
           .select()
@@ -1210,14 +1243,25 @@ export class PanelService {
 
       yield* requireWebPanelPermissions(panel.worktreeId, definition)
       const encodedPanelId = encodeURIComponent(panelId)
-      return yield* Effect.promise(() =>
-        webPanelRuntime.resolve(
-          definition,
-          requestedPath,
-          `/api/web-panels/${encodedPanelId}/assets/`
+      return yield* Effect.flatMap(currentPromiseSpan, (trace) =>
+        Effect.promise(() =>
+          webPanelRuntime.resolve(
+            definition,
+            requestedPath,
+            `/api/web-panels/${encodedPanelId}/assets/`,
+            trace
+          )
         )
+      ).pipe(
+        Effect.tap((result) =>
+          Effect.annotateCurrentSpan({
+            'treeport.web_panel.development': result.development,
+            'treeport.web_panel.resolution': result.kind
+          })
+        ),
+        Effect.withSpan('treeport.web_panel.runtime.resolve')
       )
-    })
+    }).pipe(Effect.withSpan('treeport.web_panel.asset'))
   }
 
   listBrowserPanels(): PanelEffect<BrowserPanel[]> {

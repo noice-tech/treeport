@@ -369,15 +369,16 @@ export const rpc = {
         ),
         panels: {
           open: {
-            $post: ({
-              param,
-              json
-            }: RequestInput<{ worktreeId: string }, unknown>) =>
+            $post: (
+              { param, json }: RequestInput<{ worktreeId: string }, unknown>,
+              options?: { readonly init: RequestInit }
+            ) =>
               endpoint<OpenWebPanelResult>(
                 'POST',
                 `/api/worktrees/${id(param.worktreeId)}/panels/open`,
                 openWebPanelResponseSchema,
-                { json }
+                { json },
+                options?.init
               )
           },
           order: {

@@ -103,6 +103,7 @@ import {
   writeTreeFileSchema,
   type ApiErrorBody
 } from '@treeport/shared'
+import * as Headers from '@effect/platform/Headers'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
@@ -1254,6 +1255,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(openWebPanelSchema)
+        const request = yield* serverRequest
         return jsonContractResponse(
           openWebPanelResponseSchema,
           yield* operation(() =>
@@ -1262,7 +1264,8 @@ export function createApp({
               body.definitionId,
               { input: body.input ?? null, cwd: body.launchCwd ?? null },
               body.newInstance ?? false,
-              body.sourceTerminalId ?? null
+              body.sourceTerminalId ?? null,
+              request.headers['x-request-id'] ?? null
             )
           )
         )
@@ -1837,6 +1840,12 @@ export function createApp({
         : 0
     )
     const response = yield* routed.pipe(
+      Effect.provideService(
+        serverRequest,
+        request.modify({
+          headers: Headers.set(request.headers, 'x-request-id', requestId)
+        })
+      ),
       Effect.catchAllCause((cause) => {
         if (Cause.isInterruptedOnly(cause)) {
           return Effect.failCause(cause)

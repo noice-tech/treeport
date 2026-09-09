@@ -12,6 +12,7 @@ import * as Exit from 'effect/Exit'
 import * as Layer from 'effect/Layer'
 import * as ManagedRuntime from 'effect/ManagedRuntime'
 import * as Option from 'effect/Option'
+import * as Runtime from 'effect/Runtime'
 import * as Tracer from 'effect/Tracer'
 
 export interface TreeportTraceContext {
@@ -52,7 +53,11 @@ const SAFE_ATTRIBUTE_NAMES = new Set([
   'treeport.terminal.snapshot_bytes',
   'treeport.terminal_host.method',
   'treeport.terminal_host.queue_wait_ms',
-  'treeport.worktree.id'
+  'treeport.worktree.id',
+  'treeport.web_panel.reused',
+  'treeport.web_panel.development',
+  'treeport.web_panel.build_pending',
+  'treeport.web_panel.resolution'
 ])
 
 function tracingDestination(
@@ -232,6 +237,44 @@ export const currentTraceContext: Effect.Effect<
       )
     )
   : Effect.succeed(null)
+
+export type PromiseSpan = <A>(
+  name: string,
+  evaluate: () => Promise<A>,
+  attributes?: TreeportSpanAttributes
+) => Promise<A>
+
+export const untracedPromiseSpan: PromiseSpan = (_name, evaluate) => evaluate()
+
+// Preserve the request's tracer and parent across the Promise-based Vite boundary.
+// Re-throw the original error so runtime diagnostics and DomainError handling stay intact.
+export const currentPromiseSpan = Effect.gen(function* () {
+  if (!tracingEnabled()) {
+    return untracedPromiseSpan
+  }
+
+  const runtime = yield* Effect.runtime<never>()
+  const parent = yield* Effect.option(Effect.currentSpan)
+  const run: PromiseSpan = async (name, evaluate, attributes = {}) => {
+    const exit = await Runtime.runPromiseExit(runtime)(
+      Effect.tryPromise({ try: evaluate, catch: (cause) => ({ cause }) }).pipe(
+        Effect.withSpan(name, {
+          parent: Option.getOrUndefined(parent),
+          attributes
+        })
+      )
+    )
+    if (Exit.isSuccess(exit)) {
+      return exit.value
+    }
+
+    const failure = Cause.failureOption(exit.cause)
+    throw Option.isSome(failure)
+      ? failure.value.cause
+      : Cause.squash(exit.cause)
+  }
+  return run
+})
 
 export function makeHostTraceRuntime(serviceVersion: string) {
   if (!tracingEnabled()) {

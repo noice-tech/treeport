@@ -14,6 +14,11 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { registerBrowserOpen, traceBrowserOpen } from './browser-open-tracing'
+import {
+  beginWebPanelOpen,
+  registerWebPanelOpen,
+  traceWebPanelOpen
+} from './web-panel-open-tracing'
 import { NotificationCenter } from './features/notifications/notification-center'
 import { TerminalBellAttention } from './features/notifications/terminal-bell-attention'
 import { BrowserPanelWorkspace } from './features/browser-panels/browser-panel-workspace'
@@ -519,6 +524,7 @@ function WorkspaceApp() {
       input: WebPanelInput | null
     }) =>
       (async () => {
+        const requestId = beginWebPanelOpen()
         if (
           definition.permissions.length > 0 &&
           !definition.permissionsGranted
@@ -539,20 +545,30 @@ function WorkspaceApp() {
           )
         }
 
-        return (
-          await parseResponse(
-            rpc.api.worktrees[':worktreeId'].panels.open.$post({
+        const result = await parseResponse(
+          rpc.api.worktrees[':worktreeId'].panels.open.$post(
+            {
               param: { worktreeId: worktree.id },
               json: {
                 definitionId: definition.id,
                 input,
                 launchCwd: null
               }
-            })
+            },
+            { init: { headers: { 'x-request-id': requestId } } }
           )
-        ).panel
+        ).catch((error) => {
+          browserTrace('web_panel.open.request_failed', requestId)
+          throw error
+        })
+        registerWebPanelOpen(result.panel.id, requestId)
+        traceWebPanelOpen(result.panel.id, 'web_panel.open.response', {
+          reused: result.reused
+        })
+        return result.panel
       })(),
     onSuccess: async (panel, { worktree }) => {
+      traceWebPanelOpen(panel.id, 'web_panel.open.ui_requested')
       setDialog(null)
       revealTool(panel, false)
       queryClient.setQueryData<ProjectRecord[]>(
@@ -810,10 +826,17 @@ function WorkspaceApp() {
   }
   const navigatePanelOpenRequest = useCallback(
     (request: ProductEventDataMap['panel.open_requested']) => {
+      const webPanel = request.panel.kind === 'web'
       if (request.requestId) {
-        browserTrace('browser.open.event_received', request.requestId, {
-          panelId: request.panelId
-        })
+        browserTrace(
+          webPanel
+            ? 'web_panel.open.event_received'
+            : 'browser.open.event_received',
+          request.requestId,
+          {
+            panelId: request.panelId
+          }
+        )
       }
 
       if (
@@ -828,8 +851,13 @@ function WorkspaceApp() {
       }
 
       if (request.requestId) {
-        registerBrowserOpen(request.panelId, request.requestId)
-        traceBrowserOpen(request.panelId, 'browser.open.ui_requested')
+        if (webPanel) {
+          registerWebPanelOpen(request.panelId, request.requestId)
+          traceWebPanelOpen(request.panelId, 'web_panel.open.ui_requested')
+        } else {
+          registerBrowserOpen(request.panelId, request.requestId)
+          traceBrowserOpen(request.panelId, 'browser.open.ui_requested')
+        }
       }
 
       revealTool(
@@ -887,7 +915,9 @@ function WorkspaceApp() {
         .then(() => {
           if (request.requestId) {
             browserTrace(
-              'browser.open.workspace_navigated',
+              webPanel
+                ? 'web_panel.open.workspace_navigated'
+                : 'browser.open.workspace_navigated',
               request.requestId,
               {
                 panelId: request.panelId

@@ -35,4 +35,13 @@ if (!process.env.TREEPORT_DESKTOP_RENDERER_PORT?.trim()) {
   )
 }
 
-await api.start({ dir: process.cwd(), interactive: process.stdout.isTTY })
+// Opt-in local CDP access for profiling the development desktop with agent-browser.
+const debugPort = process.env.TREEPORT_DESKTOP_DEBUG_PORT?.trim()
+const args = debugPort
+  ? [
+      '--remote-debugging-address=127.0.0.1',
+      `--remote-debugging-port=${z.coerce.number().int().min(1).max(65535).parse(debugPort)}`
+    ]
+  : []
+
+await api.start({ dir: process.cwd(), interactive: process.stdout.isTTY, args })
