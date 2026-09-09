@@ -1,7 +1,7 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
-import { browserUrlSchema } from './browser-protocol.js'
+import { browserObservedUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import { workspacePresenceSchema } from './presence-protocol.js'
 import {
@@ -66,7 +66,7 @@ const browserPanelSnapshotSchema = Schema.Struct({
   kind: Schema.Literal('browser'),
   worktreeId: identifierSchema,
   title: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
-  url: Schema.Union(Schema.Literal('about:blank'), browserUrlSchema),
+  url: Schema.Union(Schema.Literal('about:blank'), browserObservedUrlSchema),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })

@@ -1,5 +1,5 @@
 import * as Schema from 'effect/Schema'
-import { browserUrlSchema } from './browser-protocol.js'
+import { browserObservedUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import { terminalRuntimeMetadataSchema } from './terminal-protocol.js'
 import { webPanelPermissionSchema } from './web-panel-protocol.js'
@@ -96,7 +96,7 @@ export const browserPanelSchema = Schema.Struct({
   kind: Schema.Literal('browser'),
   worktreeId: Schema.String,
   title: Schema.String,
-  url: Schema.Union(Schema.Literal('about:blank'), browserUrlSchema),
+  url: Schema.Union(Schema.Literal('about:blank'), browserObservedUrlSchema),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })

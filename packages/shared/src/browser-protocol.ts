@@ -2,9 +2,11 @@
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
-export const BROWSER_PROTOCOL_VERSION = 7
+export const BROWSER_PROTOCOL_VERSION = 8
+export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
-export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
+// Observed Chromium addresses can be megabytes long (including JSON escaping).
+export const BROWSER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 export type BrowserMouseButton = 'left' | 'right' | 'middle'
 
@@ -23,9 +25,10 @@ const browserRequestIdSchema = Schema.String.pipe(
 const browserGenerationSchema = Schema.Int.pipe(Schema.positive())
 const browserRevisionSchema = Schema.NonNegativeInt
 
-export const browserUrlSchema = Schema.String.pipe(
+// Observed addresses are metadata, not navigation input. Never shorten a URL:
+// doing so can change its destination. Transport payload limits still apply.
+export const browserObservedUrlSchema = Schema.String.pipe(
   Schema.minLength(1),
-  Schema.maxLength(4_096),
   Schema.filter(
     (value) => {
       if (!URL.canParse(value)) {
@@ -45,6 +48,15 @@ export const browserUrlSchema = Schema.String.pipe(
     }
   )
 )
+
+export const browserUrlSchema = browserObservedUrlSchema.pipe(
+  Schema.maxLength(4_096)
+)
+
+export function normalizeBrowserTitle(title: string): string {
+  const end = title.charCodeAt(255)
+  return title.slice(0, end >= 0xd800 && end <= 0xdbff ? 255 : 256)
+}
 
 export const browserClientMessageSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal('navigate'), url: browserUrlSchema }),
@@ -76,7 +88,7 @@ export const browserClientMessageSchema = Schema.Union(
   }),
   Schema.Struct({
     type: Schema.Literal('insertText'),
-    text: Schema.String.pipe(Schema.maxLength(64 * 1024))
+    text: Schema.String.pipe(Schema.maxLength(BROWSER_MAX_INSERT_TEXT_LENGTH))
   }),
   Schema.Struct({
     type: Schema.Literal('find'),
@@ -101,8 +113,12 @@ export type BrowserClientMessage = Schema.Schema.Type<
 >
 
 export const browserRuntimeStateSchema = Schema.Struct({
-  url: Schema.Union(Schema.Literal('about:blank'), browserUrlSchema),
-  title: Schema.String.pipe(Schema.maxLength(256)),
+  url: Schema.Union(Schema.Literal('about:blank'), browserObservedUrlSchema),
+  // Ordinary page metadata must not invalidate an otherwise healthy connection.
+  title: Schema.transform(Schema.String, Schema.String, {
+    decode: normalizeBrowserTitle,
+    encode: normalizeBrowserTitle
+  }),
   loading: Schema.Boolean,
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
@@ -376,7 +392,7 @@ export const browserOwnerClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('popup'),
     generation: browserGenerationSchema,
-    url: browserUrlSchema
+    url: browserObservedUrlSchema
   }),
   Schema.Struct({
     type: Schema.Literal('crashed'),

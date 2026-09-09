@@ -13,6 +13,7 @@ import type {
 } from '@treeport/shared'
 import {
   BROWSER_PROTOCOL_VERSION,
+  BROWSER_MAX_INSERT_TEXT_LENGTH,
   parseBrowserClientMessage,
   parseBrowserServerMessage
 } from '@treeport/shared'
@@ -70,6 +71,9 @@ export function connectBrowserPanel(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let currentVisible = initialVisible
   let ready = false
+  let protocolFailed = false
+  let reconnectAttempts = 0
+  let readyAt: number | null = null
   let connectedOnce = false
   let connecting = false
   let socket: BrowserPanelSocket | null = null
@@ -77,6 +81,10 @@ export function connectBrowserPanel(
   let viewport: Extract<BrowserClientMessage, { type: 'resize' }> | null = null
 
   const reportError = (cause: unknown) => {
+    if (disposed) {
+      return
+    }
+
     handlers.message({
       type: 'browserUnavailable',
       message: cause instanceof Error ? cause.message : String(cause),
@@ -85,18 +93,21 @@ export function connectBrowserPanel(
   }
 
   const scheduleReconnect = () => {
-    if (disposed || reconnectTimer) {
+    if (disposed || protocolFailed || reconnectTimer) {
       return
     }
 
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null
-      void connect().catch((cause) => {
-        connecting = false
-        reportError(cause)
-        scheduleReconnect()
-      })
-    }, 500)
+    reconnectTimer = setTimeout(
+      () => {
+        reconnectTimer = null
+        void connect().catch((cause) => {
+          connecting = false
+          reportError(cause)
+          scheduleReconnect()
+        })
+      },
+      Math.min(30_000, 500 * 2 ** Math.min(reconnectAttempts++, 6))
+    )
   }
 
   const connect = async () => {
@@ -110,12 +121,24 @@ export function connectBrowserPanel(
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ clientId, visible: currentVisible })
+        body: JSON.stringify({ clientId, visible: currentVisible }),
+        signal: AbortSignal.timeout(10_000)
       }
     )
-    const body: unknown = await response.json()
+    const body: unknown = await response.json().catch(() => null)
     const result = decodeUnknownOrNull(browserTicketResponseSchema, body)
+    if (response.ok && !result) {
+      protocolFailed = true
+      throw new Error(
+        'Browser ticket response is invalid. Automatic retries stopped. Reload or update Treeport to reconnect.'
+      )
+    }
+
     if (!response.ok || !result) {
+      if ([400, 401, 403, 404].includes(response.status)) {
+        protocolFailed = true
+      }
+
       const error = decodeUnknownOrNull(apiErrorBodySchema, body)
       throw new Error(error?.error.message ?? 'Could not attach hosted browser')
     }
@@ -138,6 +161,15 @@ export function connectBrowserPanel(
 
       const message = parseBrowserServerMessage(value)
       if (!message) {
+        protocolFailed = true
+        pendingCommands.length = 0
+        ready = false
+        socket = null
+        reportError(
+          new Error(
+            'Browser protocol response is invalid. Automatic retries stopped. Reload Treeport to reconnect; if this continues, update Treeport and report the problem.'
+          )
+        )
         connectedSocket.disconnect()
         return
       }
@@ -145,6 +177,10 @@ export function connectBrowserPanel(
       handlers.message(message)
       if (message.type !== 'ready') {
         return
+      }
+
+      if (!ready) {
+        readyAt = Date.now()
       }
 
       ready = true
@@ -177,7 +213,20 @@ export function connectBrowserPanel(
 
       socket = null
       ready = false
+      if (readyAt !== null && Date.now() - readyAt >= 30_000) {
+        reconnectAttempts = 0
+      }
+
+      readyAt = null
+      const lostInput = pendingCommands.length > 0
       pendingCommands.length = 0
+      reportError(
+        new Error(
+          lostInput
+            ? 'Browser disconnected before queued input was sent. Reconnecting; queued input was not replayed. Retry your input after reconnecting.'
+            : 'Browser disconnected. Reconnecting with backoff (up to 30 seconds).'
+        )
+      )
       scheduleReconnect()
     })
     connectedSocket.on('connect_error', (error) => {
@@ -185,10 +234,18 @@ export function connectBrowserPanel(
         return
       }
 
-      reportError(error)
-      connectedSocket.disconnect()
+      // Detach first: disconnect must not overwrite the useful server error.
       socket = null
       ready = false
+      readyAt = null
+      const lostInput = pendingCommands.length > 0
+      pendingCommands.length = 0
+      reportError(
+        new Error(
+          `${error.message}${lostInput ? ' Queued input was not sent; retry it after reconnecting.' : ''}`
+        )
+      )
+      connectedSocket.disconnect()
       scheduleReconnect()
     })
   }
@@ -202,7 +259,18 @@ export function connectBrowserPanel(
   return {
     send(value) {
       const command = parseBrowserClientMessage(value)
-      if (!command || disposed) {
+      if (disposed) {
+        return
+      }
+
+      if (!command) {
+        handlers.message({
+          type: 'navigationError',
+          message:
+            value.type === 'insertText'
+              ? `Paste was not sent. The limit is ${BROWSER_MAX_INSERT_TEXT_LENGTH.toLocaleString('en-US')} UTF-16 code units; paste smaller portions. No text was inserted.`
+              : 'Browser command was not sent because it is invalid.'
+        })
         return
       }
 
@@ -220,11 +288,24 @@ export function connectBrowserPanel(
         return
       }
 
-      if (!connectedOnce) {
+      // Never queue paste: a delayed paste can target a different page or owner.
+      // Keep the initial command queue bounded without silently evicting input.
+      if (
+        !protocolFailed &&
+        !connectedOnce &&
+        command.type !== 'insertText' &&
+        pendingCommands.length < 32
+      ) {
         pendingCommands.push(command)
-        if (pendingCommands.length > 32) {
-          pendingCommands.shift()
-        }
+      } else if (
+        command.type !== 'frameAck' &&
+        command.type !== 'requestVideoKeyframe'
+      ) {
+        handlers.message({
+          type: 'navigationError',
+          message:
+            'Browser input was not sent. Wait for the browser to reconnect, then retry your input.'
+        })
       }
     },
     setVisible(nextVisible) {

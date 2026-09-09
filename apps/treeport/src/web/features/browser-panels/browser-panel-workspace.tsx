@@ -24,7 +24,12 @@ import type {
   WorktreeListener,
   WorktreeListenerDiscovery
 } from '@treeport/shared'
-import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
+import {
+  browserUrlSchema,
+  browserObservedUrlSchema,
+  BROWSER_MAX_INSERT_TEXT_LENGTH,
+  decodeUnknownOrNull
+} from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
 import { Button } from '../../components/ui/button'
 import { Empty, EmptyDescription, EmptyTitle } from '../../components/ui/empty'
@@ -266,13 +271,14 @@ export function BrowserPanelWorkspace({
         }
 
         onLoadingChange(panel.id, message.state.loading)
-        if (!addressDirtyRef.current) {
+        if (!addressDirtyRef.current && message.state.url !== previousUrl) {
           setError(null)
         }
 
         const pendingNavigation = pendingNavigationRef.current
         const validUrl =
-          decodeUnknownOrNull(browserUrlSchema, message.state.url) !== null
+          decodeUnknownOrNull(browserObservedUrlSchema, message.state.url) !==
+          null
         // takeControl can report the old page before the queued navigation starts.
         const navigationStarted =
           pendingNavigation === null ||
@@ -1230,11 +1236,23 @@ export function BrowserPanelWorkspace({
             onKeyUp={(event) => key(event, 'up')}
             onPaste={(event) => {
               event.preventDefault()
+              const text = event.clipboardData.getData('text/plain')
+              if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
+                setError(
+                  'Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.'
+                )
+                return
+              }
+
+              if (!connectionRef.current || inputBlocked) {
+                setError(
+                  'Paste was not sent. Wait for the browser to become available, then retry.'
+                )
+                return
+              }
+
               send({ type: 'takeControl' })
-              send({
-                type: 'insertText',
-                text: event.clipboardData.getData('text/plain')
-              })
+              send({ type: 'insertText', text })
             }}
           />
         )}

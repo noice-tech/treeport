@@ -1,6 +1,8 @@
 import crypto from 'node:crypto'
 import {
   browserUrlSchema,
+  browserObservedUrlSchema,
+  normalizeBrowserTitle,
   decodeUnknownOrNull,
   webPanelInputSchema
 } from '@treeport/shared'
@@ -487,7 +489,7 @@ export class PanelService {
       const parsedUrl =
         state.url === 'about:blank'
           ? 'about:blank'
-          : decodeUnknownOrNull(browserUrlSchema, state.url)
+          : decodeUnknownOrNull(browserObservedUrlSchema, state.url)
       if (!parsedUrl) {
         return yield* Effect.fail(
           new DomainError(
@@ -500,7 +502,7 @@ export class PanelService {
 
       const url =
         parsedUrl === 'about:blank' ? parsedUrl : new URL(parsedUrl).href
-      const requestedTitle = state.title.trim().slice(0, 256)
+      const requestedTitle = normalizeBrowserTitle(state.title.trim())
       const title =
         requestedTitle ||
         (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
