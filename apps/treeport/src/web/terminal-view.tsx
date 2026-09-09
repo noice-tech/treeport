@@ -4,10 +4,19 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore
+  useSyncExternalStore,
+  type MouseEvent
 } from 'react'
+import { toast } from 'sonner'
 import { ArrowPathIcon } from '@heroicons/react/16/solid'
 import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuTrigger
+} from './components/ui/context-menu'
 import { Button } from './components/ui/button'
 import {
   Dialog,
@@ -47,6 +56,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   exitSerial: 0,
   fileTransfer: null,
   hasSelection: false,
+  hoveredLink: null,
   pasteRequestSerial: 0,
   error: null
 }
@@ -63,6 +73,7 @@ export function TerminalView({
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const pasteTriggerRef = useRef<HTMLButtonElement>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
+  const linkToCopyRef = useRef<string | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
   const [paste, setPaste] = useState({
@@ -205,6 +216,18 @@ export function TerminalView({
     return () => activeSession.setInputModifiers(false, false, () => undefined)
   }, [activeSession, alt, ctrl])
 
+  const copyText = (text?: string) => {
+    void activeSession
+      ?.copyText(text)
+      .catch(() => toast.error('Couldn’t copy text'))
+  }
+
+  const stopLinkMouseEvent = (event: MouseEvent) => {
+    if (event.button === 2 && snapshot.hoveredLink) {
+      event.stopPropagation()
+    }
+  }
+
   const sendInput = (value: string) => {
     let data = value
     if (ctrl && value.length === 1) {
@@ -328,12 +351,44 @@ export function TerminalView({
     >
       {terminal ? (
         <div className="relative min-h-0 min-w-0 overflow-hidden">
-          <div
-            key={terminal.id}
-            className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1.5"
-            ref={hostRef}
-            onMouseDown={() => activeSession?.focus({ requestControl: true })}
-          />
+          <ContextMenu key={terminal.id}>
+            <ContextMenuTrigger
+              asChild
+              disabled={!snapshot.hoveredLink}
+              onContextMenu={() => {
+                // Keep the target when moving from the terminal into the menu.
+                linkToCopyRef.current = snapshot.hoveredLink
+              }}
+            >
+              <div
+                className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1.5"
+                ref={hostRef}
+                onMouseDownCapture={stopLinkMouseEvent}
+                onMouseUpCapture={stopLinkMouseEvent}
+                onMouseDown={() =>
+                  activeSession?.focus({ requestControl: true })
+                }
+              />
+            </ContextMenuTrigger>
+            <ContextMenuContent
+              onCloseAutoFocus={(event) => {
+                event.preventDefault()
+                activeSession?.focus()
+              }}
+            >
+              <ContextMenuGroup>
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (linkToCopyRef.current) {
+                      copyText(linkToCopyRef.current)
+                    }
+                  }}
+                >
+                  Copy link address
+                </ContextMenuItem>
+              </ContextMenuGroup>
+            </ContextMenuContent>
+          </ContextMenu>
           {snapshot.phase === 'ready' && !snapshot.controller ? (
             <span
               className="absolute top-3 right-14 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
@@ -398,7 +453,7 @@ export function TerminalView({
                 variant="ghost"
                 size="sm"
                 className="rounded-none border-r border-white/10 px-3 text-zinc-100"
-                onClick={() => activeSession?.copySelection()}
+                onClick={() => copyText()}
               >
                 Copy
               </Button>

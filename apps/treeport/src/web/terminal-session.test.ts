@@ -121,6 +121,7 @@ class FakeSession {
     exitSerial: 0,
     fileTransfer: null,
     hasSelection: false,
+    hoveredLink: null,
     pasteRequestSerial: 0,
     error: null
   }
@@ -241,6 +242,7 @@ function controllerSessionFixture() {
       exitSerial: 0,
       fileTransfer: null,
       hasSelection: false,
+      hoveredLink: null,
       pasteRequestSerial: 0,
       error: null
     }
@@ -266,6 +268,20 @@ function controllerSessionFixture() {
 }
 
 describe('terminal options', () => {
+  it('does not activate links on modifier-right-click or middle-click', () => {
+    const request = vi.fn()
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
+    vi.stubGlobal('fetch', request)
+    const handler = terminalOptions('term_source').linkHandler
+    for (const button of [1, 2]) {
+      handler.activate(
+        testAccess<MouseEvent>({ button, ctrlKey: true }),
+        'https://example.test/'
+      )
+    }
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('opens OSC 8 links in Browser on Apple Cmd-click or touch', () => {
     const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
@@ -274,17 +290,17 @@ describe('terminal options', () => {
     const url = 'https://github.com/acme/project/pull/123'
 
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      testAccess<MouseEvent>({ button: 0, metaKey: false, ctrlKey: false }),
       url
     )
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
+      testAccess<MouseEvent>({ button: 0, metaKey: false, ctrlKey: true }),
       url
     )
     expect(request).not.toHaveBeenCalled()
 
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
+      testAccess<MouseEvent>({ button: 0, metaKey: true, ctrlKey: false }),
       url
     )
     expect(request).toHaveBeenCalledWith(
@@ -300,7 +316,7 @@ describe('terminal options', () => {
       vi.fn(() => testAccess<MediaQueryList>({ matches: true }))
     )
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      testAccess<MouseEvent>({ button: 0, metaKey: false, ctrlKey: false }),
       url
     )
     expect(request).toHaveBeenCalledTimes(2)
@@ -314,17 +330,17 @@ describe('terminal options', () => {
     const url = 'http://example.test/docs'
 
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      testAccess<MouseEvent>({ button: 0, metaKey: false, ctrlKey: false }),
       url
     )
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
+      testAccess<MouseEvent>({ button: 0, metaKey: true, ctrlKey: false }),
       url
     )
     expect(request).not.toHaveBeenCalled()
 
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
+      testAccess<MouseEvent>({ button: 0, metaKey: false, ctrlKey: true }),
       url
     )
     expect(request).toHaveBeenCalledWith(
@@ -348,17 +364,17 @@ describe('terminal options', () => {
     const url = 'file:///Users/example/project/readme%20draft.md'
 
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      testAccess<MouseEvent>({ button: 0, metaKey: false, ctrlKey: false }),
       url
     )
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
+      testAccess<MouseEvent>({ button: 0, metaKey: false, ctrlKey: true }),
       url
     )
     expect(openFileUrl).not.toHaveBeenCalled()
 
     handler.activate(
-      testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
+      testAccess<MouseEvent>({ button: 0, metaKey: true, ctrlKey: false }),
       url
     )
     expect(openFileUrl).toHaveBeenCalledOnce()
@@ -371,7 +387,11 @@ describe('terminal options', () => {
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
     vi.stubGlobal('window', { open })
     const handler = terminalOptions().linkHandler
-    const click = testAccess<MouseEvent>({ metaKey: false, ctrlKey: true })
+    const click = testAccess<MouseEvent>({
+      button: 0,
+      metaKey: false,
+      ctrlKey: true
+    })
 
     for (const url of [
       'https://',
@@ -1283,6 +1303,7 @@ describe('TerminalSession', () => {
         exitSerial: 0,
         fileTransfer: null,
         hasSelection: false,
+        hoveredLink: null,
         pasteRequestSerial: 0,
         error: null
       }
