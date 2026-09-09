@@ -24,13 +24,6 @@ interface ManagedContext {
   }
 }
 
-const BrowserStatusSchema = Type.Object(
-  {
-    installed: Type.Boolean(),
-    launchReady: Type.Boolean()
-  },
-  { additionalProperties: true }
-)
 const ContextSchema = Type.Union([
   Type.Object(
     {
@@ -205,27 +198,9 @@ export default function treeportExtension(pi: ExtensionAPI): void {
         return
       }
 
-      let browserCommandsAvailable = true
-      try {
-        await runTreeportJson(pi, ['browser', 'status'], BrowserStatusSchema, {
-          cwd: sessionContext.cwd,
-          signal,
-          timeout: CONTEXT_TIMEOUT_MS
-        })
-      } catch {
-        browserCommandsAvailable = false
-      }
-
-      // Shutdown/reload invalidates this snapshot, even if the CLI ignores abort.
-      if (signal.aborted) {
-        return
-      }
-
       const guidanceLines = [
         'Treeport context:',
-        browserCommandsAvailable
-          ? 'Treeport is a worktree-first workspace for projects, trees, persistent terminals, and browser tabs.'
-          : 'Treeport is a worktree-first workspace for projects, trees, and persistent terminals.',
+        'Treeport is a worktree-first workspace for projects, trees, persistent terminals, and browser tabs.',
         'A project is a registered repository or folder. A tree is its main checkout or a linked Git worktree.',
         `This session runs in project ${JSON.stringify(
           detected.project.name
@@ -239,27 +214,16 @@ export default function treeportExtension(pi: ExtensionAPI): void {
         '`treeport terminal wait --until idle` observes OSC progress. It is not a readiness check and can return immediately.',
         'Delete a terminal only when the user asks to stop or close its process. Never delete this Pi session terminal.',
         'A side quest is independent work in another persistent terminal. Use `treeport terminal create` here or `treeport spawn` for another tree.',
-        ...(browserCommandsAvailable
-          ? [
-              'Use `treeport browser` commands for visible browser tabs. Take a new snapshot after navigation or a runtime change.',
-              'Leave browser tabs open for user inspection. Do not install Chromium without user approval.',
-              'Do not put secrets in browser URLs or command arguments.'
-            ]
-          : []),
+        'Use `treeport browser` commands for visible browser tabs. Take a new snapshot after navigation or a runtime change.',
+        'Leave browser tabs open for user inspection. Do not install Chromium without user approval.',
+        'Do not put secrets in browser URLs or command arguments.',
         'Use `treeport <area> <command> --help` for exact syntax. Do not load the Treeport skill for these routine operations.'
       ]
       // Publish the complete snapshot atomically. Discovery never edits history,
-      // including when a user submits while these CLI calls are in flight.
+      // including when a user submits while the context CLI call is in flight.
       guidance = guidanceLines.join('\n')
 
-      if (!browserCommandsAvailable) {
-        warn(
-          sessionContext,
-          'Treeport browser commands are unavailable in this session.'
-        )
-      } else {
-        lastWarning = null
-      }
+      lastWarning = null
 
       if (sessionContext.hasUI) {
         sessionContext.ui.setStatus(

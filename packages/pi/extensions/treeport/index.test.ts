@@ -176,10 +176,6 @@ function success<T>(value: T) {
   }
 }
 
-function commandArgs(call: ExecCall): string[] {
-  return call.args.filter((value) => value !== '--json')
-}
-
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubEnv('TREEPORT_CLI_ENTRYPOINT', '')
@@ -251,12 +247,7 @@ describe('Treeport Pi extension', () => {
   })
 
   it('waits for submission, hides context from chat, and deduplicates across fresh extension instances', async () => {
-    const execute = (call: ExecCall) =>
-      success(
-        commandArgs(call)[0] === 'context'
-          ? managed
-          : { installed: false, launchReady: false }
-      )
+    const execute = () => success(managed)
     const runtime = harness(execute)
     for (const reason of ['startup', 'reload', 'resume', 'new', 'fork']) {
       await runtime.emit('session_start', { reason })
@@ -270,7 +261,7 @@ describe('Treeport Pi extension', () => {
       options: { triggerTurn: false }
     })
     expect(runtime.sent[0]?.message.content).toMatch(/^Treeport context:/)
-    // Browser commands are useful even before Chromium is installed.
+    // Browser guidance does not depend on a runtime or capability probe.
     expect(runtime.sent[0]?.message.content).toContain('treeport browser')
     await runtime.emit('input')
     runtime.sessionManager.appendMessage({
@@ -298,18 +289,9 @@ describe('Treeport Pi extension', () => {
 
   it('appends changed context before input without rewriting history, including A -> B -> A', async () => {
     let name = managed.worktree.name
-    let browserAvailable = true
-    const runtime = harness((call) => {
-      if (commandArgs(call)[0] === 'context') {
-        return success({ ...managed, worktree: { ...managed.worktree, name } })
-      }
-
-      if (!browserAvailable) {
-        throw new Error('Browser capability unavailable')
-      }
-
-      return success({ installed: true, launchReady: true })
-    })
+    const runtime = harness(() =>
+      success({ ...managed, worktree: { ...managed.worktree, name } })
+    )
     await runtime.emit('session_start')
     await runtime.emit('input')
     runtime.sessionManager.appendMessage({
@@ -341,24 +323,14 @@ describe('Treeport Pi extension', () => {
         .messages.map((message) => message.role)
     ).toEqual(['custom', 'user', 'custom', 'user', 'custom', 'user'])
 
-    browserAvailable = false
     await runtime.emit('agent_settled')
     await vi.advanceTimersByTimeAsync(0)
     await runtime.emit('input')
-    expect(runtime.sent).toHaveLength(4)
-    expect(runtime.sent[3]?.message.content).not.toContain('treeport browser')
-    await runtime.emit('input')
-    expect(runtime.sent).toHaveLength(4)
+    expect(runtime.sent).toHaveLength(3)
   })
 
   it('does not inject while browsing branches and checks only the active branch at input', async () => {
-    const runtime = harness((call) =>
-      success(
-        commandArgs(call)[0] === 'context'
-          ? managed
-          : { installed: true, launchReady: true }
-      )
-    )
+    const runtime = harness(() => success(managed))
     const sm = runtime.sessionManager
     const root = sm.appendMessage({
       role: 'user',
@@ -391,13 +363,11 @@ describe('Treeport Pi extension', () => {
 
   it('only appends when Treeport is discovered in the middle of an existing conversation', async () => {
     let managedSession = false
-    const runtime = harness((call) =>
+    const runtime = harness(() =>
       success(
-        commandArgs(call)[0] === 'context'
-          ? managedSession
-            ? managed
-            : { managed: false, reason: 'outside_treeport' }
-          : { installed: true, launchReady: true }
+        managedSession
+          ? managed
+          : { managed: false, reason: 'outside_treeport' }
       )
     )
     const sm = runtime.sessionManager
@@ -447,12 +417,7 @@ describe('Treeport Pi extension', () => {
   })
 
   it('does not rewrite or duplicate previously visible context to hide it', async () => {
-    const execute = (call: ExecCall) =>
-      success(
-        commandArgs(call)[0] === 'context'
-          ? managed
-          : { installed: true, launchReady: true }
-      )
+    const execute = () => success(managed)
     const original = harness(execute)
     await original.emit('session_start')
     await original.emit('input')
@@ -472,13 +437,7 @@ describe('Treeport Pi extension', () => {
   })
 
   it('leaves running turns alone and refreshes in the background while idle', async () => {
-    const runtime = harness((call) =>
-      success(
-        commandArgs(call)[0] === 'context'
-          ? managed
-          : { installed: true, launchReady: true }
-      )
-    )
+    const runtime = harness(() => success(managed))
     runtime.context.isIdle = () => false
     await runtime.emit('session_start')
     await runtime.emit('input')
@@ -511,17 +470,13 @@ describe('Treeport Pi extension', () => {
           })
         )
     })
-    const runtime = harness((call) => {
-      if (commandArgs(call)[0] === 'context') {
-        if (slow) {
-          started()
-          return pending
-        }
-
-        return success(managed)
+    const runtime = harness(() => {
+      if (slow) {
+        started()
+        return pending
       }
 
-      return success({ installed: true, launchReady: true })
+      return success(managed)
     })
     await runtime.emit('session_start')
     expect(runtime.sent).toEqual([])
@@ -572,22 +527,21 @@ describe('Treeport Pi extension', () => {
           })
         )
     })
-    const runtime = harness((call) => {
-      if (commandArgs(call)[0] === 'context') {
-        if (slow) {
-          started()
-          return pending
-        }
-
-        return success({ ...managed, worktree: { ...managed.worktree, name } })
+    const runtime = harness(() => {
+      if (slow) {
+        started()
+        return pending
       }
 
-      return success({ installed: true, launchReady: true })
+      return success({ ...managed, worktree: { ...managed.worktree, name } })
     })
     await runtime.emit('session_start')
     name = 'idle-update'
     await vi.advanceTimersByTimeAsync(30_000)
-    expect(runtime.execCalls).toHaveLength(4)
+    expect(runtime.execCalls.map((call) => call.args)).toEqual([
+      ['context', '--json'],
+      ['context', '--json']
+    ])
     expect(runtime.sent).toEqual([])
     await runtime.emit('input')
     expect(runtime.sent[0]?.message.content).toContain('"idle-update"')
@@ -618,16 +572,12 @@ describe('Treeport Pi extension', () => {
 
   it('persists guidance without UI and leaves history untouched if Treeport becomes unavailable', async () => {
     let available = true
-    const runtime = harness((call) => {
+    const runtime = harness(() => {
       if (!available) {
         throw new Error('CLI unavailable')
       }
 
-      return success(
-        commandArgs(call)[0] === 'context'
-          ? managed
-          : { installed: false, launchReady: false }
-      )
+      return success(managed)
     })
     runtime.context.hasUI = false
     await runtime.emit('session_start')
@@ -665,13 +615,12 @@ describe('Treeport Pi extension', () => {
     vi.stubEnv('TREEPORT_CLI_ENTRYPOINT', '')
     vi.stubEnv('TREEPORT_DAEMON_RECORD', developmentRecord)
 
-    const runtime = harness((call) =>
-      commandArgs(call).join(' ') === 'browser status'
-        ? success({ installed: true, launchReady: true })
-        : success(managed)
-    )
+    const runtime = harness(() => success(managed))
     await runtime.emit('session_start', { reason: 'startup' })
     expect(runtime.tools).toEqual([])
+    expect(runtime.execCalls.map((call) => call.args)).toEqual([
+      ['context', '--json']
+    ])
     expect(
       runtime.execCalls.every((call) => call.command === developmentCli)
     ).toBe(true)
@@ -715,34 +664,6 @@ describe('Treeport Pi extension', () => {
       key: 'treeport',
       text: undefined
     })
-
-    const oldCli = harness((call) =>
-      commandArgs(call)[0] === 'context'
-        ? success(managed)
-        : {
-            stdout: '',
-            stderr: JSON.stringify({
-              error: {
-                code: 'USAGE_ERROR',
-                message: "error: unknown command 'browser'"
-              }
-            }),
-            code: 2,
-            killed: false
-          }
-    )
-    await oldCli.emit('session_start', { reason: 'startup' })
-    expect(oldCli.tools).toEqual([])
-    expect(oldCli.notifications).toContainEqual({
-      message: 'Treeport browser commands are unavailable in this session.',
-      type: 'warning'
-    })
-    expect(oldCli.sent).toEqual([])
-    await oldCli.emit('input')
-    const oldGuidance = oldCli.sent[0]?.message.content
-    expect(oldGuidance).toContain('projects, trees, and persistent terminals.')
-    expect(oldGuidance).not.toContain('browser tabs')
-    expect(oldGuidance).not.toContain('treeport browser')
 
     await rm(developmentRoot, { recursive: true, force: true })
   })
