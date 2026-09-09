@@ -5,15 +5,10 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 import { asc, eq, sql } from 'drizzle-orm'
 import type * as Effect from 'effect/Effect'
-import type { ProjectRecord, WebPanel, WorktreeRecord } from '@treeport/shared'
+import type { ProjectRecord } from '@treeport/shared'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
-import {
-  mapProject,
-  mapWorktree,
-  openDatabase,
-  type TreeportDatabase
-} from './database'
-import { projects, webPanels, worktrees } from './database-schema'
+import { mapProject, openDatabase, type TreeportDatabase } from './database'
+import { projects, worktrees } from './database-schema'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
@@ -374,22 +369,6 @@ export async function persistedProject(
   return mapProject(project, rows)
 }
 
-export async function persistedWorktree(
-  database: TreeportDatabase,
-  worktreeId: string
-): Promise<WorktreeRecord | null> {
-  const [row] = await database.db
-    .select({
-      worktree: worktrees,
-      mainWorktreePath: projects.mainWorktreePath
-    })
-    .from(worktrees)
-    .innerJoin(projects, eq(worktrees.projectId, projects.id))
-    .where(eq(worktrees.id, worktreeId))
-    .limit(1)
-  return row ? mapWorktree(row.worktree, row.mainWorktreePath) : null
-}
-
 export async function persistedProjectOpen(
   database: TreeportDatabase,
   projectId: string
@@ -417,37 +396,6 @@ export async function persistedProjectMetadata(
     .where(eq(projects.id, projectId))
     .limit(1)
   return row ? { ...row, nameIsCustom: Boolean(row.nameIsCustom) } : null
-}
-
-export async function persistedWebPanel(
-  database: TreeportDatabase,
-  panelId: string
-): Promise<WebPanel | null> {
-  const [row] = await database.db
-    .select()
-    .from(webPanels)
-    .where(eq(webPanels.id, panelId))
-    .limit(1)
-  if (!row) {
-    return null
-  }
-
-  return {
-    id: row.id,
-    kind: 'web',
-    worktreeId: row.worktreeId,
-    definitionId: row.definitionId,
-    title: row.title,
-    launch: {
-      // SAFETY: The test fixture provides the asserted contract used here.
-      input: JSON.parse(row.inputJson) as WebPanel['launch']['input'],
-      cwd: row.launchCwd
-    },
-    permissions: [],
-    sandbox: { allowSameOrigin: false },
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt
-  }
 }
 
 interface FakeWorktree {
@@ -979,30 +927,4 @@ export async function fixture() {
   services.push(service)
   await service.runEffect(service.initialize())
   return { root, main, runner, service, database, config }
-}
-
-export async function waitForOperation(
-  service: IntegrationService,
-  operationId: string
-) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const operation = await service.getOperation(operationId)
-    if (operation.status === 'completed' || operation.status === 'failed') {
-      return operation
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-  throw new Error('operation timeout')
-}
-
-export async function beginFromPreview(
-  service: IntegrationService,
-  worktreeId: string
-) {
-  const preview = await service.removePreview(worktreeId)
-  return service.beginRemove(worktreeId, {
-    confirmationToken: preview.confirmationToken,
-    confirmDestructive: preview.warnings.length > 0
-  })
 }
