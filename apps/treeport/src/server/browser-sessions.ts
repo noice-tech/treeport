@@ -167,6 +167,7 @@ interface BrowserAttachment {
   visible: boolean
   closing: boolean
   inFlightFrames: Map<number, number>
+  pendingJpeg: BrowserFrame | null
   waitingForKeyframe: boolean
   viewport: { width: number; height: number }
 }
@@ -668,6 +669,7 @@ export class BrowserSessionManager {
     session.videoError = null
     session.keyframeRequestedAt = 0
     for (const attachment of session.attachments.values()) {
+      attachment.pendingJpeg = null
       attachment.inFlightFrames.clear()
       attachment.waitingForKeyframe = true
     }
@@ -682,7 +684,9 @@ export class BrowserSessionManager {
           Effect.sync(() =>
             this.broadcastNavigationError(
               session,
-              `Could not open the popup: ${cause instanceof Error ? cause.message : String(cause)}`
+              `Could not open the popup: ${
+                cause instanceof Error ? cause.message : String(cause)
+              }`
             )
           )
         ),
@@ -1112,6 +1116,7 @@ export class BrowserSessionManager {
       visible: ticket.visible,
       closing: false,
       inFlightFrames: new Map(),
+      pendingJpeg: null,
       waitingForKeyframe: true,
       viewport: { ...session.state.viewport }
     }
@@ -1705,6 +1710,18 @@ export class BrowserSessionManager {
         continue
       }
 
+      // JPEGs are independent: retain only the newest image while the viewer
+      // decodes its current one. VP8 still needs its ordered reference frames.
+      if (
+        frame.mimeType === 'image/jpeg' &&
+        attachment.inFlightFrames.size > 0
+      ) {
+        attachment.pendingJpeg = frame
+        networkTelemetry.droppedNow('browsers', 'coalesced')
+        continue
+      }
+
+      attachment.pendingJpeg = null
       if (
         attachment.inFlightFrames.size >= 8 ||
         (attachment.waitingForKeyframe && !frame.keyframe)
@@ -1770,6 +1787,19 @@ export class BrowserSessionManager {
 
       attachment.inFlightFrames.delete(message.sequence)
       networkTelemetry.durationNow('browsers', 'ack_lag', Date.now() - sentAt)
+      const pending = attachment.pendingJpeg
+      if (pending && attachment.inFlightFrames.size === 0) {
+        attachment.pendingJpeg = null
+        if (attachment.visible && attachment.transport.isConnected()) {
+          if (attachment.transport.sendFrame(pending)) {
+            attachment.waitingForKeyframe = false
+            attachment.inFlightFrames.set(pending.sequence, Date.now())
+          } else {
+            attachment.waitingForKeyframe = true
+          }
+        }
+      }
+
       if (attachment.visible && attachment.waitingForKeyframe) {
         this.requestVideoKeyframe(session)
       }
@@ -1780,6 +1810,7 @@ export class BrowserSessionManager {
     if (message.type === 'setVisible') {
       attachment.visible = message.visible
       attachment.inFlightFrames.clear()
+      attachment.pendingJpeg = null
       attachment.waitingForKeyframe = true
       if (message.visible) {
         this.prepareVideoViewer(session, attachment)
@@ -1964,7 +1995,10 @@ export class BrowserSessionManager {
           })
         }
       },
-      required: false
+      // Reserve admission capacity for releases after accepting their presses.
+      required:
+        (message.type === 'key' || message.type === 'pointer') &&
+        message.phase === 'up'
     })
   }
 

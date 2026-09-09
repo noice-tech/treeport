@@ -6,6 +6,8 @@ export class BrowserVideoDecoder {
   private lastSequence = 0
   private disposed = false
   private failures = 0
+  private decodingJpeg = false
+  private pendingJpeg: BrowserFrame | null = null
 
   constructor(
     private readonly draw: (frame: VideoFrame) => void,
@@ -19,6 +21,11 @@ export class BrowserVideoDecoder {
     }
 
     this.decoder = null
+    if (this.pendingJpeg) {
+      this.send({ type: 'frameAck', sequence: this.pendingJpeg.sequence })
+      this.pendingJpeg = null
+    }
+
     for (const sequence of this.pending.values()) {
       this.send({ type: 'frameAck', sequence })
     }
@@ -47,13 +54,24 @@ export class BrowserVideoDecoder {
     }
 
     if (frame.mimeType === 'image/jpeg') {
-      this.lastSequence = frame.sequence
+      // Keep decoding bounded without starving paint when capture is faster
+      // than decoding. A completed image is useful even if a newer one arrived.
+      if (this.decodingJpeg) {
+        if (this.pendingJpeg) {
+          this.send({ type: 'frameAck', sequence: this.pendingJpeg.sequence })
+        }
+
+        this.pendingJpeg = frame
+        return
+      }
+
+      this.decodingJpeg = true
       void createImageBitmap(
         new Blob([new Uint8Array(frame.data)], { type: 'image/jpeg' })
       )
         .then((bitmap) => {
           try {
-            if (!this.disposed && this.lastSequence === frame.sequence) {
+            if (!this.disposed) {
               const decoded = new VideoFrame(bitmap, {
                 timestamp: frame.timestamp
               })
@@ -75,9 +93,15 @@ export class BrowserVideoDecoder {
             )
           }
         })
-        .finally(() =>
+        .finally(() => {
+          this.decodingJpeg = false
           this.send({ type: 'frameAck', sequence: frame.sequence })
-        )
+          const pending = this.pendingJpeg
+          this.pendingJpeg = null
+          if (pending && !this.disposed) {
+            this.receive(pending)
+          }
+        })
       return
     }
 
