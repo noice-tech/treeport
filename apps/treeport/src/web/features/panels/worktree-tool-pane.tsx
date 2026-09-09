@@ -531,7 +531,7 @@ export function WorktreeToolPane({
       {tools.length > 0 ? (
         <div className="flex min-w-0 items-center gap-1.5 border-b border-white/8 bg-zinc-900 py-1.5 pr-10 pl-2">
           <div
-            className="flex min-w-0 items-center gap-1.5 overflow-x-auto"
+            className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             role="tablist"
             aria-label={`${worktreeName} tool tabs`}
           >
