@@ -104,20 +104,17 @@ export function installBrowserWebviewPolicy(options: {
       const computer = options.selectedComputer()
       const partition = params.partition ?? webPreferences.partition ?? ''
       const panelId = browserBootstrapPanelId(params.src ?? '') ?? ''
-      const atCapacity = entries.size + pendingGuests.size >= 6
       if (
         !computer?.loopback ||
         partition !== BROWSER_PARTITION ||
         !decodeUnknownOrNull(browserPanelIdSchema, panelId) ||
-        entries.has(panelId) ||
-        atCapacity
+        entries.has(panelId)
       ) {
         event.preventDefault()
         options.trustedRenderer.send('native-browser:unavailable', {
           panelId,
-          message: atCapacity
-            ? 'This desktop window can run six Browser pages. Close another Browser tab, then select Retry.'
-            : 'The desktop app rejected this Browser. Select Retry to reopen it.'
+          message:
+            'The desktop app rejected this Browser. Select Retry to reopen it.'
         })
         return
       }
@@ -140,8 +137,7 @@ export function installBrowserWebviewPolicy(options: {
     if (
       !computer?.loopback ||
       guest.hostWebContents !== options.trustedRenderer ||
-      guest.session !== session.fromPartition(BROWSER_PARTITION) ||
-      entries.size + pendingGuests.size >= 6
+      guest.session !== session.fromPartition(BROWSER_PARTITION)
     ) {
       guest.close({ waitForBeforeUnload: false })
       return

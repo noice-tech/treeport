@@ -1597,8 +1597,8 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
         .toBe('panel-two')
     })
 
-    await test.step('reject native capacity overflow and recover after closing a guest', async () => {
-      // Native attachment has a six-page limit. Rejection must offer recovery.
+    await test.step('open more than six native browser pages', async () => {
+      // Keep the existing page open while adding six more pages.
       for (let index = 0; index < 6; index += 1) {
         await restartedWindow
           .getByRole('button', { name: 'New panel in main tree' })
@@ -1607,26 +1607,10 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
           .getByRole('dialog', { name: 'New panel' })
           .getByRole('button', { name: 'Browser, hosted browser' })
           .click()
-        if (index < 5) {
-          await expect(
-            restartedWindow.getByRole('button', { name: 'Reload application' })
-          ).toBeEnabled()
-        }
+        await expect(
+          restartedWindow.getByRole('button', { name: 'Reload application' })
+        ).toBeEnabled()
       }
-      await expect(
-        restartedWindow.getByText(
-          'This desktop window can run six Browser pages. Close another Browser tab, then select Retry.'
-        )
-      ).toBeVisible()
-      await expect(
-        restartedWindow.getByRole('button', { name: 'Retry', exact: true })
-      ).toBeEnabled()
-      await restartedWindow
-        .getByRole('button', { name: 'Close Shared profile', exact: true })
-        .click()
-      await restartedWindow
-        .getByRole('button', { name: 'Retry', exact: true })
-        .click()
       await restartedAddress.fill(`${origin}/site/profile`)
       await restartedAddress.press('Enter')
       await expect
