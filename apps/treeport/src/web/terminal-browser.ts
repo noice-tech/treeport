@@ -156,7 +156,7 @@ export function restoreTerminalSnapshotLinks(
   }
 }
 
-export function activateTerminalLink(
+function activateTerminalLink(
   event: MouseEvent,
   url: string,
   terminalId?: string
