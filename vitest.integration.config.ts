@@ -2,13 +2,12 @@ import { defineConfig } from 'vitest/config'
 
 // Direct runs must not inherit the managing Treeport instance's paths or credentials.
 for (const name of Object.keys(process.env)) {
-  // The browser executable is a test input, not an instance address or credential.
-  if (name.startsWith('TREEPORT_') && name !== 'TREEPORT_BROWSER_EXECUTABLE') {
+  if (name.startsWith('TREEPORT_')) {
     delete process.env[name]
   }
 }
 
-// Bound native browser and subprocess load while allowing independent fixtures
+// Bound subprocess load while allowing independent fixtures
 // to overlap. Tests own separate runtime directories and ephemeral listeners.
 export default defineConfig({
   test: {

@@ -783,7 +783,7 @@ export function storedServiceMode(input: {
   return input.mode ?? (input.manager === 'launchd' ? 'headless' : 'user')
 }
 
-export async function assertServiceDirectory(
+async function assertServiceDirectory(
   directory: string,
   uid: number
 ): Promise<void> {

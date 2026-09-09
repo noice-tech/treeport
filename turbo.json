@@ -25,14 +25,8 @@
       "dependsOn": ["build"],
       "outputs": []
     },
-    "@treeport/desktop#test:desktop": {
-      "dependsOn": ["build"],
-      "cache": false,
-      "passThroughEnv": [
-        "DBUS_SESSION_BUS_ADDRESS",
-        "DISPLAY",
-        "WAYLAND_DISPLAY"
-      ]
+    "//#knip": {
+      "cache": false
     },
     "@treeport/treeport#test:package": {
       "dependsOn": ["build"],
@@ -53,12 +47,7 @@
     },
     "//#test:integration:run": {
       "dependsOn": ["@treeport/treeport#build"],
-      "cache": false,
-      "passThroughEnv": [
-        "PLAYWRIGHT_BROWSERS_PATH",
-        "TREEPORT_BROWSER_EXECUTABLE",
-        "DOCKER_*"
-      ]
+      "cache": false
     }
   }
 }

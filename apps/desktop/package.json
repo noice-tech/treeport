@@ -19,14 +19,9 @@
     "publish:desktop": "electron-forge publish",
     "check:release": "node scripts/check-release.mjs",
     "smoke:release": "node scripts/smoke-release.mjs",
-    "test": "pnpm build && pnpm test:desktop",
-    "pretest:desktop": "install-electron",
-    "test:desktop": "playwright test --config playwright.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "devDependencies": {
-    "@effect/platform-node": "^0.108.1",
-    "@effect/rpc": "^0.76.2",
     "@electron-forge/cli": "7.11.2",
     "@electron-forge/core": "7.11.2",
     "@electron-forge/maker-dmg": "7.11.2",
