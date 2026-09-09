@@ -51,6 +51,7 @@ import {
 } from './local-source-path'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 import { createRendererRequestHandler } from './renderer-request-handler'
+import { loadRenderer } from './renderer-load'
 import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 
 const dirname = __dirname
@@ -534,9 +535,7 @@ function connectSelected(
         broadcastState()
         const renderer = mainWindow?.webContents
         if (renderer && !renderer.getURL().startsWith('treeport-app://')) {
-          runtime.fork(
-            Effect.tryPromise(() => renderer.loadURL(PRIVATE_RENDERER_URL))
-          )
+          yield* loadRenderer(renderer, PRIVATE_RENDERER_URL)
         }
 
         return
@@ -565,9 +564,12 @@ function connectSelected(
         : { status: 'connecting', computerId: computer.id }
       broadcastState()
       const renderer = mainWindow?.webContents
-      if (renderer && renderer.getURL() !== requestedUrl) {
-        runtime.fork(Effect.tryPromise(() => renderer.loadURL(requestedUrl)))
-      }
+      // Keep navigation recovery owned by this connection, so switching
+      // computers or closing the window also cancels pending retries.
+      // getURL() can already equal the target after a failed navigation.
+      const rendererLoad = yield* Effect.fork(
+        renderer ? loadRenderer(renderer, requestedUrl) : Effect.void
+      )
 
       yield* Stream.runForEach(watchBackendHealth(computer.origin), (health) =>
         Effect.gen(function* () {
@@ -634,6 +636,8 @@ function connectSelected(
           broadcastState()
         })
       )
+      // Health can become ready before the renderer dev server does.
+      yield* Fiber.join(rendererLoad)
     })
   )
 }
