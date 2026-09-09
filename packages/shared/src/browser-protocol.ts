@@ -2,7 +2,7 @@
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
-export const BROWSER_PROTOCOL_VERSION = 6
+export const BROWSER_PROTOCOL_VERSION = 7
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
 
@@ -125,7 +125,52 @@ export type BrowserSessionState = Schema.Schema.Type<
   typeof browserSessionStateSchema
 >
 
+// Only native keywords cross the boundary: remote cursor URLs must never load
+// resources from the viewer's network or carry credentials into the client.
+export const browserCursorSchema = Schema.Literal(
+  'auto',
+  'default',
+  'none',
+  'context-menu',
+  'help',
+  'pointer',
+  'progress',
+  'wait',
+  'cell',
+  'crosshair',
+  'text',
+  'vertical-text',
+  'alias',
+  'copy',
+  'move',
+  'no-drop',
+  'not-allowed',
+  'grab',
+  'grabbing',
+  'e-resize',
+  'n-resize',
+  'ne-resize',
+  'nw-resize',
+  's-resize',
+  'se-resize',
+  'sw-resize',
+  'w-resize',
+  'ew-resize',
+  'ns-resize',
+  'nesw-resize',
+  'nwse-resize',
+  'col-resize',
+  'row-resize',
+  'all-scroll',
+  'zoom-in',
+  'zoom-out'
+)
+
 export const browserServerMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('cursor'),
+    cursor: browserCursorSchema
+  }),
   Schema.Struct({
     type: Schema.Literal('ready'),
     state: browserSessionStateSchema

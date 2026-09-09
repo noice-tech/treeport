@@ -217,12 +217,30 @@ export function BrowserPanelWorkspace({
 
   const receiveMessage = useCallback(
     (message: BrowserServerMessage) => {
+      const canvas = canvasRef.current
+      if (message.type === 'cursor') {
+        if (canvas && stateRef.current?.controlled) {
+          canvas.style.cursor = message.cursor
+        }
+
+        return
+      }
+
       if (
         message.type === 'ready' ||
         message.type === 'state' ||
         message.type === 'controlChanged'
       ) {
         const previousUrl = stateRef.current?.url ?? panel.url
+        if (
+          canvas &&
+          (message.type === 'ready' ||
+            !message.state.controlled ||
+            message.state.url !== previousUrl)
+        ) {
+          canvas.style.cursor = 'default'
+        }
+
         stateRef.current = message.state
         if (
           message.state.viewport.width > 0 &&
@@ -281,6 +299,10 @@ export function BrowserPanelWorkspace({
 
         setInputValue(receivedAddress)
         return
+      }
+
+      if (canvas) {
+        canvas.style.cursor = 'default'
       }
 
       onLoadingChange(panel.id, false)
@@ -354,6 +376,10 @@ export function BrowserPanelWorkspace({
     return () => {
       if (connectionRef.current === connection) {
         connectionRef.current = null
+      }
+
+      if (canvasRef.current) {
+        canvasRef.current.style.cursor = 'default'
       }
 
       decoder.dispose()
@@ -1084,6 +1110,9 @@ export function BrowserPanelWorkspace({
               }
 
               send({ type: 'pointer', phase: 'move', ...point(event) })
+            }}
+            onPointerLeave={(event) => {
+              event.currentTarget.style.cursor = 'default'
             }}
             onPointerDown={(event) => {
               if (event.pointerType === 'touch' && !event.isPrimary) {

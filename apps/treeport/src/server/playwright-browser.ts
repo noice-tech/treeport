@@ -18,6 +18,7 @@ import type {
 
 import { PlaywrightBrowserVideo } from './browser-video'
 import { browserRuntime } from './browser-runtime'
+import { browserCursor } from './browser-cursor'
 import { BrowserContainer } from './browser-container'
 
 export interface PlaywrightBrowserCallbacks {
@@ -527,6 +528,10 @@ export class PlaywrightBrowser {
       canGoBack: history.currentIndex > 0,
       canGoForward: history.currentIndex < history.entries.length - 1
     })
+  }
+
+  async cursor(point: { x: number; y: number }) {
+    return this.page ? browserCursor(this.page, point) : ('default' as const)
   }
 
   async requestVideoKeyframe(): Promise<void> {
