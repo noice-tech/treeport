@@ -13,6 +13,7 @@ import type {
   WebPanelInput,
   WorktreeRecord
 } from '@treeport/shared'
+import { registerBrowserOpen, traceBrowserOpen } from './browser-open-tracing'
 import { NotificationCenter } from './features/notifications/notification-center'
 import { TerminalBellAttention } from './features/notifications/terminal-bell-attention'
 import { BrowserPanelWorkspace } from './features/browser-panels/browser-panel-workspace'
@@ -809,6 +810,12 @@ function WorkspaceApp() {
   }
   const navigatePanelOpenRequest = useCallback(
     (request: ProductEventDataMap['panel.open_requested']) => {
+      if (request.requestId) {
+        browserTrace('browser.open.event_received', request.requestId, {
+          panelId: request.panelId
+        })
+      }
+
       if (
         !openRequestMatchesWorkspace(
           request.sourceTerminalId,
@@ -818,6 +825,11 @@ function WorkspaceApp() {
         )
       ) {
         return
+      }
+
+      if (request.requestId) {
+        registerBrowserOpen(request.panelId, request.requestId)
+        traceBrowserOpen(request.panelId, 'browser.open.ui_requested')
       }
 
       revealTool(
@@ -871,9 +883,21 @@ function WorkspaceApp() {
                 await navigateToWorkspace(freshTarget)
               }
             })
-      void navigation.catch((error) => {
-        notifyError(error, { operation: 'open panel' })
-      })
+      void navigation
+        .then(() => {
+          if (request.requestId) {
+            browserTrace(
+              'browser.open.workspace_navigated',
+              request.requestId,
+              {
+                panelId: request.panelId
+              }
+            )
+          }
+        })
+        .catch((error) => {
+          notifyError(error, { operation: 'open panel' })
+        })
     },
     [
       activePanelId,

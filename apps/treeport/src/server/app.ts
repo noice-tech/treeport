@@ -1207,12 +1207,14 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(openBrowserPanelFromTerminalSchema)
+        const request = yield* HttpServerRequest.HttpServerRequest
         return jsonContractResponse(
           openBrowserPanelResponseSchema,
           yield* operation(() =>
             service.panels.openBrowserPanelFromTerminal(
               params.terminalId!,
-              body.url
+              body.url,
+              request.headers['x-request-id'] ?? null
             )
           ),
           201

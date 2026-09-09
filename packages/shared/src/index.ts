@@ -1008,6 +1008,7 @@ interface ProductEventPayloadMap {
     worktreeId: string
     panelId: string
     panel: BrowserPanel | WebPanel
+    requestId?: string | null
     sourceTerminalId: string | null
     sourcePanelId: string | null
   }

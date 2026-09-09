@@ -187,6 +187,9 @@ export const productEventSchema = Schema.Union(
       worktreeId: identifierSchema,
       panelId: identifierSchema,
       panel: openPanelSnapshotSchema,
+      requestId: Schema.optionalWith(Schema.NullOr(Schema.String), {
+        exact: true
+      }),
       sourceTerminalId: Schema.NullOr(identifierSchema),
       sourcePanelId: Schema.NullOr(identifierSchema)
     })

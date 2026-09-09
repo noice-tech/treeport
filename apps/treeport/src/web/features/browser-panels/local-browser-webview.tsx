@@ -7,6 +7,7 @@ import type {
   BrowserServerMessage,
   BrowserSessionState
 } from '@treeport/shared'
+import { traceBrowserOpen } from '../../browser-open-tracing'
 import type { BrowserPanelConnection } from '../../browser-session-client'
 import {
   connectLocalBrowserOwner,
@@ -81,6 +82,7 @@ export function LocalBrowserWebview({
       return
     }
 
+    traceBrowserOpen(panel.id, 'browser.local.mounted')
     const abortController = new AbortController()
     let disposed = false
     let registering = false
@@ -114,6 +116,7 @@ export function LocalBrowserWebview({
         return
       }
 
+      traceBrowserOpen(panel.id, 'browser.local.unavailable')
       onMessage({
         type: 'browserUnavailable',
         message: cause instanceof Error ? cause.message : String(cause),
@@ -162,14 +165,25 @@ export function LocalBrowserWebview({
       }
     }
     const startLoading = () => {
+      traceBrowserOpen(panel.id, 'browser.local.loading_started')
       loading = true
       emitState()
     }
     const stopLoading = () => {
+      traceBrowserOpen(panel.id, 'browser.local.loading_stopped')
       loading = false
       emitState()
     }
-    const refresh = () => emitState()
+    const refresh = (event: Event) => {
+      if (
+        event.type === 'did-navigate' ||
+        event.type === 'did-navigate-in-page'
+      ) {
+        traceBrowserOpen(panel.id, 'browser.local.navigation_committed')
+      }
+
+      emitState()
+    }
     const clearRuntimeControl = () => {
       externalControllerRef.current = null
       retainPaintRef.current = false
@@ -331,12 +345,16 @@ export function LocalBrowserWebview({
           startLoading()
         }
 
+        traceBrowserOpen(panel.id, 'browser.local.command_dispatched', {
+          command: message.type
+        })
         const revision = ++commandRevision
         const navigationFailed = (cause: unknown) => {
           if (disposed || revision !== commandRevision) {
             return
           }
 
+          traceBrowserOpen(panel.id, 'browser.local.navigation_failed')
           loading = false
           emitState()
           onMessage({
@@ -391,6 +409,7 @@ export function LocalBrowserWebview({
       }
 
       registering = true
+      traceBrowserOpen(panel.id, 'browser.local.owner_ticket_started')
       void (async () => {
         const ownerTicket = await requestLocalBrowserOwnerTicket(
           panel.id,
@@ -401,12 +420,14 @@ export function LocalBrowserWebview({
           return
         }
 
+        traceBrowserOpen(panel.id, 'browser.local.owner_ticket_received')
         if (!descriptor || descriptorChallenge !== ownerTicket.challenge) {
           descriptor = await bridge.registerBrowser(
             panel.id,
             webview.getWebContentsId(),
             ownerTicket.challenge
           )
+          traceBrowserOpen(panel.id, 'browser.local.registered')
           descriptorChallenge = ownerTicket.challenge
         }
 
@@ -447,6 +468,9 @@ export function LocalBrowserWebview({
           return
         }
 
+        traceBrowserOpen(panel.id, 'browser.local.owner_connected', {
+          resumed: connectionOwner.resumed
+        })
         owner = connectionOwner
         takeControlRef.current = () => owner?.takeControl()
         // A granted claim starts unlocked; the daemon reapplies external control after ready.
@@ -521,6 +545,7 @@ export function LocalBrowserWebview({
       webview.addEventListener(eventName, refresh)
     }
     const browserReady = () => {
+      traceBrowserOpen(panel.id, 'browser.local.dom_ready')
       domReady = true
       connectOwner()
     }

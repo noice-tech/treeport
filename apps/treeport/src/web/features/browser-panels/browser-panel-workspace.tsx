@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
   type PointerEvent
 } from 'react'
+import { traceBrowserOpen } from '../../browser-open-tracing'
 import {
   ArrowLeftIcon,
   ArrowPathIcon,
@@ -150,6 +151,13 @@ export function BrowserPanelWorkspace({
   const [listenersLoading, setListenersLoading] = useState(false)
   const { localBrowser, computerId } = useDesktopRuntime()
 
+  useEffect(() => {
+    traceBrowserOpen(panel.id, 'browser.open.panel_committed', {
+      active,
+      localBrowser
+    })
+  }, [active, localBrowser, panel])
+
   const send = useCallback(
     (message: Parameters<BrowserPanelConnection['send']>[0]) => {
       connectionRef.current?.send(message)
@@ -252,6 +260,7 @@ export function BrowserPanelWorkspace({
         setState(message.state)
 
         if (message.type === 'ready') {
+          traceBrowserOpen(panel.id, 'browser.open.runtime_ready')
           setAddressFocusRevision((revision) => revision + 1)
           setFailure(null)
         }
@@ -336,6 +345,8 @@ export function BrowserPanelWorkspace({
       return
     }
 
+    traceBrowserOpen(panel.id, 'browser.hosted.attach_started')
+    let firstFrame = true
     const decoder = new BrowserVideoDecoder(
       (frame) => {
         const canvas = canvasRef.current
@@ -353,6 +364,11 @@ export function BrowserPanelWorkspace({
         }
 
         drawing.drawImage(frame, 0, 0)
+        if (firstFrame) {
+          firstFrame = false
+          traceBrowserOpen(panel.id, 'browser.hosted.first_frame_drawn')
+        }
+
         setError((current) =>
           current === 'Browser video was interrupted. Reconnecting…'
             ? null

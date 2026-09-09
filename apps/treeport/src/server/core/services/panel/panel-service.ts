@@ -279,7 +279,8 @@ export class PanelService {
     requestedUrl?: string,
     sourceTerminalId: string | null = null,
     sourcePanelId: string | null = null,
-    reuseExistingUrl = false
+    reuseExistingUrl = false,
+    requestId: string | null = null
   ): PanelEffect<OpenBrowserPanelResult> {
     const getBrowserPanel = this.getBrowserPanel.bind(this)
     const createBrowserPanel = this.createBrowserPanel.bind(this)
@@ -290,8 +291,9 @@ export class PanelService {
       const terminals = yield* TerminalOperations
       let targetWorktreeId = worktreeId
       if (sourceTerminalId) {
-        const terminal =
-          yield* terminals.getTerminalFromBindings(sourceTerminalId)
+        const terminal = yield* terminals
+          .getTerminalFromBindings(sourceTerminalId)
+          .pipe(Effect.withSpan('treeport.browser.open.resolve_terminal'))
         if (targetWorktreeId && terminal.worktreeId !== targetWorktreeId) {
           return yield* Effect.fail(
             new DomainError(
@@ -356,31 +358,46 @@ export class PanelService {
             )
             .orderBy(desc(browserPanels.createdAt), desc(browserPanels.id))
             .limit(1)
-        )
+        ).pipe(Effect.withSpan('treeport.browser.open.lookup_panel'))
         existingPanel = existing ? mapBrowserPanel(existing) : null
       }
 
       const panel =
         existingPanel ??
-        (yield* createBrowserPanel(targetWorktreeId, requestedUrl))
+        (yield* createBrowserPanel(targetWorktreeId, requestedUrl).pipe(
+          Effect.withSpan('treeport.browser.open.create_panel')
+        ))
+      yield* Effect.annotateCurrentSpan({
+        'treeport.panel.id': panel.id,
+        'treeport.browser.panel_reused': existingPanel !== null
+      })
       yield* Effect.sync(() =>
         events.publish('panel.open_requested', {
           worktreeId: targetWorktreeId,
           panelId: panel.id,
           panel,
           sourceTerminalId,
-          sourcePanelId
+          sourcePanelId,
+          requestId
         })
-      )
+      ).pipe(Effect.withSpan('treeport.browser.open.publish'))
       return { panel }
-    })
+    }).pipe(Effect.withSpan('treeport.browser.open'))
   }
 
   openBrowserPanelFromTerminal(
     terminalId: string,
-    requestedUrl: string
+    requestedUrl: string,
+    requestId: string | null = null
   ): PanelEffect<OpenBrowserPanelResult> {
-    return this.openBrowserPanel(null, requestedUrl, terminalId, null, true)
+    return this.openBrowserPanel(
+      null,
+      requestedUrl,
+      terminalId,
+      null,
+      true,
+      requestId
+    )
   }
 
   openBrowserPanelFromPanel(
