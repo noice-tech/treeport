@@ -200,7 +200,7 @@ export function installBrowserWebviewPolicy(options: {
           p { margin: 0 0 0.75rem; color: #5f6368; font-size: 0.95rem; line-height: 1.5; }
           button { margin: 1rem 0 1.5rem; border: 0; border-radius: 999px; padding: 0.65rem 1.15rem; background: #1a73e8; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
           button:focus-visible { outline: 3px solid #8ab4f8; outline-offset: 3px; }
-          code { color: #5f6368; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+          code { display: block; overflow-wrap: anywhere; color: #5f6368; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
           @media (prefers-color-scheme: dark) { body { background: #202124; color: #e8eaed; } p, code { color: #9aa0a6; } button { background: #8ab4f8; color: #202124; } }
         `)}
         const main = document.createElement('main')
