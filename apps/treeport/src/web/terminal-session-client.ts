@@ -12,7 +12,6 @@ import {
 } from '@treeport/shared'
 import { errorMessage } from './error-message'
 import {
-  activateTerminalLink,
   restoreTerminalSnapshotLinks,
   TERMINAL_FONT_SIZE,
   terminalKeyboardInput,
@@ -94,6 +93,7 @@ export interface TerminalSessionSnapshot {
   exitSerial: number
   fileTransfer: TerminalFileTransfer | null
   hasSelection: boolean
+  hoveredLink: string | null
   pasteRequestSerial: number
   error: string | null
 }
@@ -109,6 +109,7 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   exitSerial: 0,
   fileTransfer: null,
   hasSelection: false,
+  hoveredLink: null,
   pasteRequestSerial: 0,
   error: null
 }
@@ -367,6 +368,7 @@ export class TerminalSession {
     this.selectionDragCancel?.()
     this.wrapper?.remove()
     this.host = null
+    this.update({ hoveredLink: null })
     this.focusAfterRender = false
   }
 
@@ -486,9 +488,8 @@ export class TerminalSession {
     this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`, options)
   }
 
-  copySelection(): void {
-    const selection = this.terminal?.getSelection() ?? ''
-    if (!selection) {
+  async copyText(text = this.terminal?.getSelection() ?? ''): Promise<void> {
+    if (!text) {
       return
     }
 
@@ -496,23 +497,29 @@ export class TerminalSession {
     // execCommand remains the reliable synchronous path from a user gesture
     // there, provided the selected value lives in a real form control.
     const copyBuffer = document.createElement('textarea')
-    copyBuffer.value = selection
+    copyBuffer.value = text
     copyBuffer.readOnly = true
     copyBuffer.style.position = 'fixed'
     copyBuffer.style.left = '-9999px'
     copyBuffer.style.opacity = '0'
-    document.body.appendChild(copyBuffer)
+    // Stay inside the active focus scope when copying from a modal menu.
+    ;(document.activeElement?.parentElement ?? document.body).appendChild(
+      copyBuffer
+    )
     copyBuffer.focus({ preventScroll: true })
     copyBuffer.select()
-    copyBuffer.setSelectionRange(0, selection.length)
+    copyBuffer.setSelectionRange(0, text.length)
     const copied = document.execCommand('copy')
     copyBuffer.remove()
-
-    if (!copied && navigator.clipboard) {
-      void navigator.clipboard.writeText(selection)
-    }
-
     this.focus()
+
+    if (!copied) {
+      if (!navigator.clipboard) {
+        throw new Error('Clipboard is unavailable')
+      }
+
+      await navigator.clipboard.writeText(text)
+    }
   }
 
   clearSelection(): void {
@@ -563,7 +570,10 @@ export class TerminalSession {
       return
     }
 
-    const terminal = new Terminal(terminalOptions(this.terminalId))
+    const options = terminalOptions(this.terminalId, (hoveredLink) =>
+      this.update({ hoveredLink })
+    )
+    const terminal = new Terminal(options)
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(
@@ -575,9 +585,10 @@ export class TerminalSession {
       })
     )
     terminal.loadAddon(
-      new WebLinksAddon((event, url) =>
-        activateTerminalLink(event, url, this.terminalId)
-      )
+      new WebLinksAddon(options.linkHandler.activate, {
+        hover: options.linkHandler.hover,
+        leave: options.linkHandler.leave
+      })
     )
     terminal.open(this.wrapper)
     terminal.onSelectionChange(() => this.updateSelectionState())

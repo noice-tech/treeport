@@ -162,8 +162,9 @@ export function activateTerminalLink(
   terminalId?: string
 ): void {
   if (
-    !globalThis.matchMedia?.('(pointer: coarse)').matches &&
-    (usesMacKeyboard() ? !event.metaKey : !event.ctrlKey)
+    event.button !== 0 ||
+    (!globalThis.matchMedia?.('(pointer: coarse)').matches &&
+      (usesMacKeyboard() ? !event.metaKey : !event.ctrlKey))
   ) {
     return
   }
@@ -568,7 +569,10 @@ export function trackTerminalScrolling(
   }
 }
 
-export function terminalOptions(terminalId?: string) {
+export function terminalOptions(
+  terminalId?: string,
+  onLinkHover?: (url: string | null) => void
+) {
   return {
     cursorBlink: true,
     convertEol: false,
@@ -586,6 +590,8 @@ export function terminalOptions(terminalId?: string) {
     linkHandler: {
       activate: (event: MouseEvent, url: string) =>
         activateTerminalLink(event, url, terminalId),
+      hover: (_event: MouseEvent, url: string) => onLinkHover?.(url),
+      leave: () => onLinkHover?.(null),
       allowNonHttpProtocols: true
     },
     theme: {

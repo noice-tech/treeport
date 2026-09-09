@@ -137,6 +137,9 @@ A `file:` link opens in the default system application only in the macOS desktop
 
 A browser client does not open terminal `file:` links.
 
+To copy a terminal link without opening it, right-click the link and select **Copy link address**.
+This copies the destination address, even when the link shows a different label.
+
 ### Drop, paste, or upload files
 
 Take control before you drop files on a terminal. Also take control before you paste files or clipboard images.
