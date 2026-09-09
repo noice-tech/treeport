@@ -8,11 +8,11 @@ for (const name of Object.keys(process.env)) {
   }
 }
 
-// Browser decoding and subprocess readiness share host resources. Run files
-// serially so host load cannot starve native browser and terminal boundaries.
+// Bound native browser and subprocess load while allowing independent fixtures
+// to overlap. Tests own separate runtime directories and ephemeral listeners.
 export default defineConfig({
   test: {
-    fileParallelism: false,
+    maxWorkers: 3,
     include: [
       'apps/**/*.integration.test.ts',
       'scripts/**/*.integration.test.mjs'

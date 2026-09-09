@@ -7,6 +7,8 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     '' \
     'Install repository dependencies and run the local pull request gate.' \
     'The gate includes unit, integration, desktop, package, and static checks.' \
+    'Independent checks run concurrently after their build prerequisites.' \
+    'Tests always run. Unchanged builds and type checks can use the Turbo cache.' \
     '' \
     'Test commands:' \
     '  pnpm test:unit         Isolated behavior.' \

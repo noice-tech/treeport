@@ -9,6 +9,8 @@ for (const name of Object.keys(process.env)) {
 
 export default defineConfig({
   test: {
+    // Leave CPU capacity for the native integration and desktop checks in ci:local.
+    maxWorkers: 6,
     include: [
       'packages/**/*.test.ts',
       'apps/**/*.test.ts',

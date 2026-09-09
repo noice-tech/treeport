@@ -46,22 +46,6 @@ function processExists(pid: number): boolean {
 
 const repositoryRoot = fileURLToPath(new URL('../../../..', import.meta.url))
 
-async function localTsxCli(): Promise<string> {
-  const packageDirectory = (
-    await fs.readdir(path.join(repositoryRoot, 'node_modules/.pnpm'))
-  ).find((entry) => entry.startsWith('tsx@'))
-  if (!packageDirectory) {
-    throw new Error('The local tsx package is unavailable')
-  }
-
-  return path.join(
-    repositoryRoot,
-    'node_modules/.pnpm',
-    packageDirectory,
-    'node_modules/tsx/dist/cli.mjs'
-  )
-}
-
 describe('detached terminal host lifecycle', () => {
   const roots: string[] = []
   const hostPids = new Set<number>()
@@ -116,10 +100,10 @@ child.once('exit', (code) => process.exit(code ?? 1))
       launcherPath,
       hostEntryPath: path.join(
         repositoryRoot,
-        'apps/treeport/src/server/terminal-host-entry.ts'
+        'apps/treeport/dist/node/server/terminal-host-entry.js'
       ),
       hostExecutable: process.execPath,
-      hostArguments: [await localTsxCli()]
+      hostArguments: []
     }
 
     const firstDaemon = await connectOrStartTerminalHost(options)

@@ -112,11 +112,7 @@ protocol.registerSchemesAsPrivileged([
   }
 ])
 const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
-const desktopReleaseVersion = app.isPackaged
-  ? app.getVersion()
-  : desktopE2e
-    ? process.env.TREEPORT_DESKTOP_E2E_RELEASE_VERSION?.trim() || null
-    : null
+const desktopReleaseVersion = app.isPackaged ? app.getVersion() : null
 const desktopUpdateReady =
   desktopE2e && process.env.TREEPORT_DESKTOP_E2E_UPDATE_READY === '1'
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
