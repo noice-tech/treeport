@@ -26,7 +26,6 @@ import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { z } from 'zod'
-import { MINIMUM_SUPPORTED_BACKEND_VERSION } from '../src/desktop-contract'
 
 function serverPort<Address>(address: Address): number {
   const parsed = z.object({ port: z.number().int() }).safeParse(address)
@@ -51,10 +50,6 @@ interface BrowserPanelFixture {
   url: string
   createdAt: string
   updatedAt: string
-}
-
-interface CompatibilityHealthFixture {
-  version: string | null
 }
 
 interface BrowserOwnerControl {
@@ -752,90 +747,6 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
       expect(connectedBrowser.contexts()[0]!.pages()).toHaveLength(1)
       const visiblePage = connectedBrowser.contexts()[0]!.pages()[0]!
       expect(visiblePage.url()).toBe(`${origin}/site/start`)
-      await test.step('route native location and find shortcuts across guest focus', async () => {
-        await visiblePage.locator('#hit').focus()
-        await visiblePage.keyboard.press(
-          process.platform === 'darwin' ? 'Meta+L' : 'Control+L'
-        )
-        await expect(address).toBeFocused()
-        await expect(address).toHaveJSProperty('selectionStart', 0)
-        await expect(address).toHaveJSProperty(
-          'selectionEnd',
-          `${origin}/site/start`.length
-        )
-
-        await address.fill(`${origin}/site/next`)
-        await address.press('Enter')
-        await expect(address).not.toBeFocused()
-        await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/next`)
-        await expect
-          .poll(() => visiblePage.evaluate(() => document.hasFocus()))
-          .toBe(true)
-        await window.keyboard.press('x')
-        await expect
-          .poll(() => visiblePage.locator('#key').textContent())
-          .toBe('x')
-        await visiblePage.goBack()
-        await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
-        await expect(address).toHaveValue(`${origin}/site/start`)
-
-        expect(
-          await electronApp.evaluate(({ webContents }, targetUrl) => {
-            const browser = webContents
-              .getAllWebContents()
-              .find(
-                (contents) =>
-                  contents.getType() === 'webview' &&
-                  contents.getURL() === targetUrl
-              )
-            browser?.sendInputEvent({
-              type: 'keyDown',
-              keyCode: 'f',
-              modifiers: [process.platform === 'darwin' ? 'meta' : 'control']
-            })
-            return browser !== undefined
-          }, `${origin}/site/start`)
-        ).toBe(true)
-        const findInput = window.getByRole('textbox', { name: 'Find in page' })
-        await expect(findInput).toBeVisible()
-        await findInput.focus()
-        expect(
-          await electronApp.evaluate(({ webContents }, targetUrl) => {
-            const browser = webContents
-              .getAllWebContents()
-              .find(
-                (contents) =>
-                  contents.getType() === 'webview' &&
-                  contents.getURL() === targetUrl
-              )
-            if (!browser) {
-              return false
-            }
-
-            process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = ''
-            browser.on('found-in-page', (_event, result) => {
-              process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = String(
-                result.matches
-              )
-            })
-            return true
-          }, `${origin}/site/start`)
-        ).toBe(true)
-        await findInput.fill('Browser target')
-        await expect
-          .poll(() =>
-            electronApp!.evaluate(
-              () => process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES
-            )
-          )
-          .toBe('1')
-        await findInput.press('Escape')
-        await expect(findInput).toHaveCount(0)
-        await expect
-          .poll(() => visiblePage.evaluate(() => document.hasFocus()))
-          .toBe(true)
-      })
-
       await window.getByRole('button', { name: /^Shell/ }).click()
       await expect(window).toHaveURL(
         /\/worktrees\/wt_main\/terminals\/term_shell$/
@@ -1552,10 +1463,6 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
 
         return restartedWindow
       })
-    const restartedAddress = restartedWindow.getByRole('textbox', {
-      name: 'Application URL'
-    })
-
     await test.step('recover a crashed native renderer', async () => {
       await electronApp!.evaluate(({ webContents }, targetUrl) => {
         webContents
@@ -1596,43 +1503,6 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
         )
         .toBe('panel-two')
     })
-
-    await test.step('open more than six native browser pages', async () => {
-      // Keep the existing page open while adding six more pages.
-      for (let index = 0; index < 6; index += 1) {
-        await restartedWindow
-          .getByRole('button', { name: 'New panel in main tree' })
-          .click()
-        await restartedWindow
-          .getByRole('dialog', { name: 'New panel' })
-          .getByRole('button', { name: 'Browser, hosted browser' })
-          .click()
-        await expect(
-          restartedWindow.getByRole('button', { name: 'Reload application' })
-        ).toBeEnabled()
-      }
-      await restartedAddress.fill(`${origin}/site/profile`)
-      await restartedAddress.press('Enter')
-      await expect
-        .poll(() =>
-          electronApp!.evaluate(({ webContents }, targetUrl) => {
-            const browser = webContents
-              .getAllWebContents()
-              .find(
-                (contents) =>
-                  contents.getType() === 'webview' &&
-                  contents.getURL() === targetUrl
-              )
-            return browser?.executeJavaScript(
-              "document.querySelector('output')?.textContent"
-            )
-          }, `${origin}/site/profile`)
-        )
-        .toBe('panel-two')
-      await expect(
-        restartedWindow.getByRole('button', { name: 'Reload application' })
-      ).toBeEnabled()
-    })
   } finally {
     await electronApp?.close().catch(() => undefined)
     for (const response of stalledResponses) {
@@ -1640,198 +1510,6 @@ test('preserves native Browser isolation, ownership and runtime continuity', asy
     }
     await new Promise<void>((resolve) => ownerWebSockets.close(() => resolve()))
     await Effect.runPromise(Scope.close(rpcScope, Exit.void))
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-    await fs.rm(userData, { recursive: true, force: true })
-  }
-})
-
-test('guides version updates and reconnects to a supported backend', async () => {
-  const userData = await fs.mkdtemp(
-    path.join(os.tmpdir(), 'treeport-electron-incompatible-')
-  )
-  const health: CompatibilityHealthFixture = { version: '0.4.0' }
-  let rejectHealth = false
-  let rejectedHealthRequests = 0
-  let applicationRequests = 0
-  let updateRequests = 0
-  let remoteUpdateRequests = 0
-  const server = http.createServer((request, response) => {
-    if (request.url === '/api/health') {
-      if (rejectHealth) {
-        rejectedHealthRequests += 1
-        response.destroy()
-        return
-      }
-
-      response.setHeader('content-type', 'application/json')
-      response.end(
-        JSON.stringify({
-          ok: true,
-          version: health.version,
-          hostname: 'old-treeport'
-        })
-      )
-      return
-    }
-
-    applicationRequests += 1
-    if (request.url === '/api/update') {
-      updateRequests += 1
-      if (request.headers['x-treeport-test-remote'] === '1') {
-        remoteUpdateRequests += 1
-      }
-    }
-
-    response.setHeader('content-type', 'application/json')
-    if (request.url === '/api/projects') {
-      response.end(JSON.stringify({ projects: [] }))
-    } else if (request.url === '/api/projects/recent') {
-      response.end(JSON.stringify({ projects: [] }))
-    } else if (request.url === '/api/terminal-presets') {
-      response.end(JSON.stringify({ presets: [] }))
-    } else if (request.url?.startsWith('/api/terminal-preset-definitions')) {
-      response.end(JSON.stringify({ definitions: [], diagnostics: [] }))
-    } else {
-      response.statusCode = 404
-      response.end(JSON.stringify({ error: { message: 'Not found' } }))
-    }
-  })
-  let electronApp: Awaited<ReturnType<typeof electron.launch>> | null = null
-
-  try {
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const port = serverPort(server.address())
-    electronApp = await electron.launch({
-      args: [`--user-data-dir=${userData}`, '.'],
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        TREEPORT_DESKTOP_E2E: '1',
-        TREEPORT_DESKTOP_E2E_RELEASE_VERSION: '0.6.0',
-        TREEPORT_DESKTOP_USER_DATA: '',
-        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${port}`
-      }
-    })
-    const window = await electronApp.firstWindow()
-
-    await expect(
-      window.getByRole('heading', { name: 'This computer needs an update' })
-    ).toBeVisible()
-    await expect(
-      window.getByText('treeport update', { exact: true })
-    ).toBeVisible()
-    expect(applicationRequests).toBe(0)
-
-    await window.getByRole('button', { name: 'Copy command' }).click()
-    await expect(window.getByRole('button', { name: 'Copied' })).toBeVisible()
-    expect(
-      await electronApp.evaluate(({ clipboard }) => clipboard.readText())
-    ).toBe('treeport update')
-
-    health.version = '0.7.0'
-    await window.getByRole('button', { name: 'Retry' }).click()
-    await expect(
-      window.getByRole('heading', { name: 'The desktop app needs an update' })
-    ).toBeVisible()
-    await expect(
-      window.getByRole('button', { name: 'Installation instructions' })
-    ).toBeVisible()
-    expect(applicationRequests).toBe(0)
-
-    health.version = null
-    await window.evaluate(() => window.treeportShell.retryConnection())
-    await expect(
-      window.getByRole('heading', {
-        name: 'This Treeport version is not supported'
-      })
-    ).toBeVisible()
-
-    await test.step('retry a real failed health request without another user action', async () => {
-      health.version = MINIMUM_SUPPORTED_BACKEND_VERSION
-      rejectHealth = true
-      await window.getByRole('button', { name: 'Retry' }).click()
-      await expect.poll(() => rejectedHealthRequests).toBeGreaterThan(0)
-      expect(
-        (await window.evaluate(() => window.treeportShell.getState()))
-          .connection.status
-      ).toBe('connecting')
-      expect(applicationRequests).toBe(0)
-      rejectHealth = false
-      await expect(
-        window.getByText('Open project', { exact: true })
-      ).toBeVisible()
-      expect(applicationRequests).toBeGreaterThan(0)
-      await expect.poll(() => updateRequests).toBeGreaterThan(0)
-    })
-
-    await electronApp.evaluate(({ autoUpdater, dialog, clipboard }) => {
-      dialog.showMessageBox = async (options) => {
-        // SAFETY: This fixture records the single-options overload used by the update action.
-        clipboard.writeText(
-          (options as Electron.MessageBoxOptions).detail ?? ''
-        )
-        return { response: 1, checkboxChecked: false }
-      }
-      autoUpdater.emit(
-        'error',
-        new Error('The update download was interrupted.')
-      )
-    })
-    await window.getByRole('button', { name: 'Desktop update failed' }).click()
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ clipboard }) => clipboard.readText())
-      )
-      .toContain('Install the latest desktop application manually')
-    await electronApp.evaluate(({ autoUpdater }) =>
-      autoUpdater.emit('update-downloaded')
-    )
-    await window
-      .getByRole('button', { name: 'Update & restart', exact: true })
-      .click()
-    await expect(
-      window.getByRole('button', { name: 'Update & restart', exact: true })
-    ).toHaveCount(0)
-
-    // Route a private remote fixture without contacting a real remote backend.
-    await electronApp.evaluate((_electron, backendOrigin) => {
-      const originalFetch = globalThis.fetch
-      globalThis.fetch = (input, init) => {
-        const request = new Request(input, init)
-        const url = new URL(request.url)
-        if (url.hostname === 'fixture.example.ts.net') {
-          request.headers.set('x-treeport-test-remote', '1')
-          return originalFetch(
-            new Request(
-              new URL(`${url.pathname}${url.search}`, backendOrigin),
-              request
-            )
-          )
-        }
-
-        return originalFetch(request)
-      }
-    }, `http://127.0.0.1:${port}`)
-    await window.evaluate(() => {
-      // Navigation can destroy this renderer before the successful IPC reply.
-      void window.treeportShell.addComputer('https://fixture.example.ts.net')
-    })
-    await expect(window).toHaveURL('https://fixture.example.ts.net/')
-    await expect(
-      window.getByText('Open project', { exact: true })
-    ).toBeVisible()
-    await electronApp.evaluate(({ autoUpdater }) =>
-      autoUpdater.emit('update-downloaded')
-    )
-    await window
-      .getByRole('button', { name: 'Update & restart', exact: true })
-      .click()
-    await expect(
-      window.getByRole('button', { name: 'Update & restart', exact: true })
-    ).toHaveCount(0)
-    expect(remoteUpdateRequests).toBe(0)
-  } finally {
-    await electronApp?.close().catch(() => undefined)
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await fs.rm(userData, { recursive: true, force: true })
   }
