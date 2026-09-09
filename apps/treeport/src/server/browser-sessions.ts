@@ -30,7 +30,8 @@ import {
   BROWSER_MAX_FRAME_BYTES,
   browserOwnerEndpointSchema,
   browserOwnerIdentitySchema,
-  browserUrlSchema,
+  browserObservedUrlSchema,
+  normalizeBrowserTitle,
   decodeUnknownOrNull,
   isSchemaValue,
   parseBrowserClientMessage,
@@ -709,13 +710,13 @@ export class BrowserSessionManager {
     const parsed =
       value.url === 'about:blank'
         ? 'about:blank'
-        : decodeUnknownOrNull(browserUrlSchema, value.url)
+        : decodeUnknownOrNull(browserObservedUrlSchema, value.url)
     if (!parsed) {
       return
     }
 
     const url = parsed === 'about:blank' ? parsed : new URL(parsed).href
-    const requestedTitle = value.title.trim().slice(0, 256)
+    const requestedTitle = normalizeBrowserTitle(value.title.trim())
     const title =
       requestedTitle ||
       (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
@@ -791,8 +792,10 @@ export class BrowserSessionManager {
     const restoredUrl =
       authorized.panel.url === 'about:blank'
         ? null
-        : (decodeUnknownOrNull(browserUrlSchema, authorized.panel.url) ??
-          'about:blank')
+        : (decodeUnknownOrNull(
+            browserObservedUrlSchema,
+            authorized.panel.url
+          ) ?? 'about:blank')
     const agentDirectory = path.join(
       this.config.runtimeDir,
       'browsers',

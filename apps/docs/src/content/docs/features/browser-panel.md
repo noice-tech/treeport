@@ -128,6 +128,12 @@ Correct the address or start the target. Then, select **Reload**.
 
 Use pointer, keyboard, and scroll input in the page.
 
+A remote paste can contain up to 1,048,576 UTF-16 code units. Most characters use one unit; some, such as emoji, use two.
+
+If a paste exceeds this limit, Treeport shows an error and sends no text. Paste smaller portions instead.
+
+If Treeport rejects input during reconnection, wait for the page to reconnect. Then, repeat the input.
+
 Press `Command+F` on macOS or `Ctrl+F` on Linux to find text in the page.
 
 On a local desktop, right-click the page to open the browser context menu.
@@ -143,6 +149,12 @@ With a mouse, modifier-click the link.
 If a Browser panel has the exact URL in that tree, Treeport selects it instead of opening another panel.
 
 ## Recover an unavailable browser
+
+After a network disconnection, Treeport retries automatically with increasing delays, up to 30 seconds.
+
+An invalid browser protocol response stops automatic retries and shows an error. Reload Treeport to reconnect.
+
+If the protocol error continues, update Treeport and report the problem.
 
 If the browser cannot start or its page process stops, Treeport shows **Browser unavailable**.
 

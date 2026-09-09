@@ -8,7 +8,11 @@ import type {
   Dialog,
   Page
 } from 'playwright'
-import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
+import {
+  browserObservedUrlSchema,
+  decodeUnknownOrNull,
+  normalizeBrowserTitle
+} from '@treeport/shared'
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
@@ -463,7 +467,7 @@ export class PlaywrightBrowser {
       void page
         .title()
         .then((title) => {
-          if (title !== this.stateValue.title) {
+          if (normalizeBrowserTitle(title) !== this.stateValue.title) {
             this.updateState({ title })
           }
         })
@@ -483,13 +487,14 @@ export class PlaywrightBrowser {
     // supported address (including a failed navigation's target) for recovery.
     const url =
       observedUrl === 'about:blank' ||
-      decodeUnknownOrNull(browserUrlSchema, observedUrl) !== null
+      decodeUnknownOrNull(browserObservedUrlSchema, observedUrl) !== null
         ? observedUrl
         : this.stateValue.url
     this.stateValue = {
       ...this.stateValue,
       ...patch,
       url,
+      title: normalizeBrowserTitle(patch.title ?? this.stateValue.title),
       viewport: patch.viewport ?? this.stateValue.viewport
     }
     this.callbacks.state(this.stateValue)

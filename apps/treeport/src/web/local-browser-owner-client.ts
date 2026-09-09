@@ -148,7 +148,16 @@ export function connectLocalBrowserOwner(
     socket.on('ownerMessage', (value: BrowserOwnerServerMessage) => {
       const message = parseBrowserOwnerServerMessage(value)
       if (!message) {
-        rejectBeforeReady(new Error('The Browser owner protocol is invalid.'))
+        const reason =
+          'The Browser owner protocol is invalid. Reload Treeport to reconnect; update Treeport if this continues.'
+        if (!settled) {
+          rejectBeforeReady(new Error(reason))
+        } else if (!disposed) {
+          disposed = true
+          socket.disconnect()
+          handlers.closed(reason)
+        }
+
         return
       }
 

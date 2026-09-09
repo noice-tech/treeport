@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
+import {
+  browserObservedUrlSchema,
+  decodeUnknownOrNull,
+  normalizeBrowserTitle
+} from '@treeport/shared'
 import type {
   BrowserClientMessage,
   BrowserPanel,
@@ -31,13 +35,13 @@ function browserState(
       : observedUrl || fallbackUrl
   const url =
     currentUrl === 'about:blank' ||
-    decodeUnknownOrNull(browserUrlSchema, currentUrl) !== null
+    decodeUnknownOrNull(browserObservedUrlSchema, currentUrl) !== null
       ? currentUrl
       : fallbackUrl
   const bounds = webview.getBoundingClientRect()
   return {
     url,
-    title: blankPage ? '' : webview.getTitle(),
+    title: blankPage ? '' : normalizeBrowserTitle(webview.getTitle()),
     loading,
     canGoBack: webview.canGoBack(),
     canGoForward: webview.canGoForward(),
