@@ -1,3 +1,4 @@
+import '../../../scripts/development-tracing.mjs'
 import { api } from '@electron-forge/core'
 import net from 'node:net'
 import { z } from 'zod'

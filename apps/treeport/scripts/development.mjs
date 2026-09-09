@@ -1,14 +1,26 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
+import { rm } from 'node:fs/promises'
+import '../../../scripts/development-tracing.mjs'
 
-const child = spawn('pnpm', ['dev:server'], {
-  env: {
-    ...process.env,
-    TREEPORT_DAEMON_LIFECYCLE: 'external',
-    TREEPORT_WEB_DEVELOPMENT: '1'
-  },
-  stdio: 'inherit'
-})
+const serverOnly = process.argv.includes('--server')
+await rm('.treeport-dev-dist', { recursive: true, force: true })
+const child = spawn(
+  'pnpm',
+  ['exec', 'tsdown', '--watch', '--out-dir', '.treeport-dev-dist'],
+  {
+    env: {
+      ...process.env,
+      TREEPORT_DAEMON_LIFECYCLE: 'external',
+      TREEPORT_WEB_DEVELOPMENT: serverOnly
+        ? process.env.TREEPORT_WEB_DEVELOPMENT
+        : '1',
+      TREEPORT_DATA_DIR: '.treeport-dev/data',
+      TREEPORT_RUNTIME_DIR: '.treeport-dev/runtime'
+    },
+    stdio: 'inherit'
+  }
+)
 
 let stopping = false
 let requestedSignal = null

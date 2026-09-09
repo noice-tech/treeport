@@ -189,7 +189,7 @@ const installRendererRequestRouting = Effect.gen(function* () {
     yield* Effect.acquireRelease(
       Effect.sync(() =>
         rendererSession.protocol.handle(scheme, (request) =>
-          desktopRuntime.run(handler(request))
+          desktopRuntime.run(handler(request), 'desktop.renderer.request')
         )
       ),
       () => Effect.sync(() => rendererSession.protocol.unhandle(scheme))
@@ -1340,7 +1340,8 @@ function queueWorkspaceTarget(target: WorkspaceTarget): void {
   }
 
   desktopRuntime.fork(
-    workspaceTargets.withPermits(1)(openWorkspaceTarget(target))
+    workspaceTargets.withPermits(1)(openWorkspaceTarget(target)),
+    'desktop.workspace.open'
   )
 }
 
@@ -1451,7 +1452,8 @@ if (!hasSingleInstanceLock) {
       Effect.catchAllCause((cause) =>
         Effect.logError(cause).pipe(Effect.andThen(() => app.quit()))
       )
-    )
+    ),
+    'desktop.startup'
   )
 
   let quitReady = false
