@@ -595,7 +595,7 @@ describe('Treeport Pi extension', () => {
     expect(runtime.notifications).toEqual([])
   })
 
-  it('adds stable CLI guidance and the badge only in a managed session', async () => {
+  it('describes the Treeport environment and capabilities with on-demand CLI help', async () => {
     const developmentRoot = await mkdtemp(join(tmpdir(), 'treeport-pi-cli-'))
     const developmentRecord = join(
       developmentRoot,
@@ -637,22 +637,24 @@ describe('Treeport Pi extension', () => {
     expect(runtime.sent).toEqual([])
     await runtime.emit('input')
     const guidance = runtime.sent[0]?.message.content
-    expect(guidance).toContain(
-      'Treeport is a worktree-first workspace for projects, trees, persistent terminals, and browser tabs.'
-    )
-    for (const instruction of [
-      'This session runs in project "Treeport" and tree "pi-extension".',
+    for (const description of [
+      'You are working inside Treeport',
+      'This Pi session runs in a persistent terminal managed by Treeport.',
+      'Your current Treeport project is "Treeport" and your tree is "pi-extension".',
+      'Treeport provides persistent terminals for shells, development servers, and other agents.',
+      'Treeport has browser support.',
+      'You and the user share the same live page.',
+      'creating a separate tree and terminal for independent work',
       'Use the `treeport` CLI through bash for Treeport operations.',
-      'treeport terminal create --worktree . --name <name> -- <program> <arg> ...',
-      'sleep 5; treeport terminal capture <id>',
-      'It is not a readiness check and can return immediately.',
+      'treeport browser --help',
+      'treeport terminal --help',
       'Never delete this Pi session terminal.',
-      'Use `treeport terminal create` here or `treeport spawn` for another tree.',
-      'Use `treeport browser` commands for visible browser tabs.',
-      'Do not load the Treeport skill for these routine operations.'
+      'Do not install a browser runtime without user approval.'
     ]) {
-      expect(guidance).toContain(instruction)
+      expect(guidance).toContain(description)
     }
+    expect(guidance).not.toContain('treeport terminal create --worktree')
+    expect(guidance).not.toContain('sleep 5;')
     expect(guidance).not.toContain('project-1')
     expect(guidance).not.toContain('/repo/pi-extension')
 

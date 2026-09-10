@@ -1,6 +1,6 @@
 # `@treeport/pi`
 
-Give Pi compact Treeport context and access to the Treeport CLI.
+Tell Pi that it works inside Treeport, describe Treeport capabilities, and provide access to the Treeport CLI.
 
 ## Requirements
 
@@ -44,11 +44,15 @@ Examples:
 - “Open the app and check the settings page.”
 - “Do this side quest in a separate tree.”
 
-In a managed session, the extension briefly defines Treeport projects and trees.
+In a managed session, the extension tells Pi that it works inside Treeport.
+
+It describes persistent terminals, browser support, and project and tree management.
 
 It includes the current project and tree names. It does not include IDs, paths, or the daemon URL.
 
-The guidance tells Pi to use the `treeport` CLI through its standard Bash tool.
+Pi uses the `treeport` CLI through its standard Bash tool.
+
+Pi consults CLI `--help` when it needs command syntax or options. The context does not include command procedures or help output.
 
 Pi uses a persistent terminal for a long-running process. Pi uses Bash directly for a finite command.
 
@@ -60,7 +64,7 @@ Pi can control visible browser tabs when the Treeport CLI and daemon support bro
 
 The browser tabs stay open so you can inspect them.
 
-The guidance requires your approval before a Chromium installation.
+The safety guidance requires your approval before a browser runtime installation.
 
 ## Use the skill for detailed workflows
 
