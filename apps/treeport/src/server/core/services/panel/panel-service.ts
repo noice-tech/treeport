@@ -807,7 +807,6 @@ export class PanelService {
     panelId: string,
     discardStoredData = false
   ): PanelEffect<void> {
-    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -830,7 +829,6 @@ export class PanelService {
       yield* Effect.annotateCurrentSpan({
         'treeport.worktree.id': panel.worktreeId
       })
-      yield* requireAvailableWorktree(panel.worktreeId)
       const [storedValue] = yield* Effect.promise(() =>
         database.db
           .select({ key: webPanelStorage.key })
