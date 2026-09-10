@@ -37,7 +37,8 @@ Outside a managed terminal, the package adds no instructions, notification, or f
 
 In a managed terminal, sending a message lets the package add **Treeport context** before that message.
 The context stays hidden in chat. Use `/tree` to inspect it.
-It defines Treeport projects and trees for Pi. It does not start a model request or change the system prompt.
+It tells Pi that it works inside Treeport and describes the available capabilities.
+It does not start a model request or change the system prompt.
 
 Startup, resume, and reload add no context messages.
 The package discovers context during initialization and refreshes its in-memory result while Pi is idle.
@@ -50,7 +51,9 @@ Input during a running response does not add context.
 
 The context includes the current project and tree names. It does not include their IDs, paths, or daemon URL.
 
+The context describes persistent terminals, browser support, and project and tree management.
 The package tells Pi to use the `treeport` CLI through its standard Bash tool.
+Pi consults CLI `--help` when it needs command syntax or options. The context does not include command procedures or help output.
 
 ### Start persistent processes
 
@@ -82,7 +85,7 @@ Open the app and check the settings page.
 
 Pi opens or controls a browser tab in the current tree.
 
-The package adds browser guidance only when the Treeport CLI and daemon support browser commands.
+The context describes browser support. Browser operations require a Treeport CLI and daemon that support browser commands.
 
 The browser tab stays open after the task. You can inspect or control the same page.
 
@@ -118,7 +121,6 @@ The package tells Pi to follow these rules:
 
 - delete a terminal only when you ask Pi to stop or close its process;
 - never delete the terminal that hosts the Pi session;
-- never poll terminal output through repeated model calls;
 - never set up or install a browser without your approval;
 - never put secrets in browser URLs or command arguments.
 
@@ -154,7 +156,7 @@ These sessions stay as standard Treeport terminals. You can open them, monitor t
 
 Each Treeport CLI package contains the skill.
 
-The `@treeport/pi` package also loads the skill for Pi. Pi uses compact extension guidance for routine Treeport operations.
+The `@treeport/pi` package also loads the skill for Pi. Pi uses the capability context and CLI help for routine Treeport operations.
 
 To show the CLI package skill location, run:
 

@@ -200,24 +200,18 @@ export default function treeportExtension(pi: ExtensionAPI): void {
 
       const guidanceLines = [
         'Treeport context:',
-        'Treeport is a worktree-first workspace for projects, trees, persistent terminals, and browser tabs.',
-        'A project is a registered repository or folder. A tree is its main checkout or a linked Git worktree.',
-        `This session runs in project ${JSON.stringify(
+        'You are working inside Treeport, a worktree-first workspace. This Pi session runs in a persistent terminal managed by Treeport.',
+        `Your current Treeport project is ${JSON.stringify(
           detected.project.name
-        )} and tree ${JSON.stringify(detected.worktree.name)}.`,
-        'Use the `treeport` CLI through bash for Treeport operations. Use `--json` when you must parse a result.',
-        'Use bash directly for finite commands that Pi must await.',
-        'For a persistent process, run `treeport terminal create --worktree . --name <name> -- <program> <arg> ...`.',
-        'Pass the child program and its arguments after `--`. Do not use an implicit shell command string.',
-        'Observe persistent terminals with `treeport terminal inspect`, `treeport terminal capture`, or `treeport terminal wait`.',
-        'Do not poll through repeated model calls. Sleep and capture in one bash call, such as `sleep 5; treeport terminal capture <id>`.',
-        '`treeport terminal wait --until idle` observes OSC progress. It is not a readiness check and can return immediately.',
+        )} and your tree is ${JSON.stringify(detected.worktree.name)}.`,
+        'A project is a registered repository or folder. A tree is its main checkout or a linked Git worktree.',
+        'Treeport provides persistent terminals for shells, development servers, and other agents. You can start processes, inspect their status, read their output, and wait for runtime conditions. The user can view and take control of these terminals.',
+        'Treeport has browser support. You can open and control visible browser tabs, navigate pages, interact with page elements, inspect accessibility snapshots, and capture screenshots, console messages, and network requests. You and the user share the same live page.',
+        'Treeport can manage projects and trees, including creating a separate tree and terminal for independent work.',
+        'Use the `treeport` CLI through bash for Treeport operations. When you need command syntax or options, consult `treeport --help`, `treeport <area> --help`, or `treeport <area> <command> --help` (for example, `treeport browser --help` or `treeport terminal --help`).',
         'Delete a terminal only when the user asks to stop or close its process. Never delete this Pi session terminal.',
-        'A side quest is independent work in another persistent terminal. Use `treeport terminal create` here or `treeport spawn` for another tree.',
-        'Use `treeport browser` commands for visible browser tabs. Take a new snapshot after navigation or a runtime change.',
-        'Leave browser tabs open for user inspection. Do not install Chromium without user approval.',
-        'Do not put secrets in browser URLs or command arguments.',
-        'Use `treeport <area> <command> --help` for exact syntax. Do not load the Treeport skill for these routine operations.'
+        'Leave browser tabs open for user inspection. Do not install a browser runtime without user approval.',
+        'Do not put secrets in browser URLs or command arguments.'
       ]
       // Publish the complete snapshot atomically. Discovery never edits history,
       // including when a user submits while the context CLI call is in flight.
