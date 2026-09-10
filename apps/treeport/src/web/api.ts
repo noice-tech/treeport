@@ -455,12 +455,16 @@ export const rpc = {
     },
     panels: {
       ':panelId': {
-        $delete: ({ param, query }: RequestInput<{ panelId: string }>) =>
+        $delete: (
+          { param, query }: RequestInput<{ panelId: string }>,
+          init?: RequestInit
+        ) =>
           endpoint<{ ok: true }>(
             'DELETE',
             `/api/panels/${id(param.panelId)}`,
             okResponseSchema,
-            query ? { query } : undefined
+            query ? { query } : undefined,
+            init
           ),
         context: {
           $get: ({ param }: RequestInput<{ panelId: string }>) =>

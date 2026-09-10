@@ -264,6 +264,7 @@ export function useTerminalWorkflows({
     },
     onSettled: (_, error, closed) => {
       browserTrace('terminal.remove.settled', closed.correlationId, {
+        elapsedMs: Number((performance.now() - closed.queuedAt).toFixed(3)),
         failed: error !== null,
         terminalId: closed.terminal.id
       })
@@ -415,19 +416,34 @@ export function useTerminalWorkflows({
           .reverse()
           .find((candidate) => !closingTerminalIdsRef.current.has(candidate.id))
       if (nextTerminal) {
+        browserTrace('terminal.remove.navigation.started', correlationId, {
+          nextTerminalId: nextTerminal.id,
+          terminalId: terminal.id
+        })
         void navigateToWorkspace(
           terminalTarget(project.id, worktree.id, nextTerminal.id),
           true
-        )
+        ).then(() => {
+          browserTrace('terminal.remove.navigation.finished', correlationId, {
+            nextTerminalId: nextTerminal.id,
+            terminalId: terminal.id
+          })
+        })
       }
     }
 
     terminalSessions.forget(terminal.id)
+    browserTrace('terminal.remove.session.forgotten', correlationId, {
+      terminalId: terminal.id
+    })
     queryClient.setQueryData<ProjectRecord[]>(
       projectsQueryKey,
       (current) =>
         removeProjectTerminal(current, worktree.id, terminal.id).projects
     )
+    browserTrace('terminal.remove.cache.updated', correlationId, {
+      terminalId: terminal.id
+    })
     closeTerminal.mutate({ terminal, index, correlationId, queuedAt })
   }
 

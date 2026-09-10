@@ -1276,6 +1276,9 @@ export function createApp({
       '/api/panels/:panelId',
       Effect.gen(function* () {
         const params = yield* routeParams
+        yield* Effect.annotateCurrentSpan({
+          'treeport.panel.id': params.panelId!
+        })
         const query = yield* requestQuery(deletePanelQuerySchema)
         const canClose = browserSessions
           ? yield* operation(() =>
@@ -1283,7 +1286,7 @@ export function createApp({
                 params.panelId!,
                 query.force === 'true'
               )
-            )
+            ).pipe(Effect.withSpan('treeport.panel.remove.close_guard'))
           : undefined
         if (canClose === false) {
           return yield* Effect.fail(
@@ -1302,7 +1305,7 @@ export function createApp({
           )
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
-      })
+      }).pipe(Effect.withSpan('treeport.panel.remove.request'))
     ),
     route(
       'GET',

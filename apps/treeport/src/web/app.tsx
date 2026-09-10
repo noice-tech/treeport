@@ -670,12 +670,16 @@ function WorkspaceApp() {
     mutationFn: ({
       panel,
       discardStoredData = false,
-      force = false
+      force = false,
+      correlationId,
+      requestedAt
     }: {
       panel: BrowserPanel | WebPanel
       discardStoredData?: boolean
       force?: boolean
       trigger?: HTMLElement
+      correlationId: string
+      requestedAt: number
     }) => {
       const query: DeletePanelQuery = {}
       if (discardStoredData) {
@@ -686,14 +690,27 @@ function WorkspaceApp() {
         query.force = 'true'
       }
 
+      browserTrace('panel.remove.request.started', correlationId, {
+        elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
+        panelId: panel.id,
+        panelKind: panel.kind
+      })
       return parseResponse(
-        rpc.api.panels[':panelId'].$delete({
-          param: { panelId: panel.id },
-          query
-        })
+        rpc.api.panels[':panelId'].$delete(
+          {
+            param: { panelId: panel.id },
+            query
+          },
+          { headers: { 'x-request-id': correlationId } }
+        )
       )
     },
-    onSuccess: async (_, { panel }) => {
+    onSuccess: async (_, { panel, correlationId, requestedAt }) => {
+      browserTrace('panel.remove.response.received', correlationId, {
+        elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
+        panelId: panel.id,
+        panelKind: panel.kind
+      })
       setWebPanelRuntimeTitle(panel.id, null)
       setWebPanelDirty(panel.id, false)
       setPreserveTerminalFocusPanelId((current) =>
@@ -751,6 +768,9 @@ function WorkspaceApp() {
             )
           }))
       )
+      browserTrace('panel.remove.cache.updated', correlationId, {
+        panelId: panel.id
+      })
       if (selectedPanel?.id === panel.id) {
         const target = nextTool
           ? targetForPanel(projects, nextTool)
@@ -758,7 +778,13 @@ function WorkspaceApp() {
             ? targetForWorktree(projects, worktree, selectedTerminalId)
             : null
         if (target) {
+          browserTrace('panel.remove.navigation.started', correlationId, {
+            panelId: panel.id
+          })
           await navigateToWorkspace(target, true)
+          browserTrace('panel.remove.navigation.finished', correlationId, {
+            panelId: panel.id
+          })
         }
       }
 
@@ -766,15 +792,26 @@ function WorkspaceApp() {
         restoreEmptyToolFocus()
       }
 
+      browserTrace('panel.remove.settled', correlationId, {
+        elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
+        failed: false,
+        panelId: panel.id
+      })
       void queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
       })
     },
-    onError: (error, { panel, trigger }) => {
+    onError: (error, request) => {
+      const { panel, trigger, correlationId, requestedAt } = request
       if (
         panel.kind === 'browser' &&
         errorDetails(error).code === 'BROWSER_BEFORE_UNLOAD'
       ) {
+        browserTrace('panel.remove.confirmation.required', correlationId, {
+          elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
+          panelId: panel.id,
+          reason: 'browser-before-unload'
+        })
         openDialog(
           { type: 'close-panel', panel, reason: 'browser-before-unload' },
           trigger
@@ -782,15 +819,35 @@ function WorkspaceApp() {
         return
       }
 
+      browserTrace('panel.remove.failed', correlationId, {
+        elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
+        panelId: panel.id,
+        panelKind: panel.kind
+      })
       notifyError(error, { operation: `close panel “${panel.title}”` })
     }
   })
+  const startPanelClose = (
+    panel: BrowserPanel | WebPanel,
+    options: { discardStoredData?: boolean; force?: boolean } = {},
+    trigger?: HTMLElement
+  ) => {
+    const correlationId = newBrowserCorrelationId()
+    const requestedAt = performance.now()
+    browserTrace('panel.remove.command.admitted', correlationId, {
+      panelId: panel.id,
+      panelKind: panel.kind,
+      worktreeId: panel.worktreeId
+    })
+    const request = { panel, ...options, correlationId, requestedAt }
+    closePanel.mutate(trigger ? { ...request, trigger } : request)
+  }
   const requestClosePanel = (
     panel: BrowserPanel | WebPanel,
     trigger?: HTMLElement
   ) => {
     if (panel.kind === 'browser') {
-      closePanel.mutate(trigger ? { panel, trigger } : { panel })
+      startPanelClose(panel, {}, trigger)
       return
     }
 
@@ -814,7 +871,7 @@ function WorkspaceApp() {
             trigger
           )
         } else {
-          closePanel.mutate({ panel })
+          startPanelClose(panel)
         }
       },
       (error) => {
@@ -1770,10 +1827,11 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         onConfirm={(panel) => {
-          closePanel.mutate(
+          startPanelClose(
+            panel,
             panel.kind === 'browser'
-              ? { panel, force: true }
-              : { panel, discardStoredData: true }
+              ? { force: true }
+              : { discardStoredData: true }
           )
         }}
       />

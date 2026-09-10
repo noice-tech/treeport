@@ -546,16 +546,19 @@ export class PanelService {
           .from(browserPanels)
           .where(eq(browserPanels.id, panelId))
           .limit(1)
-      )
+      ).pipe(Effect.withSpan('treeport.browser.remove.lookup'))
       if (!row) {
         return yield* Effect.fail(
           new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
         )
       }
 
+      yield* Effect.annotateCurrentSpan({
+        'treeport.worktree.id': row.worktreeId
+      })
       yield* Effect.promise(() =>
         database.db.delete(browserPanels).where(eq(browserPanels.id, panelId))
-      )
+      ).pipe(Effect.withSpan('treeport.browser.remove.persist'))
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('panel.removed', {
@@ -563,7 +566,11 @@ export class PanelService {
           panelId
         })
       })
-    })
+    }).pipe(
+      Effect.withSpan('treeport.browser.remove', {
+        attributes: { 'treeport.panel.id': panelId }
+      })
+    )
   }
 
   deletePanel(panelId: string, discardStoredData = false): PanelEffect<void> {
@@ -578,11 +585,18 @@ export class PanelService {
           .from(browserPanels)
           .where(eq(browserPanels.id, panelId))
           .limit(1)
-      )
+      ).pipe(Effect.withSpan('treeport.panel.remove.resolve_kind'))
+      yield* Effect.annotateCurrentSpan({
+        'treeport.panel.kind': browserPanel ? 'browser' : 'web'
+      })
       return yield* browserPanel
         ? deleteBrowserPanel(panelId)
         : deleteWebPanel(panelId, discardStoredData)
-    })
+    }).pipe(
+      Effect.withSpan('treeport.panel.remove', {
+        attributes: { 'treeport.panel.id': panelId }
+      })
+    )
   }
 
   createWebPanel(
@@ -806,13 +820,16 @@ export class PanelService {
           .from(webPanels)
           .where(eq(webPanels.id, panelId))
           .limit(1)
-      )
+      ).pipe(Effect.withSpan('treeport.web_panel.remove.lookup'))
       if (!panel) {
         return yield* Effect.fail(
           new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
         )
       }
 
+      yield* Effect.annotateCurrentSpan({
+        'treeport.worktree.id': panel.worktreeId
+      })
       yield* requireAvailableWorktree(panel.worktreeId)
       const [storedValue] = yield* Effect.promise(() =>
         database.db
@@ -820,7 +837,7 @@ export class PanelService {
           .from(webPanelStorage)
           .where(eq(webPanelStorage.panelId, panelId))
           .limit(1)
-      )
+      ).pipe(Effect.withSpan('treeport.web_panel.remove.storage_check'))
       if (!discardStoredData && storedValue) {
         return yield* Effect.fail(
           new DomainError(
@@ -833,7 +850,7 @@ export class PanelService {
 
       yield* Effect.promise(() =>
         database.db.delete(webPanels).where(eq(webPanels.id, panelId))
-      )
+      ).pipe(Effect.withSpan('treeport.web_panel.remove.persist'))
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('panel.removed', {
@@ -841,7 +858,11 @@ export class PanelService {
           panelId
         })
       })
-    })
+    }).pipe(
+      Effect.withSpan('treeport.web_panel.remove', {
+        attributes: { 'treeport.panel.id': panelId }
+      })
+    )
   }
 
   requireWebPanelTreeFiles(
