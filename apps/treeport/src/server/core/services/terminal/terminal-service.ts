@@ -107,9 +107,9 @@ export class TerminalService {
       const locks = yield* MutationLocks
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
-      let sessions = (yield* Effect.tryPromise(() =>
-        terminalHost.listTerminals(worktree.id)
-      ).pipe(Effect.orDie)).filter(
+      let sessions = (yield* terminalHost
+        .listTerminals(worktree.id)
+        .pipe(Effect.orDie)).filter(
         (terminal) => terminal.worktreeId === worktree.id
       )
       if (!(yield* locks.isWorktreeLocked(worktree.id))) {
@@ -123,9 +123,7 @@ export class TerminalService {
             continue
           }
 
-          yield* Effect.tryPromise(() =>
-            terminalHost.killTerminal(terminal.id)
-          ).pipe(Effect.orDie)
+          yield* terminalHost.killTerminal(terminal.id).pipe(Effect.orDie)
           sessions = sessions.filter(
             (candidate) => candidate.id !== terminal.id
           )
@@ -505,15 +503,18 @@ export class TerminalService {
 
       yield* Effect.gen(function* () {
         const trace = yield* currentTraceContext
-        yield* Effect.tryPromise({
-          try: () => terminalHost.createTerminal(session, trace ?? undefined),
-          catch: (error) =>
-            new DomainError(
-              'TERMINAL_CREATE_FAILED',
-              error instanceof Error ? error.message : String(error),
-              500
+        yield* terminalHost
+          .createTerminal(session, trace ?? undefined)
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new DomainError(
+                  'TERMINAL_CREATE_FAILED',
+                  error instanceof Error ? error.message : String(error),
+                  500
+                )
             )
-        })
+          )
       }).pipe(
         Effect.withSpan('treeport.terminal_host.ipc.create', {
           kind: 'client',
@@ -729,9 +730,9 @@ export class TerminalService {
         ? yield* getTerminal(terminalId)
         : (cachedTerminal ?? (yield* getTerminalFromBindings(terminalId)))
       const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
-      const state = yield* Effect.tryPromise(() =>
-        terminalHost.terminalState(terminal.id)
-      ).pipe(Effect.orDie)
+      const state = yield* terminalHost
+        .terminalState(terminal.id)
+        .pipe(Effect.orDie)
       yield* projectStore.requireOpenProject(worktree.projectId)
       if (!(yield* terminalState.hasTerminal(terminalId))) {
         return yield* Effect.fail(
@@ -830,9 +831,9 @@ export class TerminalService {
       const terminal = yield* getTerminal(terminalId)
       const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
-      yield* Effect.tryPromise(() =>
-        terminalHost.renameTerminal(terminal.id, name, now())
-      ).pipe(Effect.orDie)
+      yield* terminalHost
+        .renameTerminal(terminal.id, name, now())
+        .pipe(Effect.orDie)
       const renamed = yield* getTerminal(terminalId)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
@@ -925,9 +926,9 @@ export class TerminalService {
 
       yield* Effect.gen(function* () {
         const trace = yield* currentTraceContext
-        yield* Effect.tryPromise(() =>
-          terminalHost.killTerminal(terminal.id, trace ?? undefined)
-        ).pipe(Effect.orDie)
+        yield* terminalHost
+          .killTerminal(terminal.id, trace ?? undefined)
+          .pipe(Effect.orDie)
       }).pipe(
         Effect.withSpan('treeport.terminal_host.ipc.remove', {
           kind: 'client',
@@ -976,9 +977,9 @@ export class TerminalService {
       let terminated = 0
       for (const project of yield* listProjects()) {
         for (const worktree of project.worktrees) {
-          const terminalIds = yield* Effect.tryPromise(() =>
-            terminalHost.killWorktree(worktree.id)
-          ).pipe(Effect.orDie)
+          const terminalIds = yield* terminalHost
+            .killWorktree(worktree.id)
+            .pipe(Effect.orDie)
           terminated += terminalIds.length
           yield* clearWorktreeTerminalState(worktree.id, terminalIds)
         }

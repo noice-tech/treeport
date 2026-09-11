@@ -49,23 +49,18 @@ async function main(): Promise<void> {
     )
     const terminalHost = await Effect.runPromise(
       Scope.extend(
-        Effect.acquireRelease(
-          Effect.tryPromise(() =>
-            connectOrStartTerminalHost({
-              dataDir: config.dataDir,
-              runtimeDir: config.runtimeDir,
-              launcherPath,
-              hostEntryPath: fileURLToPath(
-                new URL('./terminal-host-entry.js', import.meta.url)
-              ),
-              environment: {
-                ...process.env,
-                TREEPORT_APP_VERSION: config.appVersion
-              }
-            })
-          ).pipe(Effect.orDie),
-          (host) => Effect.sync(() => host.dispose())
-        ),
+        connectOrStartTerminalHost({
+          dataDir: config.dataDir,
+          runtimeDir: config.runtimeDir,
+          launcherPath,
+          hostEntryPath: fileURLToPath(
+            new URL('./terminal-host-entry.js', import.meta.url)
+          ),
+          environment: {
+            ...process.env,
+            TREEPORT_APP_VERSION: config.appVersion
+          }
+        }),
         resourceScope
       )
     )

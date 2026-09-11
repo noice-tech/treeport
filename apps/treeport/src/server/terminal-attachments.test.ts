@@ -1,6 +1,7 @@
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
 import { describe, expect, it, vi } from 'vitest'
 import {
   parseTerminalServerEvent,
@@ -13,7 +14,7 @@ import {
 } from '@treeport/shared'
 import type { TreeportService } from './core/index'
 import { TerminalAttachmentManager } from './terminal-attachments'
-import type { TerminalAttachmentBackend } from './terminal-host-sessions'
+import type { TerminalAttachmentBackend } from './core/terminal'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import { testAccess } from './test-access'
 
@@ -37,33 +38,60 @@ class HostDouble implements TerminalAttachmentBackend {
   snapshotGate: Promise<void> | null = null
   writeError: Error | null = null
 
-  async attach(
-    _terminalId: string,
-    listener: (data: string, sequence: number) => void
-  ) {
-    this.outputListeners.add(listener)
-    await this.snapshotGate
-    return {
-      data: this.snapshotData,
-      links: [],
-      images: null,
-      fence: this.snapshotFence,
-      cols: 100,
-      rows: 30,
-      unsubscribe: () => this.outputListeners.delete(listener)
-    }
+  attach() {
+    return Effect.gen(this, function* () {
+      const pending: Array<{ data: string; sequence: number }> = []
+      let emit: ((data: string, sequence: number) => void) | null = null
+      const listener = (data: string, sequence: number) => {
+        if (emit) {
+          emit(data, sequence)
+        } else {
+          pending.push({ data, sequence })
+        }
+      }
+      this.outputListeners.add(listener)
+
+      if (this.snapshotGate) {
+        yield* Effect.promise(() => this.snapshotGate!)
+      }
+
+      return {
+        data: this.snapshotData,
+        links: [],
+        images: null,
+        fence: this.snapshotFence,
+        cols: 100,
+        rows: 30,
+        output: Stream.asyncScoped<{ data: string; sequence: number }>(
+          (streamEmit) =>
+            Effect.acquireRelease(
+              Effect.sync(() => {
+                emit = (data, sequence) => streamEmit.single({ data, sequence })
+                for (const output of pending.splice(0)) {
+                  emit(output.data, output.sequence)
+                }
+              }),
+              () =>
+                Effect.sync(() => {
+                  emit = null
+                  this.outputListeners.delete(listener)
+                })
+            )
+        ).pipe(Stream.filter((event) => event.sequence > this.snapshotFence))
+      }
+    })
   }
 
-  subscribeRuntime() {
-    return () => undefined
+  runtimeEvents() {
+    return Stream.empty
   }
 
   terminalTitleState() {
-    return Promise.resolve(null)
+    return Effect.succeed(null)
   }
 
   runtimeState() {
-    return Promise.resolve({
+    return Effect.succeed({
       title: null,
       status: 'running' as const,
       progress: null,
@@ -71,21 +99,26 @@ class HostDouble implements TerminalAttachmentBackend {
     })
   }
 
-  async write(
+  write(
     _terminalId: string,
     data: string | Buffer,
     authority: { attachmentId: string; generation: number }
-  ): Promise<void> {
-    if (this.writeError) {
-      throw this.writeError
-    }
+  ) {
+    return Effect.try({
+      try: () => {
+        if (this.writeError) {
+          throw this.writeError
+        }
 
-    this.writes.push({ data, authority })
+        this.writes.push({ data, authority })
+      },
+      catch: (cause) => cause
+    })
   }
 
   prepareQueryAuthority() {
     this.transitionSerial += 1
-    return Promise.resolve({
+    return Effect.succeed({
       transitionId: `transition-${this.transitionSerial}`,
       fence: this.snapshotFence
     })
@@ -97,21 +130,22 @@ class HostDouble implements TerminalAttachmentBackend {
     attachmentId: string,
     generation: number
   ) {
-    this.activations.push({ transitionId, attachmentId, generation })
-    return Promise.resolve()
+    return Effect.sync(() => {
+      this.activations.push({ transitionId, attachmentId, generation })
+    })
   }
 
   useHostQueryAuthority() {
-    this.hostAuthorityCount += 1
-    return Promise.resolve()
+    return Effect.sync(() => {
+      this.hostAuthorityCount += 1
+    })
   }
 
   resize(_terminalId: string, cols: number, rows: number) {
-    this.resizes.push({ cols, rows })
-    return Promise.resolve()
+    return Effect.sync(() => {
+      this.resizes.push({ cols, rows })
+    })
   }
-
-  dispose() {}
 
   emit(data: string, sequence: number): void {
     for (const listener of [...this.outputListeners]) {
@@ -364,6 +398,9 @@ describe('TerminalAttachmentManager', () => {
     host.emit(transientChunk, 1)
     host.emit(transientChunk, 2)
     expect(slow.connected).toBe(true)
+    await vi.waitFor(() =>
+      expect(eventPayloads(slow, 'output')).toHaveLength(2)
+    )
     const transientOutput = eventPayloads(slow, 'output').at(-1)!
     manager.message(slowId, 'output_ack', {
       streamId: transientOutput.streamId,

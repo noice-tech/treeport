@@ -2,6 +2,7 @@ import http, { type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import WebSocket from 'ws'
 import * as Effect from 'effect/Effect'
+import * as Stream from 'effect/Stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ProductEventBus,
@@ -43,7 +44,7 @@ import type {
   BrowserTransport
 } from './browser-sessions'
 import type { TerminalMetadataManager } from './terminal-metadata'
-import type { TerminalAttachmentBackend } from './terminal-host-sessions'
+import type { TerminalAttachmentBackend } from './core/terminal'
 
 class FakePty {
   readonly pid = 1
@@ -162,30 +163,41 @@ async function fixture(
   ptys.push(child)
   // SAFETY: The test fixture provides the terminal-host attachment contract.
   const terminalHost = testAccess<TerminalAttachmentBackend>({
-    attach: vi.fn(async (_terminalId, listener) => ({
-      data: '',
-      fence: 0,
-      cols: 100,
-      rows: 30,
-      unsubscribe: child.onData(listener).dispose
-    })),
-    subscribeRuntime: vi.fn(() => () => undefined),
-    terminalTitleState: vi.fn(async () => null),
-    runtimeState: vi.fn(async () => ({
-      title: null,
-      status: 'running',
-      progress: null,
-      bell: null
-    })),
-    write: vi.fn((_terminalId, data) => child.write(data)),
-    prepareQueryAuthority: vi.fn(async () => ({
-      transitionId: 'transition',
-      fence: 0
-    })),
-    activateQueryAuthority: vi.fn(async () => undefined),
-    useHostQueryAuthority: vi.fn(async () => undefined),
-    resize: vi.fn(async () => undefined),
-    dispose: vi.fn()
+    attach: vi.fn(() =>
+      Effect.succeed({
+        data: '',
+        links: [],
+        images: null,
+        fence: 0,
+        cols: 100,
+        rows: 30,
+        output: Stream.asyncScoped<{ data: string; sequence: number }>((emit) =>
+          Effect.acquireRelease(
+            Effect.sync(() =>
+              child.onData((data, sequence) => emit.single({ data, sequence }))
+            ),
+            (disposable) => Effect.sync(() => disposable.dispose())
+          )
+        )
+      })
+    ),
+    runtimeEvents: vi.fn(() => Stream.empty),
+    terminalTitleState: vi.fn(() => Effect.succeed(null)),
+    runtimeState: vi.fn(() =>
+      Effect.succeed({
+        title: null,
+        status: 'running' as const,
+        progress: null,
+        bell: null
+      })
+    ),
+    write: vi.fn((_terminalId, data) => Effect.sync(() => child.write(data))),
+    prepareQueryAuthority: vi.fn(() =>
+      Effect.succeed({ transitionId: 'transition', fence: 0 })
+    ),
+    activateQueryAuthority: vi.fn(() => Effect.void),
+    useHostQueryAuthority: vi.fn(() => Effect.void),
+    resize: vi.fn(() => Effect.void)
   })
   const currentMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',

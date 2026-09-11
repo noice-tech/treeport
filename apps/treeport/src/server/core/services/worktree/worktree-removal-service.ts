@@ -51,15 +51,6 @@ class RemovalExecutionError {
   constructor(readonly cause: unknown) {}
 }
 
-function removalPromise<Result>(
-  evaluate: () => Promise<Result>
-): Effect.Effect<Result, RemovalExecutionError> {
-  return Effect.tryPromise({
-    try: evaluate,
-    catch: (cause) => new RemovalExecutionError(cause)
-  })
-}
-
 function removalAdapter<Result, Failure>(
   effect: Effect.Effect<Result, Failure>
 ): Effect.Effect<Result, RemovalExecutionError> {
@@ -68,12 +59,12 @@ function removalAdapter<Result, Failure>(
   )
 }
 
-function removalEffect<Result>(
-  effect: Effect.Effect<Result>
+function removalEffect<Result, Failure>(
+  effect: Effect.Effect<Result, Failure>
 ): Effect.Effect<Result, RemovalExecutionError> {
   return Effect.catchAllCause(effect, (cause) =>
     Cause.isInterruptedOnly(cause)
-      ? Effect.failCause(cause)
+      ? Effect.interrupt
       : Effect.fail(new RemovalExecutionError(Cause.squash(cause)))
   )
 }
@@ -1064,8 +1055,8 @@ export class WorktreeRemovalService {
             }
           }
 
-          yield* removalPromise(() =>
-            terminalHost.killWorktree(lockedWorktreeId)
+          yield* removalEffect(
+            terminalHost.killWorktree(lockedWorktreeId).pipe(Effect.asVoid)
           )
           yield* persistPhase('terminals_stopped')
 

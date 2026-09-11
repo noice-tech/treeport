@@ -4,8 +4,14 @@ import path from 'node:path'
 import xtermHeadless from '@xterm/headless'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
+import * as Deferred from 'effect/Deferred'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as Fiber from 'effect/Fiber'
+import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
 import {
-  TerminalHostSessionManager,
+  makeTerminalHostSessions,
   type TerminalHostRuntimeEvent
 } from './terminal-host-sessions'
 import { testAccess } from './test-access'
@@ -23,6 +29,8 @@ class FakePty {
   kills = 0
   pauses = 0
   resumes = 0
+  dataDisposals = 0
+  exitDisposals = 0
   private dataListener: ((data: string) => void) | null = null
   private exitListener:
     | ((event: { exitCode: number; signal?: number }) => void)
@@ -30,12 +38,22 @@ class FakePty {
 
   onData(listener: (data: string) => void) {
     this.dataListener = listener
-    return { dispose: () => (this.dataListener = null) }
+    return {
+      dispose: () => {
+        this.dataDisposals += 1
+        this.dataListener = null
+      }
+    }
   }
 
   onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
     this.exitListener = listener
-    return { dispose: () => (this.exitListener = null) }
+    return {
+      dispose: () => {
+        this.exitDisposals += 1
+        this.exitListener = null
+      }
+    }
   }
 
   emit(data: string) {
@@ -68,7 +86,24 @@ class FakePty {
 }
 
 const directories: string[] = []
+const scopes: Scope.CloseableScope[] = []
+const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
+  Effect.runPromise(Scope.extend(effect, scopes.at(-1)!))
+const acquire = async (
+  options: Parameters<typeof makeTerminalHostSessions>[0]
+) => {
+  const scope = await Effect.runPromise(Scope.make())
+  scopes.push(scope)
+  return Effect.runPromise(
+    Scope.extend(makeTerminalHostSessions(options), scope)
+  )
+}
 afterEach(async () => {
+  await Promise.all(
+    scopes
+      .splice(0)
+      .map((scope) => Effect.runPromise(Scope.close(scope, Exit.void)))
+  )
   await Promise.all(
     directories
       .splice(0)
@@ -88,27 +123,33 @@ describe('TerminalHostSessionManager', () => {
       return testAccess<IPty>(pty)
     })
     const terminate = vi.fn(async (child: IPty) => child.kill())
-    const manager = new TerminalHostSessionManager(
+    const manager = await acquire({
       runtimeDir,
-      '/treeport/launcher.js',
+      launcherPath: '/treeport/launcher.js',
       // SAFETY: The fake implements the IPty methods used by this boundary.
-      spawn as never,
-      terminate,
-      50
-    )
-
-    await manager.createTerminal({
-      terminalId: 'term',
-      worktreeId: 'worktree',
-      name: 'Shell',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      cwd: runtimeDir,
-      argv: ['/bin/bash', '-l'],
-      shellCommand: null,
-      interactiveShell: true,
-      initialSize: { cols: 80, rows: 24 },
-      env: { HOME: '/home/test', TREEPORT_TERMINAL_ID: 'term' }
+      spawnPty: spawn as never,
+      terminateProcessTree: (child) =>
+        Effect.tryPromise({
+          try: () => terminate(child),
+          catch: (cause) => cause
+        }),
+      progressStaleMs: 50
     })
+
+    await run(
+      manager.createTerminal({
+        terminalId: 'term',
+        worktreeId: 'worktree',
+        name: 'Shell',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        cwd: runtimeDir,
+        argv: ['/bin/bash', '-l'],
+        shellCommand: null,
+        interactiveShell: true,
+        initialSize: { cols: 80, rows: 24 },
+        env: { HOME: '/home/test', TREEPORT_TERMINAL_ID: 'term' }
+      })
+    )
 
     expect(spawn).toHaveBeenCalledWith(
       '/bin/bash',
@@ -133,19 +174,39 @@ describe('TerminalHostSessionManager', () => {
     const firstOutput: string[] = []
     const secondOutput: string[] = []
     const runtimeEvents: TerminalHostRuntimeEvent[] = []
-    manager.subscribeOutput('term', (data) => firstOutput.push(data))
-    manager.subscribeOutput('term', (data) => secondOutput.push(data))
-    manager.subscribeRuntime('term', (event) => runtimeEvents.push(event))
+    const firstAttachment = await run(manager.attach('term'))
+    const secondAttachment = await run(manager.attach('term'))
+    await run(
+      Effect.forkScoped(
+        Stream.runForEach(firstAttachment!.output, ({ data }) =>
+          Effect.sync(() => firstOutput.push(data))
+        )
+      )
+    )
+    await run(
+      Effect.forkScoped(
+        Stream.runForEach(secondAttachment!.output, ({ data }) =>
+          Effect.sync(() => secondOutput.push(data))
+        )
+      )
+    )
+    await run(
+      Effect.forkScoped(
+        Stream.runForEach(manager.runtimeEvents('term'), (event) =>
+          Effect.sync(() => runtimeEvents.push(event))
+        )
+      )
+    )
     pty.emit(
       '\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
     )
-    const snapshot = await manager.snapshot('term')
-    expect(manager.runtimeState('term')).toMatchObject({
+    const snapshot = await run(manager.snapshot('term'))
+    expect(await run(manager.runtimeState('term'))).toMatchObject({
       progress: { state: 'normal', value: 50 },
       bell: { sequence: 1 }
     })
-    await vi.waitFor(() =>
-      expect(manager.runtimeState('term')?.progress).toBeNull()
+    await vi.waitFor(async () =>
+      expect((await run(manager.runtimeState('term')))?.progress).toBeNull()
     )
     expect(runtimeEvents).toContainEqual({ progress: null })
     pty.emit('after attach\r\n')
@@ -168,7 +229,7 @@ describe('TerminalHostSessionManager', () => {
 
     pty.emit('normal Unicode: λ🙂\r\n')
     pty.emit('\u001b[?1049halternate Unicode: 雪\r\n')
-    const alternateSnapshot = await manager.snapshot('term')
+    const alternateSnapshot = await run(manager.snapshot('term'))
     const browser = new Terminal({
       cols: alternateSnapshot!.cols,
       rows: alternateSnapshot!.rows,
@@ -203,8 +264,8 @@ describe('TerminalHostSessionManager', () => {
         (_, index) => `history-${index.toString().padStart(4, '0')}-🙂\r\n`
       ).join('')
     )
-    await manager.resize('term', 40, 12)
-    const reflowedSnapshot = await manager.snapshot('term')
+    await run(manager.resize('term', 40, 12))
+    const reflowedSnapshot = await run(manager.snapshot('term'))
     const reconnected = new Terminal({
       cols: reflowedSnapshot!.cols,
       rows: reflowedSnapshot!.rows,
@@ -239,13 +300,13 @@ describe('TerminalHostSessionManager', () => {
         }
       ])
     )
-    await expect(manager.captureTerminal('term', 10)).resolves.toContain(
+    await expect(run(manager.captureTerminal('term', 10))).resolves.toContain(
       'history-1999-🙂'
     )
 
     // The canonical headless terminal answers while detached.
     pty.emit('\u001b[6n')
-    await manager.snapshot('term')
+    await run(manager.snapshot('term'))
     expect(pty.writes).toHaveLength(1)
     expect(pty.writes[0]).toMatch(
       new RegExp(String.raw`^\u001b\[\d+;\d+R$`, 'u')
@@ -253,64 +314,121 @@ describe('TerminalHostSessionManager', () => {
 
     // A paused parser fence hands query authority to one browser. The
     // historical snapshot cannot answer the old query again.
-    const transition = await manager.prepareQueryAuthority('term')
-    await manager.activateQueryAuthority(
-      'term',
-      transition.transitionId,
-      'viewer',
-      2
+    const transition = await run(manager.prepareQueryAuthority('term'))
+    await run(
+      manager.activateQueryAuthority(
+        'term',
+        transition.transitionId,
+        'viewer',
+        2
+      )
     )
     pty.emit('\u001b[6n')
-    await manager.snapshot('term')
+    await run(manager.snapshot('term'))
     expect(pty.writes).toHaveLength(1)
 
     const pausesBeforeFlood = pty.pauses
     for (let index = 0; index < 18; index += 1) {
       pty.emit('x'.repeat(64 * 1024))
     }
-    manager.write('term', 'responsive-input', {
-      attachmentId: 'viewer',
-      generation: 2
-    })
+    await run(
+      manager.write('term', 'responsive-input', {
+        attachmentId: 'viewer',
+        generation: 2
+      })
+    )
     expect(pty.writes.at(-1)).toBe('responsive-input')
     expect(pty.pauses).toBeGreaterThan(pausesBeforeFlood)
-    await manager.snapshot('term')
+    await run(manager.snapshot('term'))
     expect(pty.resumes).toBeGreaterThan(0)
 
-    manager.write('term', 'ignored', {
-      attachmentId: 'other-viewer',
-      generation: 2
-    })
-    manager.write('term', 'input', {
-      attachmentId: 'viewer',
-      generation: 2
-    })
+    await run(
+      manager.write('term', 'ignored', {
+        attachmentId: 'other-viewer',
+        generation: 2
+      })
+    )
+    await run(
+      manager.write('term', 'input', {
+        attachmentId: 'viewer',
+        generation: 2
+      })
+    )
     expect(pty.writes.at(-1)).toBe('input')
 
     // Handoff to the detached responder happens behind another parser fence.
-    await manager.useHostQueryAuthority('term')
+    await run(manager.useHostQueryAuthority('term'))
     pty.emit('\u001b[6n')
-    await manager.snapshot('term')
+    await run(manager.snapshot('term'))
     expect(
       pty.writes.filter(
         (value) => value !== 'input' && value !== 'responsive-input'
       )
     ).toHaveLength(2)
 
-    await manager.resize('term', 100, 30)
+    await run(manager.resize('term', 100, 30))
     expect(pty.resizes).toEqual([
       [40, 12],
       [100, 30]
     ])
 
     pty.exit(7)
-    await expect(manager.terminalState('term')).resolves.toEqual({
+    await expect(run(manager.terminalState('term'))).resolves.toEqual({
       status: 'exited',
       exitCode: 7
     })
-    await manager.shutdown()
+    await run(manager.shutdown())
     expect(terminate).toHaveBeenCalledOnce()
     expect(pty.kills).toBe(1)
+  })
+
+  it('releases scoped pauses and authority transitions during teardown', async () => {
+    const runtimeDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-')
+    )
+    directories.push(runtimeDir)
+    const pty = new FakePty()
+    const manager = await acquire({
+      runtimeDir,
+      launcherPath: '/treeport/launcher.js',
+      // SAFETY: The fake implements the IPty methods used by this boundary.
+      spawnPty: (() => testAccess<IPty>(pty)) as never,
+      terminateProcessTree: (child) => Effect.sync(() => child.kill())
+    })
+    await run(
+      manager.createTerminal({
+        terminalId: 'term',
+        worktreeId: 'worktree',
+        name: 'Shell',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        cwd: runtimeDir,
+        argv: ['/bin/sh', '-l'],
+        shellCommand: null,
+        interactiveShell: true,
+        env: {}
+      })
+    )
+
+    const pauseScope = await Effect.runPromise(Scope.make())
+    expect(
+      await Effect.runPromise(
+        Scope.extend(manager.pauseOutput('term'), pauseScope)
+      )
+    ).toBe(true)
+    expect(pty.pauses).toBe(1)
+    await Effect.runPromise(Scope.close(pauseScope, Exit.void))
+    expect(pty.resumes).toBe(1)
+
+    await run(manager.prepareQueryAuthority('term'))
+    expect(pty.pauses).toBe(2)
+    await run(manager.killTerminal('term'))
+    expect(pty.resumes).toBe(2)
+    expect(pty.dataDisposals).toBe(1)
+    expect(pty.exitDisposals).toBe(1)
+
+    await run(manager.shutdown())
+    expect(pty.dataDisposals).toBe(1)
+    expect(pty.exitDisposals).toBe(1)
   })
 
   it('keeps fallback sessions on the launcher path until exit', async () => {
@@ -320,26 +438,28 @@ describe('TerminalHostSessionManager', () => {
     directories.push(runtimeDir)
     const pty = new FakePty()
     const spawn = vi.fn(() => testAccess<IPty>(pty))
-    const manager = new TerminalHostSessionManager(
+    const manager = await acquire({
       runtimeDir,
-      '/treeport/launcher.js',
+      launcherPath: '/treeport/launcher.js',
       // SAFETY: The fake implements the IPty methods used by this boundary.
-      spawn as never,
-      async (child) => child.kill()
-    )
-
-    await manager.createTerminal({
-      terminalId: 'term',
-      worktreeId: 'worktree',
-      name: 'Command',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      cwd: runtimeDir,
-      argv: ['/bin/sh'],
-      shellCommand: null,
-      interactiveShell: true,
-      fallbackArgv: ['/bin/sh', '-l'],
-      env: {}
+      spawnPty: spawn as never,
+      terminateProcessTree: (child) => Effect.sync(() => child.kill())
     })
+
+    await run(
+      manager.createTerminal({
+        terminalId: 'term',
+        worktreeId: 'worktree',
+        name: 'Command',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        cwd: runtimeDir,
+        argv: ['/bin/sh'],
+        shellCommand: null,
+        interactiveShell: true,
+        fallbackArgv: ['/bin/sh', '-l'],
+        env: {}
+      })
+    )
 
     expect(spawn).toHaveBeenCalledWith(
       process.execPath,
@@ -355,7 +475,59 @@ describe('TerminalHostSessionManager', () => {
         await fs.readdir(path.join(runtimeDir, 'terminal-specs'))
       ).toHaveLength(0)
     )
-    await manager.shutdown()
+    await run(manager.shutdown())
+  })
+
+  it('keeps physical cleanup owned after the requesting fiber is interrupted', async () => {
+    const runtimeDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-')
+    )
+    directories.push(runtimeDir)
+    const pty = new FakePty()
+    const cleanupStarted = await Effect.runPromise(Deferred.make<void>())
+    const releaseCleanup = await Effect.runPromise(Deferred.make<void>())
+    let cleanupFinished = false
+    const manager = await acquire({
+      runtimeDir,
+      launcherPath: '/treeport/launcher.js',
+      // SAFETY: The fake implements the IPty methods used by this boundary.
+      spawnPty: (() => testAccess<IPty>(pty)) as never,
+      terminateProcessTree: () =>
+        Deferred.succeed(cleanupStarted, undefined).pipe(
+          Effect.zipRight(Deferred.await(releaseCleanup)),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              cleanupFinished = true
+            })
+          )
+        )
+    })
+    await run(
+      manager.createTerminal({
+        terminalId: 'term',
+        worktreeId: 'worktree',
+        name: 'Shell',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        cwd: runtimeDir,
+        argv: ['/bin/sh', '-l'],
+        shellCommand: null,
+        interactiveShell: true,
+        env: {}
+      })
+    )
+
+    const requestingFiber = Effect.runFork(manager.killTerminal('term'))
+    await Effect.runPromise(Deferred.await(cleanupStarted))
+    await Effect.runPromise(Fiber.interrupt(requestingFiber))
+    expect(await run(manager.terminalState('term'))).toEqual({
+      status: 'missing',
+      exitCode: null
+    })
+    expect(cleanupFinished).toBe(false)
+
+    await Effect.runPromise(Deferred.succeed(releaseCleanup, undefined))
+    await run(manager.shutdown())
+    expect(cleanupFinished).toBe(true)
   })
 
   it('reports cleanup failure without retaining or poisoning the terminal ID', async () => {
@@ -369,13 +541,17 @@ describe('TerminalHostSessionManager', () => {
       .fn<(child: IPty) => Promise<void>>()
       .mockRejectedValueOnce(new Error('cleanup failed'))
       .mockResolvedValue(undefined)
-    const manager = new TerminalHostSessionManager(
+    const manager = await acquire({
       runtimeDir,
-      '/treeport/launcher.js',
+      launcherPath: '/treeport/launcher.js',
       // SAFETY: The fake implements the IPty methods used by this boundary.
-      spawn as never,
-      terminate
-    )
+      spawnPty: spawn as never,
+      terminateProcessTree: (child) =>
+        Effect.tryPromise({
+          try: () => terminate(child),
+          catch: (cause) => cause
+        })
+    })
     const input = (name: string) => ({
       terminalId: 'term',
       worktreeId: 'worktree',
@@ -388,17 +564,19 @@ describe('TerminalHostSessionManager', () => {
       env: {}
     })
 
-    await manager.createTerminal(input('First'))
-    await expect(manager.killTerminal('term')).rejects.toThrow('cleanup failed')
-    await expect(manager.terminalState('term')).resolves.toEqual({
+    await run(manager.createTerminal(input('First')))
+    await expect(run(manager.killTerminal('term'))).rejects.toThrow(
+      'cleanup failed'
+    )
+    await expect(run(manager.terminalState('term'))).resolves.toEqual({
       status: 'missing',
       exitCode: null
     })
 
     await expect(
-      manager.createTerminal(input('Replacement'))
+      run(manager.createTerminal(input('Replacement')))
     ).resolves.toBeUndefined()
-    await expect(manager.shutdown()).resolves.toBeUndefined()
+    await expect(run(manager.shutdown())).resolves.toBeUndefined()
     expect(terminate).toHaveBeenCalledTimes(2)
   })
 })

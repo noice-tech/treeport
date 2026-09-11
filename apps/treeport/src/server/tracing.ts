@@ -1,9 +1,6 @@
 export {
   currentPromiseSpan,
   currentTraceContext,
-  makeHostTraceRuntime,
   makeTracingLayer,
-  tracingLayerFromEnvironment,
-  type TreeportSpanAttributes,
-  type TreeportTraceContext
+  tracingLayerFromEnvironment
 } from '@treeport/shared/tracing'

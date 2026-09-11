@@ -763,9 +763,7 @@ export class ProjectService {
             for (const worktree of project.worktrees) {
               terminalIdsByWorktree.set(
                 worktree.id,
-                yield* Effect.tryPromise(() =>
-                  terminalHost.killWorktree(worktree.id)
-                ).pipe(Effect.orDie)
+                yield* terminalHost.killWorktree(worktree.id).pipe(Effect.orDie)
               )
             }
             yield* database
