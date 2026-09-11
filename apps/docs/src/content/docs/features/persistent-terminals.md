@@ -1,83 +1,24 @@
 ---
 title: Persistent terminals
-description: Run terminal programs and connect again without a restart.
+description: Keep terminal programs running when you disconnect.
 ---
 
-Treeport runs each terminal in its detached terminal host. The host owns one PTY and one canonical terminal model for the session. The process belongs to the tree, not to a client or API daemon.
+Each tree can have multiple terminals for shells, Pi, development servers, editors, and test watchers.
 
-## Disconnect without a stop
+## Disconnect and reconnect
 
-When you close a client or terminal view, only that client disconnects.
+Closing Treeport or a terminal view does not stop the process. Open the terminal again to continue the same session.
 
-Coding agents, shells, development servers, editors, and test watchers continue to run. Open the terminal again to connect to the same process.
+You can reconnect from the macOS app, a browser, or a phone through [Remote access](/features/remote-access/).
 
-Treeport reports whether the terminal process runs or has exited. It also reports the exit code when that code is available.
+## Use your terminal tools
 
-If a command returns to an interactive shell, the terminal continues to run because the shell is active.
+Terminal programs keep their usual interfaces, keyboard shortcuts, mouse input, and interactive prompts.
 
-## Connect from another device
+You can scroll through earlier output, select text, and copy or paste. Connected viewers share one terminal size.
 
-Open the same terminal from the browser or desktop client.
+Treeport also displays Kitty inline images. Earlier images are not restored after a reconnect.
 
-You can also connect from a phone through the supported Tailscale Serve endpoint.
+## See terminal status
 
-## Read earlier output
-
-Each browser keeps its own useful terminal scrollback. Earlier output or a selection can stay visible in one browser while new output continues and other viewers remain at their own positions.
-
-See [Shortcuts](/reference/shortcuts/#selection-scrolling-and-clipboard) for scroll, selection, copy, and paste operations.
-
-## Understand the shared terminal size
-
-A terminal has one size for all connected clients. The client that has control sets the row-and-column grid.
-
-Other clients fit that grid into the available area. A change of control between different devices can change the layout for all clients.
-
-See [Shared terminal size](/reference/shortcuts/#shared-terminal-size).
-
-:::caution
-Remote access gives terminal control. Use only the authenticated Tailscale Serve workflow. Give access only to users who can control the host.
-:::
-
-Read the [security guidance](/security/) before you enable remote access.
-
-## Run standard terminal applications
-
-Treeport transfers terminal input and output. It does not replace the terminal user interface.
-
-Mouse input, keyboard shortcuts, alternate screens, and interactive prompts continue to work as the terminal application expects.
-
-### View Kitty images
-
-Treeport displays inline images that use the Kitty graphics protocol.
-
-A connected client displays an image when an application sends it. Treeport does not restore earlier images after a reconnect.
-
-A tree can have multiple named terminals:
-
-```text
-investigate-cache
-├── agent       Pi
-├── dev         pnpm dev
-├── tests       pnpm test --watch
-└── shell       login shell
-```
-
-## Add runtime information
-
-Applications can add information with standard signals:
-
-- **Title**: Short context, such as `PR #123` or `Development server`.
-- **BEL**: An important change that requires attention.
-- **OSC 9;4 progress**: Active work, a percentage, or a cleared state.
-- **Process exit**: Completion and the exit code, when available.
-
-These signals are not necessary for persistence or control. See the [terminal signals reference](/reference/terminal-signals/).
-
-## Keep the terminal host focused
-
-The Treeport-owned terminal host provides persistence, canonical history, reconnect snapshots, and byte-stream fanout. It does not implement windows, panes, layouts, prefix keys, or server-side copy mode.
-
-Browser clients own scrolling, selection, and clipboard behavior.
-
-The [Pi integration](/building-apps/coding-agents/#use-pi) can create persistent terminals for long-running agent tasks.
+Treeport shows whether a process is running or has exited. Supported applications can also show [Attention and progress](/building-apps/coding-agents/#attention-and-progress).

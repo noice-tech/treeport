@@ -3,156 +3,35 @@ title: Remote access
 description: Open Treeport privately from other devices through Tailscale Serve.
 ---
 
-Treeport supports remote access through [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve).
-
-The daemon stays on loopback. Tailscale Serve supplies private HTTPS and authenticates each remote user.
-
-Serve adds the Tailscale user identity to HTTP and WebSocket requests. Treeport rejects remote requests that do not have this identity.
-
-Your tailnet ACLs and grants control access. Each permitted user can control Treeport terminals and trees.
-
-:::caution
-Do not use Tailscale Funnel, a public proxy, an arbitrary reverse proxy, or a direct network listener.
-:::
-
-A tagged client device does not supply a user identity. Use a user-owned device to connect. The server can be tagged.
+Use [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) to access Treeport from another computer or phone.
 
 ## Enable remote access
 
-1. Install Tailscale.
-2. Sign in to your tailnet.
-3. Connect this computer:
-
-```sh
-tailscale up
-```
-
-Enable the Treeport endpoint:
+Install Tailscale on the host and connecting device. Sign in to the same tailnet, then run this command on the host:
 
 ```sh
 treeport remote enable
 ```
 
-This command starts the loopback daemon when necessary. It prints a URL similar to this URL:
+Open the printed HTTPS URL from a permitted, user-owned Tailscale device.
 
-```text
-https://laptop.tailnet.ts.net:8733
-```
+In the macOS app, select the computer name, then **Connect to another computer…**. Enter the same URL.
 
-Open this URL from a user-owned device that your tailnet policy permits.
+Tailscale controls access. Treeport does not require a separate login.
 
-Tailscale supplies the user identity on each request. Treeport does not show a separate login or create a second session.
+:::caution
+Anyone with access can control terminals and trees. Allow only trusted users.
 
-Local access does not change. Browsers and commands on the host continue to use `http://127.0.0.1:8733`.
+Keep the backend on loopback. Do not use Tailscale Funnel or expose Treeport directly to the public internet.
+:::
 
-You can install Treeport on a virtual private server. Keep the daemon on loopback, and use Tailscale Serve for private HTTPS.
+## See who is connected
 
-Do not make Treeport available through the public address of the server.
+Treeport shows other people in the workspace. Select the people button to see their focused panel or background status.
 
-## See other people in a workspace
+## Manage access
 
-When another person opens the same workspace, Treeport shows their name above the workspace.
-Select the people button to see their focused panel or background status.
+- `treeport remote status` checks the private endpoint.
+- `treeport remote disable` removes Treeport's remote access route.
 
-Treeport uses the connecting device's Tailscale identity. Your own tabs do not count as other people.
-Local connections appear as **Local user**, because they do not supply a Tailscale identity.
-
-Focus comes from the browser. It does not prove that a person is reading or typing.
-It does not change terminal control or access permissions.
-
-Treeport shares workspace and panel presence, not terminal input or browser URLs. It does not save presence history.
-Disconnected tabs disappear after their presence expires. Presence can take up to 45 seconds to expire after the last update.
-
-## Connect the desktop client
-
-The desktop client starts with **This computer** at `http://127.0.0.1:8733`.
-
-1. Select the computer name in the title bar.
-2. Select **Connect to another computer…**.
-3. Enter the HTTPS URL from `treeport remote enable`.
-
-The desktop client uses the current Tailscale connection on the Mac. It does not request separate Treeport credentials.
-
-The client requires an HTTPS certificate that the operating system trusts. It does not permit an insecure certificate exception.
-
-## Connect the CLI
-
-On another permitted tailnet device, set `TREEPORT_API_URL` to the Serve URL:
-
-```sh
-TREEPORT_API_URL=https://laptop.tailnet.ts.net:8733 \
-  treeport project list
-```
-
-Tailscale Serve authenticates the request. The CLI does not create or save a Treeport credential.
-
-Run lifecycle commands on the computer that runs Treeport. These commands include `start`, `stop`, `service`, and `remote`.
-
-## Select a different port
-
-Treeport uses HTTPS port `8733` by default. This dedicated port prevents a conflict with another Serve application at its root route.
-
-If the port is in use, select a different port:
-
-```sh
-treeport remote enable --port 8734
-```
-
-Treeport does not replace an endpoint that already uses the selected port.
-
-## Check persistence and status
-
-Tailscale Serve keeps its configuration separately from the Treeport CLI process.
-
-Treeport saves the selected port and loopback target. After setup, `treeport start` makes Treeport available at the saved remote URL.
-
-For recovery after a reboot, enable [service supervision](/features/service-supervision/).
-
-Treeport does not change the Serve route when launchd or systemd restarts the daemon.
-
-When the daemon is healthy again, the same private URL becomes available.
-
-Check remote access:
-
-```sh
-treeport remote status
-```
-
-If another process changed or removed the route, the status command reports that it is not available.
-
-Confirm that the port is correct before you enable the route again.
-
-## Disable remote access
-
-Run:
-
-```sh
-treeport remote disable
-```
-
-Treeport removes only the root Serve route that it created.
-
-If another process changed that route, Treeport keeps the route and removes only its saved preference.
-
-## Supported remote access boundary
-
-Treeport currently supports only Tailscale Serve for remote access.
-
-This limit keeps the daemon on loopback and supplies one reviewed authentication boundary.
-
-Support for other authenticated private-network systems can be proposed in [issue #274](https://github.com/noice-tech/treeport/issues/274).
-
-Do not work around this limit with a LAN listener or public internet access.
-
-Treeport gives full terminal access. A future alternative must authenticate HTTP, WebSocket, desktop, and CLI traffic.
-
-It must also stop access when authentication fails.
-
-## Correct common problems
-
-- If Tailscale is not installed, install it and run `tailscale up`.
-- If Tailscale is disconnected, run `tailscale up`.
-- If Treeport returns `401`, use the Serve URL from a user-owned Tailscale device.
-- If another user cannot connect, review the tailnet ACLs and grants in the Tailscale administration console.
-- If an old listener preference prevents startup, run `treeport start --host 127.0.0.1`.
-- After you repair the listener, run `treeport remote enable`.
+Use [Service supervision](/features/service-supervision/) to start the backend automatically.

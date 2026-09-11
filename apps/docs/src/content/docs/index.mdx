@@ -1,44 +1,23 @@
 ---
 title: Treeport
-description: Use persistent terminals in Git worktrees.
+description: Persistent terminals for Git worktrees.
 template: splash
 hero:
-  tagline: Keep coding agents, shells, and development servers active in each Git worktree. Reconnect from a desktop, browser, or phone.
+  tagline: Persistent terminals for Git worktrees.
   actions:
     - text: Install Treeport
       link: /getting-started/installation/
       icon: right-arrow
-    - text: View the source on GitHub
-      link: https://github.com/noice-tech/treeport
-      icon: external
-      variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components'
+## Features
 
-## Keep each task in its own Git worktree
-
-Treeport gives each Git worktree a persistent workspace for terminals and tools. The interface calls this workspace a tree.
-
-<CardGrid>
-  <Card title="Use Git worktrees" icon="seti:git">
-    Treeport finds worktrees that Git, editors, agents, and other tools create.
-  </Card>
-  <Card title="Keep terminals active" icon="seti:shell">
-    Terminal processes continue when you disconnect.
-  </Card>
-  <Card title="Connect from another device" icon="laptop">
-    Use the macOS desktop client or a supported browser.
-  </Card>
-  <Card title="Use your terminal tools" icon="puzzle">
-    Run Pi, Claude Code, Codex, shells, and development servers.
-  </Card>
-</CardGrid>
-
-## Use a standard application interface
-
-Treeport gives terminal tools a familiar application interface. You can use tabs, mouse navigation, editors, agents, and pull-request workflows.
-
-Treeport uses existing tools. It does not replace them.
-
-Read the [Treeport design principles](/concepts/philosophy/).
+- [Git worktrees](/concepts/projects-worktrees-terminals/): Create separate workspaces or open existing worktrees and folders.
+- [Coding agents](/building-apps/coding-agents/): Pi is the only supported integration.
+- [Persistent terminals](/features/persistent-terminals/): Keep processes running when you disconnect.
+- [Terminal presets](/features/terminal-presets/): Save and reuse commands.
+- [Packages](/features/packages/): Add terminal presets and web panels.
+- [Browser](/features/browser-panel/) and [web panels](/features/web-panels/) (experimental): Open websites and project tools beside terminals.
+- [Remote access](/features/remote-access/): Connect from another computer or phone through Tailscale.
+- [Service supervision](/features/service-supervision/): Start automatically and restart after an unexpected exit.
+- [Tree setup and cleanup](/features/worktree-setup-hooks/): Run commands when creating or removing a tree.
