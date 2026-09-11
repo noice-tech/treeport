@@ -1,269 +1,37 @@
 ---
-title: Browser primitive (experimental)
-description: Open and control a web page in a built-in Treeport panel.
+title: Browser (experimental)
+description: Open web pages beside your terminals.
 ---
 
-The Browser primitive is a built-in tool. It opens one top-level web page for a tree.
-
-Each browser panel has one address bar, one page, and one live browser runtime.
-
-Treeport shows Browser panels in the tree's side panel. On desktop, the terminal stays visible beside this panel.
-
-## Understand the browser runtime
-
-Each browser panel has one authoritative runtime.
-
-A local desktop connection can open the page in an Electron `<webview>`.
-
-Web and remote desktop clients stream this Electron page while its desktop connection stays open.
-
-If no local desktop owns the page, Playwright controls Chrome or Chromium on the daemon computer.
-
-The toolbar and `treeport browser` commands control the same live page.
-
-Treeport does not synchronize two browser pages.
-
-Remote viewing requires a browser with WebCodecs VP8 decoding, such as Chrome or the Treeport desktop app.
-
-The remote stream contains video only. It does not contain page audio.
-
-For an Electron runtime, page requests come from the desktop computer.
-
-For a Playwright runtime, page requests come from the daemon computer.
-
-Thus, `localhost` identifies the computer that runs the authoritative runtime.
-
-## Prepare the browser host
-
-### macOS
-
-Install Google Chrome in `/Applications`. Treeport uses Chrome directly, including on a Mac mini. Docker is not required.
-
-### Linux and VPS hosts
-
-Treeport runs on the host. Only its browser runs in a Docker container.
-
-Install rootful Docker on the host. Run Treeport as a non-root service user with access to the local Docker daemon.
-
-Docker access gives that user extensive host privileges. Do not grant it to untrusted users.
-
-Open a Browser panel. Select **Set up browser** when prompted.
-
-Setup builds a local image with distribution Chromium, its libraries, and fonts. It can take several minutes and requires internet access.
-
-The same image recipe supports x86-64 and ARM64 Linux hosts. It does not use Chrome for Testing.
-
-You can also start setup from the CLI:
-
-```sh
-treeport browser install
-```
-
-After setup, Treeport starts and reconnects to the browser automatically. Treeport does not download an image when you open a panel.
-
-The container uses host networking, so browser `localhost` reaches services on the VPS.
-
-Its debugging endpoint listens on loopback only. Treeport does not publish a debugging port on external network interfaces.
-
-Treeport supplies a non-root user and a seccomp policy for the browser sandbox. Host security restrictions can still prevent startup.
-
-Remote Docker contexts and rootless Docker are not supported. The Docker daemon and Treeport must use the same host filesystem.
-
-To use an existing native browser instead, set `TREEPORT_BROWSER_EXECUTABLE` to its absolute path before starting Treeport.
-
-### Check and maintain the browser
-
-Check the installation and test browser startup:
-
-```sh
-treeport browser status
-```
-
-Treeport runs the browser headless. A VPS does not need a display, Xvfb, or a desktop environment.
-
-Run Treeport as a dedicated non-root user. The browser sandbox must work under the host's kernel and security policy.
-
-Treeport does not disable the sandbox if startup fails. Use the `launchError` from `status` to correct missing libraries or sandbox restrictions.
-
-Keep the Treeport data directory on a persistent volume owned by the service user. Keep the same user identity across restarts.
-
-Use graceful service shutdown. Do not run two daemon instances against the same data directory.
-
-The shared profile stays in Treeport's data directory, outside the container. Container replacement does not remove it.
-
-For a Linux container, run `treeport browser install` again to rebuild with current distribution security updates.
-
-For native Chrome, use the operating system's browser update mechanism. Restart Treeport after either type of update.
-
-The previous `browser remove` command is no longer available. Treeport never removes a native browser installation.
-
-Native Chrome, the Linux container, and the previous bundled Chromium use separate profiles to prevent incompatible browser versions from changing existing data.
-
-Switching between these runtimes requires a new login. Existing profile data remains unchanged.
-
-Headless Chrome can still be identified as automated. Some websites can reject logins from automated browsers or server IP addresses.
-
-## Open a page
-
-1. Select the side panel button.
-2. Select **Browser** in the empty panel or the `+` menu.
-3. Enter search terms or an HTTP or HTTPS address in the address bar.
-4. Press Enter.
-
-You can also select **Browser** from **New panel**.
-
-Treeport sends search terms to Google Search.
-
-You can omit the protocol. Treeport adds `http://` when necessary.
-
-To open a detected development server, select **Development servers** on the right of the address bar.
-
-The page is not in an iframe. Sites that block iframe use can open in the browser panel.
-
-Use **Back**, **Forward**, **Reload**, and the address bar to control the page.
-
-If the page cannot load, Treeport shows the network error code.
-
-Correct the address or start the target. Then, select **Reload**.
-
-Use pointer, keyboard, and scroll input in the page.
-
-A remote paste can contain up to 1,048,576 UTF-16 code units. Most characters use one unit; some, such as emoji, use two.
-
-If a paste exceeds this limit, Treeport shows an error and sends no text. Paste smaller portions instead.
-
-If Treeport rejects input during reconnection, wait for the page to reconnect. Then, repeat the input.
-
-Press `Command+F` on macOS or `Ctrl+F` on Linux to find text in the page.
-
-On a local desktop, right-click the page to open the browser context menu.
-
-Use this menu to open links in new Browser tabs, copy link addresses, and edit text.
-
-When a page opens a popup, Treeport opens a new browser panel in the same tree.
-
-On a touch screen, tap an HTTP or HTTPS terminal link to open it in that terminal's tree.
-
-With a mouse, modifier-click the link.
-
-If a Browser panel has the exact URL in that tree, Treeport selects it instead of opening another panel.
-
-## Recover an unavailable browser
-
-After a network disconnection, Treeport retries automatically with increasing delays, up to 30 seconds.
-
-An invalid browser protocol response stops automatic retries and shows an error. Reload Treeport to reconnect.
-
-If the protocol error continues, update Treeport and report the problem.
-
-If the browser cannot start or its page process stops, Treeport shows **Browser unavailable**.
-
-Select **Retry** to reopen the page. Unsaved page input can be lost.
-
-If only video capture fails, **Retry** reconnects to the existing page. It does not replace that page.
-
-## Open a browser panel from the CLI
-
-Open a blank browser panel:
-
-```sh
-treeport browser open --worktree .
-```
-
-Open a browser panel with a URL:
-
-```sh
-treeport browser open http://127.0.0.1:5173 --worktree .
-```
-
-The server accepts only HTTP and HTTPS URLs without credentials.
-
-From a visible managed terminal, this command reveals the new Browser in the side panel. The terminal keeps keyboard focus.
-
-## Control a browser panel from an agent
-
-Use these commands to inspect and control the current page:
-
-```sh
-treeport browser list
-treeport browser snapshot
-treeport browser click e12
-treeport browser fill e14 "value"
-treeport browser press Enter
-treeport browser console
-treeport browser network
-treeport browser screenshot
-```
-
-Without `--panel`, Treeport selects the only browser panel in the current tree.
-
-If multiple browser panels are open, add `--panel <panel-id>`.
-
-A snapshot reference, such as `e12`, identifies an element in the current live runtime.
-
-Take a new snapshot after navigation or a runtime change.
-
-For a local desktop connection, commands control the live Electron `<webview>` page.
-
-Commands continue while you select another Treeport workspace.
-
-Commands that inspect or interact with an existing page do not open the side panel or select a Browser tab.
-
-Your current desktop control keeps keyboard focus.
+Browser panels let you use websites and development servers inside a tree.
 
 You can interact with the page while an agent uses it. A robot icon appears in the toolbar during an agent command.
 
-Agent commands do not take browser control from you. Agent actions can change the same page state as your actions.
+## Open a page
 
-For other connections, commands control the streamed Playwright page.
+1. Open **New panel** and select **Browser**.
+2. Enter a URL or search terms in the address bar.
+3. Press Enter.
 
-## Close a browser panel
+Use **Development servers** beside the address bar to open a detected server.
 
-Close a Browser tab in the side panel. Hiding the side panel does not close its Browser tabs.
+The panel supports navigation, page search, and normal keyboard and pointer input.
 
-Treeport runs the site's page-close handlers. If the site uses `beforeunload`, Treeport asks you before it closes.
+## Browser requirements
 
-Browser panels use shared browser data like tabs in one browser.
+The local macOS app includes browser support. For browser hosting without the local app:
 
-Cookies, local storage, and login state are available to other browser panels on the same browser host.
+- **macOS:** Install Google Chrome in Applications.
+- **Linux:** Install local, rootful Docker, then select **Set up browser** when prompted.
 
-Treeport keeps this data when you close a panel or restart Treeport.
+Docker access gives extensive host privileges. Grant it only to trusted users.
 
-The daemon browser stays running when you close its last tab. Persistent site data survives browser restarts; session-only data might not.
+Remote viewing requires a browser with WebCodecs VP8 support, such as Chrome.
 
-Everyone with browser access shares its signed-in accounts, including agents with browser control. Use company accounts, not personal accounts.
+## Browser data and limits
 
-Sites can expire or revoke a login at any time.
+Browser panels on the same host share login state. Anyone with browser access, including agents, can use those signed-in accounts.
 
-Treeport does not use, import, or attach to a personal browser profile.
+Treeport uses its own browser data, not your personal browser profile.
 
-Treeport saves each panel's current URL and title. It restores the URL when it creates a new runtime.
-
-A closed panel does not keep tab-specific state such as history, session storage, form input, or snapshot references.
-
-The desktop runtime and the daemon runtime keep separate app-owned profiles. They do not copy browser data between computers.
-
-A remote client keeps the Electron page history, session storage, form input, and live page state.
-
-This continuity requires the local desktop connection to stay open.
-
-If that connection closes, Treeport can start a daemon runtime from the saved URL.
-
-This runtime change does not keep tab-specific state.
-
-## Understand remote limits
-
-A browser panel in a web or remote desktop client does not support these features:
-
-- streamed audio;
-- downloads;
-- file selection or upload;
-- automatic clipboard synchronization with the daemon computer.
-
-The Treeport controls have accessible names and keyboard operation.
-
-The streamed page image does not include semantic accessibility information.
-
-Use `treeport browser snapshot` to read the page's semantic accessibility data.
-
-The [Pi integration](/building-apps/coding-agents/#use-pi) lets Pi control the current tree's visible browser tab.
+Remote browser panels do not support audio, downloads, or file uploads.

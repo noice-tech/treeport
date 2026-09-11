@@ -56,28 +56,15 @@ export default defineConfig({
           items: [
             { label: 'Install Treeport', slug: 'getting-started/installation' },
             {
-              label: 'Recover after an update',
-              slug: 'getting-started/update-recovery'
-            }
-          ]
-        },
-        {
-          label: 'Concepts',
-          items: [
-            { label: 'Design principles', slug: 'concepts/philosophy' },
-            {
               label: 'Projects, trees, and terminals',
               slug: 'concepts/projects-worktrees-terminals'
-            },
-            {
-              label: 'Fits around your tools',
-              slug: 'concepts/fits-around-your-tools'
             }
           ]
         },
         {
           label: 'Features',
           items: [
+            { label: 'Coding agents', slug: 'building-apps/coding-agents' },
             {
               label: 'Persistent terminals',
               slug: 'features/persistent-terminals'
@@ -98,36 +85,11 @@ export default defineConfig({
               slug: 'features/browser-panel'
             },
             {
-              label: 'Attention and progress',
-              slug: 'features/attention-and-progress'
-            },
-            {
-              label: 'Tree setup',
+              label: 'Tree setup and cleanup',
               slug: 'features/worktree-setup-hooks'
             }
           ]
-        },
-        {
-          label: 'Tools and workflows',
-          items: [
-            {
-              label: 'Tree-friendly development',
-              slug: 'workflows/worktree-friendly-development'
-            },
-            { label: 'Shell setup', slug: 'workflows/shell-setup' },
-            { label: 'Coding agents', slug: 'building-apps/coding-agents' }
-          ]
-        },
-        {
-          label: 'Reference',
-          items: [
-            { label: 'Shortcuts', slug: 'reference/shortcuts' },
-            { label: 'CLI', slug: 'reference/cli' },
-            { label: 'Configuration', slug: 'reference/configuration' },
-            { label: 'Terminal signals', slug: 'reference/terminal-signals' }
-          ]
-        },
-        { label: 'Security', slug: 'security' }
+        }
       ]
     })
   ]

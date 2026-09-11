@@ -23,6 +23,8 @@ Treeport development terminals are usually managed by an outer Treeport instance
 
 ## Documentation
 
+- Do not write, update, or add project documentation unless the user explicitly asks. Code changes do not imply a documentation request.
+- When requested, keep documentation concise and feature-focused. Do not add deep reference material, implementation details, or design principles.
 - Keep project documentation in `apps/docs`.
 - Public documentation belongs in `apps/docs/src/content/docs`.
 - Treat code and tests as the source of truth for implementation and architecture. Do not maintain separate internal documentation.
