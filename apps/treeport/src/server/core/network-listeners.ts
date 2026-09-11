@@ -1,10 +1,15 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
   WorktreeListener,
   WorktreeListenerDiscovery
 } from '@treeport/shared'
-import type { CommandRunner } from './command'
+import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import { asEffectCommandRunner, type CommandRunner } from './command'
 
 export interface WorktreeListenerScope {
   worktreePath: string
@@ -204,7 +209,7 @@ function finalListeners(
   )
 }
 
-export class NetworkListenerAdapter {
+class PromiseNetworkListenerAdapter {
   constructor(
     private readonly runner: CommandRunner,
     private readonly platform: NodeJS.Platform = process.platform,
@@ -411,4 +416,70 @@ export class NetworkListenerAdapter {
       )
     }
   }
+}
+
+export class NetworkListenerError extends Data.TaggedError(
+  'NetworkListenerError'
+)<{
+  readonly operation: 'listeners'
+  readonly cause: unknown
+  readonly message: string
+}> {
+  constructor(cause: unknown) {
+    super({
+      operation: 'listeners',
+      cause,
+      message: cause instanceof Error ? cause.message : String(cause)
+    })
+  }
+}
+
+export class NetworkListenerAdapter {
+  private readonly implementation: PromiseNetworkListenerAdapter
+  private readonly cancellation = new AsyncLocalStorage<AbortSignal>()
+
+  constructor(
+    runner: CommandRunner,
+    platform: NodeJS.Platform = process.platform,
+    procRoot = '/proc'
+  ) {
+    const effectRunner = asEffectCommandRunner(runner)
+    this.implementation = new PromiseNetworkListenerAdapter(
+      {
+        run: (request) =>
+          Effect.runPromise(effectRunner.runEffect(request), {
+            signal: this.cancellation.getStore()
+          })
+      },
+      platform,
+      procRoot
+    )
+  }
+
+  listeners(
+    scope: WorktreeListenerScope
+  ): Effect.Effect<WorktreeListenerDiscovery, NetworkListenerError> {
+    return Effect.tryPromise({
+      try: (signal) =>
+        this.cancellation.run(signal, () =>
+          this.implementation.listeners(scope)
+        ),
+      catch: (cause) => new NetworkListenerError(cause)
+    })
+  }
+}
+
+export class NetworkListenerPort extends Context.Tag(
+  'treeport/NetworkListeners'
+)<NetworkListenerPort, NetworkListenerAdapter>() {}
+
+export function NetworkListenersLayer(
+  runner: CommandRunner,
+  platform: NodeJS.Platform = process.platform,
+  procRoot = '/proc'
+): Layer.Layer<NetworkListenerPort> {
+  return Layer.succeed(
+    NetworkListenerPort,
+    new NetworkListenerAdapter(runner, platform, procRoot)
+  )
 }

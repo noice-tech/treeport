@@ -89,20 +89,26 @@ class HostDouble implements TerminalAttachmentBackend {
 
 class BellStoreDouble implements TerminalBellStateStore {
   readonly states = new Map<string, TerminalBellState>()
-  readonly upsert = vi.fn(async (state: TerminalBellState) => {
-    this.states.set(state.terminalId, state)
-  })
-  readonly markRead = vi.fn(async (terminalId: string, sequence: number) => {
-    const state = this.states.get(terminalId)
-    if (state?.sequence === sequence) {
-      this.states.set(terminalId, { ...state, unread: false })
-    }
-  })
-  readonly delete = vi.fn(async (terminalId: string) => {
-    this.states.delete(terminalId)
-  })
+  readonly upsert = vi.fn((state: TerminalBellState) =>
+    Effect.sync(() => {
+      this.states.set(state.terminalId, state)
+    })
+  )
+  readonly markRead = vi.fn((terminalId: string, sequence: number) =>
+    Effect.sync(() => {
+      const state = this.states.get(terminalId)
+      if (state?.sequence === sequence) {
+        this.states.set(terminalId, { ...state, unread: false })
+      }
+    })
+  )
+  readonly delete = vi.fn((terminalId: string) =>
+    Effect.sync(() => {
+      this.states.delete(terminalId)
+    })
+  )
   load() {
-    return Promise.resolve([...this.states.values()])
+    return Effect.sync(() => [...this.states.values()])
   }
 }
 

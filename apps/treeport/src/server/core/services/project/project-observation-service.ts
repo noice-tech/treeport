@@ -12,7 +12,8 @@ import {
   ProjectObservations,
   WorktreeMutations
 } from '../infrastructure/application-runtime'
-import { DatabasePort, GitPort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
+import { GitPort } from '../../git'
 import { ProjectFolderIdentities } from './project-folder-identities'
 import { ProjectStore } from './project-store'
 
@@ -51,22 +52,26 @@ export class ProjectObservationService {
                   return
                 }
 
-                const [metadata] = yield* Effect.promise(() =>
-                  database.db
-                    .select({
-                      device: projects.repositoryDevice,
-                      inode: projects.repositoryInode
-                    })
-                    .from(projects)
-                    .where(eq(projects.id, project.id))
-                    .limit(1)
-                )
+                const [metadata] = yield* database
+                  .execute('project.observation.service.54', (db) =>
+                    db
+                      .select({
+                        device: projects.repositoryDevice,
+                        inode: projects.repositoryInode
+                      })
+                      .from(projects)
+                      .where(eq(projects.id, project.id))
+                      .limit(1)
+                  )
+                  .pipe(Effect.orDie)
                 const [canonicalPath, folderStat] = yield* Effect.all(
                   [
-                    Effect.promise(() => fs.realpath(project.rootPath)),
-                    Effect.promise(() =>
+                    Effect.tryPromise(() => fs.realpath(project.rootPath)).pipe(
+                      Effect.orDie
+                    ),
+                    Effect.tryPromise(() =>
                       fs.stat(project.rootPath, { bigint: true })
-                    )
+                    ).pipe(Effect.orDie)
                   ],
                   { concurrency: 'unbounded' }
                 )
@@ -108,15 +113,17 @@ export class ProjectObservationService {
                 }
 
                 if (metadata.device !== device || metadata.inode !== inode) {
-                  yield* Effect.promise(() =>
-                    database.db
-                      .update(projects)
-                      .set({
-                        repositoryDevice: device,
-                        repositoryInode: inode
-                      })
-                      .where(eq(projects.id, project.id))
-                  )
+                  yield* database
+                    .execute('project.observation.service.111', (db) =>
+                      db
+                        .update(projects)
+                        .set({
+                          repositoryDevice: device,
+                          repositoryInode: inode
+                        })
+                        .where(eq(projects.id, project.id))
+                    )
+                    .pipe(Effect.orDie)
                 }
 
                 yield* folderIdentities.set(project.id, { device, inode })
@@ -147,21 +154,23 @@ export class ProjectObservationService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const git = yield* GitPort
-      const [metadata] = yield* Effect.promise(() =>
-        database.db
-          .select({
-            projectKind: projects.kind,
-            repositoryPath: projects.repositoryPath,
-            isOpen: projects.isOpen,
-            device: projects.repositoryDevice,
-            inode: projects.repositoryInode,
-            gitWorktreeKey: worktrees.gitWorktreeKey
-          })
-          .from(worktrees)
-          .innerJoin(projects, eq(worktrees.projectId, projects.id))
-          .where(eq(worktrees.id, binding.id))
-          .limit(1)
-      )
+      const [metadata] = yield* database
+        .execute('project.observation.service.150', (db) =>
+          db
+            .select({
+              projectKind: projects.kind,
+              repositoryPath: projects.repositoryPath,
+              isOpen: projects.isOpen,
+              device: projects.repositoryDevice,
+              inode: projects.repositoryInode,
+              gitWorktreeKey: worktrees.gitWorktreeKey
+            })
+            .from(worktrees)
+            .innerJoin(projects, eq(worktrees.projectId, projects.id))
+            .where(eq(worktrees.id, binding.id))
+            .limit(1)
+        )
+        .pipe(Effect.orDie)
       if (!metadata) {
         return yield* Effect.fail(
           new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
@@ -178,88 +187,110 @@ export class ProjectObservationService {
         )
       }
 
-      return yield* Effect.tryPromise({
-        try: async () => {
-          const [
-            canonicalWorktree,
-            worktreeStat,
-            canonicalRepository,
-            repositoryStat
-          ] = await Promise.all([
+      const unavailable = (message: string) =>
+        new DomainError('WORKTREE_UNAVAILABLE', message, 409)
+      const [
+        canonicalWorktree,
+        worktreeStat,
+        canonicalRepository,
+        repositoryStat
+      ] = yield* Effect.tryPromise({
+        try: () =>
+          Promise.all([
             fs.realpath(binding.path),
             fs.stat(binding.path, { bigint: true }),
             fs.realpath(metadata.repositoryPath),
             fs.stat(metadata.repositoryPath, { bigint: true })
-          ])
-          if (
-            canonicalWorktree !== binding.path ||
-            !worktreeStat.isDirectory() ||
-            canonicalRepository !== metadata.repositoryPath ||
-            !repositoryStat.isDirectory() ||
-            repositoryStat.dev.toString() !== metadata.device ||
-            repositoryStat.ino.toString() !== metadata.inode
-          ) {
-            throw new Error('The registered tree path changed')
-          }
+          ]),
+        catch: (error) =>
+          unavailable(error instanceof Error ? error.message : String(error))
+      })
 
-          if (metadata.projectKind === 'folder') {
-            if (
-              binding.kind !== 'folder' ||
-              binding.path !== metadata.repositoryPath ||
-              metadata.gitWorktreeKey !== null
-            ) {
-              throw new Error('The registered folder tree identity changed')
-            }
-
-            return binding
-          }
-
-          if (!metadata.gitWorktreeKey) {
-            throw new Error('The Git worktree key is missing')
-          }
-
-          const identity = await git.worktreeLaunchIdentity(binding.path)
-          const expectedCommonPath = path.join(metadata.repositoryPath, '.git')
-          const expectedCommonDirectory = await fs
-            .realpath(expectedCommonPath)
-            .catch(() => path.resolve(expectedCommonPath))
-          const relativeGitDirectory = path.relative(
-            identity.commonDirectory,
-            identity.gitDirectory
+      return yield* Effect.gen(function* () {
+        if (
+          canonicalWorktree !== binding.path ||
+          !worktreeStat.isDirectory() ||
+          canonicalRepository !== metadata.repositoryPath ||
+          !repositoryStat.isDirectory() ||
+          repositoryStat.dev.toString() !== metadata.device ||
+          repositoryStat.ino.toString() !== metadata.inode
+        ) {
+          return yield* Effect.fail(
+            unavailable('The registered tree path changed')
           )
-          const observedKey =
-            relativeGitDirectory === ''
-              ? 'main'
-              : relativeGitDirectory.split(path.sep).length === 2 &&
-                  relativeGitDirectory.startsWith(`worktrees${path.sep}`)
-                ? relativeGitDirectory.split(path.sep).join('/')
-                : null
-          if (identity.topLevel !== binding.path) {
-            throw new Error('Git reports a different worktree path')
-          }
+        }
 
-          if (identity.commonDirectory !== expectedCommonDirectory) {
-            throw new Error(
-              `Git reports a different repository (${identity.commonDirectory} instead of ${expectedCommonDirectory})`
+        if (metadata.projectKind === 'folder') {
+          if (
+            binding.kind !== 'folder' ||
+            binding.path !== metadata.repositoryPath ||
+            metadata.gitWorktreeKey !== null
+          ) {
+            return yield* Effect.fail(
+              unavailable('The registered folder tree identity changed')
             )
           }
 
-          if (observedKey !== metadata.gitWorktreeKey) {
-            throw new Error('Git reports a different worktree key')
-          }
-
-          if ((binding.kind === 'main') !== (observedKey === 'main')) {
-            throw new Error('Git reports a different worktree kind')
-          }
-
           return binding
-        },
-        catch: (error) =>
-          new DomainError(
-            'WORKTREE_UNAVAILABLE',
-            error instanceof Error ? error.message : String(error),
-            409
+        }
+
+        if (!metadata.gitWorktreeKey) {
+          return yield* Effect.fail(
+            unavailable('The Git worktree key is missing')
           )
+        }
+
+        const identity = yield* git
+          .worktreeLaunchIdentity(binding.path)
+          .pipe(Effect.mapError((error) => unavailable(error.message)))
+        const expectedCommonPath = path.join(metadata.repositoryPath, '.git')
+        const expectedCommonDirectory = yield* Effect.tryPromise({
+          try: () =>
+            fs
+              .realpath(expectedCommonPath)
+              .catch(() => path.resolve(expectedCommonPath)),
+          catch: (error) =>
+            unavailable(error instanceof Error ? error.message : String(error))
+        })
+        const relativeGitDirectory = path.relative(
+          identity.commonDirectory,
+          identity.gitDirectory
+        )
+        const observedKey =
+          relativeGitDirectory === ''
+            ? 'main'
+            : relativeGitDirectory.split(path.sep).length === 2 &&
+                relativeGitDirectory.startsWith(`worktrees${path.sep}`)
+              ? relativeGitDirectory.split(path.sep).join('/')
+              : null
+
+        if (identity.topLevel !== binding.path) {
+          return yield* Effect.fail(
+            unavailable('Git reports a different worktree path')
+          )
+        }
+
+        if (identity.commonDirectory !== expectedCommonDirectory) {
+          return yield* Effect.fail(
+            unavailable(
+              `Git reports a different repository (${identity.commonDirectory} instead of ${expectedCommonDirectory})`
+            )
+          )
+        }
+
+        if (observedKey !== metadata.gitWorktreeKey) {
+          return yield* Effect.fail(
+            unavailable('Git reports a different worktree key')
+          )
+        }
+
+        if ((binding.kind === 'main') !== (observedKey === 'main')) {
+          return yield* Effect.fail(
+            unavailable('Git reports a different worktree kind')
+          )
+        }
+
+        return binding
       })
     })
   }

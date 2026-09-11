@@ -15,10 +15,7 @@ import * as Either from 'effect/Either'
 import { serializeOperation } from '../../database'
 import { projects } from '../../database-schema'
 import { DomainError } from '../../domain'
-import {
-  resolveWorktreeCleanupTasks,
-  type WorktreeSetupTask
-} from '../../setup'
+import { Setup, type WorktreeSetupTask } from '../../setup'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations,
@@ -33,12 +30,12 @@ import {
 import { MutationLocks } from '../infrastructure/mutation-locks'
 import {
   CommandPort,
-  DatabasePort,
   EventBusPort,
-  GitHubPort,
-  GitPort,
   TerminalHostPort
 } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
+import { GitHubPort } from '../../gh'
+import { GitPort } from '../../git'
 import { ProjectStore } from '../project/project-store'
 import { TerminalState } from '../terminal/terminal-state'
 
@@ -61,6 +58,14 @@ function removalPromise<Result>(
     try: evaluate,
     catch: (cause) => new RemovalExecutionError(cause)
   })
+}
+
+function removalAdapter<Result, Failure>(
+  effect: Effect.Effect<Result, Failure>
+): Effect.Effect<Result, RemovalExecutionError> {
+  return effect.pipe(
+    Effect.mapError((cause) => new RemovalExecutionError(cause))
+  )
 }
 
 function removalEffect<Result>(
@@ -347,9 +352,7 @@ export class WorktreeRemovalService {
       }
 
       yield* projectStore.requireOpenProject(worktree.projectId)
-      const pr = yield* Effect.promise(() =>
-        gh.pullRequest(worktree.path, branch)
-      )
+      const pr = yield* gh.pullRequest(worktree.path, branch)
       const current = yield* projectStore.storedWorktree(worktreeId)
       if (!current) {
         return yield* Effect.fail(
@@ -367,8 +370,9 @@ export class WorktreeRemovalService {
         )
       }
 
-      yield* Effect.promise(() =>
-        database.db.run(sql`
+      yield* database
+        .execute('worktree.removal.service.370', (db) =>
+          db.run(sql`
           UPDATE worktrees
           SET pr_state=${pr.state},pr_number=${pr.number},pr_url=${pr.url},
               pr_base_branch=${pr.baseBranch},pr_head_branch=${pr.headBranch},
@@ -376,7 +380,8 @@ export class WorktreeRemovalService {
               updated_at=${now()}
           WHERE id=${worktreeId}
         `)
-      )
+        )
+        .pipe(Effect.orDie)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('worktree.updated', { worktreeId })
@@ -398,6 +403,7 @@ export class WorktreeRemovalService {
 
     return Effect.gen(function* () {
       const git = yield* GitPort
+      const setupService = yield* Setup
       const projectStore = yield* ProjectStore
       const worktree = yield* requireAvailableWorktree(worktreeId, true)
       worktree.terminals = yield* listWorktreeTerminals(worktree)
@@ -412,9 +418,9 @@ export class WorktreeRemovalService {
         )
       }
 
-      const live = (yield* Effect.promise(() =>
-        git.listWorktrees(project.repositoryPath)
-      )).find((item) => item.path === worktree.path)
+      const live = (yield* git
+        .listWorktrees(project.repositoryPath)
+        .pipe(Effect.orDie)).find((item) => item.path === worktree.path)
       if (!live) {
         return yield* Effect.fail(
           new DomainError(
@@ -438,16 +444,16 @@ export class WorktreeRemovalService {
             },
             fingerprint: `prunable:${live.head ?? ''}:${live.branch ?? ''}`
           }
-        : yield* Effect.promise(() => git.dirtyStatus(worktree.path))
+        : yield* git.dirtyStatus(worktree.path).pipe(Effect.orDie)
       const dirty = status.dirty
       const reachable =
         live.detached && head
-          ? yield* Effect.promise(() =>
-              git.isCommitReachable(
+          ? yield* git
+              .isCommitReachable(
                 live.prunable ? project.repositoryPath : worktree.path,
                 head
               )
-            )
+              .pipe(Effect.orDie)
           : null
       const reasons: string[] = []
       const warnings: string[] = []
@@ -455,13 +461,9 @@ export class WorktreeRemovalService {
       let cleanupDefinitionHash: string | null = null
       let cleanupUnavailableReason: string | null = null
       const cleanup = yield* Effect.either(
-        Effect.tryPromise({
-          try: () =>
-            resolveWorktreeCleanupTasks({
-              mainWorktreePath: project.mainWorktreePath,
-              worktreePath: worktree.path
-            }),
-          catch: (cause) => cause
+        setupService.resolveCleanupTasks({
+          mainWorktreePath: project.mainWorktreePath,
+          worktreePath: worktree.path
         })
       )
       if (Either.isRight(cleanup)) {
@@ -589,14 +591,16 @@ export class WorktreeRemovalService {
       const worktreeMutations = yield* WorktreeMutations
       const worktree = yield* projectStore.getWorktree(worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
-      const [activeRemoval] = yield* Effect.promise(() =>
-        database.db.all<{ id: string }>(sql`
+      const [activeRemoval] = yield* database
+        .execute('worktree.removal.service.592', (db) =>
+          db.all<{ id: string }>(sql`
           SELECT id FROM operations
           WHERE worktree_id=${worktreeId} AND kind='remove'
             AND status IN ('pending','running')
           LIMIT 1
         `)
-      )
+        )
+        .pipe(Effect.orDie)
       if (activeRemoval) {
         return yield* Effect.fail(
           new DomainError(
@@ -731,29 +735,33 @@ export class WorktreeRemovalService {
             }
 
             const checkout = yield* checkoutStat(preview.path)
-            const [checkoutBinding] = yield* Effect.promise(() =>
-              database.db.all<{
-                git_worktree_key: string | null
-                managed_wrapper_path: string | null
-              }>(sql`
+            const [checkoutBinding] = yield* database
+              .execute('worktree.removal.service.734', (db) =>
+                db.all<{
+                  git_worktree_key: string | null
+                  managed_wrapper_path: string | null
+                }>(sql`
                 SELECT git_worktree_key,managed_wrapper_path
                 FROM worktrees WHERE id=${worktreeId}
               `)
-            )
-            const [projectMetadata] = yield* Effect.promise(() =>
-              database.db
-                .select({ identity: projects.repositoryIdentity })
-                .from(projects)
-                .where(eq(projects.id, worktree.projectId))
-                .limit(1)
-            )
+              )
+              .pipe(Effect.orDie)
+            const [projectMetadata] = yield* database
+              .execute('worktree.removal.service.743', (db) =>
+                db
+                  .select({ identity: projects.repositoryIdentity })
+                  .from(projects)
+                  .where(eq(projects.id, worktree.projectId))
+                  .limit(1)
+              )
+              .pipe(Effect.orDie)
             const repositoryPath = prunable
               ? (yield* projectStore.getProject(worktree.projectId))
                   .repositoryPath
               : preview.path
-            const repositoryIdentity = yield* Effect.promise(() =>
-              git.repositoryIdentity(repositoryPath)
-            )
+            const repositoryIdentity = yield* git
+              .repositoryIdentity(repositoryPath)
+              .pipe(Effect.orDie)
             if (
               !projectMetadata?.identity ||
               repositoryIdentity !== projectMetadata.identity
@@ -830,9 +838,10 @@ export class WorktreeRemovalService {
             }
 
             const timestamp = now()
-            yield* Effect.promise(() =>
-              database.db.transaction(async (tx) => {
-                await tx.run(sql`
+            yield* database
+              .execute('worktree.removal.service.833', (db) =>
+                db.transaction(async (tx) => {
+                  await tx.run(sql`
                   INSERT INTO operations(
                     id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
                   ) VALUES(
@@ -875,8 +884,9 @@ export class WorktreeRemovalService {
                     NULL,NULL,${timestamp},${timestamp}
                   )
                 `)
-              })
-            )
+                })
+              )
+              .pipe(Effect.orDie)
             yield* invalidateProjectsSnapshot()
             return { operationId, preview, skipCleanup }
           })
@@ -940,6 +950,7 @@ export class WorktreeRemovalService {
       const events = yield* EventBusPort
       const git = yield* GitPort
       const runner = yield* CommandPort
+      const setupService = yield* Setup
       const projectStore = yield* ProjectStore
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
@@ -967,13 +978,15 @@ export class WorktreeRemovalService {
           request.phase = phase
         }).pipe(
           Effect.zipRight(
-            Effect.promise(() =>
-              database.db.run(sql`
+            database
+              .execute('worktree.removal.service.970', (db) =>
+                db.run(sql`
                 UPDATE operations
                 SET request_json=${serializeOperation(request)},updated_at=${now()}
                 WHERE id=${operationId}
               `)
-            )
+              )
+              .pipe(Effect.orDie)
           ),
           Effect.zipRight(
             Effect.logInfo('Tree removal phase changed').pipe(
@@ -991,17 +1004,19 @@ export class WorktreeRemovalService {
           resumed: operation.status === 'running'
         })
       )
-      yield* Effect.promise(() =>
-        database.db.run(sql`
+      yield* database
+        .execute('worktree.removal.service.994', (db) =>
+          db.run(sql`
           UPDATE operations SET status='running',error=NULL,updated_at=${now()}
           WHERE id=${operationId}
         `)
-      )
+        )
+        .pipe(Effect.orDie)
       let gitRemoved =
         request.phase === 'git_removed' || request.phase === 'cleanup_pending'
       let retiredNow = false
       const workflow = Effect.gen(function* () {
-        const liveWorktrees = yield* removalPromise(() =>
+        const liveWorktrees = yield* removalAdapter(
           git.listWorktrees(project.repositoryPath)
         )
         const acceptedKey = request.gitWorktreeKey
@@ -1012,7 +1027,7 @@ export class WorktreeRemovalService {
               ? item.prunable
               : acceptedKey !== null && item.gitWorktreeKey === acceptedKey)
         )
-        const liveRepositoryIdentity = yield* removalPromise(() =>
+        const liveRepositoryIdentity = yield* removalAdapter(
           git.repositoryIdentity(project.repositoryPath)
         )
 
@@ -1060,42 +1075,47 @@ export class WorktreeRemovalService {
               (command) => command.status === 'completed'
             )
           if (!cleanupAlreadyCompleted) {
-            const cleanup = yield* removalPromise(() =>
-              resolveWorktreeCleanupTasks({
+            const cleanup = yield* removalAdapter(
+              setupService.resolveCleanupTasks({
                 mainWorktreePath: project.mainWorktreePath,
                 worktreePath: preview.path
               })
             ).pipe(
               Effect.catchAll((error) => {
                 request.cleanupCommands.status = 'failed'
-                return Effect.promise(() =>
-                  database.db.run(sql`
+                return database
+                  .execute('worktree.removal.service.1071', (db) =>
+                    db.run(sql`
                     UPDATE operations
                     SET request_json=${serializeOperation(request)},updated_at=${now()}
                     WHERE id=${operationId}
                   `)
-                ).pipe(
-                  Effect.zipRight(
-                    Effect.fail(
-                      removalFailure(
-                        `Project cleanup configuration is unavailable: ${removalErrorMessage(error)}`
+                  )
+                  .pipe(Effect.orDie)
+                  .pipe(
+                    Effect.zipRight(
+                      Effect.fail(
+                        removalFailure(
+                          `Project cleanup configuration is unavailable: ${removalErrorMessage(error)}`
+                        )
                       )
                     )
                   )
-                )
               })
             )
             if (
               cleanup.definitionHash !== request.cleanupCommands.definitionHash
             ) {
               request.cleanupCommands.status = 'failed'
-              yield* Effect.promise(() =>
-                database.db.run(sql`
+              yield* database
+                .execute('worktree.removal.service.1092', (db) =>
+                  db.run(sql`
                   UPDATE operations
                   SET request_json=${serializeOperation(request)},updated_at=${now()}
                   WHERE id=${operationId}
                 `)
-              )
+                )
+                .pipe(Effect.orDie)
               return yield* Effect.fail(
                 removalFailure(
                   'Project cleanup configuration changed after removal was accepted'
@@ -1112,13 +1132,15 @@ export class WorktreeRemovalService {
               )
             ) {
               request.cleanupCommands.status = 'failed'
-              yield* Effect.promise(() =>
-                database.db.run(sql`
+              yield* database
+                .execute('worktree.removal.service.1115', (db) =>
+                  db.run(sql`
                   UPDATE operations
                   SET request_json=${serializeOperation(request)},updated_at=${now()}
                   WHERE id=${operationId}
                 `)
-              )
+                )
+                .pipe(Effect.orDie)
               return yield* Effect.fail(
                 removalFailure(
                   'Project cleanup commands changed after removal was accepted'
@@ -1127,13 +1149,15 @@ export class WorktreeRemovalService {
             }
 
             request.cleanupCommands.status = 'running'
-            yield* Effect.promise(() =>
-              database.db.run(sql`
+            yield* database
+              .execute('worktree.removal.service.1130', (db) =>
+                db.run(sql`
                 UPDATE operations
                 SET request_json=${serializeOperation(request)},updated_at=${now()}
                 WHERE id=${operationId}
               `)
-            )
+              )
+              .pipe(Effect.orDie)
             for (const [index, task] of cleanup.tasks.entries()) {
               const progress = request.cleanupCommands.commands[index]
               if (!progress) {
@@ -1156,13 +1180,15 @@ export class WorktreeRemovalService {
                 error: null,
                 outputTruncated: false
               })
-              yield* Effect.promise(() =>
-                database.db.run(sql`
+              yield* database
+                .execute('worktree.removal.service.1159', (db) =>
+                  db.run(sql`
                   UPDATE operations
                   SET request_json=${serializeOperation(request)},updated_at=${now()}
                   WHERE id=${operationId}
                 `)
-              )
+                )
+                .pipe(Effect.orDie)
 
               const [executable, ...args] = task.argv
               if (!executable) {
@@ -1171,8 +1197,8 @@ export class WorktreeRemovalService {
                   error: 'Cleanup command has no executable'
                 })
               } else {
-                yield* removalPromise(() =>
-                  runner.run({
+                yield* removalAdapter(
+                  runner.runEffect({
                     executable,
                     args,
                     cwd: task.cwd,
@@ -1215,13 +1241,15 @@ export class WorktreeRemovalService {
                 request.cleanupCommands.status = 'failed'
               }
 
-              yield* Effect.promise(() =>
-                database.db.run(sql`
+              yield* database
+                .execute('worktree.removal.service.1218', (db) =>
+                  db.run(sql`
                   UPDATE operations
                   SET request_json=${serializeOperation(request)},updated_at=${now()}
                   WHERE id=${operationId}
                 `)
-              )
+                )
+                .pipe(Effect.orDie)
               if (progress.status === 'failed') {
                 return yield* Effect.fail(
                   removalFailure(
@@ -1239,16 +1267,14 @@ export class WorktreeRemovalService {
           yield* persistPhase('cleanup_commands_completed')
 
           if (request.prunable) {
-            yield* removalPromise(() =>
-              git.pruneWorktrees(project.repositoryPath)
-            )
+            yield* removalAdapter(git.pruneWorktrees(project.repositoryPath))
           } else {
-            yield* removalPromise(() =>
+            yield* removalAdapter(
               git.removeWorktree(project.repositoryPath, preview.path, force)
             )
           }
 
-          const stillReported = (yield* removalPromise(() =>
+          const stillReported = (yield* removalAdapter(
             git.listWorktrees(project.repositoryPath)
           )).some(
             (item) =>
@@ -1273,23 +1299,27 @@ export class WorktreeRemovalService {
         gitRemoved = true
         yield* persistPhase('git_removed')
 
-        const [storedBinding] = yield* Effect.promise(() =>
-          database.db.all<{
-            id: string
-            git_worktree_key: string | null
-          }>(sql`
+        const [storedBinding] = yield* database
+          .execute('worktree.removal.service.1276', (db) =>
+            db.all<{
+              id: string
+              git_worktree_key: string | null
+            }>(sql`
             SELECT id,git_worktree_key FROM worktrees WHERE id=${preview.worktreeId}
           `)
-        )
+          )
+          .pipe(Effect.orDie)
         if (
           storedBinding &&
           (!acceptedKey || storedBinding.git_worktree_key === acceptedKey)
         ) {
-          const deletion = yield* Effect.promise(() =>
-            database.db.run(sql`
+          const deletion = yield* database
+            .execute('worktree.removal.service.1288', (db) =>
+              db.run(sql`
               DELETE FROM worktrees WHERE id=${preview.worktreeId}
             `)
-          )
+            )
+            .pipe(Effect.orDie)
           retiredNow = deletion.rowsAffected > 0
           if (retiredNow) {
             const terminalIds = yield* terminalState.clearWorktree(
@@ -1314,7 +1344,7 @@ export class WorktreeRemovalService {
         yield* persistPhase('cleanup_pending')
         let cleanupWarning: string | null = null
         let residualPath: string | null = null
-        const currentRepositoryIdentity = yield* removalPromise(() =>
+        const currentRepositoryIdentity = yield* removalAdapter(
           git.repositoryIdentity(project.repositoryPath)
         ).pipe(
           Effect.match({
@@ -1364,7 +1394,7 @@ export class WorktreeRemovalService {
               : preview.path
           }
         } else if (request.prunable) {
-          const worktreeAtPath = (yield* removalPromise(() =>
+          const worktreeAtPath = (yield* removalAdapter(
             git.listWorktrees(project.repositoryPath)
           )).some((item) => item.path === preview.path)
           if (!worktreeAtPath) {
@@ -1392,8 +1422,9 @@ export class WorktreeRemovalService {
         }
 
         const timestamp = now()
-        yield* Effect.promise(() =>
-          database.db.run(sql`
+        yield* database
+          .execute('worktree.removal.service.1395', (db) =>
+            db.run(sql`
             UPDATE operations
             SET status='completed',
                 result_json=${serializeOperation({
@@ -1415,7 +1446,8 @@ export class WorktreeRemovalService {
                 updated_at=${timestamp}
             WHERE id=${operationId}
           `)
-        )
+          )
+          .pipe(Effect.orDie)
         yield* cleanupWarning
           ? Effect.logWarning(
               'Tree removal completed with residual files'
@@ -1436,8 +1468,9 @@ export class WorktreeRemovalService {
           const base = removalErrorMessage(error)
           if (gitRemoved) {
             const warning = base.slice(0, 4_096)
-            yield* Effect.promise(() =>
-              database.db.run(sql`
+            yield* database
+              .execute('worktree.removal.service.1439', (db) =>
+                db.run(sql`
                 UPDATE operations
                 SET status='completed',
                     result_json=${serializeOperation({
@@ -1458,7 +1491,8 @@ export class WorktreeRemovalService {
                     updated_at=${now()}
                 WHERE id=${operationId}
               `)
-            )
+              )
+              .pipe(Effect.orDie)
             yield* Effect.logWarning(
               'Tree removal cleanup failed after Git removal'
             ).pipe(
@@ -1483,13 +1517,15 @@ export class WorktreeRemovalService {
                   ? `Terminals were stopped, but Git removal failed: ${base}`
                   : base
             ).slice(0, 4_096)
-            yield* Effect.promise(() =>
-              database.db.run(sql`
+            yield* database
+              .execute('worktree.removal.service.1486', (db) =>
+                db.run(sql`
                 UPDATE operations
                 SET status='failed',result_json=NULL,error=${message},updated_at=${now()}
                 WHERE id=${operationId}
               `)
-            )
+              )
+              .pipe(Effect.orDie)
             yield* Effect.logError(
               'Tree removal failed; Git kept the tree'
             ).pipe(

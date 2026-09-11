@@ -8,6 +8,11 @@ import { drizzle } from 'drizzle-orm/libsql'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql/driver'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { z } from 'zod'
+import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import type { Scope } from 'effect/Scope'
 import type {
   CreateOperationRequest,
   CreateOperationResult,
@@ -215,6 +220,9 @@ const externalRemoveOperationResultSchema: z.ZodType<ExternalRemoveOperationResu
   })
 
 type TreeportOrm = LibSQLDatabase<typeof schema>
+type TreeportTransaction = Parameters<
+  Parameters<TreeportOrm['transaction']>[0]
+>[0]
 export type ProjectRow = typeof projectTable.$inferSelect
 export type WorktreeRow = typeof worktrees.$inferSelect
 export type TerminalPresetRow = typeof terminalPresets.$inferSelect
@@ -241,13 +249,70 @@ function deserializeOperation<Value extends object>(
   return schema.parse(JSON.parse(value))
 }
 
-export interface TreeportDatabase {
+export class DatabaseError extends Data.TaggedError('DatabaseError')<{
+  readonly operation: string
+  readonly stage: 'prepare' | 'inspect' | 'migrate' | 'validate' | 'query'
+  readonly cause: unknown
+  readonly message: string
+}> {
+  constructor(
+    operation: string,
+    stage: DatabaseError['stage'],
+    cause: unknown
+  ) {
+    super({
+      operation,
+      stage,
+      cause,
+      message: `Database ${operation} failed: ${cause instanceof Error ? cause.message : String(cause)}`
+    })
+  }
+}
+
+export interface DatabaseService {
   readonly filePath: string
+  readonly execute: <A>(
+    operation: string,
+    query: (db: TreeportOrm) => PromiseLike<A>
+  ) => Effect.Effect<A, DatabaseError>
+  readonly transaction: <A>(
+    operation: string,
+    body: (tx: TreeportTransaction) => Promise<A>
+  ) => Effect.Effect<A, DatabaseError>
+}
+
+export class DatabasePort extends Context.Tag('treeport/Database')<
+  DatabasePort,
+  DatabaseService
+>() {}
+
+/** Raw handle retained only for database boundary tests and scoped acquisition. */
+export interface TreeportDatabase extends DatabaseService {
   readonly db: TreeportOrm
   close(): void
 }
 
-export async function openDatabase(
+function acquireDatabase(
+  filePath: string,
+  options: DatabaseOpenOptions = {}
+): Effect.Effect<TreeportDatabase, DatabaseError, Scope> {
+  return Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () => openDatabasePromise(filePath, options),
+      catch: (cause) => new DatabaseError('open', 'prepare', cause)
+    }),
+    (database) => Effect.sync(() => database.close())
+  )
+}
+
+export function DatabaseLayer(
+  filePath: string,
+  options: DatabaseOpenOptions = {}
+): Layer.Layer<DatabasePort, DatabaseError> {
+  return Layer.scoped(DatabasePort, acquireDatabase(filePath, options))
+}
+
+async function openDatabasePromise(
   filePath: string,
   options: DatabaseOpenOptions = {}
 ): Promise<TreeportDatabase> {
@@ -429,9 +494,18 @@ export async function openDatabase(
       })
     }
 
+    const execute: DatabaseService['execute'] = (operation, query) =>
+      Effect.tryPromise({
+        try: async () => await query(db),
+        catch: (cause) => new DatabaseError(operation, 'query', cause)
+      })
+
     return {
       filePath: absoluteFilePath,
       db,
+      execute,
+      transaction: (operation, body) =>
+        execute(operation, (database) => database.transaction(body)),
       close: () => client.close()
     }
   } catch (error) {
@@ -439,6 +513,9 @@ export async function openDatabase(
     throw error
   }
 }
+
+/** Promise interpreter retained for database boundary tests only. */
+export const openDatabaseForTest = openDatabasePromise
 
 export function mapProject(
   row: ProjectRow,

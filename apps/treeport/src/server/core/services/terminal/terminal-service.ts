@@ -29,10 +29,10 @@ import {
 import { MutationLocks } from '../infrastructure/mutation-locks'
 import {
   ConfigPort,
-  DatabasePort,
   EventBusPort,
   TerminalHostPort
 } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
 import { ProjectStore } from '../project/project-store'
 import { currentTraceContext } from '../../../tracing'
 import { TerminalState } from './terminal-state'
@@ -107,9 +107,11 @@ export class TerminalService {
       const locks = yield* MutationLocks
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
-      let sessions = (yield* Effect.promise(() =>
+      let sessions = (yield* Effect.tryPromise(() =>
         terminalHost.listTerminals(worktree.id)
-      )).filter((terminal) => terminal.worktreeId === worktree.id)
+      ).pipe(Effect.orDie)).filter(
+        (terminal) => terminal.worktreeId === worktree.id
+      )
       if (!(yield* locks.isWorktreeLocked(worktree.id))) {
         for (const terminal of sessions) {
           if (
@@ -121,25 +123,29 @@ export class TerminalService {
             continue
           }
 
-          yield* Effect.promise(() => terminalHost.killTerminal(terminal.id))
+          yield* Effect.tryPromise(() =>
+            terminalHost.killTerminal(terminal.id)
+          ).pipe(Effect.orDie)
           sessions = sessions.filter(
             (candidate) => candidate.id !== terminal.id
           )
         }
       }
 
-      const storedOrder = yield* Effect.promise(() =>
-        database.db
-          .select()
-          .from(workspaceItemOrders)
-          .where(
-            and(
-              eq(workspaceItemOrders.worktreeId, worktree.id),
-              eq(workspaceItemOrders.surface, 'terminal')
+      const storedOrder = yield* database
+        .execute('terminal.service.131', (db) =>
+          db
+            .select()
+            .from(workspaceItemOrders)
+            .where(
+              and(
+                eq(workspaceItemOrders.worktreeId, worktree.id),
+                eq(workspaceItemOrders.surface, 'terminal')
+              )
             )
-          )
-          .orderBy(asc(workspaceItemOrders.position))
-      )
+            .orderBy(asc(workspaceItemOrders.position))
+        )
+        .pipe(Effect.orDie)
       const positionById = new Map(
         storedOrder.map((item) => [item.itemId, item.position])
       )
@@ -232,26 +238,28 @@ export class TerminalService {
         )
       }
 
-      yield* Effect.promise(() =>
-        database.db.transaction(async (tx) => {
-          await tx
-            .delete(workspaceItemOrders)
-            .where(
-              and(
-                eq(workspaceItemOrders.worktreeId, worktreeId),
-                eq(workspaceItemOrders.surface, 'terminal')
+      yield* database
+        .execute('terminal.service.235', (db) =>
+          db.transaction(async (tx) => {
+            await tx
+              .delete(workspaceItemOrders)
+              .where(
+                and(
+                  eq(workspaceItemOrders.worktreeId, worktreeId),
+                  eq(workspaceItemOrders.surface, 'terminal')
+                )
               )
+            await tx.insert(workspaceItemOrders).values(
+              terminalIds.map((itemId, position) => ({
+                worktreeId,
+                surface: 'terminal' as const,
+                itemId,
+                position
+              }))
             )
-          await tx.insert(workspaceItemOrders).values(
-            terminalIds.map((itemId, position) => ({
-              worktreeId,
-              surface: 'terminal' as const,
-              itemId,
-              position
-            }))
-          )
-        })
-      )
+          })
+        )
+        .pipe(Effect.orDie)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('worktree.updated', { worktreeId })
@@ -721,9 +729,9 @@ export class TerminalService {
         ? yield* getTerminal(terminalId)
         : (cachedTerminal ?? (yield* getTerminalFromBindings(terminalId)))
       const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
-      const state = yield* Effect.promise(() =>
+      const state = yield* Effect.tryPromise(() =>
         terminalHost.terminalState(terminal.id)
-      )
+      ).pipe(Effect.orDie)
       yield* projectStore.requireOpenProject(worktree.projectId)
       if (!(yield* terminalState.hasTerminal(terminalId))) {
         return yield* Effect.fail(
@@ -822,9 +830,9 @@ export class TerminalService {
       const terminal = yield* getTerminal(terminalId)
       const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
-      yield* Effect.promise(() =>
+      yield* Effect.tryPromise(() =>
         terminalHost.renameTerminal(terminal.id, name, now())
-      )
+      ).pipe(Effect.orDie)
       const renamed = yield* getTerminal(terminalId)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
@@ -917,9 +925,9 @@ export class TerminalService {
 
       yield* Effect.gen(function* () {
         const trace = yield* currentTraceContext
-        yield* Effect.promise(() =>
+        yield* Effect.tryPromise(() =>
           terminalHost.killTerminal(terminal.id, trace ?? undefined)
-        )
+        ).pipe(Effect.orDie)
       }).pipe(
         Effect.withSpan('treeport.terminal_host.ipc.remove', {
           kind: 'client',
@@ -968,9 +976,9 @@ export class TerminalService {
       let terminated = 0
       for (const project of yield* listProjects()) {
         for (const worktree of project.worktrees) {
-          const terminalIds = yield* Effect.promise(() =>
+          const terminalIds = yield* Effect.tryPromise(() =>
             terminalHost.killWorktree(worktree.id)
-          )
+          ).pipe(Effect.orDie)
           terminated += terminalIds.length
           yield* clearWorktreeTerminalState(worktree.id, terminalIds)
         }

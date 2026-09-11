@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import * as Cause from 'effect/Cause'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as Fiber from 'effect/Fiber'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import {
   resolveWorktreeCleanupTasks,
@@ -71,11 +75,13 @@ describe('worktree setup', () => {
     )
 
     await expect(
-      resolveWorktreeSetupTasks({
-        shell: '/bin/zsh',
-        mainWorktreePath: main,
-        worktreePath: worktree
-      })
+      Effect.runPromise(
+        resolveWorktreeSetupTasks({
+          shell: '/bin/zsh',
+          mainWorktreePath: main,
+          worktreePath: worktree
+        })
+      )
     ).resolves.toEqual([
       {
         label: 'Generate code',
@@ -131,10 +137,12 @@ describe('worktree setup', () => {
       })
     )
 
-    const first = await resolveWorktreeCleanupTasks({
-      mainWorktreePath: main,
-      worktreePath: worktree
-    })
+    const first = await Effect.runPromise(
+      resolveWorktreeCleanupTasks({
+        mainWorktreePath: main,
+        worktreePath: worktree
+      })
+    )
     expect(first.tasks).toEqual([
       {
         label: 'Drop database',
@@ -156,10 +164,12 @@ describe('worktree setup', () => {
     ])
     expect(first.definitionHash).toMatch(/^[a-f0-9]{64}$/)
     await expect(
-      resolveWorktreeCleanupTasks({
-        mainWorktreePath: main,
-        worktreePath: worktree
-      })
+      Effect.runPromise(
+        resolveWorktreeCleanupTasks({
+          mainWorktreePath: main,
+          worktreePath: worktree
+        })
+      )
     ).resolves.toEqual(first)
 
     await fs.writeFile(
@@ -181,10 +191,12 @@ describe('worktree setup', () => {
     )
     expect(
       (
-        await resolveWorktreeCleanupTasks({
-          mainWorktreePath: main,
-          worktreePath: worktree
-        })
+        await Effect.runPromise(
+          resolveWorktreeCleanupTasks({
+            mainWorktreePath: main,
+            worktreePath: worktree
+          })
+        )
       ).definitionHash
     ).not.toBe(first.definitionHash)
   })
@@ -204,10 +216,12 @@ describe('worktree setup', () => {
     )
 
     await expect(
-      resolveWorktreeCleanupTasks({
-        mainWorktreePath: main,
-        worktreePath: worktree
-      })
+      Effect.runPromise(
+        resolveWorktreeCleanupTasks({
+          mainWorktreePath: main,
+          worktreePath: worktree
+        })
+      )
     ).resolves.toEqual({ tasks: [], definitionHash: null })
   })
 
@@ -281,11 +295,13 @@ describe('worktree setup', () => {
         JSON.stringify(value)
       )
       await expect(
-        resolveWorktreeSetupTasks({
-          shell: '/bin/sh',
-          mainWorktreePath: main,
-          worktreePath: worktree
-        })
+        Effect.runPromise(
+          resolveWorktreeSetupTasks({
+            shell: '/bin/sh',
+            mainWorktreePath: main,
+            worktreePath: worktree
+          })
+        )
       ).rejects.toThrow(/Invalid Treeport setup/)
     }
 
@@ -298,10 +314,12 @@ describe('worktree setup', () => {
       })
     )
     await expect(
-      resolveWorktreeCleanupTasks({
-        mainWorktreePath: main,
-        worktreePath: worktree
-      })
+      Effect.runPromise(
+        resolveWorktreeCleanupTasks({
+          mainWorktreePath: main,
+          worktreePath: worktree
+        })
+      )
     ).rejects.toThrow(/cleanup\[0\]\.cwd must stay inside the tree/)
   })
 
@@ -339,7 +357,9 @@ describe('worktree setup', () => {
       mainWorktreePath: main,
       worktreePath: worktree
     }
-    await expect(resolveWorktreeSetupTasks(input)).resolves.toEqual([
+    await expect(
+      Effect.runPromise(resolveWorktreeSetupTasks(input))
+    ).resolves.toEqual([
       expect.objectContaining({
         label: 'Native',
         argv: ['native-command']
@@ -350,20 +370,65 @@ describe('worktree setup', () => {
       path.join(main, '.treeport', 'setup.json'),
       JSON.stringify({ version: 1, commands: [] })
     )
-    await expect(resolveWorktreeSetupTasks(input)).resolves.toEqual([])
+    await expect(
+      Effect.runPromise(resolveWorktreeSetupTasks(input))
+    ).resolves.toEqual([])
 
     await fs.writeFile(path.join(main, '.treeport', 'setup.json'), 'null')
-    await expect(resolveWorktreeSetupTasks(input)).rejects.toThrow(
-      /Invalid Treeport setup/
-    )
+    await expect(
+      Effect.runPromise(resolveWorktreeSetupTasks(input))
+    ).rejects.toThrow(/Invalid Treeport setup/)
 
     await fs.rm(path.join(main, '.treeport', 'setup.json'))
-    await expect(resolveWorktreeSetupTasks(input)).resolves.toEqual([
+    await expect(
+      Effect.runPromise(resolveWorktreeSetupTasks(input))
+    ).resolves.toEqual([
       expect.objectContaining({
         label: 'Zed fallback',
         argv: ['zed-command']
       })
     ])
+  })
+
+  it('preserves interruption while a setup command is running', async () => {
+    let started = false
+    let cancelled = false
+    const runner: CommandRunner = {
+      run: () => new Promise<CommandResult>(() => undefined),
+      runEffect: () =>
+        Effect.sync(() => {
+          started = true
+        }).pipe(
+          Effect.zipRight(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              cancelled = true
+            })
+          )
+        )
+    }
+    const fiber = Effect.runFork(
+      runWorktreeSetupTasks({
+        runner,
+        tasks: [
+          {
+            label: 'Wait',
+            argv: ['wait'],
+            cwd: '/worktree',
+            env: {},
+            timeoutMs: 1_000
+          }
+        ]
+      })
+    )
+
+    await vi.waitFor(() => expect(started).toBe(true))
+    const exit = await Effect.runPromise(Fiber.interrupt(fiber))
+
+    expect(Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)).toBe(
+      true
+    )
+    expect(cancelled).toBe(true)
   })
 
   it('runs generic tasks sequentially and stops with bounded failure output', async () => {
@@ -396,7 +461,9 @@ describe('worktree setup', () => {
       }
     ]
 
-    const results = await runWorktreeSetupTasks({ runner, tasks })
+    const results = await Effect.runPromise(
+      runWorktreeSetupTasks({ runner, tasks })
+    )
     expect(results).toEqual([
       { label: 'First', error: null },
       { label: 'Second', error: expect.any(String) }

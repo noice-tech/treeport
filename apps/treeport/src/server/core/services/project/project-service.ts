@@ -30,12 +30,12 @@ import {
 import { MutationLocks } from '../infrastructure/mutation-locks'
 import {
   ConfigPort,
-  DatabasePort,
   EventBusPort,
-  GitPort,
   PackageSystemPort,
   TerminalHostPort
 } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
+import { GitPort } from '../../git'
 import { TerminalState } from '../terminal/terminal-state'
 import { ProjectDirectoryService } from './project-directory-service'
 import { ProjectFolderIdentities } from './project-folder-identities'
@@ -212,12 +212,14 @@ export class ProjectService {
         )
       }
 
-      yield* Effect.promise(() =>
-        database.db.run(sql`
+      yield* database
+        .execute('project.service.215', (db) =>
+          db.run(sql`
           UPDATE projects SET color = ${color}, updated_at = ${now()}
           WHERE id = ${projectId}
         `)
-      )
+        )
+        .pipe(Effect.orDie)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('project.updated', { projectId })
@@ -237,12 +239,12 @@ export class ProjectService {
       const config = yield* ConfigPort
       const projectStore = yield* ProjectStore
       const project = yield* projectStore.getProject(projectId)
-      return yield* Effect.promise(() =>
+      return yield* Effect.tryPromise(() =>
         loadTreeContextFields({
           dataDir: config.dataDir,
           projectRoot: project.rootPath
         })
-      )
+      ).pipe(Effect.orDie)
     })
   }
 
@@ -263,13 +265,15 @@ export class ProjectService {
   > {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const [row] = yield* Effect.promise(() =>
-        database.db
-          .select({ treeContextJson: worktrees.treeContextJson })
-          .from(worktrees)
-          .where(eq(worktrees.id, worktreeId))
-          .limit(1)
-      )
+      const [row] = yield* database
+        .execute('project.service.266', (db) =>
+          db
+            .select({ treeContextJson: worktrees.treeContextJson })
+            .from(worktrees)
+            .where(eq(worktrees.id, worktreeId))
+            .limit(1)
+        )
+        .pipe(Effect.orDie)
       if (!row) {
         return yield* Effect.fail(
           new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
@@ -440,16 +444,18 @@ export class ProjectService {
             )
             yield* terminals.ensureProjectTerminals(projectId)
             if (project.kind === 'repository') {
-              const defaultBranch = yield* Effect.promise(() =>
-                git.defaultBranch(project.repositoryPath)
-              )
-              yield* Effect.promise(() =>
-                database.db.run(sql`
+              const defaultBranch = yield* git
+                .defaultBranch(project.repositoryPath)
+                .pipe(Effect.orDie)
+              yield* database
+                .execute('project.service.446', (db) =>
+                  db.run(sql`
                   UPDATE projects
                   SET default_branch = ${defaultBranch}, updated_at = ${now()}
                   WHERE id = ${projectId}
                 `)
-              )
+                )
+                .pipe(Effect.orDie)
             }
 
             yield* observations.reconcile()
@@ -514,17 +520,19 @@ export class ProjectService {
             () =>
               Effect.gen(function* () {
                 const timestamp = now()
-                yield* Effect.promise(() =>
-                  database.db
-                    .update(projects)
-                    .set({
-                      isOpen: 1,
-                      showInRecents: 0,
-                      lastOpenedAt: timestamp,
-                      updatedAt: timestamp
-                    })
-                    .where(eq(projects.id, projectId))
-                )
+                yield* database
+                  .execute('project.service.517', (db) =>
+                    db
+                      .update(projects)
+                      .set({
+                        isOpen: 1,
+                        showInRecents: 0,
+                        lastOpenedAt: timestamp,
+                        updatedAt: timestamp
+                      })
+                      .where(eq(projects.id, projectId))
+                  )
+                  .pipe(Effect.orDie)
                 const project = yield* projectStore.getProject(projectId)
                 yield* packages.registerProject(project)
                 yield* invalidateProjectsSnapshot()
@@ -595,12 +603,14 @@ export class ProjectService {
               ),
             () =>
               Effect.gen(function* () {
-                yield* Effect.promise(() =>
-                  database.db
-                    .update(projects)
-                    .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
-                    .where(eq(projects.id, projectId))
-                )
+                yield* database
+                  .execute('project.service.598', (db) =>
+                    db
+                      .update(projects)
+                      .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
+                      .where(eq(projects.id, projectId))
+                  )
+                  .pipe(Effect.orDie)
                 yield* invalidateProjectsSnapshot()
                 yield* Effect.sync(() => {
                   events.publish('project.updated', { projectId })
@@ -639,12 +649,14 @@ export class ProjectService {
             )
           }
 
-          yield* Effect.promise(() =>
-            database.db
-              .update(projects)
-              .set({ showInRecents: 0, updatedAt: now() })
-              .where(and(eq(projects.id, projectId), eq(projects.isOpen, 0)))
-          )
+          yield* database
+            .execute('project.service.642', (db) =>
+              db
+                .update(projects)
+                .set({ showInRecents: 0, updatedAt: now() })
+                .where(and(eq(projects.id, projectId), eq(projects.isOpen, 0)))
+            )
+            .pipe(Effect.orDie)
           yield* Effect.sync(() =>
             events.publish('project.updated', { projectId })
           )
@@ -751,14 +763,16 @@ export class ProjectService {
             for (const worktree of project.worktrees) {
               terminalIdsByWorktree.set(
                 worktree.id,
-                yield* Effect.promise(() =>
+                yield* Effect.tryPromise(() =>
                   terminalHost.killWorktree(worktree.id)
-                )
+                ).pipe(Effect.orDie)
               )
             }
-            yield* Effect.promise(() =>
-              database.db.run(sql`DELETE FROM projects WHERE id=${projectId}`)
-            )
+            yield* database
+              .execute('project.service.759', (db) =>
+                db.run(sql`DELETE FROM projects WHERE id=${projectId}`)
+              )
+              .pipe(Effect.orDie)
             yield* folderIdentities.remove(projectId)
             yield* Effect.sync(() => packages.forgetProject(projectId))
             for (const worktree of project.worktrees) {
@@ -792,9 +806,9 @@ export class ProjectService {
 
 function canonicalPath(identifier: string): Effect.Effect<string> {
   const resolved = path.resolve(identifier)
-  return Effect.promise(() => fs.realpath(resolved)).pipe(
-    Effect.orElseSucceed(() => resolved)
-  )
+  return Effect.tryPromise(() => fs.realpath(resolved))
+    .pipe(Effect.orDie)
+    .pipe(Effect.orElseSucceed(() => resolved))
 }
 
 function isPathWithin(candidate: string, parent: string): boolean {

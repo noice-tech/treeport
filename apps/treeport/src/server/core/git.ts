@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -8,7 +9,12 @@ import type {
   GitDiffImage,
   GitDiffImageRequest
 } from '@treeport/shared'
-import type { CommandRunner } from './command'
+import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
+import * as Deferred from 'effect/Deferred'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import { asEffectCommandRunner, type CommandRunner } from './command'
 import { ExternalCommandError, runChecked } from './command'
 
 export interface GitWorktreeInfo {
@@ -142,12 +148,7 @@ export function parseDirtyStatus(output: string): DirtyState {
   }
 }
 
-export class GitAdapter {
-  private readonly repositoryIdentityInitializations = new Map<
-    string,
-    Promise<string>
-  >()
-
+class PromiseGitAdapter {
   constructor(
     private readonly runner: CommandRunner,
     private readonly executable = 'git'
@@ -261,35 +262,15 @@ export class GitAdapter {
     return values[0]!.toLowerCase()
   }
 
-  async ensureRepositoryIdentity(cwd: string): Promise<string> {
-    const commonDirectoryResult = await this.checked(cwd, [
-      'rev-parse',
-      '--git-common-dir'
-    ])
-    const commonDirectoryValue = commonDirectoryResult.stdout.trim()
-    const resolvedCommonDirectory = path.isAbsolute(commonDirectoryValue)
-      ? commonDirectoryValue
-      : path.resolve(cwd, commonDirectoryValue)
-    const commonDirectory = await fs
-      .realpath(resolvedCommonDirectory)
-      .catch(() => path.resolve(resolvedCommonDirectory))
-    const pending = this.repositoryIdentityInitializations.get(commonDirectory)
-    if (pending) {
-      return pending
-    }
+  async repositoryCommonDirectory(cwd: string): Promise<string> {
+    const result = await this.checked(cwd, ['rev-parse', '--git-common-dir'])
+    const value = result.stdout.trim()
+    const resolved = path.isAbsolute(value) ? value : path.resolve(cwd, value)
+    return fs.realpath(resolved).catch(() => path.resolve(resolved))
+  }
 
-    const initialization = this.initializeRepositoryIdentity(cwd)
-    this.repositoryIdentityInitializations.set(commonDirectory, initialization)
-    try {
-      return await initialization
-    } finally {
-      if (
-        this.repositoryIdentityInitializations.get(commonDirectory) ===
-        initialization
-      ) {
-        this.repositoryIdentityInitializations.delete(commonDirectory)
-      }
-    }
+  async ensureRepositoryIdentity(cwd: string): Promise<string> {
+    return this.initializeRepositoryIdentity(cwd)
   }
 
   private async initializeRepositoryIdentity(cwd: string): Promise<string> {
@@ -983,4 +964,270 @@ export class GitAdapter {
       behind: Number.parseInt(behind, 10)
     }
   }
+}
+
+export class GitError extends Data.TaggedError('GitError')<{
+  readonly operation: string
+  readonly cause: unknown
+  readonly message: string
+}> {
+  constructor(operation: string, cause: unknown) {
+    super({
+      operation,
+      cause,
+      message: cause instanceof Error ? cause.message : String(cause)
+    })
+  }
+}
+
+type GitEffect<A> = Effect.Effect<A, GitError>
+
+/** Effect-native Git boundary. Operations are cold and failures are typed. */
+export class GitAdapter {
+  private readonly implementation: PromiseGitAdapter
+  private readonly cancellation = new AsyncLocalStorage<AbortSignal>()
+  private readonly repositoryIdentityInitializations = new Map<
+    string,
+    Deferred.Deferred<string, GitError>
+  >()
+
+  constructor(runner: CommandRunner, executable = 'git') {
+    const effectRunner = asEffectCommandRunner(runner)
+    this.implementation = new PromiseGitAdapter(
+      {
+        run: (request) =>
+          Effect.runPromise(effectRunner.runEffect(request), {
+            signal: this.cancellation.getStore()
+          })
+      },
+      executable
+    )
+  }
+
+  private operation<A>(
+    operation: string,
+    evaluate: () => Promise<A>
+  ): GitEffect<A> {
+    return Effect.tryPromise({
+      try: (signal) => this.cancellation.run(signal, evaluate),
+      catch: (cause) => new GitError(operation, cause)
+    })
+  }
+
+  findRepositoryRoot(inputPath: string): GitEffect<string | null> {
+    return this.operation('findRepositoryRoot', () =>
+      this.implementation.findRepositoryRoot(inputPath)
+    )
+  }
+
+  findProjectRepositoryRoot(inputPath: string): GitEffect<string | null> {
+    return this.operation('findProjectRepositoryRoot', () =>
+      this.implementation.findProjectRepositoryRoot(inputPath)
+    )
+  }
+
+  canonicalizeRepositoryPath(inputPath: string): GitEffect<string> {
+    return this.operation('canonicalizeRepositoryPath', () =>
+      this.implementation.canonicalizeRepositoryPath(inputPath)
+    )
+  }
+
+  repositoryIdentity(cwd: string): GitEffect<string | null> {
+    return this.operation('repositoryIdentity', () =>
+      this.implementation.repositoryIdentity(cwd)
+    )
+  }
+
+  ensureRepositoryIdentity(cwd: string): GitEffect<string> {
+    return Effect.gen(this, function* () {
+      const commonDirectory = yield* this.operation(
+        'resolveRepositoryCommonDirectory',
+        () => this.implementation.repositoryCommonDirectory(cwd)
+      )
+      const existing =
+        this.repositoryIdentityInitializations.get(commonDirectory)
+      if (existing) {
+        return yield* Deferred.await(existing)
+      }
+
+      const candidate = yield* Deferred.make<string, GitError>()
+      const pending = yield* Effect.sync(() => {
+        const winner =
+          this.repositoryIdentityInitializations.get(commonDirectory)
+        if (winner) {
+          return winner
+        }
+
+        this.repositoryIdentityInitializations.set(commonDirectory, candidate)
+        return candidate
+      })
+      if (pending !== candidate) {
+        return yield* Deferred.await(pending)
+      }
+
+      const initialization = this.operation('ensureRepositoryIdentity', () =>
+        this.implementation.ensureRepositoryIdentity(cwd)
+      )
+      yield* Effect.uninterruptible(
+        Effect.exit(initialization).pipe(
+          Effect.flatMap((exit) => Deferred.done(candidate, exit)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (
+                this.repositoryIdentityInitializations.get(commonDirectory) ===
+                candidate
+              ) {
+                this.repositoryIdentityInitializations.delete(commonDirectory)
+              }
+            })
+          )
+        )
+      )
+      return yield* Deferred.await(candidate)
+    })
+  }
+
+  worktreeLaunchIdentity(cwd: string): GitEffect<GitWorktreeLaunchIdentity> {
+    return this.operation('worktreeLaunchIdentity', () =>
+      this.implementation.worktreeLaunchIdentity(cwd)
+    )
+  }
+
+  listWorktrees(cwd: string): GitEffect<GitWorktreeInfo[]> {
+    return this.operation('listWorktrees', () =>
+      this.implementation.listWorktrees(cwd)
+    )
+  }
+
+  repairWorktrees(cwd: string): GitEffect<void> {
+    return this.operation('repairWorktrees', () =>
+      this.implementation.repairWorktrees(cwd)
+    )
+  }
+
+  resolveMainCheckout(cwd: string): GitEffect<string> {
+    return this.operation('resolveMainCheckout', () =>
+      this.implementation.resolveMainCheckout(cwd)
+    )
+  }
+
+  currentBranch(cwd: string): GitEffect<string> {
+    return this.operation('currentBranch', () =>
+      this.implementation.currentBranch(cwd)
+    )
+  }
+
+  remoteDefaultBranch(cwd: string): GitEffect<string | null> {
+    return this.operation('remoteDefaultBranch', () =>
+      this.implementation.remoteDefaultBranch(cwd)
+    )
+  }
+
+  defaultBranch(cwd: string): GitEffect<string> {
+    return this.operation('defaultBranch', () =>
+      this.implementation.defaultBranch(cwd)
+    )
+  }
+
+  resolveCommit(cwd: string, ref = 'HEAD'): GitEffect<string> {
+    return this.operation('resolveCommit', () =>
+      this.implementation.resolveCommit(cwd, ref)
+    )
+  }
+
+  resolveDefaultCommit(cwd: string): GitEffect<string> {
+    return this.operation('resolveDefaultCommit', () =>
+      this.implementation.resolveDefaultCommit(cwd)
+    )
+  }
+
+  createDetachedWorktree(
+    cwd: string,
+    worktreePath: string,
+    commit: string
+  ): GitEffect<void> {
+    return this.operation('createDetachedWorktree', () =>
+      this.implementation.createDetachedWorktree(cwd, worktreePath, commit)
+    )
+  }
+
+  pruneWorktrees(cwd: string): GitEffect<void> {
+    return this.operation('pruneWorktrees', () =>
+      this.implementation.pruneWorktrees(cwd)
+    )
+  }
+
+  removeWorktree(
+    cwd: string,
+    worktreePath: string,
+    force: boolean
+  ): GitEffect<void> {
+    return this.operation('removeWorktree', () =>
+      this.implementation.removeWorktree(cwd, worktreePath, force)
+    )
+  }
+
+  isCommitReachable(cwd: string, commit: string): GitEffect<boolean | null> {
+    return this.operation('isCommitReachable', () =>
+      this.implementation.isCommitReachable(cwd, commit)
+    )
+  }
+
+  dirtyStatus(cwd: string): GitEffect<GitDirtyStatus> {
+    return this.operation('dirtyStatus', () =>
+      this.implementation.dirtyStatus(cwd)
+    )
+  }
+
+  dirtyState(cwd: string): GitEffect<DirtyState> {
+    return this.operation('dirtyState', () =>
+      this.implementation.dirtyState(cwd)
+    )
+  }
+
+  worktreeFiles(cwd: string): GitEffect<string[]> {
+    return this.operation('worktreeFiles', () =>
+      this.implementation.worktreeFiles(cwd)
+    )
+  }
+
+  diffImage(cwd: string, input: GitDiffImageRequest): GitEffect<GitDiffImage> {
+    return this.operation('diffImage', () =>
+      this.implementation.diffImage(cwd, input)
+    )
+  }
+
+  worktreeDiff(cwd: string, defaultBranch: string): GitEffect<GitDiff> {
+    return this.operation('worktreeDiff', () =>
+      this.implementation.worktreeDiff(cwd, defaultBranch)
+    )
+  }
+
+  isMerged(cwd: string, branch: string): GitEffect<boolean> {
+    return this.operation('isMerged', () =>
+      this.implementation.isMerged(cwd, branch)
+    )
+  }
+
+  commitSummary(
+    cwd: string,
+    branch: string,
+    defaultBranch: string
+  ): GitEffect<{ ahead: number; behind: number } | null> {
+    return this.operation('commitSummary', () =>
+      this.implementation.commitSummary(cwd, branch, defaultBranch)
+    )
+  }
+}
+
+export class GitPort extends Context.Tag('treeport/Git')<
+  GitPort,
+  GitAdapter
+>() {}
+
+export function GitLayer(
+  runner: CommandRunner,
+  executable = 'git'
+): Layer.Layer<GitPort> {
+  return Layer.succeed(GitPort, new GitAdapter(runner, executable))
 }

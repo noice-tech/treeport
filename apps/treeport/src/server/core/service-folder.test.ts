@@ -2,10 +2,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
+import { openDatabaseForTest } from './database'
 import type { DomainError } from './domain'
-import { openDatabase } from './database'
-import { GhAdapter } from './gh'
-import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import {
   databases,
@@ -94,20 +92,17 @@ describe('ordinary folder projects', () => {
     `)
     database.close()
     databases.splice(databases.indexOf(database), 1)
-    const reopenedDatabase = await openDatabase(config.databasePath)
-    databases.push(reopenedDatabase)
     const restartedService = integrationService(
       new TreeportService({
         config,
-        database: reopenedDatabase,
         runner,
-        git: new GitAdapter(runner),
-        terminalHost: new TerminalHostDouble(runner),
-        gh: new GhAdapter(runner)
+        terminalHost: new TerminalHostDouble(runner)
       })
     )
     services.push(restartedService)
     await restartedService.runEffect(restartedService.initialize())
+    const reopenedDatabase = await openDatabaseForTest(config.databasePath)
+    databases.push(reopenedDatabase)
     const restarted = await restartedService.getProjectSnapshot(registered.id)
     expect(restarted).toMatchObject({
       availability: { state: 'available', message: null },

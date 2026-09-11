@@ -32,12 +32,36 @@ export interface CommandResult {
 
 export interface CommandRunner {
   run(request: CommandRequest): Promise<CommandResult>
+  runEffect?(
+    request: CommandRequest
+  ): Effect.Effect<CommandResult, CommandExecutionError>
 }
 
 export interface EffectCommandRunner extends CommandRunner {
   runEffect(
     request: CommandRequest
   ): Effect.Effect<CommandResult, CommandExecutionError>
+}
+
+export function asEffectCommandRunner(
+  runner: CommandRunner
+): EffectCommandRunner {
+  const nativeRun = runner.runEffect
+  if (nativeRun) {
+    return {
+      run: (request) => runner.run(request),
+      runEffect: (request) => nativeRun.call(runner, request)
+    }
+  }
+
+  return {
+    run: (request) => runner.run(request),
+    runEffect: (request) =>
+      Effect.tryPromise({
+        try: () => runner.run(request),
+        catch: (cause) => new SpawnCommandError(request, cause)
+      })
+  }
 }
 
 export type CommandExecutionError =

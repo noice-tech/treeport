@@ -2,9 +2,13 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
 import { parseDurationMs } from '../../duration'
-import type { CommandRunner } from './command'
-import { readOptionalJsonc } from './jsonc'
+import { asEffectCommandRunner, type CommandRunner } from './command'
+import { readOptionalJsonc, type JsoncError } from './jsonc'
 import { resolveZedCreateWorktreeSetupTasks } from './zed'
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30 * 60_000
@@ -145,22 +149,33 @@ function isPathWithin(candidate: string, parent: string): boolean {
   )
 }
 
-async function readNativeSetup(mainWorktreePath: string) {
+interface NativeSetup {
+  filePath: string
+  setup: z.infer<typeof setupFileSchema> | null
+}
+
+function readNativeSetup(
+  mainWorktreePath: string
+): Effect.Effect<NativeSetup, JsoncError | Error> {
   const filePath = path.join(mainWorktreePath, TREEPORT_SETUP_PATH)
-  const file = await readOptionalJsonc(filePath)
-  if (!file.found) {
-    return { filePath, setup: null }
-  }
+  return Effect.gen(function* () {
+    const file = yield* readOptionalJsonc(filePath)
+    if (!file.found) {
+      return { filePath, setup: null }
+    }
 
-  const parsed = setupFileSchema.safeParse(file.value)
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0]!
-    throw new Error(
-      `Invalid Treeport setup in ${filePath}: ${formatIssuePath(issue.path)}: ${issue.message}`
-    )
-  }
+    const parsed = setupFileSchema.safeParse(file.value)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]!
+      return yield* Effect.fail(
+        new Error(
+          `Invalid Treeport setup in ${filePath}: ${formatIssuePath(issue.path)}: ${issue.message}`
+        )
+      )
+    }
 
-  return { filePath, setup: parsed.data }
+    return { filePath, setup: parsed.data }
+  })
 }
 
 async function resolveNativeTasks(input: {
@@ -210,85 +225,128 @@ async function resolveNativeTasks(input: {
   })
 }
 
-export async function resolveWorktreeSetupTasks(input: {
+export class SetupError extends Data.TaggedError('SetupError')<{
+  readonly operation: 'resolveSetup' | 'resolveCleanup'
+  readonly cause: unknown
+  readonly message: string
+}> {
+  constructor(operation: SetupError['operation'], cause: unknown) {
+    const detail = cause instanceof Error && cause.cause ? cause.cause : cause
+    super({
+      operation,
+      cause,
+      message: detail instanceof Error ? detail.message : String(detail)
+    })
+  }
+}
+
+export function resolveWorktreeSetupTasks(input: {
   shell: string
   mainWorktreePath: string
   worktreePath: string
-}): Promise<WorktreeSetupTask[]> {
-  const mainWorktreePath = await fs.realpath(input.mainWorktreePath)
-  const native = await readNativeSetup(mainWorktreePath)
-  if (!native.setup) {
-    return resolveZedCreateWorktreeSetupTasks({
-      ...input,
-      mainWorktreePath,
-      worktreePath: await fs.realpath(input.worktreePath)
-    })
-  }
-
-  return resolveNativeTasks({
-    mainWorktreePath,
-    worktreePath: input.worktreePath,
-    commands: native.setup.commands,
-    commandPath: 'commands',
-    filePath: native.filePath
-  })
-}
-
-export async function resolveWorktreeCleanupTasks(input: {
-  mainWorktreePath: string
-  worktreePath: string
-}): Promise<WorktreeCleanupResolution> {
-  const mainWorktreePath = await fs.realpath(input.mainWorktreePath)
-  const native = await readNativeSetup(mainWorktreePath)
-  const commands = native.setup?.cleanup ?? []
-  if (commands.length === 0) {
-    return { tasks: [], definitionHash: null }
-  }
-
-  const tasks = await resolveNativeTasks({
-    mainWorktreePath,
-    worktreePath: input.worktreePath,
-    commands,
-    commandPath: 'cleanup',
-    filePath: native.filePath
-  })
-  const definitionHash = crypto
-    .createHash('sha256')
-    .update(
-      JSON.stringify(
-        tasks.map((task) => ({
-          argv: task.argv,
-          cwd: task.cwd,
-          env: Object.fromEntries(
-            Object.entries(task.env).sort(([a], [b]) => a.localeCompare(b))
-          ),
-          timeoutMs: task.timeoutMs
-        }))
-      )
+}): Effect.Effect<WorktreeSetupTask[], SetupError> {
+  return Effect.gen(function* () {
+    const mainWorktreePath = yield* Effect.tryPromise(() =>
+      fs.realpath(input.mainWorktreePath)
     )
-    .digest('hex')
-  return { tasks, definitionHash }
-}
-
-export async function runWorktreeSetupTasks(input: {
-  runner: CommandRunner
-  tasks: WorktreeSetupTask[]
-}): Promise<WorktreeSetupResult[]> {
-  const results: WorktreeSetupResult[] = []
-  for (const task of input.tasks) {
-    const [executable, ...args] = task.argv
-    if (!executable) {
-      continue
+    const native = yield* readNativeSetup(mainWorktreePath)
+    if (!native.setup) {
+      const worktreePath = yield* Effect.tryPromise(() =>
+        fs.realpath(input.worktreePath)
+      )
+      return yield* resolveZedCreateWorktreeSetupTasks({
+        ...input,
+        mainWorktreePath,
+        worktreePath
+      })
     }
 
-    try {
-      const result = await input.runner.run({
-        executable,
-        args,
-        cwd: task.cwd,
-        env: { ...process.env, ...task.env },
-        timeoutMs: task.timeoutMs
+    const commands = native.setup.commands
+    return yield* Effect.tryPromise(() =>
+      resolveNativeTasks({
+        mainWorktreePath,
+        worktreePath: input.worktreePath,
+        commands,
+        commandPath: 'commands',
+        filePath: native.filePath
       })
+    )
+  }).pipe(Effect.mapError((cause) => new SetupError('resolveSetup', cause)))
+}
+
+export function resolveWorktreeCleanupTasks(input: {
+  mainWorktreePath: string
+  worktreePath: string
+}): Effect.Effect<WorktreeCleanupResolution, SetupError> {
+  return Effect.gen(function* () {
+    const mainWorktreePath = yield* Effect.tryPromise(() =>
+      fs.realpath(input.mainWorktreePath)
+    )
+    const native = yield* readNativeSetup(mainWorktreePath)
+    const commands = native.setup?.cleanup ?? []
+    if (commands.length === 0) {
+      return { tasks: [], definitionHash: null }
+    }
+
+    const tasks = yield* Effect.tryPromise(() =>
+      resolveNativeTasks({
+        mainWorktreePath,
+        worktreePath: input.worktreePath,
+        commands,
+        commandPath: 'cleanup',
+        filePath: native.filePath
+      })
+    )
+    const definitionHash = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify(
+          tasks.map((task) => ({
+            argv: task.argv,
+            cwd: task.cwd,
+            env: Object.fromEntries(
+              Object.entries(task.env).sort(([a], [b]) => a.localeCompare(b))
+            ),
+            timeoutMs: task.timeoutMs
+          }))
+        )
+      )
+      .digest('hex')
+    return { tasks, definitionHash }
+  }).pipe(Effect.mapError((cause) => new SetupError('resolveCleanup', cause)))
+}
+
+export function runWorktreeSetupTasks(input: {
+  runner: CommandRunner
+  tasks: WorktreeSetupTask[]
+}): Effect.Effect<WorktreeSetupResult[]> {
+  const runner = asEffectCommandRunner(input.runner)
+  return Effect.gen(function* () {
+    const results: WorktreeSetupResult[] = []
+    for (const task of input.tasks) {
+      const [executable, ...args] = task.argv
+      if (!executable) {
+        continue
+      }
+
+      const outcome = yield* Effect.either(
+        runner.runEffect({
+          executable,
+          args,
+          cwd: task.cwd,
+          env: { ...process.env, ...task.env },
+          timeoutMs: task.timeoutMs
+        })
+      )
+      if (outcome._tag === 'Left') {
+        results.push({
+          label: task.label,
+          error: outcome.left.message.slice(0, MAX_SETUP_OUTPUT)
+        })
+        break
+      }
+
+      const result = outcome.right
       if (result.exitCode !== 0) {
         const detail = (
           result.stderr.trim() ||
@@ -300,16 +358,25 @@ export async function runWorktreeSetupTasks(input: {
       }
 
       results.push({ label: task.label, error: null })
-    } catch (error) {
-      results.push({
-        label: task.label,
-        error: (error instanceof Error ? error.message : String(error)).slice(
-          0,
-          MAX_SETUP_OUTPUT
-        )
-      })
-      break
     }
-  }
-  return results
+
+    return results
+  })
 }
+
+export interface SetupService {
+  readonly resolveSetupTasks: typeof resolveWorktreeSetupTasks
+  readonly resolveCleanupTasks: typeof resolveWorktreeCleanupTasks
+  readonly runTasks: typeof runWorktreeSetupTasks
+}
+
+export class Setup extends Context.Tag('treeport/Setup')<
+  Setup,
+  SetupService
+>() {}
+
+export const SetupLive = Layer.succeed(Setup, {
+  resolveSetupTasks: resolveWorktreeSetupTasks,
+  resolveCleanupTasks: resolveWorktreeCleanupTasks,
+  runTasks: runWorktreeSetupTasks
+})

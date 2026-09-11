@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import { NetworkListenerAdapter } from './network-listeners'
@@ -61,14 +62,16 @@ describe('NetworkListenerAdapter', () => {
     await processFixture(procRoot, 200, 1, 'python', worktree, ['222'])
     await processFixture(procRoot, 300, 1, 'other', otherWorktree, ['333'])
 
-    const result = await new NetworkListenerAdapter(
-      { run: async () => ({ stdout: '', stderr: '', exitCode: 0 }) },
-      'linux',
-      procRoot
-    ).listeners({
-      worktreePath: worktree,
-      terminalProcesses: [{ pid: 100, terminalId: 'term_dev' }]
-    })
+    const result = await Effect.runPromise(
+      new NetworkListenerAdapter(
+        { run: async () => ({ stdout: '', stderr: '', exitCode: 0 }) },
+        'linux',
+        procRoot
+      ).listeners({
+        worktreePath: worktree,
+        terminalProcesses: [{ pid: 100, terminalId: 'term_dev' }]
+      })
+    )
 
     expect(result).toEqual({
       supported: true,
@@ -124,10 +127,12 @@ describe('NetworkListenerAdapter', () => {
     }
 
     await expect(
-      new NetworkListenerAdapter(new Runner(), 'darwin').listeners({
-        worktreePath: worktree,
-        terminalProcesses: [{ pid: 100, terminalId: 'term_dev' }]
-      })
+      Effect.runPromise(
+        new NetworkListenerAdapter(new Runner(), 'darwin').listeners({
+          worktreePath: worktree,
+          terminalProcesses: [{ pid: 100, terminalId: 'term_dev' }]
+        })
+      )
     ).resolves.toEqual({
       supported: true,
       message: null,
@@ -157,10 +162,12 @@ describe('NetworkListenerAdapter', () => {
       }
     }
     await expect(
-      new NetworkListenerAdapter(runner, 'win32').listeners({
-        worktreePath: '/repo',
-        terminalProcesses: []
-      })
+      Effect.runPromise(
+        new NetworkListenerAdapter(runner, 'win32').listeners({
+          worktreePath: '/repo',
+          terminalProcesses: []
+        })
+      )
     ).resolves.toEqual({
       supported: false,
       message: 'TCP listener discovery is not supported on this platform.',

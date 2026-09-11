@@ -11,6 +11,7 @@ import * as Effect from 'effect/Effect'
 import type { Scope } from 'effect/Scope'
 import type { TreeportService } from './core/index'
 import { DomainError } from './core/index'
+import { DatabasePort } from './core/database'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
 import {
   DatabaseTerminalBellStateStore,
@@ -52,9 +53,12 @@ export function acquireTerminalMetadataManager(
   bellStateStore?: TerminalBellStateStore
 ): Effect.Effect<TerminalMetadataManager, never, Scope | ApplicationServices> {
   return Effect.acquireRelease(
-    Effect.sync(
-      () => new TerminalMetadataManager(service, terminalHost, bellStateStore)
-    ),
+    Effect.gen(function* () {
+      const store =
+        bellStateStore ??
+        new DatabaseTerminalBellStateStore(yield* DatabasePort)
+      return new TerminalMetadataManager(service, terminalHost, store)
+    }),
     (manager) =>
       Effect.sync(() => manager.dispose()).pipe(
         Effect.ensuring(manager.drain())
@@ -78,10 +82,9 @@ export class TerminalMetadataManager {
   constructor(
     private readonly service: TreeportService,
     private readonly terminalHost: TerminalAttachmentBackend,
-    bellStateStore?: TerminalBellStateStore
+    bellStateStore: TerminalBellStateStore
   ) {
-    this.bellStateStore =
-      bellStateStore ?? new DatabaseTerminalBellStateStore(service.database)
+    this.bellStateStore = bellStateStore
   }
 
   initialize(): Effect.Effect<void, unknown, ApplicationServices> {
@@ -91,7 +94,7 @@ export class TerminalMetadataManager {
       }
 
       this.initialized = true
-      const states = yield* Effect.promise(() => this.bellStateStore.load())
+      const states = yield* this.bellStateStore.load().pipe(Effect.orDie)
       for (const state of states) {
         this.persistedBells.set(state.terminalId, state)
       }
@@ -266,9 +269,12 @@ export class TerminalMetadataManager {
         }
 
         if (entry.bell && sequence === latestSequence && entry.bell.unread) {
-          yield* Effect.promise(() =>
-            this.bellStateStore.markRead(terminalId, sequence)
-          ).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.persist'))
+          yield* this.bellStateStore
+            .markRead(terminalId, sequence)
+            .pipe(
+              Effect.orDie,
+              Effect.withSpan('treeport.terminal.bell.acknowledge.persist')
+            )
           yield* Effect.sync(() => {
             const persisted = this.persistedBells.get(terminalId)
             if (persisted?.sequence === sequence) {
@@ -316,7 +322,7 @@ export class TerminalMetadataManager {
               return
             }
 
-            yield* Effect.promise(() => this.bellStateStore.delete(terminalId))
+            yield* this.bellStateStore.delete(terminalId).pipe(Effect.orDie)
             yield* Effect.sync(() => {
               this.persistedBells.delete(terminalId)
             })
@@ -422,7 +428,7 @@ export class TerminalMetadataManager {
         return
       }
 
-      entry.runtimeUnsubscribe = yield* Effect.promise(async () =>
+      entry.runtimeUnsubscribe = yield* Effect.tryPromise(async () =>
         this.terminalHost.subscribeRuntime(entry.terminalId, (event) => {
           if (event.titleState) {
             this.reconcileTitleState(entry, event.titleState)
@@ -452,14 +458,14 @@ export class TerminalMetadataManager {
             this.stopRuntime(entry)
           }
         })
-      )
+      ).pipe(Effect.orDie)
       const [state, titleState] = yield* Effect.all([
-        Effect.promise(async () =>
+        Effect.tryPromise(async () =>
           this.terminalHost.runtimeState(entry.terminalId)
-        ),
-        Effect.promise(async () =>
+        ).pipe(Effect.orDie),
+        Effect.tryPromise(async () =>
           this.terminalHost.terminalTitleState(entry.terminalId)
-        )
+        ).pipe(Effect.orDie)
       ])
       if (this.entries.get(entry.terminalId) !== entry) {
         return
@@ -531,7 +537,7 @@ export class TerminalMetadataManager {
           occurredAt: bell.at,
           unread: true
         }
-        yield* Effect.promise(() => this.bellStateStore.upsert(state))
+        yield* this.bellStateStore.upsert(state).pipe(Effect.orDie)
         yield* Effect.sync(() => {
           this.persistedBells.set(entry.terminalId, state)
           if (this.entries.get(entry.terminalId) === entry) {

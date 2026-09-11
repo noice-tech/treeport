@@ -28,7 +28,7 @@ import {
   type ApplicationServices,
   TreeFileMutations
 } from '../infrastructure/application-runtime'
-import { GitPort } from '../infrastructure/ports'
+import { GitPort } from '../../git'
 
 function domainPromise<Result>(
   evaluate: () => Promise<Result>
@@ -63,10 +63,12 @@ export class TreeFileService {
   ): Effect.Effect<TreeFileListing, never, ApplicationServices> {
     return Effect.gen(function* () {
       const git = yield* GitPort
-      const root = yield* Effect.promise(() => fs.realpath(worktree.path))
+      const root = yield* Effect.tryPromise(() =>
+        fs.realpath(worktree.path)
+      ).pipe(Effect.orDie)
       const paths: string[] = []
       if (project.kind === 'repository') {
-        const candidates = yield* Effect.promise(() => git.worktreeFiles(root))
+        const candidates = yield* git.worktreeFiles(root).pipe(Effect.orDie)
         for (const relativePath of candidates) {
           if (paths.length > TREE_FILE_LIST_MAX_ENTRIES) {
             break
@@ -106,11 +108,13 @@ export class TreeFileService {
           paths.length <= TREE_FILE_LIST_MAX_ENTRIES
         ) {
           const relativeDirectory = directories.pop()!
-          const entries = (yield* Effect.promise(() =>
+          const entries = (yield* Effect.tryPromise(() =>
             fs.readdir(path.join(root, relativeDirectory), {
               withFileTypes: true
             })
-          )).sort((left, right) => right.name.localeCompare(left.name))
+          ).pipe(Effect.orDie)).sort((left, right) =>
+            right.name.localeCompare(left.name)
+          )
           for (const entry of entries) {
             if (entry.name === '.git' && entry.isDirectory()) {
               continue
@@ -146,7 +150,9 @@ export class TreeFileService {
     return Effect.gen(function* () {
       const panels = yield* PanelOperations
       const { worktree } = yield* panels.requireWebPanelTreeFiles(panelId)
-      const root = yield* Effect.promise(() => fs.realpath(worktree.path))
+      const root = yield* Effect.tryPromise(() =>
+        fs.realpath(worktree.path)
+      ).pipe(Effect.orDie)
       const file = yield* readTreeFileFromRoot(root, requestedPath)
       return {
         path: file.path,
@@ -172,7 +178,9 @@ export class TreeFileService {
       const { project, worktree } =
         yield* panels.requireWebPanelTreeFiles(panelId)
       const listing = yield* listTreeFilesForTree(project, worktree)
-      const root = yield* Effect.promise(() => fs.realpath(worktree.path))
+      const root = yield* Effect.tryPromise(() =>
+        fs.realpath(worktree.path)
+      ).pipe(Effect.orDie)
       const expression = new RegExp(
         query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
         'iu'
@@ -297,18 +305,20 @@ export class TreeFileService {
         )
       }
 
-      const root = yield* Effect.promise(() => fs.realpath(worktree.path))
+      const root = yield* Effect.tryPromise(() =>
+        fs.realpath(worktree.path)
+      ).pipe(Effect.orDie)
       const resolved = yield* resolveTreeFile(root, input.path)
       const mutations = yield* TreeFileMutations
       return yield* mutations.enqueue(
         resolved.canonicalPath,
         Effect.acquireUseRelease(
-          Effect.promise(() =>
+          Effect.tryPromise(() =>
             fs.open(
               resolved.canonicalPath,
               fsConstants.O_RDWR | fsConstants.O_NOFOLLOW
             )
-          ),
+          ).pipe(Effect.orDie),
           (handle) =>
             Effect.gen(function* () {
               const current = yield* readTreeFileHandle(handle)
@@ -328,17 +338,19 @@ export class TreeFileService {
 
               let offset = 0
               while (offset < content.length) {
-                const write = yield* Effect.promise(() =>
+                const write = yield* Effect.tryPromise(() =>
                   handle.write(content, offset, content.length - offset, offset)
-                )
+                ).pipe(Effect.orDie)
                 if (write.bytesWritten === 0) {
                   throw new Error('Could not write tree file')
                 }
 
                 offset += write.bytesWritten
               }
-              yield* Effect.promise(() => handle.truncate(content.length))
-              yield* Effect.promise(() => handle.sync())
+              yield* Effect.tryPromise(() =>
+                handle.truncate(content.length)
+              ).pipe(Effect.orDie)
+              yield* Effect.tryPromise(() => handle.sync()).pipe(Effect.orDie)
               return {
                 path: resolved.path,
                 revision: crypto
@@ -347,7 +359,7 @@ export class TreeFileService {
                   .digest('hex')
               }
             }),
-          (handle) => Effect.promise(() => handle.close())
+          (handle) => Effect.tryPromise(() => handle.close()).pipe(Effect.orDie)
         )
       )
     })
@@ -401,7 +413,7 @@ export class TreeFileService {
             })
         ),
         readTreeFileHandle,
-        (handle) => Effect.promise(() => handle.close())
+        (handle) => Effect.tryPromise(() => handle.close()).pipe(Effect.orDie)
       )
       return { path: resolved.path, ...file }
     })
@@ -513,7 +525,9 @@ export class TreeFileService {
     handle: Awaited<ReturnType<typeof fs.open>>
   ): Effect.Effect<{ bytes: Buffer; content: string }, DomainError<unknown>> {
     return Effect.gen(function* () {
-      const stat = yield* Effect.promise(() => handle.stat())
+      const stat = yield* Effect.tryPromise(() => handle.stat()).pipe(
+        Effect.orDie
+      )
       if (!stat.isFile()) {
         return yield* Effect.fail(
           new DomainError(
@@ -537,9 +551,9 @@ export class TreeFileService {
       const buffer = Buffer.alloc(TREE_FILE_MAX_BYTES + 1)
       let bytesRead = 0
       while (bytesRead < buffer.length) {
-        const read = yield* Effect.promise(() =>
+        const read = yield* Effect.tryPromise(() =>
           handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
-        )
+        ).pipe(Effect.orDie)
         if (read.bytesRead === 0) {
           break
         }

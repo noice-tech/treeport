@@ -7,10 +7,12 @@ import { asc, eq, sql } from 'drizzle-orm'
 import type * as Effect from 'effect/Effect'
 import type { ProjectRecord } from '@treeport/shared'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
-import { mapProject, openDatabase, type TreeportDatabase } from './database'
+import {
+  mapProject,
+  openDatabaseForTest,
+  type TreeportDatabase
+} from './database'
 import { projects, worktrees } from './database-schema'
-import { GhAdapter } from './gh'
-import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import type { AppConfig } from './config'
 import type { ApplicationServices } from './services/infrastructure/application-runtime'
@@ -30,7 +32,7 @@ beforeAll(async () => {
     path.join(os.tmpdir(), 'treeport-service-template-')
   )
   databaseTemplate = path.join(templateDirectory, 'empty.db')
-  const database = await openDatabase(databaseTemplate)
+  const database = await openDatabaseForTest(databaseTemplate)
   database.close()
 })
 
@@ -894,7 +896,7 @@ export async function fixture() {
   // Each test owns a fresh database; migration behavior has its own suite.
   const databasePath = path.join(root, 'treeport.db')
   await fs.copyFile(databaseTemplate, databasePath)
-  const database = await openDatabase(databasePath)
+  const database = await openDatabaseForTest(databasePath)
   databases.push(database)
   const config: AppConfig = {
     host: '127.0.0.1',
@@ -910,21 +912,12 @@ export async function fixture() {
     daemonLifecycle: 'external',
     webDevelopment: false
   }
-  const git = new GitAdapter(runner)
   const terminalHost = new TerminalHostDouble(runner)
-  const gh = new GhAdapter(runner)
   const service = integrationService(
-    new TreeportService({
-      config,
-      database,
-      runner,
-      git,
-      terminalHost,
-      gh
-    })
+    new TreeportService({ config, runner, terminalHost })
   )
-  service.attachHttpServer(http.createServer())
   services.push(service)
   await service.runEffect(service.initialize())
+  service.attachHttpServer(http.createServer())
   return { root, main, runner, service, database, config }
 }

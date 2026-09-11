@@ -11,12 +11,9 @@ import {
   WorktreeMutations
 } from '../infrastructure/application-runtime'
 import { MutationLocks } from '../infrastructure/mutation-locks'
-import {
-  DatabasePort,
-  EventBusPort,
-  GitPort,
-  TerminalHostPort
-} from '../infrastructure/ports'
+import { EventBusPort, TerminalHostPort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
+import { GitPort } from '../../git'
 import { ProjectStore } from '../project/project-store'
 import { TerminalState } from '../terminal/terminal-state'
 
@@ -27,10 +24,9 @@ const id = (prefix: string): string =>
 function optionalPromise<Result>(
   evaluate: () => Promise<Result>
 ): Effect.Effect<Result | null> {
-  return Effect.tryPromise({
-    try: evaluate,
-    catch: (cause) => cause
-  }).pipe(Effect.orElseSucceed(() => null))
+  return Effect.tryPromise({ try: evaluate, catch: (cause) => cause }).pipe(
+    Effect.orElseSucceed(() => null)
+  )
 }
 
 export class WorktreeReconciler {
@@ -67,18 +63,20 @@ export class WorktreeReconciler {
         throw new Error('Registered project is missing')
       }
 
-      const [storedIdentity] = yield* Effect.promise(() =>
-        database.db
-          .select({
-            identity: projects.repositoryIdentity,
-            device: projects.repositoryDevice,
-            inode: projects.repositoryInode,
-            nameIsCustom: projects.nameIsCustom
-          })
-          .from(projects)
-          .where(eq(projects.id, projectId))
-          .limit(1)
-      )
+      const [storedIdentity] = yield* database
+        .execute('worktree.reconciler.70', (db) =>
+          db
+            .select({
+              identity: projects.repositoryIdentity,
+              device: projects.repositoryDevice,
+              inode: projects.repositoryInode,
+              nameIsCustom: projects.nameIsCustom
+            })
+            .from(projects)
+            .where(eq(projects.id, projectId))
+            .limit(1)
+        )
+        .pipe(Effect.orDie)
       if (!storedIdentity) {
         throw new Error('Registered project is missing its repository metadata')
       }
@@ -94,9 +92,9 @@ export class WorktreeReconciler {
         canonicalStat = yield* optionalPromise(() =>
           fs.stat(repository, { bigint: true })
         )
-        markerAtStoredPath = yield* Effect.promise(() =>
-          git.repositoryIdentity(repository)
-        )
+        markerAtStoredPath = yield* git
+          .repositoryIdentity(repository)
+          .pipe(Effect.orDie)
       }
 
       if (repositoryIdentity === null) {
@@ -114,18 +112,18 @@ export class WorktreeReconciler {
 
         const legacyRepository = canonicalRepository
         const legacyStat = canonicalStat
-        const canonical = yield* Effect.promise(() =>
-          git.canonicalizeRepositoryPath(legacyRepository)
-        )
-        const resolvedMain = yield* Effect.promise(() =>
-          git.resolveMainCheckout(canonical)
-        )
-        const enrollmentInventory = yield* Effect.promise(() =>
-          git.listWorktrees(canonical)
-        )
-        const verifiedStat = yield* Effect.promise(() =>
+        const canonical = yield* git
+          .canonicalizeRepositoryPath(legacyRepository)
+          .pipe(Effect.orDie)
+        const resolvedMain = yield* git
+          .resolveMainCheckout(canonical)
+          .pipe(Effect.orDie)
+        const enrollmentInventory = yield* git
+          .listWorktrees(canonical)
+          .pipe(Effect.orDie)
+        const verifiedStat = yield* Effect.tryPromise(() =>
           fs.stat(legacyRepository, { bigint: true })
-        )
+        ).pipe(Effect.orDie)
         if (
           canonical !== legacyRepository ||
           resolvedMain !== legacyRepository ||
@@ -146,29 +144,31 @@ export class WorktreeReconciler {
 
         repositoryIdentity =
           markerAtStoredPath ??
-          (yield* Effect.promise(() =>
-            git.ensureRepositoryIdentity(legacyRepository)
-          ))
+          (yield* git
+            .ensureRepositoryIdentity(legacyRepository)
+            .pipe(Effect.orDie))
         const enrolledIdentity = repositoryIdentity
-        const [identityOwner] = yield* Effect.promise(() =>
-          database.db
-            .select({ id: projects.id })
-            .from(projects)
-            .where(eq(projects.repositoryIdentity, enrolledIdentity))
-            .limit(1)
-        )
+        const [identityOwner] = yield* database
+          .execute('worktree.reconciler.153', (db) =>
+            db
+              .select({ id: projects.id })
+              .from(projects)
+              .where(eq(projects.repositoryIdentity, enrolledIdentity))
+              .limit(1)
+          )
+          .pipe(Effect.orDie)
         if (identityOwner && identityOwner.id !== projectId) {
           throw new Error(
             'The local Treeport repository identity belongs to another registered project'
           )
         }
 
-        markerAtStoredPath = yield* Effect.promise(() =>
-          git.repositoryIdentity(legacyRepository)
-        )
-        const enrolledStat = yield* Effect.promise(() =>
+        markerAtStoredPath = yield* git
+          .repositoryIdentity(legacyRepository)
+          .pipe(Effect.orDie)
+        const enrolledStat = yield* Effect.tryPromise(() =>
           fs.stat(legacyRepository, { bigint: true })
-        )
+        ).pipe(Effect.orDie)
         if (
           markerAtStoredPath !== repositoryIdentity ||
           enrolledStat.dev !== legacyStat.dev ||
@@ -197,13 +197,13 @@ export class WorktreeReconciler {
             continue
           }
 
-          const candidateMarker = yield* optionalPromise(() =>
-            git.repositoryIdentity(candidate)
-          )
+          const candidateMarker = yield* git
+            .repositoryIdentity(candidate)
+            .pipe(Effect.orElseSucceed(() => null))
           if (candidateMarker === repositoryIdentity) {
-            const candidateTopLevel = yield* optionalPromise(() =>
-              git.canonicalizeRepositoryPath(candidate)
-            )
+            const candidateTopLevel = yield* git
+              .canonicalizeRepositoryPath(candidate)
+              .pipe(Effect.orElseSucceed(() => null))
             if (candidateTopLevel === candidate) {
               candidates.add(candidate)
             }
@@ -226,9 +226,9 @@ export class WorktreeReconciler {
         }
 
         canonicalRepository = candidate
-        canonicalStat = yield* Effect.promise(() =>
+        canonicalStat = yield* Effect.tryPromise(() =>
           fs.stat(candidate, { bigint: true })
-        )
+        ).pipe(Effect.orDie)
       }
 
       if (
@@ -242,28 +242,27 @@ export class WorktreeReconciler {
       repositoryPath = canonicalRepository
       mainPath = canonicalRepository
       const repositoryRenamed = repositoryPath !== storedProject.repositoryPath
-      const canonical = yield* Effect.promise(() =>
-        git.canonicalizeRepositoryPath(repositoryPath)
-      )
+      const canonical = yield* git
+        .canonicalizeRepositoryPath(repositoryPath)
+        .pipe(Effect.orDie)
       if (canonical !== repositoryPath) {
         throw new Error('Repository is not the Git top-level main checkout')
       }
 
       if (repositoryRenamed) {
         if (
-          (yield* Effect.promise(() =>
-            git.repositoryIdentity(repositoryPath)
-          )) !== repositoryIdentity
+          (yield* git.repositoryIdentity(repositoryPath).pipe(Effect.orDie)) !==
+          repositoryIdentity
         ) {
           throw new Error('Repository rename candidate changed during recovery')
         }
 
-        yield* Effect.promise(() => git.repairWorktrees(repositoryPath))
+        yield* git.repairWorktrees(repositoryPath).pipe(Effect.orDie)
       }
 
-      const discovered = (yield* Effect.promise(() =>
-        git.listWorktrees(repositoryPath)
-      )).filter((item) => !item.bare)
+      const discovered = (yield* git
+        .listWorktrees(repositoryPath)
+        .pipe(Effect.orDie)).filter((item) => !item.bare)
       if (
         (!allowProjectLock &&
           ((yield* locks.isProjectLocked(projectId)) ||
@@ -288,8 +287,10 @@ export class WorktreeReconciler {
 
       const [repositoryStat, verifiedIdentity] = yield* Effect.all(
         [
-          Effect.promise(() => fs.stat(repositoryPath, { bigint: true })),
-          Effect.promise(() => git.repositoryIdentity(repositoryPath))
+          Effect.tryPromise(() =>
+            fs.stat(repositoryPath, { bigint: true })
+          ).pipe(Effect.orDie),
+          git.repositoryIdentity(repositoryPath).pipe(Effect.orDie)
         ],
         { concurrency: 'unbounded' }
       )
@@ -309,26 +310,28 @@ export class WorktreeReconciler {
         storedIdentity.device !== repositoryDevice ||
         storedIdentity.inode !== repositoryInode
       const timestamp = now()
-      const known = yield* Effect.promise(() =>
-        database.db.all<{
-          id: string
-          path: string
-          git_worktree_key: string | null
-          kind: 'main' | 'linked'
-          managed_wrapper_path: string | null
-          created_at: string
-          head: string
-          branch: string | null
-          detached: number
-          locked: number
-          lock_reason: string | null
-          prunable: number
-        }>(sql`
+      const known = yield* database
+        .execute('worktree.reconciler.312', (db) =>
+          db.all<{
+            id: string
+            path: string
+            git_worktree_key: string | null
+            kind: 'main' | 'linked'
+            managed_wrapper_path: string | null
+            created_at: string
+            head: string
+            branch: string | null
+            detached: number
+            locked: number
+            lock_reason: string | null
+            prunable: number
+          }>(sql`
           SELECT id,path,git_worktree_key,kind,
                  managed_wrapper_path,created_at,head,branch,detached,locked,lock_reason,prunable
           FROM worktrees WHERE project_id=${projectId}
         `)
-      )
+        )
+        .pipe(Effect.orDie)
       const keyed = new Map(
         known.flatMap((worktree) =>
           worktree.git_worktree_key
@@ -382,29 +385,34 @@ export class WorktreeReconciler {
       )
       for (const worktree of retired) {
         const terminalIds = yield* terminalState.trackedTerminalIds(worktree.id)
-        const sessions = yield* Effect.promise(() =>
+        const sessions = yield* Effect.tryPromise(() =>
           terminalHost.listTerminals(worktree.id)
-        )
+        ).pipe(Effect.orDie)
         for (const terminal of sessions) {
           if (terminal.worktreeId === worktree.id) {
             terminalIds.add(terminal.id)
           }
         }
-        yield* Effect.promise(() => terminalHost.killWorktree(worktree.id))
+        yield* Effect.tryPromise(() =>
+          terminalHost.killWorktree(worktree.id)
+        ).pipe(Effect.orDie)
 
-        const [acceptedRemoval] = yield* Effect.promise(() =>
-          database.db.all<{ id: string }>(sql`
+        const [acceptedRemoval] = yield* database
+          .execute('worktree.reconciler.395', (db) =>
+            db.all<{ id: string }>(sql`
             SELECT id FROM operations
             WHERE worktree_id=${worktree.id} AND kind='remove'
               AND status IN ('pending','running')
             ORDER BY created_at DESC,id DESC LIMIT 1
           `)
-        )
+          )
+          .pipe(Effect.orDie)
         const retiredAt = now()
-        yield* Effect.promise(() =>
-          database.db.transaction(async (tx) => {
-            if (!acceptedRemoval) {
-              await tx.run(sql`
+        yield* database
+          .execute('worktree.reconciler.404', (db) =>
+            db.transaction(async (tx) => {
+              if (!acceptedRemoval) {
+                await tx.run(sql`
                 INSERT INTO operations(
                   id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
                 ) VALUES(
@@ -426,11 +434,12 @@ export class WorktreeReconciler {
                   })},NULL,${retiredAt},${retiredAt}
                 )
               `)
-            }
+              }
 
-            await tx.run(sql`DELETE FROM worktrees WHERE id=${worktree.id}`)
-          })
-        )
+              await tx.run(sql`DELETE FROM worktrees WHERE id=${worktree.id}`)
+            })
+          )
+          .pipe(Effect.orDie)
         const removedTerminalIds = yield* terminalState.clearWorktree(
           worktree.id,
           terminalIds
@@ -463,16 +472,18 @@ export class WorktreeReconciler {
         )
       }
 
-      yield* Effect.promise(() =>
-        database.db.transaction(async (tx) => {
-          if (projectIdentityChanged) {
-            const projectName =
-              repositoryRenamed &&
-              !storedIdentity.nameIsCustom &&
-              storedProject.name === path.basename(storedProject.repositoryPath)
-                ? path.basename(repositoryPath)
-                : storedProject.name
-            await tx.run(sql`
+      yield* database
+        .execute('worktree.reconciler.466', (db) =>
+          db.transaction(async (tx) => {
+            if (projectIdentityChanged) {
+              const projectName =
+                repositoryRenamed &&
+                !storedIdentity.nameIsCustom &&
+                storedProject.name ===
+                  path.basename(storedProject.repositoryPath)
+                  ? path.basename(repositoryPath)
+                  : storedProject.name
+              await tx.run(sql`
               UPDATE projects
               SET name=${projectName},repository_path=${repositoryPath},
                   main_worktree_path=${mainPath},
@@ -481,16 +492,16 @@ export class WorktreeReconciler {
                   repository_inode=${repositoryInode},updated_at=${timestamp}
               WHERE id=${projectId}
             `)
-          }
+            }
 
-          for (const { item, existing } of matched) {
-            const kind = item.path === mainPath ? 'main' : 'linked'
-            if (existing) {
-              if (!changedExistingIds.has(existing.id)) {
-                continue
-              }
+            for (const { item, existing } of matched) {
+              const kind = item.path === mainPath ? 'main' : 'linked'
+              if (existing) {
+                if (!changedExistingIds.has(existing.id)) {
+                  continue
+                }
 
-              await tx.run(sql`
+                await tx.run(sql`
                 UPDATE worktrees
                 SET path=${item.path},
                     git_worktree_key=${
@@ -507,10 +518,10 @@ export class WorktreeReconciler {
                     updated_at=${timestamp}
                 WHERE id=${existing.id}
               `)
-              continue
-            }
+                continue
+              }
 
-            await tx.run(sql`
+              await tx.run(sql`
               INSERT INTO worktrees(
                 id,project_id,path,git_worktree_key,head,branch,detached,locked,lock_reason,
                 prunable,kind,created_at,updated_at
@@ -523,9 +534,10 @@ export class WorktreeReconciler {
                 ${kind},${timestamp},${timestamp}
               )
             `)
-          }
-        })
-      )
+            }
+          })
+        )
+        .pipe(Effect.orDie)
 
       if (projectIdentityChanged || changed.length > 0) {
         yield* Effect.sync(() => projectSnapshots.invalidate())
