@@ -211,7 +211,9 @@ Commands that inspect or interact with an existing page do not open the side pan
 
 Your current desktop control keeps keyboard focus.
 
-Agent control continues between successful commands. To take control, click or tap the browser viewport.
+You can interact with the page while an agent uses it. A robot icon appears in the toolbar during an agent command.
+
+Agent commands do not take browser control from you. Agent actions can change the same page state as your actions.
 
 For other connections, commands control the streamed Playwright page.
 

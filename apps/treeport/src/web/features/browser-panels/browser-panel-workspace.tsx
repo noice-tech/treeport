@@ -874,6 +874,31 @@ export function BrowserPanelWorkspace({
             window.requestAnimationFrame(() => inputRef.current?.select())
           }}
         />
+        <span
+          className="pointer-events-none flex size-8 shrink-0 items-center justify-center text-cyan-300"
+          role="status"
+          aria-label={state?.agentActive ? 'Agent interacting' : undefined}
+          title={state?.agentActive ? 'Agent interacting' : undefined}
+        >
+          <svg
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className={`size-4 ${state?.agentActive ? 'opacity-100' : 'opacity-0'}`}
+          >
+            <path d="M10 2.25v2.1" />
+            <circle cx="10" cy="1.9" r=".7" fill="currentColor" stroke="none" />
+            <rect x="3.25" y="4.5" width="13.5" height="11" rx="3" />
+            <path d="M1.75 8.25v3.5M18.25 8.25v3.5M7.25 15.5v2.25M12.75 15.5v2.25" />
+            <circle cx="7.25" cy="9" r="1" fill="currentColor" stroke="none" />
+            <circle cx="12.75" cy="9" r="1" fill="currentColor" stroke="none" />
+            <path d="M7.25 12.25h5.5" />
+          </svg>
+        </span>
         <Popover
           open={serversOpen}
           onOpenChange={(open) => {
@@ -982,9 +1007,8 @@ export function BrowserPanelWorkspace({
       ) : null}
       {state?.hasController && !state.controlled ? (
         <p className="bg-amber-950 px-2.5 py-1.5 text-amber-200" role="status">
-          {state.controller === 'agent'
-            ? 'A coding agent controls this browser. Interact with the viewport to take control.'
-            : 'Another Treeport client controls this browser. Interact with the viewport to take control.'}
+          Another Treeport client controls this browser. Interact with the
+          viewport to take control.
         </p>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">

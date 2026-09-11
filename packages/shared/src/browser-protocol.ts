@@ -2,7 +2,7 @@
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
-export const BROWSER_PROTOCOL_VERSION = 8
+export const BROWSER_PROTOCOL_VERSION = 9
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 // Observed Chromium addresses can be megabytes long (including JSON escaping).
@@ -135,7 +135,8 @@ export const browserSessionStateSchema = Schema.Struct({
   ...browserRuntimeStateSchema.fields,
   controlled: Schema.Boolean,
   hasController: Schema.Boolean,
-  controller: Schema.Literal('you', 'agent', 'other', 'none')
+  controller: Schema.Literal('you', 'other', 'none'),
+  agentActive: Schema.Boolean
 })
 export type BrowserSessionState = Schema.Schema.Type<
   typeof browserSessionStateSchema
@@ -440,8 +441,9 @@ export const browserOwnerServerMessageSchema = Schema.Union(
     type: Schema.Literal('runtimeControl'),
     generation: browserGenerationSchema,
     requestId: browserRequestIdSchema,
-    controller: Schema.Literal('agent', 'other', 'none'),
-    retainPaint: Schema.Boolean
+    controller: Schema.Literal('other', 'none'),
+    retainPaint: Schema.Boolean,
+    agentActive: Schema.Boolean
   }),
   Schema.Struct({
     type: Schema.Literal('closeRequest'),

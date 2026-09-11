@@ -94,8 +94,9 @@ export function connectLocalBrowserOwner(
   endpoint: string,
   handlers: {
     setRuntimeControl(
-      controller: 'agent' | 'other' | 'none',
-      retainPaint: boolean
+      controller: 'other' | 'none',
+      retainPaint: boolean,
+      agentActive: boolean
     ): Promise<boolean>
     requestClose(force: boolean): Promise<boolean>
     closed(reason: string): void
@@ -241,7 +242,11 @@ export function connectLocalBrowserOwner(
 
       if (message.type === 'runtimeControl') {
         void handlers
-          .setRuntimeControl(message.controller, message.retainPaint)
+          .setRuntimeControl(
+            message.controller,
+            message.retainPaint,
+            message.agentActive
+          )
           .then(
             (accepted) =>
               sendOwnerResult(socket, {
