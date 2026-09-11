@@ -743,9 +743,7 @@ export const applicationUpdateStatusSchema = Schema.Struct({
     'activate',
     'restart',
     'health_check',
-    'rollback',
     'complete',
-    'recovery_required',
     'failed'
   ),
   operationId: nullableStringSchema,

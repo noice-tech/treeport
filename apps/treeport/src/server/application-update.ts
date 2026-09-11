@@ -7,6 +7,7 @@ import { z } from 'zod'
 import {
   compareTreeportVersions,
   formatLocalUpdateError,
+  LOCAL_UPDATE_REINSTALL_GUIDANCE,
   inspectLocalUpdateInstallation,
   isCanonicalTreeportVersion,
   readLocalUpdateProgress,
@@ -37,10 +38,8 @@ const updateErrorSchema = z.looseObject({
     details: z
       .looseObject({
         operationId: z.string().optional(),
-        recovery: z.string().optional(),
-        cause: z.string().optional(),
-        logPath: z.string().optional(),
-        snapshotPaths: z.array(z.string()).optional()
+        next: z.string().optional(),
+        cause: z.string().optional()
       })
       .optional()
   })
@@ -216,6 +215,7 @@ export function createApplicationUpdateManager(
       !result ||
       !progress.operationId ||
       result.operationId === progress.operationId
+    const completedResult = resultMatchesOperation ? result : null
     const errorOperationId = updateError?.error.details?.operationId ?? null
     const errorMatchesOperation =
       !updateError ||
@@ -227,37 +227,46 @@ export function createApplicationUpdateManager(
       isCanonicalTreeportVersion(currentVersion) &&
       compareTreeportVersions(latestVersion, currentVersion) > 0
     )
-    const recoveryError = progress.recoveryAction
     const cliError = errorMatchesOperation ? updateError?.error : null
     const interrupted = Boolean(
       !progress.active &&
       progress.phase &&
       progress.phase !== 'complete' &&
-      (resultFileExists || errorFileExists) &&
-      !result &&
-      !updateError
+      progress.phase !== 'failed' &&
+      !completedResult &&
+      !cliError &&
+      (resultFileExists || errorFileExists || progress.operationId)
     )
+    const updateFailed = progress.phase === 'failed' || interrupted
+    const cliDetails = cliError ? { ...cliError.details } : undefined
+    if (
+      cliError &&
+      cliDetails &&
+      !cliDetails.next &&
+      !['UPDATE_CANCELLED', 'UPDATE_INTERRUPTED'].includes(cliError.code)
+    ) {
+      cliDetails.next = LOCAL_UPDATE_REINSTALL_GUIDANCE
+    }
+
     const error =
       launchError ??
       (cliError
-        ? formatLocalUpdateError(cliError.message, cliError.details)
-        : recoveryError) ??
-      (interrupted
-        ? 'The update process stopped before it returned a result. Retry the update or run `treeport update` on the host.'
-        : null)
-    const inactiveFailedPhase =
-      interrupted ||
-      progress.phase === 'rollback' ||
-      progress.phase === 'recovery_required'
+        ? formatLocalUpdateError(cliError.message, cliDetails)
+        : updateFailed
+          ? formatLocalUpdateError(
+              interrupted
+                ? 'The update process stopped before it returned a result.'
+                : 'Treeport could not finish installing the update.',
+              { next: LOCAL_UPDATE_REINSTALL_GUIDANCE }
+            )
+          : null)
     const phase: ApplicationUpdatePhase = progress.active
       ? (progress.phase ?? 'starting')
       : launching
         ? 'starting'
-        : launchError || cliError || inactiveFailedPhase
-          ? progress.phase === 'recovery_required'
-            ? 'recovery_required'
-            : 'failed'
-          : result && resultMatchesOperation
+        : launchError || cliError || updateFailed
+          ? 'failed'
+          : completedResult
             ? 'complete'
             : progress.phase === 'complete'
               ? 'complete'
@@ -275,9 +284,12 @@ export function createApplicationUpdateManager(
         ? blockedReason
         : 'Treeport is checking whether this installation can update itself.',
       phase,
-      operationId: progress.operationId ?? result?.operationId ?? null,
+      operationId: progress.operationId ?? completedResult?.operationId ?? null,
       targetVersion:
-        progress.toVersion ?? result?.toVersion ?? latestVersion ?? null,
+        progress.toVersion ??
+        completedResult?.toVersion ??
+        latestVersion ??
+        null,
       error: error || null
     }
   }
@@ -370,8 +382,7 @@ export function createApplicationUpdateManager(
           'stop',
           'activate',
           'restart',
-          'health_check',
-          'rollback'
+          'health_check'
         ].includes(currentStatus.phase)
       ) {
         throw new DomainError(
@@ -405,12 +416,16 @@ export function createApplicationUpdateManager(
           fs.open(errorPath, 'wx', 0o600)
         ])
         const spawned = new Promise<ChildProcess>((resolve, reject) => {
-          const child = spawnProcess(entrypoint, ['update', '--json'], {
-            env: environment,
-            detached: true,
-            shell: false,
-            stdio: ['ignore', resultFile.fd, errorFile.fd]
-          })
+          const child = spawnProcess(
+            entrypoint,
+            ['update', '--yes', '--json'],
+            {
+              env: environment,
+              detached: true,
+              shell: false,
+              stdio: ['ignore', resultFile.fd, errorFile.fd]
+            }
+          )
           child.once('spawn', () => resolve(child))
           child.once('error', reject)
           child.once('exit', () => {

@@ -90,7 +90,7 @@ export function ConnectionPage({
           <ConnectionHeading
             description={
               computer?.loopback
-                ? 'Start Treeport. If an update failed, read the recovery instructions before you retry.'
+                ? 'Start Treeport. If an update failed, reinstall the same or a newer compatible release first.'
                 : `${state.connection.message} Retrying automatically.`
             }
           >
@@ -120,7 +120,7 @@ export function ConnectionPage({
                 variant="link"
                 onClick={() => void window.treeportShell.openInstallationDocs()}
               >
-                Installation and recovery instructions
+                Installation instructions
               </Button>
             </>
           ) : null}

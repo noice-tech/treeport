@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -31,7 +30,6 @@ import type {
 import { inferWorktreeName } from './zed'
 
 const LEGACY_LATEST_VERSION = 10
-const BACKUP_RETENTION = 2
 
 const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
   z.strictObject({
@@ -224,8 +222,6 @@ export type OperationRow = typeof operations.$inferSelect
 
 export interface DatabaseOpenOptions {
   migrationsFolder?: string
-  backupDirectory?: string
-  onMigrationSnapshot?: (snapshotPath: string) => Promise<void>
 }
 
 export function serializeOperation<Value extends object>(
@@ -248,8 +244,6 @@ function deserializeOperation<Value extends object>(
 export interface TreeportDatabase {
   readonly filePath: string
   readonly db: TreeportOrm
-  readonly migrationState: 'unchanged' | 'advanced'
-  readonly migrationSnapshotPaths: string[]
   close(): void
 }
 
@@ -274,7 +268,6 @@ export async function openDatabase(
   let hasDurableSchema = false
   let hasLegacyMigrations = false
   let migrationsPending = !databaseExists
-  const migrationSnapshotPaths: string[] = []
   let drizzleRows: Array<{ hash: string; createdAt: number | null }> = []
 
   if (!databaseExists) {
@@ -313,7 +306,7 @@ export async function openDatabase(
 
         if (newestLegacyVersion > LEGACY_LATEST_VERSION) {
           throw new Error(
-            `Treeport database schema version ${newestLegacyVersion} is newer than this binary supports (${LEGACY_LATEST_VERSION}). Upgrade Treeport before opening ${absoluteFilePath}.`
+            `Treeport database schema version ${newestLegacyVersion} is newer than this binary supports (${LEGACY_LATEST_VERSION}). Reinstall a newer compatible Treeport release before opening ${absoluteFilePath}.`
           )
         }
 
@@ -351,7 +344,7 @@ export async function openDatabase(
 
         if (createdAt > latestMigration.folderMillis) {
           throw new Error(
-            `Treeport database schema ${createdAt} is newer than this binary supports (${latestMigration.folderMillis}). Upgrade Treeport before opening ${absoluteFilePath}.`
+            `Treeport database schema ${createdAt} is newer than this binary supports (${latestMigration.folderMillis}). Reinstall a newer compatible Treeport release before opening ${absoluteFilePath}.`
           )
         }
 
@@ -360,7 +353,7 @@ export async function openDatabase(
         )
         if (!knownMigration || knownMigration.hash !== row.hash) {
           throw new Error(
-            `Treeport database at ${absoluteFilePath} has an unrecognized migration history. Use a compatible Treeport version or restore a pre-migration snapshot.`
+            `Treeport database at ${absoluteFilePath} has an unrecognized migration history. Reinstall the same or a newer compatible Treeport release before opening it.`
           )
         }
       }
@@ -378,48 +371,6 @@ export async function openDatabase(
       migrationsPending =
         drizzleRows.length === 0 ||
         Number(drizzleRows.at(-1)?.createdAt) < latestMigration.folderMillis
-      if (migrationsPending && hasDurableSchema) {
-        const backupDirectory = path.resolve(
-          options.backupDirectory ??
-            path.join(path.dirname(absoluteFilePath), 'database-backups')
-        )
-        await fs.promises.mkdir(backupDirectory, {
-          recursive: true,
-          mode: 0o700
-        })
-        await fs.promises.chmod(backupDirectory, 0o700)
-        const timestamp = new Date().toISOString().replaceAll(':', '-')
-        const prefix = `${path.basename(absoluteFilePath)}.pre-migration-`
-        const backupPath = path.join(
-          backupDirectory,
-          `${prefix}${timestamp}-${process.pid}-${crypto
-            .randomBytes(4)
-            .toString('hex')}.db`
-        )
-        try {
-          await db.run(
-            sql.raw(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`)
-          )
-          await fs.promises.chmod(backupPath, 0o600)
-          migrationSnapshotPaths.push(backupPath)
-        } catch (error) {
-          await fs.promises.rm(backupPath, { force: true })
-          throw error
-        }
-        await options.onMigrationSnapshot?.(backupPath)
-        const backups = (await fs.promises.readdir(backupDirectory))
-          .filter((name) => name.startsWith(prefix) && name.endsWith('.db'))
-          .sort()
-        await Promise.all(
-          backups
-            .slice(0, Math.max(0, backups.length - BACKUP_RETENTION))
-            .map((name) =>
-              fs.promises.rm(path.join(backupDirectory, name), {
-                force: true
-              })
-            )
-        )
-      }
     }
 
     await fs.promises.chmod(absoluteFilePath, 0o600)
@@ -481,8 +432,6 @@ export async function openDatabase(
     return {
       filePath: absoluteFilePath,
       db,
-      migrationState: migrationsPending ? 'advanced' : 'unchanged',
-      migrationSnapshotPaths,
       close: () => client.close()
     }
   } catch (error) {

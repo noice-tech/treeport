@@ -30,7 +30,6 @@ import { WorkspacePresenceManager } from './workspace-presence'
 import { createSocketServer } from './socket-server'
 import { makeRpcHttpApp } from './rpc-server'
 import { acquireTerminalMetadataManager } from './terminal-metadata'
-import { createUpdateStartupReporter } from './update-startup'
 import { connectOrStartTerminalHost } from './terminal-host-client'
 
 async function main(): Promise<void> {
@@ -38,9 +37,6 @@ async function main(): Promise<void> {
   process.title = config.webDevelopment
     ? 'treeport-server-dev'
     : 'treeport-server'
-  let updateStartup: Awaited<
-    ReturnType<typeof createUpdateStartupReporter>
-  > | null = null
   const resourceScope = await Effect.runPromise(Scope.make())
 
   try {
@@ -53,31 +49,17 @@ async function main(): Promise<void> {
         resourceScope
       )
     )
-    updateStartup = await createUpdateStartupReporter(config)
     const prerequisites = await checkRuntimePrerequisites(config)
     const runner = new SpawnCommandRunner()
-    await updateStartup.databaseOpening()
     const database = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
-          Effect.promise(() =>
-            openDatabase(config.databasePath, {
-              backupDirectory: path.join(config.dataDir, 'database-backups'),
-              onMigrationSnapshot: async (snapshotPath) => {
-                console.log(`Pre-migration snapshot: ${snapshotPath}`)
-                await updateStartup!.snapshotCreated(snapshotPath)
-              }
-            })
-          ),
+          Effect.promise(() => openDatabase(config.databasePath)),
           (opened) => Effect.sync(() => opened.close())
         ),
         resourceScope
       )
     )
-    await updateStartup.databaseOpened({
-      migrationState: database.migrationState,
-      snapshotPaths: database.migrationSnapshotPaths
-    })
     const git = new GitAdapter(runner, config.gitPath)
     const launcherPath = fileURLToPath(
       new URL('./core/launcher.js', import.meta.url)
@@ -339,7 +321,6 @@ async function main(): Promise<void> {
       })
     })
     await ownership.publish()
-    await updateStartup.ready()
     await service.runEffect(
       Effect.flatMap(ApplicationDaemons, (daemons) =>
         daemons.fork(applicationUpdate.polling)
@@ -370,13 +351,7 @@ async function main(): Promise<void> {
     process.once('SIGINT', shutdown)
     process.once('SIGTERM', shutdown)
   } catch (error) {
-    await (
-      updateStartup?.failed(
-        error instanceof Error ? error : new Error(String(error))
-      ) ?? Promise.resolve()
-    ).finally(() =>
-      Effect.runPromise(Scope.close(resourceScope, Exit.fail(error)))
-    )
+    await Effect.runPromise(Scope.close(resourceScope, Exit.fail(error)))
     throw error
   }
 }

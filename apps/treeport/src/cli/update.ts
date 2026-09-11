@@ -15,22 +15,17 @@ import {
 } from './lifecycle.js'
 import { serviceInstalled, serviceStatus, serviceStop } from './service.js'
 import { humanOutput, type HumanOutput } from './output.js'
-import {
-  readUpdateStartupReport,
-  type UpdateMigrationState,
-  type UpdateStartupReport
-} from '../server/update-startup.js'
-
 const PACKAGE_NAME = '@treeport/treeport'
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
-const DESTRUCTIVE_PHASES = new Set([
+const INSTALLATION_PHASES = new Set<LocalUpdatePhase>([
   'stop',
   'activate',
   'restart',
-  'health_check',
-  'rollback',
-  'recovery_required'
+  'health_check'
 ])
+
+export const LOCAL_UPDATE_REINSTALL_GUIDANCE =
+  'Reinstall the same or a newer compatible Treeport release with `npm install --global @treeport/treeport@latest`, then start Treeport normally.'
 
 export type LocalUpdatePhase =
   | 'inspect'
@@ -41,9 +36,8 @@ export type LocalUpdatePhase =
   | 'activate'
   | 'restart'
   | 'health_check'
-  | 'rollback'
   | 'complete'
-  | 'recovery_required'
+  | 'failed'
 
 interface UpdateOperation {
   schemaVersion: 1
@@ -51,20 +45,6 @@ interface UpdateOperation {
   phase: LocalUpdatePhase
   fromVersion: string
   toVersion: string | null
-  npmPrefix: string | null
-  activeTarget: string | null
-  stagedTarget: string | null
-  previousTarget: string | null
-  daemonWasRunning: boolean
-  startRequested: boolean
-  daemonLifecycle: 'treeport' | 'service' | null
-  serviceMode: 'user' | 'headless' | null
-  terminalIds: string[]
-  activated: boolean
-  migrationState: UpdateMigrationState
-  rollbackAttempted: boolean
-  rollbackSucceeded: boolean
-  recoveryAction: string | null
   updatedAt: string
 }
 
@@ -80,26 +60,11 @@ const operationSchema: z.ZodType<UpdateOperation> = z.strictObject({
     'activate',
     'restart',
     'health_check',
-    'rollback',
     'complete',
-    'recovery_required'
+    'failed'
   ]),
   fromVersion: z.string(),
   toVersion: z.string().nullable(),
-  npmPrefix: z.string().nullable(),
-  activeTarget: z.string().nullable(),
-  stagedTarget: z.string().nullable(),
-  previousTarget: z.string().nullable(),
-  daemonWasRunning: z.boolean(),
-  startRequested: z.boolean().default(false),
-  daemonLifecycle: z.enum(['treeport', 'service']).nullable(),
-  serviceMode: z.enum(['user', 'headless']).nullable(),
-  terminalIds: z.array(z.string()),
-  activated: z.boolean(),
-  migrationState: z.enum(['not_started', 'unchanged', 'advanced', 'unknown']),
-  rollbackAttempted: z.boolean(),
-  rollbackSucceeded: z.boolean(),
-  recoveryAction: z.string().nullable(),
   updatedAt: z.string()
 })
 
@@ -159,17 +124,6 @@ export interface LocalUpdateResult {
     after: number
     preserved: boolean
   }
-  rollback: {
-    attempted: boolean
-    safe: boolean
-    succeeded: boolean
-  }
-}
-
-interface LocalUpdateRollbackDetails {
-  attempted: boolean
-  safe: boolean
-  succeeded: boolean
 }
 
 export interface LocalUpdateErrorDetails {
@@ -184,11 +138,7 @@ export interface LocalUpdateErrorDetails {
   pid?: number
   mode?: 'headless'
   administratorCommand?: string
-  migrationState?: UpdateMigrationState
-  rollback?: LocalUpdateRollbackDetails
-  recovery?: string
-  logPath?: string
-  snapshotPaths?: string[]
+  next?: string
   terminalIds?: string[]
 }
 
@@ -198,23 +148,11 @@ export function formatLocalUpdateError(
   message: string,
   details: {
     cause?: string | undefined
-    recovery?: string | undefined
-    logPath?: string | undefined
-    snapshotPaths?: string[] | undefined
+    next?: string | undefined
   } = {}
 ): string {
   return [
-    ...new Set(
-      [
-        message,
-        details.cause,
-        details.recovery,
-        details.logPath ? `Daemon log: ${details.logPath}` : null,
-        ...(details.snapshotPaths ?? []).map(
-          (snapshot) => `Pre-migration snapshot: ${snapshot}`
-        )
-      ].filter(Boolean)
-    )
+    ...new Set([message, details.cause, details.next].filter(Boolean))
   ].join('\n')
 }
 
@@ -223,7 +161,6 @@ export interface LocalUpdateConfirmation {
   toVersion: string
   daemonWasRunning: boolean
   startRequested: boolean
-  recovery: boolean
 }
 
 export interface LocalUpdateOptions {
@@ -268,13 +205,11 @@ export async function confirmLocalUpdate(
         style.indent(
           [
             'Clients can briefly disconnect. Terminal sessions are preserved.',
-            preview.recovery
-              ? 'This also repairs an interrupted update.'
-              : preview.daemonWasRunning
-                ? 'Treeport will stop, update, and restart.'
-                : preview.startRequested
-                  ? 'Treeport will start after the update.'
-                  : 'Treeport will remain stopped.'
+            preview.daemonWasRunning
+              ? 'Treeport will stop, update, and restart.'
+              : preview.startRequested
+                ? 'Treeport will start after the update.'
+                : 'Treeport will remain stopped.'
           ].join('\n')
         ),
         style.action('Continue? [y/N] ')
@@ -396,8 +331,6 @@ export interface LocalUpdateProgress {
   phase: LocalUpdatePhase | null
   fromVersion: string | null
   toVersion: string | null
-  recoveryAction: string | null
-  migrationState: UpdateMigrationState | null
 }
 
 export async function readLocalUpdateProgress(
@@ -425,13 +358,7 @@ export async function readLocalUpdateProgress(
     fromVersion: operationMatchesLock
       ? (operation?.fromVersion ?? lock?.fromVersion ?? null)
       : (lock?.fromVersion ?? null),
-    toVersion: operationMatchesLock ? (operation?.toVersion ?? null) : null,
-    recoveryAction: operationMatchesLock
-      ? (operation?.recoveryAction ?? null)
-      : null,
-    migrationState: operationMatchesLock
-      ? (operation?.migrationState ?? null)
-      : null
+    toVersion: operationMatchesLock ? (operation?.toVersion ?? null) : null
   }
 }
 
@@ -481,33 +408,8 @@ async function terminalIds(apiUrl: string): Promise<string[]> {
     .sort()
 }
 
-// Missing evidence after a possible startup must never authorize an older binary.
-export function updateMigrationState(
-  operation: Pick<
-    UpdateOperation,
-    'operationId' | 'toVersion' | 'phase' | 'migrationState'
-  >,
-  report: UpdateStartupReport | null
-): UpdateMigrationState {
-  if (operation.migrationState === 'advanced') {
-    return 'advanced'
-  }
-
-  if (
-    report?.operationId === operation.operationId &&
-    report.targetVersion === operation.toVersion
-  ) {
-    return report.migrationState
-  }
-
-  return ['stop', 'activate'].includes(operation.phase) &&
-    operation.migrationState === 'not_started'
-    ? 'not_started'
-    : 'unknown'
-}
-
 async function stopUpdateDaemon(
-  lifecycle: UpdateOperation['daemonLifecycle']
+  lifecycle: 'treeport' | 'service' | null
 ): Promise<void> {
   if (lifecycle === 'service') {
     const stopped = await serviceStop()
@@ -518,7 +420,7 @@ async function stopUpdateDaemon(
         {
           phase: 'stop',
           administratorCommand: stopped.administratorCommand,
-          recovery: stopped.administratorCommand
+          next: stopped.administratorCommand
         }
       )
     }
@@ -545,35 +447,6 @@ async function startThroughStableEntrypoint(
   const result = await runCommand(entrypoint, ['start', '--json'], environment)
   if (result.code !== 0) {
     throw new Error(commandFailure('treeport start', result))
-  }
-}
-
-async function verifyRestoredDaemon(
-  operation: UpdateOperation,
-  dataDir: string
-): Promise<void> {
-  const deadline = Date.now() + 10_000
-  let daemon = await daemonStatus()
-  while (Date.now() < deadline && !daemon.verified) {
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    daemon = await daemonStatus()
-  }
-  if (
-    !daemon.verified ||
-    daemon.health?.version !== operation.fromVersion ||
-    daemon.health?.daemonLifecycle !== operation.daemonLifecycle ||
-    path.resolve(daemon.state!.dataDir) !== dataDir
-  ) {
-    throw new Error(
-      'The previous Treeport daemon did not pass recovery verification.'
-    )
-  }
-
-  const recovered = await terminalIds(daemon.state!.apiUrl)
-  if (operation.terminalIds.some((id) => !recovered.includes(id))) {
-    throw new Error(
-      'The previous Treeport daemon did not recover every terminal.'
-    )
   }
 }
 
@@ -784,7 +657,6 @@ export async function runLocalUpdate(
   await fs.mkdir(updateDirectory, { recursive: true, mode: 0o700 })
 
   const operationId = crypto.randomUUID()
-  const staleOperation = await readOperation(operationPath)
   const provisionalVersion = await fs
     .readFile(await resolvePackagePath('package.json'), 'utf8')
     .then((value) => packageSchema.parse(JSON.parse(value)).version)
@@ -849,97 +721,24 @@ export async function runLocalUpdate(
     phase: 'inspect',
     fromVersion: provisionalVersion,
     toVersion: null,
-    npmPrefix: null,
-    activeTarget: null,
-    stagedTarget: null,
-    previousTarget: null,
-    daemonWasRunning: false,
-    startRequested: options.start ?? false,
-    daemonLifecycle: null,
-    serviceMode: null,
-    terminalIds: [],
-    activated: false,
-    migrationState: 'not_started',
-    rollbackAttempted: false,
-    rollbackSucceeded: false,
-    recoveryAction: null,
     updatedAt: new Date().toISOString()
   }
-  let recoveryOperation: UpdateOperation | null = null
-  let recoveryReport: UpdateStartupReport | null = null
-  let recoveringPrevious = false
   const save = async (phase: LocalUpdatePhase) => {
     operation = { ...operation, phase, updatedAt: new Date().toISOString() }
-    if (recoveryOperation && !DESTRUCTIVE_PHASES.has(phase)) {
-      return
-    }
-
     await writeJson(operationPath, operation)
   }
+  let stagedTarget: string | null = null
+  let activated = false
+  let daemonWasRunning = false
+  let daemonLifecycle: 'treeport' | 'service' | null = null
+  let terminalIdsBefore: string[] = []
   let installation: Awaited<
     ReturnType<typeof inspectLocalUpdateInstallation>
   > | null = null
 
   try {
     installation = await inspectLocalUpdateInstallation(environment)
-    operation = {
-      ...operation,
-      fromVersion: installation.version,
-      npmPrefix: installation.prefix,
-      activeTarget: installation.managed
-        ? await fs
-            .realpath(installation.currentLink)
-            .catch(() => installation!.prefix)
-        : installation.prefix
-    }
-
-    if (
-      staleOperation &&
-      (staleOperation.daemonWasRunning ||
-        staleOperation.startRequested ||
-        staleOperation.activated) &&
-      DESTRUCTIVE_PHASES.has(staleOperation.phase) &&
-      !staleOperation.rollbackSucceeded &&
-      !(await daemonStatus()).running
-    ) {
-      const staleReport = await readUpdateStartupReport(paths.dataDir)
-      staleOperation.migrationState = updateMigrationState(
-        staleOperation,
-        staleReport
-      )
-      const rollbackUnsafe = ['advanced', 'unknown'].includes(
-        staleOperation.migrationState
-      )
-      if (rollbackUnsafe) {
-        recoveryReport =
-          staleReport?.operationId === staleOperation.operationId &&
-          staleReport.targetVersion === staleOperation.toVersion
-            ? staleReport
-            : null
-        if (
-          staleOperation.previousTarget &&
-          operation.activeTarget === staleOperation.previousTarget
-        ) {
-          throw new LocalUpdateError(
-            'UPDATE_RECOVERY_REQUIRED',
-            'The older Treeport version is active after a database migration may have started. Treeport will not start it.',
-            {
-              phase: 'recovery_required',
-              operationId: staleOperation.operationId,
-              migrationState: staleOperation.migrationState,
-              logPath: recoveryReport?.logPath ?? paths.logPath,
-              snapshotPaths: recoveryReport?.snapshotPaths ?? [],
-              recovery:
-                'Install the same or a newer Treeport release and inspect the daemon log.'
-            }
-          )
-        }
-      }
-
-      // Inspect recovery evidence now, but never change the daemon or binary
-      // until the user has approved this transaction.
-      recoveryOperation = staleOperation
-    }
+    operation = { ...operation, fromVersion: installation.version }
 
     await save('inspect')
     const initialDaemon = await daemonStatus()
@@ -1005,27 +804,7 @@ export async function runLocalUpdate(
       )
     }
 
-    if (
-      comparison === 0 &&
-      recoveryOperation &&
-      ['advanced', 'unknown'].includes(recoveryOperation.migrationState)
-    ) {
-      throw new LocalUpdateError(
-        'UPDATE_RECOVERY_REQUIRED',
-        'Treeport needs a newer release to recover after the interrupted database migration.',
-        {
-          phase: 'recovery_required',
-          operationId: recoveryOperation.operationId,
-          migrationState: recoveryOperation.migrationState,
-          logPath: recoveryReport?.logPath ?? paths.logPath,
-          snapshotPaths: recoveryReport?.snapshotPaths ?? [],
-          recovery:
-            'Install the next Treeport release when it is available and run `treeport update` again.'
-        }
-      )
-    }
-
-    if (comparison === 0 && !recoveryOperation) {
+    if (comparison === 0) {
       const currentTerminals = initialDaemon.verified
         ? await terminalIds(initialDaemon.state!.apiUrl)
         : []
@@ -1058,18 +837,13 @@ export async function runLocalUpdate(
           before: currentTerminals.length,
           after: currentTerminals.length,
           preserved: true
-        },
-        rollback: { attempted: false, safe: true, succeeded: false }
+        }
       }
     }
 
     const intendedRunning =
       initialDaemon.verified || serviceBefore?.requestedState === 'running'
-    const shouldRun =
-      intendedRunning ||
-      Boolean(options.start) ||
-      Boolean(recoveryOperation?.daemonWasRunning) ||
-      Boolean(recoveryOperation?.startRequested)
+    const shouldRun = intendedRunning || Boolean(options.start)
     if (serviceBefore) {
       // The service owns migration/preflight diagnostics. Do not synthesize a
       // privileged stop flow, or discover a legacy launcher after activation.
@@ -1081,7 +855,7 @@ export async function runLocalUpdate(
             phase: 'inspect',
             operationId,
             administratorCommand: serviceBefore.administratorCommand,
-            recovery: serviceBefore.administratorCommand
+            next: serviceBefore.administratorCommand
           }
         )
       }
@@ -1101,7 +875,7 @@ export async function runLocalUpdate(
             phase: 'inspect',
             operationId,
             cause: serviceBefore.issues.join('\n'),
-            recovery: serviceBefore.recoveryCommands.join('\n')
+            next: serviceBefore.recoveryCommands.join('\n')
           }
         )
       }
@@ -1111,8 +885,7 @@ export async function runLocalUpdate(
       fromVersion: installation.version,
       toVersion: release.version,
       daemonWasRunning: intendedRunning,
-      startRequested: Boolean(options.start),
-      recovery: recoveryOperation !== null
+      startRequested: Boolean(options.start)
     }
     if (!options.yes && !interrupted) {
       if (options.confirm) {
@@ -1129,7 +902,7 @@ export async function runLocalUpdate(
             130
           )
         }
-      } else if (shouldRun || recoveryOperation) {
+      } else if (shouldRun) {
         throw new LocalUpdateError(
           'UPDATE_CONFIRMATION_REQUIRED',
           `Updating Treeport ${installation.version} -> ${release.version} requires consent. Clients can briefly disconnect; terminals are preserved. Re-run with --yes.`,
@@ -1138,7 +911,7 @@ export async function runLocalUpdate(
             operationId,
             fromVersion: preview.fromVersion,
             toVersion: preview.toVersion,
-            recovery: 'Re-run `treeport update --yes` to approve the update.'
+            next: 'Re-run `treeport update --yes` to approve the update.'
           }
         )
       }
@@ -1153,97 +926,6 @@ export async function runLocalUpdate(
       )
     }
 
-    if (
-      recoveryOperation &&
-      ['not_started', 'unchanged'].includes(recoveryOperation.migrationState)
-    ) {
-      recoveringPrevious = true
-      if (
-        recoveryOperation.daemonLifecycle === 'service' ||
-        recoveryOperation.daemonWasRunning ||
-        recoveryOperation.startRequested
-      ) {
-        await stopUpdateDaemon(recoveryOperation.daemonLifecycle)
-      }
-
-      // A supervisor could have retried startup while confirmation was open.
-      // Only evidence read after it stops can authorize an older binary.
-      recoveryOperation.migrationState = updateMigrationState(
-        recoveryOperation,
-        await readUpdateStartupReport(paths.dataDir)
-      )
-      if (['advanced', 'unknown'].includes(recoveryOperation.migrationState)) {
-        recoveryOperation.recoveryAction =
-          'Keep the installed version. Inspect the daemon log and retry with the same or a newer release.'
-        await writeJson(operationPath, {
-          ...recoveryOperation,
-          phase: 'recovery_required',
-          updatedAt: new Date().toISOString()
-        })
-        throw new LocalUpdateError(
-          'UPDATE_RECOVERY_REQUIRED',
-          'Startup evidence changed during recovery. Treeport will not start the older version.',
-          {
-            phase: 'recovery_required',
-            operationId: recoveryOperation.operationId,
-            migrationState: recoveryOperation.migrationState,
-            recovery: recoveryOperation.recoveryAction
-          }
-        )
-      }
-
-      if (recoveryOperation.previousTarget) {
-        await replaceSymlink(
-          installation.currentLink,
-          recoveryOperation.previousTarget
-        )
-      }
-
-      await fs.rm(path.join(updateDirectory, 'pending-startup.json'), {
-        force: true
-      })
-      await fs.rm(path.join(updateDirectory, 'startup-report.json'), {
-        force: true
-      })
-      if (recoveryOperation.daemonWasRunning) {
-        await startThroughStableEntrypoint(installation.entrypoint, environment)
-          .then(() => verifyRestoredDaemon(recoveryOperation!, paths.dataDir))
-          .catch((error) => {
-            throw new LocalUpdateError(
-              'UPDATE_RECOVERY_REQUIRED',
-              'Treeport restored the previous version but could not verify daemon and terminal recovery.',
-              {
-                phase: 'recovery_required',
-                operationId: recoveryOperation!.operationId,
-                cause: error instanceof Error ? error.message : String(error),
-                recovery: 'Inspect the daemon log, then run `treeport start`.'
-              }
-            )
-          })
-      }
-
-      await writeJson(operationPath, {
-        ...recoveryOperation,
-        phase: 'complete',
-        activated: false,
-        rollbackAttempted: true,
-        rollbackSucceeded: true,
-        recoveryAction: 'Run `treeport update` again.',
-        updatedAt: new Date().toISOString()
-      } satisfies UpdateOperation)
-      throw new LocalUpdateError(
-        'UPDATE_ROLLED_BACK',
-        'Treeport recovered the interrupted update and restored the previous state. Run `treeport update` again.',
-        {
-          phase: 'rollback',
-          operationId: recoveryOperation.operationId,
-          migrationState: recoveryOperation.migrationState,
-          rollback: { attempted: true, safe: true, succeeded: true },
-          recovery: 'Run `treeport update` again.'
-        }
-      )
-    }
-
     const stagingPath = path.join(
       installation.managedRoot,
       `.staging-${release.version}-${operationId}`
@@ -1252,7 +934,7 @@ export async function runLocalUpdate(
       installation.versionsDirectory,
       release.version
     )
-    operation.stagedTarget = stagingPath
+    stagedTarget = stagingPath
     await save('stage')
     progress(`Downloading Treeport ${release.version}…`)
     await fs.rm(stagingPath, { recursive: true, force: true })
@@ -1420,8 +1102,6 @@ export async function runLocalUpdate(
       )
     }
 
-    operation.migrationState =
-      recoveryOperation?.migrationState ?? 'not_started'
     const serviceReady = installedService ? await serviceStatus() : null
     if (
       serviceReady?.installed !== serviceBefore?.installed ||
@@ -1443,26 +1123,17 @@ export async function runLocalUpdate(
       )
     }
 
-    operation.daemonWasRunning =
-      intendedRunning || Boolean(recoveryOperation?.daemonWasRunning)
-    operation.startRequested =
-      Boolean(options.start) || Boolean(recoveryOperation?.startRequested)
-    operation.daemonLifecycle = recoveryOperation
-      ? recoveryOperation.daemonLifecycle
-      : daemonBefore.verified
-        ? daemonBefore.health?.daemonLifecycle === 'service'
-          ? 'service'
-          : 'treeport'
-        : installedService
-          ? 'service'
-          : 'treeport'
-    operation.serviceMode =
-      recoveryOperation?.serviceMode ?? serviceBefore?.mode ?? null
-    operation.terminalIds = recoveryOperation
-      ? recoveryOperation.terminalIds
-      : daemonBefore.verified
-        ? await terminalIds(daemonBefore.state!.apiUrl)
-        : []
+    daemonWasRunning = intendedRunning
+    daemonLifecycle = daemonBefore.verified
+      ? daemonBefore.health?.daemonLifecycle === 'service'
+        ? 'service'
+        : 'treeport'
+      : installedService
+        ? 'service'
+        : 'treeport'
+    terminalIdsBefore = daemonBefore.verified
+      ? await terminalIds(daemonBefore.state!.apiUrl)
+      : []
 
     if (interrupted) {
       throw new LocalUpdateError(
@@ -1476,20 +1147,16 @@ export async function runLocalUpdate(
     // A stopped service can still have an in-flight supervisor launch. Await
     // its shutdown acknowledgement before switching binaries, independently
     // of whether this transaction should start Treeport afterward.
-    if (
-      operation.daemonLifecycle === 'service' ||
-      operation.daemonWasRunning ||
-      recoveryOperation
-    ) {
+    if (daemonLifecycle === 'service' || daemonWasRunning) {
       progress('Stopping the Treeport daemon and preserving terminals…')
-      await stopUpdateDaemon(operation.daemonLifecycle)
+      await stopUpdateDaemon(daemonLifecycle)
     }
 
     await save('activate')
     progress(`Activating Treeport ${release.version}…`)
     await fs.rm(targetPath, { recursive: true, force: true })
     await fs.rename(stagingPath, targetPath)
-    operation.stagedTarget = targetPath
+    stagedTarget = targetPath
     const currentExists = await fs
       .lstat(installation.currentLink)
       .then(() => true)
@@ -1500,7 +1167,6 @@ export async function runLocalUpdate(
       await replaceSymlink(installation.currentLink, installation.prefix)
     }
 
-    operation.previousTarget = await fs.realpath(installation.currentLink)
     await save('activate')
     const launcher = `#!/bin/sh\nset -eu\n# TREEPORT_MANAGED_LAUNCHER=1\nexport TREEPORT_INSTALLATION_METHOD=npm\nexport TREEPORT_CLI_ENTRYPOINT=${shellQuote(
       installation.entrypoint
@@ -1520,67 +1186,36 @@ export async function runLocalUpdate(
     await fs.chmod(temporaryLauncher, 0o755)
     await fs.rename(temporaryLauncher, installation.entrypoint)
     await replaceSymlink(installation.currentLink, targetPath)
-    operation.activeTarget = targetPath
-    operation.activated = true
+    activated = true
     await save('activate')
 
     let daemonAfter: Awaited<ReturnType<typeof daemonStatus>> | null = null
     let terminalsAfter: string[] = []
     if (shouldRun) {
-      await writeJson(path.join(updateDirectory, 'pending-startup.json'), {
-        schemaVersion: 1,
-        operationId,
-        targetVersion: release.version,
-        createdAt: new Date().toISOString()
-      })
-      // Seed only lifecycle evidence, before any new daemon can open the database.
-      await writeJson(path.join(updateDirectory, 'startup-report.json'), {
-        schemaVersion: 1,
-        operationId,
-        targetVersion: release.version,
-        instanceId: null,
-        migrationState: operation.migrationState,
-        ready: false,
-        error: null,
-        logPath: paths.logPath,
-        snapshotPaths: recoveryReport?.snapshotPaths ?? [],
-        updatedAt: new Date().toISOString()
-      } satisfies UpdateStartupReport)
-      operation.migrationState =
-        operation.migrationState === 'advanced' ? 'advanced' : 'unknown'
       await save('restart')
       progress(
         `Restarting the ${
-          operation.daemonLifecycle === 'service'
-            ? 'Treeport service'
-            : 'Treeport daemon'
+          daemonLifecycle === 'service' ? 'Treeport service' : 'Treeport daemon'
         }…`
       )
       await startThroughStableEntrypoint(installation.entrypoint, environment)
       await save('health_check')
       const healthDeadline = Date.now() + 10_000
-      let report = await readUpdateStartupReport(paths.dataDir)
       daemonAfter = await daemonStatus()
       while (
         Date.now() < healthDeadline &&
         (!daemonAfter.verified ||
-          daemonAfter.health?.version !== release.version ||
-          report?.operationId !== operationId ||
-          !report.ready)
+          daemonAfter.health?.version !== release.version)
       ) {
         await new Promise((resolve) => setTimeout(resolve, 100))
         daemonAfter = await daemonStatus()
-        report = await readUpdateStartupReport(paths.dataDir)
       }
-      operation.migrationState = updateMigrationState(operation, report)
       if (
         !daemonAfter.running ||
         !daemonAfter.verified ||
         daemonAfter.health?.version !== release.version ||
-        daemonAfter.health.daemonLifecycle !== operation.daemonLifecycle ||
-        path.resolve(daemonAfter.state!.dataDir) !== paths.dataDir ||
-        report?.operationId !== operationId ||
-        !report.ready
+        daemonAfter.health.daemonLifecycle !== daemonLifecycle ||
+        path.resolve(daemonAfter.state!.dataDir) !== paths.dataDir
       ) {
         throw new LocalUpdateError(
           'UPDATE_HEALTH_VERIFICATION_FAILED',
@@ -1589,7 +1224,7 @@ export async function runLocalUpdate(
         )
       }
 
-      if (operation.daemonLifecycle === 'service') {
+      if (daemonLifecycle === 'service') {
         const serviceAfter = await serviceStatus()
         if (
           !serviceAfter.healthy ||
@@ -1606,20 +1241,16 @@ export async function runLocalUpdate(
       }
 
       terminalsAfter = await terminalIds(daemonAfter.state!.apiUrl)
-      const missing = operation.terminalIds.filter(
+      const missing = terminalIdsBefore.filter(
         (terminalId) => !terminalsAfter.includes(terminalId)
       )
       if (missing.length > 0) {
         throw new LocalUpdateError(
           'UPDATE_TERMINAL_VERIFICATION_FAILED',
-          'Treeport restarted, but one or more terminal sessions were not recovered.',
+          'Treeport restarted, but one or more terminal sessions are unavailable.',
           { phase: 'health_check', operationId, terminalIds: missing }
         )
       }
-    } else {
-      await fs.rm(path.join(updateDirectory, 'pending-startup.json'), {
-        force: true
-      })
     }
 
     await save('complete')
@@ -1632,10 +1263,7 @@ export async function runLocalUpdate(
       )
       .catch(() => [])
     const removable = versionDirectories.filter(
-      (name) =>
-        name !== release.version &&
-        path.join(installation!.versionsDirectory, name) !==
-          operation.previousTarget
+      (name) => name !== release.version
     )
     await Promise.all(
       removable.map((name) =>
@@ -1654,55 +1282,38 @@ export async function runLocalUpdate(
       toVersion: release.version,
       installation: { method: 'npm' },
       daemon: {
-        wasRunning: operation.daemonWasRunning,
-        lifecycle: operation.daemonLifecycle,
+        wasRunning: daemonWasRunning,
+        lifecycle: daemonLifecycle,
         restarted: shouldRun,
         healthy: Boolean(daemonAfter?.verified),
         version: daemonAfter?.health?.version ?? null
       },
       terminals: {
-        before: operation.terminalIds.length,
+        before: terminalIdsBefore.length,
         after: terminalsAfter.length,
-        preserved: operation.terminalIds.every((id) =>
-          terminalsAfter.includes(id)
-        )
-      },
-      rollback: { attempted: false, safe: true, succeeded: false }
+        preserved: terminalIdsBefore.every((id) => terminalsAfter.includes(id))
+      }
     }
   } catch (error) {
     const failedPhase = operation.phase
-    if (!DESTRUCTIVE_PHASES.has(operation.phase)) {
+    if (!INSTALLATION_PHASES.has(failedPhase)) {
       if (error instanceof LocalUpdateError) {
         throw error
       }
 
-      if (recoveringPrevious && recoveryOperation) {
-        throw new LocalUpdateError(
-          'UPDATE_RECOVERY_REQUIRED',
-          'Treeport could not restore the interrupted update. Recovery is still required.',
-          {
-            phase: 'recovery_required',
-            operationId: recoveryOperation.operationId,
-            cause: error instanceof Error ? error.message : String(error),
-            recovery:
-              'Inspect the active version and daemon log before retrying.'
-          }
-        )
-      }
-
       const code =
-        operation.phase === 'resolve'
+        failedPhase === 'resolve'
           ? 'UPDATE_RELEASE_RESOLUTION_FAILED'
-          : operation.phase === 'stage'
+          : failedPhase === 'stage'
             ? 'UPDATE_STAGING_FAILED'
-            : operation.phase === 'verify'
+            : failedPhase === 'verify'
               ? 'UPDATE_VERIFICATION_FAILED'
               : 'UPDATE_INSTALLATION_UNSUPPORTED'
       throw new LocalUpdateError(
         code,
         error instanceof Error ? error.message : String(error),
         {
-          phase: operation.phase,
+          phase: failedPhase,
           operationId,
           fromVersion: operation.fromVersion,
           toVersion: operation.toVersion
@@ -1710,101 +1321,31 @@ export async function runLocalUpdate(
       )
     }
 
-    // Stop service retries before reading evidence or changing the active binary.
-    const stopError =
-      operation.daemonLifecycle === 'service' ||
-      operation.daemonWasRunning ||
-      operation.startRequested
-        ? await stopUpdateDaemon(operation.daemonLifecycle).then(
-            () => null,
-            (cause: unknown) =>
-              cause instanceof Error ? cause.message : String(cause)
-          )
-        : null
-    const observedReport = await readUpdateStartupReport(paths.dataDir)
-    const startupReport =
-      observedReport?.operationId === operationId &&
-      observedReport.targetVersion === operation.toVersion
-        ? observedReport
-        : null
-    operation.migrationState = updateMigrationState(operation, startupReport)
-
-    const rollbackSafe =
-      !stopError &&
-      ['not_started', 'unchanged'].includes(operation.migrationState)
-    if (!rollbackSafe) {
-      operation.recoveryAction = stopError
-        ? `Keep the active version installed. Stop the daemon, then inspect the daemon log. Stop failed: ${stopError}`
-        : 'Keep the new version installed. Inspect the daemon log and repair with the same or a newer Treeport release.'
-      await save('recovery_required')
-      throw new LocalUpdateError(
-        'UPDATE_RECOVERY_REQUIRED',
-        'Treeport could not prove that rollback is safe. Treeport did not start the older daemon.',
-        {
-          operationId,
-          phase: failedPhase,
-          fromVersion: operation.fromVersion,
-          toVersion: operation.toVersion,
-          migrationState: operation.migrationState,
-          rollback: { attempted: false, safe: false, succeeded: false },
-          cause:
-            startupReport?.error ??
-            (error instanceof Error ? error.message : String(error)),
-          logPath: startupReport?.logPath ?? paths.logPath,
-          snapshotPaths: startupReport?.snapshotPaths ?? [],
-          recovery: operation.recoveryAction
-        }
-      )
-    }
-
-    operation.rollbackAttempted = true
-    await save('rollback')
-    if (!installation) {
-      throw error
-    }
-
-    const rollbackError = await (async () => {
-      if (operation.previousTarget) {
-        await replaceSymlink(installation.currentLink, operation.previousTarget)
-      }
-
-      await fs.rm(path.join(updateDirectory, 'pending-startup.json'), {
-        force: true
-      })
-      if (operation.daemonWasRunning) {
-        await startThroughStableEntrypoint(installation.entrypoint, environment)
-        await verifyRestoredDaemon(operation, paths.dataDir)
-      }
-    })().then(
-      () => null,
-      (cause) => cause
-    )
-    operation.rollbackSucceeded = rollbackError === null
-    operation.recoveryAction = rollbackError
-      ? 'Inspect the active version and daemon log before starting Treeport.'
-      : 'The previous Treeport version is active again.'
-    await save(rollbackError ? 'recovery_required' : 'rollback')
+    await save('failed').catch(() => undefined)
+    const details: LocalUpdateErrorDetails =
+      error instanceof LocalUpdateError
+        ? {
+            ...error.details,
+            phase: failedPhase,
+            operationId,
+            fromVersion: operation.fromVersion,
+            toVersion: operation.toVersion,
+            next: error.details.next ?? LOCAL_UPDATE_REINSTALL_GUIDANCE
+          }
+        : {
+            phase: failedPhase,
+            operationId,
+            fromVersion: operation.fromVersion,
+            toVersion: operation.toVersion,
+            cause: error instanceof Error ? error.message : String(error),
+            next: LOCAL_UPDATE_REINSTALL_GUIDANCE
+          }
     throw new LocalUpdateError(
-      rollbackError ? 'UPDATE_ROLLBACK_FAILED' : 'UPDATE_ROLLED_BACK',
-      rollbackError
-        ? 'The update failed and Treeport could not restore the previous running state.'
-        : 'The update failed. Treeport restored the previous version.',
-      {
-        operationId,
-        phase: failedPhase,
-        fromVersion: operation.fromVersion,
-        toVersion: operation.toVersion,
-        migrationState: operation.migrationState,
-        rollback: {
-          attempted: true,
-          safe: true,
-          succeeded: rollbackError === null
-        },
-        cause: error instanceof Error ? error.message : String(error),
-        logPath: startupReport?.logPath ?? paths.logPath,
-        snapshotPaths: startupReport?.snapshotPaths ?? [],
-        recovery: operation.recoveryAction
-      }
+      error instanceof LocalUpdateError ? error.code : 'UPDATE_FAILED',
+      error instanceof LocalUpdateError
+        ? error.message
+        : 'Treeport could not finish installing the update.',
+      details
     )
   } finally {
     process.off('SIGINT', interrupt)
@@ -1819,12 +1360,12 @@ export async function runLocalUpdate(
     }
 
     if (
-      !operation.activated &&
-      operation.stagedTarget &&
+      !activated &&
+      stagedTarget &&
       ['stage', 'verify'].includes(operation.phase)
     ) {
       await fs
-        .rm(operation.stagedTarget, { recursive: true, force: true })
+        .rm(stagedTarget, { recursive: true, force: true })
         .catch(() => undefined)
     }
 

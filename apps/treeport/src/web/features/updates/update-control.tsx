@@ -31,8 +31,7 @@ const activePhases = new Set<ApplicationUpdateStatus['phase']>([
   'stop',
   'activate',
   'restart',
-  'health_check',
-  'rollback'
+  'health_check'
 ])
 
 function backendUpdateEnabled(
@@ -104,7 +103,7 @@ export function UpdateControl() {
       return
     }
 
-    if (status.phase === 'failed' || status.phase === 'recovery_required') {
+    if (status.phase === 'failed') {
       sessionStorage.removeItem(pendingUpdateStorageKey)
     }
   }, [status])
@@ -112,11 +111,7 @@ export function UpdateControl() {
   const updating = Boolean(
     update.isPending || (status && activePhases.has(status.phase))
   )
-  const failed = Boolean(
-    requestError ||
-    status?.phase === 'failed' ||
-    status?.phase === 'recovery_required'
-  )
+  const failed = Boolean(requestError || status?.phase === 'failed')
   const visible = Boolean(
     enabled && (status?.updateAvailable || updating || failed)
   )
@@ -134,9 +129,7 @@ export function UpdateControl() {
               ? 'Installing the update…'
               : status?.phase === 'restart' || status?.phase === 'health_check'
                 ? 'Restarting Treeport and reconnecting…'
-                : status?.phase === 'rollback'
-                  ? 'Restoring the previous version…'
-                  : null
+                : null
 
   if (!visible) {
     return <div className="size-9 shrink-0" aria-hidden />

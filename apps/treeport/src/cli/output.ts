@@ -178,39 +178,13 @@ export function formatLocalUpdateError(
   output: HumanOutput,
   cancelled = false
 ): string {
-  // The transaction's plain error also serves the API. In human output,
-  // move recovery into Next rather than repeating it in the failure reason.
-  const reason =
-    details.rollback?.succeeded &&
-    message === 'The update failed. Treeport restored the previous version.'
-      ? (details.cause ?? 'The update could not be completed.')
-      : details.recovery && message.endsWith(details.recovery)
-        ? message.slice(0, -details.recovery.length).trim()
-        : message
   const reasons = [
     ...new Set(
       [
-        details.recovery ===
-        'Re-run `treeport update --yes` to approve the update.'
-          ? reason.replace(/ Re-run with --yes\.$/, '')
-          : cancelled
-            ? reason.replace(/^Treeport update cancelled\. /, '')
-            : reason,
+        cancelled
+          ? message.replace(/^Treeport update cancelled\. /, '')
+          : message,
         details.cause
-      ].filter((value): value is string => Boolean(value))
-    )
-  ]
-  const recovery = [
-    ...new Set(
-      [
-        details.rollback?.succeeded ||
-        details.recovery === 'The previous Treeport version is active again.'
-          ? 'Treeport restored the previous version.'
-          : null,
-        details.recovery === 'The previous Treeport version is active again.'
-          ? null
-          : details.recovery,
-        details.administratorCommand
       ].filter((value): value is string => Boolean(value))
     )
   ]
@@ -220,22 +194,13 @@ export function formatLocalUpdateError(
       cancelled ? 'warning' : 'failure'
     ),
     output.indent(reasons.join('\n')),
-    details.rollback?.attempted &&
-      !details.rollback.succeeded &&
-      output.summary('Rollback did not succeed', 'failure'),
-    output.next(recovery),
+    output.next(
+      [...new Set([details.next, details.administratorCommand])].filter(
+        (value): value is string => Boolean(value)
+      )
+    ),
     output.detail(
-      output.rows([
-        details.phase ? ['Phase', stateName(details.phase)] : null,
-        details.migrationState
-          ? ['Migration', stateName(details.migrationState)]
-          : null,
-        details.logPath ? ['Daemon log', details.logPath] : null,
-        ...(details.snapshotPaths ?? []).map((snapshot): [string, string] => [
-          'Pre-migration snapshot',
-          snapshot
-        ])
-      ])
+      output.rows([details.phase ? ['Phase', stateName(details.phase)] : null])
     )
   )
 }
