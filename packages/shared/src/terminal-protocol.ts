@@ -3,7 +3,7 @@ import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
 export const SOCKET_PATH = '/api/socket'
-export const TERMINAL_PROTOCOL_VERSION = 7
+export const TERMINAL_PROTOCOL_VERSION = 8
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
@@ -165,6 +165,15 @@ export const terminalOutputAckSchema = Schema.Struct({
 })
 export const terminalQueryAuthorityRequestSchema = Schema.Struct({
   generation,
+  cellSize: Schema.optionalWith(
+    Schema.NullOr(
+      Schema.Struct({
+        width: Schema.Number.pipe(Schema.between(1, 100)),
+        height: Schema.Number.pipe(Schema.between(1, 200))
+      })
+    ),
+    { default: () => null }
+  ),
   transitionId: Schema.NullOr(
     Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
   )
@@ -189,11 +198,71 @@ export type TerminalSnapshotLink = Schema.Schema.Type<
   typeof terminalSnapshotLinkSchema
 >
 
+const imageNumber = Schema.Number.pipe(Schema.finite())
+const imageCommandSchema = Schema.Struct({
+  columns: Schema.optionalWith(imageNumber, { exact: true }),
+  rows: Schema.optionalWith(imageNumber, { exact: true }),
+  x: Schema.optionalWith(imageNumber, { exact: true }),
+  y: Schema.optionalWith(imageNumber, { exact: true }),
+  sourceWidth: Schema.optionalWith(imageNumber, { exact: true }),
+  sourceHeight: Schema.optionalWith(imageNumber, { exact: true }),
+  xOffset: Schema.optionalWith(imageNumber, { exact: true }),
+  yOffset: Schema.optionalWith(imageNumber, { exact: true }),
+  zIndex: Schema.optionalWith(imageNumber, { exact: true }),
+  cursorMovement: Schema.optionalWith(imageNumber, { exact: true }),
+  placementId: Schema.optionalWith(imageNumber, { exact: true })
+})
+export const terminalImageSnapshotSchema = Schema.Struct({
+  nextImageId: positiveInt,
+  images: Schema.Array(
+    Schema.Struct({
+      id: Schema.NonNegativeInt,
+      data: Schema.String.pipe(Schema.maxLength(24 * 1024 * 1024)),
+      width: Schema.NonNegativeInt,
+      height: Schema.NonNegativeInt,
+      format: Schema.Number,
+      compression: Schema.String.pipe(Schema.maxLength(1))
+    })
+  ).pipe(Schema.maxItems(256)),
+  placements: Schema.Array(
+    Schema.Struct({
+      imageId: Schema.NonNegativeInt,
+      command: imageCommandSchema,
+      cellSize: Schema.Struct({
+        width: Schema.Number.pipe(Schema.between(1, 100)),
+        height: Schema.Number.pipe(Schema.between(1, 200))
+      }),
+      buffer: Schema.Literal('normal', 'alternate'),
+      tiles: Schema.mutable(
+        Schema.Array(
+          Schema.mutable(
+            Schema.Tuple(
+              Schema.NonNegativeInt,
+              Schema.NonNegativeInt,
+              Schema.NonNegativeInt,
+              positiveInt
+            )
+          )
+        )
+      ).pipe(Schema.maxItems(1_000_000))
+    })
+  ).pipe(Schema.maxItems(2_048)),
+  pending: Schema.String.pipe(Schema.maxLength(24 * 1024 * 1024))
+})
+export type TerminalImageSnapshot = Schema.Schema.Type<
+  typeof terminalImageSnapshotSchema
+>
+export type TerminalImagePlacement = TerminalImageSnapshot['placements'][number]
+
 export const terminalReadySchema = Schema.Struct({
   ...terminalReadyBase,
   ...dimensions,
   revision: positiveInt,
   snapshot: Schema.String,
+  snapshotImages: Schema.optionalWith(
+    Schema.NullOr(terminalImageSnapshotSchema),
+    { default: () => null }
+  ),
   snapshotLinks: Schema.optionalWith(
     Schema.Array(terminalSnapshotLinkSchema).pipe(Schema.maxItems(10_000)),
     { default: () => [] }

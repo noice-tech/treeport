@@ -39,6 +39,7 @@ class HostDouble implements TerminalAttachmentBackend {
     return Promise.resolve({
       data: '',
       links: [],
+      images: null,
       fence: 0,
       cols: 100,
       rows: 30,

@@ -247,6 +247,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 5.2.0
         version: 5.2.0(supports-color@10.2.2)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
+      '@xterm/addon-image':
+        specifier: 0.10.0-beta.301
+        version: 0.10.0-beta.301(@xterm/xterm@6.1.0-beta.304)
       '@xterm/addon-serialize':
         specifier: 0.15.0-beta.301
         version: 0.15.0-beta.301(@xterm/xterm@6.1.0-beta.304)
@@ -338,9 +341,6 @@ importers:
       '@xterm/addon-fit':
         specifier: 0.12.0-beta.301
         version: 0.12.0-beta.301(@xterm/xterm@6.1.0-beta.304)
-      '@xterm/addon-image':
-        specifier: 0.10.0-beta.301
-        version: 0.10.0-beta.301(@xterm/xterm@6.1.0-beta.304)
       '@xterm/addon-web-links':
         specifier: 0.13.0-beta.301
         version: 0.13.0-beta.301(@xterm/xterm@6.1.0-beta.304)

@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import type { TerminalProgress, TerminalSnapshotLink } from '@treeport/shared'
+import type {
+  TerminalProgress,
+  TerminalSnapshotLink,
+  TerminalImageSnapshot
+} from '@treeport/shared'
 import type {
   HostedTerminal,
   TerminalLaunchSpec,
@@ -9,7 +13,7 @@ import type {
 } from './core/terminal'
 import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
 
-export const TERMINAL_HOST_PROTOCOL_VERSION = 3
+export const TERMINAL_HOST_PROTOCOL_VERSION = 4
 const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 export interface TerminalHostRecord {
@@ -121,7 +125,13 @@ export const terminalHostInputSchemas = {
     .extend({
       transitionId: z.string(),
       attachmentId: z.string(),
-      generation: z.number().int().positive()
+      generation: z.number().int().positive(),
+      cellSize: z
+        .object({
+          width: z.number().min(1).max(100),
+          height: z.number().min(1).max(200)
+        })
+        .nullable()
     })
     .strict(),
   hostQueryAuthority: terminalIdSchema,
@@ -234,6 +244,7 @@ export interface TerminalHostResults {
   attach: {
     data: string
     links?: TerminalSnapshotLink[] | undefined
+    images: TerminalImageSnapshot | null
     fence: number
     cols: number
     rows: number

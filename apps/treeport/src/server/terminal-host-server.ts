@@ -386,7 +386,8 @@ export async function startTerminalHostServer(
           input.terminalId,
           input.transitionId,
           input.attachmentId,
-          input.generation
+          input.generation,
+          input.cellSize
         )
         respond<'activateQueryAuthority'>(connection, frame.id, null)
         return

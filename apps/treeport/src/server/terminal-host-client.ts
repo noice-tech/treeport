@@ -5,7 +5,10 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import type { Socket } from 'node:net'
-import type { TerminalSnapshotLink } from '@treeport/shared'
+import type {
+  TerminalSnapshotLink,
+  TerminalImageSnapshot
+} from '@treeport/shared'
 import type {
   HostedTerminal,
   TerminalProcess,
@@ -224,6 +227,7 @@ export class TerminalHostClient {
   ): Promise<{
     data: string
     links: TerminalSnapshotLink[]
+    images: TerminalImageSnapshot | null
     fence: number
     cols: number
     rows: number
@@ -350,13 +354,15 @@ export class TerminalHostClient {
     terminalId: string,
     transitionId: string,
     attachmentId: string,
-    generation: number
+    generation: number,
+    cellSize: { width: number; height: number } | null = null
   ): Promise<void> {
     return this.request('activateQueryAuthority', {
       terminalId,
       transitionId,
       attachmentId,
-      generation
+      generation,
+      cellSize
     }).then(() => undefined)
   }
 
