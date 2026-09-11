@@ -741,7 +741,7 @@ function installMenu(): void {
         {
           label: 'Reload',
           accelerator: 'CommandOrControl+R',
-          click: () => mainWindow?.webContents.reload()
+          click: () => sendDesktopCommand('reload')
         },
         {
           label: 'Force Reload',

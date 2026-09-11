@@ -599,6 +599,11 @@ export function BrowserPanelWorkspace({
     }
 
     return desktopBridge.onCommand((command) => {
+      if (command === 'reload') {
+        send({ type: 'reload' })
+        return
+      }
+
       if (
         (command !== 'find-in-page' && command !== 'focus-location') ||
         autoFocusBlocked ||
@@ -613,7 +618,7 @@ export function BrowserPanelWorkspace({
         focusAddress()
       }
     })
-  }, [active, autoFocusBlocked, focusAddress, focusFind])
+  }, [active, autoFocusBlocked, focusAddress, focusFind, send])
 
   const discoverListeners = useCallback(async () => {
     setListenersLoading(true)
