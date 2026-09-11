@@ -433,7 +433,7 @@ export class TerminalAttachmentManager {
       connection.transport.isConnected()
 
     return Effect.gen(function* () {
-      const terminal = yield* self.service.terminals.getTerminalForAttachment(
+      const terminal = yield* self.service.terminals.getKnownTerminal(
         connection.terminalId
       )
       if (!active()) {

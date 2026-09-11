@@ -166,8 +166,8 @@ export function integrationService(
     getTerminal: run(
       application.terminals.getTerminal.bind(application.terminals)
     ),
-    getTerminalForAttachment: run(
-      application.terminals.getTerminalForAttachment.bind(application.terminals)
+    getKnownTerminal: run(
+      application.terminals.getKnownTerminal.bind(application.terminals)
     ),
     refreshTerminalStatus: run(
       application.terminals.refreshTerminalStatus.bind(application.terminals)

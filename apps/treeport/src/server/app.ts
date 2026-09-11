@@ -1562,14 +1562,17 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(terminalBellAcknowledgementSchema)
+        yield* Effect.annotateCurrentSpan({
+          'treeport.terminal.id': params.terminalId!
+        })
         yield* operation(() =>
-          service.terminals.getTerminal(params.terminalId!)
-        )
+          service.terminals.getKnownTerminal(params.terminalId!)
+        ).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.lookup'))
         yield* operation(() =>
           metadata.acknowledgeBell(params.terminalId!, body.sequence)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
-      })
+      }).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.request'))
     ),
     route(
       'POST',

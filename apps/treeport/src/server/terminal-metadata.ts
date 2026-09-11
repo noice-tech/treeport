@@ -268,7 +268,7 @@ export class TerminalMetadataManager {
         if (entry.bell && sequence === latestSequence && entry.bell.unread) {
           yield* Effect.promise(() =>
             this.bellStateStore.markRead(terminalId, sequence)
-          )
+          ).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.persist'))
           yield* Effect.sync(() => {
             const persisted = this.persistedBells.get(terminalId)
             if (persisted?.sequence === sequence) {
@@ -283,7 +283,7 @@ export class TerminalMetadataManager {
               entry.acknowledgedBellSequence = sequence
               this.publish(entry)
             }
-          })
+          }).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.publish'))
           return
         }
 
