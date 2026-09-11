@@ -2,7 +2,5 @@ export {
   currentPromiseSpan,
   currentTraceContext,
   makeTracingLayer,
-  tracingLayerFromEnvironment,
-  untracedPromiseSpan,
-  type PromiseSpan
+  tracingLayerFromEnvironment
 } from '@treeport/shared/tracing'

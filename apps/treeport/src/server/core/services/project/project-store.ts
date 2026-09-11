@@ -10,7 +10,7 @@ import * as Layer from 'effect/Layer'
 import { mapOperation, mapProject, mapWorktree } from '../../database'
 import { operations, projects, worktrees } from '../../database-schema'
 import { DomainError } from '../../domain'
-import { DatabasePort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
 
 export interface ProjectStoreService {
   readonly storedProjects: (
@@ -55,24 +55,28 @@ export const ProjectStoreLive = Layer.effect(
 
     const storedProjects = (openOnly = false): Effect.Effect<ProjectRecord[]> =>
       Effect.gen(function* () {
-        const projectRows = yield* Effect.promise(() =>
-          database.db
-            .select()
-            .from(projects)
-            .where(openOnly ? eq(projects.isOpen, 1) : undefined)
-            .orderBy(sql`${projects.name} COLLATE NOCASE`)
-        )
-        const worktreeRows = yield* Effect.promise(() =>
-          database.db
-            .select()
-            .from(worktrees)
-            .orderBy(
-              asc(worktrees.projectId),
-              sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
-              asc(worktrees.createdAt),
-              sql`rowid`
-            )
-        )
+        const projectRows = yield* database
+          .execute('project.store.58', (db) =>
+            db
+              .select()
+              .from(projects)
+              .where(openOnly ? eq(projects.isOpen, 1) : undefined)
+              .orderBy(sql`${projects.name} COLLATE NOCASE`)
+          )
+          .pipe(Effect.orDie)
+        const worktreeRows = yield* database
+          .execute('project.store.65', (db) =>
+            db
+              .select()
+              .from(worktrees)
+              .orderBy(
+                asc(worktrees.projectId),
+                sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
+                asc(worktrees.createdAt),
+                sql`rowid`
+              )
+          )
+          .pipe(Effect.orDie)
         return projectRows.map((project) =>
           mapProject(
             project,
@@ -85,28 +89,32 @@ export const ProjectStoreLive = Layer.effect(
       projectId: string
     ): Effect.Effect<ProjectRecord | null> =>
       Effect.gen(function* () {
-        const [project] = yield* Effect.promise(() =>
-          database.db
-            .select()
-            .from(projects)
-            .where(eq(projects.id, projectId))
-            .limit(1)
-        )
+        const [project] = yield* database
+          .execute('project.store.88', (db) =>
+            db
+              .select()
+              .from(projects)
+              .where(eq(projects.id, projectId))
+              .limit(1)
+          )
+          .pipe(Effect.orDie)
         if (!project) {
           return null
         }
 
-        const worktreeRows = yield* Effect.promise(() =>
-          database.db
-            .select()
-            .from(worktrees)
-            .where(eq(worktrees.projectId, projectId))
-            .orderBy(
-              sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
-              asc(worktrees.createdAt),
-              sql`rowid`
-            )
-        )
+        const worktreeRows = yield* database
+          .execute('project.store.99', (db) =>
+            db
+              .select()
+              .from(worktrees)
+              .where(eq(worktrees.projectId, projectId))
+              .orderBy(
+                sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
+                asc(worktrees.createdAt),
+                sql`rowid`
+              )
+          )
+          .pipe(Effect.orDie)
         return mapProject(project, worktreeRows)
       })
 
@@ -114,17 +122,19 @@ export const ProjectStoreLive = Layer.effect(
       worktreeId: string
     ): Effect.Effect<WorktreeRecord | null> =>
       Effect.gen(function* () {
-        const [row] = yield* Effect.promise(() =>
-          database.db
-            .select({
-              worktree: worktrees,
-              mainWorktreePath: projects.mainWorktreePath
-            })
-            .from(worktrees)
-            .innerJoin(projects, eq(worktrees.projectId, projects.id))
-            .where(eq(worktrees.id, worktreeId))
-            .limit(1)
-        )
+        const [row] = yield* database
+          .execute('project.store.117', (db) =>
+            db
+              .select({
+                worktree: worktrees,
+                mainWorktreePath: projects.mainWorktreePath
+              })
+              .from(worktrees)
+              .innerJoin(projects, eq(worktrees.projectId, projects.id))
+              .where(eq(worktrees.id, worktreeId))
+              .limit(1)
+          )
+          .pipe(Effect.orDie)
         return row ? mapWorktree(row.worktree, row.mainWorktreePath) : null
       })
 
@@ -132,13 +142,15 @@ export const ProjectStoreLive = Layer.effect(
       projectId: string
     ): Effect.Effect<boolean | null> =>
       Effect.gen(function* () {
-        const [row] = yield* Effect.promise(() =>
-          database.db
-            .select({ isOpen: projects.isOpen })
-            .from(projects)
-            .where(eq(projects.id, projectId))
-            .limit(1)
-        )
+        const [row] = yield* database
+          .execute('project.store.135', (db) =>
+            db
+              .select({ isOpen: projects.isOpen })
+              .from(projects)
+              .where(eq(projects.id, projectId))
+              .limit(1)
+          )
+          .pipe(Effect.orDie)
         return row ? Boolean(row.isOpen) : null
       })
 
@@ -146,13 +158,15 @@ export const ProjectStoreLive = Layer.effect(
       operationId: string
     ): Effect.Effect<OperationRecord | null> =>
       Effect.gen(function* () {
-        const [row] = yield* Effect.promise(() =>
-          database.db
-            .select()
-            .from(operations)
-            .where(eq(operations.id, operationId))
-            .limit(1)
-        )
+        const [row] = yield* database
+          .execute('project.store.149', (db) =>
+            db
+              .select()
+              .from(operations)
+              .where(eq(operations.id, operationId))
+              .limit(1)
+          )
+          .pipe(Effect.orDie)
         return row ? mapOperation(row) : null
       })
 

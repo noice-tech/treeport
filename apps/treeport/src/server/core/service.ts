@@ -6,15 +6,14 @@ import type {
 } from 'node:http'
 import type { Duplex } from 'node:stream'
 import type { AppConfig } from './config'
-import type { CommandRunner } from './command'
-import type { TreeportDatabase } from './database'
+import { asEffectCommandRunner, type CommandRunner } from './command'
 import type { DomainError } from './domain'
 import { ProductEventBus } from './events'
-import type { GhAdapter } from './gh'
-import type { GitAdapter } from './git'
-import { NetworkListenerAdapter } from './network-listeners'
 import { PackageSystem } from './package-system'
-import { WebPanelViteRuntime } from './web-panel-vite-runtime'
+import {
+  type WebPanelViteRuntime,
+  WebPanelRuntimePort
+} from './web-panel-vite-runtime'
 import { ApplicationLifecycle } from './services/infrastructure/application-lifecycle'
 import {
   type ApplicationRuntime,
@@ -41,11 +40,8 @@ import { WorktreeReconciler } from './services/worktree/worktree-reconciler'
 
 interface ServiceDependencies {
   config: AppConfig
-  database: TreeportDatabase
   runner: CommandRunner
-  git: GitAdapter
   terminalHost: TerminalSessionBackend
-  gh: GhAdapter
   events?: ProductEventBus
 }
 
@@ -160,16 +156,13 @@ export class TreeportService {
   private readonly treeFileService: TreeFileService
   private readonly worktreeService: WorktreeService
   private readonly worktreeReconciler: WorktreeReconciler
-  private readonly networkListeners: NetworkListenerAdapter
-  private readonly webPanelRuntime: WebPanelViteRuntime
+  private webPanelRuntime: WebPanelViteRuntime | null = null
   private readonly runtime: ApplicationRuntime
   private readonly lifecycle: ApplicationLifecycle
 
-  constructor(private readonly deps: ServiceDependencies) {
+  constructor(deps: ServiceDependencies) {
     this.events = deps.events ?? new ProductEventBus()
     this.packages = new PackageSystem(deps.config, deps.runner)
-    this.networkListeners = new NetworkListenerAdapter(deps.runner)
-    this.webPanelRuntime = new WebPanelViteRuntime(deps.config)
     this.terminalService = new TerminalService()
     this.terminalPresetService = new TerminalPresetService()
     this.panelService = new PanelService()
@@ -184,6 +177,7 @@ export class TreeportService {
     this.lifecycle = new ApplicationLifecycle()
     this.runtime = makeApplicationRuntime({
       ...deps,
+      runner: asEffectCommandRunner(deps.runner),
       events: this.events,
       packages: this.packages,
       panelService: this.panelService,
@@ -192,9 +186,7 @@ export class TreeportService {
       projectSnapshotService: this.projectSnapshotService,
       terminalService: this.terminalService,
       worktreeReconciler: this.worktreeReconciler,
-      worktreeService: this.worktreeService,
-      networkListeners: this.networkListeners,
-      webPanelRuntime: this.webPanelRuntime
+      worktreeService: this.worktreeService
     })
   }
 
@@ -255,8 +247,16 @@ export class TreeportService {
     )
   }
 
+  private requireWebPanelRuntime(): WebPanelViteRuntime {
+    if (!this.webPanelRuntime) {
+      throw new Error('Treeport service is not initialized')
+    }
+
+    return this.webPanelRuntime
+  }
+
   attachHttpServer(server: HttpServer): void {
-    this.webPanelRuntime.attachHttpServer(server)
+    this.requireWebPanelRuntime().attachHttpServer(server)
   }
 
   handleWebPanelDevelopmentRequest(
@@ -264,7 +264,11 @@ export class TreeportService {
     response: ServerResponse,
     next: () => void
   ): void {
-    this.webPanelRuntime.handleDevelopmentRequest(request, response, next)
+    this.requireWebPanelRuntime().handleDevelopmentRequest(
+      request,
+      response,
+      next
+    )
   }
 
   handleWebPanelDevelopmentUpgrade(
@@ -272,15 +276,15 @@ export class TreeportService {
     socket: Duplex,
     head: Buffer
   ): boolean {
-    return this.webPanelRuntime.handleDevelopmentUpgrade(request, socket, head)
+    return this.requireWebPanelRuntime().handleDevelopmentUpgrade(
+      request,
+      socket,
+      head
+    )
   }
 
   async disposeRuntime(): Promise<void> {
     await this.runtime.dispose()
-  }
-
-  get database(): TreeportDatabase {
-    return this.deps.database
   }
 
   get projects(): ProjectApi {
@@ -312,7 +316,10 @@ export class TreeportService {
   }
 
   initialize(): Effect.Effect<void, never, ApplicationServices> {
-    return this.lifecycle.initialize()
+    return Effect.gen(this, function* () {
+      this.webPanelRuntime = yield* WebPanelRuntimePort
+      yield* this.lifecycle.initialize()
+    })
   }
 
   drainMutations(): Effect.Effect<void, never, ApplicationServices> {

@@ -6,7 +6,7 @@ import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
 import { DomainError } from '../../domain'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
-import { GitPort } from '../infrastructure/ports'
+import { GitPort } from '../../git'
 
 export class ProjectDirectoryService {
   browseDirectory(
@@ -177,16 +177,16 @@ export class ProjectDirectoryService {
 
       let repositoryPath: string | null = null
       if (exact) {
-        const checkout = yield* Effect.promise(() =>
-          git.findProjectRepositoryRoot(directoryPath)
-        )
+        const checkout = yield* git
+          .findProjectRepositoryRoot(directoryPath)
+          .pipe(Effect.orDie)
         if (checkout) {
-          const mainCheckout = yield* Effect.promise(() =>
-            git.resolveMainCheckout(checkout)
-          )
-          repositoryPath = yield* Effect.promise(() =>
+          const mainCheckout = yield* git
+            .resolveMainCheckout(checkout)
+            .pipe(Effect.orDie)
+          repositoryPath = yield* Effect.tryPromise(() =>
             fs.realpath(mainCheckout)
-          )
+          ).pipe(Effect.orDie)
         }
       }
 

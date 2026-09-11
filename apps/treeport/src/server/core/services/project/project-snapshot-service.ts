@@ -26,7 +26,8 @@ import {
   TerminalOperations
 } from '../domain-services'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
-import { DatabasePort, GitPort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
+import { GitPort } from '../../git'
 import { ProjectStore } from './project-store'
 
 export class ProjectSnapshotService {
@@ -82,20 +83,22 @@ export class ProjectSnapshotService {
   > {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      return yield* Effect.promise(() =>
-        database.db
-          .select({
-            id: projects.id,
-            name: projects.name,
-            kind: projects.kind,
-            rootPath: projects.repositoryPath,
-            repositoryPath: projects.repositoryPath,
-            lastOpenedAt: projects.lastOpenedAt
-          })
-          .from(projects)
-          .where(and(eq(projects.isOpen, 0), eq(projects.showInRecents, 1)))
-          .orderBy(desc(projects.lastOpenedAt), asc(projects.id))
-      )
+      return yield* database
+        .execute('project.snapshot.service.85', (db) =>
+          db
+            .select({
+              id: projects.id,
+              name: projects.name,
+              kind: projects.kind,
+              rootPath: projects.repositoryPath,
+              repositoryPath: projects.repositoryPath,
+              lastOpenedAt: projects.lastOpenedAt
+            })
+            .from(projects)
+            .where(and(eq(projects.isOpen, 0), eq(projects.showInRecents, 1)))
+            .orderBy(desc(projects.lastOpenedAt), asc(projects.id))
+        )
+        .pipe(Effect.orDie)
     })
   }
 
@@ -217,10 +220,9 @@ export class ProjectSnapshotService {
                     project.kind === 'repository' &&
                     project.availability.state === 'available' &&
                     !worktree.prunable
-                      ? yield* Effect.tryPromise({
-                          try: () => git.dirtyState(worktree.path),
-                          catch: (cause) => cause
-                        }).pipe(Effect.orElseSucceed(() => null))
+                      ? yield* git
+                          .dirtyState(worktree.path)
+                          .pipe(Effect.orElseSucceed(() => null))
                       : null
                   const terminalInventory = yield* Effect.exit(
                     terminalService.listWorktreeTerminals(worktree)
@@ -252,35 +254,44 @@ export class ProjectSnapshotService {
                     storedToolOrder
                   ] = yield* Effect.all(
                     [
-                      Effect.promise(() =>
-                        database.db
-                          .select()
-                          .from(browserPanels)
-                          .where(eq(browserPanels.worktreeId, worktree.id))
-                          .orderBy(
-                            asc(browserPanels.createdAt),
-                            asc(browserPanels.id)
-                          )
-                      ),
-                      Effect.promise(() =>
-                        database.db
-                          .select()
-                          .from(webPanels)
-                          .where(eq(webPanels.worktreeId, worktree.id))
-                          .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-                      ),
-                      Effect.promise(() =>
-                        database.db
-                          .select()
-                          .from(workspaceItemOrders)
-                          .where(
-                            and(
-                              eq(workspaceItemOrders.worktreeId, worktree.id),
-                              eq(workspaceItemOrders.surface, 'tool')
+                      database
+                        .execute('project.snapshot.service.255', (db) =>
+                          db
+                            .select()
+                            .from(browserPanels)
+                            .where(eq(browserPanels.worktreeId, worktree.id))
+                            .orderBy(
+                              asc(browserPanels.createdAt),
+                              asc(browserPanels.id)
                             )
-                          )
-                          .orderBy(asc(workspaceItemOrders.position))
-                      )
+                        )
+                        .pipe(Effect.orDie),
+                      database
+                        .execute('project.snapshot.service.265', (db) =>
+                          db
+                            .select()
+                            .from(webPanels)
+                            .where(eq(webPanels.worktreeId, worktree.id))
+                            .orderBy(
+                              asc(webPanels.createdAt),
+                              asc(webPanels.id)
+                            )
+                        )
+                        .pipe(Effect.orDie),
+                      database
+                        .execute('project.snapshot.service.272', (db) =>
+                          db
+                            .select()
+                            .from(workspaceItemOrders)
+                            .where(
+                              and(
+                                eq(workspaceItemOrders.worktreeId, worktree.id),
+                                eq(workspaceItemOrders.surface, 'tool')
+                              )
+                            )
+                            .orderBy(asc(workspaceItemOrders.position))
+                        )
+                        .pipe(Effect.orDie)
                     ],
                     { concurrency: 'unbounded' }
                   )

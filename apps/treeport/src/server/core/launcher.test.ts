@@ -1,4 +1,8 @@
 import { EventEmitter } from 'node:events'
+import * as Cause from 'effect/Cause'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as Fiber from 'effect/Fiber'
 import { describe, expect, it, vi } from 'vitest'
 import { runLaunchSpec, type LauncherDependencies } from './launcher'
 import type { TerminalLaunchSpec } from './terminal'
@@ -51,31 +55,33 @@ describe('terminal launcher setup pipeline', () => {
     )
     const output = writable()
     const error = writable()
-    const code = await runLaunchSpec(
-      spec({
-        setupTasks: [
-          {
-            label: 'first',
-            argv: ['one', 'a b'],
-            cwd: '/one',
-            env: { ONE: '1' },
-            timeoutMs: 100
-          },
-          {
-            label: 'second',
-            argv: ['two', '$HOME'],
-            cwd: '/two',
-            env: { TWO: '2' },
-            timeoutMs: 100
-          }
-        ]
-      }),
-      {
-        spawnProcess,
-        stdout: output.stream,
-        stderr: error.stream,
-        signalSource: new EventEmitter()
-      }
+    const code = await Effect.runPromise(
+      runLaunchSpec(
+        spec({
+          setupTasks: [
+            {
+              label: 'first',
+              argv: ['one', 'a b'],
+              cwd: '/one',
+              env: { ONE: '1' },
+              timeoutMs: 100
+            },
+            {
+              label: 'second',
+              argv: ['two', '$HOME'],
+              cwd: '/two',
+              env: { TWO: '2' },
+              timeoutMs: 100
+            }
+          ]
+        }),
+        {
+          spawnProcess,
+          stdout: output.stream,
+          stderr: error.stream,
+          signalSource: new EventEmitter()
+        }
+      )
     )
 
     expect(code).toBe(7)
@@ -116,18 +122,20 @@ describe('terminal launcher setup pipeline', () => {
 
     const output = writable()
     await expect(
-      runLaunchSpec(
-        spec({
-          initialTitle: '  --Review;\u001bTitle  ',
-          fallbackArgv: ['/bin/zsh', '-l'],
-          env: { HOME: '/home/user', ZDOTDIR: '/home/user/.config/zsh' },
-          shellIntegrationDir: '/treeport/integration'
-        }),
-        {
-          spawnProcess,
-          stdout: output.stream,
-          signalSource: new EventEmitter()
-        }
+      Effect.runPromise(
+        runLaunchSpec(
+          spec({
+            initialTitle: '  --Review;\u001bTitle  ',
+            fallbackArgv: ['/bin/zsh', '-l'],
+            env: { HOME: '/home/user', ZDOTDIR: '/home/user/.config/zsh' },
+            shellIntegrationDir: '/treeport/integration'
+          }),
+          {
+            spawnProcess,
+            stdout: output.stream,
+            signalSource: new EventEmitter()
+          }
+        )
       )
     ).resolves.toBe(0)
     expect(calls.map((call) => call.argv)).toEqual([
@@ -168,29 +176,37 @@ describe('terminal launcher setup pipeline', () => {
       shellIntegrationDir: '/treeport/integration'
     }
 
-    await runLaunchSpec(
-      spec({
-        argv: ['/bin/bash', '-l'],
-        env: { PROMPT_COMMAND: 'user_prompt' },
-        ...integration
-      }),
-      dependencies
+    await Effect.runPromise(
+      runLaunchSpec(
+        spec({
+          argv: ['/bin/bash', '-l'],
+          env: { PROMPT_COMMAND: 'user_prompt' },
+          ...integration
+        }),
+        dependencies
+      )
     )
-    await runLaunchSpec(
-      spec({
-        argv: ['/opt/homebrew/bin/fish', '-l'],
-        env: { XDG_DATA_DIRS: '/usr/local/share:/usr/share' },
-        ...integration
-      }),
-      dependencies
+    await Effect.runPromise(
+      runLaunchSpec(
+        spec({
+          argv: ['/opt/homebrew/bin/fish', '-l'],
+          env: { XDG_DATA_DIRS: '/usr/local/share:/usr/share' },
+          ...integration
+        }),
+        dependencies
+      )
     )
-    await runLaunchSpec(
-      spec({ argv: ['/bin/bash', '-c', 'echo okay'], ...integration }),
-      dependencies
+    await Effect.runPromise(
+      runLaunchSpec(
+        spec({ argv: ['/bin/bash', '-c', 'echo okay'], ...integration }),
+        dependencies
+      )
     )
-    await runLaunchSpec(
-      spec({ argv: ['/bin/nu', '-l'], ...integration }),
-      dependencies
+    await Effect.runPromise(
+      runLaunchSpec(
+        spec({ argv: ['/bin/nu', '-l'], ...integration }),
+        dependencies
+      )
     )
 
     expect(calls[0]).toMatchObject({
@@ -233,13 +249,15 @@ describe('terminal launcher setup pipeline', () => {
     const error = writable()
 
     await expect(
-      runLaunchSpec(
-        spec({ argv: ['missing'], fallbackArgv: ['/bin/zsh', '-l'] }),
-        {
-          spawnProcess,
-          stderr: error.stream,
-          signalSource: new EventEmitter()
-        }
+      Effect.runPromise(
+        runLaunchSpec(
+          spec({ argv: ['missing'], fallbackArgv: ['/bin/zsh', '-l'] }),
+          {
+            spawnProcess,
+            stderr: error.stream,
+            signalSource: new EventEmitter()
+          }
+        )
       )
     ).resolves.toBe(0)
     expect(calls).toEqual([['missing'], ['/bin/zsh', '-l']])
@@ -257,10 +275,12 @@ describe('terminal launcher setup pipeline', () => {
         return shell
       })
     const signalSource = new EventEmitter()
-    const launch = runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
-      spawnProcess,
-      signalSource
-    })
+    const launch = Effect.runPromise(
+      runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
+        spawnProcess,
+        signalSource
+      })
+    )
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
     signalSource.emit('SIGINT')
     await expect(launch).resolves.toBe(0)
@@ -269,10 +289,12 @@ describe('terminal launcher setup pipeline', () => {
     const teardownChild = new FakeChild()
     const teardownSpawn = vi.fn(() => teardownChild)
     const teardownSignals = new EventEmitter()
-    const teardown = runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
-      spawnProcess: teardownSpawn,
-      signalSource: teardownSignals
-    })
+    const teardown = Effect.runPromise(
+      runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
+        spawnProcess: teardownSpawn,
+        signalSource: teardownSignals
+      })
+    )
     await vi.waitFor(() => expect(teardownSpawn).toHaveBeenCalledTimes(1))
     teardownSignals.emit('SIGHUP')
     await expect(teardown).resolves.toBe(1)
@@ -286,31 +308,33 @@ describe('terminal launcher setup pipeline', () => {
       return child
     })
     const error = writable()
-    const code = await runLaunchSpec(
-      spec({
-        setupTasks: [
-          {
-            label: 'bad',
-            argv: ['false'],
-            cwd: '/worktree',
-            env: {},
-            timeoutMs: 100
-          },
-          {
-            label: 'skipped',
-            argv: ['echo'],
-            cwd: '/worktree',
-            env: {},
-            timeoutMs: 100
-          }
-        ]
-      }),
-      {
-        spawnProcess,
-        stderr: error.stream,
-        stdout: writable().stream,
-        signalSource: new EventEmitter()
-      }
+    const code = await Effect.runPromise(
+      runLaunchSpec(
+        spec({
+          setupTasks: [
+            {
+              label: 'bad',
+              argv: ['false'],
+              cwd: '/worktree',
+              env: {},
+              timeoutMs: 100
+            },
+            {
+              label: 'skipped',
+              argv: ['echo'],
+              cwd: '/worktree',
+              env: {},
+              timeoutMs: 100
+            }
+          ]
+        }),
+        {
+          spawnProcess,
+          stderr: error.stream,
+          stdout: writable().stream,
+          signalSource: new EventEmitter()
+        }
+      )
     )
 
     expect(code).toBe(23)
@@ -322,11 +346,33 @@ describe('terminal launcher setup pipeline', () => {
     const child = new FakeChild()
     const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
-    const launch = runLaunchSpec(spec(), { spawnProcess, signalSource })
+    const launch = Effect.runPromise(
+      runLaunchSpec(spec(), { spawnProcess, signalSource })
+    )
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
     signalSource.emit('SIGINT')
     await expect(launch).resolves.toBe(1)
     expect(child.kill).toHaveBeenCalledWith('SIGINT')
+  })
+
+  it('terminates the child and removes signal listeners when interrupted', async () => {
+    const child = new FakeChild()
+    const spawnProcess = vi.fn(() => child)
+    const signalSource = new EventEmitter()
+    const fiber = Effect.runFork(
+      runLaunchSpec(spec(), { spawnProcess, signalSource })
+    )
+
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
+    const exit = await Effect.runPromise(Fiber.interrupt(fiber))
+
+    expect(Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)).toBe(
+      true
+    )
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+      expect(signalSource.listenerCount(signal)).toBe(0)
+    }
   })
 
   it('does not continue when a setup child handles a forwarded signal and exits cleanly', async () => {
@@ -338,24 +384,26 @@ describe('terminal launcher setup pipeline', () => {
     const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
     const error = writable()
-    const launch = runLaunchSpec(
-      spec({
-        setupTasks: [
-          {
-            label: 'traps signal',
-            argv: ['setup'],
-            cwd: '/worktree',
-            env: {},
-            timeoutMs: 100
-          }
-        ]
-      }),
-      {
-        spawnProcess,
-        signalSource,
-        stderr: error.stream,
-        stdout: writable().stream
-      }
+    const launch = Effect.runPromise(
+      runLaunchSpec(
+        spec({
+          setupTasks: [
+            {
+              label: 'traps signal',
+              argv: ['setup'],
+              cwd: '/worktree',
+              env: {},
+              timeoutMs: 100
+            }
+          ]
+        }),
+        {
+          spawnProcess,
+          signalSource,
+          stderr: error.stream,
+          stdout: writable().stream
+        }
+      )
     )
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
     signalSource.emit('SIGTERM')
@@ -372,24 +420,26 @@ describe('terminal launcher setup pipeline', () => {
     })
     const output = writable()
     const error = writable()
-    await runLaunchSpec(
-      spec({
-        setupTasks: [
-          {
-            label: 'unsafe\u001b[31m\nlabel',
-            argv: ['false'],
-            cwd: '/worktree',
-            env: {},
-            timeoutMs: 100
-          }
-        ]
-      }),
-      {
-        spawnProcess,
-        stdout: output.stream,
-        stderr: error.stream,
-        signalSource: new EventEmitter()
-      }
+    await Effect.runPromise(
+      runLaunchSpec(
+        spec({
+          setupTasks: [
+            {
+              label: 'unsafe\u001b[31m\nlabel',
+              argv: ['false'],
+              cwd: '/worktree',
+              env: {},
+              timeoutMs: 100
+            }
+          ]
+        }),
+        {
+          spawnProcess,
+          stdout: output.stream,
+          stderr: error.stream,
+          signalSource: new EventEmitter()
+        }
+      )
     )
     expect(`${output.value()}${error.value()}`).not.toContain('\u001b')
     expect(output.value()).toContain('unsafe [31m label')
@@ -399,11 +449,13 @@ describe('terminal launcher setup pipeline', () => {
     const spawnProcess = vi.fn()
     const error = writable()
     await expect(
-      runLaunchSpec(spec({ setupError: 'invalid compatible task file' }), {
-        spawnProcess,
-        stderr: error.stream,
-        signalSource: new EventEmitter()
-      })
+      Effect.runPromise(
+        runLaunchSpec(spec({ setupError: 'invalid compatible task file' }), {
+          spawnProcess,
+          stderr: error.stream,
+          signalSource: new EventEmitter()
+        })
+      )
     ).resolves.toBe(1)
     expect(spawnProcess).not.toHaveBeenCalled()
     expect(error.value()).toContain('invalid compatible task file')
@@ -413,24 +465,26 @@ describe('terminal launcher setup pipeline', () => {
     const child = new FakeChild()
     const spawnProcess = vi.fn(() => child)
     const error = writable()
-    const code = await runLaunchSpec(
-      spec({
-        setupTasks: [
-          {
-            label: 'slow',
-            argv: ['sleep'],
-            cwd: '/worktree',
-            env: {},
-            timeoutMs: 1
-          }
-        ]
-      }),
-      {
-        spawnProcess,
-        stderr: error.stream,
-        stdout: writable().stream,
-        signalSource: new EventEmitter()
-      }
+    const code = await Effect.runPromise(
+      runLaunchSpec(
+        spec({
+          setupTasks: [
+            {
+              label: 'slow',
+              argv: ['sleep'],
+              cwd: '/worktree',
+              env: {},
+              timeoutMs: 1
+            }
+          ]
+        }),
+        {
+          spawnProcess,
+          stderr: error.stream,
+          stdout: writable().stream,
+          signalSource: new EventEmitter()
+        }
+      )
     )
     expect(code).toBe(124)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')

@@ -18,11 +18,8 @@ import {
   ProjectSnapshotOperations
 } from '../domain-services'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
-import {
-  DatabasePort,
-  EventBusPort,
-  PackageSystemPort
-} from '../infrastructure/ports'
+import { EventBusPort, PackageSystemPort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
 import { ProjectStore } from '../project/project-store'
 
 const now = (): string => new Date().toISOString()
@@ -42,7 +39,7 @@ export class PanelDefinitionService {
       const projectStore = yield* ProjectStore
       const worktree = yield* projectStore.getWorktree(worktreeId)
       const webPanelsRoot = path.join(worktree.path, '.treeport', 'web-panels')
-      const directories = yield* Effect.promise(() =>
+      const directories = yield* Effect.tryPromise(() =>
         fs.readdir(webPanelsRoot, { withFileTypes: true }).catch((error) => {
           // SAFETY: Node filesystem errors expose their stable code here.
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -51,7 +48,7 @@ export class PanelDefinitionService {
 
           throw error
         })
-      )
+      ).pipe(Effect.orDie)
       const definitions: ResolvedDefinition[] = []
       for (const directory of directories.sort((left, right) =>
         left.name.localeCompare(right.name)
@@ -62,12 +59,12 @@ export class PanelDefinitionService {
 
         const root = path.join(webPanelsRoot, directory.name)
         const entry = 'index.html'
-        const entryIsFile = yield* Effect.promise(() =>
+        const entryIsFile = yield* Effect.tryPromise(() =>
           fs
             .stat(path.join(root, entry))
             .then((value) => value.isFile())
             .catch(() => false)
-        )
+        ).pipe(Effect.orDie)
         if (!entryIsFile) {
           continue
         }
@@ -149,7 +146,7 @@ export class PanelDefinitionService {
         )
       ]
       return yield* Effect.forEach(definitions, (definition) =>
-        Effect.promise(async () => {
+        Effect.tryPromise(async () => {
           const realRoot = await fs.realpath(definition.root).catch(() => null)
           const realIcon = await fs
             .realpath(path.join(definition.root, 'icon.svg'))
@@ -177,7 +174,7 @@ export class PanelDefinitionService {
             ...definition,
             icon: `data:image/svg+xml;base64,${await fs.readFile(realIcon, 'base64')}`
           }
-        })
+        }).pipe(Effect.orDie)
       )
     })
   }
@@ -227,20 +224,26 @@ export class PanelDefinitionService {
         worktreeId,
         definition
       )
-      const [grant] = yield* Effect.promise(() =>
-        database.db
-          .select({ permissionsJson: webPanelPermissionGrants.permissionsJson })
-          .from(webPanelPermissionGrants)
-          .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
-          .limit(1)
-      )
+      const [grant] = yield* database
+        .execute('panel.definition.service.230', (db) =>
+          db
+            .select({
+              permissionsJson: webPanelPermissionGrants.permissionsJson
+            })
+            .from(webPanelPermissionGrants)
+            .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+            .limit(1)
+        )
+        .pipe(Effect.orDie)
       if (definition.permissions.length === 0) {
         if (grant) {
-          yield* Effect.promise(() =>
-            database.db
-              .delete(webPanelPermissionGrants)
-              .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
-          )
+          yield* database
+            .execute('panel.definition.service.239', (db) =>
+              db
+                .delete(webPanelPermissionGrants)
+                .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+            )
+            .pipe(Effect.orDie)
         }
 
         return true
@@ -250,11 +253,13 @@ export class PanelDefinitionService {
         grant?.permissionsJson ===
         JSON.stringify([...definition.permissions].sort())
       if (grant && !matches) {
-        yield* Effect.promise(() =>
-          database.db
-            .delete(webPanelPermissionGrants)
-            .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
-        )
+        yield* database
+          .execute('panel.definition.service.253', (db) =>
+            db
+              .delete(webPanelPermissionGrants)
+              .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+          )
+          .pipe(Effect.orDie)
       }
 
       return matches
@@ -350,47 +355,53 @@ export class PanelDefinitionService {
       )
       if (granted && definition.permissions.length > 0) {
         const timestamp = now()
-        yield* Effect.promise(() =>
-          database.db
-            .insert(webPanelPermissionGrants)
-            .values({
-              sourceKey,
-              definitionId,
-              permissionsJson: JSON.stringify(
-                [...definition.permissions].sort()
-              ),
-              grantedAt: timestamp,
-              updatedAt: timestamp
-            })
-            .onConflictDoUpdate({
-              target: webPanelPermissionGrants.sourceKey,
-              set: {
+        yield* database
+          .execute('panel.definition.service.353', (db) =>
+            db
+              .insert(webPanelPermissionGrants)
+              .values({
+                sourceKey,
+                definitionId,
                 permissionsJson: JSON.stringify(
                   [...definition.permissions].sort()
                 ),
+                grantedAt: timestamp,
                 updatedAt: timestamp
-              }
-            })
-        )
+              })
+              .onConflictDoUpdate({
+                target: webPanelPermissionGrants.sourceKey,
+                set: {
+                  permissionsJson: JSON.stringify(
+                    [...definition.permissions].sort()
+                  ),
+                  updatedAt: timestamp
+                }
+              })
+          )
+          .pipe(Effect.orDie)
       } else {
-        yield* Effect.promise(() =>
-          database.db
-            .delete(webPanelPermissionGrants)
-            .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
-        )
+        yield* database
+          .execute('panel.definition.service.376', (db) =>
+            db
+              .delete(webPanelPermissionGrants)
+              .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+          )
+          .pipe(Effect.orDie)
       }
 
-      const affectedPanels = yield* Effect.promise(() =>
-        database.db
-          .select({ id: webPanels.id })
-          .from(webPanels)
-          .where(
-            and(
-              eq(webPanels.worktreeId, worktreeId),
-              eq(webPanels.definitionId, definitionId)
+      const affectedPanels = yield* database
+        .execute('panel.definition.service.383', (db) =>
+          db
+            .select({ id: webPanels.id })
+            .from(webPanels)
+            .where(
+              and(
+                eq(webPanels.worktreeId, worktreeId),
+                eq(webPanels.definitionId, definitionId)
+              )
             )
-          )
-      )
+        )
+        .pipe(Effect.orDie)
       yield* Effect.sync(() => projectSnapshots.invalidate())
       yield* Effect.sync(() => {
         for (const panel of affectedPanels) {
@@ -460,15 +471,17 @@ export class PanelDefinitionService {
         return { launch: { input: launch.input, cwd: null }, inputJson }
       }
 
-      const worktreeRoot = yield* Effect.promise(() =>
+      const worktreeRoot = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
-      )
-      const requestedCwd = yield* Effect.promise(() =>
+      ).pipe(Effect.orDie)
+      const requestedCwd = yield* Effect.tryPromise(() =>
         fs.realpath(path.resolve(worktree.path, launch.cwd!)).catch(() => null)
-      )
+      ).pipe(Effect.orDie)
       if (
         !requestedCwd ||
-        !(yield* Effect.promise(() => fs.stat(requestedCwd))).isDirectory()
+        !(yield* Effect.tryPromise(() => fs.stat(requestedCwd)).pipe(
+          Effect.orDie
+        )).isDirectory()
       ) {
         return yield* Effect.fail(
           new DomainError(

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { eq, sql } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  openDatabase,
+  openDatabaseForTest,
   type TreeportDatabase
 } from '../src/server/core/database'
 import {
@@ -34,7 +34,7 @@ describe('development database snapshots', () => {
     directories.push(directory)
     const sourcePath = path.join(directory, 'source', 'treeport.db')
     const destinationPath = path.join(directory, 'destination', 'treeport.db')
-    const source = await openDatabase(sourcePath)
+    const source = await openDatabaseForTest(sourcePath)
     databases.push(source)
     await source.db.insert(projects).values({
       id: 'project',
@@ -70,7 +70,7 @@ describe('development database snapshots', () => {
     await expect(
       cloneDevelopmentDatabase(sourcePath, destinationPath)
     ).resolves.toEqual({ copied: true })
-    const snapshot = await openDatabase(destinationPath)
+    const snapshot = await openDatabaseForTest(destinationPath)
     expect(
       await snapshot.db
         .select()
@@ -106,7 +106,7 @@ describe('development database snapshots', () => {
       cloneDevelopmentDatabase(sourcePath, destinationPath, { force: true })
     ).resolves.toEqual({ copied: true })
 
-    const refreshed = await openDatabase(destinationPath)
+    const refreshed = await openDatabaseForTest(destinationPath)
     expect(
       await refreshed.db
         .select({ name: projects.name })

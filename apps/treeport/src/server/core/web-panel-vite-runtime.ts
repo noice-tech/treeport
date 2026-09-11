@@ -17,7 +17,11 @@ import {
   type InlineConfig,
   type ViteDevServer
 } from 'vite'
-import { untracedPromiseSpan, type PromiseSpan } from '../tracing'
+import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
+import * as Deferred from 'effect/Deferred'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
 import type { AppConfig } from './config'
 import { DomainError } from './domain'
 import {
@@ -86,16 +90,29 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;')
 }
 
+interface DevelopmentServerEntry {
+  readonly base: string
+  readonly server: ViteDevServer
+  readonly allowNetworkRequests: boolean
+  readonly upgrade: (
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ) => void
+}
+
 export class WebPanelViteRuntime {
-  private readonly builds = new Map<string, Promise<string>>()
+  private readonly builds = new Map<
+    string,
+    Deferred.Deferred<string, WebPanelRuntimeError>
+  >()
+  private readonly developmentServerCreations = new Map<
+    string,
+    Deferred.Deferred<DevelopmentServerEntry, WebPanelRuntimeError>
+  >()
   private readonly developmentServers = new Map<
     string,
-    {
-      base: string
-      server: ViteDevServer
-      allowNetworkRequests: boolean
-      upgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void
-    }
+    DevelopmentServerEntry
   >()
   private httpServer?: HttpServer
 
@@ -244,35 +261,58 @@ export class WebPanelViteRuntime {
     return hash.digest('hex')
   }
 
-  private async compiledDirectory(
-    source: ResolvedWebPanelSource,
-    trace: PromiseSpan
-  ): Promise<{ hash: string; directory: string }> {
-    const hash = await trace('treeport.web_panel.runtime.hash', () =>
-      this.hashSource(source)
-    )
-    const parent = path.join(this.config.cacheDir, 'web-panels', COMPILER_ABI)
-    const directory = path.join(parent, hash)
-    const metadata = path.join(directory, BUILD_METADATA)
-    if (
-      await trace('treeport.web_panel.runtime.cache_lookup', () =>
-        fs
-          .readFile(metadata, 'utf8')
-          .then((value) => {
-            // SAFETY: This module writes the cache metadata with a hash field.
-            return JSON.parse(value) as { hash?: string }
-          })
-          .then((value) => value.hash === hash)
-          .catch(() => false)
-      )
-    ) {
-      return { hash, directory }
-    }
+  private runtimePromise<A>(
+    operation: string,
+    evaluate: () => Promise<A>
+  ): Effect.Effect<A, WebPanelRuntimeError> {
+    return Effect.tryPromise({
+      try: evaluate,
+      catch: (cause) => new WebPanelRuntimeError(operation, cause)
+    })
+  }
 
-    let pending = this.builds.get(hash)
-    const buildPending = Boolean(pending)
-    if (!pending) {
-      pending = (async () => {
+  private compiledDirectory(
+    source: ResolvedWebPanelSource
+  ): Effect.Effect<{ hash: string; directory: string }, WebPanelRuntimeError> {
+    return Effect.gen(this, function* () {
+      const hash = yield* this.runtimePromise('hashSource', () =>
+        this.hashSource(source)
+      )
+      const parent = path.join(this.config.cacheDir, 'web-panels', COMPILER_ABI)
+      const directory = path.join(parent, hash)
+      const metadata = path.join(directory, BUILD_METADATA)
+      const cached = yield* this.runtimePromise(
+        'readBuildMetadata',
+        async () => {
+          const value = await fs.readFile(metadata, 'utf8')
+          // SAFETY: This module writes the cache metadata with a hash field.
+          return (JSON.parse(value) as { hash?: string }).hash === hash
+        }
+      ).pipe(Effect.orElseSucceed(() => false))
+      if (cached) {
+        return { hash, directory }
+      }
+
+      const existing = this.builds.get(hash)
+      if (existing) {
+        return { hash, directory: yield* Deferred.await(existing) }
+      }
+
+      const candidate = yield* Deferred.make<string, WebPanelRuntimeError>()
+      const pending = yield* Effect.sync(() => {
+        const winner = this.builds.get(hash)
+        if (winner) {
+          return winner
+        }
+
+        this.builds.set(hash, candidate)
+        return candidate
+      })
+      if (pending !== candidate) {
+        return { hash, directory: yield* Deferred.await(pending) }
+      }
+
+      const buildEffect = this.runtimePromise('build', async () => {
         await fs.mkdir(parent, { recursive: true, mode: 0o700 })
         const temporary = path.join(
           parent,
@@ -285,9 +325,7 @@ export class WebPanelViteRuntime {
             root: await fs.realpath(source.root),
             packageRoot: await fs.realpath(source.packageRoot)
           }
-          await trace('treeport.web_panel.runtime.build', () =>
-            build(this.viteConfig(buildSource, './', { outDir: temporary }))
-          )
+          await build(this.viteConfig(buildSource, './', { outDir: temporary }))
           await fs.writeFile(
             path.join(temporary, BUILD_METADATA),
             `${JSON.stringify({ hash, compilerAbi: COMPILER_ABI })}\n`
@@ -302,23 +340,21 @@ export class WebPanelViteRuntime {
         } finally {
           await fs.rm(temporary, { recursive: true, force: true })
         }
-      })()
-      this.builds.set(hash, pending)
-      void pending
-        .finally(() => this.builds.delete(hash))
-        .catch(() => undefined)
-    }
-
-    return {
-      hash,
-      directory: await trace(
-        'treeport.web_panel.runtime.build_wait',
-        () => pending!,
-        {
-          'treeport.web_panel.build_pending': buildPending
-        }
+      })
+      yield* Effect.uninterruptible(
+        Effect.exit(buildEffect).pipe(
+          Effect.flatMap((exit) => Deferred.done(candidate, exit)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (this.builds.get(hash) === candidate) {
+                this.builds.delete(hash)
+              }
+            })
+          )
+        )
       )
-    }
+      return { hash, directory: yield* Deferred.await(candidate) }
+    })
   }
 
   private errorPage(source: ResolvedWebPanelSource, cause: unknown): string {
@@ -335,112 +371,154 @@ export class WebPanelViteRuntime {
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Panel build failed</title><style>body{font-family:system-ui,sans-serif;margin:2rem;line-height:1.5}pre{white-space:pre-wrap;background:#f4f4f5;padding:1rem;border-radius:.5rem}</style></head><body><h1>Web panel could not be compiled</h1><p><strong>${escapeHtml(source.definitionId)}</strong>${source.packageSource ? ` from ${escapeHtml(source.packageSource)}` : ''}</p><p>Stage: ${stage}</p><pre>${escapeHtml(diagnostic)}</pre><p>For a local panel package, install its <code>node_modules</code>. Put browser runtime imports in <code>dependencies</code>, not <code>devDependencies</code>.</p></body></html>`
   }
 
-  private async developmentServer(
-    source: ResolvedWebPanelSource,
-    trace: PromiseSpan
-  ): Promise<{
-    base: string
-    server: ViteDevServer
-  }> {
-    const canonical = await fs.realpath(source.root)
-    const key = crypto
-      .createHash('sha256')
-      .update(canonical)
-      .update(source.allowNetworkRequests ? ':network' : ':isolated')
-      .digest('hex')
-      .slice(0, 24)
-    const existing = this.developmentServers.get(key)
-    if (existing) {
-      return existing
-    }
-
-    if (!this.httpServer) {
-      throw new Error('Treeport development panel server is not attached')
-    }
-
-    const base = `/api/web-panel-dev/${key}/`
-    const developmentSource = {
-      ...source,
-      root: canonical,
-      packageRoot: await fs.realpath(source.packageRoot)
-    }
-    const previousUpgradeListeners = new Set(
-      this.httpServer.listeners('upgrade')
-    )
-    const server = await trace('treeport.web_panel.runtime.vite_start', () =>
-      createServer(
-        this.viteConfig(developmentSource, base, { server: this.httpServer! })
+  private developmentServer(
+    source: ResolvedWebPanelSource
+  ): Effect.Effect<DevelopmentServerEntry, WebPanelRuntimeError> {
+    return Effect.gen(this, function* () {
+      const canonical = yield* this.runtimePromise(
+        'canonicalizePanelRoot',
+        () => fs.realpath(source.root)
       )
-    )
-    const addedUpgradeListeners = this.httpServer
-      .listeners('upgrade')
-      .filter((listener) => !previousUpgradeListeners.has(listener))
-    if (addedUpgradeListeners.length !== 1) {
-      await server.close()
-      throw new Error('Web panel Vite did not register one HMR upgrade handler')
-    }
+      const key = crypto
+        .createHash('sha256')
+        .update(canonical)
+        .update(source.allowNetworkRequests ? ':network' : ':isolated')
+        .digest('hex')
+        .slice(0, 24)
+      const existing = this.developmentServers.get(key)
+      if (existing) {
+        return existing
+      }
 
-    // SAFETY: Vite registered this listener on Node's upgrade event above.
-    const upgrade = addedUpgradeListeners[0] as (
-      request: IncomingMessage,
-      socket: Duplex,
-      head: Buffer
-    ) => void
-    this.httpServer.removeListener('upgrade', upgrade)
-    const created = {
-      base,
-      server,
-      allowNetworkRequests: source.allowNetworkRequests,
-      upgrade
-    }
-    this.developmentServers.set(key, created)
-    return created
+      const pendingExisting = this.developmentServerCreations.get(key)
+      if (pendingExisting) {
+        return yield* Deferred.await(pendingExisting)
+      }
+
+      const candidate = yield* Deferred.make<
+        DevelopmentServerEntry,
+        WebPanelRuntimeError
+      >()
+      const pending = yield* Effect.sync(() => {
+        const winner = this.developmentServerCreations.get(key)
+        if (winner) {
+          return winner
+        }
+
+        this.developmentServerCreations.set(key, candidate)
+        return candidate
+      })
+      if (pending !== candidate) {
+        return yield* Deferred.await(pending)
+      }
+
+      const httpServer = this.httpServer
+      const create = httpServer
+        ? this.runtimePromise('createDevelopmentServer', async () => {
+            const base = `/api/web-panel-dev/${key}/`
+            const developmentSource = {
+              ...source,
+              root: canonical,
+              packageRoot: await fs.realpath(source.packageRoot)
+            }
+            const previousUpgradeListeners = new Set(
+              httpServer.listeners('upgrade')
+            )
+            const server = await createServer(
+              this.viteConfig(developmentSource, base, { server: httpServer })
+            )
+            const addedUpgradeListeners = httpServer
+              .listeners('upgrade')
+              .filter((listener) => !previousUpgradeListeners.has(listener))
+            if (addedUpgradeListeners.length !== 1) {
+              await server.close()
+              throw new Error(
+                'Web panel Vite did not register one HMR upgrade handler'
+              )
+            }
+
+            // SAFETY: Vite registered this listener on Node's upgrade event above.
+            const upgrade = addedUpgradeListeners[0] as (
+              request: IncomingMessage,
+              socket: Duplex,
+              head: Buffer
+            ) => void
+            httpServer.removeListener('upgrade', upgrade)
+            return {
+              base,
+              server,
+              allowNetworkRequests: source.allowNetworkRequests,
+              upgrade
+            }
+          })
+        : Effect.fail(
+            new WebPanelRuntimeError(
+              'createDevelopmentServer',
+              new Error('Treeport development panel server is not attached')
+            )
+          )
+      return yield* Effect.uninterruptible(
+        Effect.gen(this, function* () {
+          const exit = yield* Effect.exit(create)
+          if (exit._tag === 'Success') {
+            this.developmentServers.set(key, exit.value)
+          }
+
+          yield* Deferred.done(candidate, exit)
+          this.developmentServerCreations.delete(key)
+          return yield* Deferred.await(candidate)
+        })
+      )
+    })
   }
 
-  async resolve(
+  private resolveEffect(
     source: ResolvedWebPanelSource,
     requestedPath: string,
-    logicalBase: string,
-    trace: PromiseSpan = untracedPromiseSpan
-  ): Promise<WebPanelAssetResolution> {
-    try {
+    logicalBase: string
+  ): Effect.Effect<
+    WebPanelAssetResolution,
+    DomainError<unknown> | WebPanelRuntimeError
+  > {
+    return Effect.gen(this, function* () {
       if (requestedPath && !requestedPath.startsWith(IMMUTABLE_PREFIX)) {
         const candidate = path.resolve(source.root, requestedPath)
         if (!isWithin(candidate, path.resolve(source.root))) {
-          throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+          return yield* Effect.fail(
+            new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+          )
         }
 
-        const real = await fs.realpath(candidate).catch(() => null)
-        const panelRoot = await fs.realpath(source.root)
+        const real = yield* this.runtimePromise('canonicalizeAsset', () =>
+          fs.realpath(candidate)
+        ).pipe(Effect.orElseSucceed(() => null))
+        const panelRoot = yield* this.runtimePromise(
+          'canonicalizePanelRoot',
+          () => fs.realpath(source.root)
+        )
         if (real && !isWithin(real, panelRoot)) {
-          throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+          return yield* Effect.fail(
+            new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+          )
         }
       }
 
       if (source.development) {
-        const development = await trace(
-          'treeport.web_panel.runtime.development_server',
-          () => this.developmentServer(source, trace)
-        )
-        const relative = requestedPath || source.entry
-
+        const development = yield* this.developmentServer(source)
         return {
-          kind: 'redirect',
-          location: `${development.base}${relative}`,
-          development: true,
+          kind: 'redirect' as const,
+          location: `${development.base}${requestedPath || source.entry}`,
+          development: true as const,
           allowNetworkRequests: source.allowNetworkRequests
         }
       }
 
-      const immutable = requestedPath.startsWith(IMMUTABLE_PREFIX)
-      if (!immutable) {
-        const compiled = await trace('treeport.web_panel.runtime.compile', () =>
-          this.compiledDirectory(source, trace)
-        )
+      if (!requestedPath.startsWith(IMMUTABLE_PREFIX)) {
+        const compiled = yield* this.compiledDirectory(source)
         return {
-          kind: 'redirect',
+          kind: 'redirect' as const,
           location: `${logicalBase}${IMMUTABLE_PREFIX}${compiled.hash}/${requestedPath || source.entry}`,
-          development: false,
+          development: false as const,
           allowNetworkRequests: source.allowNetworkRequests
         }
       }
@@ -451,7 +529,9 @@ export class WebPanelViteRuntime {
         !/^[a-f0-9]{64}$/u.test(hash ?? '') ||
         segments.length === 0
       ) {
-        throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+        return yield* Effect.fail(
+          new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+        )
       }
 
       const directory = path.join(
@@ -460,49 +540,57 @@ export class WebPanelViteRuntime {
         COMPILER_ABI,
         hash!
       )
-      const canonicalDirectory = await fs.realpath(directory).catch(() => null)
+      const canonicalDirectory = yield* this.runtimePromise(
+        'canonicalizeBuildDirectory',
+        () => fs.realpath(directory)
+      ).pipe(Effect.orElseSucceed(() => null))
       if (!canonicalDirectory) {
-        throw new DomainError(
-          'WEB_PANEL_ASSET_NOT_FOUND',
-          'Web panel asset not found',
-          404
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_ASSET_NOT_FOUND',
+            'Web panel asset not found',
+            404
+          )
         )
       }
 
       const candidate = path.resolve(directory, ...segments)
       if (!isWithin(candidate, directory)) {
-        throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+        return yield* Effect.fail(
+          new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+        )
       }
 
-      const real = await fs.realpath(candidate).catch(() => null)
+      const real = yield* this.runtimePromise('canonicalizeAsset', () =>
+        fs.realpath(candidate)
+      ).pipe(Effect.orElseSucceed(() => null))
       if (!real || !isWithin(real, canonicalDirectory)) {
-        throw new DomainError(
-          'WEB_PANEL_ASSET_NOT_FOUND',
-          'Web panel asset not found',
-          404
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_ASSET_NOT_FOUND',
+            'Web panel asset not found',
+            404
+          )
         )
       }
 
       return {
-        kind: 'asset',
+        kind: 'asset' as const,
         path: real,
-        immutable: true,
-        development: false,
+        immutable: true as const,
+        development: false as const,
         allowNetworkRequests: source.allowNetworkRequests
       }
-    } catch (error) {
-      if (error instanceof DomainError) {
-        throw error
-      }
-
-      console.error(`Failed to compile web panel ${source.definitionId}`, error)
-      return {
-        kind: 'error',
-        html: this.errorPage(source, error),
-        development: source.development,
-        allowNetworkRequests: source.allowNetworkRequests
-      }
-    }
+    }).pipe(
+      Effect.catchTag('WebPanelRuntimeError', (error) =>
+        Effect.succeed({
+          kind: 'error' as const,
+          html: this.errorPage(source, error.cause),
+          development: source.development,
+          allowNetworkRequests: source.allowNetworkRequests
+        })
+      )
+    )
   }
 
   handleDevelopmentRequest(
@@ -571,25 +659,94 @@ export class WebPanelViteRuntime {
     return true
   }
 
-  async disposeDevelopmentServers(): Promise<void> {
-    const servers = [...this.developmentServers.values()]
-    this.developmentServers.clear()
-    await Promise.all(
-      servers.map(async ({ server }) => {
-        await server.waitForRequestsIdle()
-        // Vite's dependency scan can create an optimizer after close() snapshots
-        // the work to cancel. Let scans settle before closing their optimizers.
-        await Promise.all(
-          Object.values(server.environments).map(
-            (environment) => environment.depsOptimizer?.scanProcessing
-          )
-        )
-        await server.close()
-      })
+  resolve(
+    source: ResolvedWebPanelSource,
+    requestedPath: string,
+    logicalBase: string
+  ): Effect.Effect<
+    WebPanelAssetResolution,
+    DomainError<unknown> | WebPanelRuntimeError
+  > {
+    return this.resolveEffect(source, requestedPath, logicalBase).pipe(
+      Effect.tap((result) =>
+        result.kind === 'error'
+          ? Effect.logError('Failed to compile web panel').pipe(
+              Effect.annotateLogs({ definitionId: source.definitionId })
+            )
+          : Effect.void
+      ),
+      Effect.withSpan('treeport.web_panel.runtime.resolve')
     )
   }
 
-  async dispose(): Promise<void> {
-    await this.disposeDevelopmentServers()
+  disposeDevelopmentServers(): Effect.Effect<void, WebPanelRuntimeError> {
+    return Effect.gen(this, function* () {
+      const pending = [...this.developmentServerCreations.values()]
+      yield* Effect.all(
+        pending.map((creation) => Effect.exit(Deferred.await(creation))),
+        { concurrency: 'unbounded' }
+      )
+      const servers = yield* Effect.sync(() => {
+        const active = [...this.developmentServers.values()]
+        this.developmentServers.clear()
+        return active
+      })
+      yield* this.runtimePromise('disposeDevelopmentServers', () =>
+        Promise.all(
+          servers.map(async ({ server }) => {
+            await server.waitForRequestsIdle()
+            // Vite's dependency scan can create an optimizer after close() snapshots
+            // the work to cancel. Let scans settle before closing their optimizers.
+            await Promise.all(
+              Object.values(server.environments).map(
+                (environment) => environment.depsOptimizer?.scanProcessing
+              )
+            )
+            await server.close()
+          })
+        ).then(() => undefined)
+      )
+    })
   }
+
+  dispose(): Effect.Effect<void, WebPanelRuntimeError> {
+    return Effect.all(
+      [...this.builds.values()].map((pending) =>
+        Effect.exit(Deferred.await(pending))
+      ),
+      { concurrency: 'unbounded', discard: true }
+    ).pipe(Effect.zipRight(this.disposeDevelopmentServers()))
+  }
+}
+
+export class WebPanelRuntimeError extends Data.TaggedError(
+  'WebPanelRuntimeError'
+)<{
+  readonly operation: string
+  readonly cause: unknown
+  readonly message: string
+}> {
+  constructor(operation: string, cause: unknown) {
+    super({
+      operation,
+      cause,
+      message: cause instanceof Error ? cause.message : String(cause)
+    })
+  }
+}
+
+export class WebPanelRuntimePort extends Context.Tag(
+  'treeport/WebPanelRuntime'
+)<WebPanelRuntimePort, WebPanelViteRuntime>() {}
+
+export function WebPanelRuntimeLayer(
+  config: AppConfig
+): Layer.Layer<WebPanelRuntimePort> {
+  return Layer.scoped(
+    WebPanelRuntimePort,
+    Effect.acquireRelease(
+      Effect.sync(() => new WebPanelViteRuntime(config)),
+      (runtime) => runtime.dispose().pipe(Effect.orDie)
+    )
+  )
 }

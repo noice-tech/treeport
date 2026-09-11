@@ -29,10 +29,10 @@ import {
 import { MutationLocks } from '../infrastructure/mutation-locks'
 import {
   ConfigPort,
-  DatabasePort,
   EventBusPort,
   TerminalHostPort
 } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
 import { ProjectStore } from '../project/project-store'
 import { currentTraceContext } from '../../../tracing'
 import { TerminalState } from './terminal-state'
@@ -130,18 +130,20 @@ export class TerminalService {
         }
       }
 
-      const storedOrder = yield* Effect.promise(() =>
-        database.db
-          .select()
-          .from(workspaceItemOrders)
-          .where(
-            and(
-              eq(workspaceItemOrders.worktreeId, worktree.id),
-              eq(workspaceItemOrders.surface, 'terminal')
+      const storedOrder = yield* database
+        .execute('terminal.service.131', (db) =>
+          db
+            .select()
+            .from(workspaceItemOrders)
+            .where(
+              and(
+                eq(workspaceItemOrders.worktreeId, worktree.id),
+                eq(workspaceItemOrders.surface, 'terminal')
+              )
             )
-          )
-          .orderBy(asc(workspaceItemOrders.position))
-      )
+            .orderBy(asc(workspaceItemOrders.position))
+        )
+        .pipe(Effect.orDie)
       const positionById = new Map(
         storedOrder.map((item) => [item.itemId, item.position])
       )
@@ -234,26 +236,28 @@ export class TerminalService {
         )
       }
 
-      yield* Effect.promise(() =>
-        database.db.transaction(async (tx) => {
-          await tx
-            .delete(workspaceItemOrders)
-            .where(
-              and(
-                eq(workspaceItemOrders.worktreeId, worktreeId),
-                eq(workspaceItemOrders.surface, 'terminal')
+      yield* database
+        .execute('terminal.service.235', (db) =>
+          db.transaction(async (tx) => {
+            await tx
+              .delete(workspaceItemOrders)
+              .where(
+                and(
+                  eq(workspaceItemOrders.worktreeId, worktreeId),
+                  eq(workspaceItemOrders.surface, 'terminal')
+                )
               )
+            await tx.insert(workspaceItemOrders).values(
+              terminalIds.map((itemId, position) => ({
+                worktreeId,
+                surface: 'terminal' as const,
+                itemId,
+                position
+              }))
             )
-          await tx.insert(workspaceItemOrders).values(
-            terminalIds.map((itemId, position) => ({
-              worktreeId,
-              surface: 'terminal' as const,
-              itemId,
-              position
-            }))
-          )
-        })
-      )
+          })
+        )
+        .pipe(Effect.orDie)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('worktree.updated', { worktreeId })

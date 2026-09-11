@@ -9,11 +9,8 @@ import * as Scope from 'effect/Scope'
 import type { ViteDevServer } from 'vite'
 import {
   checkRuntimePrerequisites,
-  GhAdapter,
-  GitAdapter,
   loadConfig,
   SpawnCommandRunner,
-  openDatabase,
   TreeportService
 } from './core/index'
 import { createApp } from './app'
@@ -41,30 +38,15 @@ async function main(): Promise<void> {
 
   try {
     const ownership = await Effect.runPromise(
-      Scope.extend(
-        Effect.acquireRelease(
-          Effect.promise(() => acquireDaemonOwnership(config)),
-          (owned) => Effect.promise(() => owned.release())
-        ),
-        resourceScope
-      )
+      Scope.extend(acquireDaemonOwnership(config), resourceScope)
     )
-    const prerequisites = await checkRuntimePrerequisites(config)
     const runner = new SpawnCommandRunner()
-    const database = await Effect.runPromise(
-      Scope.extend(
-        Effect.acquireRelease(
-          Effect.promise(() => openDatabase(config.databasePath)),
-          (opened) => Effect.sync(() => opened.close())
-        ),
-        resourceScope
-      )
+    const prerequisites = await Effect.runPromise(
+      checkRuntimePrerequisites(config, runner)
     )
-    const git = new GitAdapter(runner, config.gitPath)
     const launcherPath = fileURLToPath(
       new URL('./core/launcher.js', import.meta.url)
     )
-    const gh = new GhAdapter(runner, config.ghPath)
     const terminalHost = await Effect.runPromise(
       Scope.extend(
         connectOrStartTerminalHost({
@@ -86,29 +68,25 @@ async function main(): Promise<void> {
       Scope.extend(
         Effect.acquireRelease(
           Effect.sync(
-            () =>
-              new TreeportService({
-                config,
-                database,
-                runner,
-                git,
-                terminalHost,
-                gh
-              })
+            () => new TreeportService({ config, runner, terminalHost })
           ),
           (application) =>
-            Effect.promise(() =>
+            Effect.tryPromise(() =>
               application.runEffect(application.drainMutations())
-            ).pipe(
-              Effect.ensuring(
-                Effect.promise(() => application.disposeRuntime())
-              )
             )
+              .pipe(Effect.orDie)
+              .pipe(
+                Effect.ensuring(
+                  Effect.tryPromise(() => application.disposeRuntime()).pipe(
+                    Effect.orDie
+                  )
+                )
+              )
         ).pipe(
           Effect.tap((application) =>
-            Effect.promise(() =>
+            Effect.tryPromise(() =>
               application.runEffect(application.initialize())
-            )
+            ).pipe(Effect.orDie)
           )
         ),
         resourceScope
@@ -133,7 +111,8 @@ async function main(): Promise<void> {
       Scope.extend(
         Effect.acquireRelease(
           Effect.sync(() => new BrowserSessionManager(service, config)),
-          (sessions) => Effect.promise(() => sessions.dispose())
+          (sessions) =>
+            Effect.tryPromise(() => sessions.dispose()).pipe(Effect.orDie)
         ),
         resourceScope
       )
@@ -255,7 +234,7 @@ async function main(): Promise<void> {
       vite = await Effect.runPromise(
         Scope.extend(
           Effect.acquireRelease(
-            Effect.promise(() =>
+            Effect.tryPromise(() =>
               createViteServer({
                 configFile: path.resolve(
                   path.dirname(fileURLToPath(import.meta.url)),
@@ -267,9 +246,11 @@ async function main(): Promise<void> {
                   hmr: { server, path: '/@vite-hmr' }
                 }
               })
-            ),
+            ).pipe(Effect.orDie),
             (developmentServer) =>
-              Effect.promise(() => developmentServer.close())
+              Effect.tryPromise(() => developmentServer.close()).pipe(
+                Effect.orDie
+              )
           ),
           resourceScope
         )
@@ -303,7 +284,8 @@ async function main(): Promise<void> {
       Scope.extend(
         Effect.acquireRelease(
           Effect.sync(() => createSocketServer(socketDependencies)),
-          (sockets) => Effect.promise(() => sockets.close())
+          (sockets) =>
+            Effect.tryPromise(() => sockets.close()).pipe(Effect.orDie)
         ),
         resourceScope
       )
@@ -315,7 +297,7 @@ async function main(): Promise<void> {
         resolve()
       })
     })
-    await ownership.publish()
+    await Effect.runPromise(ownership.publish())
     await service.runEffect(
       Effect.flatMap(ApplicationDaemons, (daemons) =>
         daemons.fork(applicationUpdate.polling)

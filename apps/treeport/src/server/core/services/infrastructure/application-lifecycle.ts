@@ -20,7 +20,8 @@ import {
 } from '../domain-services'
 import { PackageMutations } from '../package/package-mutations'
 import { ProjectStore } from '../project/project-store'
-import { DatabasePort, PackageSystemPort, TerminalHostPort } from './ports'
+import { PackageSystemPort, TerminalHostPort } from './ports'
+import { DatabasePort } from '../../database'
 
 const now = (): string => new Date().toISOString()
 
@@ -38,25 +39,28 @@ export class ApplicationLifecycle {
       const worktreeMutations = yield* WorktreeMutations
 
       yield* terminalHost.initialize().pipe(Effect.orDie)
-      const interrupted = yield* Effect.promise(() =>
-        database.db.all<{
-          id: string
-          kind: OperationRecord['kind']
-        }>(sql`
+      const interrupted = yield* database
+        .execute('application.lifecycle.41', (db) =>
+          db.all<{
+            id: string
+            kind: OperationRecord['kind']
+          }>(sql`
           SELECT id, kind
           FROM operations
           WHERE status IN ('pending','running')
         `)
-      )
+        )
+        .pipe(Effect.orDie)
       const timestamp = now()
-      yield* Effect.promise(() =>
-        database.db.transaction(async (tx) => {
-          for (const operation of interrupted) {
-            if (operation.kind === 'remove') {
-              continue
-            }
+      yield* database
+        .execute('application.lifecycle.52', (db) =>
+          db.transaction(async (tx) => {
+            for (const operation of interrupted) {
+              if (operation.kind === 'remove') {
+                continue
+              }
 
-            await tx.run(sql`
+              await tx.run(sql`
               UPDATE operations
               SET status = 'failed',
                   error = ${
@@ -67,9 +71,10 @@ export class ApplicationLifecycle {
                   updated_at = ${timestamp}
               WHERE id = ${operation.id}
             `)
-          }
-        })
-      )
+            }
+          })
+        )
+        .pipe(Effect.orDie)
       yield* observations.reconcile()
 
       for (const interruptedOperation of interrupted) {

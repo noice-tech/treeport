@@ -9,12 +9,9 @@ import { webPanelPermissionGrants } from '../../database-schema'
 import type { DomainError } from '../../domain'
 import { PanelOperations, ProjectSnapshotOperations } from '../domain-services'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
-import {
-  DatabasePort,
-  EventBusPort,
-  PackageSystemPort,
-  WebPanelRuntimePort
-} from '../infrastructure/ports'
+import { EventBusPort, PackageSystemPort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
+import { WebPanelRuntimePort } from '../../web-panel-vite-runtime'
 import { ProjectStore } from '../project/project-store'
 
 export class PackageService {
@@ -55,7 +52,7 @@ export class PackageService {
       }
 
       const result = yield* packages.install(source, projectId)
-      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
       return result
     })
@@ -115,14 +112,16 @@ export class PackageService {
       const after = yield* collectPermissionSourceKeys
       for (const sourceKey of before) {
         if (!after.has(sourceKey)) {
-          yield* Effect.promise(() =>
-            database.db
-              .delete(webPanelPermissionGrants)
-              .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
-          )
+          yield* database
+            .execute('package.service.118', (db) =>
+              db
+                .delete(webPanelPermissionGrants)
+                .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+            )
+            .pipe(Effect.orDie)
         }
       }
-      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
       return result
     })
@@ -144,7 +143,7 @@ export class PackageService {
       const projects = yield* projectStore.storedProjects()
       yield* Effect.sync(() => packages.syncProjects(projects))
       const results = yield* packages.update(source)
-      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged()
       return results
     })
@@ -171,7 +170,7 @@ export class PackageService {
       }
 
       const result = yield* packages.reload(projectId)
-      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
       return result
     })

@@ -3,11 +3,14 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import type { AppConfig } from './config'
 import {
   WebPanelViteRuntime,
+  WebPanelRuntimeLayer,
+  WebPanelRuntimePort,
   type ResolvedWebPanelSource
 } from './web-panel-vite-runtime'
 
@@ -124,8 +127,8 @@ describe('WebPanelViteRuntime', () => {
     const logicalBase = '/api/web-panels/panel/assets/'
 
     const firstRequests = await Promise.all([
-      runtime.resolve(source, '', logicalBase),
-      runtime.resolve(source, '', logicalBase)
+      Effect.runPromise(runtime.resolve(source, '', logicalBase)),
+      Effect.runPromise(runtime.resolve(source, '', logicalBase))
     ])
     expect(firstRequests[0]).toMatchObject({
       kind: 'redirect',
@@ -137,7 +140,9 @@ describe('WebPanelViteRuntime', () => {
     }
 
     const firstPath = immutablePath(firstRequests[0].location)
-    const document = await runtime.resolve(source, firstPath, logicalBase)
+    const document = await Effect.runPromise(
+      runtime.resolve(source, firstPath, logicalBase)
+    )
     expect(document).toMatchObject({ kind: 'asset', immutable: true })
     if (document.kind !== 'asset') {
       throw new Error('expected compiled document')
@@ -146,10 +151,12 @@ describe('WebPanelViteRuntime', () => {
     const html = await fs.readFile(document.path, 'utf8')
     const script = /src="\.\/(assets\/[^"]+\.js)"/u.exec(html)?.[1]
     expect(script).toBeTruthy()
-    const compiledScript = await runtime.resolve(
-      source,
-      `${firstPath.slice(0, firstPath.lastIndexOf('/') + 1)}${script}`,
-      logicalBase
+    const compiledScript = await Effect.runPromise(
+      runtime.resolve(
+        source,
+        `${firstPath.slice(0, firstPath.lastIndexOf('/') + 1)}${script}`,
+        logicalBase
+      )
     )
     if (compiledScript.kind !== 'asset') {
       throw new Error('expected compiled script')
@@ -159,26 +166,30 @@ describe('WebPanelViteRuntime', () => {
     expect(compiledSource).toContain('dependency loaded')
     expect(compiledSource).toContain('treeport-panel-v1')
 
-    expect(await runtime.resolve(source, '', logicalBase)).toEqual(
-      firstRequests[0]
-    )
+    expect(
+      await Effect.runPromise(runtime.resolve(source, '', logicalBase))
+    ).toEqual(firstRequests[0])
     await fs.writeFile(
       path.join(panelRoot, 'panel.tsx'),
       "document.querySelector('#root').textContent = 'source changed'\n"
     )
-    const changed = await runtime.resolve(source, '', logicalBase)
+    const changed = await Effect.runPromise(
+      runtime.resolve(source, '', logicalBase)
+    )
     expect(changed).toMatchObject({ kind: 'redirect' })
     expect(changed).not.toEqual(firstRequests[0])
-    expect(await runtime.resolve(source, firstPath, logicalBase)).toMatchObject(
-      {
-        kind: 'asset',
-        immutable: true
-      }
-    )
+    expect(
+      await Effect.runPromise(runtime.resolve(source, firstPath, logicalBase))
+    ).toMatchObject({
+      kind: 'asset',
+      immutable: true
+    })
 
-    await expect(
-      runtime.resolve(source, '../../outside.js', logicalBase)
-    ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
+    expect(
+      await Effect.runPromise(
+        Effect.flip(runtime.resolve(source, '../../outside.js', logicalBase))
+      )
+    ).toMatchObject({ code: 'INVALID_ASSET_PATH' })
   })
 
   it('serves local source panels through Vite with sandbox-compatible headers', async () => {
@@ -201,10 +212,12 @@ describe('WebPanelViteRuntime', () => {
         throw new Error('expected HTTP listener address')
       }
 
-      const resolution = await runtime.resolve(
-        { ...source, development: true, allowNetworkRequests: true },
-        '',
-        '/api/web-panels/panel/assets/'
+      const resolution = await Effect.runPromise(
+        runtime.resolve(
+          { ...source, development: true, allowNetworkRequests: true },
+          '',
+          '/api/web-panels/panel/assets/'
+        )
       )
       if (resolution.kind !== 'redirect') {
         throw new Error('expected development redirect')
@@ -263,7 +276,57 @@ describe('WebPanelViteRuntime', () => {
       expect(untrustedReferrerPolicy).toContain(browserOrigin)
       expect(untrustedReferrerPolicy).not.toContain('attacker.example')
     } finally {
-      await runtime.dispose()
+      await Effect.runPromise(runtime.dispose())
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  })
+
+  it('closes development servers when its layer scope closes', async () => {
+    const { config, source } = await fixture()
+    let runtime: WebPanelViteRuntime | null = null
+    let location = ''
+    const server = http.createServer((request, response) => {
+      if (!runtime) {
+        response.statusCode = 503
+        response.end()
+        return
+      }
+
+      runtime.handleDevelopmentRequest(request, response, () => {
+        response.statusCode = 404
+        response.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+
+    try {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            runtime = yield* WebPanelRuntimePort
+            runtime.attachHttpServer(server)
+            const resolution = yield* runtime.resolve(
+              { ...source, development: true },
+              '',
+              '/api/web-panels/panel/assets/'
+            )
+            if (resolution.kind !== 'redirect') {
+              throw new Error('expected development redirect')
+            }
+
+            location = resolution.location
+          }).pipe(Effect.provide(WebPanelRuntimeLayer(config)))
+        )
+      )
+
+      const address = z.object({ port: z.number() }).parse(server.address())
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}${location}`
+      )
+      expect(response.status).toBe(404)
+    } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve()))
       )
@@ -276,10 +339,12 @@ describe('WebPanelViteRuntime', () => {
       path.join(panelRoot, 'panel.tsx'),
       "import missing from 'not-installed'; document.body.textContent = missing\n"
     )
-    const result = await new WebPanelViteRuntime(config).resolve(
-      source,
-      '',
-      '/api/web-panels/panel/assets/'
+    const result = await Effect.runPromise(
+      new WebPanelViteRuntime(config).resolve(
+        source,
+        '',
+        '/api/web-panels/panel/assets/'
+      )
     )
     expect(result).toMatchObject({ kind: 'error', development: false })
     if (result.kind !== 'error') {

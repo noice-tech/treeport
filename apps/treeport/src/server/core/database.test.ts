@@ -10,7 +10,7 @@ import {
   mapOperation,
   mapProject,
   mapTerminalPreset,
-  openDatabase,
+  openDatabaseForTest,
   type TreeportDatabase
 } from './database'
 import {
@@ -91,7 +91,9 @@ describe('SQLite migration and catalog ordering', () => {
       path.join(os.tmpdir(), 'treeport-db-#?%-')
     )
     directories.push(directory)
-    const database = await openDatabase(path.join(directory, 'metadata.db'))
+    const database = await openDatabaseForTest(
+      path.join(directory, 'metadata.db')
+    )
     databases.push(database)
 
     expect(
@@ -159,7 +161,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const database = await openDatabase(filePath)
+    const database = await openDatabaseForTest(filePath)
     await database.db.insert(projects).values({
       id: 'p_bells',
       name: 'Bells',
@@ -189,7 +191,7 @@ describe('SQLite migration and catalog ordering', () => {
     })
     database.close()
 
-    const reopened = await openDatabase(filePath)
+    const reopened = await openDatabaseForTest(filePath)
     databases.push(reopened)
     expect(await reopened.db.select().from(terminalBellStates)).toEqual([
       {
@@ -208,7 +210,9 @@ describe('SQLite migration and catalog ordering', () => {
   it('keeps the main worktree first and linked worktrees in creation order', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
     directories.push(directory)
-    const database = await openDatabase(path.join(directory, 'metadata.db'))
+    const database = await openDatabaseForTest(
+      path.join(directory, 'metadata.db')
+    )
     databases.push(database)
     await database.db.insert(projects).values({
       id: 'p_order',
@@ -262,7 +266,9 @@ describe('SQLite migration and catalog ordering', () => {
       path.join(os.tmpdir(), 'treeport-panels-')
     )
     directories.push(directory)
-    const database = await openDatabase(path.join(directory, 'metadata.db'))
+    const database = await openDatabaseForTest(
+      path.join(directory, 'metadata.db')
+    )
     databases.push(database)
     await database.db.insert(projects).values({
       id: 'p',
@@ -377,7 +383,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = await openDatabase(filePath)
+    const initial = await openDatabaseForTest(filePath)
     await initial.db.insert(projects).values({
       id: 'p_existing',
       name: 'Existing',
@@ -441,7 +447,7 @@ describe('SQLite migration and catalog ordering', () => {
     })
     initial.close()
 
-    const reopened = await openDatabase(filePath)
+    const reopened = await openDatabaseForTest(filePath)
     databases.push(reopened)
     const [projectRow] = await reopened.db
       .select()
@@ -522,7 +528,7 @@ describe('SQLite migration and catalog ordering', () => {
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
-    const oldDatabase = await openDatabase(filePath, {
+    const oldDatabase = await openDatabaseForTest(filePath, {
       migrationsFolder: oldMigrations
     })
     await oldDatabase.db.run(sql`
@@ -557,7 +563,7 @@ describe('SQLite migration and catalog ordering', () => {
     `)
     oldDatabase.close()
 
-    const migrated = await openDatabase(filePath)
+    const migrated = await openDatabaseForTest(filePath)
     databases.push(migrated)
     expect(
       await migrated.db
@@ -595,7 +601,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = await openDatabase(filePath)
+    const initial = await openDatabaseForTest(filePath)
     await initial.db.insert(terminalPresets).values({
       id: 'preset_legacy',
       name: 'Legacy preset',
@@ -656,7 +662,7 @@ describe('SQLite migration and catalog ordering', () => {
     })
     initial.close()
 
-    const reopened = await openDatabase(filePath)
+    const reopened = await openDatabaseForTest(filePath)
     databases.push(reopened)
     expect(
       (await reopened.db.select().from(terminalPresets)).map(mapTerminalPreset)
@@ -696,7 +702,7 @@ describe('SQLite migration and catalog ordering', () => {
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
-    const oldDatabase = await openDatabase(filePath, {
+    const oldDatabase = await openDatabaseForTest(filePath, {
       migrationsFolder: oldMigrations
     })
     await oldDatabase.db.run(sql`
@@ -759,7 +765,7 @@ describe('SQLite migration and catalog ordering', () => {
     `)
     oldDatabase.close()
 
-    const migrated = await openDatabase(filePath)
+    const migrated = await openDatabaseForTest(filePath)
     databases.push(migrated)
     expect(
       await migrated.db
@@ -786,7 +792,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const current = await openDatabase(filePath)
+    const current = await openDatabaseForTest(filePath)
     const { supported } = (await current.db.get<{ supported: number }>(sql`
       SELECT max(created_at) AS supported FROM __drizzle_migrations
     `))!
@@ -798,7 +804,7 @@ describe('SQLite migration and catalog ordering', () => {
     current.close()
     const before = await fs.readFile(filePath)
 
-    await expect(openDatabase(filePath)).rejects.toThrow(
+    await expect(openDatabaseForTest(filePath)).rejects.toThrow(
       /newer than this binary supports.*Reinstall a newer compatible Treeport/
     )
     expect(await fs.readFile(filePath)).toEqual(before)
@@ -844,7 +850,7 @@ describe('SQLite migration and catalog ordering', () => {
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
-    const oldDatabase = await openDatabase(filePath, {
+    const oldDatabase = await openDatabaseForTest(filePath, {
       migrationsFolder: oldMigrations
     })
     await oldDatabase.db.run(sql`
@@ -867,7 +873,7 @@ describe('SQLite migration and catalog ordering', () => {
     `)
     oldDatabase.close()
 
-    const migrated = await openDatabase(filePath)
+    const migrated = await openDatabaseForTest(filePath)
     databases.push(migrated)
     expect(
       await migrated.db
@@ -900,7 +906,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = await openDatabase(filePath)
+    const initial = await openDatabaseForTest(filePath)
     await initial.db.insert(projects).values({
       id: 'p_recover',
       name: 'Recover me',
@@ -959,7 +965,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
 
     await expect(
-      openDatabase(filePath, { migrationsFolder: brokenMigrations })
+      openDatabaseForTest(filePath, { migrationsFolder: brokenMigrations })
     ).rejects.toThrow()
     const failedClient = createClient({ url: pathToFileURL(filePath).href })
     const failed = drizzle(failedClient)
@@ -980,7 +986,7 @@ describe('SQLite migration and catalog ordering', () => {
       )
     ).toEqual({ count: 0 })
     failedClient.close()
-    const reopened = await openDatabase(filePath)
+    const reopened = await openDatabaseForTest(filePath)
     databases.push(reopened)
     expect(
       await reopened.db

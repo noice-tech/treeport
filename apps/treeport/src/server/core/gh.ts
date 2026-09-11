@@ -1,6 +1,14 @@
 import type { PrInfo, PrState } from '@treeport/shared'
 import { z } from 'zod'
-import type { CommandRunner } from './command'
+import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import {
+  asEffectCommandRunner,
+  type CommandRunner,
+  type EffectCommandRunner
+} from './command'
 
 const ghPrSchema = z
   .object({
@@ -45,16 +53,32 @@ const unknownPr = (): PrInfo => ({
   refreshedAt: new Date().toISOString()
 })
 
-export class GhAdapter {
-  constructor(
-    private readonly runner: CommandRunner,
-    private readonly executable = 'gh'
-  ) {}
+class GitHubDecodeError extends Data.TaggedError('GitHubDecodeError')<{
+  readonly cause: unknown
+  readonly message: string
+}> {
+  constructor(cause: unknown) {
+    super({
+      cause,
+      message: cause instanceof Error ? cause.message : String(cause)
+    })
+  }
+}
 
-  async pullRequest(cwd: string, branch: string): Promise<PrInfo> {
-    const checkedAt = new Date().toISOString()
-    try {
-      const auth = await this.runner.run({
+export class GhAdapter {
+  private readonly runner: EffectCommandRunner
+
+  constructor(
+    runner: CommandRunner,
+    private readonly executable = 'gh'
+  ) {
+    this.runner = asEffectCommandRunner(runner)
+  }
+
+  pullRequest(cwd: string, branch: string): Effect.Effect<PrInfo> {
+    const lookup = Effect.gen(this, function* () {
+      const checkedAt = new Date().toISOString()
+      const auth = yield* this.runner.runEffect({
         executable: this.executable,
         args: ['auth', 'status'],
         cwd,
@@ -64,7 +88,7 @@ export class GhAdapter {
         return unknownPr()
       }
 
-      const result = await this.runner.run({
+      const result = yield* this.runner.runEffect({
         executable: this.executable,
         args: [
           'pr',
@@ -85,7 +109,10 @@ export class GhAdapter {
         return unknownPr()
       }
 
-      const values = z.array(ghPrSchema).parse(JSON.parse(result.stdout))
+      const values = yield* Effect.try({
+        try: () => z.array(ghPrSchema).parse(JSON.parse(result.stdout)),
+        catch: (cause) => new GitHubDecodeError(cause)
+      })
       const pr = values[0] ?? null
       return {
         state: mapPrState(pr),
@@ -96,8 +123,20 @@ export class GhAdapter {
         mergedAt: pr?.mergedAt ?? null,
         refreshedAt: checkedAt
       }
-    } catch {
-      return unknownPr()
-    }
+    })
+
+    return lookup.pipe(Effect.catchAll(() => Effect.succeed(unknownPr())))
   }
+}
+
+export class GitHubPort extends Context.Tag('treeport/GitHub')<
+  GitHubPort,
+  GhAdapter
+>() {}
+
+export function GitHubLayer(
+  runner: CommandRunner,
+  executable = 'gh'
+): Layer.Layer<GitHubPort> {
+  return Layer.succeed(GitHubPort, new GhAdapter(runner, executable))
 }

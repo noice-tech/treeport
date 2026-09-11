@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { sql } from 'drizzle-orm'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { expect, it } from 'vitest'
-import { openDatabase, type TreeportDatabase } from './database'
+import { openDatabaseForTest, type TreeportDatabase } from './database'
 import baseline from './fixtures/database-0.5.0.json' with { type: 'json' }
 
 it('preserves the published database contract through upgrade and downgrade refusal', async () => {
@@ -63,7 +63,7 @@ it('preserves the published database contract through upgrade and downgrade refu
         )
       )
     )
-    database = await openDatabase(filePath, {
+    database = await openDatabaseForTest(filePath, {
       migrationsFolder: historicalMigrations
     })
     // Seed the historical columns directly, independent of today's ORM schema.
@@ -89,7 +89,7 @@ it('preserves the published database contract through upgrade and downgrade refu
     database.close()
     database = null
 
-    database = await openDatabase(filePath)
+    database = await openDatabaseForTest(filePath)
     expect(await database.db.all(catalogQuery)).toEqual(catalog)
     expect(await database.db.all(historyQuery)).toEqual(
       migrations.map((migration) => ({
@@ -100,7 +100,7 @@ it('preserves the published database contract through upgrade and downgrade refu
     database.close()
     database = null
 
-    database = await openDatabase(filePath)
+    database = await openDatabaseForTest(filePath)
     await database.db.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
     database.close()
     database = null
@@ -108,7 +108,7 @@ it('preserves the published database contract through upgrade and downgrade refu
     // Exercise the schema-version boundary, not an npm installation or old CLI.
     const beforeDowngrade = await fs.readFile(filePath)
     await expect(
-      openDatabase(filePath, { migrationsFolder: historicalMigrations })
+      openDatabaseForTest(filePath, { migrationsFolder: historicalMigrations })
     ).rejects.toThrow(/newer than this binary supports/)
     expect(await fs.readFile(filePath)).toEqual(beforeDowngrade)
   } finally {

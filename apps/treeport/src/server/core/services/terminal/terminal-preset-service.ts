@@ -9,13 +9,10 @@ import { mapTerminalPreset } from '../../database'
 import { terminalPresets } from '../../database-schema'
 import { DomainError } from '../../domain'
 import { loadRepositoryTerminalPresets } from '../../repository-terminal-presets'
-import { loadZedTerminalPresetDefinitions } from '../../zed'
+import { Zed } from '../../zed'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
-import {
-  ConfigPort,
-  DatabasePort,
-  PackageSystemPort
-} from '../infrastructure/ports'
+import { ConfigPort, PackageSystemPort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
 import { ProjectStore } from '../project/project-store'
 
 const now = (): string => new Date().toISOString()
@@ -30,12 +27,14 @@ export class TerminalPresetService {
   > {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const rows = yield* Effect.promise(() =>
-        database.db
-          .select()
-          .from(terminalPresets)
-          .orderBy(asc(terminalPresets.createdAt), asc(terminalPresets.id))
-      )
+      const rows = yield* database
+        .execute('terminal.preset.service.33', (db) =>
+          db
+            .select()
+            .from(terminalPresets)
+            .orderBy(asc(terminalPresets.createdAt), asc(terminalPresets.id))
+        )
+        .pipe(Effect.orDie)
       return rows.map(mapTerminalPreset)
     })
   }
@@ -52,6 +51,7 @@ export class TerminalPresetService {
 
     return Effect.gen(function* () {
       const config = yield* ConfigPort
+      const zed = yield* Zed
       const packages = yield* PackageSystemPort
       const projectStore = yield* ProjectStore
       const worktree = context?.worktreeId
@@ -71,19 +71,19 @@ export class TerminalPresetService {
             listTerminalPresets(),
             packages.terminalPresetDefinitions(projectId),
             worktree && project
-              ? Effect.promise(() =>
+              ? Effect.tryPromise(() =>
                   loadRepositoryTerminalPresets(project.id, worktree.path)
-                )
+                ).pipe(Effect.orDie)
               : Effect.succeed({ definitions: [], diagnostics: [] }),
             worktree && project?.kind === 'repository'
-              ? Effect.promise(() =>
-                  loadZedTerminalPresetDefinitions({
+              ? zed
+                  .loadTerminalPresetDefinitions({
                     projectId: project.id,
                     shell: config.shell,
                     mainWorktreePath: project.mainWorktreePath,
                     worktreePath: worktree.path
                   })
-                )
+                  .pipe(Effect.orDie)
               : Effect.succeed({ definitions: [], diagnostics: [] })
           ] as const,
           { concurrency: 'unbounded' }
@@ -139,17 +139,19 @@ export class TerminalPresetService {
         createdAt: timestamp,
         updatedAt: timestamp
       }
-      yield* Effect.promise(() =>
-        database.db.insert(terminalPresets).values({
-          id: preset.id,
-          name: preset.name,
-          executable: preset.executable,
-          argsJson: JSON.stringify(preset.args),
-          closeOnSuccess: Number(preset.closeOnSuccess),
-          createdAt: preset.createdAt,
-          updatedAt: preset.updatedAt
-        })
-      )
+      yield* database
+        .execute('terminal.preset.service.142', (db) =>
+          db.insert(terminalPresets).values({
+            id: preset.id,
+            name: preset.name,
+            executable: preset.executable,
+            argsJson: JSON.stringify(preset.args),
+            closeOnSuccess: Number(preset.closeOnSuccess),
+            createdAt: preset.createdAt,
+            updatedAt: preset.updatedAt
+          })
+        )
+        .pipe(Effect.orDie)
       return preset
     })
   }
@@ -163,13 +165,15 @@ export class TerminalPresetService {
   ): Effect.Effect<TerminalPreset, DomainError<unknown>, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const [existingRow] = yield* Effect.promise(() =>
-        database.db
-          .select()
-          .from(terminalPresets)
-          .where(eq(terminalPresets.id, presetId))
-          .limit(1)
-      )
+      const [existingRow] = yield* database
+        .execute('terminal.preset.service.166', (db) =>
+          db
+            .select()
+            .from(terminalPresets)
+            .where(eq(terminalPresets.id, presetId))
+            .limit(1)
+        )
+        .pipe(Effect.orDie)
       if (!existingRow) {
         return yield* Effect.fail(
           new DomainError(
@@ -203,23 +207,25 @@ export class TerminalPresetService {
             ? timestamp
             : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
       }
-      const result = yield* Effect.promise(() =>
-        database.db
-          .update(terminalPresets)
-          .set({
-            name: preset.name,
-            executable: preset.executable,
-            argsJson: JSON.stringify(preset.args),
-            closeOnSuccess: Number(preset.closeOnSuccess),
-            updatedAt: preset.updatedAt
-          })
-          .where(
-            and(
-              eq(terminalPresets.id, preset.id),
-              eq(terminalPresets.updatedAt, expectedUpdatedAt)
+      const result = yield* database
+        .execute('terminal.preset.service.206', (db) =>
+          db
+            .update(terminalPresets)
+            .set({
+              name: preset.name,
+              executable: preset.executable,
+              argsJson: JSON.stringify(preset.args),
+              closeOnSuccess: Number(preset.closeOnSuccess),
+              updatedAt: preset.updatedAt
+            })
+            .where(
+              and(
+                eq(terminalPresets.id, preset.id),
+                eq(terminalPresets.updatedAt, expectedUpdatedAt)
+              )
             )
-          )
-      )
+        )
+        .pipe(Effect.orDie)
       if (result.rowsAffected === 0) {
         return yield* Effect.fail(
           new DomainError(
@@ -240,13 +246,15 @@ export class TerminalPresetService {
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const [existing] = yield* Effect.promise(() =>
-        database.db
-          .select({ updatedAt: terminalPresets.updatedAt })
-          .from(terminalPresets)
-          .where(eq(terminalPresets.id, presetId))
-          .limit(1)
-      )
+      const [existing] = yield* database
+        .execute('terminal.preset.service.243', (db) =>
+          db
+            .select({ updatedAt: terminalPresets.updatedAt })
+            .from(terminalPresets)
+            .where(eq(terminalPresets.id, presetId))
+            .limit(1)
+        )
+        .pipe(Effect.orDie)
       if (!existing) {
         return yield* Effect.fail(
           new DomainError(
@@ -257,16 +265,18 @@ export class TerminalPresetService {
         )
       }
 
-      const result = yield* Effect.promise(() =>
-        database.db
-          .delete(terminalPresets)
-          .where(
-            and(
-              eq(terminalPresets.id, presetId),
-              eq(terminalPresets.updatedAt, expectedUpdatedAt)
+      const result = yield* database
+        .execute('terminal.preset.service.260', (db) =>
+          db
+            .delete(terminalPresets)
+            .where(
+              and(
+                eq(terminalPresets.id, presetId),
+                eq(terminalPresets.updatedAt, expectedUpdatedAt)
+              )
             )
-          )
-      )
+        )
+        .pipe(Effect.orDie)
       if (
         existing.updatedAt !== expectedUpdatedAt ||
         result.rowsAffected === 0

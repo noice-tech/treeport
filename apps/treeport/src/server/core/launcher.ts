@@ -4,6 +4,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import * as Effect from 'effect/Effect'
 import { TERMINAL_NAME_MAX_LENGTH } from '@treeport/shared'
 import { integrateShellLaunch } from './shell-integration'
 import type { TerminalLaunchSpec } from './terminal'
@@ -106,10 +107,10 @@ function runChild(
     spawnProcess: SpawnProcess
     signalSource: SignalSource
   }
-): Promise<ChildResult> {
+): Effect.Effect<ChildResult> {
   const [executable, ...args] = argv
   if (!executable) {
-    return Promise.resolve({
+    return Effect.succeed({
       code: 127,
       signal: null,
       forwardedSignal: null,
@@ -118,7 +119,7 @@ function runChild(
     })
   }
 
-  return new Promise((resolve) => {
+  return Effect.async<ChildResult>((resume) => {
     let child: LauncherChild
     try {
       child = options.spawnProcess(executable, args, {
@@ -128,13 +129,15 @@ function runChild(
         shell: false
       })
     } catch (error) {
-      resolve({
-        code: 127,
-        signal: null,
-        forwardedSignal: null,
-        timedOut: false,
-        spawnError: error instanceof Error ? error : new Error(String(error))
-      })
+      resume(
+        Effect.succeed({
+          code: 127,
+          signal: null,
+          forwardedSignal: null,
+          timedOut: false,
+          spawnError: error instanceof Error ? error : new Error(String(error))
+        })
+      )
       return
     }
 
@@ -170,7 +173,7 @@ function runChild(
       for (const [signal, forward] of forwarders) {
         options.signalSource.off(signal, forward)
       }
-      resolve(result)
+      resume(Effect.succeed(result))
     }
     for (const [signal, forward] of forwarders) {
       options.signalSource.on(signal, forward)
@@ -197,165 +200,205 @@ function runChild(
     child.once('exit', (code, signal) =>
       finish({ code, signal, forwardedSignal, timedOut, spawnError: null })
     )
+
+    return Effect.async<void>((complete) => {
+      if (timer) {
+        clearTimeout(timer)
+      }
+
+      if (killTimer) {
+        clearTimeout(killTimer)
+      }
+
+      for (const [signal, forward] of forwarders) {
+        options.signalSource.off(signal, forward)
+      }
+      if (settled) {
+        complete(Effect.void)
+        return
+      }
+
+      const forceTimer = setTimeout(() => child.kill('SIGKILL'), 5_000)
+      const onInterruptedExit = () => {
+        clearTimeout(forceTimer)
+        complete(Effect.void)
+      }
+
+      child.once('exit', onInterruptedExit)
+      child.kill('SIGTERM')
+      forceTimer.unref?.()
+    })
   })
 }
 
-export async function runLaunchSpec(
+export function runLaunchSpec(
   spec: TerminalLaunchSpec,
   dependencies: LauncherDependencies = {}
-): Promise<number> {
-  const spawnProcess = dependencies.spawnProcess ?? spawn
-  const stdout = dependencies.stdout ?? process.stdout
-  const stderr = dependencies.stderr ?? process.stderr
-  const signalSource = dependencies.signalSource ?? process
-  if (spec.setupError) {
-    stderr.write(
-      `[Treeport setup] ${safeDiagnostic(spec.setupError) || 'setup preparation failed'}\n`
-    )
-    return 1
-  }
+): Effect.Effect<number> {
+  return Effect.gen(function* () {
+    const spawnProcess = dependencies.spawnProcess ?? spawn
+    const stdout = dependencies.stdout ?? process.stdout
+    const stderr = dependencies.stderr ?? process.stderr
+    const signalSource = dependencies.signalSource ?? process
+    if (spec.setupError) {
+      stderr.write(
+        `[Treeport setup] ${safeDiagnostic(spec.setupError) || 'setup preparation failed'}\n`
+      )
+      return 1
+    }
 
-  for (const task of spec.setupTasks ?? []) {
-    const label = safeLabel(task.label)
-    stdout.write(`[Treeport setup] ${label}\n`)
-    const result = await runChild(task.argv, {
-      cwd: task.cwd,
-      env: { ...process.env, ...spec.env, ...task.env },
-      timeoutMs: task.timeoutMs,
+    for (const task of spec.setupTasks ?? []) {
+      const label = safeLabel(task.label)
+      stdout.write(`[Treeport setup] ${label}\n`)
+      const result = yield* runChild(task.argv, {
+        cwd: task.cwd,
+        env: { ...process.env, ...spec.env, ...task.env },
+        timeoutMs: task.timeoutMs,
+        spawnProcess,
+        signalSource
+      })
+      if (result.spawnError) {
+        stderr.write(
+          `[Treeport setup] ${label} failed: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
+        )
+        return 127
+      }
+
+      if (result.timedOut) {
+        stderr.write(
+          `[Treeport setup] ${label} failed: timed out after ${task.timeoutMs}ms\n`
+        )
+        return 124
+      }
+
+      const terminationSignal = result.forwardedSignal ?? result.signal
+      if (terminationSignal) {
+        stderr.write(
+          `[Treeport setup] ${label} failed: terminated by ${terminationSignal}\n`
+        )
+        return 1
+      }
+
+      if (result.code !== 0) {
+        stderr.write(
+          `[Treeport setup] ${label} failed: exit ${result.code ?? 1}\n`
+        )
+        return result.code ?? 1
+      }
+
+      stdout.write(`[Treeport setup] ${label} complete\n`)
+    }
+
+    if (!spec.argv[0]) {
+      stderr.write('Treeport launcher: argv is empty\n')
+      return 127
+    }
+
+    const commandEnvironment = { ...process.env, ...spec.env }
+    const command = integrateShellLaunch(
+      spec.argv,
+      commandEnvironment,
+      spec.shellIntegrationDir,
+      Boolean(spec.shellIntegrationDir)
+    )
+    const initialTitle = spec.initialTitle
+      ? safeDiagnostic(spec.initialTitle)
+      : ''
+    if (initialTitle && spec.shellIntegrationDir) {
+      stdout.write(`\u001b]777;command;${initialTitle}\u001b\\`)
+    }
+
+    const result = yield* runChild(command.argv, {
+      cwd: spec.cwd,
+      env: command.env,
       spawnProcess,
       signalSource
     })
     if (result.spawnError) {
       stderr.write(
-        `[Treeport setup] ${label} failed: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
+        `Treeport launcher: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
       )
-      return 127
     }
 
-    if (result.timedOut) {
-      stderr.write(
-        `[Treeport setup] ${label} failed: timed out after ${task.timeoutMs}ms\n`
-      )
-      return 124
-    }
-
-    const terminationSignal = result.forwardedSignal ?? result.signal
-    if (terminationSignal) {
-      stderr.write(
-        `[Treeport setup] ${label} failed: terminated by ${terminationSignal}\n`
-      )
+    if (
+      result.forwardedSignal &&
+      (!spec.fallbackArgv || result.forwardedSignal !== 'SIGINT')
+    ) {
       return 1
     }
 
-    if (result.code !== 0) {
-      stderr.write(
-        `[Treeport setup] ${label} failed: exit ${result.code ?? 1}\n`
+    if (spec.fallbackArgv) {
+      if (spec.shellIntegrationDir) {
+        stdout.write('\u001b]777;command;\u001b\\')
+      }
+
+      const fallback = integrateShellLaunch(
+        spec.fallbackArgv,
+        commandEnvironment,
+        spec.shellIntegrationDir,
+        Boolean(spec.shellIntegrationDir)
       )
-      return result.code ?? 1
+      const fallbackResult = yield* runChild(fallback.argv, {
+        cwd: spec.cwd,
+        env: fallback.env,
+        spawnProcess,
+        signalSource
+      })
+      if (fallbackResult.spawnError) {
+        stderr.write(
+          `Treeport launcher: ${safeDiagnostic(fallbackResult.spawnError.message) || 'spawn error'}\n`
+        )
+        return 127
+      }
+
+      if (fallbackResult.forwardedSignal || fallbackResult.signal) {
+        return 1
+      }
+
+      return fallbackResult.code ?? 1
     }
 
-    stdout.write(`[Treeport setup] ${label} complete\n`)
-  }
+    if (result.spawnError) {
+      return 127
+    }
 
-  if (!spec.argv[0]) {
-    stderr.write('Treeport launcher: argv is empty\n')
-    return 127
-  }
+    if (result.signal) {
+      return 1
+    }
 
-  const commandEnvironment = { ...process.env, ...spec.env }
-  const command = integrateShellLaunch(
-    spec.argv,
-    commandEnvironment,
-    spec.shellIntegrationDir,
-    Boolean(spec.shellIntegrationDir)
-  )
-  const initialTitle = spec.initialTitle
-    ? safeDiagnostic(spec.initialTitle)
-    : ''
-  if (initialTitle && spec.shellIntegrationDir) {
-    stdout.write(`\u001b]777;command;${initialTitle}\u001b\\`)
-  }
-
-  const result = await runChild(command.argv, {
-    cwd: spec.cwd,
-    env: command.env,
-    spawnProcess,
-    signalSource
+    return result.code ?? 1
   })
-  if (result.spawnError) {
-    stderr.write(
-      `Treeport launcher: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
-    )
-  }
-
-  if (
-    result.forwardedSignal &&
-    (!spec.fallbackArgv || result.forwardedSignal !== 'SIGINT')
-  ) {
-    return 1
-  }
-
-  if (spec.fallbackArgv) {
-    if (spec.shellIntegrationDir) {
-      stdout.write('\u001b]777;command;\u001b\\')
-    }
-
-    const fallback = integrateShellLaunch(
-      spec.fallbackArgv,
-      commandEnvironment,
-      spec.shellIntegrationDir,
-      Boolean(spec.shellIntegrationDir)
-    )
-    const fallbackResult = await runChild(fallback.argv, {
-      cwd: spec.cwd,
-      env: fallback.env,
-      spawnProcess,
-      signalSource
-    })
-    if (fallbackResult.spawnError) {
-      stderr.write(
-        `Treeport launcher: ${safeDiagnostic(fallbackResult.spawnError.message) || 'spawn error'}\n`
-      )
-      return 127
-    }
-
-    if (fallbackResult.forwardedSignal || fallbackResult.signal) {
-      return 1
-    }
-
-    return fallbackResult.code ?? 1
-  }
-
-  if (result.spawnError) {
-    return 127
-  }
-
-  if (result.signal) {
-    return 1
-  }
-
-  return result.code ?? 1
 }
 
-async function main(): Promise<void> {
+function main(): Effect.Effect<number> {
   const specPath = process.argv[2]
   if (!specPath) {
-    process.stderr.write('Treeport launcher: missing launch spec\n')
-    process.exit(127)
+    return Effect.sync(() => {
+      process.stderr.write('Treeport launcher: missing launch spec\n')
+      return 127
+    })
   }
 
-  let spec: TerminalLaunchSpec
-  try {
-    spec = launchSpecSchema.parse(
-      JSON.parse(await fs.readFile(specPath, 'utf8'))
+  return Effect.tryPromise({
+    try: () => fs.readFile(specPath, 'utf8'),
+    catch: (cause) => cause
+  }).pipe(
+    Effect.flatMap((source) =>
+      Effect.try({
+        try: () => launchSpecSchema.parse(JSON.parse(source)),
+        catch: (cause) => cause
+      })
+    ),
+    Effect.flatMap(runLaunchSpec),
+    Effect.catchAll((error) =>
+      Effect.sync(() => {
+        process.stderr.write(
+          `Treeport launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`
+        )
+        return 127
+      })
     )
-  } catch (error) {
-    process.stderr.write(
-      `Treeport launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`
-    )
-    process.exit(127)
-  }
-  process.exit(await runLaunchSpec(spec))
+  )
 }
 
 const invokedPath = process.argv[1]
@@ -363,10 +406,13 @@ if (
   invokedPath &&
   path.resolve(invokedPath) === path.resolve(fileURLToPath(import.meta.url))
 ) {
-  void main().catch((error) => {
-    process.stderr.write(
-      `Treeport launcher: ${error instanceof Error ? error.message : String(error)}\n`
-    )
-    process.exit(127)
-  })
+  void Effect.runPromise(main()).then(
+    (exitCode) => process.exit(exitCode),
+    (error) => {
+      process.stderr.write(
+        `Treeport launcher: ${error instanceof Error ? error.message : String(error)}\n`
+      )
+      process.exit(127)
+    }
+  )
 }

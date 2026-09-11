@@ -6,15 +6,23 @@ import * as Layer from 'effect/Layer'
 import * as ManagedRuntime from 'effect/ManagedRuntime'
 import * as Option from 'effect/Option'
 import type { AppConfig } from '../../config'
-import type { CommandRunner } from '../../command'
-import type { TreeportDatabase } from '../../database'
+import type { EffectCommandRunner } from '../../command'
+import { DatabaseLayer, type DatabasePort } from '../../database'
 import type { ProductEventBus } from '../../events'
-import type { GhAdapter } from '../../gh'
-import type { GitAdapter } from '../../git'
-import type { NetworkListenerAdapter } from '../../network-listeners'
+import { GitHubLayer, type GitHubPort } from '../../gh'
+import { GitLayer, type GitPort } from '../../git'
+import {
+  NetworkListenersLayer,
+  type NetworkListenerPort
+} from '../../network-listeners'
 import type { PackageSystem } from '../../package-system'
+import { SetupLive, type Setup } from '../../setup'
 import type { TerminalSessionBackend } from '../../terminal'
-import type { WebPanelViteRuntime } from '../../web-panel-vite-runtime'
+import { ZedLive, type Zed } from '../../zed'
+import {
+  WebPanelRuntimeLayer,
+  type WebPanelRuntimePort
+} from '../../web-panel-vite-runtime'
 import { tracingLayerFromEnvironment } from '../../../tracing'
 import {
   PanelOperations,
@@ -41,14 +49,9 @@ import { MutationLocks } from './mutation-locks'
 import {
   CommandPort,
   ConfigPort,
-  DatabasePort,
   EventBusPort,
-  GitHubPort,
-  GitPort,
-  NetworkListenerPort,
   PackageSystemPort,
-  TerminalHostPort,
-  WebPanelRuntimePort
+  TerminalHostPort
 } from './ports'
 
 export class WorktreeMutations extends Effect.Service<WorktreeMutations>()(
@@ -138,11 +141,8 @@ export class ApplicationFibers extends Effect.Service<ApplicationFibers>()(
 
 export interface ApplicationResources {
   readonly config: AppConfig
-  readonly database: TreeportDatabase
-  readonly runner: CommandRunner
-  readonly git: GitAdapter
+  readonly runner: EffectCommandRunner
   readonly terminalHost: TerminalSessionBackend
-  readonly gh: GhAdapter
   readonly events: ProductEventBus
   readonly packages: PackageSystem
   readonly panelService: PanelService
@@ -152,17 +152,15 @@ export interface ApplicationResources {
   readonly terminalService: TerminalService
   readonly worktreeReconciler: WorktreeReconciler
   readonly worktreeService: WorktreeService
-  readonly networkListeners: NetworkListenerAdapter
-  readonly webPanelRuntime: WebPanelViteRuntime
 }
 
 export function makeApplicationRuntime(resources: ApplicationResources) {
   const adapters = Layer.mergeAll(
     Layer.succeed(ConfigPort, resources.config),
-    Layer.succeed(DatabasePort, resources.database),
+    DatabaseLayer(resources.config.databasePath),
     Layer.succeed(CommandPort, resources.runner),
-    Layer.succeed(GitPort, resources.git),
-    Layer.succeed(GitHubPort, resources.gh),
+    GitLayer(resources.runner, resources.config.gitPath),
+    GitHubLayer(resources.runner, resources.config.ghPath),
     Layer.succeed(TerminalHostPort, resources.terminalHost),
     Layer.succeed(EventBusPort, resources.events),
     Layer.succeed(PackageSystemPort, resources.packages),
@@ -179,14 +177,8 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
     Layer.succeed(TerminalOperations, resources.terminalService),
     Layer.succeed(WorktreeReconciliation, resources.worktreeReconciler),
     Layer.succeed(WorktreeOperations, resources.worktreeService),
-    Layer.succeed(NetworkListenerPort, resources.networkListeners),
-    Layer.scoped(
-      WebPanelRuntimePort,
-      Effect.acquireRelease(
-        Effect.succeed(resources.webPanelRuntime),
-        (runtime) => Effect.promise(() => runtime.dispose())
-      )
-    )
+    NetworkListenersLayer(resources.runner),
+    WebPanelRuntimeLayer(resources.config)
   )
 
   const projectStore = ProjectStoreLive.pipe(Layer.provide(adapters))
@@ -194,6 +186,8 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
   return ManagedRuntime.make(
     Layer.mergeAll(
       adapters,
+      SetupLive,
+      ZedLive,
       projectStore,
       ProjectFolderIdentities.Default,
       WorktreeMutations.Default,
@@ -235,6 +229,8 @@ export type ApplicationServices =
   | WorktreeOperations
   | NetworkListenerPort
   | WebPanelRuntimePort
+  | Setup
+  | Zed
   | ProjectStore
   | ProjectFolderIdentities
   | WorktreeMutations

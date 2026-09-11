@@ -1,11 +1,15 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
 import type {
   TerminalPresetDefinition,
   TerminalPresetDefinitionDiagnostic
 } from '@treeport/shared'
-import { readOptionalJsonc } from './jsonc'
+import { readOptionalJsonc, type OptionalJsoncResult } from './jsonc'
 import type { WorktreeSetupTask } from './setup'
 
 const DEFAULT_WORKTREE_DIRECTORY = '../worktrees'
@@ -106,9 +110,10 @@ export function inferWorktreeName(
     : checkoutName
 }
 
-export async function resolveZedWorktreePath(
+async function resolveZedWorktreePathPromise(
   mainWorktreePath: string,
-  inputName: string
+  inputName: string,
+  settingsFile: OptionalJsoncResult
 ): Promise<{
   name: string
   path: string
@@ -116,9 +121,6 @@ export async function resolveZedWorktreePath(
   directorySetting: string
 }> {
   const name = normalizeWorktreeName(inputName)
-  const settingsFile = await readOptionalJsonc(
-    path.join(mainWorktreePath, '.zed', 'settings.json')
-  )
   const settings = zedSettingsSchema.safeParse(
     settingsFile.found ? settingsFile.value : {}
   )
@@ -163,7 +165,7 @@ export async function resolveZedWorktreePath(
   }
 }
 
-export async function prepareZedWorktreeWrapper(
+async function prepareZedWorktreeWrapperPromise(
   mainWorktreePath: string,
   wrapperPath: string
 ): Promise<{ created: boolean; path: string }> {
@@ -343,12 +345,9 @@ function parseTask(
   return task
 }
 
-export async function loadCreateWorktreeTasks(
-  mainWorktreePath: string
+async function loadCreateWorktreeTasksPromise(
+  tasksFile: OptionalJsoncResult
 ): Promise<ZedTask[]> {
-  const tasksFile = await readOptionalJsonc(
-    path.join(mainWorktreePath, ZED_TASKS_CONFIG_PATH)
-  )
   const entries = taskArray(tasksFile.found ? tasksFile.value : null) ?? []
   return entries.flatMap((entry, index) => {
     const parsedEntry = zedTaskRecordSchema.safeParse(entry)
@@ -431,35 +430,18 @@ function resolveTask(
   }
 }
 
-export async function loadZedTerminalPresetDefinitions(input: {
-  projectId: string
-  shell: string
-  mainWorktreePath: string
-  worktreePath: string
-}): Promise<{
+async function loadZedTerminalPresetDefinitionsPromise(
+  input: {
+    projectId: string
+    shell: string
+    mainWorktreePath: string
+    worktreePath: string
+  },
+  tasksFile: OptionalJsoncResult
+): Promise<{
   definitions: TerminalPresetDefinition[]
   diagnostics: TerminalPresetDefinitionDiagnostic[]
 }> {
-  let tasksFile
-  try {
-    tasksFile = await readOptionalJsonc(
-      path.join(input.mainWorktreePath, ZED_TASKS_CONFIG_PATH)
-    )
-  } catch (error) {
-    return {
-      definitions: [],
-      diagnostics: [
-        {
-          path: ZED_TASKS_CONFIG_PATH,
-          itemId: null,
-          message: `Could not load Zed tasks: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        }
-      ]
-    }
-  }
-
   if (!tasksFile.found) {
     return { definitions: [], diagnostics: [] }
   }
@@ -514,12 +496,14 @@ export async function loadZedTerminalPresetDefinitions(input: {
   return { definitions, diagnostics }
 }
 
-export async function resolveZedCreateWorktreeSetupTasks(input: {
-  shell: string
-  mainWorktreePath: string
-  worktreePath: string
-}): Promise<WorktreeSetupTask[]> {
-  const tasks = await loadCreateWorktreeTasks(input.mainWorktreePath)
+async function resolveZedCreateWorktreeSetupTasksPromise(
+  input: {
+    shell: string
+    mainWorktreePath: string
+    worktreePath: string
+  },
+  tasks: ZedTask[]
+): Promise<WorktreeSetupTask[]> {
   return tasks.map((task) => {
     const resolved = resolveTask(task, input, false)
     let argv = resolved.argv
@@ -540,3 +524,121 @@ export async function resolveZedCreateWorktreeSetupTasks(input: {
     }
   })
 }
+
+class ZedError extends Data.TaggedError('ZedError')<{
+  readonly operation: string
+  readonly cause: unknown
+  readonly message: string
+}> {
+  constructor(operation: string, cause: unknown) {
+    super({
+      operation,
+      cause,
+      message: cause instanceof Error ? cause.message : String(cause)
+    })
+  }
+}
+
+function zedEffect<A>(operation: string, evaluate: () => Promise<A>) {
+  return Effect.tryPromise({
+    try: evaluate,
+    catch: (cause) => new ZedError(operation, cause)
+  })
+}
+
+export function resolveZedWorktreePath(
+  mainWorktreePath: string,
+  inputName: string
+) {
+  return readOptionalJsonc(
+    path.join(mainWorktreePath, '.zed', 'settings.json')
+  ).pipe(
+    Effect.flatMap((settingsFile) =>
+      zedEffect('resolveWorktreePath', () =>
+        resolveZedWorktreePathPromise(mainWorktreePath, inputName, settingsFile)
+      )
+    ),
+    Effect.mapError((error) => new ZedError('resolveWorktreePath', error))
+  )
+}
+
+function prepareZedWorktreeWrapper(
+  mainWorktreePath: string,
+  wrapperPath: string
+) {
+  return zedEffect('prepareWorktreeWrapper', () =>
+    prepareZedWorktreeWrapperPromise(mainWorktreePath, wrapperPath)
+  )
+}
+
+export function loadCreateWorktreeTasks(mainWorktreePath: string) {
+  return readOptionalJsonc(
+    path.join(mainWorktreePath, ZED_TASKS_CONFIG_PATH)
+  ).pipe(
+    Effect.flatMap((tasksFile) =>
+      zedEffect('loadCreateWorktreeTasks', () =>
+        loadCreateWorktreeTasksPromise(tasksFile)
+      )
+    ),
+    Effect.mapError((error) => new ZedError('loadCreateWorktreeTasks', error))
+  )
+}
+
+export function loadZedTerminalPresetDefinitions(input: {
+  projectId: string
+  shell: string
+  mainWorktreePath: string
+  worktreePath: string
+}) {
+  return readOptionalJsonc(
+    path.join(input.mainWorktreePath, ZED_TASKS_CONFIG_PATH)
+  ).pipe(
+    Effect.flatMap((tasksFile) =>
+      zedEffect('loadTerminalPresetDefinitions', () =>
+        loadZedTerminalPresetDefinitionsPromise(input, tasksFile)
+      )
+    ),
+    Effect.catchAll((error) =>
+      Effect.succeed({
+        definitions: [],
+        diagnostics: [
+          {
+            path: ZED_TASKS_CONFIG_PATH,
+            itemId: null,
+            message: `Could not load Zed tasks: ${error.message}`
+          }
+        ]
+      })
+    )
+  )
+}
+
+export function resolveZedCreateWorktreeSetupTasks(input: {
+  shell: string
+  mainWorktreePath: string
+  worktreePath: string
+}) {
+  return loadCreateWorktreeTasks(input.mainWorktreePath).pipe(
+    Effect.flatMap((tasks) =>
+      zedEffect('resolveCreateWorktreeSetupTasks', () =>
+        resolveZedCreateWorktreeSetupTasksPromise(input, tasks)
+      )
+    )
+  )
+}
+
+export interface ZedService {
+  readonly resolveWorktreePath: typeof resolveZedWorktreePath
+  readonly prepareWorktreeWrapper: typeof prepareZedWorktreeWrapper
+  readonly loadTerminalPresetDefinitions: typeof loadZedTerminalPresetDefinitions
+  readonly resolveCreateWorktreeSetupTasks: typeof resolveZedCreateWorktreeSetupTasks
+}
+
+export class Zed extends Context.Tag('treeport/Zed')<Zed, ZedService>() {}
+
+export const ZedLive = Layer.succeed(Zed, {
+  resolveWorktreePath: resolveZedWorktreePath,
+  prepareWorktreeWrapper: prepareZedWorktreeWrapper,
+  loadTerminalPresetDefinitions: loadZedTerminalPresetDefinitions,
+  resolveCreateWorktreeSetupTasks: resolveZedCreateWorktreeSetupTasks
+})

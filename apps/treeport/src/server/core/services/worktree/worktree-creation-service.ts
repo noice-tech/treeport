@@ -19,16 +19,8 @@ import * as Fiber from 'effect/Fiber'
 import { mapOperation, mapWorktree, serializeOperation } from '../../database'
 import { operations, projects, worktrees } from '../../database-schema'
 import { DomainError } from '../../domain'
-import {
-  resolveWorktreeSetupTasks,
-  runWorktreeSetupTasks,
-  type WorktreeSetupTask
-} from '../../setup'
-import {
-  normalizeWorktreeName,
-  prepareZedWorktreeWrapper,
-  resolveZedWorktreePath
-} from '../../zed'
+import { Setup, type WorktreeSetupTask } from '../../setup'
+import { normalizeWorktreeName, Zed } from '../../zed'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations,
@@ -40,13 +32,9 @@ import {
   WorktreeMutations
 } from '../infrastructure/application-runtime'
 import { MutationLocks } from '../infrastructure/mutation-locks'
-import {
-  CommandPort,
-  ConfigPort,
-  DatabasePort,
-  EventBusPort,
-  GitPort
-} from '../infrastructure/ports'
+import { CommandPort, ConfigPort, EventBusPort } from '../infrastructure/ports'
+import { DatabasePort } from '../../database'
+import { GitPort } from '../../git'
 import { ProjectStore } from '../project/project-store'
 
 const now = (): string => new Date().toISOString()
@@ -142,24 +130,26 @@ export class WorktreeCreationService {
         yield* projectStore.requireOpenProject(filteredProjectId)
       }
 
-      const rows = yield* Effect.promise(() =>
-        database.db
-          .select()
-          .from(operations)
-          .where(
-            and(
-              or(
-                eq(operations.status, 'pending'),
-                eq(operations.status, 'running')
-              ),
-              ...(filters.projectId
-                ? [eq(operations.projectId, filters.projectId)]
-                : []),
-              ...(filters.kind ? [eq(operations.kind, filters.kind)] : [])
+      const rows = yield* database
+        .execute('worktree.creation.service.145', (db) =>
+          db
+            .select()
+            .from(operations)
+            .where(
+              and(
+                or(
+                  eq(operations.status, 'pending'),
+                  eq(operations.status, 'running')
+                ),
+                ...(filters.projectId
+                  ? [eq(operations.projectId, filters.projectId)]
+                  : []),
+                ...(filters.kind ? [eq(operations.kind, filters.kind)] : [])
+              )
             )
-          )
-          .orderBy(asc(operations.createdAt), asc(operations.id))
-      )
+            .orderBy(asc(operations.createdAt), asc(operations.id))
+        )
+        .pipe(Effect.orDie)
       return rows.map(mapOperation)
     })
   }
@@ -236,8 +226,9 @@ export class WorktreeCreationService {
         request.context = treeContext
       }
 
-      yield* Effect.promise(() =>
-        database.db.run(sql`
+      yield* database
+        .execute('worktree.creation.service.239', (db) =>
+          db.run(sql`
           INSERT INTO operations(
             id,kind,project_id,worktree_id,status,request_json,result_json,error,
             created_at,updated_at
@@ -246,7 +237,8 @@ export class WorktreeCreationService {
             ${serializeOperation(request)},NULL,NULL,${timestamp},${timestamp}
           )
         `)
-      )
+        )
+        .pipe(Effect.orDie)
       const operation = yield* projectStore.getOperation(operationId)
       yield* Effect.sync(() =>
         events.publish('create.started', { projectId, operationId })
@@ -297,12 +289,14 @@ export class WorktreeCreationService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
-      yield* Effect.promise(() =>
-        database.db.run(sql`
+      yield* database
+        .execute('worktree.creation.service.300', (db) =>
+          db.run(sql`
           UPDATE operations SET status='running',updated_at=${now()}
           WHERE id=${operationId} AND status='pending'
         `)
-      )
+        )
+        .pipe(Effect.orDie)
 
       const creation = executeCreateWorktree(
         projectId,
@@ -316,8 +310,9 @@ export class WorktreeCreationService {
         onSuccess: (result) =>
           Effect.gen(function* () {
             const timestamp = now()
-            yield* Effect.promise(() =>
-              database.db.run(sql`
+            yield* database
+              .execute('worktree.creation.service.319', (db) =>
+                db.run(sql`
                 UPDATE operations
                 SET status='completed',worktree_id=${result.worktree.id},
                     result_json=${serializeOperation({
@@ -328,7 +323,8 @@ export class WorktreeCreationService {
                     })},error=NULL,updated_at=${timestamp}
                 WHERE id=${operationId}
               `)
-            )
+              )
+              .pipe(Effect.orDie)
             yield* Effect.sync(() =>
               events.publish('create.completed', {
                 projectId,
@@ -340,13 +336,15 @@ export class WorktreeCreationService {
         onFailure: (cause) =>
           Effect.gen(function* () {
             const message = causeMessage(cause)
-            yield* Effect.promise(() =>
-              database.db.run(sql`
+            yield* database
+              .execute('worktree.creation.service.343', (db) =>
+                db.run(sql`
                 UPDATE operations
                 SET status='failed',error=${message.slice(0, 4_096)},updated_at=${now()}
                 WHERE id=${operationId}
               `)
-            )
+              )
+              .pipe(Effect.orDie)
             yield* Effect.sync(() =>
               events.publish('create.failed', { projectId, operationId })
             )
@@ -454,6 +452,8 @@ export class WorktreeCreationService {
         const locks = yield* MutationLocks
         const projectStore = yield* ProjectStore
         const runner = yield* CommandPort
+        const setupService = yield* Setup
+        const zed = yield* Zed
         const contextValues = yield* Effect.sync(() => {
           const parsed = decodeUnknownOrNull(
             treeContextValuesSchema,
@@ -524,16 +524,18 @@ export class WorktreeCreationService {
                 )
               }
 
-              const destination = yield* Effect.tryPromise({
-                try: () =>
-                  resolveZedWorktreePath(project.mainWorktreePath, name),
-                catch: (error) =>
-                  new DomainError(
-                    'INVALID_WORKTREE_PATH',
-                    error instanceof Error ? error.message : String(error),
-                    400
+              const destination = yield* zed
+                .resolveWorktreePath(project.mainWorktreePath, name)
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new DomainError(
+                        'INVALID_WORKTREE_PATH',
+                        error.message,
+                        400
+                      )
                   )
-              })
+                )
               let worktreePath = destination.path
               let wrapperPath = destination.wrapperPath
               const pathExists = yield* Effect.tryPromise({
@@ -573,78 +575,84 @@ export class WorktreeCreationService {
                   )
                 }
 
-                commit = yield* Effect.promise(() =>
-                  git.resolveCommit(source.path)
-                )
+                commit = yield* git
+                  .resolveCommit(source.path)
+                  .pipe(Effect.orDie)
               } else {
-                commit = yield* Effect.promise(() =>
-                  git.resolveDefaultCommit(project.repositoryPath)
-                )
+                commit = yield* git
+                  .resolveDefaultCommit(project.repositoryPath)
+                  .pipe(Effect.orDie)
               }
 
-              const preparedWrapper = yield* Effect.tryPromise({
-                try: () =>
-                  prepareZedWorktreeWrapper(
-                    project.mainWorktreePath,
-                    wrapperPath
-                  ),
-                catch: (error) =>
-                  new DomainError(
-                    'INVALID_WORKTREE_PATH',
-                    error instanceof Error ? error.message : String(error),
-                    400
+              const preparedWrapper = yield* zed
+                .prepareWorktreeWrapper(project.mainWorktreePath, wrapperPath)
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new DomainError(
+                        'INVALID_WORKTREE_PATH',
+                        error.message,
+                        400
+                      )
                   )
-              })
+                )
               const wrapperCreated = preparedWrapper.created
               wrapperPath = preparedWrapper.path
               worktreePath = path.join(
                 wrapperPath,
                 path.basename(project.mainWorktreePath)
               )
-              yield* Effect.promise(() =>
-                git.createDetachedWorktree(
+              yield* git
+                .createDetachedWorktree(
                   project.repositoryPath,
                   worktreePath,
                   commit
                 )
-              ).pipe(
-                Effect.onError(() =>
-                  wrapperCreated
-                    ? Effect.promise(() => fs.rmdir(wrapperPath)).pipe(
-                        Effect.catchAllCause((cause) =>
-                          Effect.logWarning(
-                            `Failed to remove worktree wrapper ${wrapperPath} after creation failed: ${Cause.pretty(cause)}`
+                .pipe(Effect.orDie)
+                .pipe(
+                  Effect.onError(() =>
+                    wrapperCreated
+                      ? Effect.tryPromise(() => fs.rmdir(wrapperPath))
+                          .pipe(Effect.orDie)
+                          .pipe(
+                            Effect.catchAllCause((cause) =>
+                              Effect.logWarning(
+                                `Failed to remove worktree wrapper ${wrapperPath} after creation failed: ${Cause.pretty(cause)}`
+                              )
+                            )
                           )
-                        )
-                      )
-                    : Effect.void
+                      : Effect.void
+                  )
                 )
-              )
               yield* importWorktrees(
                 project.id,
                 project.repositoryPath,
                 project.mainWorktreePath,
                 true
               )
-              yield* Effect.promise(() =>
-                database.db.run(sql`
+              yield* database
+                .execute('worktree.creation.service.629', (db) =>
+                  db.run(sql`
               UPDATE worktrees
               SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null},
                   tree_context_json=${JSON.stringify(contextValues)}
               WHERE path=${worktreePath}
             `)
-              )
-              const [worktreeRow] = yield* Effect.promise(() =>
-                database.db
-                  .select({
-                    worktree: worktrees,
-                    mainWorktreePath: projects.mainWorktreePath
-                  })
-                  .from(worktrees)
-                  .innerJoin(projects, eq(worktrees.projectId, projects.id))
-                  .where(eq(worktrees.path, worktreePath))
-                  .limit(1)
-              )
+                )
+                .pipe(Effect.orDie)
+              const [worktreeRow] = yield* database
+                .execute('worktree.creation.service.637', (db) =>
+                  db
+                    .select({
+                      worktree: worktrees,
+                      mainWorktreePath: projects.mainWorktreePath
+                    })
+                    .from(worktrees)
+                    .innerJoin(projects, eq(worktrees.projectId, projects.id))
+                    .where(eq(worktrees.path, worktreePath))
+                    .limit(1)
+                )
+                .pipe(Effect.orDie)
               if (!worktreeRow) {
                 return yield* Effect.fail(
                   new DomainError(
@@ -689,13 +697,11 @@ export class WorktreeCreationService {
 
           const setupResolution = yield* Effect.forkScoped(
             Effect.exit(
-              Effect.promise(() =>
-                resolveWorktreeSetupTasks({
-                  shell: config.shell,
-                  mainWorktreePath: project.mainWorktreePath,
-                  worktreePath: worktree.path
-                })
-              )
+              setupService.resolveSetupTasks({
+                shell: config.shell,
+                mainWorktreePath: project.mainWorktreePath,
+                worktreePath: worktree.path
+              })
             )
           )
           const initialTerminalResult = yield* Effect.exit(
@@ -803,17 +809,17 @@ export class WorktreeCreationService {
           }
         } else {
           const setupResultsExit = yield* Effect.exit(
-            Effect.promise(() =>
-              resolveWorktreeSetupTasks({
+            setupService
+              .resolveSetupTasks({
                 shell: config.shell,
                 mainWorktreePath: project.mainWorktreePath,
                 worktreePath: worktree.path
               })
-            ).pipe(
-              Effect.flatMap((tasks) =>
-                Effect.promise(() => runWorktreeSetupTasks({ runner, tasks }))
+              .pipe(
+                Effect.flatMap((tasks) =>
+                  setupService.runTasks({ runner, tasks })
+                )
               )
-            )
           )
           if (
             Exit.isFailure(setupResultsExit) &&

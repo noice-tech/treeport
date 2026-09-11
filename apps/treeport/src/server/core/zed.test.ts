@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   inferWorktreeName,
@@ -56,7 +57,9 @@ describe('Zed worktree compatibility', () => {
   it('resolves the default Zed layout and project-local JSONC settings', async () => {
     const { root, main } = await repository('repo')
     const canonicalRoot = await fs.realpath(root)
-    await expect(resolveZedWorktreePath(main, 'topic')).resolves.toMatchObject({
+    await expect(
+      Effect.runPromise(resolveZedWorktreePath(main, 'topic'))
+    ).resolves.toMatchObject({
       path: path.join(canonicalRoot, 'worktrees', 'repo', 'topic', 'repo'),
       wrapperPath: path.join(canonicalRoot, 'worktrees', 'repo', 'topic')
     })
@@ -64,7 +67,9 @@ describe('Zed worktree compatibility', () => {
       path.join(main, '.zed', 'settings.json'),
       `{ // project override\n "git": { "worktree_directory": "../zed-trees", },\n}`
     )
-    await expect(resolveZedWorktreePath(main, 'other')).resolves.toMatchObject({
+    await expect(
+      Effect.runPromise(resolveZedWorktreePath(main, 'other'))
+    ).resolves.toMatchObject({
       path: path.join(canonicalRoot, 'zed-trees', 'repo', 'other', 'repo')
     })
   })
@@ -75,9 +80,9 @@ describe('Zed worktree compatibility', () => {
       path.join(main, '.zed', 'settings.json'),
       JSON.stringify({ git: { worktree_directory: '../../outside' } })
     )
-    await expect(resolveZedWorktreePath(main, 'topic')).rejects.toThrow(
-      /must stay inside/
-    )
+    await expect(
+      Effect.runPromise(resolveZedWorktreePath(main, 'topic'))
+    ).rejects.toThrow(/must stay inside/)
   })
 
   it('rejects a configured worktree root that escapes through a symbolic link', async () => {
@@ -95,9 +100,9 @@ describe('Zed worktree compatibility', () => {
       path.join(main, '.zed', 'settings.json'),
       JSON.stringify({ git: { worktree_directory: '../linked-trees' } })
     )
-    await expect(resolveZedWorktreePath(main, 'topic')).rejects.toThrow(
-      /symbolic link/i
-    )
+    await expect(
+      Effect.runPromise(resolveZedWorktreePath(main, 'topic'))
+    ).rejects.toThrow(/symbolic link/i)
   })
 
   it('loads create_worktree tasks with Zed variables', async () => {
@@ -117,13 +122,17 @@ describe('Zed worktree compatibility', () => {
         {"label":"build","command":"bun install && bun run build","cwd":"$ZED_WORKTREE_ROOT","hooks":["create_worktree"]},
       ]`
     )
-    expect(await loadCreateWorktreeTasks(main)).toHaveLength(2)
+    expect(await Effect.runPromise(loadCreateWorktreeTasks(main))).toHaveLength(
+      2
+    )
     await expect(
-      resolveZedCreateWorktreeSetupTasks({
-        shell: '/bin/zsh',
-        mainWorktreePath: main,
-        worktreePath: worktree
-      })
+      Effect.runPromise(
+        resolveZedCreateWorktreeSetupTasks({
+          shell: '/bin/zsh',
+          mainWorktreePath: main,
+          worktreePath: worktree
+        })
+      )
     ).resolves.toEqual([
       {
         label: 'setup',
@@ -178,12 +187,14 @@ describe('Zed worktree compatibility', () => {
       }`
     )
 
-    const listing = await loadZedTerminalPresetDefinitions({
-      projectId: 'project_1',
-      shell: '/bin/zsh',
-      mainWorktreePath: main,
-      worktreePath: worktree
-    })
+    const listing = await Effect.runPromise(
+      loadZedTerminalPresetDefinitions({
+        projectId: 'project_1',
+        shell: '/bin/zsh',
+        mainWorktreePath: main,
+        worktreePath: worktree
+      })
+    )
     expect(listing).toEqual({
       definitions: [
         {
@@ -232,7 +243,9 @@ describe('Zed worktree compatibility', () => {
       ],
       diagnostics: []
     })
-    expect(await loadCreateWorktreeTasks(main)).toHaveLength(1)
+    expect(await Effect.runPromise(loadCreateWorktreeTasks(main))).toHaveLength(
+      1
+    )
   })
 
   it('isolates malformed picker tasks, invalid files, and repository roots', async () => {
@@ -254,12 +267,14 @@ describe('Zed worktree compatibility', () => {
       ])
     )
 
-    const listing = await loadZedTerminalPresetDefinitions({
-      projectId: 'first',
-      shell: '/bin/zsh',
-      mainWorktreePath: first.main,
-      worktreePath: first.main
-    })
+    const listing = await Effect.runPromise(
+      loadZedTerminalPresetDefinitions({
+        projectId: 'first',
+        shell: '/bin/zsh',
+        mainWorktreePath: first.main,
+        worktreePath: first.main
+      })
+    )
     expect(listing.definitions).toEqual([
       expect.objectContaining({
         id: 'repository:first:zed-task:3',
@@ -278,12 +293,14 @@ describe('Zed worktree compatibility', () => {
       '10'
     ])
     expect(
-      await loadZedTerminalPresetDefinitions({
-        projectId: 'second',
-        shell: '/bin/zsh',
-        mainWorktreePath: second.main,
-        worktreePath: second.main
-      })
+      await Effect.runPromise(
+        loadZedTerminalPresetDefinitions({
+          projectId: 'second',
+          shell: '/bin/zsh',
+          mainWorktreePath: second.main,
+          worktreePath: second.main
+        })
+      )
     ).toEqual({ definitions: [], diagnostics: [] })
 
     await fs.writeFile(
@@ -291,12 +308,14 @@ describe('Zed worktree compatibility', () => {
       JSON.stringify({ tasks: 'invalid' })
     )
     await expect(
-      loadZedTerminalPresetDefinitions({
-        projectId: 'first',
-        shell: '/bin/zsh',
-        mainWorktreePath: first.main,
-        worktreePath: first.main
-      })
+      Effect.runPromise(
+        loadZedTerminalPresetDefinitions({
+          projectId: 'first',
+          shell: '/bin/zsh',
+          mainWorktreePath: first.main,
+          worktreePath: first.main
+        })
+      )
     ).resolves.toMatchObject({
       definitions: [],
       diagnostics: [
@@ -306,12 +325,14 @@ describe('Zed worktree compatibility', () => {
 
     await fs.writeFile(path.join(first.main, '.zed', 'tasks.json'), '{ bad')
     await expect(
-      loadZedTerminalPresetDefinitions({
-        projectId: 'first',
-        shell: '/bin/zsh',
-        mainWorktreePath: first.main,
-        worktreePath: first.main
-      })
+      Effect.runPromise(
+        loadZedTerminalPresetDefinitions({
+          projectId: 'first',
+          shell: '/bin/zsh',
+          mainWorktreePath: first.main,
+          worktreePath: first.main
+        })
+      )
     ).resolves.toMatchObject({
       definitions: [],
       diagnostics: [
@@ -353,11 +374,13 @@ describe('Zed worktree compatibility', () => {
       ])
     )
 
-    const tasks = await resolveZedCreateWorktreeSetupTasks({
-      shell: '/bin/zsh',
-      mainWorktreePath: main,
-      worktreePath: worktree
-    })
+    const tasks = await Effect.runPromise(
+      resolveZedCreateWorktreeSetupTasks({
+        shell: '/bin/zsh',
+        mainWorktreePath: main,
+        worktreePath: worktree
+      })
+    )
     expect(tasks[0]).toMatchObject({
       argv: ['node', 'a b', 'semi;colon', '$cash', "quote'argument", '雪'],
       cwd: path.join(worktree, 'nested dir'),
