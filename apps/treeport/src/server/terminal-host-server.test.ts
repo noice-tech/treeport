@@ -1,12 +1,13 @@
+/* eslint-disable anti-slop/no-chained-type-assertions -- The test uses a deliberately partial service double. */
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalHostClient } from './terminal-host-client'
-import { startTerminalHostServer } from './terminal-host-server'
-import type { TerminalHostSessionManager } from './terminal-host-sessions'
-import { testAccess } from './test-access'
-import type { TreeportSpanAttributes } from './tracing'
+import { makeTerminalHostServer } from './terminal-host-server'
+import type { TerminalHostSessions } from './terminal-host-sessions'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -31,40 +32,20 @@ describe('terminal host request scheduling', () => {
     const killStarted = new Promise<void>((resolve) => {
       markKillStarted = resolve
     })
-    const createTerminal = vi.fn(async () => undefined)
-    const traced: Array<{
-      name: string
-      parent: { traceId: string; spanId: string; sampled: boolean }
-      attributes: TreeportSpanAttributes
-    }> = []
-    const sessions = testAccess<TerminalHostSessionManager>({
-      sessionCount: 0,
-      initialize: async () => undefined,
+    const createTerminal = vi.fn(() => Effect.void)
+    // SAFETY: This test exercises only the explicitly mocked server session methods.
+    const sessions = {
+      sessionCount: Effect.succeed(0),
+      initialize: () => Effect.succeed(true),
       createTerminal,
-      killTerminal: async () => {
-        markKillStarted()
-        await killGate
-      },
-      restoreHostQueryAuthority: async () => undefined
-    })
-    const host = await startTerminalHostServer({
-      hostId: 'host',
-      hostKey: 'key',
-      token: 'token',
-      socketPath: path.join(root, 'host.sock'),
-      recordPath: path.join(root, 'host.json'),
-      sessions,
-      trace: async (name, parent, attributes, evaluate) => {
-        traced.push({ name, parent, attributes })
-        return evaluate()
-      }
-    })
-    const client = await TerminalHostClient.connect(
-      host.record.socketPath,
-      'token',
-      'key',
-      'host'
-    )
+      killTerminal: () =>
+        Effect.promise(() => {
+          markKillStarted()
+          return killGate
+        }),
+      restoreHostQueryAuthority: () => Effect.void,
+      shutdown: () => Effect.void
+    } as unknown as TerminalHostSessions
     const input = (terminalId: string) => ({
       terminalId,
       worktreeId: 'worktree',
@@ -77,44 +58,38 @@ describe('terminal host request scheduling', () => {
       env: {}
     })
 
-    const trace = {
-      traceId: '1234567890abcdef1234567890abcdef',
-      spanId: '1234567890abcdef',
-      sampled: true
-    }
-
-    try {
-      await client.createTerminal(input('old'))
-      const killing = client.killTerminal('old', trace)
-      await killStarted
-      await expect(
-        client.createTerminal(input('new'), trace)
-      ).resolves.toBeUndefined()
-      expect(createTerminal).toHaveBeenCalledTimes(2)
-      expect(traced).toEqual([
-        {
-          name: 'treeport.terminal_host.pty.remove',
-          parent: trace,
-          attributes: {
-            'treeport.terminal_host.method': 'kill',
-            'treeport.terminal_host.queue_wait_ms': expect.any(Number)
-          }
-        },
-        {
-          name: 'treeport.terminal_host.pty.create',
-          parent: trace,
-          attributes: {
-            'treeport.terminal_host.method': 'create',
-            'treeport.terminal_host.queue_wait_ms': expect.any(Number)
-          }
-        }
-      ])
-      releaseKill()
-      await killing
-    } finally {
-      releaseKill()
-      client.dispose()
-      await host.close()
-    }
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* makeTerminalHostServer({
+            hostId: 'host',
+            hostKey: 'key',
+            token: 'token',
+            socketPath: path.join(root, 'host.sock'),
+            recordPath: path.join(root, 'host.json'),
+            sessions
+          })
+          const client = yield* TerminalHostClient.connect(
+            host.record.socketPath,
+            'token',
+            'key',
+            'host'
+          )
+          yield* client.createTerminal(input('old'))
+          const killing = yield* Effect.fork(
+            client.killTerminal('old', {
+              traceId: '1234567890abcdef1234567890abcdef',
+              spanId: '1234567890abcdef',
+              sampled: true
+            })
+          )
+          yield* Effect.promise(() => killStarted)
+          yield* client.createTerminal(input('new'))
+          expect(createTerminal).toHaveBeenCalledTimes(2)
+          releaseKill()
+          yield* Fiber.join(killing)
+        })
+      )
+    )
   })
 })

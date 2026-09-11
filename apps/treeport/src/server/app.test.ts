@@ -557,7 +557,8 @@ function fixture(webDist = '/missing') {
     acknowledgeBell: metadataAcknowledgeBell
   })
   const captureTerminal = vi.fn(
-    async (): Promise<string | null> => 'Preparing changes\nRunning tests'
+    async (_terminalId: string, _lines: number): Promise<string | null> =>
+      'Preparing changes\nRunning tests'
   )
   const applicationUpdateStatus: ApplicationUpdateStatus = {
     currentVersion: '0.4.0',
@@ -585,8 +586,9 @@ function fixture(webDist = '/missing') {
     requestPanelClose: browserRequestPanelClose
   })
   const terminalHost = testAccess<TerminalSessionBackend>({
-    captureTerminal,
-    shutdownIfEmpty: vi.fn(async () => undefined)
+    captureTerminal: (terminalId: string, lines: number) =>
+      Effect.promise(() => captureTerminal(terminalId, lines)),
+    shutdownIfEmpty: vi.fn(() => Effect.void)
   })
   const presence = new WorkspacePresenceManager(service.events)
   const app = createApp({

@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 import { asc, eq, sql } from 'drizzle-orm'
-import type * as Effect from 'effect/Effect'
+import * as Effect from 'effect/Effect'
 import type { ProjectRecord } from '@treeport/shared'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import { mapProject, openDatabase, type TreeportDatabase } from './database'
@@ -755,130 +755,138 @@ class SystemDouble implements CommandRunner {
 export class TerminalHostDouble implements TerminalSessionBackend {
   constructor(private readonly system: SystemDouble) {}
 
-  initialize(): Promise<boolean> {
-    return Promise.resolve(true)
+  initialize() {
+    return Effect.succeed(true)
   }
 
-  async createTerminal(input: TerminalCreateInput): Promise<void> {
-    this.system.terminalCreateAttempts += 1
-    if (this.system.terminalCreateGate) {
-      await this.system.terminalCreateGate
-    }
+  createTerminal(input: TerminalCreateInput) {
+    return Effect.gen(this, function* () {
+      this.system.terminalCreateAttempts += 1
+      if (this.system.terminalCreateGate) {
+        yield* Effect.promise(() => this.system.terminalCreateGate!)
+      }
 
-    if (this.system.terminalCreateFails) {
-      throw new Error('terminal create failed')
-    }
+      if (this.system.terminalCreateFails) {
+        return yield* Effect.fail(new Error('terminal create failed'))
+      }
 
-    this.system.terminalCreateInputs.set(
-      input.terminalId,
-      structuredClone(input)
-    )
-    this.system.sessions.set(`${input.worktreeId}/${input.terminalId}`, {
-      id: input.terminalId,
-      worktreeId: input.worktreeId,
-      name: input.name,
-      argv: [...input.argv],
-      shellCommand: input.shellCommand,
-      interactiveShell: input.interactiveShell,
-      closeOnSuccess: input.closeOnSuccess ?? false,
-      status: 'running',
-      exitCode: null,
-      createdAt: input.createdAt,
-      updatedAt: input.createdAt,
-      alive: true,
-      created: Math.floor(Date.now() / 1_000)
+      this.system.terminalCreateInputs.set(
+        input.terminalId,
+        structuredClone(input)
+      )
+      this.system.sessions.set(`${input.worktreeId}/${input.terminalId}`, {
+        id: input.terminalId,
+        worktreeId: input.worktreeId,
+        name: input.name,
+        argv: [...input.argv],
+        shellCommand: input.shellCommand,
+        interactiveShell: input.interactiveShell,
+        closeOnSuccess: input.closeOnSuccess ?? false,
+        status: 'running',
+        exitCode: null,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        alive: true,
+        created: Math.floor(Date.now() / 1_000)
+      })
     })
   }
 
-  async listTerminals(worktreeId: string): Promise<HostedTerminal[]> {
-    this.system.terminalInventoryAttempts += 1
-    if (this.system.terminalInventoryGate) {
-      await this.system.terminalInventoryGate
-    }
+  listTerminals(worktreeId: string): Effect.Effect<HostedTerminal[], Error> {
+    return Effect.gen(this, function* () {
+      this.system.terminalInventoryAttempts += 1
+      if (this.system.terminalInventoryGate) {
+        yield* Effect.promise(() => this.system.terminalInventoryGate!)
+      }
 
-    if (this.system.terminalInventoryFails) {
-      throw new Error('terminal inventory failed')
-    }
+      if (this.system.terminalInventoryFails) {
+        return yield* Effect.fail(new Error('terminal inventory failed'))
+      }
 
-    return [...this.system.sessions.values()]
-      .filter((terminal) => terminal.worktreeId === worktreeId)
-      .map(({ alive, created: _created, ...terminal }) => ({
-        ...terminal,
-        status: alive ? 'running' : 'exited'
-      }))
+      return [...this.system.sessions.values()]
+        .filter((terminal) => terminal.worktreeId === worktreeId)
+        .map(({ alive, created: _created, ...terminal }) => ({
+          ...terminal,
+          status: alive ? ('running' as const) : ('exited' as const)
+        }))
+    })
   }
 
-  async terminalState(terminalId: string): Promise<TerminalSessionState> {
-    this.system.terminalStateAttempts += 1
-    if (this.system.terminalStateGate) {
-      await this.system.terminalStateGate
-    }
+  terminalState(terminalId: string): Effect.Effect<TerminalSessionState> {
+    return Effect.gen(this, function* () {
+      this.system.terminalStateAttempts += 1
+      if (this.system.terminalStateGate) {
+        yield* Effect.promise(() => this.system.terminalStateGate!)
+      }
 
-    const terminal = [...this.system.sessions.values()].find(
-      (candidate) => candidate.id === terminalId
-    )
-    return terminal
-      ? {
-          status: terminal.alive ? 'running' : 'exited',
-          exitCode: terminal.exitCode
+      const terminal = [...this.system.sessions.values()].find(
+        (candidate) => candidate.id === terminalId
+      )
+      return terminal
+        ? {
+            status: terminal.alive ? ('running' as const) : ('exited' as const),
+            exitCode: terminal.exitCode
+          }
+        : { status: 'missing' as const, exitCode: null }
+    })
+  }
+
+  renameTerminal(terminalId: string, name: string, updatedAt: string) {
+    return Effect.sync(() => {
+      const terminal = [...this.system.sessions.values()].find(
+        (candidate) => candidate.id === terminalId
+      )
+      if (terminal) {
+        terminal.name = name
+        terminal.updatedAt = updatedAt
+      }
+    })
+  }
+
+  listProcesses() {
+    return Effect.succeed([])
+  }
+
+  captureTerminal() {
+    return Effect.succeed(null)
+  }
+
+  killTerminal(terminalId: string) {
+    return Effect.gen(this, function* () {
+      if (this.system.terminalKillFails) {
+        return yield* Effect.fail(new Error('terminal cleanup failed'))
+      }
+
+      for (const [key, terminal] of this.system.sessions) {
+        if (terminal.id === terminalId) {
+          this.system.sessions.delete(key)
         }
-      : { status: 'missing', exitCode: null }
-  }
-
-  async renameTerminal(
-    terminalId: string,
-    name: string,
-    updatedAt: string
-  ): Promise<void> {
-    const terminal = [...this.system.sessions.values()].find(
-      (candidate) => candidate.id === terminalId
-    )
-    if (terminal) {
-      terminal.name = name
-      terminal.updatedAt = updatedAt
-    }
-  }
-
-  listProcesses(): Promise<[]> {
-    return Promise.resolve([])
-  }
-
-  captureTerminal(): Promise<null> {
-    return Promise.resolve(null)
-  }
-
-  async killTerminal(terminalId: string): Promise<void> {
-    if (this.system.terminalKillFails) {
-      throw new Error('terminal cleanup failed')
-    }
-
-    for (const [key, terminal] of this.system.sessions) {
-      if (terminal.id === terminalId) {
-        this.system.sessions.delete(key)
       }
-    }
+    })
   }
 
-  shutdownIfEmpty(): Promise<void> {
-    return Promise.resolve()
+  shutdownIfEmpty() {
+    return Effect.void
   }
 
-  async killWorktree(worktreeId: string): Promise<string[]> {
-    if (
-      this.system.terminalKillWorktreeFails ||
-      this.system.terminalKillFailureWorktrees.has(worktreeId)
-    ) {
-      throw new Error('terminal host cleanup failed')
-    }
-
-    const removed: string[] = []
-    for (const [key, terminal] of this.system.sessions) {
-      if (terminal.worktreeId === worktreeId) {
-        removed.push(terminal.id)
-        this.system.sessions.delete(key)
+  killWorktree(worktreeId: string) {
+    return Effect.gen(this, function* () {
+      if (
+        this.system.terminalKillWorktreeFails ||
+        this.system.terminalKillFailureWorktrees.has(worktreeId)
+      ) {
+        return yield* Effect.fail(new Error('terminal host cleanup failed'))
       }
-    }
-    return removed
+
+      const removed: string[] = []
+      for (const [key, terminal] of this.system.sessions) {
+        if (terminal.worktreeId === worktreeId) {
+          removed.push(terminal.id)
+          this.system.sessions.delete(key)
+        }
+      }
+      return removed
+    })
   }
 }
 

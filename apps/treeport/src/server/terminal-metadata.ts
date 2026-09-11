@@ -8,7 +8,9 @@ import {
   type WorktreeRecord
 } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
-import type { Scope } from 'effect/Scope'
+import * as Exit from 'effect/Exit'
+import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
 import type { TreeportService } from './core/index'
 import { DomainError } from './core/index'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
@@ -18,7 +20,7 @@ import {
   type TerminalBellStateStore
 } from './core/terminal-bell-state-store'
 import type { TerminalTitleState } from './core/terminal'
-import type { TerminalAttachmentBackend } from './terminal-host-sessions'
+import type { TerminalAttachmentBackend } from './core/terminal'
 
 const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
   ['pi', 'pi'],
@@ -37,7 +39,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   launchCommandLine: string | null
   interactiveShellCommand: string | null
   launchProgram: TerminalProgram | null
-  runtimeUnsubscribe: (() => void) | null
+  runtimeScope: Scope.CloseableScope | null
   acknowledgedBellSequence: number
 }
 
@@ -50,19 +52,25 @@ export function acquireTerminalMetadataManager(
   service: TreeportService,
   terminalHost: TerminalAttachmentBackend,
   bellStateStore?: TerminalBellStateStore
-): Effect.Effect<TerminalMetadataManager, never, Scope | ApplicationServices> {
-  return Effect.acquireRelease(
-    Effect.sync(
-      () => new TerminalMetadataManager(service, terminalHost, bellStateStore)
-    ),
-    (manager) =>
+): Effect.Effect<
+  TerminalMetadataManager,
+  never,
+  Scope.Scope | ApplicationServices
+> {
+  return Effect.gen(function* () {
+    const manager = new TerminalMetadataManager(
+      service,
+      terminalHost,
+      bellStateStore
+    )
+    yield* Effect.addFinalizer(() =>
       Effect.sync(() => manager.dispose()).pipe(
         Effect.ensuring(manager.drain())
       )
-  ).pipe(
-    Effect.tap((manager) => manager.initialize()),
-    Effect.orDie
-  )
+    )
+    yield* manager.initialize()
+    return manager
+  }).pipe(Effect.orDie)
 }
 
 export class TerminalMetadataManager {
@@ -211,7 +219,7 @@ export class TerminalMetadataManager {
             ? launchCommand
             : null,
           launchProgram,
-          runtimeUnsubscribe: null,
+          runtimeScope: null,
           acknowledgedBellSequence: bell
             ? bell.unread
               ? bell.sequence - 1
@@ -418,48 +426,51 @@ export class TerminalMetadataManager {
     entry: TerminalMetadataEntry
   ): Effect.Effect<void, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
-      if (entry.runtimeUnsubscribe) {
+      if (entry.runtimeScope) {
         return
       }
 
-      entry.runtimeUnsubscribe = yield* Effect.promise(async () =>
-        this.terminalHost.subscribeRuntime(entry.terminalId, (event) => {
-          if (event.titleState) {
-            this.reconcileTitleState(entry, event.titleState)
-          } else if (event.title !== undefined) {
-            entry.terminalTitle = event.title
-            this.update(entry, { title: event.title })
-          }
+      const runtimeScope = yield* Scope.make()
+      entry.runtimeScope = runtimeScope
+      yield* Effect.forkIn(
+        Stream.runForEach(
+          this.terminalHost.runtimeEvents(entry.terminalId),
+          (event) =>
+            Effect.gen(this, function* () {
+              if (event.titleState) {
+                this.reconcileTitleState(entry, event.titleState)
+              } else if (event.title !== undefined) {
+                entry.terminalTitle = event.title
+                this.update(entry, { title: event.title })
+              }
 
-          if (event.progress !== undefined) {
-            this.setProgress(entry, event.progress)
-          }
+              if (event.progress !== undefined) {
+                this.setProgress(entry, event.progress)
+              }
 
-          if (event.bell) {
-            this.service.forkApplicationEffect(
-              this.recordBell(entry, event.bell).pipe(
-                Effect.catchAll((error) =>
-                  Effect.logError(
-                    `Failed to persist terminal bell for ${entry.terminalId}`
-                  ).pipe(Effect.annotateLogs({ cause: String(error) }))
-                )
-              )
-            )
-          }
+              if (event.bell) {
+                yield* this.recordBell(entry, event.bell)
+              }
 
-          if ('exitCode' in event) {
-            entry.status = 'exited'
-            this.stopRuntime(entry)
-          }
-        })
-      )
-      const [state, titleState] = yield* Effect.all([
-        Effect.promise(async () =>
-          this.terminalHost.runtimeState(entry.terminalId)
+              if ('exitCode' in event) {
+                entry.status = 'exited'
+                this.stopRuntime(entry)
+              }
+            })
+        ).pipe(
+          Effect.catchAll((error) =>
+            Effect.logError(
+              `Terminal runtime stream failed for ${entry.terminalId}`
+            ).pipe(Effect.annotateLogs({ cause: String(error) }))
+          )
         ),
-        Effect.promise(async () =>
-          this.terminalHost.terminalTitleState(entry.terminalId)
-        )
+        runtimeScope
+      )
+      // Ensure the scoped runtime subscription is installed before returning.
+      yield* Effect.yieldNow()
+      const [state, titleState] = yield* Effect.all([
+        this.terminalHost.runtimeState(entry.terminalId),
+        this.terminalHost.terminalTitleState(entry.terminalId)
       ])
       if (this.entries.get(entry.terminalId) !== entry) {
         return
@@ -484,8 +495,12 @@ export class TerminalMetadataManager {
   }
 
   private stopRuntime(entry: TerminalMetadataEntry): void {
-    entry.runtimeUnsubscribe?.()
-    entry.runtimeUnsubscribe = null
+    const runtimeScope = entry.runtimeScope
+    entry.runtimeScope = null
+    if (runtimeScope) {
+      this.service.forkApplicationEffect(Scope.close(runtimeScope, Exit.void))
+    }
+
     this.update(entry, {
       progress: null,
       hasForegroundProcess: entry.status === 'running' ? null : false

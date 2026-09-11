@@ -23,11 +23,13 @@ import {
   type TerminalServerPayload
 } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
-import type * as Scope from 'effect/Scope'
+import * as Exit from 'effect/Exit'
+import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
 import type { TreeportService } from './core/index'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
 import type { TerminalMetadataManager } from './terminal-metadata'
-import type { TerminalAttachmentBackend } from './terminal-host-sessions'
+import type { TerminalAttachmentBackend } from './core/terminal'
 import { networkTelemetry } from './network-telemetry'
 import { currentTraceContext } from './tracing'
 
@@ -62,8 +64,7 @@ interface ClientConnection {
   outputStallTimeout: NodeJS.Timeout | null
   announcedReady: boolean
   metadataUnsubscribe: (() => void) | null
-  directOutputUnsubscribe: (() => void) | null
-  directRuntimeUnsubscribe: (() => void) | null
+  directScope: Scope.CloseableScope | null
   queryAuthorityActive: boolean
   queryAuthorityGrantPending: boolean
   queryTransitionId: string | null
@@ -140,8 +141,7 @@ export class TerminalAttachmentManager {
       outputStallTimeout: null,
       announcedReady: false,
       metadataUnsubscribe: null,
-      directOutputUnsubscribe: null,
-      directRuntimeUnsubscribe: null,
+      directScope: null,
       queryAuthorityActive: false,
       queryAuthorityGrantPending: false,
       queryTransitionId: null,
@@ -351,10 +351,12 @@ export class TerminalAttachmentManager {
     }
 
     this.releaseMetadataSubscription(connection)
-    connection.directOutputUnsubscribe?.()
-    connection.directRuntimeUnsubscribe?.()
-    connection.directOutputUnsubscribe = null
-    connection.directRuntimeUnsubscribe = null
+    const directScope = connection.directScope
+    connection.directScope = null
+    if (directScope) {
+      this.service.forkApplicationEffect(Scope.close(directScope, Exit.void))
+    }
+
     connection.pendingDirectOutput = []
     connection.pendingDirectOutputBytes = 0
     networkTelemetry.watermarkBytesNow('terminals', 'unacknowledged_output', 0)
@@ -466,57 +468,44 @@ export class TerminalAttachmentManager {
             ).pipe(Effect.annotateLogs({ cause: String(error) }))
           )
         )
-      connection.directRuntimeUnsubscribe = yield* Effect.tryPromise({
-        try: async () =>
-          self.terminalHost.subscribeRuntime(connection.terminalId, (event) => {
-            if ('exitCode' in event) {
-              connection.exitObserved = true
-              connection.pendingExitCode = event.exitCode ?? null
-              if (connection.announcedReady) {
-                self.send(connection, 'exit', {
-                  exitCode: connection.pendingExitCode
-                })
+      const directScope = yield* Scope.make()
+      connection.directScope = directScope
+      yield* Effect.forkIn(
+        Stream.runForEach(
+          self.terminalHost.runtimeEvents(connection.terminalId),
+          (event) =>
+            Effect.sync(() => {
+              if ('exitCode' in event) {
+                connection.exitObserved = true
+                connection.pendingExitCode = event.exitCode ?? null
+                if (connection.announcedReady) {
+                  self.send(connection, 'exit', {
+                    exitCode: connection.pendingExitCode
+                  })
+                }
               }
-            }
-          }),
-        catch: (cause) => cause
-      }).pipe(
-        Effect.withSpan('treeport.terminal.attach.runtime_subscription', {
-          attributes: { 'treeport.terminal.id': connection.terminalId }
-        })
+            })
+        ).pipe(
+          Effect.catchAll((cause) =>
+            Effect.sync(() => {
+              if (active()) {
+                connection.transport.disconnect(true)
+                self.close(connection.id)
+              }
+            }).pipe(Effect.annotateLogs({ cause: String(cause) }))
+          ),
+          Effect.withSpan('treeport.terminal.attach.runtime_subscription', {
+            attributes: { 'treeport.terminal.id': connection.terminalId }
+          })
+        ),
+        directScope
       )
       const initial = yield* Effect.gen(function* () {
         const trace = yield* currentTraceContext
-        return yield* Effect.tryPromise({
-          try: () =>
-            self.terminalHost.attach(
-              connection.terminalId,
-              (data, ownerSequence) => {
-                if (connection.state === 'initializing') {
-                  connection.pendingDirectOutputBytes += Buffer.byteLength(data)
-                  networkTelemetry.watermarkBytesNow(
-                    'terminals',
-                    'pending_output',
-                    connection.pendingDirectOutputBytes
-                  )
-                  if (
-                    connection.pendingDirectOutputBytes >=
-                    TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES
-                  ) {
-                    connection.transport.disconnect(true)
-                    self.close(connection.id)
-                    return
-                  }
-
-                  connection.pendingDirectOutput.push({ data, ownerSequence })
-                } else {
-                  self.sendOutput(connection, data)
-                }
-              },
-              trace ?? undefined
-            ),
-          catch: (cause) => cause
-        })
+        return yield* Scope.extend(
+          self.terminalHost.attach(connection.terminalId, trace ?? undefined),
+          directScope
+        )
       }).pipe(
         Effect.withSpan('treeport.terminal_host.ipc.attach', {
           kind: 'client',
@@ -527,7 +516,7 @@ export class TerminalAttachmentManager {
         })
       )
       if (!active()) {
-        initial?.unsubscribe()
+        yield* Scope.close(directScope, Exit.void)
         return
       }
 
@@ -539,7 +528,35 @@ export class TerminalAttachmentManager {
         return yield* Effect.fail(new Error('Terminal is unavailable'))
       }
 
-      connection.directOutputUnsubscribe = initial.unsubscribe
+      yield* Effect.forkIn(
+        Stream.runForEach(initial.output, ({ data, sequence: ownerSequence }) =>
+          Effect.sync(() => {
+            if (connection.state === 'initializing') {
+              connection.pendingDirectOutputBytes += Buffer.byteLength(data)
+              networkTelemetry.watermarkBytesNow(
+                'terminals',
+                'pending_output',
+                connection.pendingDirectOutputBytes
+              )
+              if (
+                connection.pendingDirectOutputBytes >=
+                TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES
+              ) {
+                connection.transport.disconnect(true)
+                self.close(connection.id)
+                return
+              }
+
+              connection.pendingDirectOutput.push({ data, ownerSequence })
+            } else {
+              self.sendOutput(connection, data)
+            }
+          })
+        ).pipe(Effect.orDie),
+        directScope
+      )
+      // Let the stream install its scoped queue before announcing readiness.
+      yield* Effect.yieldNow()
       const size = decodeUnknownOrNull(terminalSizeSchema, {
         cols: initial.cols || cols,
         rows: initial.rows || rows
@@ -766,18 +783,12 @@ export class TerminalAttachmentManager {
 
   private enqueueTerminal<Result>(
     terminalId: string,
-    operation: () => Promise<Result> | Result,
+    operation: () => Effect.Effect<Result, unknown>,
     onError: (cause: unknown) => void
   ): void {
     this.service.forkApplicationEffect(
       this.service
-        .terminalAttachmentMutation(
-          terminalId,
-          Effect.tryPromise({
-            try: async () => operation(),
-            catch: (cause) => cause
-          })
-        )
+        .terminalAttachmentMutation(terminalId, Effect.suspend(operation))
         .pipe(
           Effect.catchAll((cause) => Effect.sync(() => onError(cause))),
           Effect.asVoid
@@ -812,31 +823,32 @@ export class TerminalAttachmentManager {
     )
     this.enqueueTerminal(
       connection.terminalId,
-      async () => {
-        connection.queuedInputBytes = Math.max(
-          0,
-          connection.queuedInputBytes - bytes
-        )
-        connection.queuedInputMessages = Math.max(
-          0,
-          connection.queuedInputMessages - 1
-        )
-        networkTelemetry.watermarkBytesNow(
-          'terminals',
-          'queued_input',
-          connection.queuedInputBytes
-        )
-        if (
-          this.isActive(connection) &&
-          this.canControl(connection, generation) &&
-          connection.queryAuthorityActive
-        ) {
-          await this.terminalHost.write(connection.terminalId, data, {
-            attachmentId: connection.id,
-            generation
-          })
-        }
-      },
+      () =>
+        Effect.gen(this, function* () {
+          connection.queuedInputBytes = Math.max(
+            0,
+            connection.queuedInputBytes - bytes
+          )
+          connection.queuedInputMessages = Math.max(
+            0,
+            connection.queuedInputMessages - 1
+          )
+          networkTelemetry.watermarkBytesNow(
+            'terminals',
+            'queued_input',
+            connection.queuedInputBytes
+          )
+          if (
+            this.isActive(connection) &&
+            this.canControl(connection, generation) &&
+            connection.queryAuthorityActive
+          ) {
+            yield* this.terminalHost.write(connection.terminalId, data, {
+              attachmentId: connection.id,
+              generation
+            })
+          }
+        }),
       (error) => this.failInputWrite(connection, error)
     )
   }
@@ -863,118 +875,128 @@ export class TerminalAttachmentManager {
   ): void {
     this.enqueueTerminal(
       connection.terminalId,
-      async () => {
-        if (
-          !this.isActive(connection) ||
-          !this.canControl(connection, generation)
-        ) {
-          return
-        }
+      () =>
+        Effect.gen(this, function* () {
+          if (
+            !this.isActive(connection) ||
+            !this.canControl(connection, generation)
+          ) {
+            return
+          }
 
-        if (transitionId === null) {
-          if (connection.queryAuthorityActive) {
+          if (transitionId === null) {
+            if (connection.queryAuthorityActive) {
+              this.send(connection, 'query_authority', {
+                generation,
+                transitionId: null,
+                active: true
+              })
+              return
+            }
+
+            const otherAuthority = [...this.clients.values()].some(
+              (client) =>
+                client.terminalId === connection.terminalId &&
+                (client.queryAuthorityActive ||
+                  client.queryTransitionId !== null)
+            )
+            if (otherAuthority) {
+              yield* this.revokeQueryAuthority(connection.terminalId)
+            }
+
+            const transition = yield* this.terminalHost.prepareQueryAuthority(
+              connection.terminalId
+            )
+            if (
+              !this.isActive(connection) ||
+              !this.canControl(connection, generation)
+            ) {
+              yield* this.terminalHost.useHostQueryAuthority(
+                connection.terminalId
+              )
+              return
+            }
+
+            connection.queryAuthorityGrantPending = false
+            connection.queryTransitionId = transition.transitionId
             this.send(connection, 'query_authority', {
               generation,
-              transitionId: null,
+              transitionId: transition.transitionId,
+              active: false
+            })
+            return
+          }
+
+          if (connection.queryTransitionId !== transitionId) {
+            return
+          }
+
+          if (!connection.queryAuthorityGrantPending) {
+            connection.queryAuthorityGrantPending = true
+            this.send(connection, 'query_authority', {
+              generation,
+              transitionId,
               active: true
             })
             return
           }
 
-          const otherAuthority = [...this.clients.values()].some(
-            (client) =>
-              client.terminalId === connection.terminalId &&
-              (client.queryAuthorityActive || client.queryTransitionId !== null)
-          )
-          if (otherAuthority) {
-            await this.revokeQueryAuthority(connection.terminalId)
-          }
-
-          const transition = await this.terminalHost.prepareQueryAuthority(
-            connection.terminalId
+          yield* this.terminalHost.activateQueryAuthority(
+            connection.terminalId,
+            transitionId,
+            connection.id,
+            generation,
+            cellSize
           )
           if (
             !this.isActive(connection) ||
             !this.canControl(connection, generation)
           ) {
-            await this.terminalHost.useHostQueryAuthority(connection.terminalId)
+            yield* this.terminalHost.useHostQueryAuthority(
+              connection.terminalId
+            )
             return
           }
 
+          connection.queryTransitionId = null
           connection.queryAuthorityGrantPending = false
-          connection.queryTransitionId = transition.transitionId
+          connection.queryAuthorityActive = true
           this.send(connection, 'query_authority', {
             generation,
-            transitionId: transition.transitionId,
-            active: false
-          })
-          return
-        }
-
-        if (connection.queryTransitionId !== transitionId) {
-          return
-        }
-
-        if (!connection.queryAuthorityGrantPending) {
-          connection.queryAuthorityGrantPending = true
-          this.send(connection, 'query_authority', {
-            generation,
-            transitionId,
+            transitionId: null,
             active: true
           })
-          return
-        }
-
-        await this.terminalHost.activateQueryAuthority(
-          connection.terminalId,
-          transitionId,
-          connection.id,
-          generation,
-          cellSize
-        )
-        if (
-          !this.isActive(connection) ||
-          !this.canControl(connection, generation)
-        ) {
-          await this.terminalHost.useHostQueryAuthority(connection.terminalId)
-          return
-        }
-
-        connection.queryTransitionId = null
-        connection.queryAuthorityGrantPending = false
-        connection.queryAuthorityActive = true
-        this.send(connection, 'query_authority', {
-          generation,
-          transitionId: null,
-          active: true
-        })
-      },
+        }),
       (error) => this.failInputWrite(connection, error)
     )
   }
 
-  private async revokeQueryAuthority(terminalId: string): Promise<void> {
-    await this.terminalHost.useHostQueryAuthority(terminalId)
-    for (const client of this.clients.values()) {
-      if (
-        client.terminalId !== terminalId ||
-        (!client.queryAuthorityActive && client.queryTransitionId === null)
-      ) {
-        continue
-      }
+  private revokeQueryAuthority(
+    terminalId: string
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      yield* this.terminalHost.useHostQueryAuthority(terminalId)
+      for (const client of this.clients.values()) {
+        if (
+          client.terminalId !== terminalId ||
+          (!client.queryAuthorityActive && client.queryTransitionId === null)
+        ) {
+          continue
+        }
 
-      client.queryAuthorityActive = false
-      client.queryAuthorityGrantPending = false
-      client.queryTransitionId = null
-      if (this.isActive(client)) {
-        const lease = this.controllers.get(terminalId)
-        this.send(client, 'query_authority', {
-          generation: lease?.generation ?? 0,
-          transitionId: null,
-          active: false
-        })
+        client.queryAuthorityActive = false
+        client.queryAuthorityGrantPending = false
+        client.queryTransitionId = null
+        if (this.isActive(client)) {
+          const lease = this.controllers.get(terminalId)
+          this.send(client, 'query_authority', {
+            generation: lease?.generation ?? 0,
+            transitionId: null,
+            active: false
+          })
+        }
       }
-    }
+    })
   }
 
   private resizeTerminal(
@@ -984,45 +1006,50 @@ export class TerminalAttachmentManager {
   ): void {
     this.enqueueTerminal(
       connection.terminalId,
-      async () => {
-        if (!this.isActive(connection) || !this.isController(connection)) {
-          return
-        }
+      () =>
+        Effect.gen(this, function* () {
+          if (!this.isActive(connection) || !this.isController(connection)) {
+            return
+          }
 
-        await this.applyDimensions(connection.terminalId, cols, rows)
-      },
+          yield* this.applyDimensions(connection.terminalId, cols, rows)
+        }),
       (error) => this.failDimensionChange(connection.terminalId, error)
     )
   }
 
-  private async applyDimensions(
+  private applyDimensions(
     terminalId: string,
     cols: number,
     rows: number
-  ): Promise<void> {
-    const current = this.dimensions.get(terminalId)
-    if (!current) {
-      throw new Error('Terminal dimensions are unavailable')
-    }
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      const current = this.dimensions.get(terminalId)
+      if (!current) {
+        return yield* Effect.fail(
+          new Error('Terminal dimensions are unavailable')
+        )
+      }
 
-    if (current.cols === cols && current.rows === rows) {
-      return
-    }
+      if (current.cols === cols && current.rows === rows) {
+        return
+      }
 
-    const next = { ...current, cols, rows, revision: current.revision + 1 }
-    this.dimensions.set(terminalId, next)
+      const next = { ...current, cols, rows, revision: current.revision + 1 }
+      this.dimensions.set(terminalId, next)
 
-    const active = [...this.clients.values()].filter(
-      (client) => client.terminalId === terminalId && this.isActive(client)
-    )
-    for (const client of active) {
-      this.send(client, 'dimensions', {
-        cols: next.cols,
-        rows: next.rows,
-        revision: next.revision
-      })
-    }
-    await this.terminalHost.resize(terminalId, next.cols, next.rows)
+      const active = [...this.clients.values()].filter(
+        (client) => client.terminalId === terminalId && this.isActive(client)
+      )
+      for (const client of active) {
+        this.send(client, 'dimensions', {
+          cols: next.cols,
+          rows: next.rows,
+          revision: next.revision
+        })
+      }
+      yield* this.terminalHost.resize(terminalId, next.cols, next.rows)
+    })
   }
 
   private failDimensionChange(terminalId: string, cause: unknown): void {
@@ -1099,49 +1126,50 @@ export class TerminalAttachmentManager {
   ): void {
     this.enqueueTerminal(
       connection.terminalId,
-      async () => {
-        if (!this.isActive(connection)) {
-          return
-        }
+      () =>
+        Effect.gen(this, function* () {
+          if (!this.isActive(connection)) {
+            return
+          }
 
-        const previous = this.controllers.get(connection.terminalId)
-        if (!previous || generation !== previous.generation) {
-          this.sendControl(connection)
-          return
-        }
+          const previous = this.controllers.get(connection.terminalId)
+          if (!previous || generation !== previous.generation) {
+            this.sendControl(connection)
+            return
+          }
 
-        if (previous.connectionId === connection.id) {
-          await this.applyDimensions(connection.terminalId, cols, rows)
-          return
-        }
+          if (previous.connectionId === connection.id) {
+            yield* this.applyDimensions(connection.terminalId, cols, rows)
+            return
+          }
 
-        if (previous.timer) {
-          clearTimeout(previous.timer)
-        }
+          if (previous.timer) {
+            clearTimeout(previous.timer)
+          }
 
-        await this.revokeQueryAuthority(connection.terminalId)
-        if (!this.isActive(connection)) {
-          return
-        }
+          yield* this.revokeQueryAuthority(connection.terminalId)
+          if (!this.isActive(connection)) {
+            return
+          }
 
-        this.controllers.set(connection.terminalId, {
-          clientId: connection.clientId,
-          connectionId: connection.id,
-          generation: this.nextControllerGeneration(connection.terminalId),
-          expiresAt: Number.POSITIVE_INFINITY,
-          timer: null
-        })
-        await this.applyDimensions(connection.terminalId, cols, rows)
-        if (!this.isActive(connection) || !this.isController(connection)) {
-          return
-        }
+          this.controllers.set(connection.terminalId, {
+            clientId: connection.clientId,
+            connectionId: connection.id,
+            generation: this.nextControllerGeneration(connection.terminalId),
+            expiresAt: Number.POSITIVE_INFINITY,
+            timer: null
+          })
+          yield* this.applyDimensions(connection.terminalId, cols, rows)
+          if (!this.isActive(connection) || !this.isController(connection)) {
+            return
+          }
 
-        this.broadcastControl(connection.terminalId)
-        this.publishControllerChanged(
-          connection.terminalId,
-          connection.clientId
-        )
-      },
+          this.broadcastControl(connection.terminalId)
+          this.publishControllerChanged(
+            connection.terminalId,
+            connection.clientId
+          )
+        }),
       (error) => this.failDimensionChange(connection.terminalId, error)
     )
   }
@@ -1149,30 +1177,34 @@ export class TerminalAttachmentManager {
   private expireControllerLease(terminalId: string, clientId: string): void {
     this.enqueueTerminal(
       terminalId,
-      async () => {
-        const lease = this.controllers.get(terminalId)
-        if (!lease || lease.clientId !== clientId || lease.connectionId) {
-          return
-        }
+      () =>
+        Effect.gen(this, function* () {
+          const lease = this.controllers.get(terminalId)
+          if (!lease || lease.clientId !== clientId || lease.connectionId) {
+            return
+          }
 
-        const replacement = [...this.clients.values()].find(
-          (client) =>
-            client.terminalId === terminalId && client.state === 'ready'
-        )
-        await this.revokeQueryAuthority(terminalId)
-        if (replacement) {
-          lease.clientId = replacement.clientId
-          lease.connectionId = replacement.id
-          lease.generation = this.nextControllerGeneration(terminalId)
-          lease.expiresAt = Number.POSITIVE_INFINITY
-          lease.timer = null
-        } else {
-          this.controllers.delete(terminalId)
-        }
+          const replacement = [...this.clients.values()].find(
+            (client) =>
+              client.terminalId === terminalId && client.state === 'ready'
+          )
+          yield* this.revokeQueryAuthority(terminalId)
+          if (replacement) {
+            lease.clientId = replacement.clientId
+            lease.connectionId = replacement.id
+            lease.generation = this.nextControllerGeneration(terminalId)
+            lease.expiresAt = Number.POSITIVE_INFINITY
+            lease.timer = null
+          } else {
+            this.controllers.delete(terminalId)
+          }
 
-        this.broadcastControl(terminalId)
-        this.publishControllerChanged(terminalId, replacement?.clientId ?? null)
-      },
+          this.broadcastControl(terminalId)
+          this.publishControllerChanged(
+            terminalId,
+            replacement?.clientId ?? null
+          )
+        }),
       (error) => this.failDimensionChange(terminalId, error)
     )
   }

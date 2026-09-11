@@ -67,23 +67,18 @@ async function main(): Promise<void> {
     const gh = new GhAdapter(runner, config.ghPath)
     const terminalHost = await Effect.runPromise(
       Scope.extend(
-        Effect.acquireRelease(
-          Effect.promise(() =>
-            connectOrStartTerminalHost({
-              dataDir: config.dataDir,
-              runtimeDir: config.runtimeDir,
-              launcherPath,
-              hostEntryPath: fileURLToPath(
-                new URL('./terminal-host-entry.js', import.meta.url)
-              ),
-              environment: {
-                ...process.env,
-                TREEPORT_APP_VERSION: config.appVersion
-              }
-            })
+        connectOrStartTerminalHost({
+          dataDir: config.dataDir,
+          runtimeDir: config.runtimeDir,
+          launcherPath,
+          hostEntryPath: fileURLToPath(
+            new URL('./terminal-host-entry.js', import.meta.url)
           ),
-          (host) => Effect.sync(() => host.dispose())
-        ),
+          environment: {
+            ...process.env,
+            TREEPORT_APP_VERSION: config.appVersion
+          }
+        }),
         resourceScope
       )
     )

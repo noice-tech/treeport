@@ -1,4 +1,13 @@
-import type { TerminalSize, TerminalStatus } from '@treeport/shared'
+import type {
+  TerminalImageSnapshot,
+  TerminalProgress,
+  TerminalSize,
+  TerminalSnapshotLink,
+  TerminalStatus
+} from '@treeport/shared'
+import type * as Effect from 'effect/Effect'
+import type * as Scope from 'effect/Scope'
+import type * as Stream from 'effect/Stream'
 import type { WorktreeSetupTask } from './setup'
 
 export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
@@ -68,23 +77,101 @@ export interface TerminalTraceContext {
   sampled: boolean
 }
 
+export interface TerminalHostRuntimeEvent {
+  title?: string | undefined
+  progress?: TerminalProgress | null | undefined
+  bell?: { sequence: number; at: string } | undefined
+  exitCode?: number | null | undefined
+  titleState?: TerminalTitleState | undefined
+}
+
+export interface TerminalHostOutput {
+  data: string
+  sequence: number
+}
+
+interface TerminalHostSnapshot {
+  data: string
+  links: TerminalSnapshotLink[]
+  images: TerminalImageSnapshot | null
+  fence: number
+  cols: number
+  rows: number
+}
+
+export interface TerminalHostAttachment extends TerminalHostSnapshot {
+  output: Stream.Stream<TerminalHostOutput, unknown>
+}
+
+/** Browser-facing view of the detached terminal host. */
+export interface TerminalAttachmentBackend {
+  attach(
+    terminalId: string,
+    trace?: TerminalTraceContext
+  ): Effect.Effect<TerminalHostAttachment | null, unknown, Scope.Scope>
+  runtimeEvents(
+    terminalId: string
+  ): Stream.Stream<TerminalHostRuntimeEvent, unknown>
+  terminalTitleState(
+    terminalId: string
+  ): Effect.Effect<TerminalTitleState | null, unknown>
+  runtimeState(terminalId: string): Effect.Effect<
+    {
+      title: string | null
+      status: HostedTerminal['status']
+      progress: TerminalProgress | null
+      bell: { sequence: number; at: string } | null
+    } | null,
+    unknown
+  >
+  write(
+    terminalId: string,
+    data: string | Buffer,
+    authority: { attachmentId: string; generation: number }
+  ): Effect.Effect<void, unknown>
+  prepareQueryAuthority(
+    terminalId: string
+  ): Effect.Effect<{ transitionId: string; fence: number }, unknown>
+  activateQueryAuthority(
+    terminalId: string,
+    transitionId: string,
+    attachmentId: string,
+    generation: number,
+    cellSize: { width: number; height: number } | null
+  ): Effect.Effect<void, unknown>
+  useHostQueryAuthority(terminalId: string): Effect.Effect<void, unknown>
+  resize(
+    terminalId: string,
+    cols: number,
+    rows: number
+  ): Effect.Effect<void, unknown>
+}
+
 /** API daemon view of the detached terminal host. */
 export interface TerminalSessionBackend {
-  initialize(): Promise<boolean>
+  initialize(): Effect.Effect<boolean, unknown>
   createTerminal(
     input: TerminalCreateInput,
     trace?: TerminalTraceContext
-  ): Promise<void>
+  ): Effect.Effect<void, unknown>
   renameTerminal(
     terminalId: string,
     name: string,
     updatedAt: string
-  ): Promise<void>
-  listTerminals(worktreeId: string): Promise<HostedTerminal[]>
-  listProcesses(worktreeId: string): Promise<TerminalProcess[]>
-  terminalState(terminalId: string): Promise<TerminalSessionState>
-  captureTerminal(terminalId: string, lines: number): Promise<string | null>
-  killTerminal(terminalId: string, trace?: TerminalTraceContext): Promise<void>
-  killWorktree(worktreeId: string): Promise<string[]>
-  shutdownIfEmpty(): Promise<void>
+  ): Effect.Effect<void, unknown>
+  listTerminals(worktreeId: string): Effect.Effect<HostedTerminal[], unknown>
+  listProcesses(worktreeId: string): Effect.Effect<TerminalProcess[], unknown>
+  terminalState(
+    terminalId: string
+  ): Effect.Effect<TerminalSessionState, unknown>
+  captureTerminal(
+    terminalId: string,
+    lines: number
+  ): Effect.Effect<string | null, unknown>
+  killTerminal(
+    terminalId: string,
+    trace?: TerminalTraceContext
+  ): Effect.Effect<void, unknown>
+  killWorktree(worktreeId: string): Effect.Effect<string[], unknown>
+  shutdownIfEmpty(): Effect.Effect<void, unknown>
 }

@@ -1,9 +1,14 @@
-import { z } from 'zod'
-import type {
-  TerminalProgress,
-  TerminalSnapshotLink,
-  TerminalImageSnapshot
+import {
+  terminalImageSnapshotSchema,
+  terminalProgressSchema,
+  terminalSnapshotLinkSchema,
+  type TerminalImageSnapshot,
+  type TerminalProgress,
+  type TerminalSnapshotLink
 } from '@treeport/shared'
+import * as Data from 'effect/Data'
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
 import type {
   HostedTerminal,
   TerminalLaunchSpec,
@@ -11,94 +16,120 @@ import type {
   TerminalTitleState,
   TerminalTraceContext
 } from './core/terminal'
-import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
+import type { TerminalHostRuntimeEvent } from './core/terminal'
 
 export const TERMINAL_HOST_PROTOCOL_VERSION = 4
 const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
 
-export interface TerminalHostRecord {
-  protocolVersion: number
-  hostId: string
-  hostKey: string
-  pid: number
-  socketPath: string
-  startedAt: string
+export class TerminalHostFrameEncodeError extends Data.TaggedError(
+  'TerminalHostFrameEncodeError'
+)<{ readonly cause: unknown }> {
+  override get message() {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause)
+  }
 }
 
-export const terminalHostRecordSchema: z.ZodType<TerminalHostRecord> = z
-  .object({
-    protocolVersion: z.number().int().positive(),
-    hostId: z.string().min(1),
-    hostKey: z.string().min(1),
-    pid: z.number().int().positive(),
-    socketPath: z.string().min(1),
-    startedAt: z.string().min(1)
-  })
-  .strict()
-
-export interface TerminalHostCreateInput {
-  terminalId: string
-  worktreeId: string
-  name: string
-  createdAt: string
-  cwd: string
-  argv: string[]
-  initialTitle?: string | undefined
-  shellCommand: string | null
-  interactiveShell: boolean
-  fallbackArgv?: string[] | undefined
-  closeOnSuccess?: boolean | undefined
-  initialSize?: { cols: number; rows: number } | undefined
-  env: Record<string, string>
-  setupTasks?: TerminalLaunchSpec['setupTasks'] | undefined
-  setupError?: string | undefined
+export class TerminalHostFrameDecodeError extends Data.TaggedError(
+  'TerminalHostFrameDecodeError'
+)<{ readonly cause: unknown }> {
+  override get message() {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause)
+  }
 }
 
-const terminalSizeSchema = z
-  .object({
-    cols: z.number().int().positive(),
-    rows: z.number().int().positive()
-  })
-  .strict()
-const terminalIdSchema = z.object({ terminalId: z.string().min(1) }).strict()
-const worktreeIdSchema = z.object({ worktreeId: z.string().min(1) }).strict()
-const setupTaskSchema = z
-  .object({
-    label: z.string(),
-    argv: z.array(z.string()),
-    cwd: z.string(),
-    env: z.record(z.string(), z.string()),
-    timeoutMs: z.number().positive()
-  })
-  .strict()
-const createSchema: z.ZodType<TerminalHostCreateInput> = z
-  .object({
-    terminalId: z.string().min(1),
-    worktreeId: z.string().min(1),
-    name: z.string(),
-    createdAt: z.string(),
-    cwd: z.string(),
-    argv: z.array(z.string()),
-    initialTitle: z.string().optional(),
-    shellCommand: z.string().nullable(),
-    interactiveShell: z.boolean(),
-    fallbackArgv: z.array(z.string()).optional(),
-    closeOnSuccess: z.boolean().optional(),
-    initialSize: terminalSizeSchema.optional(),
-    env: z.record(z.string(), z.string()),
-    setupTasks: z.array(setupTaskSchema).optional(),
-    setupError: z.string().optional()
-  })
-  .strict()
+export class TerminalHostConnectionError extends Data.TaggedError(
+  'TerminalHostConnectionError'
+)<{ readonly cause: unknown }> {
+  override get message() {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause)
+  }
+}
 
-export const terminalHostInputSchemas = {
-  handshake: z
-    .object({
-      token: z.string(),
-      hostKey: z.string(),
-      protocolVersion: z.number().int()
-    })
-    .strict(),
+export class TerminalHostDisconnected extends Data.TaggedError(
+  'TerminalHostDisconnected'
+)<{ readonly message: string }> {}
+
+export class TerminalHostRequestTimeout extends Data.TaggedError(
+  'TerminalHostRequestTimeout'
+)<{ readonly method: TerminalHostRequestMethod }> {
+  override get message() {
+    return `Terminal host request timed out: ${this.method}`
+  }
+}
+
+export class TerminalHostRequestError extends Data.TaggedError(
+  'TerminalHostRequestError'
+)<{
+  readonly code: string
+  readonly message: string
+  readonly hostProtocolVersion?: number | undefined
+  readonly liveSessionCount?: number | undefined
+}> {}
+
+export type TerminalHostClientError =
+  | TerminalHostFrameEncodeError
+  | TerminalHostFrameDecodeError
+  | TerminalHostConnectionError
+  | TerminalHostDisconnected
+  | TerminalHostRequestTimeout
+  | TerminalHostRequestError
+
+const nonEmptyString = Schema.String.pipe(Schema.minLength(1))
+const positiveInteger = Schema.Int.pipe(Schema.positive())
+
+const terminalHostRecordFields = {
+  protocolVersion: positiveInteger,
+  hostId: nonEmptyString,
+  hostKey: nonEmptyString,
+  pid: positiveInteger,
+  socketPath: nonEmptyString,
+  startedAt: nonEmptyString
+}
+const terminalHostRecordSchema = Schema.Struct(terminalHostRecordFields)
+
+export type TerminalHostRecord = typeof terminalHostRecordSchema.Type
+
+const terminalSizeSchema = Schema.Struct({
+  cols: positiveInteger,
+  rows: positiveInteger
+})
+const terminalIdSchema = Schema.Struct({ terminalId: nonEmptyString })
+const worktreeIdSchema = Schema.Struct({ worktreeId: nonEmptyString })
+const setupTaskSchema = Schema.Struct({
+  label: Schema.String,
+  argv: Schema.Array(Schema.String),
+  cwd: Schema.String,
+  env: Schema.Record({ key: Schema.String, value: Schema.String }),
+  timeoutMs: Schema.Number.pipe(Schema.positive())
+})
+const createSchema = Schema.Struct({
+  terminalId: nonEmptyString,
+  worktreeId: nonEmptyString,
+  name: Schema.String,
+  createdAt: Schema.String,
+  cwd: Schema.String,
+  argv: Schema.Array(Schema.String),
+  initialTitle: Schema.optional(Schema.String),
+  shellCommand: Schema.NullOr(Schema.String),
+  interactiveShell: Schema.Boolean,
+  fallbackArgv: Schema.optional(Schema.Array(Schema.String)),
+  closeOnSuccess: Schema.optional(Schema.Boolean),
+  initialSize: Schema.optional(terminalSizeSchema),
+  env: Schema.Record({ key: Schema.String, value: Schema.String }),
+  setupTasks: Schema.optional(Schema.Array(setupTaskSchema)),
+  setupError: Schema.optional(Schema.String)
+})
+
+export type TerminalHostCreateInput = typeof createSchema.Type & {
+  readonly setupTasks?: TerminalLaunchSpec['setupTasks'] | undefined
+}
+
+const terminalHostInputSchemas = {
+  handshake: Schema.Struct({
+    token: Schema.String,
+    hostKey: Schema.String,
+    protocolVersion: Schema.Int
+  }),
   create: createSchema,
   inventory: worktreeIdSchema,
   state: terminalIdSchema,
@@ -107,55 +138,53 @@ export const terminalHostInputSchemas = {
   subscribeRuntime: terminalIdSchema,
   unsubscribeRuntime: terminalIdSchema,
   runtimeState: terminalIdSchema,
-  write: z
-    .object({
-      terminalId: z.string(),
-      data: z.string(),
-      encoding: z.enum(['utf8', 'base64']),
-      authority: z
-        .object({
-          attachmentId: z.string(),
-          generation: z.number().int().positive()
-        })
-        .strict()
+  write: Schema.Struct({
+    terminalId: Schema.String,
+    data: Schema.String,
+    encoding: Schema.Literal('utf8', 'base64'),
+    authority: Schema.Struct({
+      attachmentId: Schema.String,
+      generation: positiveInteger
     })
-    .strict(),
+  }),
   prepareQueryAuthority: terminalIdSchema,
-  activateQueryAuthority: terminalIdSchema
-    .extend({
-      transitionId: z.string(),
-      attachmentId: z.string(),
-      generation: z.number().int().positive(),
-      cellSize: z
-        .object({
-          width: z.number().min(1).max(100),
-          height: z.number().min(1).max(200)
-        })
-        .nullable()
-    })
-    .strict(),
+  activateQueryAuthority: Schema.Struct({
+    terminalId: nonEmptyString,
+    transitionId: Schema.String,
+    attachmentId: Schema.String,
+    generation: positiveInteger,
+    cellSize: Schema.NullOr(
+      Schema.Struct({
+        width: Schema.Number.pipe(Schema.between(1, 100)),
+        height: Schema.Number.pipe(Schema.between(1, 200))
+      })
+    )
+  }),
   hostQueryAuthority: terminalIdSchema,
-  resize: terminalIdSchema
-    .extend({
-      cols: z.number().int().positive(),
-      rows: z.number().int().positive()
-    })
-    .strict(),
-  capture: terminalIdSchema
-    .extend({ lines: z.number().int().positive() })
-    .strict(),
-  rename: terminalIdSchema
-    .extend({ name: z.string(), updatedAt: z.string() })
-    .strict(),
+  resize: Schema.Struct({
+    terminalId: nonEmptyString,
+    cols: positiveInteger,
+    rows: positiveInteger
+  }),
+  capture: Schema.Struct({
+    terminalId: nonEmptyString,
+    lines: positiveInteger
+  }),
+  rename: Schema.Struct({
+    terminalId: nonEmptyString,
+    name: Schema.String,
+    updatedAt: Schema.String
+  }),
   processes: worktreeIdSchema,
   titleState: terminalIdSchema,
-  signal: terminalIdSchema
-    .extend({ signal: z.enum(['SIGINT', 'SIGTERM', 'SIGKILL', 'SIGHUP']) })
-    .strict(),
+  signal: Schema.Struct({
+    terminalId: nonEmptyString,
+    signal: Schema.Literal('SIGINT', 'SIGTERM', 'SIGKILL', 'SIGHUP')
+  }),
   kill: terminalIdSchema,
   killWorktree: worktreeIdSchema,
-  shutdown: z.object({ ifEmpty: z.literal(true) }).strict()
-}
+  shutdown: Schema.Struct({ ifEmpty: Schema.Literal(true) })
+} as const
 
 const TERMINAL_HOST_REQUEST_METHODS = [
   'handshake',
@@ -182,10 +211,11 @@ const TERMINAL_HOST_REQUEST_METHODS = [
   'shutdown'
 ] as const satisfies readonly (keyof typeof terminalHostInputSchemas)[]
 
-type TerminalHostRequestMethod = keyof typeof terminalHostInputSchemas
-export type TerminalHostRequestInput = z.infer<
-  (typeof terminalHostInputSchemas)[TerminalHostRequestMethod]
->
+export type TerminalHostRequestMethod =
+  (typeof TERMINAL_HOST_REQUEST_METHODS)[number]
+export type TerminalHostRequestInput<
+  Method extends TerminalHostRequestMethod = TerminalHostRequestMethod
+> = (typeof terminalHostInputSchemas)[Method]['Type']
 
 export interface TerminalHostRequestFrame {
   protocolVersion: number
@@ -200,11 +230,7 @@ export interface TerminalHostResponseFrame {
   protocolVersion: number
   type: 'response'
   id: string
-  /**
-   * Current hosts always send result. It is optional only so a new daemon can
-   * read an old host's structured INCOMPATIBLE_PROTOCOL response and refuse
-   * replacement safely.
-   */
+  /** Older hosts may omit result on a structured protocol failure. */
   result?: TerminalHostResult
   error: {
     code: string
@@ -244,7 +270,7 @@ export interface TerminalHostResults {
   attach: {
     data: string
     links?: TerminalSnapshotLink[] | undefined
-    images: TerminalImageSnapshot | null
+    images?: TerminalImageSnapshot | null | undefined
     fence: number
     cols: number
     rows: number
@@ -275,130 +301,261 @@ export interface TerminalHostResults {
 
 export type TerminalHostResult = TerminalHostResults[keyof TerminalHostResults]
 
-const runtimeEventSchema = z
-  .object({
-    title: z.string().optional(),
-    progress: z
-      .strictObject({
-        state: z.enum(['normal', 'error', 'indeterminate', 'paused']),
-        value: z.number().int().min(0).max(100).nullable()
+const traceSchema = Schema.Struct({
+  traceId: Schema.String.pipe(Schema.pattern(/^[0-9a-f]{32}$/)),
+  spanId: Schema.String.pipe(Schema.pattern(/^[0-9a-f]{16}$/)),
+  sampled: Schema.Boolean
+})
+const runtimeEventSchema = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  progress: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        state: Schema.Literal('normal', 'error', 'indeterminate', 'paused'),
+        value: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100)))
       })
-      .nullable()
-      .optional(),
-    bell: z
-      .object({
-        sequence: z.number().int().positive(),
-        at: z.string().datetime()
+    )
+  ),
+  bell: Schema.optional(
+    Schema.Struct({ sequence: positiveInteger, at: Schema.String })
+  ),
+  exitCode: Schema.optional(Schema.NullOr(Schema.Int)),
+  titleState: Schema.optional(
+    Schema.Struct({
+      terminalTitle: Schema.NullOr(Schema.String),
+      currentCommand: Schema.NullOr(Schema.String),
+      commandLine: Schema.optional(Schema.NullOr(Schema.String))
+    })
+  )
+})
+
+const terminalStatusSchema = Schema.Literal('running', 'exited')
+const terminalTitleStateSchema = Schema.Struct({
+  terminalTitle: Schema.NullOr(Schema.String),
+  currentCommand: Schema.NullOr(Schema.String),
+  commandLine: Schema.optional(Schema.NullOr(Schema.String))
+})
+const hostedTerminalSchema = Schema.Struct({
+  id: Schema.String,
+  worktreeId: Schema.String,
+  name: Schema.String,
+  argv: Schema.Array(Schema.String),
+  shellCommand: Schema.NullOr(Schema.String),
+  interactiveShell: Schema.Boolean,
+  closeOnSuccess: Schema.Boolean,
+  status: terminalStatusSchema,
+  exitCode: Schema.NullOr(Schema.Int),
+  createdAt: Schema.String,
+  updatedAt: Schema.String
+})
+const nullResultSchema = Schema.Null
+const terminalHostResultSchemas = {
+  handshake: Schema.Struct({
+    ...terminalHostRecordFields,
+    liveSessionCount: Schema.NonNegativeInt,
+    traceContext: Schema.optional(Schema.Boolean)
+  }),
+  create: nullResultSchema,
+  inventory: Schema.Array(hostedTerminalSchema),
+  state: Schema.Struct({
+    status: Schema.Literal('running', 'exited', 'missing'),
+    exitCode: Schema.NullOr(Schema.Int)
+  }),
+  attach: Schema.NullOr(
+    Schema.Struct({
+      data: Schema.String,
+      links: Schema.optional(Schema.Array(terminalSnapshotLinkSchema)),
+      images: Schema.optional(Schema.NullOr(terminalImageSnapshotSchema)),
+      fence: Schema.NonNegativeInt,
+      cols: positiveInteger,
+      rows: positiveInteger
+    })
+  ),
+  unsubscribeOutput: nullResultSchema,
+  subscribeRuntime: nullResultSchema,
+  unsubscribeRuntime: nullResultSchema,
+  runtimeState: Schema.NullOr(
+    Schema.Struct({
+      title: Schema.NullOr(Schema.String),
+      status: terminalStatusSchema,
+      progress: Schema.NullOr(terminalProgressSchema),
+      bell: Schema.NullOr(
+        Schema.Struct({ sequence: positiveInteger, at: Schema.String })
+      )
+    })
+  ),
+  write: nullResultSchema,
+  prepareQueryAuthority: Schema.Struct({
+    transitionId: Schema.String,
+    fence: Schema.NonNegativeInt
+  }),
+  activateQueryAuthority: nullResultSchema,
+  hostQueryAuthority: nullResultSchema,
+  resize: nullResultSchema,
+  capture: Schema.NullOr(Schema.String),
+  rename: nullResultSchema,
+  processes: Schema.Array(
+    Schema.Struct({ pid: positiveInteger, terminalId: Schema.String })
+  ),
+  titleState: Schema.NullOr(terminalTitleStateSchema),
+  signal: nullResultSchema,
+  kill: nullResultSchema,
+  killWorktree: Schema.Array(Schema.String),
+  shutdown: nullResultSchema
+} as const
+
+const terminalHostFrameSchema = Schema.Union(
+  Schema.Struct({
+    protocolVersion: Schema.Int,
+    type: Schema.Literal('request'),
+    id: Schema.String,
+    method: Schema.Literal(...TERMINAL_HOST_REQUEST_METHODS),
+    input: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+    trace: Schema.optional(traceSchema)
+  }),
+  Schema.Struct({
+    protocolVersion: Schema.Int,
+    type: Schema.Literal('response'),
+    id: Schema.String,
+    result: Schema.optional(Schema.Unknown),
+    error: Schema.NullOr(
+      Schema.Struct({
+        code: Schema.String,
+        message: Schema.String,
+        hostProtocolVersion: Schema.optional(Schema.Int),
+        liveSessionCount: Schema.optional(Schema.NonNegativeInt)
       })
-      .strict()
-      .optional(),
-    exitCode: z.number().int().nullable().optional(),
-    titleState: z
-      .object({
-        terminalTitle: z.string().nullable(),
-        currentCommand: z.string().nullable(),
-        commandLine: z.string().nullable()
-      })
-      .strict()
-      .optional()
+    )
+  }),
+  Schema.Struct({
+    protocolVersion: Schema.Int,
+    type: Schema.Literal('event'),
+    event: Schema.Literal('output'),
+    data: Schema.Struct({
+      terminalId: Schema.String,
+      output: Schema.String,
+      sequence: positiveInteger
+    })
+  }),
+  Schema.Struct({
+    protocolVersion: Schema.Int,
+    type: Schema.Literal('event'),
+    event: Schema.Literal('runtime'),
+    data: Schema.Struct({
+      terminalId: Schema.String,
+      value: runtimeEventSchema
+    })
   })
-  .strict()
-const terminalHostFrameSchema: z.ZodType<TerminalHostFrame> = z.union([
-  z
-    .object({
-      protocolVersion: z.number().int(),
-      type: z.literal('request'),
-      id: z.string(),
-      method: z.enum(TERMINAL_HOST_REQUEST_METHODS),
-      input: z.record(z.string(), z.unknown()),
-      trace: z
-        .object({
-          traceId: z.string().regex(/^[0-9a-f]{32}$/),
-          spanId: z.string().regex(/^[0-9a-f]{16}$/),
-          sampled: z.boolean()
-        })
-        .strict()
-        .optional()
-    })
-    .strict(),
-  z
-    .object({
-      protocolVersion: z.number().int(),
-      type: z.literal('response'),
-      id: z.string(),
-      result: z.any().optional(),
-      error: z
-        .object({
-          code: z.string(),
-          message: z.string(),
-          hostProtocolVersion: z.number().int().optional(),
-          liveSessionCount: z.number().int().nonnegative().optional()
-        })
-        .strict()
-        .nullable()
-    })
-    .strict(),
-  z
-    .object({
-      protocolVersion: z.number().int(),
-      type: z.literal('event'),
-      event: z.literal('output'),
-      data: z
-        .object({
-          terminalId: z.string(),
-          output: z.string(),
-          sequence: z.number().int().positive()
-        })
-        .strict()
-    })
-    .strict(),
-  z
-    .object({
-      protocolVersion: z.number().int(),
-      type: z.literal('event'),
-      event: z.literal('runtime'),
-      data: z
-        .object({ terminalId: z.string(), value: runtimeEventSchema })
-        .strict()
-    })
-    .strict()
-])
+)
 
-export function encodeTerminalHostFrame(frame: TerminalHostFrame): Buffer {
-  const payload = Buffer.from(JSON.stringify(frame), 'utf8')
-  if (payload.byteLength > TERMINAL_HOST_MAX_FRAME_BYTES) {
-    throw new Error('Terminal host frame exceeds the byte limit')
-  }
+const decodeFrame = Schema.decodeUnknownSync(terminalHostFrameSchema, {
+  onExcessProperty: 'error'
+})
 
-  const header = Buffer.allocUnsafe(4)
-  header.writeUInt32BE(payload.byteLength)
-  return Buffer.concat([header, payload])
+export function decodeTerminalHostInput<
+  Method extends TerminalHostRequestMethod
+>(
+  method: Method,
+  // eslint-disable-next-line anti-slop/no-unknown-parameters -- Request payloads are decoded by the selected Effect Schema at this IPC boundary.
+  input: unknown
+): Effect.Effect<
+  TerminalHostRequestInput<Method>,
+  TerminalHostFrameDecodeError
+> {
+  // SAFETY: Every request method maps to the schema for its declared input type.
+  const schema = terminalHostInputSchemas[method] as Schema.Schema<unknown>
+  // SAFETY: Decoding with the method-indexed schema establishes the generic method input type.
+  return Schema.decodeUnknown(schema, {
+    onExcessProperty: 'error'
+  })(input).pipe(
+    Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
+  ) as Effect.Effect<
+    TerminalHostRequestInput<Method>,
+    TerminalHostFrameDecodeError
+  >
 }
 
-export class TerminalHostFrameDecoder {
-  private buffer: Buffer = Buffer.alloc(0)
+export function decodeTerminalHostResult<
+  Method extends TerminalHostRequestMethod
+>(
+  method: Method,
+  // eslint-disable-next-line anti-slop/no-unknown-parameters -- Response payloads are decoded by the selected Effect Schema at this IPC boundary.
+  input: unknown
+): Effect.Effect<TerminalHostResults[Method], TerminalHostFrameDecodeError> {
+  // SAFETY: Every request method maps to the schema for its declared result type.
+  const schema = terminalHostResultSchemas[method] as Schema.Schema<unknown>
+  // SAFETY: Decoding with the method-indexed schema establishes the generic method result type.
+  return Schema.decodeUnknown(schema, {
+    onExcessProperty: 'error'
+  })(input).pipe(
+    Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
+  ) as Effect.Effect<TerminalHostResults[Method], TerminalHostFrameDecodeError>
+}
 
-  push(chunk: Buffer): TerminalHostFrame[] {
-    this.buffer = this.buffer.byteLength
-      ? Buffer.concat([this.buffer, chunk])
-      : chunk
-    const frames: TerminalHostFrame[] = []
-    while (this.buffer.byteLength >= 4) {
-      const length = this.buffer.readUInt32BE(0)
-      if (length <= 0 || length > TERMINAL_HOST_MAX_FRAME_BYTES) {
-        throw new Error('Invalid terminal host frame length')
+export function decodeTerminalHostRecord(
+  // eslint-disable-next-line anti-slop/no-unknown-parameters -- Discovery file contents are decoded by Effect Schema at this boundary.
+  input: unknown
+): Effect.Effect<TerminalHostRecord, TerminalHostFrameDecodeError> {
+  return Schema.decodeUnknown(terminalHostRecordSchema, {
+    onExcessProperty: 'error'
+  })(input).pipe(
+    Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
+  )
+}
+
+export function encodeTerminalHostFrame(
+  frame: TerminalHostFrame
+): Effect.Effect<Buffer, TerminalHostFrameEncodeError> {
+  return Effect.try({
+    try: () => {
+      const payload = Buffer.from(JSON.stringify(decodeFrame(frame)), 'utf8')
+      if (
+        payload.byteLength <= 0 ||
+        payload.byteLength > TERMINAL_HOST_MAX_FRAME_BYTES
+      ) {
+        throw new Error('Terminal host frame exceeds the byte limit')
       }
 
-      if (this.buffer.byteLength < length + 4) {
-        break
-      }
+      const header = Buffer.allocUnsafe(4)
+      header.writeUInt32BE(payload.byteLength)
+      return Buffer.concat([header, payload])
+    },
+    catch: (cause) => new TerminalHostFrameEncodeError({ cause })
+  })
+}
 
-      const payload = this.buffer.subarray(4, length + 4)
-      this.buffer = this.buffer.subarray(length + 4)
-      frames.push(
-        terminalHostFrameSchema.parse(JSON.parse(payload.toString('utf8')))
-      )
-    }
-    return frames
-  }
+/** A transport-owned incremental decoder. Do not share it across sockets. */
+export function makeTerminalHostFrameDecoder(): (
+  chunk: Uint8Array
+) => Effect.Effect<readonly TerminalHostFrame[], TerminalHostFrameDecodeError> {
+  let buffered = Buffer.alloc(0)
+  return (chunk) =>
+    Effect.try({
+      try: () => {
+        const next = Buffer.from(chunk)
+        buffered = buffered.byteLength ? Buffer.concat([buffered, next]) : next
+        const frames: TerminalHostFrame[] = []
+        while (buffered.byteLength >= 4) {
+          const length = buffered.readUInt32BE(0)
+          if (length <= 0 || length > TERMINAL_HOST_MAX_FRAME_BYTES) {
+            throw new Error('Invalid terminal host frame length')
+          }
+
+          if (buffered.byteLength < length + 4) {
+            break
+          }
+
+          const payload = buffered.subarray(4, length + 4)
+          buffered = buffered.subarray(length + 4)
+          // SAFETY: decodeFrame synchronously validates the parsed value against terminalHostFrameSchema.
+          frames.push(
+            decodeFrame(
+              JSON.parse(payload.toString('utf8'))
+            ) as TerminalHostFrame
+          )
+        }
+        return frames
+      },
+      catch: (cause) => new TerminalHostFrameDecodeError({ cause })
+    })
 }

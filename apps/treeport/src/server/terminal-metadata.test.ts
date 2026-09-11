@@ -1,5 +1,6 @@
 import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
+import * as Stream from 'effect/Stream'
 import { describe, expect, it, vi } from 'vitest'
 import { ProductEventBus } from './core/events'
 import type { TreeportService } from './core/index'
@@ -10,13 +11,19 @@ import type {
 import type {
   TerminalAttachmentBackend,
   TerminalHostRuntimeEvent
-} from './terminal-host-sessions'
+} from './core/terminal'
 import { TerminalMetadataManager } from './terminal-metadata'
 import { testAccess } from './test-access'
 
-type HostRuntimeState = NonNullable<
-  Awaited<ReturnType<TerminalAttachmentBackend['runtimeState']>>
->
+type HostRuntimeState = {
+  title: string | null
+  status: 'running' | 'exited'
+  progress: {
+    state: 'normal' | 'error' | 'indeterminate' | 'paused'
+    value: number | null
+  } | null
+  bell: { sequence: number; at: string } | null
+}
 
 class HostDouble implements TerminalAttachmentBackend {
   readonly listeners = new Map<
@@ -36,49 +43,57 @@ class HostDouble implements TerminalAttachmentBackend {
   }
 
   attach() {
-    return Promise.resolve({
+    return Effect.succeed({
       data: '',
       links: [],
       images: null,
       fence: 0,
       cols: 100,
       rows: 30,
-      unsubscribe: () => undefined
+      output: Stream.empty
     })
   }
-  subscribeRuntime(
-    terminalId: string,
-    listener: (event: TerminalHostRuntimeEvent) => void
-  ) {
-    const listeners =
-      this.listeners.get(terminalId) ??
-      new Set<(event: TerminalHostRuntimeEvent) => void>()
-    listeners.add(listener)
-    this.listeners.set(terminalId, listeners)
-    return () => listeners.delete(listener)
+  runtimeEvents(terminalId: string) {
+    return Stream.asyncScoped<TerminalHostRuntimeEvent>((emit) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const listeners =
+            this.listeners.get(terminalId) ??
+            new Set<(event: TerminalHostRuntimeEvent) => void>()
+          const listener = (event: TerminalHostRuntimeEvent) =>
+            emit.single(event)
+          listeners.add(listener)
+          this.listeners.set(terminalId, listeners)
+          return listener
+        }),
+        (listener) =>
+          Effect.sync(() => {
+            this.listeners.get(terminalId)?.delete(listener)
+          })
+      )
+    )
   }
   terminalTitleState() {
-    return Promise.resolve(this.titleState)
+    return Effect.succeed(this.titleState)
   }
   runtimeState() {
-    return Promise.resolve(this.state)
+    return Effect.succeed(this.state)
   }
   write() {
-    return Promise.resolve()
+    return Effect.void
   }
   prepareQueryAuthority() {
-    return Promise.resolve({ transitionId: 'transition', fence: 0 })
+    return Effect.succeed({ transitionId: 'transition', fence: 0 })
   }
   activateQueryAuthority() {
-    return Promise.resolve()
+    return Effect.void
   }
   useHostQueryAuthority() {
-    return Promise.resolve()
+    return Effect.void
   }
   resize() {
-    return Promise.resolve()
+    return Effect.void
   }
-  dispose() {}
 
   emit(terminalId: string, event: TerminalHostRuntimeEvent): void {
     for (const listener of this.listeners.get(terminalId) ?? []) {
@@ -187,6 +202,9 @@ describe('TerminalMetadataManager', () => {
     host.emit('terminal', {
       bell: { sequence: 1, at: '2026-01-01T00:01:00.000Z' }
     })
+    await vi.waitFor(() =>
+      expect(manager.get('terminal').bell?.sequence).toBe(1)
+    )
     await service.runEffect(manager.drain())
 
     expect(manager.get('terminal')).toMatchObject({
@@ -200,6 +218,9 @@ describe('TerminalMetadataManager', () => {
     expect(published).toContain('pi --mode rpc:pi:42')
 
     host.emit('terminal', { exitCode: 7 })
+    await vi.waitFor(() =>
+      expect(manager.get('terminal').hasForegroundProcess).toBe(false)
+    )
     expect(manager.get('terminal')).toMatchObject({
       hasForegroundProcess: false,
       progress: null

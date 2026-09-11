@@ -1044,9 +1044,9 @@ export class PanelService {
       const networkListeners = yield* NetworkListenerPort
       const panel = yield* getBrowserPanel(panelId)
       const worktree = yield* getWorktree(panel.worktreeId)
-      const terminalProcesses = yield* Effect.promise(() =>
-        terminalHost.listProcesses(worktree.id)
-      )
+      const terminalProcesses = yield* terminalHost
+        .listProcesses(worktree.id)
+        .pipe(Effect.orDie)
       return yield* Effect.promise(() =>
         networkListeners.listeners({
           worktreePath: worktree.path,
@@ -1086,9 +1086,9 @@ export class PanelService {
       const networkListeners = yield* NetworkListenerPort
       const context = yield* getWebPanelContext(panelId)
       const worktree = yield* getWorktree(context.panel.worktreeId)
-      const terminalProcesses = yield* Effect.promise(() =>
-        terminalHost.listProcesses(worktree.id)
-      )
+      const terminalProcesses = yield* terminalHost
+        .listProcesses(worktree.id)
+        .pipe(Effect.orDie)
       return yield* Effect.promise(() =>
         networkListeners.listeners({
           worktreePath: worktree.path,
