@@ -382,15 +382,15 @@ export class WorktreeReconciler {
       )
       for (const worktree of retired) {
         const terminalIds = yield* terminalState.trackedTerminalIds(worktree.id)
-        const sessions = yield* Effect.promise(() =>
-          terminalHost.listTerminals(worktree.id)
-        )
+        const sessions = yield* terminalHost
+          .listTerminals(worktree.id)
+          .pipe(Effect.orDie)
         for (const terminal of sessions) {
           if (terminal.worktreeId === worktree.id) {
             terminalIds.add(terminal.id)
           }
         }
-        yield* Effect.promise(() => terminalHost.killWorktree(worktree.id))
+        yield* terminalHost.killWorktree(worktree.id).pipe(Effect.orDie)
 
         const [acceptedRemoval] = yield* Effect.promise(() =>
           database.db.all<{ id: string }>(sql`

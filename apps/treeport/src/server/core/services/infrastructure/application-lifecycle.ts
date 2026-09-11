@@ -37,7 +37,7 @@ export class ApplicationLifecycle {
       const worktrees = yield* WorktreeOperations
       const worktreeMutations = yield* WorktreeMutations
 
-      yield* Effect.promise(() => terminalHost.initialize())
+      yield* terminalHost.initialize().pipe(Effect.orDie)
       const interrupted = yield* Effect.promise(() =>
         database.db.all<{
           id: string

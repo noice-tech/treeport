@@ -1,73 +1,55 @@
-import { TerminalHostSessionManager } from './terminal-host-sessions'
-import {
-  startTerminalHostServer,
-  type TerminalHostServerOptions
-} from './terminal-host-server'
-import { makeHostTraceRuntime } from './tracing'
+import { NodeRuntime } from '@effect/platform-node'
+import * as Config from 'effect/Config'
+import * as Effect from 'effect/Effect'
+import { makeTerminalHostSessions } from './terminal-host-sessions'
+import { makeTerminalHostServer } from './terminal-host-server'
+import { tracingLayerFromEnvironment } from './tracing'
 
-function requiredEnvironment(name: string): string {
-  const value = process.env[name]?.trim()
-  if (!value) {
-    throw new Error(`${name} is required`)
-  }
+const required = (name: string) => Config.nonEmptyString(name)
 
-  return value
-}
-
-async function main(): Promise<void> {
-  const runtimeDir = requiredEnvironment('TREEPORT_TERMINAL_HOST_RUNTIME_DIR')
-  const launcherPath = requiredEnvironment('TREEPORT_TERMINAL_HOST_LAUNCHER')
-  const sessions = new TerminalHostSessionManager(runtimeDir, launcherPath)
-  const traceRuntime = makeHostTraceRuntime(
-    process.env.TREEPORT_APP_VERSION ?? 'unknown'
-  )
-  const trace: TerminalHostServerOptions['trace'] = traceRuntime
-    ? (name, parent, attributes, evaluate) =>
-        traceRuntime.run(name, parent, attributes, evaluate)
-    : undefined
-  const options: TerminalHostServerOptions = {
-    hostId: requiredEnvironment('TREEPORT_TERMINAL_HOST_ID'),
-    hostKey: requiredEnvironment('TREEPORT_TERMINAL_HOST_KEY'),
-    token: requiredEnvironment('TREEPORT_TERMINAL_HOST_TOKEN'),
-    socketPath: requiredEnvironment('TREEPORT_TERMINAL_HOST_SOCKET'),
-    recordPath: requiredEnvironment('TREEPORT_TERMINAL_HOST_RECORD'),
-    sessions,
-    onShutdown: async () => {
-      await sessions.shutdown()
-      await traceRuntime?.dispose()
-      process.exit(0)
-    }
-  }
-  if (trace) {
-    options.trace = trace
-  }
-
-  const host = await startTerminalHostServer(options)
-
-  let stopping = false
-  const stop = () => {
-    if (stopping) {
-      return
-    }
-
-    stopping = true
-    void host
-      .close()
-      .then(() => sessions.shutdown())
-      .then(() => traceRuntime?.dispose())
-      .then(
-        () => process.exit(0),
-        (error) => {
-          console.error(
-            '[Treeport terminal host] Shutdown failed:',
-            error instanceof Error ? error.message : String(error)
-          )
-          process.exit(1)
-        }
-      )
-  }
+const signal = Effect.async<void>((resume) => {
+  const stop = () => resume(Effect.void)
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
-}
+  return Effect.sync(() => {
+    process.off('SIGINT', stop)
+    process.off('SIGTERM', stop)
+  })
+})
 
-await main()
+const program = Effect.gen(function* () {
+  const runtimeDir = yield* required('TREEPORT_TERMINAL_HOST_RUNTIME_DIR')
+  const launcherPath = yield* required('TREEPORT_TERMINAL_HOST_LAUNCHER')
+  const hostId = yield* required('TREEPORT_TERMINAL_HOST_ID')
+  const hostKey = yield* required('TREEPORT_TERMINAL_HOST_KEY')
+  const token = yield* required('TREEPORT_TERMINAL_HOST_TOKEN')
+  const socketPath = yield* required('TREEPORT_TERMINAL_HOST_SOCKET')
+  const recordPath = yield* required('TREEPORT_TERMINAL_HOST_RECORD')
+  const appVersion = yield* Config.string('TREEPORT_APP_VERSION').pipe(
+    Config.withDefault('unknown')
+  )
+
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const sessions = yield* makeTerminalHostSessions({
+        runtimeDir,
+        launcherPath
+      })
+      const host = yield* makeTerminalHostServer({
+        hostId,
+        hostKey,
+        token,
+        socketPath,
+        recordPath,
+        sessions
+      })
+      yield* Effect.raceFirst(host.shutdown, signal)
+    })
+  ).pipe(
+    Effect.provide(
+      tracingLayerFromEnvironment('treeport-terminal-host', appVersion)
+    )
+  )
+})
+
+NodeRuntime.runMain(program)
