@@ -525,7 +525,7 @@ async function resolveZedCreateWorktreeSetupTasksPromise(
   })
 }
 
-export class ZedError extends Data.TaggedError('ZedError')<{
+class ZedError extends Data.TaggedError('ZedError')<{
   readonly operation: string
   readonly cause: unknown
   readonly message: string
