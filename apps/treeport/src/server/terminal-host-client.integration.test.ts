@@ -272,7 +272,168 @@ child.once('exit', (code) => process.exit(code ?? 1))
     }
   })
 
-  it('disconnects a client whose queued live output stays over capacity without affecting the host', async () => {
+  it('delivers concurrent large snapshots without closing the host connection', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-large-snapshots-')
+    )
+    roots.push(root)
+    const socketPath = path.join(root, 'host.sock')
+    const recordPath = path.join(root, 'host.json')
+    const sessions = {
+      initialize: async () => undefined,
+      get sessionCount() {
+        return 1
+      },
+      subscribeOutput: () => () => undefined,
+      snapshot: async () => ({
+        data: 'x'.repeat(5 * 1024 * 1024),
+        links: [],
+        images: null,
+        fence: 0,
+        cols: 80,
+        rows: 24
+      }),
+      captureTerminal: async () => 'still-connected',
+      restoreHostQueryAuthority: async () => undefined
+    }
+    const host = await startTerminalHostServer({
+      hostId: 'concurrent-snapshots-host',
+      hostKey: 'concurrent-snapshots-key',
+      token: 'concurrent-snapshots-token',
+      socketPath,
+      recordPath,
+      // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
+      sessions: sessions as never
+    })
+    const client = await TerminalHostClient.connect(
+      socketPath,
+      'concurrent-snapshots-token',
+      'concurrent-snapshots-key',
+      'concurrent-snapshots-host'
+    )
+    clients.add(client)
+
+    try {
+      const attachments = await Promise.all([
+        client.attach('terminal', () => undefined),
+        client.attach('terminal', () => undefined)
+      ])
+      expect(attachments[0]?.data).toHaveLength(5 * 1024 * 1024)
+      expect(attachments[1]?.data).toHaveLength(5 * 1024 * 1024)
+      attachments.forEach((attachment) => attachment?.unsubscribe())
+      expect(await client.captureTerminal('terminal', 1)).toBe(
+        'still-connected'
+      )
+    } finally {
+      client.dispose()
+      clients.delete(client)
+      await host.close()
+    }
+  })
+
+  it('pauses terminal output while a large live image burst drains', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-output-flow-')
+    )
+    roots.push(root)
+    const socketPath = path.join(root, 'host.sock')
+    const recordPath = path.join(root, 'host.json')
+    const outputSubscription: OutputSubscriptionFixture = { listener: null }
+    const output = 'x'.repeat(128 * 1024)
+    const outputChunks = 64
+    let nextSequence = 1
+    let paused = false
+    let pauseCount = 0
+    let resumeCount = 0
+    let emit = () => undefined
+    const sessions = {
+      initialize: async () => undefined,
+      get sessionCount() {
+        return 1
+      },
+      subscribeOutput(
+        _terminalId: string,
+        listener: (data: string, sequence: number) => void
+      ) {
+        outputSubscription.listener = listener
+        return () => {
+          outputSubscription.listener = null
+        }
+      },
+      pauseOutput() {
+        paused = true
+        pauseCount++
+        let active = true
+        return () => {
+          if (!active) {
+            return
+          }
+
+          active = false
+          paused = false
+          resumeCount++
+          setImmediate(emit)
+        }
+      },
+      snapshot: async () => ({
+        data: '',
+        links: [],
+        images: null,
+        fence: 0,
+        cols: 80,
+        rows: 24
+      }),
+      captureTerminal: async () => 'still-connected',
+      restoreHostQueryAuthority: async () => undefined
+    }
+    const host = await startTerminalHostServer({
+      hostId: 'output-flow-host',
+      hostKey: 'output-flow-key',
+      token: 'output-flow-token',
+      socketPath,
+      recordPath,
+      // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
+      sessions: sessions as never
+    })
+    const client = await TerminalHostClient.connect(
+      socketPath,
+      'output-flow-token',
+      'output-flow-key',
+      'output-flow-host'
+    )
+    clients.add(client)
+
+    try {
+      let receivedBytes = 0
+      const attachment = await client.attach('terminal', (data) => {
+        receivedBytes += data.length
+      })
+      emit = () => {
+        while (!paused && nextSequence <= outputChunks) {
+          outputSubscription.listener?.(output, nextSequence++)
+        }
+      }
+      emit()
+
+      await waitFor(
+        () => receivedBytes === output.length * outputChunks,
+        'The live output burst did not drain',
+        10_000
+      )
+      expect(pauseCount).toBeGreaterThan(0)
+      expect(resumeCount).toBe(pauseCount)
+      expect(await client.captureTerminal('terminal', 1)).toBe(
+        'still-connected'
+      )
+      attachment?.unsubscribe()
+    } finally {
+      client.dispose()
+      clients.delete(client)
+      await host.close()
+    }
+  })
+
+  it('disconnects a producer that ignores output backpressure without affecting the host', async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-slow-client-')
     )
@@ -296,9 +457,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
           unsubscribed = true
         }
       },
+      pauseOutput: () => null,
       snapshot: async () => ({
         data: '',
         links: [],
+        images: null,
         fence: 0,
         cols: 80,
         rows: 24
@@ -330,7 +493,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         throw new Error('The host did not subscribe the client to output')
       }
 
-      for (let sequence = 1; sequence <= 32; sequence += 1) {
+      for (let sequence = 1; sequence <= 80; sequence += 1) {
         emitOutput('x'.repeat(256 * 1024), sequence)
       }
 

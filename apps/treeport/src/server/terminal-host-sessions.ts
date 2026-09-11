@@ -720,6 +720,26 @@ export class TerminalHostSessionManager {
     return () => session.outputListeners.delete(listener)
   }
 
+  pauseOutput(terminalId: string): (() => void) | null {
+    const session = this.sessions.get(terminalId)
+    if (!session) {
+      return null
+    }
+
+    this.pauseBoundary(session)
+    let paused = true
+    return () => {
+      if (!paused) {
+        return
+      }
+
+      paused = false
+      if (this.sessions.get(terminalId) === session) {
+        this.releaseBoundary(session)
+      }
+    }
+  }
+
   subscribeRuntime(
     terminalId: string,
     listener: (event: TerminalHostRuntimeEvent) => void
