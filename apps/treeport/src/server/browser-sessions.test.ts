@@ -710,8 +710,9 @@ describe('Browser sessions', () => {
       expect(ownerMessages).toContainEqual(
         expect.objectContaining({
           type: 'runtimeControl',
-          controller: 'agent',
-          retainPaint: true
+          controller: 'none',
+          retainPaint: true,
+          agentActive: true
         })
       )
     )
@@ -770,13 +771,18 @@ describe('Browser sessions', () => {
     await vi.waitFor(() =>
       expect(ownerMessages.at(-1)).toMatchObject({
         type: 'runtimeControl',
-        controller: 'agent',
-        retainPaint: true
+        controller: 'none',
+        retainPaint: true,
+        agentActive: false
       })
     )
     expect(observer.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
-      state: { controlled: false, controller: 'agent' }
+      state: {
+        controlled: false,
+        controller: 'other',
+        agentActive: false
+      }
     })
     expect(browsers).toHaveLength(1)
     await expect(
@@ -786,9 +792,16 @@ describe('Browser sessions', () => {
     await expect(beforeReadyAgent).resolves.toBe(
       '- button "Local target" [ref=e1]'
     )
-    const controlTransitions = ownerMessages.filter(
-      (message) => message.type === 'runtimeControl'
-    )
+    expect(
+      [...ownerMessages]
+        .reverse()
+        .find((message) => message.type === 'runtimeControl')
+    ).toMatchObject({
+      type: 'runtimeControl',
+      controller: 'none',
+      retainPaint: true,
+      agentActive: false
+    })
     await expect(
       runEffect(
         value.manager.agentCommand('panel_browser', {
@@ -797,9 +810,12 @@ describe('Browser sessions', () => {
         })
       )
     ).resolves.toBe('- button "Local target" [ref=e1]')
-    expect(
-      ownerMessages.filter((message) => message.type === 'runtimeControl')
-    ).toEqual(controlTransitions)
+    expect(ownerMessages.at(-1)).toMatchObject({
+      type: 'runtimeControl',
+      controller: 'none',
+      retainPaint: true,
+      agentActive: false
+    })
     expect(automationRequests).toBe(0)
     await vi.waitFor(() =>
       expect(localBrowser.cdp.commands).toContainEqual(
@@ -1198,7 +1214,6 @@ describe('Browser sessions', () => {
       })
     )
     expect(browser.commands).toEqual([
-      { type: 'resize', width: 1_280, height: 800 },
       { type: 'wheel', deltaX: 20_000, deltaY: -30_000 },
       ...boundary,
       { type: 'resize', width: 1_280, height: 800 },
@@ -1380,7 +1395,7 @@ describe('Browser sessions', () => {
     expect(browsers[1]!.closes).toBe(1)
   })
 
-  it('retains agent ownership between commands and releases it after a failure', async () => {
+  it('keeps human control while it reports agent activity', async () => {
     const runAgentCli = vi
       .fn<BrowserAgentCliRunner>()
       .mockResolvedValue('snapshot')
@@ -1401,9 +1416,19 @@ describe('Browser sessions', () => {
         args: []
       })
     )
+    expect(client.messages).toContainEqual(
+      expect.objectContaining({
+        type: 'state',
+        state: expect.objectContaining({
+          controller: 'you',
+          controlled: true,
+          agentActive: true
+        })
+      })
+    )
     expect(client.messages.at(-1)).toMatchObject({
-      type: 'controlChanged',
-      state: { controller: 'agent', controlled: false }
+      type: 'state',
+      state: { controller: 'you', controlled: true, agentActive: false }
     })
     await expect(
       runEffect(
@@ -1414,8 +1439,8 @@ describe('Browser sessions', () => {
       )
     ).rejects.toThrow('Browser disconnected')
     expect(client.messages.at(-1)).toMatchObject({
-      type: 'controlChanged',
-      state: { controller: 'you', controlled: true }
+      type: 'state',
+      state: { controller: 'you', controlled: true, agentActive: false }
     })
     await value.manager.dispose()
   })

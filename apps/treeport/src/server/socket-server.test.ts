@@ -377,6 +377,7 @@ describe('Effect WebSocket real network', () => {
               controlled: true,
               hasController: true,
               controller: 'you',
+              agentActive: false,
               viewport: { width: 800, height: 600 }
             }
           })

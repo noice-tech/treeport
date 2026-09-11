@@ -106,6 +106,7 @@ it('connects the Browser workspace directly and preserves command and frame cont
       controlled: true,
       hasController: true,
       controller: 'you',
+      agentActive: false,
       viewport: { width: 1_280, height: 800 }
     }
   }

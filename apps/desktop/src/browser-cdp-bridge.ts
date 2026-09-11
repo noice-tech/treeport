@@ -46,8 +46,7 @@ const ALLOWED_DOMAINS = new Set([
 export function createBrowserCdpBridge(
   guest: WebContents,
   identity: { panelId: string; challenge: string },
-  parent: DesktopRuntime,
-  hasExternalController: () => boolean
+  parent: DesktopRuntime
 ) {
   return Effect.gen(function* () {
     if (guest.isDestroyed() || parent.isClosed) {
@@ -799,11 +798,7 @@ export function createBrowserCdpBridge(
               )
             )
             const result = yield* request.method === 'Input.dispatchKeyEvent'
-              ? hasExternalController()
-                ? preserveDesktopFocus(guest, command, true)
-                : Effect.sync(() => guest.focus()).pipe(
-                    Effect.zipRight(command)
-                  )
+              ? preserveDesktopFocus(guest, command, true)
               : request.method === 'Input.dispatchMouseEvent'
                 ? preserveDesktopFocus(guest, command)
                 : command
