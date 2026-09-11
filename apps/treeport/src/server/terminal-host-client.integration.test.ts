@@ -272,6 +272,65 @@ child.once('exit', (code) => process.exit(code ?? 1))
     }
   })
 
+  it('delivers concurrent large snapshots without closing the host connection', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-large-snapshots-')
+    )
+    roots.push(root)
+    const socketPath = path.join(root, 'host.sock')
+    const recordPath = path.join(root, 'host.json')
+    const sessions = {
+      initialize: async () => undefined,
+      get sessionCount() {
+        return 1
+      },
+      subscribeOutput: () => () => undefined,
+      snapshot: async () => ({
+        data: 'x'.repeat(5 * 1024 * 1024),
+        links: [],
+        images: null,
+        fence: 0,
+        cols: 80,
+        rows: 24
+      }),
+      captureTerminal: async () => 'still-connected',
+      restoreHostQueryAuthority: async () => undefined
+    }
+    const host = await startTerminalHostServer({
+      hostId: 'concurrent-snapshots-host',
+      hostKey: 'concurrent-snapshots-key',
+      token: 'concurrent-snapshots-token',
+      socketPath,
+      recordPath,
+      // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
+      sessions: sessions as never
+    })
+    const client = await TerminalHostClient.connect(
+      socketPath,
+      'concurrent-snapshots-token',
+      'concurrent-snapshots-key',
+      'concurrent-snapshots-host'
+    )
+    clients.add(client)
+
+    try {
+      const attachments = await Promise.all([
+        client.attach('terminal', () => undefined),
+        client.attach('terminal', () => undefined)
+      ])
+      expect(attachments[0]?.data).toHaveLength(5 * 1024 * 1024)
+      expect(attachments[1]?.data).toHaveLength(5 * 1024 * 1024)
+      attachments.forEach((attachment) => attachment?.unsubscribe())
+      expect(await client.captureTerminal('terminal', 1)).toBe(
+        'still-connected'
+      )
+    } finally {
+      client.dispose()
+      clients.delete(client)
+      await host.close()
+    }
+  })
+
   it('disconnects a client whose queued live output stays over capacity without affecting the host', async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-slow-client-')

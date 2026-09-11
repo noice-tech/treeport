@@ -149,6 +149,7 @@ export class TerminalHostClient {
     Set<(event: TerminalHostRuntimeEvent) => void>
   >()
   private readonly decoder = new TerminalHostFrameDecoder()
+  private attachRequestTail: Promise<void> = Promise.resolve()
   private closed = false
   private supportsTraceContext = false
 
@@ -238,9 +239,18 @@ export class TerminalHostClient {
       new Set<(data: string, sequence: number) => void>()
     listeners.add(listener)
     this.outputListeners.set(terminalId, listeners)
+    // Large image snapshots can fill the host socket. Do not ask a persistent
+    // host to encode another one until this client has received the first.
+    const request = this.attachRequestTail.then(() =>
+      this.request('attach', { terminalId }, trace)
+    )
+    this.attachRequestTail = request.then(
+      () => undefined,
+      () => undefined
+    )
     let snapshot: TerminalHostResults['attach']
     try {
-      snapshot = await this.request('attach', { terminalId }, trace)
+      snapshot = await request
     } catch (error) {
       listeners.delete(listener)
       if (!listeners.size) {
