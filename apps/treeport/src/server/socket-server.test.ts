@@ -92,7 +92,7 @@ interface NetworkFixture {
   metadataSnapshot: ReturnType<typeof vi.fn<() => TerminalRuntimeMetadata[]>>
   listWebPanels: ReturnType<typeof vi.fn<() => Promise<WebPanel[]>>>
   listBrowserPanels: ReturnType<typeof vi.fn<() => Promise<BrowserPanel[]>>>
-  getTerminalForAttachment: ReturnType<
+  getKnownTerminal: ReturnType<
     typeof vi.fn<
       (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
     >
@@ -112,7 +112,7 @@ async function fixture(
   const ptys: FakePty[] = []
   const listWebPanels = vi.fn<() => Promise<WebPanel[]>>(async () => [])
   const listBrowserPanels = vi.fn<() => Promise<BrowserPanel[]>>(async () => [])
-  const getTerminalForAttachment = vi.fn<
+  const getKnownTerminal = vi.fn<
     (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
   >(() =>
     Effect.succeed({
@@ -140,8 +140,8 @@ async function fixture(
     listWebPanels,
     listBrowserPanels,
     panels: { listWebPanels, listBrowserPanels },
-    getTerminalForAttachment,
-    terminals: { getTerminalForAttachment },
+    getKnownTerminal,
+    terminals: { getKnownTerminal },
     getWorktree,
     projects: { getWorktree },
     runEffect: vi.fn((effect) =>
@@ -261,7 +261,7 @@ async function fixture(
     metadataSnapshot,
     listWebPanels,
     listBrowserPanels,
-    getTerminalForAttachment,
+    getKnownTerminal,
     ptys,
     service,
     closeConnections: socketServer.closeConnections,
@@ -727,7 +727,7 @@ describe('Effect WebSocket real network', () => {
       originless.once('ready', () => resolve())
       originless.once('connect_error', reject)
     })
-    expect(value.getTerminalForAttachment).toHaveBeenCalledTimes(3)
+    expect(value.getKnownTerminal).toHaveBeenCalledTimes(3)
     await Promise.all(
       [local, proxied, bypassed, foreignOrigin, opaqueOrigin, originless].map(
         closeClient
@@ -770,7 +770,7 @@ describe('Effect WebSocket real network', () => {
   it('does not finish attachment setup after a real pre-ready disconnect', async () => {
     const value = await fixture()
     let finishRefresh!: (terminal: TerminalRecord) => void
-    vi.mocked(value.getTerminalForAttachment).mockReturnValueOnce(
+    vi.mocked(value.getKnownTerminal).mockReturnValueOnce(
       Effect.async<TerminalRecord>((resume) => {
         finishRefresh = (terminal) => resume(Effect.succeed(terminal))
       })
@@ -783,7 +783,7 @@ describe('Effect WebSocket real network', () => {
       socket.once('connect_error', reject)
     })
     await vi.waitFor(() =>
-      expect(value.getTerminalForAttachment).toHaveBeenCalledOnce()
+      expect(value.getKnownTerminal).toHaveBeenCalledOnce()
     )
 
     socket.disconnect()

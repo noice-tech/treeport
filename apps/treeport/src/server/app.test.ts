@@ -498,6 +498,10 @@ function fixture(webDist = '/missing') {
       id,
       worktreeId: 'wt_1'
     })),
+    getKnownTerminal: vi.fn(async (id: string) => ({
+      id,
+      worktreeId: 'wt_1'
+    })),
     beginCreateWorktree: vi.fn(async () => createOperationRecord),
     listActiveOperations: vi.fn(async () => [
       { ...createOperationRecord, status: 'running' as const }
@@ -1920,8 +1924,8 @@ describe('HTTP API validation', () => {
     }
   })
 
-  it('acknowledges an observed terminal bell through an exact sequence', async () => {
-    const { app, metadataAcknowledgeBell, metadataTrack } = fixture()
+  it('acknowledges an exact bell sequence without refreshing projects', async () => {
+    const { app, metadataAcknowledgeBell, metadataTrack, service } = fixture()
     const response = await app.request('/api/terminals/term/bell/acknowledge', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1930,6 +1934,9 @@ describe('HTTP API validation', () => {
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true })
+    expect(service.getKnownTerminal).toHaveBeenCalledWith('term')
+    expect(service.getTerminal).not.toHaveBeenCalled()
+    expect(service.listProjects).not.toHaveBeenCalled()
     expect(metadataTrack).not.toHaveBeenCalled()
     expect(metadataAcknowledgeBell).toHaveBeenCalledWith('term', 4)
 
@@ -1940,6 +1947,31 @@ describe('HTTP API validation', () => {
     })
     expect(invalid.status).toBe(400)
   })
+
+  it.each([
+    { code: 'TERMINAL_NOT_FOUND', status: 404 },
+    { code: 'PROJECT_CLOSED', status: 409 }
+  ])(
+    'does not acknowledge a bell when lookup fails with $code',
+    async ({ code, status }) => {
+      const { app, metadataAcknowledgeBell, service } = fixture()
+      service.getKnownTerminal.mockRejectedValueOnce(
+        new DomainError(code, 'Terminal is unavailable', status)
+      )
+      const response = await app.request(
+        '/api/terminals/term/bell/acknowledge',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sequence: 4 })
+        }
+      )
+
+      expect(response.status).toBe(status)
+      expect(await response.json()).toMatchObject({ error: { code } })
+      expect(metadataAcknowledgeBell).not.toHaveBeenCalled()
+    }
+  )
 
   it('captures recent terminal output with a bounded line count', async () => {
     const { app, captureTerminal, service } = fixture()

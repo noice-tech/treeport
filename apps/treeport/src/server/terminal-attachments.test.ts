@@ -152,7 +152,7 @@ class TransportDouble {
 
 function fixture() {
   const host = new HostDouble()
-  const getTerminalForAttachment = vi.fn(() =>
+  const getKnownTerminal = vi.fn(() =>
     Effect.succeed({
       id: 'terminal',
       worktreeId: 'worktree',
@@ -174,8 +174,8 @@ function fixture() {
   )
   // SAFETY: This fixture supplies the service methods exercised by attachments.
   const service = testAccess<TreeportService>({
-    getTerminalForAttachment,
-    terminals: { getTerminalForAttachment },
+    getKnownTerminal,
+    terminals: { getKnownTerminal },
     getWorktree,
     projects: { getWorktree },
     runEffect: vi.fn((effect) =>

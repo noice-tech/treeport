@@ -288,7 +288,8 @@ export class TerminalService {
     })
   }
 
-  getTerminalForAttachment(terminalId: string): TerminalEffect<TerminalRecord> {
+  // Latency-sensitive requests use observed state, not a full project refresh.
+  getKnownTerminal(terminalId: string): TerminalEffect<TerminalRecord> {
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       const terminalState = yield* TerminalState
