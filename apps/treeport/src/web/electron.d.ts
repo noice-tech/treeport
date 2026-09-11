@@ -6,6 +6,7 @@ type TreeportDesktopCommand =
   | 'toggle-side-panel'
   | 'focus-location'
   | 'find-in-page'
+  | 'reload'
   | 'select-previous-worktree'
   | 'select-next-worktree'
   | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`

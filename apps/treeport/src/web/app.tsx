@@ -1448,6 +1448,14 @@ function WorkspaceApp() {
     }
 
     return desktopBridge.onCommand((command) => {
+      if (command === 'reload') {
+        if (!(toolPaneOpen && activePanel?.kind === 'browser')) {
+          window.location.reload()
+        }
+
+        return
+      }
+
       if (workspaceActionsBlocked) {
         return
       }
