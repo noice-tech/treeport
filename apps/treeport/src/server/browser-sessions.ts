@@ -86,7 +86,7 @@ export type BrowserSessionConfig = Pick<
 export interface BrowserSessionBrowser {
   readonly state: Omit<
     BrowserSessionState,
-    'controlled' | 'hasController' | 'controller'
+    'controlled' | 'hasController' | 'controller' | 'agentActive'
   >
   launch(): Promise<void>
   command(message: BrowserClientMessage): Promise<void>
@@ -157,8 +157,9 @@ interface BrowserLocalOwner {
   generation: number
   revision: number
   ready: boolean
-  controller: 'agent' | 'other' | 'none'
+  controller: 'other' | 'none'
   retainPaint: boolean
+  agentActive: boolean
   readiness: Deferred.Deferred<void>
   requests: Map<string, BrowserOwnerRequest>
 }
@@ -228,9 +229,11 @@ interface BrowserSession {
   generation: number
   attachments: Map<string, BrowserAttachment>
   controllerId: string | null
+  agentActive: boolean
+  retainLocalAgentPaint: boolean
   state: Omit<
     BrowserSessionState,
-    'controlled' | 'hasController' | 'controller'
+    'controlled' | 'hasController' | 'controller' | 'agentActive'
   >
   sequence: number
   videoError: string | null
@@ -264,7 +267,7 @@ const defaultBrowserFactory: BrowserSessionBrowserFactory = (
 
 const DEFAULT_STATE: Omit<
   BrowserSessionState,
-  'controlled' | 'hasController' | 'controller'
+  'controlled' | 'hasController' | 'controller' | 'agentActive'
 > = {
   url: 'about:blank',
   title: '',
@@ -431,11 +434,10 @@ export class BrowserSessionManager {
       controller:
         session.controllerId === attachmentController(attachment.clientId)
           ? 'you'
-          : session.controllerId === 'agent'
-            ? 'agent'
-            : session.localOwner || session.controllerId
-              ? 'other'
-              : 'none'
+          : session.localOwner || session.controllerId
+            ? 'other'
+            : 'none',
+      agentActive: session.agentActive
     }
   }
 
@@ -817,6 +819,8 @@ export class BrowserSessionManager {
       generation: 0,
       attachments: new Map(),
       controllerId: null,
+      agentActive: false,
+      retainLocalAgentPaint: false,
       state: {
         ...DEFAULT_STATE,
         url: restoredUrl ?? DEFAULT_STATE.url,
@@ -1321,6 +1325,7 @@ export class BrowserSessionManager {
           previousOwner.ready = false
           previousOwner.controller = 'none'
           previousOwner.retainPaint = false
+          previousOwner.agentActive = false
           previousOwner.readiness = readiness
           owner = previousOwner
         } else {
@@ -1335,6 +1340,7 @@ export class BrowserSessionManager {
             ready: false,
             controller: 'none',
             retainPaint: false,
+            agentActive: false,
             readiness,
             requests: new Map()
           }
@@ -1526,10 +1532,7 @@ export class BrowserSessionManager {
     await this.closeLocalAutomation(session)
     session.generation += 1
     this.resetVideoDelivery(session)
-    if (
-      session.controllerId === LOCAL_BROWSER_OWNER_CONTROLLER ||
-      session.controllerId === 'agent'
-    ) {
+    if (session.controllerId === LOCAL_BROWSER_OWNER_CONTROLLER) {
       const attachment = [...session.attachments.values()].find(
         (candidate) =>
           !candidate.closing &&
@@ -1584,8 +1587,9 @@ export class BrowserSessionManager {
     message:
       | {
           type: 'runtimeControl'
-          controller: 'agent' | 'other' | 'none'
+          controller: 'other' | 'none'
           retainPaint: boolean
+          agentActive: boolean
         }
       | { type: 'closeRequest'; force: boolean }
   ): Promise<boolean> {
@@ -1628,17 +1632,23 @@ export class BrowserSessionManager {
   private async setLocalOwnerRuntimeControl(
     session: BrowserSession,
     owner: BrowserLocalOwner,
-    controller: 'agent' | 'other' | 'none',
-    retainPaint: boolean
+    controller: 'other' | 'none',
+    retainPaint: boolean,
+    agentActive: boolean
   ): Promise<void> {
-    if (owner.controller === controller && owner.retainPaint === retainPaint) {
+    if (
+      owner.controller === controller &&
+      owner.retainPaint === retainPaint &&
+      owner.agentActive === agentActive
+    ) {
       return
     }
 
     const accepted = await this.requestLocalOwner(owner, {
       type: 'runtimeControl',
       controller,
-      retainPaint
+      retainPaint,
+      agentActive
     })
     if (
       !accepted ||
@@ -1650,6 +1660,7 @@ export class BrowserSessionManager {
 
     owner.controller = controller
     owner.retainPaint = retainPaint
+    owner.agentActive = agentActive
   }
 
   private prepareVideoViewer(
@@ -2044,18 +2055,17 @@ export class BrowserSessionManager {
     const localOwner = session.localOwner
     if (localOwner) {
       const controller =
-        controllerId === 'agent'
-          ? 'agent'
-          : controllerId && controllerId !== LOCAL_BROWSER_OWNER_CONTROLLER
-            ? 'other'
-            : 'none'
-      const retainPaint = visible || controller === 'agent'
+        controllerId && controllerId !== LOCAL_BROWSER_OWNER_CONTROLLER
+          ? 'other'
+          : 'none'
+      const retainPaint = visible || session.retainLocalAgentPaint
       if (visible) {
         await this.setLocalOwnerRuntimeControl(
           session,
           localOwner,
           controller,
-          retainPaint
+          retainPaint,
+          session.agentActive
         )
         await this.setLocalScreencasting(session, localOwner, true)
       } else {
@@ -2064,7 +2074,8 @@ export class BrowserSessionManager {
           session,
           localOwner,
           controller,
-          retainPaint
+          retainPaint,
+          session.agentActive
         )
       }
 
@@ -2489,6 +2500,7 @@ export class BrowserSessionManager {
   }
 
   private async closeLocalAutomation(session: BrowserSession): Promise<void> {
+    session.retainLocalAgentPaint = false
     const launch = session.localAutomationLaunch
     const automation =
       session.localAutomation ?? (await launch?.catch(() => null))
@@ -2700,24 +2712,20 @@ export class BrowserSessionManager {
             await this.closePlaywrightRuntime(session).catch(() => undefined)
             throw error
           })
-      const previousController = session.controllerId
-      let agentControlled = false
-      let completed = false
+      session.agentActive = true
+      this.broadcastState(session)
       try {
         if (localOwner) {
-          await this.updateScreencast(session, 'agent')
+          // Keep a background local page paintable for later agent commands.
+          // Agent activity does not revoke the local user's native input.
+          session.retainLocalAgentPaint = true
+          await this.updateScreencast(session)
           if (
             session.localOwner !== localOwner ||
             localOwner.generation !== session.generation
           ) {
             throw new Error('The local Browser owner changed.')
           }
-        }
-
-        session.controllerId = 'agent'
-        agentControlled = true
-        if (previousController !== 'agent') {
-          this.broadcastState(session, 'controlChanged')
         }
 
         if (localOwner) {
@@ -2756,7 +2764,6 @@ export class BrowserSessionManager {
         }
 
         await this.waitForPanelState(session)
-        completed = true
       } catch (cause) {
         if (!localOwner) {
           session.agentAttached = false
@@ -2764,39 +2771,12 @@ export class BrowserSessionManager {
 
         throw cause
       } finally {
-        // Ownership spans commands, not HTTP requests. A successful command
-        // keeps the same owner until explicit takeover, close or runtime loss.
-        // On failure, restore human control instead of leaving a stale lock.
-        if (agentControlled && !completed) {
-          if (localOwner && session.localOwner === localOwner) {
-            const nextController =
-              previousController && previousController !== 'agent'
-                ? previousController
-                : LOCAL_BROWSER_OWNER_CONTROLLER
-            const released = await this.updateScreencast(
-              session,
-              nextController
-            ).then(
-              () => true,
-              () => false
-            )
-            if (released) {
-              session.controllerId = nextController
-            }
-          } else {
-            const nextAttachment = [...session.attachments.values()].find(
-              (attachment) => !attachment.closing && attachment.visible
-            )
-            session.controllerId =
-              previousController && previousController !== 'agent'
-                ? previousController
-                : nextAttachment
-                  ? attachmentController(nextAttachment.clientId)
-                  : null
-          }
-
-          this.broadcastState(session, 'controlChanged')
+        session.agentActive = false
+        if (localOwner && session.localOwner === localOwner) {
+          await this.updateScreencast(session).catch(() => undefined)
         }
+
+        this.broadcastState(session)
       }
     })
     return result

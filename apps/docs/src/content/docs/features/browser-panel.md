@@ -3,7 +3,9 @@ title: Browser (experimental)
 description: Open web pages beside your terminals.
 ---
 
-Browser panels let you use websites and development servers inside a tree. You and an agent can use the same live page.
+Browser panels let you use websites and development servers inside a tree.
+
+You can interact with the page while an agent uses it. A robot icon appears in the toolbar during an agent command.
 
 ## Open a page
 

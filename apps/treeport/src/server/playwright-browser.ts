@@ -29,7 +29,7 @@ export interface PlaywrightBrowserCallbacks {
   state(
     state: Omit<
       BrowserSessionState,
-      'controlled' | 'hasController' | 'controller'
+      'controlled' | 'hasController' | 'controller' | 'agentActive'
     >
   ): void
   frame(frame: Omit<BrowserFrame, 'sequence'>): void
@@ -249,7 +249,7 @@ export class PlaywrightBrowser {
   private titleTimer: NodeJS.Timeout | null = null
   private stateValue: Omit<
     BrowserSessionState,
-    'controlled' | 'hasController' | 'controller'
+    'controlled' | 'hasController' | 'controller' | 'agentActive'
   > = {
     url: 'about:blank',
     title: '',
@@ -479,7 +479,10 @@ export class PlaywrightBrowser {
 
   private updateState(
     patch: Partial<
-      Omit<BrowserSessionState, 'controlled' | 'hasController' | 'controller'>
+      Omit<
+        BrowserSessionState,
+        'controlled' | 'hasController' | 'controller' | 'agentActive'
+      >
     >
   ): void {
     const observedUrl = patch.url ?? this.stateValue.url

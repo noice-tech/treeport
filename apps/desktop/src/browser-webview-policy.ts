@@ -461,8 +461,7 @@ export function installBrowserWebviewPolicy(options: {
             const bridge = yield* createBrowserCdpBridge(
               registered.guest,
               { panelId, challenge },
-              registered.runtime,
-              () => registered.inputLocked
+              registered.runtime
             )
             if (
               registered.runtime.isClosed ||

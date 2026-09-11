@@ -73,10 +73,11 @@ export function LocalBrowserWebview({
   inputBlockedRef.current = inputBlocked
   const initialPanelRef = useRef(panel)
   const ownerClientIdRef = useRef(crypto.randomUUID())
-  const [externalController, setExternalController] = useState<
-    'agent' | 'other' | null
-  >(null)
-  const externalControllerRef = useRef<'agent' | 'other' | null>(null)
+  const [externalController, setExternalController] = useState<'other' | null>(
+    null
+  )
+  const externalControllerRef = useRef<'other' | null>(null)
+  const agentActiveRef = useRef(false)
   const retainPaintRef = useRef(false)
   const takeControlRef = useRef<() => void>(() => undefined)
   useEffect(() => {
@@ -136,7 +137,8 @@ export function LocalBrowserWebview({
       ...state,
       controlled: externalControllerRef.current === null,
       hasController: true,
-      controller: externalControllerRef.current ?? 'you'
+      controller: externalControllerRef.current ?? 'you',
+      agentActive: agentActiveRef.current
     })
     const emitState = (
       type: 'ready' | 'state' | 'controlChanged' = 'state',
@@ -190,6 +192,7 @@ export function LocalBrowserWebview({
     }
     const clearRuntimeControl = () => {
       externalControllerRef.current = null
+      agentActiveRef.current = false
       retainPaintRef.current = false
       if (!disposed) {
         setExternalController(null)
@@ -200,12 +203,13 @@ export function LocalBrowserWebview({
       previousExternalFocus = null
     }
     const setRuntimeControl = async (
-      controller: 'agent' | 'other' | 'none',
-      retainPaint: boolean
+      controller: 'other' | 'none',
+      retainPaint: boolean,
+      nextAgentActive: boolean
     ) => {
       const previousController = externalControllerRef.current
       const previousRetainPaint = retainPaintRef.current
-      const locked = controller !== 'none'
+      const locked = controller === 'other'
       const previousFocus =
         locked &&
         previousController === null &&
@@ -267,9 +271,10 @@ export function LocalBrowserWebview({
         }
       }
 
-      externalControllerRef.current = locked ? controller : null
+      externalControllerRef.current = locked ? 'other' : null
+      agentActiveRef.current = nextAgentActive
       retainPaintRef.current = retainPaint
-      setExternalController(locked ? controller : null)
+      setExternalController(locked ? 'other' : null)
       if (!locked) {
         if (
           previousController === 'other' &&
@@ -478,8 +483,12 @@ export function LocalBrowserWebview({
         owner = connectionOwner
         takeControlRef.current = () => owner?.takeControl()
         // A granted claim starts unlocked; the daemon reapplies external control after ready.
-        if (externalControllerRef.current !== null || retainPaintRef.current) {
-          if (!(await setRuntimeControl('none', false))) {
+        if (
+          externalControllerRef.current !== null ||
+          retainPaintRef.current ||
+          agentActiveRef.current
+        ) {
+          if (!(await setRuntimeControl('none', false, false))) {
             throw new Error(
               'The Browser could not restore local input control.'
             )
