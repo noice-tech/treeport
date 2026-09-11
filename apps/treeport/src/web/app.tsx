@@ -133,8 +133,7 @@ export default function App() {
 }
 
 function WorkspaceApp() {
-  const { dismiss: dismissToolPicker, setOpen: setToolPickerOpen } =
-    useToolPicker()
+  const { dismiss: dismissToolPicker } = useToolPicker()
   const {
     focusedSurface,
     focusedSurfaceRef,
@@ -1506,8 +1505,8 @@ function WorkspaceApp() {
         toggleToolPane()
       } else if (command === 'new-terminal') {
         if (toolSurfaceHasFocus) {
-          if (selectedWorktreeTools.length > 0) {
-            setToolPickerOpen(true)
+          if (!toolLaunchDisabled && !createBrowserPanel.isPending) {
+            createBrowserPanel.mutate({ worktree: selectedWorktree })
           }
         } else {
           const correlationId = newBrowserCorrelationId()
@@ -1541,11 +1540,12 @@ function WorkspaceApp() {
     selectedProject,
     selectedTerminal,
     selectedWorktree,
-    selectedWorktreeTools.length,
+    createBrowserPanel.isPending,
+    createBrowserPanel.mutate,
     selectFocusedSurfaceByIndex,
     selectWorktree,
-    setToolPickerOpen,
     toggleToolPane,
+    toolLaunchDisabled,
     toolPaneOpen,
     workspaceActionsBlocked
   ])
