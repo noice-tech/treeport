@@ -156,7 +156,8 @@ export function NotificationCenter({
                         notification.terminalId,
                         notification.sequence,
                         notification.title
-                      ).then(() => navigateToWorkspace(notification.target))
+                      )
+                      void navigateToWorkspace(notification.target)
                     }}
                   >
                     <h3 className="truncate text-sm font-medium text-zinc-100">
