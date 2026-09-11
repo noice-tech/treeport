@@ -541,7 +541,7 @@ describe('TerminalSession', () => {
         reconnectionDelay: 100,
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
-        query: { terminalProtocol: '7' }
+        query: { terminalProtocol: '8' }
       })
     )
     const options = testAccess<{
@@ -708,6 +708,7 @@ describe('TerminalSession', () => {
     await vi.waitFor(() =>
       expect(socket.emit).toHaveBeenCalledWith('query_authority', {
         generation: 1,
+        cellSize: null,
         transitionId: null
       })
     )
@@ -724,6 +725,7 @@ describe('TerminalSession', () => {
       await vi.waitFor(() =>
         expect(socket.emit).toHaveBeenCalledWith('query_authority', {
           generation,
+          cellSize: null,
           transitionId
         })
       )
@@ -736,6 +738,7 @@ describe('TerminalSession', () => {
       await vi.waitFor(() =>
         expect(socket.emit).toHaveBeenCalledWith('query_authority', {
           generation,
+          cellSize: null,
           transitionId
         })
       )
@@ -779,6 +782,7 @@ describe('TerminalSession', () => {
     await vi.waitFor(() =>
       expect(socket.emit).toHaveBeenCalledWith('query_authority', {
         generation: 3,
+        cellSize: null,
         transitionId: null
       })
     )
@@ -1404,6 +1408,7 @@ describe('TerminalSession', () => {
     await vi.waitFor(() =>
       expect(socket.emit).toHaveBeenCalledWith('query_authority', {
         generation: 6,
+        cellSize: null,
         transitionId: null
       })
     )

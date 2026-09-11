@@ -1,5 +1,6 @@
 import type { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
+import type { TerminalImages } from '../../terminal-images'
 import {
   type ProtocolSocket,
   type ProtocolSocketOptions,
@@ -82,6 +83,7 @@ export class TerminalSessionState {
   snapshotValue: TerminalSessionSnapshot = DEFAULT_SNAPSHOT
   terminal: Terminal | null = null
   fitAddon: FitAddon | null = null
+  images: TerminalImages | null = null
   wrapper: HTMLDivElement | null = null
   host: HTMLElement | null = null
   socket: ProtocolSocket<

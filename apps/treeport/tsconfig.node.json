@@ -13,6 +13,7 @@
     "src/server/**/*.ts",
     "src/server/**/*.json",
     "src/duration.ts",
+    "src/terminal-images.ts",
     "drizzle.config.ts",
     "tsdown.config.ts",
     "package.json"

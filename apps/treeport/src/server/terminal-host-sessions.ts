@@ -10,7 +10,8 @@ import * as pty from 'node-pty'
 import {
   parseTerminalProgress,
   type TerminalProgress,
-  type TerminalSnapshotLink
+  type TerminalSnapshotLink,
+  type TerminalImageSnapshot
 } from '@treeport/shared'
 import {
   TERMINAL_PROGRESS_STALE_MS,
@@ -26,6 +27,8 @@ import {
   integrateShellLaunch,
   prepareShellIntegration
 } from './core/shell-integration'
+
+import { TerminalImages } from '../terminal-images'
 
 const { Terminal } = xtermHeadless
 const HOST_SCROLLBACK_LINES = 50_000
@@ -127,6 +130,7 @@ export interface TerminalAttachmentBackend {
   ): Promise<{
     data: string
     links: TerminalSnapshotLink[]
+    images: TerminalImageSnapshot | null
     fence: number
     cols: number
     rows: number
@@ -163,7 +167,8 @@ export interface TerminalAttachmentBackend {
     terminalId: string,
     transitionId: string,
     attachmentId: string,
-    generation: number
+    generation: number,
+    cellSize: { width: number; height: number } | null
   ): Promise<void>
   useHostQueryAuthority(terminalId: string): Promise<void>
   resize(terminalId: string, cols: number, rows: number): Promise<void>
@@ -182,6 +187,7 @@ interface HostedTerminalSession extends HostedTerminal {
   pty: IPty
   terminal: HeadlessTerminal
   serializer: SerializeAddon
+  images: TerminalImages
   dataDisposable: IDisposable | null
   exitDisposable: IDisposable | null
   outputSequence: number
@@ -371,6 +377,9 @@ export class TerminalHostSessionManager {
     // provides the same addon boundary.
     // SAFETY: Both Terminal implementations satisfy the shared addon contract.
     terminal.loadAddon(serializer as never)
+    const images = new TerminalImages(true)
+    // SAFETY: TerminalImages adapts the shared headless parser/buffer API.
+    terminal.loadAddon(images as never)
 
     let child: IPty
     try {
@@ -425,6 +434,7 @@ export class TerminalHostSessionManager {
       pty: child,
       terminal,
       serializer,
+      images,
       outputSequence: 0,
       parserQueue: [],
       parserQueuedBytes: 0,
@@ -605,6 +615,7 @@ export class TerminalHostSessionManager {
   async snapshot(terminalId: string): Promise<{
     data: string
     links: TerminalSnapshotLink[]
+    images: TerminalImageSnapshot | null
     fence: number
     cols: number
     rows: number
@@ -677,10 +688,10 @@ export class TerminalHostSessionManager {
         }
       }
 
-      // The PTY stays paused for this short serialization boundary. Output
-      // after resume has a sequence greater than the returned fence. The
-      // serialized state contains no original query sequence to replay.
-      return {
+      // Freeze text, image state and the fence together before asynchronously
+      // encoding image blobs. Only unfinished graphics commands are replayed;
+      // snapshots must never replay historical terminal queries or bells.
+      const snapshot = {
         data: session.serializer.serialize({
           scrollback: HOST_SCROLLBACK_LINES
         }),
@@ -689,6 +700,8 @@ export class TerminalHostSessionManager {
         cols: session.terminal.cols,
         rows: session.terminal.rows
       }
+      const images = await session.images.snapshot()
+      return { ...snapshot, images }
     } finally {
       this.releaseBoundary(session)
     }
@@ -771,7 +784,8 @@ export class TerminalHostSessionManager {
     terminalId: string,
     transitionId: string,
     attachmentId: string,
-    generation: number
+    generation: number,
+    cellSize: { width: number; height: number } | null = null
   ): Promise<void> {
     const session = this.sessions.get(terminalId)
     if (
@@ -780,6 +794,10 @@ export class TerminalHostSessionManager {
       session.queryTransitionId !== transitionId
     ) {
       throw new Error('Terminal query authority transition is unavailable')
+    }
+
+    if (cellSize) {
+      session.images.setCellSize(cellSize)
     }
 
     session.terminal.options.disableStdin = true
@@ -851,6 +869,7 @@ export class TerminalHostSessionManager {
           pty: _pty,
           terminal: _terminal,
           serializer: _serializer,
+          images: _images,
           dataDisposable: _data,
           exitDisposable: _exit,
           outputSequence: _outputSequence,

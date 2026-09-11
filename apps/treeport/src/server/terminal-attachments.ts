@@ -270,7 +270,8 @@ export class TerminalAttachmentManager {
       this.changeQueryAuthority(
         connection,
         parsed.generation,
-        parsed.transitionId
+        parsed.transitionId,
+        parsed.cellSize
       )
       return
     }
@@ -569,6 +570,7 @@ export class TerminalAttachmentManager {
           rows: dimensions.rows,
           revision: dimensions.revision,
           snapshot: initial.data,
+          snapshotImages: initial.images,
           snapshotLinks: initial.links
         })
       ) {
@@ -856,7 +858,8 @@ export class TerminalAttachmentManager {
   private changeQueryAuthority(
     connection: ClientConnection,
     generation: number,
-    transitionId: string | null
+    transitionId: string | null,
+    cellSize: { width: number; height: number } | null
   ): void {
     this.enqueueTerminal(
       connection.terminalId,
@@ -926,7 +929,8 @@ export class TerminalAttachmentManager {
           connection.terminalId,
           transitionId,
           connection.id,
-          generation
+          generation,
+          cellSize
         )
         if (
           !this.isActive(connection) ||

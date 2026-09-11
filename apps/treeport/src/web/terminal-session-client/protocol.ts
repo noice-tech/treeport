@@ -1,4 +1,4 @@
-import type { TerminalRenderError } from './render'
+import { TerminalRenderError } from './render'
 import * as Effect from 'effect/Effect'
 import {
   parseTerminalServerEvent,
@@ -28,6 +28,7 @@ interface Dependencies {
   ): void
   failProtocol(message: string): void
   flushControllerResize(): void
+  fit(queueControllerResize?: boolean): void
   focus(options?: { requestControl?: boolean }): void
   handleOutput(streamId: string, sequence: number, data: string): void
   scheduleFit(): void
@@ -54,6 +55,7 @@ export function makeProtocol(
     | 'expectedSequence'
     | 'focusAfterRender'
     | 'host'
+    | 'images'
     | 'lastParsedSequence'
     | 'parsedSequences'
     | 'pendingPaste'
@@ -73,6 +75,20 @@ export function makeProtocol(
   dependencies: Dependencies
 ) {
   return Effect.sync(() => {
+    function requestQueryAuthority(
+      generation: number,
+      transitionId: string | null
+    ): void {
+      // A former viewer can still have a scaled font until the scheduled fit.
+      // Measure the controller font before the host starts placing images.
+      dependencies.fit()
+      dependencies.send('query_authority', {
+        generation,
+        transitionId,
+        cellSize: state.terminal?.dimensions?.css.cell ?? null
+      })
+    }
+
     function handleServerEvent(
       event: TerminalServerEvent,
       value: TerminalProtocolInput
@@ -142,6 +158,29 @@ export function makeProtocol(
                 state.terminal,
                 message.snapshotLinks
               )
+              if (message.snapshotImages && state.images) {
+                yield* Effect.promise(() =>
+                  state.images!.restore(message.snapshotImages!)
+                ).pipe(
+                  Effect.timeoutFail({
+                    duration: '30 seconds',
+                    onTimeout: () =>
+                      new TerminalRenderError({
+                        message:
+                          'Images did not finish decoding within 30 seconds'
+                      })
+                  })
+                )
+                if (state.disposed || epoch !== state.renderEpoch) {
+                  return
+                }
+
+                if (message.snapshotImages.pending) {
+                  yield* dependencies.writeTerminal(
+                    message.snapshotImages.pending
+                  )
+                }
+              }
             }
 
             if (state.wrapper && epoch === state.renderEpoch) {
@@ -168,10 +207,7 @@ export function makeProtocol(
               state.controllerGeneration === message.generation
             ) {
               dependencies.scheduleFit()
-              dependencies.send('query_authority', {
-                generation: message.generation,
-                transitionId: null
-              })
+              requestQueryAuthority(message.generation, null)
             }
           })
         )
@@ -292,10 +328,7 @@ export function makeProtocol(
                   state.snapshotValue.controller &&
                   state.controllerGeneration === message.generation
                 ) {
-                  dependencies.send('query_authority', {
-                    generation: message.generation,
-                    transitionId: null
-                  })
+                  requestQueryAuthority(message.generation, null)
                 }
               })
             )
@@ -346,10 +379,7 @@ export function makeProtocol(
                 state.snapshotValue.controller &&
                 state.controllerGeneration === message.generation
               ) {
-                dependencies.send('query_authority', {
-                  generation: message.generation,
-                  transitionId
-                })
+                requestQueryAuthority(message.generation, transitionId)
               }
             })
           )

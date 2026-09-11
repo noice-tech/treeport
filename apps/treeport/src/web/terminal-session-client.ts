@@ -121,6 +121,7 @@ export class TerminalSession {
             enqueueRender: render.enqueueRender,
             failProtocol: connection.failProtocol,
             flushControllerResize: layout.flushControllerResize,
+            fit: layout.fit,
             focus: (...args) => this.focus(...args),
             handleOutput: render.handleOutput,
             scheduleFit: layout.scheduleFit,

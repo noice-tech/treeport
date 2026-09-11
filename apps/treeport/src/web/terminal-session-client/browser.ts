@@ -1,7 +1,7 @@
 import type { SessionTimer } from './timers'
 import * as Effect from 'effect/Effect'
 import { FitAddon } from '@xterm/addon-fit'
-import { ImageAddon } from '@xterm/addon-image'
+import { TerminalImages } from '../../terminal-images'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { type TerminalClientToServerEvents } from '@treeport/shared'
@@ -43,6 +43,7 @@ export function makeBrowser(
     | 'controllerGeneration'
     | 'fitAddon'
     | 'inputModifiers'
+    | 'images'
     | 'opened'
     | 'selectionDragCancel'
     | 'snapshotValue'
@@ -69,14 +70,8 @@ export function makeBrowser(
       state.terminal = terminal
       const fitAddon = new FitAddon()
       terminal.loadAddon(fitAddon)
-      terminal.loadAddon(
-        new ImageAddon({
-          iipSupport: false,
-          kittySupport: true,
-          sixelSupport: false,
-          storageLimit: 64
-        })
-      )
+      state.images = new TerminalImages()
+      terminal.loadAddon(state.images)
       terminal.loadAddon(
         new WebLinksAddon(options.linkHandler.activate, {
           hover: options.linkHandler.hover,

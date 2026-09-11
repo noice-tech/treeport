@@ -332,6 +332,7 @@ async function activateQueryAuthority(
       if (message.transitionId) {
         socket.emit('query_authority', {
           generation,
+          cellSize: null,
           transitionId: message.transitionId
         })
         phase += 1
@@ -339,7 +340,11 @@ async function activateQueryAuthority(
         resolve()
       }
     })
-    socket.emit('query_authority', { generation, transitionId: null })
+    socket.emit('query_authority', {
+      generation,
+      cellSize: null,
+      transitionId: null
+    })
   })
 }
 
