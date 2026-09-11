@@ -56,13 +56,14 @@ test('updates a local backend and restores the selected workspace', async ({
   mocked.setApplicationUpdate({
     ...availableUpdate,
     phase: 'failed',
-    error: 'npm could not resolve the release.'
+    error:
+      'npm could not resolve the release.\nReinstall the same or a newer compatible Treeport release with `npm install --global @treeport/treeport@latest`, then start Treeport normally.'
   })
   await expect(
     page.getByRole('button', { name: 'Treeport update failed' })
   ).toBeVisible()
   await expect(
-    popover.getByText('npm could not resolve the release.')
+    popover.getByText(/Reinstall the same or a newer compatible Treeport/)
   ).toBeVisible()
 
   await popover.getByRole('button', { name: 'Update Treeport' }).click()

@@ -8,7 +8,7 @@ import { expect, it } from 'vitest'
 import { openDatabase, type TreeportDatabase } from './database'
 import baseline from './fixtures/database-0.5.0.json' with { type: 'json' }
 
-it('preserves the published database contract through upgrade, downgrade refusal, and snapshot restoration', async () => {
+it('preserves the published database contract through upgrade and downgrade refusal', async () => {
   const migrationsFolder = fileURLToPath(
     new URL('../../../drizzle', import.meta.url)
   )
@@ -90,7 +90,6 @@ it('preserves the published database contract through upgrade, downgrade refusal
     database = null
 
     database = await openDatabase(filePath)
-    expect(database.migrationState).toBe('advanced')
     expect(await database.db.all(catalogQuery)).toEqual(catalog)
     expect(await database.db.all(historyQuery)).toEqual(
       migrations.map((migration) => ({
@@ -98,18 +97,10 @@ it('preserves the published database contract through upgrade, downgrade refusal
         created_at: migration.folderMillis
       }))
     )
-    expect(database.migrationSnapshotPaths).toHaveLength(1)
-    const snapshotPath = database.migrationSnapshotPaths[0]!
-    expect((await fs.stat(snapshotPath)).mode & 0o777).toBe(0o600)
     database.close()
     database = null
 
     database = await openDatabase(filePath)
-    expect(database.migrationState).toBe('unchanged')
-    expect(database.migrationSnapshotPaths).toEqual([])
-    expect(await fs.readdir(path.dirname(snapshotPath))).toEqual([
-      path.basename(snapshotPath)
-    ])
     await database.db.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
     database.close()
     database = null
@@ -119,18 +110,6 @@ it('preserves the published database contract through upgrade, downgrade refusal
     await expect(
       openDatabase(filePath, { migrationsFolder: historicalMigrations })
     ).rejects.toThrow(/newer than this binary supports/)
-    expect(await fs.readFile(filePath)).toEqual(beforeDowngrade)
-
-    // Restore to a separate path so the newer catalog is never destroyed.
-    const restoredPath = path.join(root, 'restored.db')
-    await fs.copyFile(snapshotPath, restoredPath)
-    database = await openDatabase(restoredPath, {
-      migrationsFolder: historicalMigrations
-    })
-    expect(database.migrationState).toBe('unchanged')
-    expect(database.migrationSnapshotPaths).toEqual([])
-    expect(await database.db.all(historyQuery)).toEqual(history)
-    expect(await database.db.all(catalogQuery)).toEqual(catalog)
     expect(await fs.readFile(filePath)).toEqual(beforeDowngrade)
   } finally {
     database?.close()

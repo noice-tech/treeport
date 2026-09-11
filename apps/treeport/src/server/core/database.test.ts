@@ -94,8 +94,6 @@ describe('SQLite migration and catalog ordering', () => {
     const database = await openDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
 
-    expect(database.migrationState).toBe('advanced')
-    expect(database.migrationSnapshotPaths).toEqual([])
     expect(
       await database.db.get<{ journal_mode: string }>(sql`PRAGMA journal_mode`)
     ).toEqual({ journal_mode: 'wal' })
@@ -193,8 +191,6 @@ describe('SQLite migration and catalog ordering', () => {
 
     const reopened = await openDatabase(filePath)
     databases.push(reopened)
-    expect(reopened.migrationState).toBe('unchanged')
-    expect(reopened.migrationSnapshotPaths).toEqual([])
     expect(await reopened.db.select().from(terminalBellStates)).toEqual([
       {
         terminalId: 'term_bells',
@@ -375,7 +371,7 @@ describe('SQLite migration and catalog ordering', () => {
     expect(await database.db.select().from(webPanelStorage)).toEqual([])
   })
 
-  it('adopts a version-7 database, preserves catalog data, and snapshots once', async () => {
+  it('adopts a version-7 database and preserves catalog data', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-v7-')
     )
@@ -492,33 +488,9 @@ describe('SQLite migration and catalog ordering', () => {
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
     ).toEqual({ count: 14 })
-
-    const backupDirectory = path.join(directory, 'database-backups')
-    const [backupName] = await fs.readdir(backupDirectory)
-    expect(backupName).toBeDefined()
-    const snapshotClient = createClient({
-      url: pathToFileURL(path.join(backupDirectory, backupName!)).href
-    })
-    const snapshot = drizzle(snapshotClient)
-    expect(
-      await snapshot.get<{ count: number }>(sql`
-        SELECT count(*) AS count FROM projects WHERE id='p_existing'
-      `)
-    ).toEqual({ count: 1 })
-    expect(
-      await snapshot.all<{ version: number }>(
-        sql`SELECT version FROM schema_migrations`
-      )
-    ).toEqual([{ version: 7 }])
-    snapshotClient.close()
-
-    reopened.close()
-    databases.splice(databases.indexOf(reopened), 1)
-    const openedAgain = await openDatabase(filePath)
-    databases.push(openedAgain)
-    expect(
-      (await fs.readdir(backupDirectory)).filter((name) => name.endsWith('.db'))
-    ).toHaveLength(1)
+    await expect(
+      fs.stat(path.join(directory, 'database-backups'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('preserves populated web panels when adding folder projects', async () => {
@@ -827,7 +799,7 @@ describe('SQLite migration and catalog ordering', () => {
     const before = await fs.readFile(filePath)
 
     await expect(openDatabase(filePath)).rejects.toThrow(
-      /newer than this binary supports.*Upgrade Treeport/
+      /newer than this binary supports.*Reinstall a newer compatible Treeport/
     )
     expect(await fs.readFile(filePath)).toEqual(before)
     await expect(
@@ -897,8 +869,6 @@ describe('SQLite migration and catalog ordering', () => {
 
     const migrated = await openDatabase(filePath)
     databases.push(migrated)
-    expect(migrated.migrationState).toBe('advanced')
-    expect(migrated.migrationSnapshotPaths).toHaveLength(1)
     expect(
       await migrated.db
         .select()
@@ -924,7 +894,7 @@ describe('SQLite migration and catalog ordering', () => {
     ).toEqual([])
   })
 
-  it('rolls back a failed migration and recovers on the next startup', async () => {
+  it('keeps a failed migration atomic and succeeds on the next startup', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-failure-')
     )
@@ -985,21 +955,12 @@ describe('SQLite migration and catalog ordering', () => {
     )
     await fs.appendFile(
       migrationFile,
-      '--> statement-breakpoint\nCREATE TABLE migration_will_rollback(id TEXT);\n--> statement-breakpoint\nTHIS IS NOT SQL;\n'
+      '--> statement-breakpoint\nCREATE TABLE partial_migration_table(id TEXT);\n--> statement-breakpoint\nTHIS IS NOT SQL;\n'
     )
 
-    const reportedSnapshots: string[] = []
     await expect(
-      openDatabase(filePath, {
-        migrationsFolder: brokenMigrations,
-        onMigrationSnapshot: async (snapshotPath) => {
-          await fs.access(snapshotPath)
-          reportedSnapshots.push(snapshotPath)
-        }
-      })
+      openDatabase(filePath, { migrationsFolder: brokenMigrations })
     ).rejects.toThrow()
-    expect(reportedSnapshots).toHaveLength(1)
-    await expect(fs.access(reportedSnapshots[0]!)).resolves.toBeUndefined()
     const failedClient = createClient({ url: pathToFileURL(filePath).href })
     const failed = drizzle(failedClient)
     expect(
@@ -1010,7 +971,7 @@ describe('SQLite migration and catalog ordering', () => {
     expect(
       await failed.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master
-        WHERE name='migration_will_rollback'
+        WHERE name='partial_migration_table'
       `)
     ).toEqual({ count: 0 })
     expect(
@@ -1019,21 +980,17 @@ describe('SQLite migration and catalog ordering', () => {
       )
     ).toEqual({ count: 0 })
     failedClient.close()
+    const reopened = await openDatabase(filePath)
+    databases.push(reopened)
     expect(
-      await fs.readdir(path.join(directory, 'database-backups'))
-    ).toHaveLength(1)
-
-    const recovered = await openDatabase(filePath)
-    databases.push(recovered)
-    expect(
-      await recovered.db
+      await reopened.db
         .select()
         .from(projects)
         .where(eq(projects.id, 'p_recover'))
         .then(([project]) => project)
     ).toMatchObject({ id: 'p_recover', name: 'Recover me' })
     expect(
-      await recovered.db.get<{ count: number }>(
+      await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
     ).toEqual({ count: 14 })

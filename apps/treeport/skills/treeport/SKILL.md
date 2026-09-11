@@ -1,6 +1,6 @@
 ---
 name: treeport
-description: Detailed Treeport CLI guidance for child-tree orchestration, lifecycle, services, remote access, updates, and recovery. Use when compact Pi guidance or command help is not sufficient. Do not load for routine background processes or browser tabs in a managed Pi session.
+description: Detailed Treeport CLI guidance for child-tree orchestration, lifecycle, services, remote access, and updates. Use when compact Pi guidance or command help is not sufficient. Do not load for routine background processes or browser tabs in a managed Pi session.
 compatibility: Requires the treeport CLI on PATH and a reachable Treeport daemon. Creation commands also require the requested child executable to be installed.
 ---
 
@@ -24,6 +24,7 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - In the external lifecycle, the parent process owns startup, shutdown, and remote exposure.
 - When the lifecycle is `service`, normal `start` and `stop` delegate to the OS manager.
 - Use bare `treeport update` to update a supported local npm installation. It preserves hosted terminals and an enabled service, and restarts only a daemon that was running.
+- If an update fails after installation starts, do not roll back or alter Treeport data. Reinstall the same or a newer compatible release with `npm install --global @treeport/treeport@latest`, then start Treeport normally.
 - Never run bare `treeport update` for an external or selected remote daemon.
 - Never invoke `sudo` for a normal service or update operation.
 - Normal macOS service mode is a user/login LaunchAgent and does not need an administrator.

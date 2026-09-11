@@ -63,9 +63,7 @@ function idleProgress(): LocalUpdateProgress {
     operationId: null,
     phase: null,
     fromVersion: null,
-    toVersion: null,
-    recoveryAction: null,
-    migrationState: null
+    toVersion: null
   }
 }
 
@@ -98,9 +96,7 @@ describe('application update manager', () => {
           operationId,
           phase: 'inspect',
           fromVersion: '0.4.0',
-          toVersion: '0.5.0',
-          recoveryAction: null,
-          migrationState: 'not_started'
+          toVersion: '0.5.0'
         }
         child.emit('spawn')
       })
@@ -164,7 +160,7 @@ describe('application update manager', () => {
     })
     expect(spawnProcess).toHaveBeenCalledWith(
       installation(dataDir).entrypoint,
-      ['update', '--json'],
+      ['update', '--yes', '--json'],
       expect.objectContaining({ detached: true, shell: false })
     )
     expect(unref).toHaveBeenCalledOnce()
@@ -206,9 +202,7 @@ describe('application update manager', () => {
           operationId: secondOperationId,
           phase: 'resolve',
           fromVersion: '0.4.0',
-          toVersion: '0.5.0',
-          recoveryAction: null,
-          migrationState: 'not_started'
+          toVersion: '0.5.0'
         }
         child.emit('spawn')
       })
@@ -227,10 +221,8 @@ describe('application update manager', () => {
           message: 'npm could not resolve the release.',
           details: {
             operationId: secondOperationId,
-            recovery: 'Retry the update.',
-            cause: 'Registry unavailable',
-            logPath: '/data/logs/daemon.log',
-            snapshotPaths: ['/data/database-backups/before.db']
+            next: 'Reinstall the same or a newer compatible Treeport release with `npm install --global @treeport/treeport@latest`, then start Treeport normally.',
+            cause: 'Registry unavailable'
           }
         }
       })
@@ -239,7 +231,33 @@ describe('application update manager', () => {
       phase: 'failed',
       operationId: secondOperationId,
       error:
-        'npm could not resolve the release.\nRegistry unavailable\nRetry the update.\nDaemon log: /data/logs/daemon.log\nPre-migration snapshot: /data/database-backups/before.db'
+        'npm could not resolve the release.\nRegistry unavailable\nReinstall the same or a newer compatible Treeport release with `npm install --global @treeport/treeport@latest`, then start Treeport normally.'
+    })
+
+    manager.dispose()
+    await fs.rm(dataDir, { recursive: true, force: true })
+  })
+
+  it('reports interrupted installation as failed with reinstall guidance', async () => {
+    const dataDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-application-update-interrupted-')
+    )
+    const manager = createApplicationUpdateManager(config(dataDir), {
+      resolveRelease: async () => release,
+      inspectInstallation: async () => installation(dataDir),
+      readProgress: async () => ({
+        active: false,
+        operationId: crypto.randomUUID(),
+        phase: 'activate',
+        fromVersion: '0.4.0',
+        toVersion: '0.5.0'
+      })
+    })
+
+    expect(await manager.status()).toMatchObject({
+      phase: 'failed',
+      error:
+        'The update process stopped before it returned a result.\nReinstall the same or a newer compatible Treeport release with `npm install --global @treeport/treeport@latest`, then start Treeport normally.'
     })
 
     manager.dispose()
