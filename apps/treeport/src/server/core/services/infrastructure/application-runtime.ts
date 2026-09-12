@@ -139,7 +139,13 @@ export class ApplicationFibers extends Effect.Service<ApplicationFibers>()(
     scoped: Effect.gen(function* () {
       const fibers = yield* FiberSet.make<unknown, never>()
       return {
-        fork: (effect) => FiberSet.run(fibers, effect).pipe(Effect.asVoid),
+        // The application scope owns accepted work, not the request's
+        // interruption mask. Inheriting that mask can deadlock races while
+        // they wait for losing command/timeout fibers to be interrupted.
+        fork: (effect) =>
+          FiberSet.run(fibers, Effect.interruptible(effect)).pipe(
+            Effect.asVoid
+          ),
         awaitEmpty: FiberSet.awaitEmpty(fibers)
       } satisfies ApplicationFiberSet
     })
