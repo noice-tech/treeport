@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, it } from 'vitest'
 const execute = promisify(execFile)
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const appRoot = path.join(repositoryRoot, 'apps/treeport')
+const panelSdkRoot = path.join(repositoryRoot, 'packages/panel-sdk')
 let root
 let npmCache
 let candidateCliA
@@ -29,7 +30,7 @@ async function command(executable, args, options = {}) {
   })
 }
 
-async function installTarball(tarball, prefix) {
+async function installTarballs(tarballs, prefix) {
   await command(
     'npm',
     [
@@ -40,7 +41,7 @@ async function installTarball(tarball, prefix) {
       '--ignore-scripts',
       '--no-audit',
       '--no-fund',
-      tarball
+      ...tarballs
     ],
     { env: { ...process.env, NPM_CONFIG_CACHE: npmCache } }
   )
@@ -322,27 +323,51 @@ beforeAll(async () => {
   npmCache = (await command('npm', ['config', 'get', 'cache'])).stdout.trim()
   assert(path.isAbsolute(npmCache), 'npm cache path must be absolute')
   const candidate = path.join(root, 'candidate')
+  const candidatePanelSdk = path.join(root, 'candidate-panel-sdk')
   candidateVersion = JSON.parse(
     await fs.readFile(path.join(appRoot, 'package.json'), 'utf8')
   ).version
-  await fs.mkdir(candidate, { recursive: true })
-  await command(
-    'pnpm',
-    ['--config.ignore-scripts=true', 'pack', '--pack-destination', candidate],
-    { cwd: appRoot, env: process.env }
+  await Promise.all(
+    [candidate, candidatePanelSdk].map((directory) =>
+      fs.mkdir(directory, { recursive: true })
+    )
   )
+  await Promise.all([
+    command(
+      'pnpm',
+      ['--config.ignore-scripts=true', 'pack', '--pack-destination', candidate],
+      { cwd: appRoot, env: process.env }
+    ),
+    command(
+      'pnpm',
+      [
+        '--config.ignore-scripts=true',
+        'pack',
+        '--pack-destination',
+        candidatePanelSdk
+      ],
+      { cwd: panelSdkRoot, env: process.env }
+    )
+  ])
   candidateTarball = path.join(
     candidate,
     (await fs.readdir(candidate)).find((name) => name.endsWith('.tgz'))
+  )
+  const panelSdkTarball = path.join(
+    candidatePanelSdk,
+    (await fs.readdir(candidatePanelSdk)).find((name) => name.endsWith('.tgz'))
   )
   candidateIntegrity = `sha512-${crypto
     .createHash('sha512')
     .update(await fs.readFile(candidateTarball))
     .digest('base64')}`
   candidatePrefix = path.join(root, 'candidate-prefix-a')
-  candidateCliA = await installTarball(candidateTarball, candidatePrefix)
-  candidateCliB = await installTarball(
-    candidateTarball,
+  candidateCliA = await installTarballs(
+    [candidateTarball, panelSdkTarball],
+    candidatePrefix
+  )
+  candidateCliB = await installTarballs(
+    [candidateTarball, panelSdkTarball],
     path.join(root, 'candidate-prefix-b')
   )
 }, 300_000)
