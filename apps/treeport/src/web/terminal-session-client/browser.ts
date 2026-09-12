@@ -1,7 +1,7 @@
 import type { SessionTimer } from './timers'
 import * as Effect from 'effect/Effect'
 import { FitAddon } from '@xterm/addon-fit'
-import { TerminalImages } from '../../terminal-images'
+import { TerminalImages } from '../../terminal-runtime/images'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { type TerminalClientToServerEvents } from '@treeport/shared'

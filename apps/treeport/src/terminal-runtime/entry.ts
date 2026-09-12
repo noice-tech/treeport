@@ -1,9 +1,8 @@
 import { NodeRuntime } from '@effect/platform-node'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
-import { makeTerminalHostSessions } from './terminal-host-sessions'
-import { makeTerminalHostServer } from './terminal-host-server'
-import { tracingLayerFromEnvironment } from './tracing'
+import { makeTerminalHostServer } from './server'
+import { makeTerminalHostSessions } from './sessions'
 
 const required = (name: string) => Config.nonEmptyString(name)
 
@@ -23,11 +22,12 @@ const program = Effect.gen(function* () {
   const hostId = yield* required('TREEPORT_TERMINAL_HOST_ID')
   const hostKey = yield* required('TREEPORT_TERMINAL_HOST_KEY')
   const token = yield* required('TREEPORT_TERMINAL_HOST_TOKEN')
+  const tokenPath = yield* required('TREEPORT_TERMINAL_HOST_TOKEN_PATH')
   const socketPath = yield* required('TREEPORT_TERMINAL_HOST_SOCKET')
   const recordPath = yield* required('TREEPORT_TERMINAL_HOST_RECORD')
-  const appVersion = yield* Config.string('TREEPORT_APP_VERSION').pipe(
-    Config.withDefault('unknown')
-  )
+  const startupTransactionId = yield* Config.string(
+    'TREEPORT_TERMINAL_HOST_STARTUP_TRANSACTION'
+  ).pipe(Config.option)
 
   yield* Effect.scoped(
     Effect.gen(function* () {
@@ -39,16 +39,18 @@ const program = Effect.gen(function* () {
         hostId,
         hostKey,
         token,
+        tokenPath,
         socketPath,
         recordPath,
-        sessions
+        sessions,
+        launcherPath,
+        startupTransactionId:
+          startupTransactionId._tag === 'Some'
+            ? startupTransactionId.value
+            : undefined
       })
       yield* Effect.raceFirst(host.shutdown, signal)
     })
-  ).pipe(
-    Effect.provide(
-      tracingLayerFromEnvironment('treeport-terminal-host', appVersion)
-    )
   )
 })
 

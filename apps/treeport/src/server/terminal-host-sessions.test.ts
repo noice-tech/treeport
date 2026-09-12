@@ -13,7 +13,7 @@ import * as Stream from 'effect/Stream'
 import {
   makeTerminalHostSessions,
   type TerminalHostRuntimeEvent
-} from './terminal-host-sessions'
+} from '../terminal-runtime/sessions'
 import { testAccess } from './test-access'
 
 const { Terminal } = xtermHeadless

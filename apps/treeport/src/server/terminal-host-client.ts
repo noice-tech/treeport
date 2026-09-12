@@ -27,11 +27,9 @@ import type {
   TerminalTraceContext
 } from './core/terminal'
 import {
-  decodeTerminalHostRecord,
   decodeTerminalHostResult,
   encodeTerminalHostFrame,
   makeTerminalHostFrameDecoder,
-  TERMINAL_HOST_PROTOCOL_VERSION,
   TerminalHostConnectionError,
   TerminalHostDisconnected,
   TerminalHostRequestError,
@@ -45,7 +43,8 @@ import {
   type TerminalHostResult,
   type TerminalHostResponseFrame,
   type TerminalHostResults
-} from './terminal-host-protocol'
+} from '../terminal-runtime/api'
+import { decodeTerminalHostDiscoveryRecord } from '../terminal-runtime/legacy-record'
 
 const TERMINAL_HOST_REQUEST_TIMEOUT_MS = 30_000
 const TERMINAL_HOST_START_TIMEOUT_MS = 10_000
@@ -134,15 +133,65 @@ function readOrCreateToken(
   })
 }
 
-function readRecord(
-  recordPath: string
-): Effect.Effect<TerminalHostRecord | null> {
-  return nodePromise<unknown>(async () =>
-    JSON.parse(await fs.readFile(recordPath, 'utf8'))
-  ).pipe(
-    Effect.flatMap(decodeTerminalHostRecord),
-    Effect.catchAll(() => Effect.succeed(null))
-  )
+interface TerminalHostDiscovery {
+  readonly record: TerminalHostRecord | null
+  readonly legacyProtocolVersion: number | null
+  readonly missing: boolean
+  readonly invalid: boolean
+}
+
+function readRecord(recordPath: string): Effect.Effect<TerminalHostDiscovery> {
+  return Effect.gen(function* () {
+    const source = yield* Effect.either(
+      nodePromise(() => fs.readFile(recordPath, 'utf8'))
+    )
+    if (Either.isLeft(source)) {
+      // SAFETY: Node filesystem failures expose their standard code on ErrnoException.
+      const code = (source.left.cause as NodeJS.ErrnoException).code
+      return {
+        record: null,
+        legacyProtocolVersion: null,
+        missing: code === 'ENOENT',
+        invalid: code !== 'ENOENT'
+      }
+    }
+
+    const parsed = yield* Effect.either(
+      Effect.try({
+        // SAFETY: JSON may contain any shape; the runtime-owned decoder validates it below.
+        try: () => JSON.parse(source.right) as unknown,
+        catch: connectionError
+      })
+    )
+    if (Either.isLeft(parsed)) {
+      return {
+        record: null,
+        legacyProtocolVersion: null,
+        missing: false,
+        invalid: true
+      }
+    }
+
+    const decoded = yield* Effect.either(
+      decodeTerminalHostDiscoveryRecord(parsed.right)
+    )
+    if (Either.isLeft(decoded)) {
+      return {
+        record: null,
+        legacyProtocolVersion: null,
+        missing: false,
+        invalid: true
+      }
+    }
+
+    const { protocolVersion, ...record } = decoded.right
+    return {
+      record,
+      legacyProtocolVersion: protocolVersion ?? null,
+      missing: false,
+      invalid: false
+    }
+  })
 }
 
 function processExists(pid: number): Effect.Effect<boolean> {
@@ -162,9 +211,7 @@ function isDefinitiveConnectionFailure(
 ): boolean {
   return (
     error._tag === 'TerminalHostRequestError' &&
-    ['AUTH_FAILED', 'HOST_MISMATCH', 'INCOMPATIBLE_PROTOCOL'].includes(
-      error.code
-    )
+    ['AUTH_FAILED', 'HOST_MISMATCH', 'UNSUPPORTED_HOST'].includes(error.code)
   )
 }
 
@@ -195,14 +242,17 @@ export class TerminalHostClient
     private readonly outputRoutes: Map<string, OutputRoute>,
     private readonly runtimeRoutes: Map<string, RuntimeRoute>,
     private readonly routeMutex: Effect.Semaphore,
-    private readonly closed: SynchronizedRef.SynchronizedRef<boolean>
+    private readonly closed: SynchronizedRef.SynchronizedRef<boolean>,
+    private readonly startupTransactionId: string | null
   ) {}
 
   static connect(
     socketPath: string,
     token: string,
     hostKey: string,
-    expectedHostId?: string
+    expectedHostId?: string,
+    startupTransactionId?: string,
+    readOnly = false
   ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
     return Effect.gen(function* () {
       const connectionScope = yield* Scope.make()
@@ -212,7 +262,9 @@ export class TerminalHostClient
             socketPath,
             token,
             hostKey,
-            expectedHostId
+            expectedHostId,
+            startupTransactionId,
+            readOnly
           ),
           connectionScope
         )
@@ -231,7 +283,9 @@ export class TerminalHostClient
     socketPath: string,
     token: string,
     hostKey: string,
-    expectedHostId?: string
+    expectedHostId: string | undefined,
+    startupTransactionId?: string,
+    readOnly = false
   ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
     return Effect.gen(function* () {
       const socket = yield* NodeSocket.makeNet({
@@ -248,7 +302,6 @@ export class TerminalHostClient
       const closed = yield* SynchronizedRef.make(false)
       const routeMutex = yield* Effect.makeSemaphore(1)
       const provisionalRecord: TerminalHostRecord = {
-        protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
         hostId: '',
         hostKey,
         pid: 1,
@@ -262,7 +315,8 @@ export class TerminalHostClient
         new Map(),
         new Map(),
         routeMutex,
-        closed
+        closed,
+        startupTransactionId ?? null
       )
 
       const disconnected = new TerminalHostDisconnected({
@@ -305,23 +359,6 @@ export class TerminalHostClient
                     Effect.forEach(
                       frames,
                       (frame) => {
-                        const explicitProtocolFailure =
-                          frame.type === 'response' &&
-                          frame.error?.code === 'INCOMPATIBLE_PROTOCOL'
-                        if (
-                          frame.protocolVersion !==
-                            TERMINAL_HOST_PROTOCOL_VERSION &&
-                          !explicitProtocolFailure
-                        ) {
-                          return client.closeWith(
-                            new TerminalHostRequestError({
-                              code: 'INCOMPATIBLE_PROTOCOL',
-                              message: `Terminal host sent protocol ${frame.protocolVersion}; daemon expects ${TERMINAL_HOST_PROTOCOL_VERSION}`,
-                              hostProtocolVersion: frame.protocolVersion
-                            })
-                          )
-                        }
-
                         if (frame.type === 'response') {
                           return client.receiveResponse(frame)
                         }
@@ -357,11 +394,19 @@ export class TerminalHostClient
           ) as Effect.Effect<void>
       )
 
-      const handshake = yield* client.request('handshake', {
+      const handshakeInput: TerminalHostRequestInput<'handshake'> = {
         token,
-        hostKey,
-        protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION
-      })
+        hostKey
+      }
+      if (startupTransactionId) {
+        Object.assign(handshakeInput, { startupTransactionId })
+      }
+
+      if (readOnly) {
+        Object.assign(handshakeInput, { readOnly: true })
+      }
+
+      const handshake = yield* client.request('handshake', handshakeInput)
       if (expectedHostId && handshake.hostId !== expectedHostId) {
         return yield* Effect.fail(
           new TerminalHostRequestError({
@@ -372,13 +417,10 @@ export class TerminalHostClient
         )
       }
 
-      client.supportsTraceContext = handshake.traceContext === true
       Object.assign(client.record, handshake)
       return client
     })
   }
-
-  private supportsTraceContext = false
 
   initialize(): Effect.Effect<boolean> {
     return Effect.succeed(true)
@@ -506,12 +548,33 @@ export class TerminalHostClient
     generation: number,
     cellSize: { width: number; height: number } | null = null
   ) {
-    return this.request('activateQueryAuthority', {
+    const input: TerminalHostRequestInput<'activateQueryAuthority'> = {
       terminalId,
       transitionId,
       attachmentId,
-      generation,
-      cellSize
+      generation
+    }
+    Object.assign(input, { cellSize })
+    return this.request('activateQueryAuthority', input).pipe(Effect.asVoid)
+  }
+
+  commitStartup(): Effect.Effect<void, TerminalHostClientError> {
+    if (!this.startupTransactionId) {
+      return Effect.void
+    }
+
+    return this.request('commitStartup', {
+      startupTransactionId: this.startupTransactionId
+    }).pipe(Effect.asVoid)
+  }
+
+  abortStartup(): Effect.Effect<void, TerminalHostClientError> {
+    if (!this.startupTransactionId) {
+      return Effect.void
+    }
+
+    return this.request('abortStartup', {
+      startupTransactionId: this.startupTransactionId
     }).pipe(Effect.asVoid)
   }
 
@@ -571,7 +634,7 @@ export class TerminalHostClient
   private request<Method extends keyof TerminalHostResults>(
     method: Method,
     input: TerminalHostRequestInput<Method>,
-    trace?: TerminalTraceContext
+    _trace?: TerminalTraceContext
   ): Effect.Effect<TerminalHostResults[Method], TerminalHostClientError> {
     return Effect.gen(this, function* () {
       if (yield* SynchronizedRef.get(this.closed)) {
@@ -593,14 +656,13 @@ export class TerminalHostClient
         return next
       })
       const frame: TerminalHostRequestFrame = {
-        protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
         type: 'request',
         id,
         method,
         input
       }
-      if (trace && this.supportsTraceContext) {
-        frame.trace = trace
+      if (_trace) {
+        Object.assign(frame, { trace: _trace })
       }
 
       const encoded = yield* encodeTerminalHostFrame(frame)
@@ -812,10 +874,47 @@ export function connectOrStartTerminalHost(
       { discard: true, concurrency: 'unbounded' }
     )
     yield* nodePromise(() => fs.chmod(path.dirname(paths.socketPath), 0o700))
-    const token = yield* readOrCreateToken(paths.tokenPath)
-    const record = yield* readRecord(paths.recordPath)
+    const discovery = yield* readRecord(paths.recordPath)
+    const record = discovery.record
 
+    if (discovery.invalid) {
+      return yield* Effect.fail(
+        connectionError(
+          new Error(
+            'The terminal host discovery record is invalid. Treeport will not replace the host or unlink its socket.'
+          )
+        )
+      )
+    }
+
+    let token = ''
     if (record) {
+      token = yield* readOrCreateToken(paths.tokenPath)
+      if (
+        record.hostKey !== paths.hostKey ||
+        record.socketPath !== paths.socketPath
+      ) {
+        return yield* Effect.fail(
+          connectionError(
+            new Error(
+              'The terminal host discovery record does not identify this installation. Treeport will not replace it.'
+            )
+          )
+        )
+      }
+
+      if (
+        discovery.legacyProtocolVersion !== null &&
+        (yield* processExists(record.pid))
+      ) {
+        return yield* Effect.fail(
+          new TerminalHostRequestError({
+            code: 'UNSUPPORTED_HOST',
+            message: `The running terminal host uses the retired protocol ${discovery.legacyProtocolVersion}. Save your work, explicitly close its terminals, stop the old terminal host, then retry.`
+          })
+        )
+      }
+
       const connected = yield* Effect.either(
         TerminalHostClient.connect(
           record.socketPath,
@@ -843,27 +942,11 @@ export function connectOrStartTerminalHost(
         )
       }
 
-      if (
-        record.hostKey === paths.hostKey &&
-        record.socketPath === paths.socketPath &&
-        isStaleSocketFailure(failure)
-      ) {
-        yield* Effect.all(
-          [
-            nodePromise(() => fs.rm(paths.recordPath, { force: true })),
-            nodePromise(() => fs.rm(paths.socketPath, { force: true }))
-          ],
-          { discard: true }
-        )
-      } else if (
-        record.hostKey !== paths.hostKey ||
-        record.socketPath !== paths.socketPath
-      ) {
-        return yield* Effect.fail(
-          connectionError(
-            new Error('The terminal host discovery record is invalid')
-          )
-        )
+      if (isStaleSocketFailure(failure)) {
+        // Keep the dead host's record until its replacement atomically publishes
+        // a new one. If startup is interrupted, the next attempt still has
+        // positive identity evidence instead of treating absence as safety.
+        yield* nodePromise(() => fs.rm(paths.socketPath, { force: true }))
       } else {
         return yield* Effect.fail(
           connectionError(
@@ -873,33 +956,33 @@ export function connectOrStartTerminalHost(
           )
         )
       }
-    } else {
-      const connected = yield* Effect.either(
-        TerminalHostClient.connect(paths.socketPath, token, paths.hostKey)
+    } else if (discovery.missing) {
+      const socketExists = yield* nodePromise(() =>
+        fs.lstat(paths.socketPath)
+      ).pipe(
+        Effect.as(true),
+        Effect.catchAll((failure) =>
+          // SAFETY: Node filesystem failures expose their standard code on ErrnoException.
+          (failure.cause as NodeJS.ErrnoException).code === 'ENOENT'
+            ? Effect.succeed(false)
+            : Effect.fail(failure)
+        )
       )
-      if (Either.isRight(connected)) {
-        return connected.right
-      }
-
-      const failure = connected.left
-      if (isDefinitiveConnectionFailure(failure)) {
-        return yield* Effect.fail(failure)
-      }
-
-      if (!isStaleSocketFailure(failure)) {
+      if (socketExists) {
         return yield* Effect.fail(
           connectionError(
             new Error(
-              'An unidentified terminal host socket answered unexpectedly. Treeport will not replace it.'
+              'A terminal host socket exists without a valid discovery record. Treeport will not connect to, unlink, or replace it.'
             )
           )
         )
       }
 
-      yield* nodePromise(() => fs.rm(paths.socketPath, { force: true }))
+      token = yield* readOrCreateToken(paths.tokenPath)
     }
 
     const hostId = crypto.randomUUID()
+    const startupTransactionId = crypto.randomUUID()
     const spawnHost = options.spawnHost ?? spawn
     const child: ChildProcess = yield* Effect.try({
       try: () =>
@@ -916,8 +999,10 @@ export function connectOrStartTerminalHost(
               TREEPORT_TERMINAL_HOST_ID: hostId,
               TREEPORT_TERMINAL_HOST_KEY: paths.hostKey,
               TREEPORT_TERMINAL_HOST_TOKEN: token,
+              TREEPORT_TERMINAL_HOST_TOKEN_PATH: paths.tokenPath,
               TREEPORT_TERMINAL_HOST_SOCKET: paths.socketPath,
-              TREEPORT_TERMINAL_HOST_RECORD: paths.recordPath
+              TREEPORT_TERMINAL_HOST_RECORD: paths.recordPath,
+              TREEPORT_TERMINAL_HOST_STARTUP_TRANSACTION: startupTransactionId
             }
           }
         ),
@@ -936,7 +1021,9 @@ export function connectOrStartTerminalHost(
             Effect.fail(
               connectionError(
                 new Error(
-                  `Terminal host exited before startup (code ${code ?? 'null'}, signal ${signal ?? 'null'})`
+                  `Terminal host exited before startup (code ${
+                    code ?? 'null'
+                  }, signal ${signal ?? 'null'})`
                 )
               )
             )
@@ -957,7 +1044,8 @@ export function connectOrStartTerminalHost(
                 paths.socketPath,
                 token,
                 paths.hostKey,
-                hostId
+                hostId,
+                startupTransactionId
               )
             )
             if (Either.isRight(connected)) {

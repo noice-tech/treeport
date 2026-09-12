@@ -133,7 +133,9 @@ async function startTerminalHost(
     const fs = require('node:fs')
     const net = require('node:net')
     const pty = require('node-pty')
-    const terminal = pty.spawn(process.execPath, ['-e', ${JSON.stringify("process.on('SIGHUP',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)")}], {
+    const terminal = pty.spawn(process.execPath, ['-e', ${JSON.stringify(
+      "process.on('SIGHUP',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"
+    )}], {
       cwd: ${JSON.stringify(fixtureDirectory)}, env: process.env
     })
     fs.writeFileSync(${JSON.stringify(terminalPidPath)}, String(terminal.pid))
@@ -149,12 +151,14 @@ async function startTerminalHost(
           request.input.token === ${JSON.stringify(token)} &&
           request.input.hostKey === ${JSON.stringify(hostKey)}
         const response = authenticated
-          ? { protocolVersion: 3, type: 'response', id: request.id, error: null,
-              result: { protocolVersion: 3, hostId: ${JSON.stringify(hostId)},
+          ? { type: 'response', id: request.id, error: null,
+              result: { hostId: ${JSON.stringify(hostId)},
                 hostKey: ${JSON.stringify(hostKey)}, pid: process.pid,
-                socketPath: ${JSON.stringify(socketPath)}, startedAt: new Date().toISOString(),
+                socketPath: ${JSON.stringify(
+                  socketPath
+                )}, startedAt: new Date().toISOString(),
                 liveSessionCount: 1 } }
-          : { protocolVersion: 3, type: 'response', id: request.id,
+          : { type: 'response', id: request.id,
               result: null, error: { code: 'AUTH_FAILED', message: 'failed' } }
         const payload = Buffer.from(JSON.stringify(response))
         const header = Buffer.alloc(4); header.writeUInt32BE(payload.length)
@@ -164,9 +168,11 @@ async function startTerminalHost(
     server.listen(${JSON.stringify(socketPath)}, () => {
       fs.chmodSync(${JSON.stringify(socketPath)}, 0o600)
       fs.writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify({
-        protocolVersion: 3, hostId: ${JSON.stringify(hostId)},
+        hostId: ${JSON.stringify(hostId)},
         hostKey: ${JSON.stringify(hostKey)}, pid: process.pid,
-        socketPath: ${JSON.stringify(socketPath)}, startedAt: new Date().toISOString()
+        socketPath: ${JSON.stringify(
+          socketPath
+        )}, startedAt: new Date().toISOString()
       }))
     })
     process.on('SIGTERM', () => process.exit(0))

@@ -1,9 +1,6 @@
 import { ImageAddon } from '@xterm/addon-image'
 import type { Terminal } from '@xterm/xterm'
-import type {
-  TerminalImageSnapshot,
-  TerminalImagePlacement
-} from '@treeport/shared'
+import type { TerminalImagePlacement, TerminalImageSnapshot } from './contract'
 
 const IMAGE_BYTES_LIMIT = 16 * 1024 * 1024
 const IMAGE_COUNT_LIMIT = 256

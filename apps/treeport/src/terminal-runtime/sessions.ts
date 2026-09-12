@@ -6,12 +6,6 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import xtermHeadless from '@xterm/headless'
 import type { IDisposable, IPty } from 'node-pty'
 import * as pty from 'node-pty'
-import {
-  parseTerminalProgress,
-  type TerminalProgress,
-  type TerminalSnapshotLink,
-  type TerminalImageSnapshot
-} from '@treeport/shared'
 import * as Data from 'effect/Data'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
@@ -24,27 +18,28 @@ import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import * as SynchronizedRef from 'effect/SynchronizedRef'
 import {
+  parseTerminalProgress,
   TERMINAL_PROGRESS_STALE_MS,
   type HostedTerminal,
   type TerminalCreateInput,
-  type TerminalHostAttachment,
   type TerminalHostOutput,
   type TerminalHostRuntimeEvent,
+  type TerminalHostSnapshot,
+  type TerminalImageSnapshot,
   type TerminalLaunchSpec,
   type TerminalProcess,
+  type TerminalProgress,
   type TerminalSessionState,
+  type TerminalSnapshotLink,
   type TerminalTitleState
-} from './core/terminal'
+} from './contract'
+import { TerminalImages } from './images'
 import {
   integrateShellLaunch,
   prepareShellIntegration
-} from './core/shell-integration'
-import { TerminalImages } from '../terminal-images'
+} from './shell-integration'
 
-export type {
-  TerminalAttachmentBackend,
-  TerminalHostRuntimeEvent
-} from './core/terminal'
+export type { TerminalHostRuntimeEvent } from './contract'
 
 const { Terminal } = xtermHeadless
 const HOST_SCROLLBACK_LINES = 50_000
@@ -53,6 +48,9 @@ const HOST_PARSER_LOW_WATERMARK = 256 * 1024
 const PROCESS_TREE_KILL_GRACE_MS = 500
 
 type HeadlessTerminal = InstanceType<typeof Terminal>
+type TerminalHostAttachment = TerminalHostSnapshot & {
+  output: Stream.Stream<TerminalHostOutput, unknown>
+}
 
 type PtySpawner = typeof pty.spawn
 type ProcessTreeTerminator = (child: IPty) => Effect.Effect<void, unknown>
@@ -239,7 +237,12 @@ const terminatePtyProcessTree: ProcessTreeTerminator = (child) =>
     yield* signalTree('SIGKILL')
   })
 
-/** Scoped detached owner of PTYs and their canonical headless emulators. */
+/**
+ * Scoped detached owner of PTYs and their canonical headless emulators.
+ * The separate process is intentional: node-pty process handles, parser
+ * history, output fences, image uploads, and query authority are in-memory
+ * state that the replacing daemon cannot reconstruct from an OS process ID.
+ */
 export class TerminalHostSessions {
   readonly shellIntegrationDir: string
 

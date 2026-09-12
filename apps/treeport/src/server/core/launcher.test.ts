@@ -4,7 +4,10 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
 import { describe, expect, it, vi } from 'vitest'
-import { runLaunchSpec, type LauncherDependencies } from './launcher'
+import {
+  runLaunchSpec,
+  type LauncherDependencies
+} from '../../terminal-runtime/launcher'
 import type { TerminalLaunchSpec } from './terminal'
 
 class FakeChild extends EventEmitter {

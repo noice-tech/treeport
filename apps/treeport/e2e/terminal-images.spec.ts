@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import xtermHeadless from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
-import { TerminalImages } from '../src/terminal-images'
+import { TerminalImages } from '../src/terminal-runtime/images'
 import { mockApp } from './support/mock-app'
 import { requestTerminalControl } from './support/interactions'
 

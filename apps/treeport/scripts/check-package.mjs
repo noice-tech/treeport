@@ -57,6 +57,8 @@ async function checkPackage(packageDirectory, published, sdkVersion) {
         'bin/treeport.mjs',
         'dist/node/cli/index.js',
         'dist/node/server/index.js',
+        'dist/node/server/terminal-host-entry.js',
+        'dist/node/server/terminal-host-preflight.js',
         'dist/node/server/core/launcher.js',
         'dist/web/index.html',
         'drizzle/0000_public_baseline.sql',

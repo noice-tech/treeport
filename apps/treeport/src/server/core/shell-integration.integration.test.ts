@@ -8,7 +8,7 @@ import { afterEach, expect, it } from 'vitest'
 import {
   integrateShellLaunch,
   prepareShellIntegration
-} from './shell-integration'
+} from '../../terminal-runtime/shell-integration'
 
 const execute = promisify(execFile)
 const temporary: string[] = []

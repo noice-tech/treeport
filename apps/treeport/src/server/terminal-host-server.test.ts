@@ -6,8 +6,8 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalHostClient } from './terminal-host-client'
-import { makeTerminalHostServer } from './terminal-host-server'
-import type { TerminalHostSessions } from './terminal-host-sessions'
+import { makeTerminalHostServer } from '../terminal-runtime/server'
+import type { TerminalHostSessions } from '../terminal-runtime/sessions'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -16,6 +16,104 @@ afterEach(async () => {
       .splice(0)
       .map((directory) => fs.rm(directory, { recursive: true, force: true }))
   )
+})
+
+describe('terminal host startup ownership', () => {
+  it('expires an interrupted provisional host before it can own terminals', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-interrupted-')
+    )
+    directories.push(root)
+    const createTerminal = vi.fn(() => Effect.void)
+    // SAFETY: An unconnected provisional host exercises initialization and shutdown only.
+    const sessions = {
+      sessionCount: Effect.succeed(0),
+      initialize: () => Effect.succeed(true),
+      createTerminal,
+      restoreHostQueryAuthority: () => Effect.void,
+      shutdown: () => Effect.void
+    } as unknown as TerminalHostSessions
+    const recordPath = path.join(root, 'host.json')
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* makeTerminalHostServer({
+            hostId: 'provisional-host',
+            hostKey: 'key',
+            token: 'token',
+            socketPath: path.join(root, 'host.sock'),
+            recordPath,
+            sessions,
+            startupTransactionId: 'startup-transaction',
+            startupTimeoutMs: 25
+          })
+          yield* host.shutdown
+        })
+      )
+    )
+
+    expect(createTerminal).not.toHaveBeenCalled()
+    await expect(fs.stat(recordPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects terminal operations on a read-only probe connection', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-read-only-')
+    )
+    directories.push(root)
+    const createTerminal = vi.fn(() => Effect.void)
+    // SAFETY: This read-only connection exercises handshake and rejected creation only.
+    const sessions = {
+      sessionCount: Effect.succeed(0),
+      initialize: () => Effect.succeed(true),
+      createTerminal,
+      restoreHostQueryAuthority: () => Effect.void,
+      shutdown: () => Effect.void
+    } as unknown as TerminalHostSessions
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* makeTerminalHostServer({
+            hostId: 'read-only-host',
+            hostKey: 'key',
+            token: 'token',
+            socketPath: path.join(root, 'host.sock'),
+            recordPath: path.join(root, 'host.json'),
+            sessions
+          })
+          const client = yield* TerminalHostClient.connect(
+            host.record.socketPath,
+            'token',
+            'key',
+            'read-only-host',
+            undefined,
+            true
+          )
+          const result = yield* Effect.either(
+            client.createTerminal({
+              terminalId: 'terminal',
+              worktreeId: 'worktree',
+              name: 'Must not launch',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              cwd: root,
+              argv: ['/bin/sh'],
+              shellCommand: null,
+              interactiveShell: false,
+              env: {}
+            })
+          )
+          expect(result).toMatchObject({
+            _tag: 'Left',
+            left: { code: 'READ_ONLY_CONNECTION' }
+          })
+        })
+      )
+    )
+
+    expect(createTerminal).not.toHaveBeenCalled()
+  })
 })
 
 describe('terminal host request scheduling', () => {
