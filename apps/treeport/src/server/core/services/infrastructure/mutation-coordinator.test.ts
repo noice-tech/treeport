@@ -3,7 +3,7 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import { describe, expect, it } from 'vitest'
-import { ApplicationDaemons } from './application-runtime'
+import { ApplicationDaemons, ApplicationFibers } from './application-runtime'
 import { makeMutationCoordinator } from './mutation-coordinator'
 
 class TestValue extends Context.Tag('treeport/test/MutationCoordinatorValue')<
@@ -38,6 +38,63 @@ describe('Application daemon ownership', () => {
     )
 
     expect(finalized).toBe(true)
+  })
+})
+
+describe('Application background ownership', () => {
+  it('does not pass an acceptance mask to owned mutation workers', async () => {
+    const interruptible = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fibers = yield* ApplicationFibers
+          const coordinator = yield* makeMutationCoordinator<string>()
+          const result = yield* Deferred.make<boolean>()
+          yield* Effect.uninterruptible(
+            fibers.fork(
+              coordinator.enqueue(
+                'project',
+                Effect.checkInterruptible((interruptible) =>
+                  Deferred.succeed(result, interruptible)
+                )
+              )
+            )
+          )
+          return yield* Deferred.await(result)
+        }).pipe(Effect.provide(ApplicationFibers.Default))
+      )
+    )
+
+    expect(interruptible).toBe(true)
+  })
+
+  it('keeps accepted work alive when the requesting fiber is interrupted', async () => {
+    let completed = false
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fibers = yield* ApplicationFibers
+          const started = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const request = yield* Effect.forkScoped(
+            Effect.uninterruptible(
+              fibers.fork(
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(started, undefined)
+                  yield* Deferred.await(release)
+                  completed = true
+                })
+              )
+            ).pipe(Effect.zipRight(Effect.never))
+          )
+          yield* Deferred.await(started)
+          yield* Fiber.interrupt(request)
+          expect(completed).toBe(false)
+          yield* Deferred.succeed(release, undefined)
+          yield* fibers.awaitEmpty
+        }).pipe(Effect.provide(ApplicationFibers.Default))
+      )
+    )
+    expect(completed).toBe(true)
   })
 })
 
