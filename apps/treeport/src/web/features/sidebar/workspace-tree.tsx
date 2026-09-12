@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
+  DocumentDuplicateIcon,
   FolderIcon,
   PlusIcon,
   TrashIcon,
@@ -17,6 +18,7 @@ import {
   ContextMenuContent,
   ContextMenuGroup,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger
 } from '../../components/ui/context-menu'
 import {
@@ -38,6 +40,27 @@ import type {
   RemovalStage
 } from '../worktrees/worktree-workflows'
 import { SidebarAction } from './sidebar-action'
+
+function copyText(text: string) {
+  const copyBuffer = document.createElement('textarea')
+  copyBuffer.value = text
+  copyBuffer.readOnly = true
+  copyBuffer.style.position = 'fixed'
+  copyBuffer.style.left = '-9999px'
+  copyBuffer.style.opacity = '0'
+  ;(document.activeElement?.parentElement ?? document.body).appendChild(
+    copyBuffer
+  )
+  copyBuffer.focus({ preventScroll: true })
+  copyBuffer.select()
+  copyBuffer.setSelectionRange(0, text.length)
+  const copied = document.execCommand('copy')
+  copyBuffer.remove()
+
+  if (!copied) {
+    void navigator.clipboard?.writeText(text).catch(() => undefined)
+  }
+}
 
 function WorktreeShell({
   name,
@@ -222,10 +245,7 @@ export function WorkspaceTree({
                     className="group/worktree min-w-0"
                   >
                     <ContextMenu>
-                      <ContextMenuTrigger
-                        asChild
-                        disabled={worktree.kind !== 'linked'}
-                      >
+                      <ContextMenuTrigger asChild>
                         <div
                           className={cn(
                             'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:has-[button:hover]:bg-white/5 max-[700px]:select-none',
@@ -314,34 +334,46 @@ export function WorkspaceTree({
                           ) : null}
                         </div>
                       </ContextMenuTrigger>
-                      {worktree.kind === 'linked' ? (
-                        <ContextMenuContent>
-                          <ContextMenuGroup>
-                            <ContextMenuItem
-                              variant="destructive"
-                              disabled={
-                                project.availability.state === 'unavailable' ||
-                                Boolean(pendingRemovals[worktree.id])
-                              }
-                              onSelect={() => {
-                                void prepareRemoval(
-                                  worktree,
-                                  document.getElementById(
-                                    `worktree-${worktree.id}`
-                                  )!
-                                )
-                              }}
-                            >
-                              <TrashIcon />
-                              {project.availability.state === 'unavailable'
-                                ? 'Git repository unavailable'
-                                : pendingRemovals[worktree.id]
-                                  ? 'Preparing removal…'
-                                  : 'Remove tree…'}
-                            </ContextMenuItem>
-                          </ContextMenuGroup>
-                        </ContextMenuContent>
-                      ) : null}
+                      <ContextMenuContent>
+                        <ContextMenuGroup>
+                          <ContextMenuItem
+                            onSelect={() => copyText(worktree.id)}
+                          >
+                            <DocumentDuplicateIcon />
+                            Copy tree ID
+                          </ContextMenuItem>
+                        </ContextMenuGroup>
+                        {worktree.kind === 'linked' ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuGroup>
+                              <ContextMenuItem
+                                variant="destructive"
+                                disabled={
+                                  project.availability.state ===
+                                    'unavailable' ||
+                                  Boolean(pendingRemovals[worktree.id])
+                                }
+                                onSelect={() => {
+                                  void prepareRemoval(
+                                    worktree,
+                                    document.getElementById(
+                                      `worktree-${worktree.id}`
+                                    )!
+                                  )
+                                }}
+                              >
+                                <TrashIcon />
+                                {project.availability.state === 'unavailable'
+                                  ? 'Git repository unavailable'
+                                  : pendingRemovals[worktree.id]
+                                    ? 'Preparing removal…'
+                                    : 'Remove tree…'}
+                              </ContextMenuItem>
+                            </ContextMenuGroup>
+                          </>
+                        ) : null}
+                      </ContextMenuContent>
                     </ContextMenu>
                     <SidebarMenuSub
                       className="terminal-list mr-0 ml-4 gap-px border-white/6 pr-0 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5"
@@ -382,93 +414,121 @@ export function WorkspaceTree({
                               {...itemProps}
                               className="group/terminal relative min-w-0"
                             >
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={selectedTerminalId === terminal.id}
-                              >
-                                <Button
-                                  variant="ghost"
-                                  type="button"
-                                  className={cn(
-                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
-                                    selectedTerminalId === terminal.id
-                                      ? 'selected bg-cyan-400/8! text-cyan-50'
-                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
-                                  )}
-                                  onClick={() => selectTerminal(terminal)}
-                                  onMouseDown={(event) => {
-                                    if (event.button === 1) {
-                                      event.preventDefault()
+                              <ContextMenu>
+                                <ContextMenuTrigger asChild>
+                                  <SidebarMenuSubButton
+                                    asChild
+                                    isActive={
+                                      selectedTerminalId === terminal.id
                                     }
-                                  }}
-                                  onAuxClick={(event) => {
-                                    if (event.button !== 1) {
-                                      return
-                                    }
-
-                                    event.preventDefault()
-                                    closeTerminal(terminal)
-                                  }}
-                                  aria-label={`${title}, ${status}`}
-                                  aria-keyshortcuts={[
-                                    focusedSurface === 'terminal' &&
-                                    shortcutIndex
-                                      ? `Meta+${shortcutIndex}`
-                                      : null,
-                                    'Alt+Shift+ArrowUp',
-                                    'Alt+Shift+ArrowDown'
-                                  ]
-                                    .filter(Boolean)
-                                    .join(' ')}
-                                  {...handleProps}
-                                >
-                                  <TerminalStatusIcon
-                                    program={
-                                      terminalPrograms.get(terminal.id) ?? null
-                                    }
-                                    progress={progress ?? null}
-                                    attention={needsAttention}
-                                    exited={terminal.status === 'exited'}
-                                    className="size-4! min-[701px]:size-3.5!"
-                                  />
-                                  <span
-                                    className={cn(
-                                      'truncate',
-                                      working && 'text-cyan-300',
-                                      needsAttention && 'text-amber-200'
-                                    )}
-                                    aria-hidden="true"
                                   >
-                                    {title}
-                                  </span>
-                                  {focusedSurface === 'terminal' &&
-                                  shortcutIndex ? (
-                                    <kbd
-                                      className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
-                                      aria-hidden="true"
+                                    <Button
+                                      variant="ghost"
+                                      type="button"
+                                      className={cn(
+                                        'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                        selectedTerminalId === terminal.id
+                                          ? 'selected bg-cyan-400/8! text-cyan-50'
+                                          : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
+                                      )}
+                                      onClick={() => selectTerminal(terminal)}
+                                      onMouseDown={(event) => {
+                                        if (event.button === 1) {
+                                          event.preventDefault()
+                                        }
+                                      }}
+                                      onAuxClick={(event) => {
+                                        if (event.button !== 1) {
+                                          return
+                                        }
+
+                                        event.preventDefault()
+                                        closeTerminal(terminal)
+                                      }}
+                                      aria-label={`${title}, ${status}`}
+                                      aria-keyshortcuts={[
+                                        focusedSurface === 'terminal' &&
+                                        shortcutIndex
+                                          ? `Meta+${shortcutIndex}`
+                                          : null,
+                                        'Alt+Shift+ArrowUp',
+                                        'Alt+Shift+ArrowDown'
+                                      ]
+                                        .filter(Boolean)
+                                        .join(' ')}
+                                      {...handleProps}
                                     >
-                                      ⌘{shortcutIndex}
-                                    </kbd>
-                                  ) : (
-                                    <span aria-hidden="true" />
-                                  )}
-                                </Button>
-                              </SidebarMenuSubButton>
-                              <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
-                                <SidebarAction
-                                  label={`Close ${title}`}
-                                  tooltip={
-                                    worktree.terminals.length === 1
-                                      ? 'Every tree keeps at least one terminal'
-                                      : 'Close terminal'
-                                  }
-                                  disabled={worktree.terminals.length === 1}
-                                  className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
-                                  onClick={() => closeTerminal(terminal)}
-                                >
-                                  <XMarkIcon />
-                                </SidebarAction>
-                              </div>
+                                      <TerminalStatusIcon
+                                        program={
+                                          terminalPrograms.get(terminal.id) ??
+                                          null
+                                        }
+                                        progress={progress ?? null}
+                                        attention={needsAttention}
+                                        exited={terminal.status === 'exited'}
+                                        className="size-4! min-[701px]:size-3.5!"
+                                      />
+                                      <span
+                                        className={cn(
+                                          'truncate',
+                                          working && 'text-cyan-300',
+                                          needsAttention && 'text-amber-200'
+                                        )}
+                                        aria-hidden="true"
+                                      >
+                                        {title}
+                                      </span>
+                                      {focusedSurface === 'terminal' &&
+                                      shortcutIndex ? (
+                                        <kbd
+                                          className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
+                                          aria-hidden="true"
+                                        >
+                                          ⌘{shortcutIndex}
+                                        </kbd>
+                                      ) : (
+                                        <span aria-hidden="true" />
+                                      )}
+                                    </Button>
+                                  </SidebarMenuSubButton>
+                                </ContextMenuTrigger>
+                                <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
+                                  <SidebarAction
+                                    label={`Close ${title}`}
+                                    tooltip={
+                                      worktree.terminals.length === 1
+                                        ? 'Every tree keeps at least one terminal'
+                                        : 'Close terminal'
+                                    }
+                                    disabled={worktree.terminals.length === 1}
+                                    className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
+                                    onClick={() => closeTerminal(terminal)}
+                                  >
+                                    <XMarkIcon />
+                                  </SidebarAction>
+                                </div>
+                                <ContextMenuContent>
+                                  <ContextMenuGroup>
+                                    <ContextMenuItem
+                                      onSelect={() => copyText(terminal.id)}
+                                    >
+                                      <DocumentDuplicateIcon />
+                                      Copy terminal ID
+                                    </ContextMenuItem>
+                                  </ContextMenuGroup>
+                                  <ContextMenuSeparator />
+                                  <ContextMenuGroup>
+                                    <ContextMenuItem
+                                      variant="destructive"
+                                      disabled={worktree.terminals.length === 1}
+                                      onSelect={() => closeTerminal(terminal)}
+                                    >
+                                      <XMarkIcon />
+                                      Close terminal
+                                    </ContextMenuItem>
+                                  </ContextMenuGroup>
+                                </ContextMenuContent>
+                              </ContextMenu>
                             </SidebarMenuSubItem>
                           )
                         }}
