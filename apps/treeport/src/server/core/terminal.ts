@@ -1,103 +1,30 @@
-import type {
-  TerminalImageSnapshot,
-  TerminalProgress,
-  TerminalSize,
-  TerminalSnapshotLink,
-  TerminalStatus
-} from '@treeport/shared'
 import type * as Effect from 'effect/Effect'
 import type * as Scope from 'effect/Scope'
 import type * as Stream from 'effect/Stream'
-import type { WorktreeSetupTask } from './setup'
+import {
+  type HostedTerminal,
+  type TerminalCreateInput,
+  type TerminalHostOutput,
+  type TerminalHostRuntimeEvent,
+  type TerminalHostSnapshot,
+  type TerminalProcess,
+  type TerminalProgress,
+  type TerminalSessionState,
+  type TerminalTitleState,
+  type TerminalTraceContext
+} from '../../terminal-runtime/contract'
 
-export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
-
-export interface TerminalLaunchSpec {
-  argv: string[]
-  initialTitle?: string | undefined
-  fallbackArgv?: string[] | undefined
-  cwd: string
-  env: Record<string, string>
-  shellIntegrationDir?: string | undefined
-  setupTasks?: WorktreeSetupTask[] | undefined
-  setupError?: string | undefined
-}
-
-export interface TerminalSessionState {
-  status: TerminalStatus
-  exitCode: number | null
-}
-
-export interface TerminalTitleState {
-  terminalTitle: string | null
-  currentCommand: string | null
-  commandLine?: string | null
-}
-
-export interface HostedTerminal {
-  id: string
-  worktreeId: string
-  name: string
-  argv: string[]
-  shellCommand: string | null
-  interactiveShell: boolean
-  closeOnSuccess: boolean
-  status: Exclude<TerminalStatus, 'missing'>
-  exitCode: number | null
-  createdAt: string
-  updatedAt: string
-}
-
-export interface TerminalProcess {
-  pid: number
-  terminalId: string
-}
-
-export interface TerminalCreateInput {
-  terminalId: string
-  worktreeId: string
-  name: string
-  createdAt: string
-  cwd: string
-  argv: string[]
-  initialTitle?: string | undefined
-  shellCommand: string | null
-  interactiveShell: boolean
-  fallbackArgv?: string[] | undefined
-  closeOnSuccess?: boolean | undefined
-  initialSize?: TerminalSize | undefined
-  env: Record<string, string>
-  setupTasks?: WorktreeSetupTask[] | undefined
-  setupError?: string | undefined
-}
-
-export interface TerminalTraceContext {
-  traceId: string
-  spanId: string
-  sampled: boolean
-}
-
-export interface TerminalHostRuntimeEvent {
-  title?: string | undefined
-  progress?: TerminalProgress | null | undefined
-  bell?: { sequence: number; at: string } | undefined
-  exitCode?: number | null | undefined
-  titleState?: TerminalTitleState | undefined
-}
-
-export interface TerminalHostOutput {
-  data: string
-  sequence: number
-}
-
-interface TerminalHostSnapshot {
-  data: string
-  links: TerminalSnapshotLink[]
-  images: TerminalImageSnapshot | null
-  fence: number
-  cols: number
-  rows: number
-}
+export {
+  type HostedTerminal,
+  type TerminalCreateInput,
+  type TerminalHostOutput,
+  type TerminalHostRuntimeEvent,
+  type TerminalLaunchSpec,
+  type TerminalProcess,
+  type TerminalSessionState,
+  type TerminalTitleState,
+  type TerminalTraceContext
+} from '../../terminal-runtime/contract'
 
 export interface TerminalHostAttachment extends TerminalHostSnapshot {
   output: Stream.Stream<TerminalHostOutput, unknown>

@@ -144,6 +144,14 @@ if (piManifest.version !== version) {
 }
 
 try {
+  run('pnpm', ['test:release-qualification'], { stdio: 'inherit' })
+} catch {
+  fail(
+    `Packaged cross-release qualification failed. Release files remain updated to ${version}; fix the failure or restore them before retrying.`
+  )
+}
+
+try {
   run('pnpm', ['check'], { stdio: 'inherit' })
 } catch {
   fail(

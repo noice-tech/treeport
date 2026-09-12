@@ -5,9 +5,8 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import * as Effect from 'effect/Effect'
-import { TERMINAL_NAME_MAX_LENGTH } from '@treeport/shared'
+import { TERMINAL_NAME_MAX_LENGTH, type TerminalLaunchSpec } from './contract'
 import { integrateShellLaunch } from './shell-integration'
-import type { TerminalLaunchSpec } from './terminal'
 
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 

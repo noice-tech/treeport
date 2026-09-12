@@ -100,7 +100,17 @@ describe('ordinary folder projects', () => {
       })
     )
     services.push(restartedService)
-    await restartedService.runEffect(restartedService.initialize())
+    const inventoryAttemptsBeforePrepare = runner.terminalInventoryAttempts
+    const createAttemptsBeforePrepare = runner.terminalCreateAttempts
+    await restartedService.runEffect(restartedService.prepareStartup())
+    expect(runner.terminalInventoryAttempts).toBe(
+      inventoryAttemptsBeforePrepare
+    )
+    expect(runner.terminalCreateAttempts).toBe(createAttemptsBeforePrepare)
+    await restartedService.runEffect(restartedService.activateStartup())
+    expect(runner.terminalInventoryAttempts).toBeGreaterThan(
+      inventoryAttemptsBeforePrepare
+    )
     const reopenedDatabase = await openDatabaseForTest(config.databasePath)
     databases.push(reopenedDatabase)
     const restarted = await restartedService.getProjectSnapshot(registered.id)

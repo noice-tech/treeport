@@ -195,6 +195,12 @@ function npmVersionExists(spec) {
 }
 
 let release = verifyRelease()
+try {
+  run('pnpm', ['test:release-qualification'], { stdio: 'inherit' })
+} catch {
+  fail('Packaged cross-release qualification failed; nothing was published.')
+}
+
 let npmUser
 try {
   npmUser = run('npm', ['whoami'])

@@ -1,6 +1,6 @@
 import type { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
-import type { TerminalImages } from '../../terminal-images'
+import type { TerminalImages } from '../../terminal-runtime/images'
 import {
   type ProtocolSocket,
   type ProtocolSocketOptions,

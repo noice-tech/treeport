@@ -96,6 +96,22 @@ const packedReleaseSchema = z.tuple([
   })
 ])
 
+const terminalHostProbeSchema = z.looseObject({
+  compatible: z.boolean(),
+  running: z.boolean(),
+  record: z
+    .looseObject({
+      hostId: z.string().min(1),
+      hostKey: z.string().min(1),
+      pid: z.number().int().positive(),
+      socketPath: z.string().min(1),
+      startedAt: z.string().min(1)
+    })
+    .nullable(),
+  reason: z.string().nullable(),
+  next: z.string().nullable()
+})
+
 export type TreeportRelease = z.infer<typeof releaseSchema>
 
 interface CommandResult {
@@ -244,7 +260,8 @@ export class LocalUpdateError extends Error {
         'UPDATE_DAEMON_OWNERSHIP_FAILED',
         'UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED',
         'UPDATE_CONFIRMATION_REQUIRED',
-        'UPDATE_SERVICE_NOT_READY'
+        'UPDATE_SERVICE_NOT_READY',
+        'UPDATE_TERMINAL_HOST_INCOMPATIBLE'
       ].includes(code)
         ? 5
         : 1)
@@ -731,6 +748,7 @@ export async function runLocalUpdate(
   let activated = false
   let daemonWasRunning = false
   let daemonLifecycle: 'treeport' | 'service' | null = null
+  let shouldRunAfterUpdate = false
   let terminalIdsBefore: string[] = []
   let installation: Awaited<
     ReturnType<typeof inspectLocalUpdateInstallation>
@@ -844,6 +862,7 @@ export async function runLocalUpdate(
     const intendedRunning =
       initialDaemon.verified || serviceBefore?.requestedState === 'running'
     const shouldRun = intendedRunning || Boolean(options.start)
+    shouldRunAfterUpdate = shouldRun
     if (serviceBefore) {
       // The service owns migration/preflight diagnostics. Do not synthesize a
       // privileged stop flow, or discover a legacy launcher after activation.
@@ -1030,6 +1049,9 @@ export async function runLocalUpdate(
         'bin/treeport.mjs',
         'dist/node/cli/index.js',
         'dist/node/server/index.js',
+        'dist/node/server/terminal-host-entry.js',
+        'dist/node/server/terminal-host-preflight.js',
+        'dist/node/server/core/launcher.js',
         'dist/web/index.html',
         'drizzle/meta/_journal.json',
         'skills/treeport/SKILL.md'
@@ -1079,6 +1101,61 @@ export async function runLocalUpdate(
         'UPDATE_VERIFICATION_FAILED',
         `The staged Treeport CLI did not report version ${release.version}.`,
         { phase: 'verify', operationId, toVersion: release.version }
+      )
+    }
+
+    // The candidate owns this compatibility decision. Its authenticated
+    // read-only handshake cannot attach, transfer query authority, or mutate a PTY.
+    const probeTerminalHost = async () => {
+      const command = await runCommand(
+        process.execPath,
+        [
+          path.join(
+            stagedPackage,
+            'dist',
+            'node',
+            'server',
+            'terminal-host-preflight.js'
+          )
+        ],
+        {
+          ...environment,
+          TREEPORT_DATA_DIR: paths.dataDir,
+          TREEPORT_RUNTIME_DIR: paths.runtimeDir
+        }
+      )
+      const parsed = await Promise.resolve(command.stdout)
+        .then((value) => terminalHostProbeSchema.safeParse(JSON.parse(value)))
+        .catch(() => null)
+      if (!parsed?.success) {
+        throw new LocalUpdateError(
+          'UPDATE_VERIFICATION_FAILED',
+          'The staged Treeport release did not return a valid terminal host compatibility result.',
+          {
+            phase: 'verify',
+            operationId,
+            toVersion: release.version,
+            cause: commandFailure('terminal host compatibility probe', command)
+          }
+        )
+      }
+
+      return parsed.data
+    }
+    const hostProbe = await probeTerminalHost()
+    if (!hostProbe.compatible) {
+      throw new LocalUpdateError(
+        'UPDATE_TERMINAL_HOST_INCOMPATIBLE',
+        hostProbe.reason ??
+          'The staged Treeport release is incompatible with the running terminal host.',
+        {
+          phase: 'verify',
+          operationId,
+          toVersion: release.version,
+          next:
+            hostProbe.next ??
+            'Keep the current installation running and finish its terminals before retrying.'
+        }
       )
     }
 
@@ -1134,6 +1211,35 @@ export async function runLocalUpdate(
     terminalIdsBefore = daemonBefore.verified
       ? await terminalIds(daemonBefore.state!.apiUrl)
       : []
+
+    const transitionHostProbe = await probeTerminalHost()
+    if (!transitionHostProbe.compatible) {
+      throw new LocalUpdateError(
+        'UPDATE_TERMINAL_HOST_INCOMPATIBLE',
+        transitionHostProbe.reason ??
+          'The staged Treeport release is incompatible with the running terminal host.',
+        {
+          phase: 'verify',
+          operationId,
+          toVersion: release.version,
+          next:
+            transitionHostProbe.next ??
+            'Keep the current installation running and finish its terminals before retrying.'
+        }
+      )
+    }
+
+    if (
+      transitionHostProbe.running !== hostProbe.running ||
+      JSON.stringify(transitionHostProbe.record) !==
+        JSON.stringify(hostProbe.record)
+    ) {
+      throw new LocalUpdateError(
+        'UPDATE_DAEMON_OWNERSHIP_FAILED',
+        'The terminal host changed while the update was staged. The active installation and terminals were left untouched.',
+        { phase: 'verify', operationId }
+      )
+    }
 
     if (interrupted) {
       throw new LocalUpdateError(
@@ -1192,13 +1298,40 @@ export async function runLocalUpdate(
     let daemonAfter: Awaited<ReturnType<typeof daemonStatus>> | null = null
     let terminalsAfter: string[] = []
     if (shouldRun) {
+      const startupCommitPath = path.join(
+        updateDirectory,
+        `startup-commit-${operationId}`
+      )
+      const startupCommitAcknowledgement = `${startupCommitPath}.ack`
+      const startupTransactionPath = path.join(
+        updateDirectory,
+        'startup-transaction.json'
+      )
+      await Promise.all([
+        fs.rm(startupCommitPath, { force: true }),
+        fs.rm(startupCommitAcknowledgement, { force: true }),
+        fs.rm(startupTransactionPath, { force: true })
+      ])
+      await fs.writeFile(
+        startupTransactionPath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          operationId,
+          ownerPid: process.pid,
+          createdAt: Date.now()
+        })}\n`,
+        { mode: 0o600, flag: 'wx' }
+      )
       await save('restart')
       progress(
         `Restarting the ${
           daemonLifecycle === 'service' ? 'Treeport service' : 'Treeport daemon'
         }…`
       )
-      await startThroughStableEntrypoint(installation.entrypoint, environment)
+      await startThroughStableEntrypoint(installation.entrypoint, {
+        ...environment,
+        TREEPORT_UPDATE_STARTUP_TRANSACTION: operationId
+      })
       await save('health_check')
       const healthDeadline = Date.now() + 10_000
       daemonAfter = await daemonStatus()
@@ -1251,28 +1384,44 @@ export async function runLocalUpdate(
           { phase: 'health_check', operationId, terminalIds: missing }
         )
       }
+
+      await fs.writeFile(startupCommitPath, 'commit\n', {
+        mode: 0o600,
+        flag: 'wx'
+      })
+      const commitDeadline = Date.now() + 5_000
+      while (Date.now() < commitDeadline) {
+        if (
+          await fs
+            .access(startupCommitAcknowledgement)
+            .then(() => true)
+            .catch(() => false)
+        ) {
+          break
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const committed = await fs
+        .access(startupCommitAcknowledgement)
+        .then(() => true)
+        .catch(() => false)
+      await fs.rm(startupCommitAcknowledgement, { force: true })
+      if (!committed) {
+        throw new LocalUpdateError(
+          'UPDATE_HEALTH_VERIFICATION_FAILED',
+          'Treeport started but did not commit terminal host ownership.',
+          { phase: 'health_check', operationId }
+        )
+      }
     }
 
     await save('complete')
-    const versionDirectories = await fs
-      .readdir(installation.versionsDirectory, { withFileTypes: true })
-      .then((entries) =>
-        entries
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => entry.name)
-      )
-      .catch(() => [])
-    const removable = versionDirectories.filter(
-      (name) => name !== release.version
-    )
-    await Promise.all(
-      removable.map((name) =>
-        fs.rm(path.join(installation!.versionsDirectory, name), {
-          recursive: true,
-          force: true
-        })
-      )
-    ).catch(() => undefined)
+    // Detached hosts may still execute their release's launcher for a later
+    // terminal creation. Retaining managed release directories is the smallest
+    // safe asset policy; a future cleanup may remove one only after proving no
+    // surviving host references it.
     return {
       schemaVersion: 1,
       operationId,
@@ -1296,6 +1445,18 @@ export async function runLocalUpdate(
     }
   } catch (error) {
     const failedPhase = operation.phase
+    let candidateStopFailure: string | null = null
+    if (
+      activated &&
+      shouldRunAfterUpdate &&
+      (failedPhase === 'restart' || failedPhase === 'health_check')
+    ) {
+      candidateStopFailure = await stopUpdateDaemon(daemonLifecycle).then(
+        () => null,
+        (cause) => (cause instanceof Error ? cause.message : String(cause))
+      )
+    }
+
     if (!INSTALLATION_PHASES.has(failedPhase)) {
       if (error instanceof LocalUpdateError) {
         throw error
@@ -1322,6 +1483,13 @@ export async function runLocalUpdate(
     }
 
     await save('failed').catch(() => undefined)
+    const candidateStopCause = candidateStopFailure
+      ? `The failed candidate daemon could not be stopped: ${candidateStopFailure}`
+      : null
+    const localUpdateCause =
+      error instanceof LocalUpdateError
+        ? [error.details.cause, candidateStopCause].filter(Boolean).join('\n')
+        : null
     const details: LocalUpdateErrorDetails =
       error instanceof LocalUpdateError
         ? {
@@ -1337,9 +1505,20 @@ export async function runLocalUpdate(
             operationId,
             fromVersion: operation.fromVersion,
             toVersion: operation.toVersion,
-            cause: error instanceof Error ? error.message : String(error),
+            cause: [
+              error instanceof Error ? error.message : String(error),
+              candidateStopFailure
+                ? `The failed candidate daemon could not be stopped: ${candidateStopFailure}`
+                : null
+            ]
+              .filter(Boolean)
+              .join('\n'),
             next: LOCAL_UPDATE_REINSTALL_GUIDANCE
           }
+    if (error instanceof LocalUpdateError && localUpdateCause) {
+      Object.assign(details, { cause: localUpdateCause })
+    }
+
     throw new LocalUpdateError(
       error instanceof LocalUpdateError ? error.code : 'UPDATE_FAILED',
       error instanceof LocalUpdateError
@@ -1369,6 +1548,17 @@ export async function runLocalUpdate(
         .catch(() => undefined)
     }
 
-    await fs.rm(lockPath, { force: true }).catch(() => undefined)
+    await Promise.all([
+      fs.rm(lockPath, { force: true }),
+      fs.rm(path.join(updateDirectory, `startup-commit-${operationId}`), {
+        force: true
+      }),
+      fs.rm(path.join(updateDirectory, `startup-commit-${operationId}.ack`), {
+        force: true
+      }),
+      fs.rm(path.join(updateDirectory, 'startup-transaction.json'), {
+        force: true
+      })
+    ]).catch(() => undefined)
   }
 }

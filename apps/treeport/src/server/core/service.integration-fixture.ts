@@ -925,7 +925,8 @@ export async function fixture() {
     new TreeportService({ config, runner, terminalHost })
   )
   services.push(service)
-  await service.runEffect(service.initialize())
+  await service.runEffect(service.prepareStartup())
+  await service.runEffect(service.activateStartup())
   service.attachHttpServer(http.createServer())
   return { root, main, runner, service, database, config }
 }

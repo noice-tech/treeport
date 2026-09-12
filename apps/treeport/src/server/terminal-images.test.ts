@@ -1,7 +1,7 @@
 import xtermHeadless from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { expect, it } from 'vitest'
-import { TerminalImages } from '../terminal-images'
+import { TerminalImages } from '../terminal-runtime/images'
 
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII='

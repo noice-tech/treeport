@@ -1,24 +1,18 @@
-import {
-  terminalImageSnapshotSchema,
-  terminalProgressSchema,
-  terminalSnapshotLinkSchema,
-  type TerminalImageSnapshot,
-  type TerminalProgress,
-  type TerminalSnapshotLink
-} from '@treeport/shared'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import type {
   HostedTerminal,
+  TerminalHostRuntimeEvent,
+  TerminalImageSnapshot,
   TerminalLaunchSpec,
+  TerminalProgress,
   TerminalSessionState,
+  TerminalSnapshotLink,
   TerminalTitleState,
   TerminalTraceContext
-} from './core/terminal'
-import type { TerminalHostRuntimeEvent } from './core/terminal'
+} from './contract'
 
-export const TERMINAL_HOST_PROTOCOL_VERSION = 4
 const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 export class TerminalHostFrameEncodeError extends Data.TaggedError(
@@ -62,7 +56,6 @@ export class TerminalHostRequestError extends Data.TaggedError(
 )<{
   readonly code: string
   readonly message: string
-  readonly hostProtocolVersion?: number | undefined
   readonly liveSessionCount?: number | undefined
 }> {}
 
@@ -78,12 +71,13 @@ const nonEmptyString = Schema.String.pipe(Schema.minLength(1))
 const positiveInteger = Schema.Int.pipe(Schema.positive())
 
 const terminalHostRecordFields = {
-  protocolVersion: positiveInteger,
   hostId: nonEmptyString,
   hostKey: nonEmptyString,
   pid: positiveInteger,
   socketPath: nonEmptyString,
-  startedAt: nonEmptyString
+  startedAt: nonEmptyString,
+  launcherPath: Schema.optional(nonEmptyString),
+  provisional: Schema.optional(Schema.Boolean)
 }
 const terminalHostRecordSchema = Schema.Struct(terminalHostRecordFields)
 
@@ -128,8 +122,11 @@ const terminalHostInputSchemas = {
   handshake: Schema.Struct({
     token: Schema.String,
     hostKey: Schema.String,
-    protocolVersion: Schema.Int
+    startupTransactionId: Schema.optional(Schema.String),
+    readOnly: Schema.optional(Schema.Boolean)
   }),
+  commitStartup: Schema.Struct({ startupTransactionId: nonEmptyString }),
+  abortStartup: Schema.Struct({ startupTransactionId: nonEmptyString }),
   create: createSchema,
   inventory: worktreeIdSchema,
   state: terminalIdSchema,
@@ -153,11 +150,13 @@ const terminalHostInputSchemas = {
     transitionId: Schema.String,
     attachmentId: Schema.String,
     generation: positiveInteger,
-    cellSize: Schema.NullOr(
-      Schema.Struct({
-        width: Schema.Number.pipe(Schema.between(1, 100)),
-        height: Schema.Number.pipe(Schema.between(1, 200))
-      })
+    cellSize: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          width: Schema.Number.pipe(Schema.between(1, 100)),
+          height: Schema.Number.pipe(Schema.between(1, 200))
+        })
+      )
     )
   }),
   hostQueryAuthority: terminalIdSchema,
@@ -188,6 +187,8 @@ const terminalHostInputSchemas = {
 
 const TERMINAL_HOST_REQUEST_METHODS = [
   'handshake',
+  'commitStartup',
+  'abortStartup',
   'create',
   'inventory',
   'state',
@@ -213,42 +214,43 @@ const TERMINAL_HOST_REQUEST_METHODS = [
 
 export type TerminalHostRequestMethod =
   (typeof TERMINAL_HOST_REQUEST_METHODS)[number]
+
+export function isTerminalHostRequestMethod(
+  method: string
+): method is TerminalHostRequestMethod {
+  // SAFETY: The readonly tuple is widened only to use Array.includes for a string candidate.
+  return (TERMINAL_HOST_REQUEST_METHODS as readonly string[]).includes(method)
+}
 export type TerminalHostRequestInput<
   Method extends TerminalHostRequestMethod = TerminalHostRequestMethod
 > = (typeof terminalHostInputSchemas)[Method]['Type']
 
 export interface TerminalHostRequestFrame {
-  protocolVersion: number
   type: 'request'
   id: string
-  method: TerminalHostRequestMethod
+  method: string
   input: object
   trace?: TerminalTraceContext | undefined
 }
 
 export interface TerminalHostResponseFrame {
-  protocolVersion: number
   type: 'response'
   id: string
-  /** Older hosts may omit result on a structured protocol failure. */
-  result?: TerminalHostResult
+  result: TerminalHostResult
   error: {
     code: string
     message: string
-    hostProtocolVersion?: number | undefined
     liveSessionCount?: number | undefined
   } | null
 }
 
 export type TerminalHostEventFrame =
   | {
-      protocolVersion: number
       type: 'event'
       event: 'output'
       data: { terminalId: string; output: string; sequence: number }
     }
   | {
-      protocolVersion: number
       type: 'event'
       event: 'runtime'
       data: { terminalId: string; value: TerminalHostRuntimeEvent }
@@ -262,8 +264,9 @@ export type TerminalHostFrame =
 export interface TerminalHostResults {
   handshake: TerminalHostRecord & {
     liveSessionCount: number
-    traceContext?: boolean
   }
+  commitStartup: null
+  abortStartup: null
   create: null
   inventory: HostedTerminal[]
   state: TerminalSessionState
@@ -329,6 +332,65 @@ const runtimeEventSchema = Schema.Struct({
   )
 })
 
+const terminalProgressSchema = Schema.Struct({
+  state: Schema.Literal('normal', 'error', 'indeterminate', 'paused'),
+  value: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100)))
+})
+const terminalSnapshotLinkSchema = Schema.Struct({
+  buffer: Schema.Literal('normal', 'alternate'),
+  uri: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4_096)),
+  line: Schema.NonNegativeInt,
+  startColumn: Schema.NonNegativeInt,
+  endColumn: positiveInteger
+})
+const imageNumber = Schema.Number.pipe(Schema.finite())
+const terminalImageCommandSchema = Schema.Struct({
+  columns: Schema.optional(imageNumber),
+  rows: Schema.optional(imageNumber),
+  x: Schema.optional(imageNumber),
+  y: Schema.optional(imageNumber),
+  sourceWidth: Schema.optional(imageNumber),
+  sourceHeight: Schema.optional(imageNumber),
+  xOffset: Schema.optional(imageNumber),
+  yOffset: Schema.optional(imageNumber),
+  zIndex: Schema.optional(imageNumber),
+  cursorMovement: Schema.optional(imageNumber),
+  placementId: Schema.optional(imageNumber)
+})
+const terminalImageSnapshotSchema = Schema.Struct({
+  nextImageId: positiveInteger,
+  images: Schema.Array(
+    Schema.Struct({
+      id: Schema.NonNegativeInt,
+      data: Schema.String.pipe(Schema.maxLength(24 * 1024 * 1024)),
+      width: Schema.NonNegativeInt,
+      height: Schema.NonNegativeInt,
+      format: Schema.Number,
+      compression: Schema.String.pipe(Schema.maxLength(1))
+    })
+  ).pipe(Schema.maxItems(256)),
+  placements: Schema.Array(
+    Schema.Struct({
+      imageId: Schema.NonNegativeInt,
+      command: terminalImageCommandSchema,
+      cellSize: Schema.Struct({
+        width: Schema.Number.pipe(Schema.between(1, 100)),
+        height: Schema.Number.pipe(Schema.between(1, 200))
+      }),
+      buffer: Schema.Literal('normal', 'alternate'),
+      tiles: Schema.Array(
+        Schema.Tuple(
+          Schema.NonNegativeInt,
+          Schema.NonNegativeInt,
+          Schema.NonNegativeInt,
+          positiveInteger
+        )
+      ).pipe(Schema.maxItems(1_000_000))
+    })
+  ).pipe(Schema.maxItems(2_048)),
+  pending: Schema.String.pipe(Schema.maxLength(24 * 1024 * 1024))
+})
+
 const terminalStatusSchema = Schema.Literal('running', 'exited')
 const terminalTitleStateSchema = Schema.Struct({
   terminalTitle: Schema.NullOr(Schema.String),
@@ -352,9 +414,10 @@ const nullResultSchema = Schema.Null
 const terminalHostResultSchemas = {
   handshake: Schema.Struct({
     ...terminalHostRecordFields,
-    liveSessionCount: Schema.NonNegativeInt,
-    traceContext: Schema.optional(Schema.Boolean)
+    liveSessionCount: Schema.NonNegativeInt
   }),
+  commitStartup: nullResultSchema,
+  abortStartup: nullResultSchema,
   create: nullResultSchema,
   inventory: Schema.Array(hostedTerminalSchema),
   state: Schema.Struct({
@@ -406,29 +469,25 @@ const terminalHostResultSchemas = {
 
 const terminalHostFrameSchema = Schema.Union(
   Schema.Struct({
-    protocolVersion: Schema.Int,
     type: Schema.Literal('request'),
     id: Schema.String,
-    method: Schema.Literal(...TERMINAL_HOST_REQUEST_METHODS),
+    method: nonEmptyString,
     input: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
     trace: Schema.optional(traceSchema)
   }),
   Schema.Struct({
-    protocolVersion: Schema.Int,
     type: Schema.Literal('response'),
     id: Schema.String,
-    result: Schema.optional(Schema.Unknown),
+    result: Schema.Unknown,
     error: Schema.NullOr(
       Schema.Struct({
         code: Schema.String,
         message: Schema.String,
-        hostProtocolVersion: Schema.optional(Schema.Int),
         liveSessionCount: Schema.optional(Schema.NonNegativeInt)
       })
     )
   }),
   Schema.Struct({
-    protocolVersion: Schema.Int,
     type: Schema.Literal('event'),
     event: Schema.Literal('output'),
     data: Schema.Struct({
@@ -438,7 +497,6 @@ const terminalHostFrameSchema = Schema.Union(
     })
   }),
   Schema.Struct({
-    protocolVersion: Schema.Int,
     type: Schema.Literal('event'),
     event: Schema.Literal('runtime'),
     data: Schema.Struct({
@@ -448,9 +506,8 @@ const terminalHostFrameSchema = Schema.Union(
   })
 )
 
-const decodeFrame = Schema.decodeUnknownSync(terminalHostFrameSchema, {
-  onExcessProperty: 'error'
-})
+// Validate every known field while discarding additive unknown fields.
+const decodeFrame = Schema.decodeUnknownSync(terminalHostFrameSchema)
 
 export function decodeTerminalHostInput<
   Method extends TerminalHostRequestMethod
@@ -465,9 +522,7 @@ export function decodeTerminalHostInput<
   // SAFETY: Every request method maps to the schema for its declared input type.
   const schema = terminalHostInputSchemas[method] as Schema.Schema<unknown>
   // SAFETY: Decoding with the method-indexed schema establishes the generic method input type.
-  return Schema.decodeUnknown(schema, {
-    onExcessProperty: 'error'
-  })(input).pipe(
+  return Schema.decodeUnknown(schema)(input).pipe(
     Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
   ) as Effect.Effect<
     TerminalHostRequestInput<Method>,
@@ -485,9 +540,7 @@ export function decodeTerminalHostResult<
   // SAFETY: Every request method maps to the schema for its declared result type.
   const schema = terminalHostResultSchemas[method] as Schema.Schema<unknown>
   // SAFETY: Decoding with the method-indexed schema establishes the generic method result type.
-  return Schema.decodeUnknown(schema, {
-    onExcessProperty: 'error'
-  })(input).pipe(
+  return Schema.decodeUnknown(schema)(input).pipe(
     Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
   ) as Effect.Effect<TerminalHostResults[Method], TerminalHostFrameDecodeError>
 }
@@ -496,9 +549,7 @@ export function decodeTerminalHostRecord(
   // eslint-disable-next-line anti-slop/no-unknown-parameters -- Discovery file contents are decoded by Effect Schema at this boundary.
   input: unknown
 ): Effect.Effect<TerminalHostRecord, TerminalHostFrameDecodeError> {
-  return Schema.decodeUnknown(terminalHostRecordSchema, {
-    onExcessProperty: 'error'
-  })(input).pipe(
+  return Schema.decodeUnknown(terminalHostRecordSchema)(input).pipe(
     Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
   )
 }

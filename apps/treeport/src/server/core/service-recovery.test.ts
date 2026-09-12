@@ -40,7 +40,8 @@ describe('operation recovery', () => {
       })
     )
     services.push(restartedService)
-    await restartedService.runEffect(restartedService.initialize())
+    await restartedService.runEffect(restartedService.prepareStartup())
+    await restartedService.runEffect(restartedService.activateStartup())
     restartedService.attachHttpServer(http.createServer())
 
     let operation = await restartedService.getOperation(operationId)

@@ -27,8 +27,7 @@ const daemonHealthSchema = z.object({
   installationMethod: z.string(),
   daemonLifecycle: z.string()
 })
-const terminalHostRecordSchema = z.object({
-  protocolVersion: z.number().int().positive(),
+const terminalHostRecordSchema = z.looseObject({
   hostId: z.string().min(1),
   hostKey: z.string().min(1),
   pid: z.number().int().positive(),
@@ -236,6 +235,12 @@ async function authenticateTerminalHost(
     return null
   }
 
+  if (record?.protocolVersion !== undefined) {
+    throw new Error(
+      'Refusing automatic cleanup of a historical terminal host; stop it explicitly with its original Treeport release'
+    )
+  }
+
   if (
     record &&
     (record.hostKey !== paths.hostKey || record.socketPath !== paths.socketPath)
@@ -248,14 +253,12 @@ async function authenticateTerminalHost(
   const requestId = crypto.randomUUID()
   const payload = Buffer.from(
     JSON.stringify({
-      protocolVersion: record?.protocolVersion ?? 3,
       type: 'request',
       id: requestId,
       method: 'handshake',
       input: {
         token,
-        hostKey: paths.hostKey,
-        protocolVersion: record?.protocolVersion ?? 3
+        hostKey: paths.hostKey
       }
     })
   )
@@ -359,10 +362,14 @@ async function stopTerminalHost(dataDir, runtimeDir, timeoutMs, graceMs) {
     timeoutMs
   )
   if (!host) {
-    await Promise.all([
-      fs.rm(paths.recordPath, { force: true }),
-      fs.rm(paths.socketPath, { force: true })
-    ])
+    if (record) {
+      await Promise.all([
+        fs.rm(paths.recordPath, { force: true }),
+        fs.rm(paths.socketPath, { force: true }),
+        fs.rm(paths.tokenPath, { force: true })
+      ])
+    }
+
     return
   }
 
@@ -390,7 +397,8 @@ async function stopTerminalHost(dataDir, runtimeDir, timeoutMs, graceMs) {
   if (!current || current.hostId === host.hostId) {
     await Promise.all([
       fs.rm(paths.recordPath, { force: true }),
-      fs.rm(paths.socketPath, { force: true })
+      fs.rm(paths.socketPath, { force: true }),
+      fs.rm(paths.tokenPath, { force: true })
     ])
   }
 }

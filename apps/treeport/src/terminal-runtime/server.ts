@@ -13,21 +13,20 @@ import * as Queue from 'effect/Queue'
 import * as Ref from 'effect/Ref'
 import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
-import * as Tracer from 'effect/Tracer'
-import type { TerminalCreateInput } from './core/terminal'
-import type { TerminalHostSessions } from './terminal-host-sessions'
+import type { TerminalCreateInput } from './contract'
+import type { TerminalHostSessions } from './sessions'
 import {
   decodeTerminalHostInput,
   decodeTerminalHostRecord,
   encodeTerminalHostFrame,
+  isTerminalHostRequestMethod,
   makeTerminalHostFrameDecoder,
-  TERMINAL_HOST_PROTOCOL_VERSION,
   type TerminalHostEventFrame,
   type TerminalHostRecord,
   type TerminalHostRequestFrame,
   type TerminalHostResponseFrame,
   type TerminalHostResults
-} from './terminal-host-protocol'
+} from './api'
 
 const TERMINAL_HOST_EVENT_HIGH_WATERMARK = 4 * 1024 * 1024
 const TERMINAL_HOST_EVENT_LOW_WATERMARK = 1024 * 1024
@@ -37,11 +36,15 @@ export interface TerminalHostServerOptions {
   readonly hostId: string
   readonly hostKey: string
   readonly token: string
+  readonly tokenPath?: string | undefined
   readonly socketPath: string
   readonly recordPath: string
   readonly sessions: TerminalHostSessions
   readonly pid?: number
   readonly startedAt?: string
+  readonly launcherPath?: string
+  readonly startupTransactionId?: string | undefined
+  readonly startupTimeoutMs?: number | undefined
 }
 
 export interface TerminalHostServerHandle {
@@ -67,6 +70,9 @@ interface OutboundFrame {
 interface HostConnection {
   readonly socket: Socket
   authenticated: boolean
+  readOnly: boolean
+  ownsStartupTransaction: boolean
+  queryAuthorityTouched: boolean
   readonly outputScopes: Map<string, Scope.CloseableScope>
   readonly runtimeScopes: Map<string, Scope.CloseableScope>
   readonly outputPauseScopes: Map<string, Scope.CloseableScope>
@@ -110,14 +116,23 @@ export function makeTerminalHostServer(
   return Effect.gen(function* () {
     yield* options.sessions.initialize().pipe(Effect.mapError(serverError))
     const record: TerminalHostRecord = {
-      protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
       hostId: options.hostId,
       hostKey: options.hostKey,
       pid: options.pid ?? process.pid,
       socketPath: options.socketPath,
       startedAt: options.startedAt ?? new Date().toISOString()
     }
+    if (options.launcherPath) {
+      Object.assign(record, { launcherPath: options.launcherPath })
+    }
+
+    if (options.startupTransactionId) {
+      Object.assign(record, { provisional: true })
+    }
+
     const shuttingDown = yield* Ref.make(false)
+    const provisional = yield* Ref.make(Boolean(options.startupTransactionId))
+    const cleanupOwnedState = yield* Ref.make(false)
     const shutdown = yield* Deferred.make<void>()
     const temporaryRecordPath = `${options.recordPath}.${process.pid}.tmp`
 
@@ -132,6 +147,22 @@ export function makeTerminalHostServer(
     )
     yield* nodePromise(() => fs.rename(temporaryRecordPath, options.recordPath))
 
+    if (options.startupTransactionId) {
+      yield* Effect.forkScoped(
+        Effect.sleep(options.startupTimeoutMs ?? 60_000).pipe(
+          Effect.zipRight(Ref.get(provisional)),
+          Effect.flatMap((stillProvisional) =>
+            stillProvisional
+              ? Ref.set(cleanupOwnedState, true).pipe(
+                  Effect.zipRight(Deferred.succeed(shutdown, undefined))
+                )
+              : Effect.void
+          ),
+          Effect.asVoid
+        )
+      )
+    }
+
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const ownsRecord = yield* nodePromise<unknown>(async () => {
@@ -142,12 +173,15 @@ export function makeTerminalHostServer(
           Effect.map((current) => current.hostId === options.hostId),
           Effect.catchAll(() => Effect.succeed(false))
         )
-        if (ownsRecord) {
-          yield* Effect.all(
-            [
-              nodePromise(() => fs.rm(options.recordPath, { force: true })),
-              nodePromise(() => fs.rm(options.socketPath, { force: true }))
-            ],
+        if (ownsRecord && (yield* Ref.get(cleanupOwnedState))) {
+          const ownedPaths = [options.recordPath, options.socketPath]
+          if (options.tokenPath) {
+            ownedPaths.push(options.tokenPath)
+          }
+
+          yield* Effect.forEach(
+            ownedPaths,
+            (ownedPath) => nodePromise(() => fs.rm(ownedPath, { force: true })),
             { discard: true }
           ).pipe(Effect.catchAll(() => Effect.void))
         }
@@ -176,6 +210,9 @@ export function makeTerminalHostServer(
           const connection: HostConnection = {
             socket: netSocket,
             authenticated: false,
+            readOnly: false,
+            ownsStartupTransaction: false,
+            queryAuthorityTouched: false,
             outputScopes: new Map(),
             runtimeScopes: new Map(),
             outputPauseScopes: new Map(),
@@ -208,7 +245,7 @@ export function makeTerminalHostServer(
               yield* closeSubscriptions(connection.outputScopes)
               yield* closeSubscriptions(connection.runtimeScopes)
               yield* closeSubscriptions(connection.outputPauseScopes)
-              if (connection.authenticated) {
+              if (connection.queryAuthorityTouched) {
                 yield* options.sessions
                   .restoreHostQueryAuthority()
                   .pipe(
@@ -220,6 +257,14 @@ export function makeTerminalHostServer(
                       )
                     )
                   )
+              }
+
+              if (
+                connection.ownsStartupTransaction &&
+                (yield* Ref.get(provisional))
+              ) {
+                yield* Ref.set(cleanupOwnedState, true)
+                yield* Deferred.succeed(shutdown, undefined)
               }
 
               netSocket.destroy()
@@ -249,7 +294,6 @@ export function makeTerminalHostServer(
             result: TerminalHostResults[Method]
           ) =>
             enqueueResponse({
-              protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
               type: 'response',
               id,
               result,
@@ -262,11 +306,10 @@ export function makeTerminalHostServer(
             message: string,
             details: Pick<
               NonNullable<TerminalHostResponseFrame['error']>,
-              'hostProtocolVersion' | 'liveSessionCount'
+              'liveSessionCount'
             > = {}
           ) =>
             enqueueResponse({
-              protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
               type: 'response',
               id,
               result: null,
@@ -348,7 +391,6 @@ export function makeTerminalHostServer(
               yield* Effect.forkIn(
                 Stream.runForEach(attachment.output, ({ data, sequence }) =>
                   sendEvent({
-                    protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
                     type: 'event',
                     event: 'output',
                     data: { terminalId, output: data, sequence }
@@ -370,7 +412,6 @@ export function makeTerminalHostServer(
                   options.sessions.runtimeEvents(terminalId),
                   (value) =>
                     sendEvent({
-                      protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
                       type: 'event',
                       event: 'runtime',
                       data: { terminalId, value }
@@ -383,20 +424,6 @@ export function makeTerminalHostServer(
 
           const handleRequest = (frame: TerminalHostRequestFrame) =>
             Effect.gen(function* () {
-              if (frame.protocolVersion !== TERMINAL_HOST_PROTOCOL_VERSION) {
-                const liveSessionCount = yield* options.sessions.sessionCount
-                yield* fail(
-                  frame.id,
-                  'INCOMPATIBLE_PROTOCOL',
-                  `Terminal host protocol ${TERMINAL_HOST_PROTOCOL_VERSION} is not compatible with daemon protocol ${frame.protocolVersion}`,
-                  {
-                    hostProtocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
-                    liveSessionCount
-                  }
-                )
-                return
-              }
-
               if (!connection.authenticated) {
                 if (frame.method !== 'handshake') {
                   yield* fail(
@@ -428,26 +455,50 @@ export function makeTerminalHostServer(
                   return
                 }
 
-                if (input.protocolVersion !== TERMINAL_HOST_PROTOCOL_VERSION) {
-                  const liveSessionCount = yield* options.sessions.sessionCount
-                  yield* fail(
-                    frame.id,
-                    'INCOMPATIBLE_PROTOCOL',
-                    `Terminal host protocol ${TERMINAL_HOST_PROTOCOL_VERSION} is not compatible with daemon protocol ${input.protocolVersion}`,
-                    {
-                      hostProtocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
-                      liveSessionCount
-                    }
-                  )
-                  return
+                if (yield* Ref.get(provisional)) {
+                  if (
+                    !options.startupTransactionId ||
+                    input.startupTransactionId !== options.startupTransactionId
+                  ) {
+                    yield* fail(
+                      frame.id,
+                      'HOST_PROVISIONAL',
+                      'The terminal host belongs to an uncommitted daemon startup'
+                    )
+                    return
+                  }
+
+                  connection.ownsStartupTransaction = true
                 }
 
                 connection.authenticated = true
+                connection.readOnly = input.readOnly ?? false
                 yield* respond<'handshake'>(frame.id, {
-                  ...record,
-                  liveSessionCount: yield* options.sessions.sessionCount,
-                  traceContext: true
+                  hostId: record.hostId,
+                  hostKey: record.hostKey,
+                  pid: record.pid,
+                  socketPath: record.socketPath,
+                  startedAt: record.startedAt,
+                  liveSessionCount: yield* options.sessions.sessionCount
                 })
+                return
+              }
+
+              if (!isTerminalHostRequestMethod(frame.method)) {
+                yield* fail(
+                  frame.id,
+                  'UNSUPPORTED_METHOD',
+                  `Unsupported terminal host method: ${frame.method}`
+                )
+                return
+              }
+
+              if (connection.readOnly) {
+                yield* fail(
+                  frame.id,
+                  'READ_ONLY_CONNECTION',
+                  'The compatibility probe cannot perform terminal operations'
+                )
                 return
               }
 
@@ -460,6 +511,19 @@ export function makeTerminalHostServer(
                 return
               }
 
+              if (
+                (yield* Ref.get(provisional)) &&
+                frame.method !== 'commitStartup' &&
+                frame.method !== 'abortStartup'
+              ) {
+                yield* fail(
+                  frame.id,
+                  'HOST_PROVISIONAL',
+                  'The terminal host cannot own terminals before daemon startup commits'
+                )
+                return
+              }
+
               switch (frame.method) {
                 case 'handshake':
                   yield* fail(
@@ -468,6 +532,60 @@ export function makeTerminalHostServer(
                     'Handshake is complete'
                   )
                   return
+                case 'commitStartup': {
+                  const input = yield* decodeTerminalHostInput(
+                    'commitStartup',
+                    frame.input
+                  )
+                  if (
+                    !connection.ownsStartupTransaction ||
+                    input.startupTransactionId !== options.startupTransactionId
+                  ) {
+                    yield* fail(
+                      frame.id,
+                      'STARTUP_TRANSACTION_MISMATCH',
+                      'The daemon does not own this provisional terminal host'
+                    )
+                    return
+                  }
+
+                  yield* Ref.set(provisional, false)
+                  Object.assign(record, { provisional: false })
+                  yield* nodePromise(() =>
+                    fs.writeFile(
+                      temporaryRecordPath,
+                      `${JSON.stringify(record)}\n`,
+                      { mode: 0o600 }
+                    )
+                  )
+                  yield* nodePromise(() =>
+                    fs.rename(temporaryRecordPath, options.recordPath)
+                  )
+                  yield* respond<'commitStartup'>(frame.id, null)
+                  return
+                }
+                case 'abortStartup': {
+                  const input = yield* decodeTerminalHostInput(
+                    'abortStartup',
+                    frame.input
+                  )
+                  if (
+                    !connection.ownsStartupTransaction ||
+                    input.startupTransactionId !== options.startupTransactionId
+                  ) {
+                    yield* fail(
+                      frame.id,
+                      'STARTUP_TRANSACTION_MISMATCH',
+                      'The daemon does not own this provisional terminal host'
+                    )
+                    return
+                  }
+
+                  yield* respond<'abortStartup'>(frame.id, null)
+                  yield* Ref.set(cleanupOwnedState, true)
+                  yield* Deferred.succeed(shutdown, undefined)
+                  return
+                }
                 case 'create': {
                   const input = yield* decodeTerminalHostInput(
                     'create',
@@ -614,6 +732,7 @@ export function makeTerminalHostServer(
                     'prepareQueryAuthority',
                     frame.input
                   )
+                  connection.queryAuthorityTouched = true
                   yield* respond<'prepareQueryAuthority'>(
                     frame.id,
                     yield* options.sessions.prepareQueryAuthority(
@@ -627,12 +746,13 @@ export function makeTerminalHostServer(
                     'activateQueryAuthority',
                     frame.input
                   )
+                  connection.queryAuthorityTouched = true
                   yield* options.sessions.activateQueryAuthority(
                     input.terminalId,
                     input.transitionId,
                     input.attachmentId,
                     input.generation,
-                    input.cellSize
+                    input.cellSize ?? null
                   )
                   yield* respond<'activateQueryAuthority'>(frame.id, null)
                   return
@@ -642,6 +762,7 @@ export function makeTerminalHostServer(
                     'hostQueryAuthority',
                     frame.input
                   )
+                  connection.queryAuthorityTouched = true
                   yield* options.sessions.useHostQueryAuthority(
                     input.terminalId
                   )
@@ -769,41 +890,20 @@ export function makeTerminalHostServer(
 
                   yield* options.sessions.shutdown()
                   yield* respond<'shutdown'>(frame.id, null)
+                  yield* Ref.set(cleanupOwnedState, true)
                   yield* Deferred.succeed(shutdown, undefined)
                 }
               }
             })
 
-          const executeRequest = (admitted: AdmittedRequest) => {
-            const { frame } = admitted
-            const name =
-              frame.method === 'create'
-                ? 'treeport.terminal_host.pty.create'
-                : frame.method === 'attach'
-                  ? 'treeport.terminal_host.attach'
-                  : frame.method === 'kill'
-                    ? 'treeport.terminal_host.pty.remove'
-                    : 'treeport.terminal_host.request'
-            const request = frame.trace
-              ? handleRequest(frame).pipe(
-                  Effect.withSpan(name, {
-                    parent: Tracer.externalSpan(frame.trace),
-                    attributes: {
-                      'treeport.terminal_host.method': frame.method,
-                      'treeport.terminal_host.queue_wait_ms':
-                        Date.now() - admitted.admittedAt
-                    }
-                  })
-                )
-              : handleRequest(frame)
-            return request.pipe(
+          const executeRequest = ({ frame }: AdmittedRequest) =>
+            handleRequest(frame).pipe(
               Effect.catchAll((cause) =>
                 fail(frame.id, 'REQUEST_FAILED', errorMessage(cause)).pipe(
                   Effect.catchAll(() => Effect.void)
                 )
               )
             )
-          }
 
           const write = yield* socket.writer
           const writer = Effect.forever(

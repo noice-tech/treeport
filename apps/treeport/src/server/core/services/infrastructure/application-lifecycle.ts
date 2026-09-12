@@ -26,18 +26,17 @@ import { DatabasePort } from '../../database'
 
 const now = (): string => new Date().toISOString()
 
+type InterruptedOperation = Pick<OperationRecord, 'id' | 'kind' | 'status'>
+
 export class ApplicationLifecycle {
-  initialize(): Effect.Effect<void, never, ApplicationServices> {
-    return Effect.gen(function* () {
-      const applicationFibers = yield* ApplicationFibers
+  private interruptedOperations: InterruptedOperation[] = []
+
+  prepareStartup(): Effect.Effect<void, never, ApplicationServices> {
+    return Effect.gen(this, function* () {
       const database = yield* DatabasePort
-      const locks = yield* MutationLocks
       const packages = yield* PackageSystemPort
-      const observations = yield* ProjectObservationOperations
       const projectStore = yield* ProjectStore
       const terminalHost = yield* TerminalHostPort
-      const worktrees = yield* WorktreeOperations
-      const worktreeMutations = yield* WorktreeMutations
 
       yield* terminalHost.initialize().pipe(Effect.orDie)
       const interrupted = yield* database
@@ -81,8 +80,29 @@ export class ApplicationLifecycle {
           })
         )
         .pipe(Effect.orDie)
+      this.interruptedOperations = interrupted
+
+      const projects = yield* projectStore.storedProjects()
+      yield* packages.initialize(projects)
+    })
+  }
+
+  activateStartup(): Effect.Effect<void, never, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      const applicationFibers = yield* ApplicationFibers
+      const locks = yield* MutationLocks
+      const observations = yield* ProjectObservationOperations
+      const projectStore = yield* ProjectStore
+      const worktrees = yield* WorktreeOperations
+      const worktreeMutations = yield* WorktreeMutations
+
+      // A newly spawned terminal host remains empty and provisional while the
+      // daemon validates its database and constructs every listener. Terminal
+      // reconciliation starts only after the caller commits that host.
       yield* observations.reconcile()
 
+      const interrupted = this.interruptedOperations
+      this.interruptedOperations = []
       const recoveries = new Map<string, OperationRecord[]>()
       for (const interruptedOperation of interrupted) {
         const operation = yield* projectStore.storedOperation(
@@ -154,9 +174,6 @@ export class ApplicationLifecycle {
           })
         )
       }
-
-      const projects = yield* projectStore.storedProjects()
-      yield* packages.initialize(projects)
     })
   }
 

@@ -12,8 +12,8 @@
     "src/cli/**/*.ts",
     "src/server/**/*.ts",
     "src/server/**/*.json",
+    "src/terminal-runtime/**/*.ts",
     "src/duration.ts",
-    "src/terminal-images.ts",
     "drizzle.config.ts",
     "tsdown.config.ts",
     "package.json"

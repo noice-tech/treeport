@@ -38,7 +38,7 @@ import {
 } from './terminal-attachments'
 import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
-import type { TerminalAttachmentBackend } from './terminal-host-sessions'
+import type { TerminalAttachmentBackend } from './core/terminal'
 import {
   BrowserSessionManager,
   type BrowserOwnerTransport,

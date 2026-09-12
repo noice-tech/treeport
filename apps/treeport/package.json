@@ -23,6 +23,7 @@
     "build:web": "vite build",
     "prepack": "pnpm --dir=../.. exec turbo run build --filter=@treeport/treeport 1>&2",
     "check:package": "node scripts/check-package.mjs",
+    "check:terminal-runtime": "node scripts/check-terminal-runtime.mjs",
     "test:package": "node scripts/check-package.mjs --packed",
     "dev": "node scripts/development.mjs",
     "dev:server": "node scripts/development.mjs --server",

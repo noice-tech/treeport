@@ -80,6 +80,9 @@ jobs:
       - name: Run repository checks
         run: pnpm check
 
+      - name: Qualify packaged terminal upgrades
+        run: pnpm test:release-qualification
+
       - name: Inspect the release state
         run: |
           gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
