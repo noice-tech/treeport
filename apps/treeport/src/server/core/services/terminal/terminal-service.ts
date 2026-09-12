@@ -23,6 +23,7 @@ import {
   type ApplicationServices,
   ProjectObservations,
   TerminalMutations,
+  TerminalRemovalMutations,
   TreeFileMutations,
   WorktreeMutations
 } from '../infrastructure/application-runtime'
@@ -851,9 +852,8 @@ export class TerminalService {
     const getTerminalFromBindings = this.getTerminalFromBindings.bind(this)
 
     return Effect.gen(function* () {
-      const projectStore = yield* ProjectStore
+      const terminalRemovalMutations = yield* TerminalRemovalMutations
       const terminalState = yield* TerminalState
-      const worktreeMutations = yield* WorktreeMutations
       const cachedTerminal = yield* terminalState.terminal(terminalId)
       const terminal =
         cachedTerminal ?? (yield* getTerminalFromBindings(terminalId))
@@ -861,10 +861,8 @@ export class TerminalService {
         'treeport.terminal.id': terminalId,
         'treeport.worktree.id': terminal.worktreeId
       })
-      const projectId = (yield* projectStore.getWorktree(terminal.worktreeId))
-        .projectId
-      yield* worktreeMutations.enqueue(
-        projectId,
+      yield* terminalRemovalMutations.enqueue(
+        terminal.worktreeId,
         executeDeleteTerminal(terminalId, terminal.worktreeId)
       )
     }).pipe(
@@ -884,6 +882,7 @@ export class TerminalService {
 
     return Effect.gen(function* () {
       const events = yield* EventBusPort
+      const locks = yield* MutationLocks
       const projectStore = yield* ProjectStore
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
@@ -924,28 +923,44 @@ export class TerminalService {
         )
       }
 
-      yield* Effect.gen(function* () {
-        const trace = yield* currentTraceContext
-        yield* terminalHost
-          .killTerminal(terminal.id, trace ?? undefined)
-          .pipe(Effect.orDie)
-      }).pipe(
-        Effect.withSpan('treeport.terminal_host.ipc.remove', {
-          kind: 'client',
-          attributes: {
-            'treeport.terminal.id': terminal.id,
-            'treeport.worktree.id': worktree.id
-          }
-        })
-      )
-      yield* terminalState.removeTerminal(terminalId, worktree.id)
-      yield* invalidateProjectsSnapshot()
-      yield* Effect.sync(() => {
-        events.publish('terminal.removed', {
-          worktreeId: worktree.id,
-          terminalId
-        })
+      const acquired = yield* locks.tryAcquire({
+        worktreeIds: [worktree.id],
+        checkProjectIds: [worktree.projectId]
       })
+      if (!acquired) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WORKTREE_BUSY',
+            'Cannot delete a terminal during a destructive project operation',
+            409
+          )
+        )
+      }
+
+      yield* Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          const trace = yield* currentTraceContext
+          yield* terminalHost
+            .killTerminal(terminal.id, trace ?? undefined)
+            .pipe(Effect.orDie)
+        }).pipe(
+          Effect.withSpan('treeport.terminal_host.ipc.remove', {
+            kind: 'client',
+            attributes: {
+              'treeport.terminal.id': terminal.id,
+              'treeport.worktree.id': worktree.id
+            }
+          })
+        )
+        yield* terminalState.removeTerminal(terminalId, worktree.id)
+        yield* invalidateProjectsSnapshot()
+        yield* Effect.sync(() => {
+          events.publish('terminal.removed', {
+            worktreeId: worktree.id,
+            terminalId
+          })
+        })
+      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktree.id] })))
     })
   }
 
@@ -961,12 +976,14 @@ export class TerminalService {
       const projectObservations = yield* ProjectObservations
       const terminalHost = yield* TerminalHostPort
       const terminalMutations = yield* TerminalMutations
+      const terminalRemovalMutations = yield* TerminalRemovalMutations
       const treeFileMutations = yield* TreeFileMutations
       const worktreeMutations = yield* WorktreeMutations
       yield* Effect.all(
         [
           worktreeMutations.drain,
           terminalMutations.drain,
+          terminalRemovalMutations.drain,
           treeFileMutations.drain,
           projectObservations.drain
         ],

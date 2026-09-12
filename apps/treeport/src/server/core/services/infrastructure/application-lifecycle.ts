@@ -9,6 +9,7 @@ import {
   TerminalAttachmentMutations,
   TerminalMetadataMutations,
   TerminalMutations,
+  TerminalRemovalMutations,
   TerminalUploadMutations,
   TreeFileMutations,
   WorktreeMutations
@@ -129,6 +130,7 @@ export class ApplicationLifecycle {
       const terminalAttachmentMutations = yield* TerminalAttachmentMutations
       const terminalMetadataMutations = yield* TerminalMetadataMutations
       const terminalMutations = yield* TerminalMutations
+      const terminalRemovalMutations = yield* TerminalRemovalMutations
       const terminalUploadMutations = yield* TerminalUploadMutations
       const treeFileMutations = yield* TreeFileMutations
       const worktreeMutations = yield* WorktreeMutations
@@ -142,6 +144,7 @@ export class ApplicationLifecycle {
           worktreeMutations.drain,
           packageMutations.drain,
           terminalMutations.drain,
+          terminalRemovalMutations.drain,
           terminalAttachmentMutations.drain,
           terminalMetadataMutations.drain,
           terminalUploadMutations.drain,
