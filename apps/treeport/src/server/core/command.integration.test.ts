@@ -1,6 +1,9 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
@@ -70,6 +73,40 @@ describe('SpawnCommandRunner', () => {
       stderr: '',
       exitCode: 0
     })
+  })
+
+  it('observes output and close events emitted immediately after spawn', async () => {
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child: ChildProcessWithoutNullStreams = Object.assign(
+      Object.create(EventEmitter.prototype),
+      {
+        pid: 2_147_483_647,
+        stdin: new PassThrough(),
+        stdout,
+        stderr
+      }
+    )
+    const runner = new SpawnCommandRunner(() => {
+      process.nextTick(() => {
+        child.emit('spawn')
+        stdout.end('done')
+        stderr.end()
+        child.emit('exit', 0, null)
+        child.emit('close', 0, null)
+      })
+      return child
+    })
+
+    const result = await Effect.runPromise(
+      runner.runEffect({
+        executable: '/fake/short-lived-command',
+        args: [],
+        timeoutMs: 100
+      })
+    )
+
+    expect(result).toEqual({ stdout: 'done', stderr: '', exitCode: 0 })
   })
 
   it('reports spawn failures with a stable tag and the original cause', async () => {

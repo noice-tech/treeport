@@ -169,8 +169,16 @@ interface ChildResource {
   readonly exit: Deferred.Deferred<
     readonly [code: number | null, signal: NodeJS.Signals | null]
   >
+  readonly close: Deferred.Deferred<
+    readonly [code: number | null, signal: NodeJS.Signals | null]
+  >
+  readonly failure: Deferred.Deferred<never, CommandExecutionError>
   readonly onExit: (code: number | null, signal: NodeJS.Signals | null) => void
+  readonly onClose: (code: number | null, signal: NodeJS.Signals | null) => void
   readonly onProcessError: (error: Error) => void
+  readonly onStdout: (chunk: Buffer | string) => void
+  readonly onStderr: (chunk: Buffer | string) => void
+  readonly onStdinError: (error: Error) => void
   readonly stdout: Buffer[]
   readonly stderr: Buffer[]
   stdoutBytes: number
@@ -202,105 +210,85 @@ function signalProcessGroup(
  * has signaled the full group and observed the direct child exit.
  */
 function runCommandEffect(
-  request: CommandRequest
+  request: CommandRequest,
+  spawnChild: (request: CommandRequest) => ChildProcessWithoutNullStreams
 ): Effect.Effect<CommandResult, CommandExecutionError> {
   const stdoutLimit = request.maxStdoutBytes ?? DEFAULT_MAX_OUTPUT_BYTES
   const stderrLimit = request.maxStderrBytes ?? DEFAULT_MAX_OUTPUT_BYTES
   const killGraceMs = request.killGraceMs ?? DEFAULT_KILL_GRACE_MS
 
   return Effect.acquireUseRelease(
-    Deferred.make<
-      readonly [code: number | null, signal: NodeJS.Signals | null]
-    >().pipe(
-      Effect.flatMap((exit) =>
+    Effect.all([
+      Deferred.make<
+        readonly [code: number | null, signal: NodeJS.Signals | null]
+      >(),
+      Deferred.make<
+        readonly [code: number | null, signal: NodeJS.Signals | null]
+      >(),
+      Deferred.make<never, CommandExecutionError>()
+    ]).pipe(
+      Effect.flatMap(([exit, close, failure]) =>
         Effect.async<ChildResource, SpawnCommandError>((resume) => {
           let child: ChildProcessWithoutNullStreams
           try {
-            child = spawn(request.executable, [...request.args], {
-              cwd: request.cwd,
-              env: request.env ?? process.env,
-              stdio: ['pipe', 'pipe', 'pipe'],
-              shell: false,
-              detached: true
-            })
+            child = spawnChild(request)
           } catch (cause) {
             resume(Effect.fail(new SpawnCommandError(request, cause)))
             return
           }
 
           let spawned = false
-          const onExit = (
-            code: number | null,
-            signal: NodeJS.Signals | null
-          ) => {
-            Deferred.unsafeDone(exit, Effect.succeed([code, signal]))
-          }
-          // Keep an error listener on stdin for the whole resource lifetime so
-          // a late EPIPE cannot become an uncaught EventEmitter error after the
-          // use phase has already failed or been interrupted.
-          const onStdinResourceError = () => {}
-          const onProcessError = (cause: Error) => {
-            if (spawned) {
-              return
-            }
+          const resource: ChildResource = {
+            child,
+            processGroupId: child.pid!,
+            exit,
+            close,
+            failure,
+            onExit: (code, signal) => {
+              Deferred.unsafeDone(exit, Effect.succeed([code, signal]))
+            },
+            onClose: (code, signal) => {
+              Deferred.unsafeDone(close, Effect.succeed([code, signal]))
+            },
+            onProcessError: (cause) => {
+              const error = new SpawnCommandError(request, cause)
+              if (!spawned) {
+                child.removeListener('spawn', onSpawn)
+                removeResourceListeners()
+                // Failed spawns can report a late stdin EPIPE. Keep one inert
+                // listener until that stream closes so it cannot become an
+                // uncaught EventEmitter error after acquisition has failed.
+                const ignoreStdinError = () => {}
+                child.stdin.on('error', ignoreStdinError)
+                child.stdin.once('close', () => {
+                  child.stdin.removeListener('error', ignoreStdinError)
+                })
+                resume(Effect.fail(error))
+                return
+              }
 
-            child.removeListener('spawn', onSpawn)
-            child.removeListener('exit', onExit)
-            child.removeListener('error', onProcessError)
-            resume(Effect.fail(new SpawnCommandError(request, cause)))
+              resource.terminalError ??= error
+              Deferred.unsafeDone(failure, Effect.fail(resource.terminalError))
+            },
+            onStdout: (chunk) => collect('stdout', chunk),
+            onStderr: (chunk) => collect('stderr', chunk),
+            onStdinError: (cause) => {
+              resource.terminalError ??= new StdinCommandError(request, cause)
+              Deferred.unsafeDone(failure, Effect.fail(resource.terminalError))
+            },
+            stdout: [],
+            stderr: [],
+            stdoutBytes: 0,
+            stderrBytes: 0,
+            terminalError: null
           }
-          const onSpawn = () => {
-            spawned = true
-            child.removeListener('spawn', onSpawn)
-            resume(
-              Effect.succeed({
-                child,
-                processGroupId: child.pid!,
-                exit,
-                onExit,
-                onProcessError,
-                stdout: [],
-                stderr: [],
-                stdoutBytes: 0,
-                stderrBytes: 0,
-                terminalError: null
-              })
-            )
-          }
-
-          child.once('spawn', onSpawn)
-          child.on('error', onProcessError)
-          child.once('exit', onExit)
-          child.stdin.on('error', onStdinResourceError)
-          child.stdin.once('close', () => {
-            child.stdin.removeListener('error', onStdinResourceError)
-          })
-        })
-      )
-    ),
-    (resource) => {
-      const awaitResult = Effect.async<CommandResult, CommandExecutionError>(
-        (resume) => {
-          let completed = false
-
-          const removeUseListeners = () => {
-            resource.child.removeListener('error', onError)
-            resource.child.removeListener('close', onClose)
-            resource.child.stdout.removeListener('data', onStdout)
-            resource.child.stderr.removeListener('data', onStderr)
-            resource.child.stdin.removeListener('error', onStdinError)
-          }
-          const fail = (
-            error: Exclude<CommandExecutionError, TimeoutCommandError>
-          ) => {
-            if (completed) {
-              return
-            }
-
-            completed = true
-            resource.terminalError ??= error
-            removeUseListeners()
-            resume(Effect.fail(resource.terminalError))
+          const removeResourceListeners = () => {
+            child.removeListener('error', resource.onProcessError)
+            child.removeListener('exit', resource.onExit)
+            child.removeListener('close', resource.onClose)
+            child.stdout.removeListener('data', resource.onStdout)
+            child.stderr.removeListener('data', resource.onStderr)
+            child.stdin.removeListener('error', resource.onStdinError)
           }
           const collect = (
             stream: 'stdout' | 'stderr',
@@ -324,79 +312,67 @@ function runCommandEffect(
             }
 
             if (bytes + buffer.length > limit) {
-              fail(new OutputLimitCommandError(request, stream, limit))
+              resource.terminalError ??= new OutputLimitCommandError(
+                request,
+                stream,
+                limit
+              )
+              Deferred.unsafeDone(failure, Effect.fail(resource.terminalError))
             }
           }
-
-          function onStdout(chunk: Buffer | string) {
-            collect('stdout', chunk)
+          const onSpawn = () => {
+            spawned = true
+            child.removeListener('spawn', onSpawn)
+            resume(Effect.succeed(resource))
           }
 
-          function onStderr(chunk: Buffer | string) {
-            collect('stderr', chunk)
-          }
-
-          function onError(error: Error) {
-            fail(new SpawnCommandError(request, error))
-          }
-
-          function onStdinError(error: Error) {
-            fail(new StdinCommandError(request, error))
-          }
-
-          function onClose(code: number | null, signal: NodeJS.Signals | null) {
-            if (completed) {
-              return
-            }
-
-            completed = true
-            removeUseListeners()
-            if (signal) {
-              resume(Effect.fail(new SignalCommandError(request, signal)))
-              return
-            }
-
-            resume(
-              Effect.succeed({
-                stdout: Buffer.concat(resource.stdout).toString(
-                  request.stdoutEncoding ?? 'utf8'
-                ),
-                stderr: Buffer.concat(resource.stderr).toString('utf8'),
-                exitCode: code ?? 1
-              })
-            )
-          }
-
-          resource.child.stdout.on('data', onStdout)
-          resource.child.stderr.on('data', onStderr)
-          resource.child.stdin.on('error', onStdinError)
-          resource.child.on('error', onError)
-          resource.child.once('close', onClose)
-
-          try {
-            resource.child.stdin.end(request.stdin)
-          } catch (cause) {
-            fail(new StdinCommandError(request, cause))
-          }
-
-          return Effect.sync(() => {
-            if (completed) {
-              return
-            }
-
-            completed = true
-            removeUseListeners()
-          })
-        }
+          // Install all terminal-event listeners before the spawn event. A
+          // short-lived child can otherwise close before the use phase starts,
+          // leaving the command waiting until its timeout.
+          child.once('spawn', onSpawn)
+          child.on('error', resource.onProcessError)
+          child.once('exit', resource.onExit)
+          child.once('close', resource.onClose)
+          child.stdout.on('data', resource.onStdout)
+          child.stderr.on('data', resource.onStderr)
+          child.stdin.on('error', resource.onStdinError)
+        })
       )
+    ),
+    (resource) => {
+      const awaitResult = Effect.raceFirst(
+        Deferred.await(resource.close).pipe(
+          Effect.flatMap(([code, signal]) => {
+            if (resource.terminalError) {
+              return Effect.fail(resource.terminalError)
+            }
 
+            if (signal) {
+              return Effect.fail(new SignalCommandError(request, signal))
+            }
+
+            return Effect.succeed({
+              stdout: Buffer.concat(resource.stdout).toString(
+                request.stdoutEncoding ?? 'utf8'
+              ),
+              stderr: Buffer.concat(resource.stderr).toString('utf8'),
+              exitCode: code ?? 1
+            })
+          })
+        ),
+        Deferred.await(resource.failure)
+      )
+      const command = Effect.try({
+        try: () => resource.child.stdin.end(request.stdin),
+        catch: (cause) => new StdinCommandError(request, cause)
+      }).pipe(Effect.zipRight(awaitResult))
       const timeoutMs = request.timeoutMs
       if (timeoutMs === undefined || timeoutMs <= 0) {
-        return awaitResult
+        return command
       }
 
       return Effect.raceFirst(
-        awaitResult,
+        command,
         Effect.sleep(Duration.millis(timeoutMs)).pipe(
           Effect.flatMap(() =>
             Effect.sync(() => {
@@ -447,7 +423,11 @@ function runCommandEffect(
         Effect.ensuring(
           Effect.sync(() => {
             resource.child.removeListener('exit', resource.onExit)
+            resource.child.removeListener('close', resource.onClose)
             resource.child.removeListener('error', resource.onProcessError)
+            resource.child.stdout.removeListener('data', resource.onStdout)
+            resource.child.stderr.removeListener('data', resource.onStderr)
+            resource.child.stdin.removeListener('error', resource.onStdinError)
           })
         ),
         Effect.asVoid
@@ -456,10 +436,23 @@ function runCommandEffect(
 }
 
 export class SpawnCommandRunner implements EffectCommandRunner {
+  constructor(
+    private readonly spawnChild: (
+      request: CommandRequest
+    ) => ChildProcessWithoutNullStreams = (request) =>
+      spawn(request.executable, [...request.args], {
+        cwd: request.cwd,
+        env: request.env ?? process.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: false,
+        detached: true
+      })
+  ) {}
+
   runEffect(
     request: CommandRequest
   ): Effect.Effect<CommandResult, CommandExecutionError> {
-    return runCommandEffect(request)
+    return runCommandEffect(request, this.spawnChild)
   }
 
   async run(request: CommandRequest): Promise<CommandResult> {
