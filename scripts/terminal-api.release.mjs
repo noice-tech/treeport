@@ -19,6 +19,7 @@ let candidateCliA
 let candidateCliB
 let candidateVersion
 let candidateTarball
+let candidatePanelSdkTarball
 let candidateIntegrity
 let candidatePrefix
 const activeRoots = new Set()
@@ -140,7 +141,7 @@ async function waitForCapture(cli, env, terminalId, marker) {
   throw new Error(`Terminal output did not contain ${marker}: ${content}`)
 }
 
-async function fakeNpm(directory, prefix) {
+async function fakeNpm(directory, prefix, panelSdkTarball) {
   const executable = path.join(directory, 'npm')
   const realNpm = (
     await command('/bin/sh', ['-c', 'command -v npm'], { env: process.env })
@@ -171,7 +172,8 @@ if (args[0] === 'prefix' && args[1] === '--global') {
   fs.copyFileSync(${JSON.stringify(candidateTarball)}, path.join(destination, filename))
   process.stdout.write(JSON.stringify([{ filename, integrity: ${JSON.stringify(candidateIntegrity)} }]) + '\\n')
 } else {
-  const result = spawnSync(${JSON.stringify(realNpm)}, args, { stdio: 'inherit', env: process.env })
+  const commandArgs = args[0] === 'install' ? [...args, ${JSON.stringify(panelSdkTarball)}] : args
+  const result = spawnSync(${JSON.stringify(realNpm)}, commandArgs, { stdio: 'inherit', env: process.env })
   process.exit(result.status ?? 1)
 }
 `,
@@ -353,7 +355,7 @@ beforeAll(async () => {
     candidate,
     (await fs.readdir(candidate)).find((name) => name.endsWith('.tgz'))
   )
-  const panelSdkTarball = path.join(
+  candidatePanelSdkTarball = path.join(
     candidatePanelSdk,
     (await fs.readdir(candidatePanelSdk)).find((name) => name.endsWith('.tgz'))
   )
@@ -363,11 +365,11 @@ beforeAll(async () => {
     .digest('base64')}`
   candidatePrefix = path.join(root, 'candidate-prefix-a')
   candidateCliA = await installTarballs(
-    [candidateTarball, panelSdkTarball],
+    [candidateTarball, candidatePanelSdkTarball],
     candidatePrefix
   )
   candidateCliB = await installTarballs(
-    [candidateTarball, panelSdkTarball],
+    [candidateTarball, candidatePanelSdkTarball],
     path.join(root, 'candidate-prefix-b')
   )
 }, 300_000)
@@ -535,7 +537,7 @@ describe('packaged stable terminal API lifecycle', () => {
       })}\n`
       await fs.writeFile(host.path, source)
       await fs.mkdir(fakeBin)
-      await fakeNpm(fakeBin, updaterPrefix)
+      await fakeNpm(fakeBin, updaterPrefix, candidatePanelSdkTarball)
 
       const refusal = await runCli(
         updaterCli,
