@@ -15,7 +15,7 @@ You can interact with the page while an agent uses it. A robot icon appears in t
 
 Use **Development servers** beside the address bar to open a detected server.
 
-The panel supports navigation, page search, and normal keyboard and pointer input.
+The panel supports navigation, page search, fullscreen, pointer lock, and normal keyboard and pointer input.
 
 ## Browser requirements
 

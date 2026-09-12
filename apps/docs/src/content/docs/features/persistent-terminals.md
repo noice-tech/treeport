@@ -7,7 +7,7 @@ Each tree can have multiple terminals for shells, Pi, development servers, edito
 
 ## Disconnect and reconnect
 
-Closing Treeport or a terminal view does not stop the process. Open the terminal again to continue the same session.
+Closing Treeport or a terminal view does not stop the process. Compatible backend updates also preserve running terminals. Open the terminal again to continue the same session.
 
 You can reconnect from the macOS app, a browser, or a phone through [Remote access](/features/remote-access/).
 
