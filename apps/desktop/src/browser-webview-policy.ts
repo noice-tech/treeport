@@ -25,6 +25,7 @@ import type {
   DesktopCommand
 } from './desktop-contract'
 
+import { browserPresentationOrigin } from './browser-presentation'
 import { permitsBrowserVideoCapture } from './browser-video'
 import * as Effect from 'effect/Effect'
 import * as Scope from 'effect/Scope'
@@ -47,6 +48,8 @@ interface BrowserEntry {
   guest: WebContents
   bridge: BrowserCdpBridge | null
   inputLocked: boolean
+  presentationActive: boolean
+  fullscreenOrigin: string | null
   runtime: DesktopRuntime
   registrations: Effect.Semaphore
 }
@@ -68,6 +71,11 @@ export interface BrowserWebviewPolicy {
     panelId: string,
     locked: boolean
   ): Effect.Effect<boolean>
+  setPresentationActive(
+    event: IpcMainInvokeEvent,
+    panelId: string,
+    active: boolean
+  ): Effect.Effect<boolean>
   requestClose(
     event: IpcMainInvokeEvent,
     panelId: string,
@@ -86,14 +94,97 @@ export function installBrowserWebviewPolicy(options: {
 }): BrowserWebviewPolicy {
   const entries = new Map<string, BrowserEntry>()
   const pendingGuests = new Map<number, BrowserEntry>()
+  const guestEntries = new Map<number, BrowserEntry>()
+  const browserSession = session.fromPartition(BROWSER_PARTITION)
+
+  const isPresentationEligible = (entry: BrowserEntry): boolean =>
+    entry.panelId !== null &&
+    entries.get(entry.panelId) === entry &&
+    guestEntries.get(entry.guest.id) === entry &&
+    !entry.guest.isDestroyed() &&
+    entry.guest.hostWebContents === options.trustedRenderer &&
+    entry.presentationActive &&
+    !entry.inputLocked &&
+    options.selectedComputer()?.loopback === true &&
+    !options.window.isDestroyed() &&
+    options.window.isVisible() &&
+    options.window.isFocused()
+
+  const releasePresentation = (entry: BrowserEntry) => {
+    entry.fullscreenOrigin = null
+    if (entry.guest.isDestroyed()) {
+      return
+    }
+
+    entry.runtime.fork(
+      Effect.tryPromise(() =>
+        entry.guest.executeJavaScript(`(async () => {
+          if (document.pointerLockElement) document.exitPointerLock()
+          if (document.fullscreenElement) await document.exitFullscreen()
+        })()`)
+      ).pipe(Effect.catchAll(() => Effect.void)),
+      'desktop.browser.release-presentation'
+    )
+  }
+
+  browserSession.setPermissionCheckHandler(
+    (contents, permission, requestingOrigin, details) => {
+      if (!contents) {
+        return false
+      }
+
+      const entry = guestEntries.get(contents.id)
+      if (!entry || entry.guest !== contents) {
+        return false
+      }
+
+      const origin = browserPresentationOrigin(
+        permission,
+        details.requestingUrl ?? requestingOrigin,
+        isPresentationEligible(entry)
+      )
+      if (permission === 'fullscreen' && origin) {
+        entry.fullscreenOrigin = origin
+      }
+
+      return origin !== null
+    }
+  )
+  browserSession.setPermissionRequestHandler(
+    (contents, permission, callback, details) => {
+      if (permitsBrowserVideoCapture(contents, permission, details)) {
+        callback(true)
+        return
+      }
+
+      const entry = guestEntries.get(contents.id)
+      if (!entry || entry.guest !== contents) {
+        callback(false)
+        return
+      }
+
+      const origin = browserPresentationOrigin(
+        permission,
+        details.requestingUrl,
+        isPresentationEligible(entry)
+      )
+      if (permission === 'fullscreen' && origin) {
+        entry.fullscreenOrigin = origin
+      }
+
+      callback(origin !== null)
+    }
+  )
 
   const disposeEntry = (entry: BrowserEntry) =>
     Effect.gen(function* () {
+      releasePresentation(entry)
       if (entry.panelId && entries.get(entry.panelId) === entry) {
         entries.delete(entry.panelId)
       }
 
       pendingGuests.delete(entry.guest.id)
+      guestEntries.delete(entry.guest.id)
 
       yield* entry.runtime.close
     })
@@ -137,7 +228,7 @@ export function installBrowserWebviewPolicy(options: {
     if (
       !computer?.loopback ||
       guest.hostWebContents !== options.trustedRenderer ||
-      guest.session !== session.fromPartition(BROWSER_PARTITION)
+      guest.session !== browserSession
     ) {
       guest.close({ waitForBeforeUnload: false })
       return
@@ -148,6 +239,8 @@ export function installBrowserWebviewPolicy(options: {
       guest,
       bridge: null,
       inputLocked: false,
+      presentationActive: false,
+      fullscreenOrigin: null,
       runtime: new DesktopRuntime(options.runtime),
       registrations: Effect.unsafeMakeSemaphore(1)
     }
@@ -156,6 +249,7 @@ export function installBrowserWebviewPolicy(options: {
         entry.runtime.scope,
         Effect.sync(() => {
           pendingGuests.delete(guest.id)
+          guestEntries.delete(guest.id)
           if (entry.panelId && entries.get(entry.panelId) === entry) {
             entries.delete(entry.panelId)
           }
@@ -168,6 +262,7 @@ export function installBrowserWebviewPolicy(options: {
       )
     )
     pendingGuests.set(guest.id, entry)
+    guestEntries.set(guest.id, entry)
     const refreshErrorPage = (
       errorDescription: string,
       validatedUrl: string
@@ -247,6 +342,11 @@ export function installBrowserWebviewPolicy(options: {
     }
     guest.on('will-navigate', preventUnsupportedNavigation)
     guest.on('will-redirect', preventUnsupportedNavigation)
+    guest.on('did-start-navigation', (details) => {
+      if (details.isMainFrame && !details.isSameDocument) {
+        releasePresentation(entry)
+      }
+    })
     const openInNewPanel = (url: string) => {
       const popup = decodeUnknownOrNull(browserUrlSchema, url)
       const panelId = entry.panelId
@@ -263,10 +363,40 @@ export function installBrowserWebviewPolicy(options: {
       openInNewPanel(url)
       return { action: 'deny' }
     })
-    guest.session.setPermissionRequestHandler(
-      (contents, permission, callback, details) =>
-        callback(permitsBrowserVideoCapture(contents, permission, details))
-    )
+    guest.on('enter-html-full-screen', () => {
+      if (!isPresentationEligible(entry)) {
+        releasePresentation(entry)
+        return
+      }
+
+      const origin =
+        entry.fullscreenOrigin ??
+        browserPresentationOrigin('fullscreen', guest.getURL(), true)
+      if (!origin) {
+        releasePresentation(entry)
+        return
+      }
+
+      entry.runtime.fork(
+        Effect.tryPromise(() =>
+          guest.executeJavaScript(`(() => {
+            const root = document.fullscreenElement
+            if (!root) return false
+            const notice = document.createElement('div')
+            notice.setAttribute('data-treeport-fullscreen-notice', '')
+            notice.textContent = ${JSON.stringify(`${origin} is full screen — Press Esc to exit`)}
+            notice.style.cssText = 'position:fixed!important;top:16px!important;left:50%!important;transform:translateX(-50%)!important;z-index:2147483647!important;box-sizing:border-box!important;max-width:calc(100% - 32px)!important;padding:9px 14px!important;border:1px solid rgba(255,255,255,.18)!important;border-radius:8px!important;background:rgba(9,9,11,.92)!important;color:#fafafa!important;font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;text-align:center!important;white-space:nowrap!important;pointer-events:none!important;box-shadow:0 8px 30px rgba(0,0,0,.35)!important'
+            root.append(notice)
+            setTimeout(() => notice.remove(), 4000)
+            return true
+          })()`)
+        ).pipe(Effect.catchAll(() => Effect.void)),
+        'desktop.browser.fullscreen-notice'
+      )
+    })
+    guest.on('leave-html-full-screen', () => {
+      entry.fullscreenOrigin = null
+    })
     const reportBrowserFocus = () => {
       if (
         entry.panelId &&
@@ -551,6 +681,29 @@ export function installBrowserWebviewPolicy(options: {
         }
 
         entry.inputLocked = locked
+        if (locked) {
+          releasePresentation(entry)
+        }
+
+        return entries.get(panelId) === entry && !entry.guest.isDestroyed()
+      })
+    },
+    setPresentationActive(event, panelId, active) {
+      return Effect.sync(() => {
+        const entry = entries.get(panelId)
+        if (
+          !options.isTrustedEvent(event) ||
+          !entry ||
+          entry.guest.isDestroyed()
+        ) {
+          return false
+        }
+
+        entry.presentationActive = active
+        if (!active) {
+          releasePresentation(entry)
+        }
+
         return entries.get(panelId) === entry && !entry.guest.isDestroyed()
       })
     },

@@ -499,6 +499,9 @@ const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
 const nativeBrowserInputControlSchema = nativeBrowserPanelSchema.extend({
   locked: z.boolean()
 })
+const nativeBrowserPresentationSchema = nativeBrowserPanelSchema.extend({
+  active: z.boolean()
+})
 
 function connectSelected(
   options: {
@@ -1250,6 +1253,18 @@ function registerIpc(): void {
             event,
             parsed.data.panelId,
             parsed.data.locked
+          )
+        )
+      : false
+  })
+  ipcMain.handle('native-browser:set-presentation-active', (event, value) => {
+    const parsed = nativeBrowserPresentationSchema.safeParse(value)
+    return parsed.success && browserWebviews
+      ? desktopRuntime.run(
+          browserWebviews.setPresentationActive(
+            event,
+            parsed.data.panelId,
+            parsed.data.active
           )
         )
       : false
