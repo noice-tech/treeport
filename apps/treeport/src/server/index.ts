@@ -104,7 +104,7 @@ async function main(): Promise<void> {
         ).pipe(
           Effect.tap((application) =>
             Effect.tryPromise(() =>
-              application.runEffect(application.initialize())
+              application.runEffect(application.prepareStartup())
             ).pipe(Effect.orDie)
           )
         ),
@@ -363,6 +363,7 @@ async function main(): Promise<void> {
     // until its separate health verification commits the transaction below.
     if (!externallyVerifiedStartup) {
       await Effect.runPromise(terminalHost.commitStartup())
+      await service.runEffect(service.activateStartup())
     }
 
     await Effect.runPromise(ownership.publish())
@@ -386,6 +387,9 @@ async function main(): Promise<void> {
                 )
                 if (commitRequested) {
                   yield* terminalHost.commitStartup()
+                  yield* Effect.tryPromise(() =>
+                    service.runEffect(service.activateStartup())
+                  ).pipe(Effect.orDie)
                   yield* Effect.tryPromise(() =>
                     fs.writeFile(acknowledgementPath, 'committed\n', {
                       mode: 0o600

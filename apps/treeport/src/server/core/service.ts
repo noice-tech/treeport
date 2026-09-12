@@ -315,11 +315,15 @@ export class TreeportService {
     return this.packageService
   }
 
-  initialize(): Effect.Effect<void, never, ApplicationServices> {
+  prepareStartup(): Effect.Effect<void, never, ApplicationServices> {
     return Effect.gen(this, function* () {
       this.webPanelRuntime = yield* WebPanelRuntimePort
-      yield* this.lifecycle.initialize()
+      yield* this.lifecycle.prepareStartup()
     })
+  }
+
+  activateStartup(): Effect.Effect<void, never, ApplicationServices> {
+    return this.lifecycle.activateStartup()
   }
 
   drainMutations(): Effect.Effect<void, never, ApplicationServices> {
