@@ -45,10 +45,12 @@ export class ApplicationLifecycle {
           db.all<{
             id: string
             kind: OperationRecord['kind']
+            status: OperationRecord['status']
           }>(sql`
-          SELECT id, kind
+          SELECT id, kind, status
           FROM operations
           WHERE status IN ('pending','running')
+          ORDER BY created_at, id
         `)
         )
         .pipe(Effect.orDie)
@@ -57,7 +59,10 @@ export class ApplicationLifecycle {
         .execute('application.lifecycle.52', (db) =>
           db.transaction(async (tx) => {
             for (const operation of interrupted) {
-              if (operation.kind === 'remove') {
+              if (
+                operation.kind === 'remove' ||
+                (operation.kind === 'create' && operation.status === 'pending')
+              ) {
                 continue
               }
 
@@ -78,43 +83,76 @@ export class ApplicationLifecycle {
         .pipe(Effect.orDie)
       yield* observations.reconcile()
 
+      const recoveries = new Map<string, OperationRecord[]>()
       for (const interruptedOperation of interrupted) {
-        if (interruptedOperation.kind !== 'remove') {
-          continue
-        }
-
         const operation = yield* projectStore.storedOperation(
           interruptedOperation.id
         )
         if (
-          operation?.kind !== 'remove' ||
-          !operation.projectId ||
-          !operation.request.preview
+          !operation?.projectId ||
+          (operation.kind === 'create' && operation.status !== 'pending') ||
+          (operation.kind !== 'create' &&
+            (operation.kind !== 'remove' || !operation.request.preview))
         ) {
           continue
         }
 
-        const worktreeId = operation.request.preview.worktreeId
-        yield* locks.acquire({ worktreeIds: [worktreeId] })
-        const recovery = worktreeMutations
-          .enqueue(
-            operation.projectId,
-            worktrees.resumeRemove(
-              operation.id,
-              worktreeId,
-              operation.request.preview!.forceRequired
-            )
-          )
-          .pipe(
-            Effect.catchAllCause((cause) =>
-              Effect.logError(
-                `Interrupted removal recovery failed for ${
-                  operation.id
-                }: ${Cause.pretty(cause)}`
-              )
-            )
-          )
-        yield* applicationFibers.fork(recovery)
+        const projectRecoveries = recoveries.get(operation.projectId) ?? []
+        projectRecoveries.push(operation)
+        recoveries.set(operation.projectId, projectRecoveries)
+      }
+
+      for (const [projectId, operations] of recoveries) {
+        yield* applicationFibers.fork(
+          Effect.gen(function* () {
+            for (const operation of operations) {
+              if (operation.kind === 'create') {
+                yield* worktreeMutations
+                  .enqueue(
+                    projectId,
+                    worktrees.resumeCreate(
+                      operation.id,
+                      projectId,
+                      operation.request
+                    )
+                  )
+                  .pipe(
+                    Effect.catchAllCause((cause) =>
+                      Effect.logError(
+                        `Interrupted tree creation recovery failed for ${
+                          operation.id
+                        }: ${Cause.pretty(cause)}`
+                      )
+                    )
+                  )
+                continue
+              }
+
+              if (operation.kind === 'remove' && operation.request.preview) {
+                const worktreeId = operation.request.preview.worktreeId
+                yield* locks.acquire({ worktreeIds: [worktreeId] })
+                yield* worktreeMutations
+                  .enqueue(
+                    projectId,
+                    worktrees.resumeRemove(
+                      operation.id,
+                      worktreeId,
+                      operation.request.preview.forceRequired
+                    )
+                  )
+                  .pipe(
+                    Effect.catchAllCause((cause) =>
+                      Effect.logError(
+                        `Interrupted removal recovery failed for ${
+                          operation.id
+                        }: ${Cause.pretty(cause)}`
+                      )
+                    )
+                  )
+              }
+            }
+          })
+        )
       }
 
       const projects = yield* projectStore.storedProjects()

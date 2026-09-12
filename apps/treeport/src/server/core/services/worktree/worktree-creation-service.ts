@@ -57,6 +57,14 @@ interface TerminalLaunchOptions {
   shellCommand?: string
 }
 
+interface CreateInitialTerminal {
+  name: string
+  initialTitle?: string
+  argv?: string[]
+  returnToShell?: boolean
+  initialSize?: TerminalSize
+}
+
 export interface CreateWorktreeResult {
   worktree: WorktreeRecord
   terminal: TerminalRecord | null
@@ -158,13 +166,7 @@ export class WorktreeCreationService {
     projectId: string,
     inputName: string,
     base: 'default' | 'current',
-    initialTerminal?: {
-      name: string
-      initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
-      initialSize?: TerminalSize
-    },
+    initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
     treeContext?: TreeContextValues
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
@@ -274,13 +276,7 @@ export class WorktreeCreationService {
     projectId: string,
     inputName: string,
     base: 'default' | 'current',
-    initialTerminal?: {
-      name: string
-      initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
-      initialSize?: TerminalSize
-    },
+    initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
     treeContext?: TreeContextValues
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
@@ -356,17 +352,47 @@ export class WorktreeCreationService {
     })
   }
 
+  resumeCreate(
+    operationId: string,
+    projectId: string,
+    request: CreateOperationRequest
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    let initialTerminal: CreateInitialTerminal | undefined
+    if (request.initialTerminal) {
+      initialTerminal = { name: request.initialTerminal.name }
+      if (request.initialTerminal.initialTitle !== undefined) {
+        initialTerminal.initialTitle = request.initialTerminal.initialTitle
+      }
+
+      if (request.initialTerminal.argv !== undefined) {
+        initialTerminal.argv = request.initialTerminal.argv
+      }
+
+      if (request.initialTerminal.returnToShell !== undefined) {
+        initialTerminal.returnToShell = request.initialTerminal.returnToShell
+      }
+
+      if (request.initialTerminal.initialSize !== undefined) {
+        initialTerminal.initialSize = request.initialTerminal.initialSize
+      }
+    }
+
+    return this.executeCreateOperation(
+      operationId,
+      projectId,
+      request.name,
+      request.base,
+      initialTerminal,
+      request.sourceWorktreeId,
+      request.context
+    )
+  }
+
   createWorktree(
     projectId: string,
     inputName: string,
     base: 'default' | 'current',
-    initialTerminal?: {
-      name: string
-      initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
-      initialSize?: TerminalSize
-    },
+    initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
     treeContext?: TreeContextValues
   ): Effect.Effect<
@@ -422,13 +448,7 @@ export class WorktreeCreationService {
     projectId: string,
     inputName: string,
     base: 'default' | 'current',
-    initialTerminal?: {
-      name: string
-      initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
-      initialSize?: TerminalSize
-    },
+    initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
     treeContext?: TreeContextValues
   ): Effect.Effect<
