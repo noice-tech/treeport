@@ -182,6 +182,27 @@ async function checkPackage(packageDirectory, published, sdkVersion) {
     [],
     'Publish output contains tests, build metadata or desktop content'
   )
+  if (cli) {
+    const privateWorkspaceImports = []
+    for (const file of files.filter((file) => file.endsWith('.js'))) {
+      const source = await fs.readFile(
+        path.join(
+          published ? packageDirectory : path.join(packageDirectory, 'dist'),
+          file
+        ),
+        'utf8'
+      )
+      if (source.includes('@treeport/shared')) {
+        privateWorkspaceImports.push(file)
+      }
+    }
+    assert.deepEqual(
+      privateWorkspaceImports,
+      [],
+      'Publish output imports the private @treeport/shared workspace package'
+    )
+  }
+
   return manifest
 }
 
