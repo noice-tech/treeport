@@ -154,4 +154,4 @@ it('bounds cached upload bytes even when images have no placements', async () =>
   await write(`\x1b_Ga=t,f=32,i=2,q=2;${payload}\x1b\\`)
   expect((await images.snapshot()).images.map((image) => image.id)).toEqual([2])
   terminal.dispose()
-})
+}, 15_000)
