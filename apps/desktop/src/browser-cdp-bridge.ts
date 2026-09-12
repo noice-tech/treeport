@@ -174,21 +174,23 @@ export function createBrowserCdpBridge(
       const cleanup = Effect.gen(function* () {
         stopping = true
         yield* video.stop
-        guest.debugger.removeListener('message', onDebuggerMessage)
-        guest.debugger.removeListener('detach', onDebuggerDetach)
         guest.removeListener('destroyed', onDestroyed)
-        if (!guest.isDestroyed() && guest.debugger.isAttached()) {
-          yield* Effect.tryPromise(() =>
-            guest.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
-              enabled: false
-            })
-          ).pipe(Effect.timeout('1 second'), Effect.ignore)
-          if (
-            attachedByBridge &&
-            !guest.isDestroyed() &&
-            guest.debugger.isAttached()
-          ) {
-            guest.debugger.detach()
+        if (!guest.isDestroyed()) {
+          guest.debugger.removeListener('message', onDebuggerMessage)
+          guest.debugger.removeListener('detach', onDebuggerDetach)
+          if (guest.debugger.isAttached()) {
+            yield* Effect.tryPromise(() =>
+              guest.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
+                enabled: false
+              })
+            ).pipe(Effect.timeout('1 second'), Effect.ignore)
+            if (
+              attachedByBridge &&
+              !guest.isDestroyed() &&
+              guest.debugger.isAttached()
+            ) {
+              guest.debugger.detach()
+            }
           }
         }
 

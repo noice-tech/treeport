@@ -1,4 +1,5 @@
 import type {
+  CreateOperationRequest,
   OperationRecord,
   PrInfo,
   RemovePreview,
@@ -61,6 +62,14 @@ export class WorktreeService {
       sourceWorktreeId,
       treeContext
     )
+  }
+
+  resumeCreate(
+    operationId: string,
+    projectId: string,
+    request: CreateOperationRequest
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    return this.creation.resumeCreate(operationId, projectId, request)
   }
 
   createWorktree(
