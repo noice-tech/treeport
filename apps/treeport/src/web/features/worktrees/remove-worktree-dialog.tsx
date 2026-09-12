@@ -52,7 +52,10 @@ export function RemoveWorktreeDialog({
   return (
     <AlertDialog open={worktree !== null} onOpenChange={onOpenChange}>
       {worktree && preview ? (
-        <AlertDialogContent restoreFocusTo={restoreFocusTo}>
+        <AlertDialogContent
+          className="min-w-0 overflow-x-hidden"
+          restoreFocusTo={restoreFocusTo}
+        >
           <AlertDialogHeader>
             <p className="eyebrow">
               {operation
@@ -155,21 +158,37 @@ export function RemoveWorktreeDialog({
               ) : null}
             </>
           ) : (
-            <div aria-live="polite">
+            <div className="min-w-0" aria-live="polite">
               {cleanup?.commands.map((command, index) => (
-                <section key={`${index}:${command.name}`}>
+                <section className="min-w-0" key={`${index}:${command.name}`}>
                   <strong>
                     {command.name}: {command.status}
                   </strong>
-                  {command.stdout ? <pre>{command.stdout}</pre> : null}
-                  {command.stderr ? <pre>{command.stderr}</pre> : null}
-                  {command.error ? <p>{command.error}</p> : null}
+                  {command.stdout ? (
+                    <pre className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                      {command.stdout}
+                    </pre>
+                  ) : null}
+                  {command.stderr ? (
+                    <pre className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                      {command.stderr}
+                    </pre>
+                  ) : null}
+                  {command.error ? (
+                    <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                      {command.error}
+                    </p>
+                  ) : null}
                   {command.outputTruncated ? (
                     <p>Cleanup output was truncated.</p>
                   ) : null}
                 </section>
               ))}
-              {operation.error ? <p>{operation.error}</p> : null}
+              {operation.error ? (
+                <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {operation.error}
+                </p>
+              ) : null}
               {cleanupFailed && preview.cleanup.commands.length > 0 ? (
                 <div className="warning danger">
                   <strong>Cleanup can be skipped.</strong>
