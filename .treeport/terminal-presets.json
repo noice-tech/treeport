@@ -1,6 +1,13 @@
 {
   "version": 1,
   "presets": {
+    "execute-task": {
+      "name": "Pi task",
+      "executable": "pi",
+      "args": [
+        "Run `treeport context` first. Read the task from its tree context, then start executing it immediately."
+      ]
+    },
     "signoff": {
       "name": "Signoff",
       "executable": "pnpm",

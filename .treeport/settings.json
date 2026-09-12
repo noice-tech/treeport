@@ -1,0 +1,11 @@
+{
+  "treeContext": {
+    "fields": [
+      {
+        "id": "task",
+        "label": "Task",
+        "input": "textarea"
+      }
+    ]
+  }
+}
