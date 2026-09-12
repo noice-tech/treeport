@@ -54,6 +54,7 @@ function browserState(
 
 export function LocalBrowserWebview({
   panel,
+  active,
   inputBlocked,
   onConnection,
   onMessage,
@@ -61,6 +62,7 @@ export function LocalBrowserWebview({
   onFocusSurface
 }: {
   panel: BrowserPanel
+  active: boolean
   inputBlocked: boolean
   onConnection: (connection: BrowserPanelConnection | null) => void
   onMessage: (message: BrowserServerMessage) => void
@@ -69,6 +71,8 @@ export function LocalBrowserWebview({
 }) {
   const { dismiss: dismissToolPicker } = useToolPicker()
   const webviewRef = useRef<TreeportBrowserWebview>(null)
+  const activeRef = useRef(active)
+  activeRef.current = active
   const inputBlockedRef = useRef(inputBlocked)
   inputBlockedRef.current = inputBlocked
   const initialPanelRef = useRef(panel)
@@ -448,6 +452,11 @@ export function LocalBrowserWebview({
           throw new Error('The desktop app rejected this Browser.')
         }
 
+        await bridge.setBrowserPresentationActive(
+          panel.id,
+          activeRef.current && !inputBlockedRef.current
+        )
+
         let connectionOwner: LocalBrowserOwnerConnection | null = null
         connectionOwner = await connectLocalBrowserOwner(
           panel.id,
@@ -615,6 +624,15 @@ export function LocalBrowserWebview({
     dismissToolPicker,
     panel.id
   ])
+
+  useEffect(() => {
+    const bridge = window.treeportDesktop
+    if (bridge) {
+      void bridge
+        .setBrowserPresentationActive(panel.id, active && !inputBlocked)
+        .catch(() => false)
+    }
+  }, [active, inputBlocked, panel.id])
 
   return (
     <div className="relative size-full">

@@ -1096,6 +1096,7 @@ export function BrowserPanelWorkspace({
           <LocalBrowserWebview
             key={connectionRevision}
             panel={panel}
+            active={active}
             inputBlocked={inputBlocked}
             onConnection={setLocalConnection}
             onMessage={receiveMessage}

@@ -182,6 +182,14 @@ const desktopBridge = Object.freeze({
       .invoke('native-browser:set-input-control', { panelId, locked })
       .then((value) => z.boolean().parse(value))
   },
+  setBrowserPresentationActive(
+    panelId: string,
+    active: boolean
+  ): Promise<boolean> {
+    return ipcRenderer
+      .invoke('native-browser:set-presentation-active', { panelId, active })
+      .then((value) => z.boolean().parse(value))
+  },
   requestBrowserClose(panelId: string, force: boolean): Promise<boolean> {
     return ipcRenderer
       .invoke('native-browser:request-close', { panelId, force })
