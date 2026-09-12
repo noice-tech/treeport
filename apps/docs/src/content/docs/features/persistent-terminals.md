@@ -17,7 +17,7 @@ Terminal programs keep their usual interfaces, keyboard shortcuts, mouse input, 
 
 You can scroll through earlier output, select text, and copy or paste. Connected viewers share one terminal size.
 
-Treeport also displays Kitty inline images. Earlier images are not restored after a reconnect.
+Treeport also displays Kitty inline images and restores them after a reconnect.
 
 ## See terminal status
 
