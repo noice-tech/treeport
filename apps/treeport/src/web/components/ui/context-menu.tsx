@@ -37,6 +37,18 @@ function ContextMenuGroup(
   return <ContextMenuPrimitive.Group {...props} />
 }
 
+function ContextMenuSeparator({
+  className,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.Separator>) {
+  return (
+    <ContextMenuPrimitive.Separator
+      className={cn('-mx-1 my-1 h-px bg-white/8', className)}
+      {...props}
+    />
+  )
+}
+
 function ContextMenuItem({
   className,
   variant = 'default',
@@ -61,5 +73,6 @@ export {
   ContextMenuContent,
   ContextMenuGroup,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger
 }
