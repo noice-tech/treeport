@@ -78,40 +78,53 @@ function ToolPickerActions({
   onCreateBrowserPanel,
   onSelectWebPanel
 }: ToolPickerActionsProps) {
+  const definitionTitleCounts = new Map<string, number>()
+  for (const definition of definitions) {
+    definitionTitleCounts.set(
+      definition.title,
+      (definitionTitleCounts.get(definition.title) ?? 0) + 1
+    )
+  }
+
   if (commandRef) {
     return (
       <Command ref={commandRef} tabIndex={0} aria-label="Available tools">
         <CommandList>
           <CommandGroup>
             <CommandItem
-              value="browser"
-              aria-label="Browser, new tab"
+              value="browser tab"
+              aria-label="Browser tab"
               disabled={launchDisabled}
               onSelect={onCreateBrowserPanel}
             >
               <GlobeAltIcon data-icon="inline-start" />
-              <span className="min-w-0 flex-1 truncate">Browser</span>
-              <span className="text-xs text-zinc-500">New tab</span>
+              <span className="min-w-0 flex-1 truncate">Browser tab</span>
             </CommandItem>
-            {definitions.map((definition) => (
-              <CommandItem
-                key={definition.id}
-                value={`${definition.title} ${definitionSource(definition)}`}
-                aria-label={`${definition.title}, web panel, ${definitionSource(
-                  definition
-                )}`}
-                disabled={launchDisabled}
-                onSelect={() => onSelectWebPanel(definition)}
-              >
-                <WebPanelIcon icon={definition.icon} />
-                <span className="min-w-0 flex-1 truncate">
-                  {definition.title}
-                </span>
-                <span className="max-w-1/2 truncate text-xs text-zinc-500">
-                  {definitionSource(definition)}
-                </span>
-              </CommandItem>
-            ))}
+            {definitions.map((definition) => {
+              const hasDuplicateTitle =
+                (definitionTitleCounts.get(definition.title) ?? 0) > 1
+              return (
+                <CommandItem
+                  key={definition.id}
+                  value={`${definition.title} ${definitionSource(definition)}`}
+                  aria-label={`${definition.title}, web panel${
+                    hasDuplicateTitle ? `, ${definitionSource(definition)}` : ''
+                  }`}
+                  disabled={launchDisabled}
+                  onSelect={() => onSelectWebPanel(definition)}
+                >
+                  <WebPanelIcon icon={definition.icon} />
+                  <span className="min-w-0 flex-1 truncate">
+                    {definition.title}
+                  </span>
+                  {hasDuplicateTitle ? (
+                    <span className="max-w-1/2 truncate text-xs text-zinc-500">
+                      {definitionSource(definition)}
+                    </span>
+                  ) : null}
+                </CommandItem>
+              )
+            })}
           </CommandGroup>
         </CommandList>
         {definitionsLoading ? (
@@ -134,33 +147,38 @@ function ToolPickerActions({
         type="button"
         variant="ghost"
         className="h-auto w-full justify-start px-2 py-1.5 text-left"
-        aria-label="Browser, new tab"
+        aria-label="Browser tab"
         disabled={launchDisabled}
         onClick={onCreateBrowserPanel}
       >
         <GlobeAltIcon data-icon="inline-start" />
-        <span className="min-w-0 flex-1 truncate">Browser</span>
-        <span className="text-xs text-zinc-500">New tab</span>
+        <span className="min-w-0 flex-1 truncate">Browser tab</span>
       </Button>
-      {definitions.map((definition) => (
-        <Button
-          key={definition.id}
-          type="button"
-          variant="ghost"
-          className="h-auto w-full justify-start px-2 py-1.5 text-left"
-          aria-label={`${definition.title}, web panel, ${definitionSource(
-            definition
-          )}`}
-          disabled={launchDisabled}
-          onClick={() => onSelectWebPanel(definition)}
-        >
-          <WebPanelIcon icon={definition.icon} />
-          <span className="min-w-0 flex-1 truncate">{definition.title}</span>
-          <span className="max-w-1/2 truncate text-xs text-zinc-500">
-            {definitionSource(definition)}
-          </span>
-        </Button>
-      ))}
+      {definitions.map((definition) => {
+        const hasDuplicateTitle =
+          (definitionTitleCounts.get(definition.title) ?? 0) > 1
+        return (
+          <Button
+            key={definition.id}
+            type="button"
+            variant="ghost"
+            className="h-auto w-full justify-start px-2 py-1.5 text-left"
+            aria-label={`${definition.title}, web panel${
+              hasDuplicateTitle ? `, ${definitionSource(definition)}` : ''
+            }`}
+            disabled={launchDisabled}
+            onClick={() => onSelectWebPanel(definition)}
+          >
+            <WebPanelIcon icon={definition.icon} />
+            <span className="min-w-0 flex-1 truncate">{definition.title}</span>
+            {hasDuplicateTitle ? (
+              <span className="max-w-1/2 truncate text-xs text-zinc-500">
+                {definitionSource(definition)}
+              </span>
+            ) : null}
+          </Button>
+        )
+      })}
       {definitionsLoading ? (
         <p className="px-2 py-2 text-sm text-zinc-500" role="status">
           Loading web panels…
