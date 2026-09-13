@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react'
+import { useSyncExternalStore, type ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
   DocumentDuplicateIcon,
   FolderIcon,
+  LinkSlashIcon,
   PlusIcon,
   TrashIcon,
   XMarkIcon
@@ -34,6 +35,13 @@ import { cn } from '../../lib/utils'
 import { terminalProgressLabel } from '../../terminal-session'
 import { ReorderableItems } from '../../use-reorderable-items'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
+import { terminalLayoutDrag } from '../terminals/terminal-layout-drag'
+import {
+  disconnectTerminalFromLayout,
+  normalizeTerminalWorkspaceLayout,
+  terminalIdsInLayoutNode,
+  terminalWorkspaceLayouts
+} from '../terminals/terminal-workspace-layout'
 import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import type {
   PendingWorktreeCreation,
@@ -176,6 +184,11 @@ export function WorkspaceTree({
   onOpenPanelDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
+  useSyncExternalStore(
+    terminalWorkspaceLayouts.subscribe,
+    terminalWorkspaceLayouts.getSnapshot,
+    terminalWorkspaceLayouts.getSnapshot
+  )
   const { focusedSurface } = useWorkspaceSurfaceFocus()
   const {
     attention: bellAttention,
@@ -194,6 +207,49 @@ export function WorkspaceTree({
       ? '⌘⇧T'
       : 'Ctrl+Shift+T'
     : null
+  const terminalTrees = new Map<
+    string,
+    {
+      terminals: TerminalRecord[]
+      splitMembers: Map<string, 'first' | 'middle' | 'last'>
+    }
+  >()
+  for (const project of projects) {
+    for (const worktree of project.worktrees) {
+      const terminalsById = new Map(
+        worktree.terminals.map((terminal) => [terminal.id, terminal])
+      )
+      const layout = normalizeTerminalWorkspaceLayout(
+        terminalWorkspaceLayouts.read(worktree.id),
+        worktree.terminals.map((terminal) => terminal.id)
+      )
+      const orderedIds = layout.groups.flatMap(terminalIdsInLayoutNode)
+      const splitMembers = new Map<string, 'first' | 'middle' | 'last'>()
+      for (const group of layout.groups) {
+        const groupIds = terminalIdsInLayoutNode(group)
+        if (groupIds.length < 2) {
+          continue
+        }
+
+        groupIds.forEach((terminalId, index) => {
+          splitMembers.set(
+            terminalId,
+            index === 0
+              ? 'first'
+              : index === groupIds.length - 1
+                ? 'last'
+                : 'middle'
+          )
+        })
+      }
+      terminalTrees.set(worktree.id, {
+        terminals: orderedIds.map((terminalId) =>
+          terminalsById.get(terminalId)!
+        ),
+        splitMembers
+      })
+    }
+  }
 
   return (
     <nav
@@ -380,11 +436,21 @@ export function WorkspaceTree({
                       aria-label={`${worktree.name} terminal tabs`}
                     >
                       <ReorderableItems
-                        items={worktree.terminals}
+                        items={
+                          terminalTrees.get(worktree.id)?.terminals ??
+                          worktree.terminals
+                        }
                         orientation="vertical"
                         onReorder={(terminalIds) =>
                           reorderTerminals(worktree, terminalIds)
                         }
+                        onDragMove={(terminal, clientX, clientY) =>
+                          terminalLayoutDrag.update(terminal, clientX, clientY)
+                        }
+                        onDragEnd={(terminal, clientX, clientY) =>
+                          terminalLayoutDrag.finish(terminal, clientX, clientY)
+                        }
+                        onDragCancel={() => terminalLayoutDrag.cancel()}
                       >
                         {(terminal, itemProps, handleProps, index) => {
                           const title =
@@ -408,11 +474,21 @@ export function WorkspaceTree({
                             selectedWorktree?.id === worktree.id && index < 9
                               ? index + 1
                               : null
+                          const splitMember = terminalTrees
+                            .get(worktree.id)
+                            ?.splitMembers.get(terminal.id)
                           return (
                             <SidebarMenuSubItem
                               key={terminal.id}
                               {...itemProps}
-                              className="group/terminal relative min-w-0"
+                              className={cn(
+                                'group/terminal relative min-w-0',
+                                splitMember && 'terminal-split-tree-member',
+                                splitMember === 'first' &&
+                                  'terminal-split-tree-first',
+                                splitMember === 'last' &&
+                                  'terminal-split-tree-last'
+                              )}
                             >
                               <ContextMenu>
                                 <ContextMenuTrigger asChild>
@@ -509,6 +585,26 @@ export function WorkspaceTree({
                                 </div>
                                 <ContextMenuContent>
                                   <ContextMenuGroup>
+                                    {splitMember ? (
+                                      <ContextMenuItem
+                                        onSelect={() =>
+                                          terminalWorkspaceLayouts.update(
+                                            worktree.id,
+                                            worktree.terminals.map(
+                                              (candidate) => candidate.id
+                                            ),
+                                            (layout) =>
+                                              disconnectTerminalFromLayout(
+                                                layout,
+                                                terminal.id
+                                              )
+                                          )
+                                        }
+                                      >
+                                        <LinkSlashIcon />
+                                        Disconnect from split
+                                      </ContextMenuItem>
+                                    ) : null}
                                     <ContextMenuItem
                                       onSelect={() => copyText(terminal.id)}
                                     >

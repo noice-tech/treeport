@@ -18,6 +18,7 @@ export async function installDesktopBridge(
     type DesktopCommand =
       | 'new-worktree'
       | 'new-terminal'
+      | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
       | 'new-panel'
       | 'close-panel'
       | 'toggle-side-panel'

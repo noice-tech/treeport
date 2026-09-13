@@ -16,6 +16,13 @@ import {
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import { TerminalView } from '../../terminal-view'
+import { TerminalSplitWorkspace } from './terminal-split-workspace'
+import {
+  splitTerminalInLayout,
+  terminalIdsInLayoutNode,
+  terminalWorkspaceLayouts,
+  type TerminalSplitDirection
+} from './terminal-workspace-layout'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
@@ -42,6 +49,10 @@ export interface CreateTerminalInput {
 
 interface CreateTerminalMutationInput extends CreateTerminalInput {
   worktreeId: string
+  splitPlacement?: {
+    targetTerminalId: string
+    direction: TerminalSplitDirection
+  }
   initialSize?: TerminalSize
   sequence: number
   projectId: string
@@ -141,6 +152,7 @@ export function useTerminalWorkflows({
         worktreeId: request.worktreeId
       })
       let targetFound = false
+      let terminalIds: string[] = []
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) => {
         const update = upsertProjectTerminal(
           current,
@@ -148,12 +160,39 @@ export function useTerminalWorkflows({
           terminal
         )
         targetFound = update.found
+        terminalIds =
+          update.projects
+            ?.flatMap((project) => project.worktrees)
+            .find((worktree) => worktree.id === request.worktreeId)
+            ?.terminals.map((candidate) => candidate.id) ?? []
         return update.projects
       })
       browserTrace('terminal.create.cache.updated', request.correlationId, {
         targetFound,
         terminalId: terminal.id
       })
+      if (request.splitPlacement) {
+        const { targetTerminalId, direction } = request.splitPlacement
+        const storedLayout = terminalWorkspaceLayouts.read(request.worktreeId)
+        terminalWorkspaceLayouts.update(
+          request.worktreeId,
+          terminalIds.length
+            ? terminalIds
+            : [
+                ...(storedLayout?.groups.flatMap(terminalIdsInLayoutNode) ??
+                  []),
+                terminal.id
+              ],
+          (layout) =>
+            splitTerminalInLayout(
+              layout,
+              targetTerminalId,
+              terminal.id,
+              direction
+            )
+        )
+      }
+
       if (!targetFound) {
         await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
         browserTrace('terminal.create.cache.refetched', request.correlationId, {
@@ -278,7 +317,11 @@ export function useTerminalWorkflows({
   const createTerminalInWorktree = (
     project: ProjectRecord,
     worktree: WorktreeRecord,
-    input: CreateTerminalInput
+    input: CreateTerminalInput,
+    splitPlacement?: {
+      targetTerminalId: string
+      direction: TerminalSplitDirection
+    }
   ) => {
     const currentProject = projects.find(
       (candidate) => candidate.id === project.id
@@ -316,6 +359,10 @@ export function useTerminalWorkflows({
       requestedAt,
       correlationId
     }
+    if (splitPlacement) {
+      mutation.splitPlacement = splitPlacement
+    }
+
     if (input.initialTitle) {
       mutation.initialTitle = input.initialTitle
     }
@@ -457,32 +504,51 @@ export function TerminalWorkspace({
   selectedWorktree,
   selectedTerminal,
   loading,
-  dialogOpen
+  dialogOpen,
+  onSelectTerminal
 }: {
   selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
   loading: boolean
   dialogOpen: boolean
+  onSelectTerminal: (terminal: TerminalRecord) => void
 }) {
   const queryClient = useQueryClient()
   const { focusedSurface } = useWorkspaceSurfaceFocus()
   const { isMobile, openMobile: drawerOpen } = useSidebar()
   const { open: projectSwitcherOpen } = useProjectSwitcher()
 
+  const autoFocusBlocked =
+    focusedSurface === 'tool' ||
+    dialogOpen ||
+    projectSwitcherOpen ||
+    (isMobile && drawerOpen)
+  const onStatusChange = () =>
+    void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+
+  if (selectedWorktree && selectedTerminal) {
+    return (
+      <TerminalSplitWorkspace
+        key={selectedWorktree.id}
+        worktree={selectedWorktree}
+        selectedTerminal={selectedTerminal}
+        loading={loading}
+        autoFocusBlocked={autoFocusBlocked}
+        onSelectTerminal={onSelectTerminal}
+        onStatusChange={onStatusChange}
+      />
+    )
+  }
+
   return (
     <TerminalView
       worktree={selectedWorktree}
       terminal={selectedTerminal}
       loading={loading}
-      autoFocusBlocked={
-        focusedSurface === 'tool' ||
-        dialogOpen ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen)
-      }
-      onStatusChange={() =>
-        void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-      }
+      active
+      autoFocusBlocked={autoFocusBlocked}
+      onActivate={() => undefined}
+      onStatusChange={onStatusChange}
     />
   )
 }

@@ -31,6 +31,7 @@ interface TreeportTestWebSocket {
 type TreeportTestDesktopCommand =
   | 'new-worktree'
   | 'new-terminal'
+  | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
   | 'new-panel'
   | 'close-panel'
   | 'toggle-side-panel'

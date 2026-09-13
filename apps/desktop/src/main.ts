@@ -678,6 +678,30 @@ function installMenu(): void {
           click: () => sendDesktopCommand('new-terminal')
         },
         {
+          id: 'split-terminal-left',
+          label: 'Split Terminal Left',
+          accelerator: 'CommandOrControl+Alt+Left',
+          click: () => sendDesktopCommand('split-terminal-left')
+        },
+        {
+          id: 'split-terminal-right',
+          label: 'Split Terminal Right',
+          accelerator: 'CommandOrControl+Alt+Right',
+          click: () => sendDesktopCommand('split-terminal-right')
+        },
+        {
+          id: 'split-terminal-up',
+          label: 'Split Terminal Up',
+          accelerator: 'CommandOrControl+Alt+Up',
+          click: () => sendDesktopCommand('split-terminal-up')
+        },
+        {
+          id: 'split-terminal-down',
+          label: 'Split Terminal Down',
+          accelerator: 'CommandOrControl+Alt+Down',
+          click: () => sendDesktopCommand('split-terminal-down')
+        },
+        {
           id: 'new-panel',
           label: 'New Panel…',
           accelerator: 'CommandOrControl+Shift+T',

@@ -30,6 +30,8 @@ type DragState = {
   startX: number
   startY: number
   startCoordinate: number
+  lastX: number
+  lastY: number
   itemStart: number
   itemSize: number
   handle: HTMLElement
@@ -44,11 +46,21 @@ type DragState = {
 export function useReorderableItems<Item extends { id: string }>({
   items,
   orientation,
-  onReorder
+  onReorder,
+  onDragMove,
+  onDragEnd,
+  onDragCancel
 }: {
   items: readonly Item[]
   orientation: 'horizontal' | 'vertical'
   onReorder: (itemIds: string[]) => void
+  onDragMove?:
+    | ((item: Item, clientX: number, clientY: number) => void)
+    | undefined
+  onDragEnd?:
+    | ((item: Item, clientX: number, clientY: number) => boolean)
+    | undefined
+  onDragCancel?: (() => void) | undefined
 }) {
   const itemIds = items.map((item) => item.id)
   const [draftIds, setDraftIds] = useState<string[] | null>(null)
@@ -75,6 +87,10 @@ export function useReorderableItems<Item extends { id: string }>({
   }
 
   const cancel = () => {
+    if (dragRef.current?.started) {
+      onDragCancel?.()
+    }
+
     cleanUpDrag()
     pendingCommit.current = null
     setDraggingId(null)
@@ -128,8 +144,14 @@ export function useReorderableItems<Item extends { id: string }>({
       return
     }
 
+    drag.lastX = clientX
+    drag.lastY = clientY
     drag.overlay.style.transform = `translate3d(${clientX - drag.startX}px, ${clientY - drag.startY}px, 0)`
     moveDraggedItem(orientation === 'horizontal' ? clientX : clientY)
+    const item = itemsById.get(drag.id)
+    if (item) {
+      onDragMove?.(item, clientX, clientY)
+    }
   }
 
   const commit = () => {
@@ -143,6 +165,10 @@ export function useReorderableItems<Item extends { id: string }>({
       (itemId, index) => itemId !== drag.originalIds[index]
     )
     const draggedId = drag.id
+    const item = itemsById.get(draggedId)
+    const handled = item
+      ? (onDragEnd?.(item, drag.lastX, drag.lastY) ?? false)
+      : false
     suppressClick.current = draggedId
     window.setTimeout(() => {
       if (suppressClick.current === draggedId) {
@@ -151,7 +177,7 @@ export function useReorderableItems<Item extends { id: string }>({
     })
     cleanUpDrag()
     setDraggingId(null)
-    if (!changed) {
+    if (handled || !changed) {
       setDraftIds(null)
       return
     }
@@ -236,6 +262,8 @@ export function useReorderableItems<Item extends { id: string }>({
           startY: event.clientY,
           startCoordinate:
             orientation === 'horizontal' ? event.clientX : event.clientY,
+          lastX: event.clientX,
+          lastY: event.clientY,
           itemStart: orientation === 'horizontal' ? rect.left : rect.top,
           itemSize: orientation === 'horizontal' ? rect.width : rect.height,
           handle: event.currentTarget,
@@ -421,11 +449,21 @@ export function ReorderableItems<Item extends { id: string }>({
   items,
   orientation,
   onReorder,
+  onDragMove,
+  onDragEnd,
+  onDragCancel,
   children
 }: {
   items: readonly Item[]
   orientation: 'horizontal' | 'vertical'
   onReorder: (itemIds: string[]) => void
+  onDragMove?:
+    | ((item: Item, clientX: number, clientY: number) => void)
+    | undefined
+  onDragEnd?:
+    | ((item: Item, clientX: number, clientY: number) => boolean)
+    | undefined
+  onDragCancel?: (() => void) | undefined
   children: (
     item: Item,
     itemProps: ReorderableItemProps,
@@ -434,7 +472,14 @@ export function ReorderableItems<Item extends { id: string }>({
   ) => ReactNode
 }) {
   const { orderedItems, announcement, getItemProps, getHandleProps } =
-    useReorderableItems({ items, orientation, onReorder })
+    useReorderableItems({
+      items,
+      orientation,
+      onReorder,
+      onDragMove,
+      onDragEnd,
+      onDragCancel
+    })
 
   return (
     <>

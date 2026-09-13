@@ -41,7 +41,9 @@ interface TerminalViewProps {
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
   loading: boolean
+  active: boolean
   autoFocusBlocked: boolean
+  onActivate: () => void
   onStatusChange: () => void
 }
 
@@ -65,7 +67,9 @@ export function TerminalView({
   worktree,
   terminal,
   loading,
+  active,
   autoFocusBlocked,
+  onActivate,
   onStatusChange
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
@@ -341,13 +345,15 @@ export function TerminalView({
     ? runtimeTitles.get(terminal.id) || terminal.name
     : ''
   return (
-    <main
+    <section
       ref={shellRef}
       className={cn(
-        'terminal-shell grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[minmax(0,1fr)_3.25rem]',
+        'terminal-shell relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[minmax(0,1fr)_3.25rem]',
         snapshot.bellActive && 'terminal-bell'
       )}
       aria-label={terminal ? `${visibleTitle} terminal` : 'Terminal panel'}
+      aria-current={active ? 'true' : undefined}
+      onPointerDownCapture={onActivate}
     >
       {terminal ? (
         <div className="relative min-h-0 min-w-0 overflow-hidden">
@@ -391,7 +397,7 @@ export function TerminalView({
           </ContextMenu>
           {snapshot.phase === 'ready' && !snapshot.controller ? (
             <span
-              className="absolute top-3 right-14 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
+              className="absolute top-3 right-24 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
               title="Interact with the terminal to control it"
             >
               <span
@@ -660,6 +666,6 @@ export function TerminalView({
           </Button>
         </div>
       )}
-    </main>
+    </section>
   )
 }

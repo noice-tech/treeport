@@ -79,6 +79,35 @@ body {
   }
 }
 
+.terminal-split-tree-member::before,
+.terminal-split-tree-member::after {
+  position: absolute;
+  left: -0.375rem;
+  z-index: 1;
+  border-color: color-mix(in oklab, var(--color-zinc-500) 55%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.terminal-split-tree-member::before {
+  top: 50%;
+  width: 0.375rem;
+  border-top-width: 1px;
+}
+
+.terminal-split-tree-member::after {
+  inset-block: 0;
+  border-left-width: 1px;
+}
+
+.terminal-split-tree-first::after {
+  top: 50%;
+}
+
+.terminal-split-tree-last::after {
+  bottom: 50%;
+}
+
 code {
   color: var(--color-cyan-200);
   font-family: 'SFMono-Regular', 'Cascadia Code', monospace;
