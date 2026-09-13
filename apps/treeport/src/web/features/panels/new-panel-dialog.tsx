@@ -30,6 +30,7 @@ import {
 } from '../../components/ui/dialog'
 import {
   terminalPresetCommand,
+  terminalPresetDisambiguator,
   terminalPresetProvenance
 } from '../../terminal-preset-definition'
 import { WebPanelIcon } from '../web-panels/web-panel-icon'
@@ -240,15 +241,18 @@ export function NewPanelDialog({
             ) : null}
             {filteredPresets.map((preset, index) => {
               const actionIndex = index + (showShell ? 1 : 0)
-              const provenance = terminalPresetProvenance(preset)
-              const command = terminalPresetCommand(preset)
+              const disambiguator = terminalPresetDisambiguator(preset, presets)
               return (
                 <Button
                   key={preset.id}
                   type="button"
                   variant="ghost"
                   className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
-                  aria-label={`${preset.name}, ${provenance}, ${command}`}
+                  aria-label={
+                    disambiguator
+                      ? `${preset.name}, ${disambiguator}`
+                      : preset.name
+                  }
                   data-panel-launch
                   data-selected={selectedIndex === actionIndex ? '' : undefined}
                   disabled={launchDisabled}
@@ -293,9 +297,11 @@ export function NewPanelDialog({
                   <span className="min-w-0 flex-1 truncate text-left">
                     {preset.name}
                   </span>
-                  <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
-                    {provenance} · {command}
-                  </span>
+                  {disambiguator ? (
+                    <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
+                      {disambiguator}
+                    </span>
+                  ) : null}
                 </Button>
               )
             })}

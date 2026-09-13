@@ -26,3 +26,14 @@ export function terminalPresetProvenance(
 
   return `${preset.source.scope === 'project' ? 'Repository' : 'Global'} · ${preset.source.packageId}`
 }
+
+export function terminalPresetDisambiguator(
+  preset: TerminalPresetDefinition,
+  presets: TerminalPresetDefinition[]
+): string | null {
+  return presets.some(
+    (candidate) => candidate.id !== preset.id && candidate.name === preset.name
+  )
+    ? terminalPresetProvenance(preset)
+    : null
+}
