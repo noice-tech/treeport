@@ -69,6 +69,7 @@ type ProjectApi = Pick<
   | 'resolveProject'
   | 'resolveWorktree'
   | 'updateProjectColor'
+  | 'updateTerminalLayout'
 >
 type WorktreeApi = Pick<
   WorktreeService,

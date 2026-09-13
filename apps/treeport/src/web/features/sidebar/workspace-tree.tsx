@@ -34,6 +34,7 @@ import { cn } from '../../lib/utils'
 import { terminalProgressLabel } from '../../terminal-session'
 import { ReorderableItems } from '../../use-reorderable-items'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
+import { terminalLayoutDrag } from '../terminals/terminal-layout-drag'
 import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import type {
   PendingWorktreeCreation,
@@ -385,6 +386,13 @@ export function WorkspaceTree({
                         onReorder={(terminalIds) =>
                           reorderTerminals(worktree, terminalIds)
                         }
+                        onDragMove={(terminal, clientX, clientY) =>
+                          terminalLayoutDrag.update(terminal, clientX, clientY)
+                        }
+                        onDragEnd={(terminal, clientX, clientY) =>
+                          terminalLayoutDrag.finish(terminal, clientX, clientY)
+                        }
+                        onDragCancel={() => terminalLayoutDrag.cancel()}
                       >
                         {(terminal, itemProps, handleProps, index) => {
                           const title =

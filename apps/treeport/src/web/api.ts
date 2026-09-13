@@ -367,6 +367,19 @@ export const rpc = {
             }
           }
         ),
+        'terminal-layout': {
+          $put: (
+            { param, json }: RequestInput<{ worktreeId: string }, unknown>,
+            options?: { readonly init: RequestInit }
+          ) =>
+            endpoint<{ ok: true }>(
+              'PUT',
+              `/api/worktrees/${id(param.worktreeId)}/terminal-layout`,
+              okResponseSchema,
+              { json },
+              options?.init
+            )
+        },
         panels: {
           open: {
             $post: (

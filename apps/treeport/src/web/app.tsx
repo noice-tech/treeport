@@ -1668,6 +1668,7 @@ function WorkspaceApp() {
                 selectedTerminal={selectedTerminal}
                 loading={projectsQuery.isPending}
                 dialogOpen={dialog !== null}
+                onSelectTerminal={selectTerminal}
               />
             </div>
             {selectedWorktree ? (

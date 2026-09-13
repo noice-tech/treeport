@@ -74,6 +74,7 @@ import {
   terminalPresetResponseSchema,
   terminalPresetsResponseSchema,
   terminalResponseSchema,
+  terminalWorkspaceLayoutSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
   terminatedTerminalsResponseSchema,
   treeContextFieldListingSchema,
@@ -1141,6 +1142,18 @@ export function createApp({
             service.projects.getWorktreeContext(params.worktreeId!)
           )
         })
+      })
+    ),
+    route(
+      'PUT',
+      '/api/worktrees/:worktreeId/terminal-layout',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(terminalWorkspaceLayoutSchema)
+        yield* operation(() =>
+          service.projects.updateTerminalLayout(params.worktreeId!, body)
+        )
+        return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
     route(

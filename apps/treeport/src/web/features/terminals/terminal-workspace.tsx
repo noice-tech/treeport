@@ -16,6 +16,7 @@ import {
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import { TerminalView } from '../../terminal-view'
+import { TerminalSplitWorkspace } from './terminal-split-workspace'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
@@ -457,32 +458,52 @@ export function TerminalWorkspace({
   selectedWorktree,
   selectedTerminal,
   loading,
-  dialogOpen
+  dialogOpen,
+  onSelectTerminal
 }: {
   selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
   loading: boolean
   dialogOpen: boolean
+  onSelectTerminal: (terminal: TerminalRecord) => void
 }) {
   const queryClient = useQueryClient()
   const { focusedSurface } = useWorkspaceSurfaceFocus()
   const { isMobile, openMobile: drawerOpen } = useSidebar()
   const { open: projectSwitcherOpen } = useProjectSwitcher()
 
+  const autoFocusBlocked =
+    focusedSurface === 'tool' ||
+    dialogOpen ||
+    projectSwitcherOpen ||
+    (isMobile && drawerOpen)
+  const onStatusChange = () =>
+    void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+
+  if (selectedWorktree && selectedTerminal) {
+    return (
+      <TerminalSplitWorkspace
+        key={selectedWorktree.id}
+        worktree={selectedWorktree}
+        selectedTerminal={selectedTerminal}
+        loading={loading}
+        autoFocusBlocked={autoFocusBlocked}
+        onSelectTerminal={onSelectTerminal}
+        onStatusChange={onStatusChange}
+      />
+    )
+  }
+
   return (
     <TerminalView
       worktree={selectedWorktree}
       terminal={selectedTerminal}
       loading={loading}
-      autoFocusBlocked={
-        focusedSurface === 'tool' ||
-        dialogOpen ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen)
-      }
-      onStatusChange={() =>
-        void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-      }
+      active
+      framed={false}
+      autoFocusBlocked={autoFocusBlocked}
+      onActivate={() => undefined}
+      onStatusChange={onStatusChange}
     />
   )
 }

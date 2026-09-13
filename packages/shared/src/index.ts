@@ -86,6 +86,13 @@ export function formatCommandLine(argv: readonly string[]): string {
 
 export type ProjectKind = 'repository' | 'folder'
 export type WorktreeKind = 'main' | 'linked' | 'folder'
+export type TerminalWorkspaceLayoutMode = 'single' | 'columns' | 'rows' | 'grid'
+export interface TerminalWorkspaceLayout {
+  mode: TerminalWorkspaceLayoutMode
+  terminalIds: Array<string | null>
+  columnRatio: number
+  rowRatio: number
+}
 export type TerminalStatus = 'running' | 'exited' | 'missing'
 export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -306,6 +313,7 @@ export interface WorktreeRecord {
   managedWrapperPath: string | null
   pr: PrInfo
   dirty: DirtyState | null
+  terminalLayout: TerminalWorkspaceLayout | null
   terminals: TerminalRecord[]
   panels: Panel[]
   createdAt: string

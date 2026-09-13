@@ -141,6 +141,9 @@ export function integrationService(
     updateProjectColor: run(
       application.projects.updateProjectColor.bind(application.projects)
     ),
+    updateTerminalLayout: run(
+      application.projects.updateTerminalLayout.bind(application.projects)
+    ),
 
     beginCreateWorktree: run(
       application.worktrees.beginCreateWorktree.bind(application.worktrees)
