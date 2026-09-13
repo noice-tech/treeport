@@ -103,7 +103,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 15 })
+    ).toEqual({ count: 14 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -493,7 +493,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 15 })
+    ).toEqual({ count: 14 })
     await expect(
       fs.stat(path.join(directory, 'database-backups'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -999,6 +999,6 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 15 })
+    ).toEqual({ count: 14 })
   })
 })

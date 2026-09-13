@@ -54,6 +54,7 @@ import {
   TerminalWorkspace,
   useTerminalWorkflows
 } from './features/terminals/terminal-workspace'
+import type { TerminalSplitDirection } from './features/terminals/terminal-workspace-layout'
 import { CreateWorktreeDialog } from './features/worktrees/create-worktree-dialog'
 import { RemoveWorktreeDialog } from './features/worktrees/remove-worktree-dialog'
 import {
@@ -1268,6 +1269,18 @@ function WorkspaceApp() {
     projects,
     selectedTerminal
   })
+  const createSplitTerminal = (direction: TerminalSplitDirection) => {
+    if (!selectedProject || !selectedWorktree || !selectedTerminal) {
+      return
+    }
+
+    terminalWorkflows.createTerminalInWorktree(
+      selectedProject,
+      selectedWorktree,
+      { name: 'Shell' },
+      { targetTerminalId: selectedTerminal.id, direction }
+    )
+  }
   const selectTerminal = useCallback(
     (terminal: TerminalRecord) => {
       focusSurface('terminal')
@@ -1423,23 +1436,56 @@ function WorkspaceApp() {
         : event.ctrlKey && !event.metaKey
       if (
         event.isComposing ||
-        event.key.toLocaleLowerCase() !== 'b' ||
         !event.altKey ||
         event.shiftKey ||
-        !modifierPressed ||
-        workspaceActionsBlocked ||
-        !selectedWorktree
+        !modifierPressed
       ) {
+        return
+      }
+
+      const direction =
+        event.key === 'ArrowLeft'
+          ? 'left'
+          : event.key === 'ArrowRight'
+            ? 'right'
+            : event.key === 'ArrowUp'
+              ? 'up'
+              : event.key === 'ArrowDown'
+                ? 'down'
+                : null
+      if (direction) {
+        if (
+          event.repeat ||
+          workspaceActionsBlocked ||
+          focusedSurfaceRef.current === 'tool' ||
+          !selectedTerminal
+        ) {
+          return
+        }
+
+        createSplitTerminal(direction)
+      } else if (
+        event.key.toLocaleLowerCase() === 'b' &&
+        !workspaceActionsBlocked &&
+        selectedWorktree
+      ) {
+        toggleToolPane()
+      } else {
         return
       }
 
       event.preventDefault()
       event.stopPropagation()
-      toggleToolPane()
     }
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
-  }, [desktopBridge, selectedWorktree, toggleToolPane, workspaceActionsBlocked])
+  }, [
+    createSplitTerminal,
+    desktopBridge,
+    selectedWorktree,
+    toggleToolPane,
+    workspaceActionsBlocked
+  ])
 
   useEffect(() => {
     if (!desktopBridge) {
@@ -1499,6 +1545,10 @@ function WorkspaceApp() {
       const selectedTabIndex = command.startsWith('select-tab-')
         ? Number(command.at(-1)) - 1
         : null
+      // SAFETY: DesktopCommand only has the four TerminalSplitDirection suffixes.
+      const splitDirection = command.startsWith('split-terminal-')
+        ? (command.slice('split-terminal-'.length) as TerminalSplitDirection)
+        : null
       if (selectedTabIndex !== null) {
         selectFocusedSurfaceByIndex(selectedTabIndex)
       } else if (command === 'toggle-side-panel') {
@@ -1520,6 +1570,8 @@ function WorkspaceApp() {
             { name: 'Shell', correlationId }
           )
         }
+      } else if (splitDirection && !toolSurfaceHasFocus) {
+        createSplitTerminal(splitDirection)
       } else if (command === 'new-panel') {
         openDialog({
           type: 'panel',

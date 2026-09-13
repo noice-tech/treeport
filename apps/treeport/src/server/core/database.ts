@@ -13,10 +13,6 @@ import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import type { Scope } from 'effect/Scope'
-import {
-  decodeUnknownOrNull,
-  terminalWorkspaceLayoutSchema
-} from '@treeport/shared'
 import type {
   CreateOperationRequest,
   CreateOperationResult,
@@ -549,12 +545,6 @@ export function mapWorktree(
   row: WorktreeRow,
   mainWorktreePath: string
 ): WorktreeRecord {
-  const terminalLayout = row.terminalLayoutJson
-    ? decodeUnknownOrNull(
-        terminalWorkspaceLayoutSchema,
-        JSON.parse(row.terminalLayoutJson)
-      )
-    : null
   return {
     id: row.id,
     projectId: row.projectId,
@@ -585,9 +575,6 @@ export function mapWorktree(
       refreshedAt: row.prRefreshedAt
     },
     dirty: null,
-    terminalLayout: terminalLayout
-      ? { ...terminalLayout, terminalIds: [...terminalLayout.terminalIds] }
-      : null,
     terminals: [],
     panels: [],
     createdAt: row.createdAt,

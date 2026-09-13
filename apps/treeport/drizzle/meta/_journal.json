@@ -99,13 +99,6 @@
       "when": 1788100000000,
       "tag": "0013_workspace_item_order",
       "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "6",
-      "when": 1788200000000,
-      "tag": "0014_terminal_workspace_layout",
-      "breakpoints": true
     }
   ]
 }

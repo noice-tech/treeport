@@ -17,6 +17,12 @@ import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import { TerminalView } from '../../terminal-view'
 import { TerminalSplitWorkspace } from './terminal-split-workspace'
+import {
+  splitTerminalInLayout,
+  terminalIdsInLayoutNode,
+  terminalWorkspaceLayouts,
+  type TerminalSplitDirection
+} from './terminal-workspace-layout'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
@@ -43,6 +49,10 @@ export interface CreateTerminalInput {
 
 interface CreateTerminalMutationInput extends CreateTerminalInput {
   worktreeId: string
+  splitPlacement?: {
+    targetTerminalId: string
+    direction: TerminalSplitDirection
+  }
   initialSize?: TerminalSize
   sequence: number
   projectId: string
@@ -142,6 +152,7 @@ export function useTerminalWorkflows({
         worktreeId: request.worktreeId
       })
       let targetFound = false
+      let terminalIds: string[] = []
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) => {
         const update = upsertProjectTerminal(
           current,
@@ -149,12 +160,39 @@ export function useTerminalWorkflows({
           terminal
         )
         targetFound = update.found
+        terminalIds =
+          update.projects
+            ?.flatMap((project) => project.worktrees)
+            .find((worktree) => worktree.id === request.worktreeId)
+            ?.terminals.map((candidate) => candidate.id) ?? []
         return update.projects
       })
       browserTrace('terminal.create.cache.updated', request.correlationId, {
         targetFound,
         terminalId: terminal.id
       })
+      if (request.splitPlacement) {
+        const { targetTerminalId, direction } = request.splitPlacement
+        const storedLayout = terminalWorkspaceLayouts.read(request.worktreeId)
+        terminalWorkspaceLayouts.update(
+          request.worktreeId,
+          terminalIds.length
+            ? terminalIds
+            : [
+                ...(storedLayout?.groups.flatMap(terminalIdsInLayoutNode) ??
+                  []),
+                terminal.id
+              ],
+          (layout) =>
+            splitTerminalInLayout(
+              layout,
+              targetTerminalId,
+              terminal.id,
+              direction
+            )
+        )
+      }
+
       if (!targetFound) {
         await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
         browserTrace('terminal.create.cache.refetched', request.correlationId, {
@@ -279,7 +317,11 @@ export function useTerminalWorkflows({
   const createTerminalInWorktree = (
     project: ProjectRecord,
     worktree: WorktreeRecord,
-    input: CreateTerminalInput
+    input: CreateTerminalInput,
+    splitPlacement?: {
+      targetTerminalId: string
+      direction: TerminalSplitDirection
+    }
   ) => {
     const currentProject = projects.find(
       (candidate) => candidate.id === project.id
@@ -317,6 +359,10 @@ export function useTerminalWorkflows({
       requestedAt,
       correlationId
     }
+    if (splitPlacement) {
+      mutation.splitPlacement = splitPlacement
+    }
+
     if (input.initialTitle) {
       mutation.initialTitle = input.initialTitle
     }
@@ -500,7 +546,6 @@ export function TerminalWorkspace({
       terminal={selectedTerminal}
       loading={loading}
       active
-      framed={false}
       autoFocusBlocked={autoFocusBlocked}
       onActivate={() => undefined}
       onStatusChange={onStatusChange}

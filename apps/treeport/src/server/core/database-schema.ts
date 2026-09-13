@@ -72,7 +72,6 @@ export const worktrees = sqliteTable(
     kind: text().notNull(),
     managedWrapperPath: text('managed_wrapper_path'),
     treeContextJson: text('tree_context_json').notNull().default('{}'),
-    terminalLayoutJson: text('terminal_layout_json'),
     prState: text('pr_state').notNull().default('unknown'),
     prNumber: integer('pr_number'),
     prUrl: text('pr_url'),

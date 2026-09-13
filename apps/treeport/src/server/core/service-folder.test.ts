@@ -84,22 +84,6 @@ describe('ordinary folder projects', () => {
     ])
 
     const terminalId = registered.worktrees[0]!.terminals[0]!.id
-    await service.updateTerminalLayout(registered.worktrees[0]!.id, {
-      mode: 'columns',
-      terminalIds: [terminalId, null],
-      columnRatio: 45,
-      rowRatio: 50
-    })
-    expect(
-      (await service.getWorktreeSnapshot(registered.worktrees[0]!.id))
-        .terminalLayout
-    ).toEqual({
-      mode: 'columns',
-      terminalIds: [terminalId, null],
-      columnRatio: 45,
-      rowRatio: 50
-    })
-
     await database.db.run(sql`
       UPDATE projects
       SET repository_device = 'previous-boot-device',
@@ -134,12 +118,6 @@ describe('ordinary folder projects', () => {
       availability: { state: 'available', message: null },
       worktrees: [
         {
-          terminalLayout: {
-            mode: 'columns',
-            terminalIds: [terminalId, null],
-            columnRatio: 45,
-            rowRatio: 50
-          },
           terminals: [
             expect.objectContaining({ id: terminalId, name: 'Shell' })
           ]

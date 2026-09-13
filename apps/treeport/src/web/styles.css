@@ -79,6 +79,35 @@ body {
   }
 }
 
+.terminal-split-tree-member::before,
+.terminal-split-tree-member::after {
+  position: absolute;
+  left: -0.375rem;
+  z-index: 1;
+  border-color: color-mix(in oklab, var(--color-zinc-500) 55%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.terminal-split-tree-member::before {
+  top: 50%;
+  width: 0.375rem;
+  border-top-width: 1px;
+}
+
+.terminal-split-tree-member::after {
+  inset-block: 0;
+  border-left-width: 1px;
+}
+
+.terminal-split-tree-first::after {
+  top: 50%;
+}
+
+.terminal-split-tree-last::after {
+  bottom: 50%;
+}
+
 code {
   color: var(--color-cyan-200);
   font-family: 'SFMono-Regular', 'Cascadia Code', monospace;
@@ -164,35 +193,6 @@ code {
 .terminal-bell {
   box-shadow: inset 0 0 0 2px
     color-mix(in oklab, var(--color-amber-300) 75%, transparent);
-}
-
-.terminal-frame-focus-flash {
-  animation: terminal-frame-focus-flash 500ms ease-out forwards;
-}
-
-.terminal-frame-focus-label {
-  animation: terminal-frame-focus-label 600ms ease-out forwards;
-}
-
-@keyframes terminal-frame-focus-flash {
-  from {
-    background: color-mix(in oklab, var(--color-cyan-400) 6%, transparent);
-  }
-
-  to {
-    background: transparent;
-  }
-}
-
-@keyframes terminal-frame-focus-label {
-  0%,
-  55% {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 0;
-  }
 }
 
 .facts {
@@ -370,12 +370,6 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .terminal-frame-focus-flash,
-  .terminal-frame-focus-label {
-    display: none;
-    animation: none;
-  }
-
   .worktree-progress-icon,
   .worktree-progress-icon :is(path, line, polyline),
   .worktree-progress-icon circle {

@@ -132,34 +132,6 @@ const dirtyStateSchema = Schema.Struct({
   conflicts: Schema.NonNegativeInt,
   total: Schema.NonNegativeInt
 })
-export const terminalWorkspaceLayoutSchema = Schema.Struct({
-  mode: Schema.Literal('single', 'columns', 'rows', 'grid'),
-  terminalIds: Schema.Array(
-    Schema.NullOr(
-      Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
-    )
-  ).pipe(
-    Schema.minItems(1),
-    Schema.maxItems(4),
-    Schema.filter(
-      (terminalIds) =>
-        new Set(terminalIds.filter((terminalId) => terminalId !== null))
-          .size ===
-        terminalIds.filter((terminalId) => terminalId !== null).length,
-      { message: () => 'Terminal layout cannot contain duplicate terminals' }
-    )
-  ),
-  columnRatio: Schema.Int.pipe(Schema.between(20, 80)),
-  rowRatio: Schema.Int.pipe(Schema.between(20, 80))
-}).pipe(
-  Schema.filter(
-    (layout) =>
-      layout.terminalIds.length ===
-      (layout.mode === 'single' ? 1 : layout.mode === 'grid' ? 4 : 2),
-    { message: () => 'Terminal layout pane count does not match its mode' }
-  )
-)
-
 export const worktreeRecordSchema = Schema.Struct({
   id: Schema.String,
   projectId: Schema.String,
@@ -175,7 +147,6 @@ export const worktreeRecordSchema = Schema.Struct({
   managedWrapperPath: nullableStringSchema,
   pr: prInfoSchema,
   dirty: Schema.NullOr(dirtyStateSchema),
-  terminalLayout: Schema.NullOr(terminalWorkspaceLayoutSchema),
   terminals: Schema.Array(terminalRecordSchema),
   panels: Schema.Array(panelSchema),
   createdAt: Schema.String,

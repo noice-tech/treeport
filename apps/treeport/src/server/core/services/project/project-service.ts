@@ -9,7 +9,6 @@ import type {
   RecentProjectRecord,
   TreeContextFieldListing,
   TreeContextValues,
-  TerminalWorkspaceLayout,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, eq, sql } from 'drizzle-orm'
@@ -290,34 +289,6 @@ export class ProjectService {
       }
 
       return context
-    })
-  }
-
-  updateTerminalLayout(
-    worktreeId: string,
-    layout: TerminalWorkspaceLayout
-  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
-    const invalidateProjectsSnapshot =
-      this.invalidateProjectsSnapshot.bind(this)
-
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-      const events = yield* EventBusPort
-      const projectStore = yield* ProjectStore
-      const worktree = yield* projectStore.getWorktree(worktreeId)
-      yield* projectStore.requireOpenProject(worktree.projectId)
-      yield* database
-        .execute('project.service.update-terminal-layout', (db) =>
-          db
-            .update(worktrees)
-            .set({ terminalLayoutJson: JSON.stringify(layout) })
-            .where(eq(worktrees.id, worktreeId))
-        )
-        .pipe(Effect.orDie)
-      yield* invalidateProjectsSnapshot()
-      yield* Effect.sync(() =>
-        events.publish('worktree.updated', { worktreeId })
-      )
     })
   }
 

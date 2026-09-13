@@ -119,6 +119,10 @@ const desktopBridge = Object.freeze({
         .enum([
           'new-worktree',
           'new-terminal',
+          'split-terminal-left',
+          'split-terminal-right',
+          'split-terminal-up',
+          'split-terminal-down',
           'new-panel',
           'close-panel',
           'toggle-side-panel',

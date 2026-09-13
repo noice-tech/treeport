@@ -42,7 +42,6 @@ interface TerminalViewProps {
   terminal: TerminalRecord | null
   loading: boolean
   active: boolean
-  framed: boolean
   autoFocusBlocked: boolean
   onActivate: () => void
   onStatusChange: () => void
@@ -69,7 +68,6 @@ export function TerminalView({
   terminal,
   loading,
   active,
-  framed,
   autoFocusBlocked,
   onActivate,
   onStatusChange
@@ -357,28 +355,6 @@ export function TerminalView({
       aria-current={active ? 'true' : undefined}
       onPointerDownCapture={onActivate}
     >
-      {active && framed ? (
-        <>
-          <span
-            className="pointer-events-none absolute inset-0 z-30 ring-1 ring-inset ring-cyan-400/55"
-            aria-hidden="true"
-          />
-          <span
-            className="pointer-events-none absolute top-0 left-0 z-30 size-3 border-t-2 border-l-2 border-cyan-300/70"
-            aria-hidden="true"
-          />
-          <span
-            className="terminal-frame-focus-flash pointer-events-none absolute inset-0 z-20"
-            aria-hidden="true"
-          />
-          <span
-            className="terminal-frame-focus-label pointer-events-none absolute top-2 left-3 z-30 max-w-[calc(100%-6rem)] truncate rounded bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-300 shadow-sm"
-            aria-hidden="true"
-          >
-            {visibleTitle}
-          </span>
-        </>
-      ) : null}
       {terminal ? (
         <div className="relative min-h-0 min-w-0 overflow-hidden">
           <ContextMenu key={terminal.id}>
