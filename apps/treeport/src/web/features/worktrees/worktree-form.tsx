@@ -14,10 +14,7 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
 import { Textarea } from '../../components/ui/textarea'
-import {
-  terminalPresetCommand,
-  terminalPresetProvenance
-} from '../../terminal-preset-definition'
+import { terminalPresetDisambiguator } from '../../terminal-preset-definition'
 
 const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
 
@@ -245,12 +242,18 @@ export function WorktreeForm({
             <option value={initialPresetId}>Loading saved preset…</option>
           )}
           <option value="shell">Shell</option>
-          {initialTerminalPresets.map((preset) => (
-            <option key={preset.id} value={preset.id}>
-              {preset.name} — {terminalPresetProvenance(preset)} —{' '}
-              {terminalPresetCommand(preset)}
-            </option>
-          ))}
+          {initialTerminalPresets.map((preset) => {
+            const disambiguator = terminalPresetDisambiguator(
+              preset,
+              initialTerminalPresets
+            )
+            return (
+              <option key={preset.id} value={preset.id}>
+                {preset.name}
+                {disambiguator ? ` — ${disambiguator}` : ''}
+              </option>
+            )
+          })}
         </NativeSelect>
         {initialPresetMissing && (
           <p className="form-note" role="status">

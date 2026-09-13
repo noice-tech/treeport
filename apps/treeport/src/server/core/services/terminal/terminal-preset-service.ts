@@ -61,6 +61,7 @@ export class TerminalPresetService {
       const project = projectId
         ? yield* projectStore.getProject(projectId)
         : null
+      const worktreePath = worktree?.path ?? project?.mainWorktreePath ?? null
       if (project) {
         yield* Effect.sync(() => packages.syncProjects([project]))
       }
@@ -70,18 +71,18 @@ export class TerminalPresetService {
           [
             listTerminalPresets(),
             packages.terminalPresetDefinitions(projectId),
-            worktree && project
+            worktreePath && project
               ? Effect.tryPromise(() =>
-                  loadRepositoryTerminalPresets(project.id, worktree.path)
+                  loadRepositoryTerminalPresets(project.id, worktreePath)
                 ).pipe(Effect.orDie)
               : Effect.succeed({ definitions: [], diagnostics: [] }),
-            worktree && project?.kind === 'repository'
+            worktreePath && project?.kind === 'repository'
               ? zed
                   .loadTerminalPresetDefinitions({
                     projectId: project.id,
                     shell: config.shell,
                     mainWorktreePath: project.mainWorktreePath,
-                    worktreePath: worktree.path
+                    worktreePath
                   })
                   .pipe(Effect.orDie)
               : Effect.succeed({ definitions: [], diagnostics: [] })
