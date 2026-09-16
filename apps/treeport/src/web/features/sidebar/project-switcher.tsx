@@ -404,7 +404,7 @@ export function ProjectSwitcher({
               <div className="flex items-center justify-between gap-2 px-2 py-1.5 min-[701px]:px-1.5 min-[701px]:py-1">
                 <h3
                   id="recent-projects-switcher-title"
-                  className="text-sm font-medium text-balance text-zinc-500 min-[701px]:text-xs"
+                  className="text-sm font-medium text-balance text-zinc-500 select-none min-[701px]:text-xs"
                 >
                   Recent projects
                 </h3>
