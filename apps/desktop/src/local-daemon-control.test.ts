@@ -115,35 +115,47 @@ describe('local daemon control inspection', () => {
     })
   })
 
-  it('runs the exact verified CLI without inherited Treeport targeting', async () => {
-    const value = await fixture()
-    const cli = path.join(path.dirname(value.recordPath), 'treeport.mjs')
-    const capture = path.join(path.dirname(value.recordPath), 'capture.json')
-    await fs.writeFile(
-      cli,
-      `import fs from 'node:fs'; fs.writeFileSync(process.env.CAPTURE_PATH, JSON.stringify({ args: process.argv.slice(2), apiUrl: process.env.TREEPORT_API_URL, host: process.env.TREEPORT_HOST, port: process.env.TREEPORT_PORT, dataDir: process.env.TREEPORT_DATA_DIR, projectId: process.env.TREEPORT_PROJECT_ID }));`,
-      { mode: 0o700 }
-    )
-    const association = {
-      ...value.association,
-      cliEntrypoint: cli
-    }
-    vi.stubEnv('CAPTURE_PATH', capture)
-    vi.stubEnv('TREEPORT_PROJECT_ID', 'wrong-project')
-    vi.stubEnv('TREEPORT_API_URL', 'http://127.0.0.1:9999')
+  it.each(['npm', 'managed'] as const)(
+    'runs the exact verified %s CLI without inherited Treeport targeting',
+    async (installation) => {
+      const value = await fixture()
+      const cli = path.join(path.dirname(value.recordPath), 'treeport.mjs')
+      const capture = path.join(path.dirname(value.recordPath), 'capture.json')
+      await fs.writeFile(
+        cli,
+        `#!/usr/bin/env node\nimport fs from 'node:fs'; fs.writeFileSync(process.env.CAPTURE_PATH, JSON.stringify({ args: process.argv.slice(2), apiUrl: process.env.TREEPORT_API_URL, host: process.env.TREEPORT_HOST, port: process.env.TREEPORT_PORT, dataDir: process.env.TREEPORT_DATA_DIR, projectId: process.env.TREEPORT_PROJECT_ID }));`,
+        { mode: 0o700 }
+      )
+      const launcher = path.join(path.dirname(value.recordPath), 'treeport')
+      await fs.writeFile(
+        launcher,
+        `#!/bin/sh\nset -eu\nexec "$TEST_NODE" "$TEST_CLI" "$@"\n`,
+        { mode: 0o700 }
+      )
+      const association = {
+        ...value.association,
+        cliEntrypoint: installation === 'managed' ? launcher : cli
+      }
+      vi.stubEnv('PATH', '/usr/bin:/bin')
+      vi.stubEnv('TEST_NODE', process.execPath)
+      vi.stubEnv('TEST_CLI', cli)
+      vi.stubEnv('CAPTURE_PATH', capture)
+      vi.stubEnv('TREEPORT_PROJECT_ID', 'wrong-project')
+      vi.stubEnv('TREEPORT_API_URL', 'http://127.0.0.1:9999')
 
-    expect(await runLocalDaemonCommand(association, 'start')).toEqual({
-      ok: true,
-      error: null
-    })
-    expect(JSON.parse(await fs.readFile(capture, 'utf8'))).toEqual({
-      args: ['start', '--json'],
-      apiUrl: origin,
-      host: '127.0.0.1',
-      port: '8733',
-      dataDir: association.dataDir
-    })
-  })
+      expect(await runLocalDaemonCommand(association, 'start')).toEqual({
+        ok: true,
+        error: null
+      })
+      expect(JSON.parse(await fs.readFile(capture, 'utf8'))).toEqual({
+        args: ['start', '--json'],
+        apiUrl: origin,
+        host: '127.0.0.1',
+        port: '8733',
+        dataDir: association.dataDir
+      })
+    }
+  )
 
   it('never grants local capabilities to remote or external daemons', async () => {
     const remote = await inspectLocalDaemonControl({

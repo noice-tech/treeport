@@ -115,7 +115,7 @@ export function ComputerDetailsDialog({
           : null,
         inventoryError:
           next.inventoryError ??
-          (preserveInventory && previous.inventory
+          (preserveInventory && !next.inventory && previous.inventory
             ? 'Open project inventory may be stale.'
             : null)
       }

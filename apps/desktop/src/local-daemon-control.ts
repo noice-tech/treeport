@@ -140,6 +140,10 @@ export async function runLocalDaemonCommand(
   )
   const listener = new URL(association.origin)
   Object.assign(environment, {
+    // npm entrypoints use /usr/bin/env node; desktop PATH may omit Node.
+    PATH: [path.dirname(association.runtimeExecutable), environment.PATH]
+      .filter(Boolean)
+      .join(path.delimiter),
     TREEPORT_API_URL: association.origin,
     TREEPORT_HOST: listener.hostname.replace(/^\[|\]$/gu, ''),
     TREEPORT_PORT: listener.port,
@@ -152,14 +156,10 @@ export async function runLocalDaemonCommand(
   })
 
   return new Promise<{ ok: boolean; error: string | null }>((resolve) => {
-    const child = spawn(
-      association.runtimeExecutable,
-      [association.cliEntrypoint, action, '--json'],
-      {
-        env: environment,
-        stdio: ['ignore', 'pipe', 'pipe']
-      }
-    )
+    const child = spawn(association.cliEntrypoint, [action, '--json'], {
+      env: environment,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
     let output = ''
     let settled = false
     let timeout: ReturnType<typeof setTimeout> | null = null
