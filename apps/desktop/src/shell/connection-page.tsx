@@ -31,6 +31,61 @@ function Origin({ children }: { children: string }) {
   )
 }
 
+function LocalDaemonStart({ computerId }: { computerId: string }) {
+  const [canStart, setCanStart] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void window.treeportShell.inspectComputer(computerId).then(
+      (details) => {
+        if (active) {
+          setCanStart(details?.localControl.canStart ?? false)
+        }
+      },
+      () => {
+        if (active) {
+          setError('Could not verify the local Treeport installation.')
+        }
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [computerId])
+
+  return (
+    <>
+      {canStart ? (
+        <Button
+          variant="default"
+          disabled={starting}
+          onClick={async () => {
+            setStarting(true)
+            setError(null)
+            const result = await window.treeportShell
+              .controlComputer(computerId, 'start')
+              .catch(() => ({ ok: false, error: 'Could not start Treeport.' }))
+            setStarting(false)
+            if (!result.ok) {
+              setError(result.error ?? 'Could not start Treeport.')
+            }
+          }}
+        >
+          {starting ? 'Starting…' : 'Start Treeport'}
+        </Button>
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
+      <p className="text-sm text-zinc-400">
+        {canStart
+          ? 'Or copy this command and paste it into your terminal:'
+          : 'Copy this command and paste it into your terminal:'}
+      </p>
+    </>
+  )
+}
+
 export function ConnectionPage({
   onConnect,
   onManage,
@@ -90,7 +145,7 @@ export function ConnectionPage({
           <ConnectionHeading
             description={
               computer?.loopback
-                ? 'Start Treeport. If an update failed, reinstall the same or a newer compatible release first.'
+                ? 'Start Treeport to reconnect to your workspace.'
                 : `${state.connection.message} Retrying automatically.`
             }
           >
@@ -101,6 +156,10 @@ export function ConnectionPage({
           <Origin>{computer?.origin ?? ''}</Origin>
           {computer?.loopback ? (
             <>
+              <LocalDaemonStart
+                key={`${computer.id}:${computer.origin}`}
+                computerId={computer.id}
+              />
               <div className="flex w-full items-center justify-between gap-3 rounded-lg bg-zinc-900 py-1 pr-1 pl-3 ring-1 ring-white/10">
                 <code className="min-w-0 truncate font-mono text-sm text-cyan-200">
                   treeport start
@@ -126,7 +185,7 @@ export function ConnectionPage({
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button
-              variant="default"
+              variant="outline"
               onClick={() => window.treeportShell.retryConnection()}
             >
               Retry now
