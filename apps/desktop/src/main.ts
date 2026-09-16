@@ -27,13 +27,20 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Stream from 'effect/Stream'
 import { DesktopRuntime } from './desktop-runtime'
-import { checkHealth, watchBackendHealth } from './backend-connection'
+import {
+  checkHealth,
+  inspectOpenProjectInventory,
+  watchBackendHealth
+} from './backend-connection'
 import { ComputerStore } from './computer-store'
 import { MINIMUM_SUPPORTED_BACKEND_VERSION } from './desktop-contract'
 import type {
+  ComputerDetails,
   ComputerMutationResult,
   ComputerUpdate,
   ConnectionState,
+  LocalControlAction,
+  LocalControlOperationResult,
   DesktopBrowserToolbarCommand,
   DesktopCommand,
   DesktopNavigationDirection,
@@ -49,6 +56,10 @@ import {
   localSourcePathSchema,
   resolveLocalSourcePath
 } from './local-source-path'
+import {
+  inspectLocalDaemonControl,
+  runLocalDaemonCommand
+} from './local-daemon-control'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 import { createRendererRequestHandler } from './renderer-request-handler'
 import { loadRenderer } from './renderer-load'
@@ -100,6 +111,32 @@ if (!parsedMinimumSupportedBackendRelease) {
 
 const minimumSupportedBackendRelease: ReleaseVersion =
   parsedMinimumSupportedBackendRelease
+
+function backendCompatibility(
+  serverVersion: string | null
+): Exclude<ComputerDetails['compatibility'], null> {
+  if (!desktopReleaseVersion) {
+    return 'compatible'
+  }
+
+  const desktopRelease = parseReleaseVersion(desktopReleaseVersion)
+  const serverRelease = serverVersion
+    ? parseReleaseVersion(serverVersion)
+    : null
+  if (!desktopRelease || !serverRelease) {
+    return 'unknown-version'
+  }
+
+  if (
+    compareReleaseVersions(serverRelease, minimumSupportedBackendRelease) < 0
+  ) {
+    return 'backend-outdated'
+  }
+
+  return compareReleaseVersions(serverRelease, desktopRelease) > 0
+    ? 'desktop-outdated'
+    : 'compatible'
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -158,6 +195,7 @@ let updateError: string | null = null
 let installUpdateOnQuit = false
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 const workspaceTargets = Effect.unsafeMakeSemaphore(1)
+const localControlOperations = Effect.unsafeMakeSemaphore(1)
 let terminalSelectionActive = false
 let browserWebviews: BrowserWebviewPolicy | null = null
 
@@ -602,32 +640,16 @@ function connectSelected(
           }
 
           const serverVersion = health.version
-          if (desktopReleaseVersion) {
-            const desktopRelease = parseReleaseVersion(desktopReleaseVersion)
-            const serverRelease = serverVersion
-              ? parseReleaseVersion(serverVersion)
-              : null
-            const reason =
-              !desktopRelease || !serverRelease
-                ? 'unknown-version'
-                : compareReleaseVersions(
-                      serverRelease,
-                      minimumSupportedBackendRelease
-                    ) < 0
-                  ? 'backend-outdated'
-                  : compareReleaseVersions(serverRelease, desktopRelease) > 0
-                    ? 'desktop-outdated'
-                    : null
-            if (reason) {
-              connection = {
-                status: 'incompatible',
-                computerId: computer.id,
-                serverVersion,
-                reason
-              }
-              broadcastState()
-              return
+          const compatibility = backendCompatibility(serverVersion ?? null)
+          if (compatibility !== 'compatible') {
+            connection = {
+              status: 'incompatible',
+              computerId: computer.id,
+              serverVersion,
+              reason: compatibility
             }
+            broadcastState()
+            return
           }
 
           connection = {
@@ -1010,10 +1032,259 @@ function mutationError(cause: unknown): ComputerMutationResult {
   }
 }
 
+function inspectComputerDetails(computerId: string) {
+  return Effect.gen(function* () {
+    const computer = store?.getComputer(computerId)
+    if (!computer) {
+      return null
+    }
+
+    const attemptedAt = new Date().toISOString()
+    const health = yield* checkHealth(computer.origin)
+    const localControl = yield* Effect.promise(() =>
+      inspectLocalDaemonControl({
+        origin: computer.origin,
+        health,
+        remembered: computer.localControl ?? null
+      })
+    ).pipe(Effect.orDie)
+    if (store) {
+      if (localControl.association) {
+        yield* store.rememberLocalControl(computerId, localControl.association)
+      } else {
+        yield* store.forgetLocalControl(computerId)
+      }
+    }
+
+    if (!health) {
+      return {
+        computerId,
+        origin: computer.origin,
+        attemptedAt,
+        health: null,
+        healthError: `Could not reach ${computer.origin}.`,
+        compatibility: null,
+        inventory: null,
+        inventoryError: null,
+        localControl: localControl.details
+      }
+    }
+
+    const fetchedAt = new Date().toISOString()
+    const compatibility = backendCompatibility(health.version ?? null)
+    const inventory =
+      compatibility === 'compatible'
+        ? yield* inspectOpenProjectInventory(computer.origin)
+        : null
+    return {
+      computerId,
+      origin: computer.origin,
+      attemptedAt,
+      health: {
+        version: health.version ?? null,
+        hostname: health.hostname ?? null,
+        pid: health.pid ?? null,
+        instanceId: health.instanceId ?? null,
+        installationMethod: health.installationMethod ?? null,
+        daemonLifecycle: health.daemonLifecycle ?? null,
+        url: health.url ?? null,
+        fetchedAt
+      },
+      healthError: null,
+      compatibility,
+      inventory,
+      inventoryError:
+        compatibility === 'compatible' && !inventory
+          ? 'Could not load open projects.'
+          : null,
+      localControl: localControl.details
+    }
+  })
+}
+
+function performLocalControl(
+  computerId: string,
+  action: LocalControlAction
+): Effect.Effect<LocalControlOperationResult> {
+  return localControlOperations.withPermits(1)(
+    Effect.gen(function* () {
+      const computer = store?.getComputer(computerId)
+      const association = computer?.localControl
+      if (!computer || !association || association.origin !== computer.origin) {
+        return {
+          action,
+          ok: false,
+          error: 'This local Treeport installation has not been verified.'
+        }
+      }
+
+      const health = yield* checkHealth(computer.origin)
+      const before = yield* Effect.promise(() =>
+        inspectLocalDaemonControl({
+          origin: computer.origin,
+          health,
+          remembered: association
+        })
+      ).pipe(Effect.orDie)
+      const allowed =
+        action === 'start'
+          ? before.details.canStart
+          : action === 'stop'
+            ? before.details.canStop
+            : before.details.canRestart
+      const verifiedAssociation = before.association
+      if (!allowed || !verifiedAssociation) {
+        return {
+          action,
+          ok: false,
+          error:
+            before.details.reason ??
+            `Treeport cannot ${action} in its current state.`
+        }
+      }
+
+      const run = (command: 'start' | 'stop') =>
+        Effect.promise(() =>
+          runLocalDaemonCommand(verifiedAssociation, command)
+        ).pipe(Effect.orDie)
+      let command =
+        action === 'restart' ? yield* run('stop') : yield* run(action)
+      if (action === 'restart' && command.ok) {
+        command = yield* run('start')
+      }
+
+      if (!command.ok) {
+        return { action, ok: false, error: command.error }
+      }
+
+      const observed = yield* checkHealth(computer.origin)
+      const after = yield* Effect.promise(() =>
+        inspectLocalDaemonControl({
+          origin: computer.origin,
+          health: observed,
+          remembered: association
+        })
+      ).pipe(Effect.orDie)
+      const expected = action === 'stop' ? 'stopped' : 'running'
+      if (after.details.state !== expected) {
+        return {
+          action,
+          ok: false,
+          error:
+            after.details.reason ??
+            `Treeport ${action} completed, but the ${expected} state could not be verified.`
+        }
+      }
+
+      return { action, ok: true, error: null }
+    })
+  )
+}
+
+function computerDiagnostics(details: ComputerDetails): string {
+  const lines = [
+    'Treeport computer details',
+    `URL: ${details.origin}`,
+    `Reachability: ${details.health ? 'reachable' : 'unavailable'}`,
+    `Compatibility: ${details.compatibility ?? 'unknown'}`,
+    `Local control: ${details.localControl.state}`
+  ]
+
+  if (details.health) {
+    lines.push(
+      `Version: ${details.health.version ?? 'unknown'}`,
+      `Hostname: ${details.health.hostname ?? 'unknown'}`,
+      `PID: ${details.health.pid ?? 'unknown'}`,
+      `Lifecycle: ${details.health.daemonLifecycle ?? 'unknown'}`,
+      `Installation: ${details.health.installationMethod ?? 'unknown'}`,
+      `Instance: ${details.health.instanceId ?? 'unknown'}`
+    )
+  }
+
+  if (details.inventory) {
+    lines.push(
+      `Open workspace: ${details.inventory.projects.length} projects, ${details.inventory.worktrees} trees, ${details.inventory.terminals} terminals`
+    )
+  }
+
+  if (details.healthError) {
+    lines.push(`Health error: ${details.healthError}`)
+  }
+
+  if (details.inventoryError) {
+    lines.push(`Inventory error: ${details.inventoryError}`)
+  }
+
+  return lines.join('\n')
+}
+
 function registerIpc(): void {
   ipcMain.handle('shell:get-state', (event) =>
     isTrustedRendererEvent(event) ? shellState() : null
   )
+  ipcMain.handle('shell:inspect-computer', (event, id) => {
+    const parsedId = z.string().safeParse(id)
+    return isTrustedRendererEvent(event) && parsedId.success
+      ? desktopRuntime.run(inspectComputerDetails(parsedId.data))
+      : null
+  })
+  ipcMain.handle('shell:control-computer', (event, id, requestedAction) => {
+    const parsedId = z.string().safeParse(id)
+    const parsedAction = z
+      .enum(['start', 'stop', 'restart'])
+      .safeParse(requestedAction)
+    if (
+      !isTrustedRendererEvent(event) ||
+      !parsedId.success ||
+      !parsedAction.success
+    ) {
+      return {
+        action: parsedAction.success ? parsedAction.data : 'restart',
+        ok: false,
+        error: 'Invalid local control request.'
+      } satisfies LocalControlOperationResult
+    }
+
+    return desktopRuntime.run(
+      performLocalControl(parsedId.data, parsedAction.data).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (!result.ok || store?.selectedComputer?.id !== parsedId.data) {
+              return
+            }
+
+            if (result.action === 'stop') {
+              connectSelected({
+                unavailableImmediately: true,
+                unavailableMessage: 'Treeport was stopped from the desktop app.'
+              })
+            } else {
+              connectSelected()
+            }
+          })
+        )
+      )
+    )
+  })
+  ipcMain.handle('shell:copy-computer-diagnostics', (event, id) => {
+    const parsedId = z.string().safeParse(id)
+    if (!isTrustedRendererEvent(event) || !parsedId.success) {
+      return false
+    }
+
+    return desktopRuntime.run(
+      inspectComputerDetails(parsedId.data).pipe(
+        Effect.map((details) => {
+          if (!details) {
+            return false
+          }
+
+          clipboard.writeText(computerDiagnostics(details))
+          return true
+        })
+      )
+    )
+  })
   ipcMain.handle('shell:select-computer', (event, id) =>
     desktopRuntime.run(
       Effect.gen(function* () {

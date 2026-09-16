@@ -41,6 +41,9 @@ export interface DaemonRecord {
   version: string
   apiUrl: string
   dataDir: string
+  runtimeDir?: string | undefined
+  cliEntrypoint?: string | null | undefined
+  runtimeExecutable?: string | undefined
   startedAt: string
   installationMethod: string
   daemonLifecycle: 'treeport' | 'service' | 'external'
@@ -124,6 +127,9 @@ const daemonRecordSchema = z.strictObject({
   version: z.string(),
   apiUrl: z.string(),
   dataDir: z.string(),
+  runtimeDir: z.string().optional(),
+  cliEntrypoint: z.string().nullable().optional(),
+  runtimeExecutable: z.string().optional(),
   startedAt: z.string(),
   installationMethod: z.string(),
   daemonLifecycle: z.enum(['treeport', 'service', 'external'])

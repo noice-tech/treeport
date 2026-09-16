@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { DesktopRuntimeProvider } from '@treeport-web/desktop-runtime'
 import { TreeportRoot } from '@treeport-web/treeport-root'
+import { ComputerDetailsDialog } from './computer-details-dialog'
 import { ComputerSelector } from './computer-selector'
 import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
@@ -57,7 +58,9 @@ function Titlebar() {
 
 export function App() {
   const state = useShellState()
-  const [dialog, setDialog] = useState<'connect' | 'manage' | null>(null)
+  const [dialog, setDialog] = useState<'connect' | 'details' | 'manage' | null>(
+    null
+  )
   const [selectorOpen, setSelectorOpen] = useState(false)
   const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
 
@@ -68,7 +71,7 @@ export function App() {
       ),
     []
   )
-  const openDialog = (nextDialog: 'connect' | 'manage') => {
+  const openDialog = (nextDialog: 'connect' | 'details' | 'manage') => {
     setSelectorOpen(false)
     setDialog(nextDialog)
   }
@@ -157,12 +160,19 @@ export function App() {
             open={selectorOpen}
             onOpenChange={setSelectorOpen}
             onConnect={() => openDialog('connect')}
+            onDetails={() => openDialog('details')}
             onManage={() => openDialog('manage')}
           />
         </div>
       ) : null}
       {state && dialog === 'connect' ? (
         <ConnectDialog state={state} onClose={() => setDialog(null)} />
+      ) : null}
+      {state && computer && dialog === 'details' ? (
+        <ComputerDetailsDialog
+          computer={computer}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {state && dialog === 'manage' ? (
         <ManageComputersDialog

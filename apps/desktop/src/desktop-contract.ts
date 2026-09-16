@@ -113,3 +113,80 @@ export interface ComputerUpdate {
   origin: string
   nameOverride?: string
 }
+
+export interface ComputerProjectSummary {
+  id: string
+  name: string
+  kind: 'repository' | 'folder'
+  rootPath: string
+  availability: 'available' | 'unavailable'
+  worktrees: number
+  terminals: number
+}
+
+export interface ComputerInventory {
+  projects: ComputerProjectSummary[]
+  worktrees: number
+  terminals: number
+  fetchedAt: string
+}
+
+export interface ComputerHealthDetails {
+  version: string | null
+  hostname: string | null
+  pid: number | null
+  instanceId: string | null
+  installationMethod: string | null
+  daemonLifecycle: 'treeport' | 'service' | 'external' | null
+  url: string | null
+  fetchedAt: string
+}
+
+export interface LocalControlAssociation {
+  origin: string
+  dataDir: string
+  runtimeDir: string
+  recordPath: string
+  cliEntrypoint: string
+  runtimeExecutable: string
+  daemonLifecycle: 'treeport' | 'service'
+}
+
+export interface LocalControlDetails {
+  state:
+    | 'remote'
+    | 'external'
+    | 'unverified'
+    | 'running'
+    | 'stopped'
+    | 'unhealthy'
+  reason: string | null
+  canStart: boolean
+  canStop: boolean
+  canRestart: boolean
+}
+
+export type LocalControlAction = 'start' | 'stop' | 'restart'
+
+export interface LocalControlOperationResult {
+  action: LocalControlAction
+  ok: boolean
+  error: string | null
+}
+
+export interface ComputerDetails {
+  computerId: string
+  origin: string
+  attemptedAt: string
+  health: ComputerHealthDetails | null
+  healthError: string | null
+  compatibility:
+    | 'compatible'
+    | 'backend-outdated'
+    | 'desktop-outdated'
+    | 'unknown-version'
+    | null
+  inventory: ComputerInventory | null
+  inventoryError: string | null
+  localControl: LocalControlDetails
+}

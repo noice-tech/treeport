@@ -1,7 +1,9 @@
 import {
   decodeUnknownOrNull,
-  desktopHealthResponseSchema
+  desktopHealthResponseSchema,
+  projectsResponseSchema
 } from '@treeport/shared'
+import type { ComputerInventory } from './desktop-contract'
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
@@ -18,6 +20,54 @@ export const checkHealth = (origin: string) =>
       : null
   }).pipe(
     Effect.timeoutOption('1500 millis'),
+    Effect.map(Option.getOrNull),
+    Effect.catchAll(() => Effect.succeed(null))
+  )
+
+export const inspectOpenProjectInventory = (origin: string) =>
+  Effect.tryPromise(async (signal) => {
+    const response = await fetch(new URL('/api/projects', origin).toString(), {
+      redirect: 'error',
+      signal
+    })
+    if (!response.ok) {
+      return null
+    }
+
+    const decoded = decodeUnknownOrNull(
+      projectsResponseSchema,
+      await response.json()
+    )
+    if (!decoded) {
+      return null
+    }
+
+    const projects = decoded.projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      kind: project.kind,
+      rootPath: project.rootPath,
+      availability: project.availability.state,
+      worktrees: project.worktrees.length,
+      terminals: project.worktrees.reduce(
+        (count, worktree) => count + worktree.terminals.length,
+        0
+      )
+    }))
+    return {
+      projects,
+      worktrees: projects.reduce(
+        (count, project) => count + project.worktrees,
+        0
+      ),
+      terminals: projects.reduce(
+        (count, project) => count + project.terminals,
+        0
+      ),
+      fetchedAt: new Date().toISOString()
+    } satisfies ComputerInventory
+  }).pipe(
+    Effect.timeoutOption('3000 millis'),
     Effect.map(Option.getOrNull),
     Effect.catchAll(() => Effect.succeed(null))
   )

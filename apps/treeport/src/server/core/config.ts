@@ -18,6 +18,8 @@ export interface AppConfig {
   appVersion?: string
   instanceId?: string
   installationMethod?: string
+  cliEntrypoint?: string | null
+  runtimeExecutable?: string
   webDist?: string
   webDevelopment: boolean
 }
@@ -120,6 +122,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     instanceId: env.TREEPORT_INSTANCE_ID?.trim() || crypto.randomUUID(),
     installationMethod:
       env.TREEPORT_INSTALLATION_METHOD?.trim() || 'development',
+    cliEntrypoint: env.TREEPORT_CLI_ENTRYPOINT?.trim() || null,
+    runtimeExecutable: process.execPath,
     webDevelopment: env.TREEPORT_WEB_DEVELOPMENT?.trim() === '1'
   }
   if (env.TREEPORT_WEB_DIST?.trim()) {

@@ -11,6 +11,9 @@ interface DaemonRecord {
   version: string
   apiUrl: string
   dataDir: string
+  runtimeDir: string
+  cliEntrypoint: string | null
+  runtimeExecutable: string
   startedAt: string
   installationMethod: string
   daemonLifecycle: 'treeport' | 'service' | 'external'
@@ -47,6 +50,9 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
     version: config.appVersion ?? 'development',
     apiUrl: config.apiUrl,
     dataDir: config.dataDir,
+    runtimeDir: config.runtimeDir,
+    cliEntrypoint: config.cliEntrypoint ?? null,
+    runtimeExecutable: config.runtimeExecutable ?? process.execPath,
     startedAt: new Date().toISOString(),
     installationMethod: config.installationMethod ?? 'development',
     daemonLifecycle: config.daemonLifecycle

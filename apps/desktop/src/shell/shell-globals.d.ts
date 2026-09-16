@@ -1,8 +1,11 @@
 import type {
+  ComputerDetails,
   ComputerMutationResult,
   ComputerUpdate,
   DesktopNavigationDirection,
-  DesktopShellState
+  DesktopShellState,
+  LocalControlAction,
+  LocalControlOperationResult
 } from '../desktop-contract'
 
 declare global {
@@ -14,6 +17,12 @@ declare global {
         listener: (active: boolean) => void
       ) => () => void
       releaseTerminalSelection: () => void
+      inspectComputer: (id: string) => Promise<ComputerDetails | null>
+      copyComputerDiagnostics: (id: string) => Promise<boolean>
+      controlComputer: (
+        id: string,
+        action: LocalControlAction
+      ) => Promise<LocalControlOperationResult>
       selectComputer: (id: string) => Promise<boolean>
       addComputer: (origin: string) => Promise<ComputerMutationResult>
       updateComputer: (

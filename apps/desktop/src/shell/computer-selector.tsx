@@ -9,12 +9,14 @@ export function ComputerSelector({
   open,
   onOpenChange,
   onConnect,
+  onDetails,
   onManage
 }: {
   state: DesktopShellState
   open: boolean
   onOpenChange: (open: boolean) => void
   onConnect: () => void
+  onDetails: () => void
   onManage: () => void
 }) {
   const selected = selectedComputer(state)
@@ -81,6 +83,14 @@ export function ComputerSelector({
           </DropdownMenu.Group>
           <DropdownMenu.Separator className="h-px shrink-0 bg-white/8" />
           <DropdownMenu.Group>
+            {selected ? (
+              <DropdownMenu.Item
+                className="flex h-8 cursor-pointer items-center rounded-md px-2.5 text-sm text-zinc-400 outline-none data-[highlighted]:bg-white/6 data-[highlighted]:text-zinc-100"
+                onSelect={onDetails}
+              >
+                Computer details…
+              </DropdownMenu.Item>
+            ) : null}
             <DropdownMenu.Item
               className="flex h-8 cursor-pointer items-center rounded-md px-2.5 text-sm text-zinc-400 outline-none data-[highlighted]:bg-white/6 data-[highlighted]:text-zinc-100"
               onSelect={onConnect}

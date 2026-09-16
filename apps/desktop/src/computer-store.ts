@@ -3,7 +3,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { z } from 'zod'
-import type { ComputerSummary, SavedComputer } from './desktop-contract'
+import type {
+  ComputerSummary,
+  LocalControlAssociation,
+  SavedComputer
+} from './desktop-contract'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 
 const desktopSettingsSchema = z.object({
@@ -16,15 +20,30 @@ const desktopSettingsSchema = z.object({
       nameOverride: z.string().optional(),
       advertisedHostname: z.string().optional(),
       createdAt: z.string(),
-      lastSelectedAt: z.string().optional()
+      lastSelectedAt: z.string().optional(),
+      localControl: z
+        .strictObject({
+          origin: z.string(),
+          dataDir: z.string(),
+          runtimeDir: z.string(),
+          recordPath: z.string(),
+          cliEntrypoint: z.string(),
+          runtimeExecutable: z.string(),
+          daemonLifecycle: z.enum(['treeport', 'service'])
+        })
+        .optional()
     })
   )
 })
 
+interface StoredComputer extends SavedComputer {
+  localControl?: LocalControlAssociation
+}
+
 interface DesktopSettings {
   version: 1
   selectedComputerId?: string
-  computers: SavedComputer[]
+  computers: StoredComputer[]
 }
 
 interface ComputerUpdateInput {
@@ -38,7 +57,7 @@ const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
     return null
   }
 
-  const computers: SavedComputer[] = []
+  const computers: StoredComputer[] = []
   const origins = new Set<string>()
   const ids = new Set<string>()
   for (const candidate of result.data.computers) {
@@ -54,7 +73,7 @@ const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
 
     origins.add(origin)
     ids.add(candidate.id)
-    const computer: SavedComputer = {
+    const computer: StoredComputer = {
       id: candidate.id,
       origin,
       createdAt: candidate.createdAt
@@ -69,6 +88,10 @@ const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
 
     if (candidate.lastSelectedAt) {
       computer.lastSelectedAt = candidate.lastSelectedAt
+    }
+
+    if (candidate.localControl?.origin === origin) {
+      computer.localControl = candidate.localControl
     }
 
     computers.push(computer)
@@ -225,7 +248,7 @@ export class ComputerStore {
     return this.getComputer(this.settings.selectedComputerId ?? '')
   }
 
-  getComputer(id: string): SavedComputer | undefined {
+  getComputer(id: string): StoredComputer | undefined {
     return this.settings.computers.find((computer) => computer.id === id)
   }
 
@@ -245,12 +268,29 @@ export class ComputerStore {
         )
         return recentDifference || left.createdAt.localeCompare(right.createdAt)
       })
-      .map((computer) => ({
-        ...computer,
-        name: computerName(computer),
-        selected: computer.id === selectedId,
-        loopback: isLoopbackUrl(new URL(computer.origin))
-      }))
+      .map((computer) => {
+        const summary: ComputerSummary = {
+          id: computer.id,
+          origin: computer.origin,
+          createdAt: computer.createdAt,
+          name: computerName(computer),
+          selected: computer.id === selectedId,
+          loopback: isLoopbackUrl(new URL(computer.origin))
+        }
+        if (computer.nameOverride) {
+          summary.nameOverride = computer.nameOverride
+        }
+
+        if (computer.advertisedHostname) {
+          summary.advertisedHostname = computer.advertisedHostname
+        }
+
+        if (computer.lastSelectedAt) {
+          summary.lastSelectedAt = computer.lastSelectedAt
+        }
+
+        return summary
+      })
   }
 
   findByOrigin(origin: string, exceptId?: string): SavedComputer | undefined {
@@ -321,9 +361,46 @@ export class ComputerStore {
 
       if (originChanged) {
         delete computer.advertisedHostname
+        delete computer.localControl
       }
 
       return { computer, originChanged }
+    })
+  }
+
+  rememberLocalControl(id: string, association: LocalControlAssociation) {
+    return Effect.suspend(() => {
+      const computer = this.getComputer(id)
+      if (
+        !computer ||
+        computer.origin !== association.origin ||
+        JSON.stringify(computer.localControl) === JSON.stringify(association)
+      ) {
+        return Effect.void
+      }
+
+      return this.mutate((draft) => {
+        const candidate = draft.computers.find((value) => value.id === id)
+        if (candidate?.origin === association.origin) {
+          candidate.localControl = association
+        }
+      })
+    })
+  }
+
+  forgetLocalControl(id: string) {
+    return Effect.suspend(() => {
+      const computer = this.getComputer(id)
+      if (!computer?.localControl) {
+        return Effect.void
+      }
+
+      return this.mutate((draft) => {
+        const candidate = draft.computers.find((value) => value.id === id)
+        if (candidate) {
+          delete candidate.localControl
+        }
+      })
     })
   }
 

@@ -14,6 +14,9 @@ const daemonRecordSchema = z.strictObject({
   version: z.string(),
   apiUrl: z.url(),
   dataDir: z.string().min(1),
+  runtimeDir: z.string().min(1),
+  cliEntrypoint: z.string().nullable(),
+  runtimeExecutable: z.string().min(1),
   startedAt: z.string(),
   installationMethod: z.literal('development'),
   daemonLifecycle: z.literal('external')

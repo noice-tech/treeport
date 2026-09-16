@@ -6,6 +6,7 @@ import {
 } from 'electron'
 import { z } from 'zod'
 import type {
+  ComputerDetails,
   ComputerMutationResult,
   ComputerUpdate,
   DesktopBrowserBridgeDescriptor,
@@ -16,7 +17,9 @@ import type {
   DesktopCommand,
   DesktopFileActionResult,
   DesktopNavigationDirection,
-  DesktopShellState
+  DesktopShellState,
+  LocalControlAction,
+  LocalControlOperationResult
 } from './desktop-contract'
 
 const localSourcePathResultSchema = z.string().nullable().catch(null)
@@ -257,6 +260,18 @@ const shellBridge = Object.freeze({
   },
   releaseTerminalSelection(): void {
     ipcRenderer.send('shell:terminal-selection-release')
+  },
+  inspectComputer(id: string): Promise<ComputerDetails | null> {
+    return ipcRenderer.invoke('shell:inspect-computer', id)
+  },
+  copyComputerDiagnostics(id: string): Promise<boolean> {
+    return ipcRenderer.invoke('shell:copy-computer-diagnostics', id)
+  },
+  controlComputer(
+    id: string,
+    action: LocalControlAction
+  ): Promise<LocalControlOperationResult> {
+    return ipcRenderer.invoke('shell:control-computer', id, action)
   },
   selectComputer(id: string): Promise<boolean> {
     return ipcRenderer.invoke('shell:select-computer', id)

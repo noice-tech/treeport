@@ -99,6 +99,38 @@ describe('desktop computer store', () => {
     expect(reopened.summaries()).toEqual([])
   })
 
+  it('persists verified local control privately and clears it when the origin changes', async () => {
+    const filePath = await settingsPath()
+    const store = await Effect.runPromise(
+      ComputerStore.load(filePath, 'http://127.0.0.1:8733')
+    )
+    const local = store.selectedComputer!
+    await Effect.runPromise(
+      store.rememberLocalControl(local.id, {
+        origin: local.origin,
+        dataDir: '/data',
+        runtimeDir: '/runtime',
+        recordPath: '/runtime/daemon.json',
+        cliEntrypoint: '/bin/treeport',
+        runtimeExecutable: '/bin/node',
+        daemonLifecycle: 'treeport'
+      })
+    )
+    expect(store.getComputer(local.id)?.localControl).toBeDefined()
+    expect(store.summaries()[0]).not.toHaveProperty('localControl')
+
+    const reopened = await Effect.runPromise(
+      ComputerStore.load(filePath, local.origin)
+    )
+    expect(reopened.getComputer(local.id)?.localControl).toBeDefined()
+    await Effect.runPromise(
+      reopened.update(local.id, {
+        origin: 'http://127.0.0.1:8734'
+      })
+    )
+    expect(reopened.getComputer(local.id)?.localControl).toBeUndefined()
+  })
+
   it('synchronizes a selected development server when its dynamic port changes', async () => {
     const filePath = await settingsPath()
     const store = await Effect.runPromise(
