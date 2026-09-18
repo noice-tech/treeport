@@ -305,9 +305,12 @@ function sendSignalToChild(child, signal) {
   }
 }
 
-async function waitForStackPort(appPort, appHost, childExit) {
+async function waitForStackPorts(ports, childExit) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    if (!(await portIsAvailable(appPort, appHost))) {
+    const portsAreClaimed = await Promise.all(
+      ports.map(({ port, host }) => portIsAvailable(port, host))
+    )
+    if (portsAreClaimed.every((available) => !available)) {
       return true
     }
 
@@ -345,6 +348,11 @@ export async function main() {
     appPort = await findAvailablePort(appPort + 1, mode.appHost)
   }
   const appUrl = urlFor(loopbackHost, appPort)
+  const desktopDebugPort = await findAvailablePort(
+    9222,
+    loopbackHost,
+    new Set([appPort])
+  )
   let tailscaleRemote = null
   if (mode.name === 'tailscale') {
     let leasePath = null
@@ -382,6 +390,7 @@ export async function main() {
     TREEPORT_API_URL: appUrl,
     TREEPORT_DAEMON_LIFECYCLE: 'external',
     TREEPORT_DESKTOP_URL: appUrl,
+    TREEPORT_DESKTOP_DEBUG_PORT: String(desktopDebugPort),
     TREEPORT_DESKTOP_USER_DATA: path.join(
       repositoryRoot,
       'apps/treeport/.treeport-dev/desktop'
@@ -393,6 +402,7 @@ export async function main() {
 
   console.log('\nTreeport development')
   console.log(`Local:     ${appUrl}`)
+  console.log(`Desktop:   CDP on ${loopbackHost}:${desktopDebugPort}`)
   if (tailscaleRemote) {
     console.log(`Tailscale: ${tailscaleRemote.url}`)
   }
@@ -443,11 +453,17 @@ export async function main() {
   process.on('SIGTERM', stopOnSigterm)
   process.on('SIGHUP', stopOnSighup)
 
-  const portsClaimed = await waitForStackPort(appPort, mode.appHost, childExit)
+  const portsClaimed = await waitForStackPorts(
+    [
+      { port: appPort, host: mode.appHost },
+      { port: desktopDebugPort, host: loopbackHost }
+    ],
+    childExit
+  )
   await releaseStartupLock()
   if (!portsClaimed && child.exitCode === null && child.signalCode === null) {
     console.warn(
-      'The development stack did not claim its port within 30 seconds.'
+      'The development stack did not claim its ports within 30 seconds.'
     )
   }
 

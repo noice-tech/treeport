@@ -8,19 +8,19 @@ if (process.platform === 'darwin') {
   await prepareDevelopmentApp()
 }
 
-if (!process.env.TREEPORT_DESKTOP_RENDERER_PORT?.trim()) {
-  process.env.TREEPORT_DESKTOP_RENDERER_PORT = String(
-    await new Promise((resolve, reject) => {
+async function allocatePort(host, excludedPorts = new Set()) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const port = await new Promise((resolve, reject) => {
       const server = net.createServer()
       server.unref()
       server.once('error', reject)
-      server.listen({ host: 'localhost', port: 0 }, () => {
+      server.listen({ host, port: 0 }, () => {
         const address = z
           .object({ port: z.number().int().positive() })
           .safeParse(server.address())
         if (!address.success) {
           server.close()
-          reject(new Error('Could not allocate the desktop renderer port.'))
+          reject(new Error(`Could not allocate a port on ${host}.`))
           return
         }
 
@@ -33,16 +33,47 @@ if (!process.env.TREEPORT_DESKTOP_RENDERER_PORT?.trim()) {
         })
       })
     })
+    if (!excludedPorts.has(port)) {
+      return port
+    }
+  }
+
+  throw new Error(`Could not allocate a unique port on ${host}.`)
+}
+
+if (!process.env.TREEPORT_DESKTOP_RENDERER_PORT?.trim()) {
+  process.env.TREEPORT_DESKTOP_RENDERER_PORT = String(
+    await allocatePort('localhost')
   )
 }
 
-// Opt-in local CDP access for profiling the development desktop with agent-browser.
-const debugPort = process.env.TREEPORT_DESKTOP_DEBUG_PORT?.trim()
-const args = debugPort
-  ? [
-      '--remote-debugging-address=127.0.0.1',
-      `--remote-debugging-port=${z.coerce.number().int().min(1).max(65535).parse(debugPort)}`
-    ]
-  : []
+if (!process.env.TREEPORT_DESKTOP_DEBUG_PORT?.trim()) {
+  process.env.TREEPORT_DESKTOP_DEBUG_PORT = String(
+    await allocatePort(
+      '127.0.0.1',
+      new Set([
+        z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(65535)
+          .parse(process.env.TREEPORT_DESKTOP_RENDERER_PORT)
+      ])
+    )
+  )
+}
 
-await api.start({ dir: process.cwd(), interactive: process.stdout.isTTY, args })
+const debugPort = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(65535)
+  .parse(process.env.TREEPORT_DESKTOP_DEBUG_PORT)
+await api.start({
+  dir: process.cwd(),
+  interactive: process.stdout.isTTY,
+  args: [
+    '--remote-debugging-address=127.0.0.1',
+    `--remote-debugging-port=${debugPort}`
+  ]
+})
