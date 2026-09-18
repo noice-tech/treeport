@@ -32,7 +32,7 @@ import {
   newBrowserCorrelationId,
   registerTerminalCorrelation
 } from '../../agent-tracing'
-import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
+import { useWorkspaceSurfaceFocus } from '../tabs/workspace-surface-focus-context'
 import { useProjectSwitcher } from '../sidebar/workspace-shell'
 
 export interface CreateTerminalInput {

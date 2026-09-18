@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { BrowserFrame, BrowserServerMessage } from '@treeport/shared'
 import {
-  connectBrowserPanel,
-  type BrowserPanelSocket
+  connectBrowserTab,
+  type BrowserTabSocket
 } from './browser-session-client'
 
 type SocketEvent = 'message' | 'frame' | 'disconnect' | 'connect_error'
 type SocketEventValue = BrowserFrame | BrowserServerMessage | Error | undefined
 
-class FakeSocket implements BrowserPanelSocket {
+class FakeSocket implements BrowserTabSocket {
   connected = true
   readonly emit = vi.fn()
   readonly disconnect = vi.fn()
@@ -74,8 +74,8 @@ it('connects the Browser workspace directly and preserves command and frame cont
   let socketCount = 0
   const messages: BrowserServerMessage[] = []
   const frames: BrowserFrame[] = []
-  const connection = connectBrowserPanel(
-    'panel-one',
+  const connection = connectBrowserTab(
+    'tab-one',
     true,
     {
       message: (message) => messages.push(message),
@@ -88,7 +88,7 @@ it('connects the Browser workspace directly and preserves command and frame cont
   connection.send({ type: 'navigate', url: 'https://example.com/' })
   await vi.waitFor(() => expect(socket.hasHandler('frame')).toBe(true))
   expect(fetch).toHaveBeenCalledWith(
-    '/api/panels/panel-one/browser-ticket',
+    '/api/tabs/tab-one/browser-ticket',
     expect.objectContaining({ method: 'POST' })
   )
   expect(

@@ -44,8 +44,7 @@ export class WorkspacePresenceManager {
     const viewer: WorkspacePresence = {
       ...input,
       focused: input.visible && input.focused,
-      focusedPanelId:
-        input.visible && input.focused ? input.focusedPanelId : null,
+      focusedTabId: input.visible && input.focused ? input.focusedTabId : null,
       identity
     }
     this.sessions.set(key, {

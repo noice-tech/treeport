@@ -7,9 +7,9 @@ Web panels are custom tools that belong to a tree. Use them for project interfac
 
 ## Open a panel
 
-Select a discovered web panel from **New panel** or the side panel's `+` menu.
+Select a discovered web panel from **New tab** or the side panel's `+` menu.
 
-Panels remain active when you switch terminals or hide the side panel.
+Tabs remain active when you switch terminals or hide the side panel.
 
 ## Add panels
 

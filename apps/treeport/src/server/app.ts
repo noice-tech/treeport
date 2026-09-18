@@ -23,20 +23,20 @@ import {
   browserOwnerTicketResponseSchema,
   browserTicketRequestSchema,
   browserTicketResponseSchema,
-  createBrowserPanelSchema,
+  createBrowserTabSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
   createWorktreeSchema,
   createWebPanelSchema,
-  deletePanelQuerySchema,
+  deleteTabQuerySchema,
   deleteTerminalPresetSchema,
   deleteWebPanelStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
   directoryBrowseResponseSchema,
   getWebPanelStorageSchema,
   healthResponseSchema,
-  openBrowserPanelFromTerminalSchema,
-  openBrowserPanelResponseSchema,
+  openBrowserTabFromTerminalSchema,
+  openBrowserTabResponseSchema,
   openWebPanelResponseSchema,
   openWebPanelSchema,
   operationQuerySchema,
@@ -385,7 +385,7 @@ export function createApp({
     const request = yield* serverRequest
     const pathname = new URL(request.url, 'http://treeport.local').pathname
     const marker = `/api/web-panels/${encodeURIComponent(
-      params.panelId!
+      params.tabId!
     )}/assets/`
     const markerStart = pathname.indexOf(marker)
     const requestedPath =
@@ -393,7 +393,7 @@ export function createApp({
         ? ''
         : decodeURI(pathname.slice(markerStart + marker.length))
     const resolution = yield* operation(() =>
-      service.panels.resolveWebPanelAsset(params.panelId!, requestedPath)
+      service.tabs.resolveWebPanelAsset(params.tabId!, requestedPath)
     )
     if (resolution.kind === 'redirect') {
       return HttpServerResponse.redirect(resolution.location, {
@@ -465,22 +465,22 @@ export function createApp({
             service.projects.getWorktreeSnapshot(body.worktreeId!)
           )
           if (
-            body.focusedPanelId !== null &&
-            !worktree.panels.some((panel) => panel.id === body.focusedPanelId)
+            body.focusedTabId !== null &&
+            !worktree.tabs.some((tab) => tab.id === body.focusedTabId)
           ) {
             return yield* Effect.fail(
               new DomainError(
                 'INVALID_PRESENCE_PANEL',
-                'The focused panel must belong to this tree',
+                'The focused tab must belong to this tree',
                 400
               )
             )
           }
-        } else if (body.focusedPanelId !== null) {
+        } else if (body.focusedTabId !== null) {
           return yield* Effect.fail(
             new DomainError(
               'INVALID_PRESENCE_PANEL',
-              'A focused panel requires a tree',
+              'A focused tab requires a tree',
               400
             )
           )
@@ -494,55 +494,53 @@ export function createApp({
     ),
     route(
       'GET',
-      '/api/panels/:panelId/files',
+      '/api/tabs/:tabId/files',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(
           treeFileListingSchema,
-          yield* operation(() =>
-            service.treeFiles.listTreeFiles(params.panelId!)
-          )
+          yield* operation(() => service.treeFiles.listTreeFiles(params.tabId!))
         )
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/files/search',
+      '/api/tabs/:tabId/files/search',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(searchTreeFilesSchema)
         return jsonContractResponse(
           treeFileSearchResultSchema,
           yield* operation(() =>
-            service.treeFiles.searchTreeFiles(params.panelId!, body.query)
+            service.treeFiles.searchTreeFiles(params.tabId!, body.query)
           )
         )
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/files/read',
+      '/api/tabs/:tabId/files/read',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(readTreeFileSchema)
         return jsonContractResponse(
           treeFileSchema,
           yield* operation(() =>
-            service.treeFiles.readTreeFile(params.panelId!, body.path)
+            service.treeFiles.readTreeFile(params.tabId!, body.path)
           )
         )
       })
     ),
     route(
       'PUT',
-      '/api/panels/:panelId/files',
+      '/api/tabs/:tabId/files',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(writeTreeFileSchema)
         return jsonContractResponse(
           treeFileWriteResultSchema,
           yield* operation(() =>
-            service.treeFiles.writeTreeFile(params.panelId!, body)
+            service.treeFiles.writeTreeFile(params.tabId!, body)
           )
         )
       })
@@ -594,7 +592,7 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(updateWebPanelPermissionGrantSchema)
         const definition = yield* operation(() =>
-          service.panels.setWebPanelPermissionGrant(
+          service.tabs.setWebPanelPermissionGrant(
             params.worktreeId!,
             params.definitionId!,
             body.granted,
@@ -608,7 +606,7 @@ export function createApp({
     ),
     route(
       'POST',
-      '/api/panels/:panelId/browser-agent',
+      '/api/tabs/:tabId/browser-agent',
       Effect.gen(function* () {
         if (!browserSessions) {
           return yield* Effect.fail(
@@ -623,7 +621,7 @@ export function createApp({
         const params = yield* routeParams
         const input = yield* requestBody(browserAgentCommandSchema)
         const output = yield* operation(() =>
-          browserSessions.agentCommand(params.panelId!, input)
+          browserSessions.agentCommand(params.tabId!, input)
         ).pipe(
           Effect.mapError((cause) =>
             cause instanceof DomainError
@@ -638,10 +636,10 @@ export function createApp({
                     command: input.command,
                     recovery:
                       input.command === 'snapshot'
-                        ? `Retry \`treeport browser snapshot --panel ${params.panelId}\`.`
+                        ? `Retry \`treeport browser snapshot --tab ${params.tabId}\`.`
                         : input.command === 'screenshot'
-                          ? `Open Browser ${params.panelId} in Treeport, then retry the screenshot.`
-                          : `Run \`treeport browser snapshot --panel ${params.panelId}\`, then retry this Browser command.`
+                          ? `Open Browser ${params.tabId} in Treeport, then retry the screenshot.`
+                          : `Run \`treeport browser snapshot --tab ${params.tabId}\`, then retry this Browser command.`
                   }
                 )
           )
@@ -651,7 +649,7 @@ export function createApp({
     ),
     route(
       'POST',
-      '/api/panels/:panelId/browser-owner-ticket',
+      '/api/tabs/:tabId/browser-owner-ticket',
       Effect.gen(function* () {
         if (!browserSessions) {
           return yield* Effect.fail(
@@ -685,14 +683,14 @@ export function createApp({
         return jsonContractResponse(
           browserOwnerTicketResponseSchema,
           yield* operation(() =>
-            browserSessions.issueOwnerTicket(params.panelId!, body.clientId)
+            browserSessions.issueOwnerTicket(params.tabId!, body.clientId)
           )
         )
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/browser-ticket',
+      '/api/tabs/:tabId/browser-ticket',
       Effect.gen(function* () {
         if (!browserSessions) {
           return yield* Effect.fail(
@@ -709,7 +707,7 @@ export function createApp({
         return jsonContractResponse(browserTicketResponseSchema, {
           ticket: yield* operation(() =>
             browserSessions.issueTicket(
-              params.panelId!,
+              params.tabId!,
               body.clientId,
               body.visible
             )
@@ -1172,26 +1170,26 @@ export function createApp({
     ),
     route(
       'PUT',
-      '/api/worktrees/:worktreeId/panels/order',
+      '/api/worktrees/:worktreeId/tabs/order',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(reorderWorkspaceItemsSchema)
         yield* operation(() =>
-          service.panels.reorderPanels(params.worktreeId!, body.itemIds)
+          service.tabs.reorderTabs(params.worktreeId!, body.itemIds)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
     route(
       'POST',
-      '/api/worktrees/:worktreeId/browser-panels',
+      '/api/worktrees/:worktreeId/browser-tabs',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(createBrowserPanelSchema)
+        const body = yield* requestBody(createBrowserTabSchema)
         return jsonContractResponse(
-          openBrowserPanelResponseSchema,
+          openBrowserTabResponseSchema,
           yield* operation(() =>
-            service.panels.openBrowserPanel(
+            service.tabs.openBrowserTab(
               params.worktreeId!,
               body.url,
               body.sourceTerminalId ?? null,
@@ -1204,15 +1202,15 @@ export function createApp({
     ),
     route(
       'POST',
-      '/api/terminals/:terminalId/browser-panels/open',
+      '/api/terminals/:terminalId/browser-tabs/open',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(openBrowserPanelFromTerminalSchema)
+        const body = yield* requestBody(openBrowserTabFromTerminalSchema)
         const request = yield* HttpServerRequest.HttpServerRequest
         return jsonContractResponse(
-          openBrowserPanelResponseSchema,
+          openBrowserTabResponseSchema,
           yield* operation(() =>
-            service.panels.openBrowserPanelFromTerminal(
+            service.tabs.openBrowserTabFromTerminal(
               params.terminalId!,
               body.url,
               request.headers['x-request-id'] ?? null
@@ -1229,29 +1227,29 @@ export function createApp({
         const params = yield* routeParams
         return jsonContractResponse(webPanelDefinitionsResponseSchema, {
           definitions: yield* operation(() =>
-            service.panels.listWebPanelDefinitions(params.worktreeId!)
+            service.tabs.listWebPanelDefinitions(params.worktreeId!)
           )
         })
       })
     ),
     route(
       'POST',
-      '/api/worktrees/:worktreeId/panels',
+      '/api/worktrees/:worktreeId/tabs',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(createWebPanelSchema)
-        const panel = yield* operation(() =>
-          service.panels.createWebPanel(params.worktreeId!, body.definitionId, {
+        const tab = yield* operation(() =>
+          service.tabs.createWebPanel(params.worktreeId!, body.definitionId, {
             input: body.input ?? null,
             cwd: body.launchCwd ?? null
           })
         )
-        return jsonContractResponse(webPanelResponseSchema, { panel }, 201)
+        return jsonContractResponse(webPanelResponseSchema, { tab }, 201)
       })
     ),
     route(
       'POST',
-      '/api/worktrees/:worktreeId/panels/open',
+      '/api/worktrees/:worktreeId/tabs/open',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(openWebPanelSchema)
@@ -1259,7 +1257,7 @@ export function createApp({
         return jsonContractResponse(
           openWebPanelResponseSchema,
           yield* operation(() =>
-            service.panels.openWebPanel(
+            service.tabs.openWebPanel(
               params.worktreeId!,
               body.definitionId,
               { input: body.input ?? null, cwd: body.launchCwd ?? null },
@@ -1273,20 +1271,20 @@ export function createApp({
     ),
     route(
       'DELETE',
-      '/api/panels/:panelId',
+      '/api/tabs/:tabId',
       Effect.gen(function* () {
         const params = yield* routeParams
         yield* Effect.annotateCurrentSpan({
-          'treeport.panel.id': params.panelId!
+          'treeport.tab.id': params.tabId!
         })
-        const query = yield* requestQuery(deletePanelQuerySchema)
+        const query = yield* requestQuery(deleteTabQuerySchema)
         const canClose = browserSessions
           ? yield* operation(() =>
               browserSessions.requestPanelClose(
-                params.panelId!,
+                params.tabId!,
                 query.force === 'true'
               )
-            ).pipe(Effect.withSpan('treeport.panel.remove.close_guard'))
+            ).pipe(Effect.withSpan('treeport.tab.remove.close_guard'))
           : undefined
         if (canClose === false) {
           return yield* Effect.fail(
@@ -1299,84 +1297,84 @@ export function createApp({
         }
 
         yield* operation(() =>
-          service.panels.deletePanel(
-            params.panelId!,
+          service.tabs.deleteTab(
+            params.tabId!,
             query.discardStoredData === 'true'
           )
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
-      }).pipe(Effect.withSpan('treeport.panel.remove.request'))
+      }).pipe(Effect.withSpan('treeport.tab.remove.request'))
     ),
     route(
       'GET',
-      '/api/panels/:panelId/context',
+      '/api/tabs/:tabId/context',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(webPanelContextResponseSchema, {
           context: yield* operation(() =>
-            service.panels.getWebPanelContext(params.panelId!)
+            service.tabs.getWebPanelContext(params.tabId!)
           )
         })
       })
     ),
     route(
       'GET',
-      '/api/panels/:panelId/diff',
+      '/api/tabs/:tabId/diff',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(gitDiffResponseSchema, {
           diff: yield* operation(() =>
-            service.panels.getWebPanelDiff(params.panelId!)
+            service.tabs.getWebPanelDiff(params.tabId!)
           )
         })
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/diff/image',
+      '/api/tabs/:tabId/diff/image',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(gitDiffImageRequestSchema)
         return jsonContractResponse(
           gitDiffImageSchema,
           yield* operation(() =>
-            service.panels.getWebPanelDiffImage(params.panelId!, body)
+            service.tabs.getWebPanelDiffImage(params.tabId!, body)
           )
         )
       })
     ),
     route(
       'GET',
-      '/api/panels/:panelId/network/listeners',
+      '/api/tabs/:tabId/network/listeners',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(listenerDiscoveryResponseSchema, {
           discovery: yield* operation(() =>
-            service.panels.getPanelListeners(params.panelId!)
+            service.tabs.getPanelListeners(params.tabId!)
           )
         })
       })
     ),
     route(
       'GET',
-      '/api/panels/:panelId/storage',
+      '/api/tabs/:tabId/storage',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(hasDataResponseSchema, {
           hasData: yield* operation(() =>
-            service.panels.hasWebPanelStorage(params.panelId!)
+            service.tabs.hasWebPanelStorage(params.tabId!)
           )
         })
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/storage/get',
+      '/api/tabs/:tabId/storage/get',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(getWebPanelStorageSchema)
         const value = yield* operation(() =>
-          service.panels.getWebPanelStorage(params.panelId!, body.key)
+          service.tabs.getWebPanelStorage(params.tabId!, body.key)
         )
         return jsonContractResponse(storageValueResponseSchema, {
           found: value !== undefined,
@@ -1386,34 +1384,30 @@ export function createApp({
     ),
     route(
       'PUT',
-      '/api/panels/:panelId/storage',
+      '/api/tabs/:tabId/storage',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(setWebPanelStorageSchema)
         yield* operation(() =>
-          service.panels.setWebPanelStorage(
-            params.panelId!,
-            body.key,
-            body.value
-          )
+          service.tabs.setWebPanelStorage(params.tabId!, body.key, body.value)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
     route(
       'DELETE',
-      '/api/panels/:panelId/storage',
+      '/api/tabs/:tabId/storage',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(deleteWebPanelStorageSchema)
         yield* operation(() =>
-          service.panels.deleteWebPanelStorage(params.panelId!, body.key)
+          service.tabs.deleteWebPanelStorage(params.tabId!, body.key)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
-    route('GET', '/api/web-panels/:panelId/assets', webPanelAsset),
-    route('GET', '/api/web-panels/:panelId/assets/*', webPanelAsset),
+    route('GET', '/api/web-panels/:tabId/assets', webPanelAsset),
+    route('GET', '/api/web-panels/:tabId/assets/*', webPanelAsset),
 
     route(
       'POST',

@@ -1,6 +1,6 @@
 import { decodeUnknownOrNull, webPanelInputSchema } from '@treeport/shared'
 import type {
-  BrowserPanel,
+  BrowserTab,
   ProjectRecord,
   RecentProjectRecord,
   WebPanel,
@@ -14,14 +14,14 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Schema from 'effect/Schema'
 import {
-  browserPanels,
+  browserTabs,
   projects,
   webPanels,
   workspaceItemOrders
 } from '../../database-schema'
 import { DomainError } from '../../domain'
 import {
-  PanelOperations,
+  TabOperations,
   ProjectObservationOperations,
   TerminalOperations
 } from '../domain-services'
@@ -172,7 +172,7 @@ export class ProjectSnapshotService {
       const database = yield* DatabasePort
       const git = yield* GitPort
       const observations = yield* ProjectObservationOperations
-      const panels = yield* PanelOperations
+      const tabs = yield* TabOperations
       const projectStore = yield* ProjectStore
       const terminalService = yield* TerminalOperations
       const storedProjects = yield* projectStore.storedProjects(true)
@@ -248,67 +248,67 @@ export class ProjectSnapshotService {
 
                   worktree.dirty = dirty
                   worktree.terminals = terminals
-                  const [
-                    storedBrowserPanels,
-                    storedWebPanels,
-                    storedToolOrder
-                  ] = yield* Effect.all(
-                    [
-                      database
-                        .execute('project.snapshot.service.255', (db) =>
-                          db
-                            .select()
-                            .from(browserPanels)
-                            .where(eq(browserPanels.worktreeId, worktree.id))
-                            .orderBy(
-                              asc(browserPanels.createdAt),
-                              asc(browserPanels.id)
-                            )
-                        )
-                        .pipe(Effect.orDie),
-                      database
-                        .execute('project.snapshot.service.265', (db) =>
-                          db
-                            .select()
-                            .from(webPanels)
-                            .where(eq(webPanels.worktreeId, worktree.id))
-                            .orderBy(
-                              asc(webPanels.createdAt),
-                              asc(webPanels.id)
-                            )
-                        )
-                        .pipe(Effect.orDie),
-                      database
-                        .execute('project.snapshot.service.272', (db) =>
-                          db
-                            .select()
-                            .from(workspaceItemOrders)
-                            .where(
-                              and(
-                                eq(workspaceItemOrders.worktreeId, worktree.id),
-                                eq(workspaceItemOrders.surface, 'tool')
+                  const [storedBrowserTabs, storedWebPanels, storedToolOrder] =
+                    yield* Effect.all(
+                      [
+                        database
+                          .execute('project.snapshot.service.255', (db) =>
+                            db
+                              .select()
+                              .from(browserTabs)
+                              .where(eq(browserTabs.worktreeId, worktree.id))
+                              .orderBy(
+                                asc(browserTabs.createdAt),
+                                asc(browserTabs.id)
                               )
-                            )
-                            .orderBy(asc(workspaceItemOrders.position))
-                        )
-                        .pipe(Effect.orDie)
-                    ],
-                    { concurrency: 'unbounded' }
-                  )
+                          )
+                          .pipe(Effect.orDie),
+                        database
+                          .execute('project.snapshot.service.265', (db) =>
+                            db
+                              .select()
+                              .from(webPanels)
+                              .where(eq(webPanels.worktreeId, worktree.id))
+                              .orderBy(
+                                asc(webPanels.createdAt),
+                                asc(webPanels.id)
+                              )
+                          )
+                          .pipe(Effect.orDie),
+                        database
+                          .execute('project.snapshot.service.272', (db) =>
+                            db
+                              .select()
+                              .from(workspaceItemOrders)
+                              .where(
+                                and(
+                                  eq(
+                                    workspaceItemOrders.worktreeId,
+                                    worktree.id
+                                  ),
+                                  eq(workspaceItemOrders.surface, 'tool')
+                                )
+                              )
+                              .orderBy(asc(workspaceItemOrders.position))
+                          )
+                          .pipe(Effect.orDie)
+                      ],
+                      { concurrency: 'unbounded' }
+                    )
                   const definitions =
                     project.availability.state === 'available' &&
                     storedWebPanels.length > 0
                       ? yield* Effect.catchAll(
-                          panels.listWebPanelDefinitions(worktree.id),
+                          tabs.listWebPanelDefinitions(worktree.id),
                           () => Effect.succeed([])
                         )
                       : []
                   const definitionsById = new Map(
                     definitions.map((definition) => [definition.id, definition])
                   )
-                  const panelSlots = [
+                  const tabSlots = [
                     ...terminals.map((terminal) => ({
-                      id: `panel_${terminal.id}`,
+                      id: `tab_${terminal.id}`,
                       kind: 'terminal' as const,
                       worktreeId: worktree.id,
                       terminalId: terminal.id,
@@ -316,11 +316,11 @@ export class ProjectSnapshotService {
                       createdAt: terminal.createdAt,
                       updatedAt: terminal.updatedAt
                     })),
-                    ...storedBrowserPanels.map(mapBrowserPanel),
-                    ...storedWebPanels.map((panel) => {
-                      const definition = definitionsById.get(panel.definitionId)
+                    ...storedBrowserTabs.map(mapBrowserTab),
+                    ...storedWebPanels.map((tab) => {
+                      const definition = definitionsById.get(tab.definitionId)
                       return mapWebPanel(
-                        panel,
+                        tab,
                         definition?.permissions ?? [],
                         definition?.permissionsGranted ?? false
                       )
@@ -333,8 +333,8 @@ export class ProjectSnapshotService {
                   const toolPositionById = new Map(
                     storedToolOrder.map((item) => [item.itemId, item.position])
                   )
-                  const orderedTools = panelSlots
-                    .filter((panel) => panel.kind !== 'terminal')
+                  const orderedTools = tabSlots
+                    .filter((tab) => tab.kind !== 'terminal')
                     .sort((left, right) => {
                       const leftPosition = toolPositionById.get(left.id)
                       const rightPosition = toolPositionById.get(right.id)
@@ -355,10 +355,8 @@ export class ProjectSnapshotService {
                       )
                     })
                   let toolIndex = 0
-                  worktree.panels = panelSlots.map((panel) =>
-                    panel.kind === 'terminal'
-                      ? panel
-                      : orderedTools[toolIndex++]!
+                  worktree.tabs = tabSlots.map((tab) =>
+                    tab.kind === 'terminal' ? tab : orderedTools[toolIndex++]!
                   )
                 })
               ),
@@ -376,7 +374,7 @@ export class ProjectSnapshotService {
   }
 }
 
-function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
+function mapBrowserTab(row: typeof browserTabs.$inferSelect): BrowserTab {
   return {
     id: row.id,
     kind: 'browser',

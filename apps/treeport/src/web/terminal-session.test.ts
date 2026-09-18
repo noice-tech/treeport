@@ -325,7 +325,7 @@ describe('terminal options', () => {
       url
     )
     expect(request).toHaveBeenCalledWith(
-      '/api/terminals/term_source/browser-panels/open',
+      '/api/terminals/term_source/browser-tabs/open',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ url })
@@ -365,7 +365,7 @@ describe('terminal options', () => {
       url
     )
     expect(request).toHaveBeenCalledWith(
-      '/api/terminals/term_source/browser-panels/open',
+      '/api/terminals/term_source/browser-tabs/open',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ url })

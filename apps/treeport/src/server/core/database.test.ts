@@ -14,7 +14,7 @@ import {
   type TreeportDatabase
 } from './database'
 import {
-  browserPanels,
+  browserTabs,
   operations,
   projects,
   terminalBellStates,
@@ -261,10 +261,8 @@ describe('SQLite migration and catalog ordering', () => {
     ])
   })
 
-  it('persists ordered WebPanel and BrowserPanel records with their worktree lifecycle', async () => {
-    const directory = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'treeport-panels-')
-    )
+  it('persists ordered WebPanel and BrowserTab records with their worktree lifecycle', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-tabs-'))
     directories.push(directory)
     const database = await openDatabaseForTest(
       path.join(directory, 'metadata.db')
@@ -272,9 +270,9 @@ describe('SQLite migration and catalog ordering', () => {
     databases.push(database)
     await database.db.insert(projects).values({
       id: 'p',
-      name: 'Panels',
-      repositoryPath: '/panels',
-      mainWorktreePath: '/panels',
+      name: 'Tabs',
+      repositoryPath: '/tabs',
+      mainWorktreePath: '/tabs',
       defaultBranch: 'main',
       repositoryDevice: '1',
       repositoryInode: '9',
@@ -285,7 +283,7 @@ describe('SQLite migration and catalog ordering', () => {
     await database.db.insert(worktrees).values({
       id: 'wt',
       projectId: 'p',
-      path: '/panels',
+      path: '/tabs',
       kind: 'main',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
@@ -303,7 +301,7 @@ describe('SQLite migration and catalog ordering', () => {
         updatedAt: createdAt
       })
     }
-    await database.db.insert(browserPanels).values({
+    await database.db.insert(browserTabs).values({
       id: 'browser',
       worktreeId: 'wt',
       title: 'Example',
@@ -313,9 +311,9 @@ describe('SQLite migration and catalog ordering', () => {
     })
     expect(
       await database.db
-        .select({ title: browserPanels.title, url: browserPanels.url })
-        .from(browserPanels)
-        .where(eq(browserPanels.worktreeId, 'wt'))
+        .select({ title: browserTabs.title, url: browserTabs.url })
+        .from(browserTabs)
+        .where(eq(browserTabs.worktreeId, 'wt'))
     ).toEqual([{ title: 'Example', url: 'https://example.com/' }])
     expect(
       (
@@ -324,17 +322,17 @@ describe('SQLite migration and catalog ordering', () => {
           .from(webPanels)
           .where(eq(webPanels.worktreeId, 'wt'))
           .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-      ).map((panel) => panel.id)
+      ).map((tab) => tab.id)
     ).toEqual(['earlier', 'later'])
 
     expect(
       await database.db
         .select()
         .from(webPanelStorage)
-        .where(eq(webPanelStorage.panelId, 'earlier'))
+        .where(eq(webPanelStorage.tabId, 'earlier'))
     ).toEqual([])
     await database.db.insert(webPanelStorage).values({
-      panelId: 'earlier',
+      tabId: 'earlier',
       key: 'comments',
       valueJson: '[{"line":12}]',
       updatedAt: '2026-02-03'
@@ -345,7 +343,7 @@ describe('SQLite migration and catalog ordering', () => {
         .from(webPanelStorage)
         .where(
           and(
-            eq(webPanelStorage.panelId, 'earlier'),
+            eq(webPanelStorage.tabId, 'earlier'),
             eq(webPanelStorage.key, 'comments')
           )
         )
@@ -354,26 +352,26 @@ describe('SQLite migration and catalog ordering', () => {
     await database.db
       .insert(webPanelStorage)
       .values({
-        panelId: 'earlier',
+        tabId: 'earlier',
         key: 'comments',
         valueJson: '[{"line":13}]',
         updatedAt: '2026-02-04'
       })
       .onConflictDoUpdate({
-        target: [webPanelStorage.panelId, webPanelStorage.key],
+        target: [webPanelStorage.tabId, webPanelStorage.key],
         set: { valueJson: '[{"line":13}]', updatedAt: '2026-02-04' }
       })
     expect(
       await database.db
         .select({ valueJson: webPanelStorage.valueJson })
         .from(webPanelStorage)
-        .where(eq(webPanelStorage.panelId, 'earlier'))
+        .where(eq(webPanelStorage.tabId, 'earlier'))
         .then(([row]) => row?.valueJson)
     ).toBe('[{"line":13}]')
 
     await database.db.delete(worktrees).where(eq(worktrees.id, 'wt'))
     expect(await database.db.select().from(webPanels)).toEqual([])
-    expect(await database.db.select().from(browserPanels)).toEqual([])
+    expect(await database.db.select().from(browserTabs)).toEqual([])
     expect(await database.db.select().from(webPanelStorage)).toEqual([])
   })
 
@@ -536,7 +534,7 @@ describe('SQLite migration and catalog ordering', () => {
         id,name,repository_path,main_worktree_path,default_branch,
         repository_device,repository_inode,last_opened_at,created_at,updated_at
       ) VALUES(
-        'p_panel','Panel project','/panel','/panel','main',
+        'p_panel','Tab project','/tab','/tab','main',
         '1','2','2026-01-01','2026-01-01','2026-01-01'
       )
     `)
@@ -544,7 +542,7 @@ describe('SQLite migration and catalog ordering', () => {
       INSERT INTO worktrees(
         id,project_id,path,kind,tmux_socket_name,created_at,updated_at
       ) VALUES(
-        'wt_panel','p_panel','/panel','main','panel-socket',
+        'wt_panel','p_panel','/tab','main','tab-socket',
         '2026-01-01','2026-01-01'
       )
     `)
@@ -553,13 +551,13 @@ describe('SQLite migration and catalog ordering', () => {
         id,worktree_id,definition_id,title,created_at,updated_at,
         input_json,launch_cwd
       ) VALUES(
-        'panel_existing','wt_panel','browser','Existing panel',
-        '2026-01-02','2026-01-03','{"url":"http://localhost:3000"}','/panel'
+        'tab_existing','wt_panel','browser','Existing tab',
+        '2026-01-02','2026-01-03','{"url":"http://localhost:3000"}','/tab'
       )
     `)
     await oldDatabase.db.run(sql`
       INSERT INTO web_panel_storage(panel_id,key,value_json,updated_at)
-      VALUES('panel_existing','state','{"ready":true}','2026-01-04')
+      VALUES('tab_existing','state','{"ready":true}','2026-01-04')
     `)
     oldDatabase.close()
 
@@ -569,15 +567,15 @@ describe('SQLite migration and catalog ordering', () => {
       await migrated.db
         .select()
         .from(webPanels)
-        .where(eq(webPanels.id, 'panel_existing'))
-        .then(([panel]) => panel)
+        .where(eq(webPanels.id, 'tab_existing'))
+        .then(([tab]) => tab)
     ).toEqual({
-      id: 'panel_existing',
+      id: 'tab_existing',
       worktreeId: 'wt_panel',
       definitionId: 'browser',
-      title: 'Existing panel',
+      title: 'Existing tab',
       inputJson: '{"url":"http://localhost:3000"}',
-      launchCwd: '/panel',
+      launchCwd: '/tab',
       createdAt: '2026-01-02',
       updatedAt: '2026-01-03'
     })
@@ -585,10 +583,10 @@ describe('SQLite migration and catalog ordering', () => {
       await migrated.db
         .select()
         .from(webPanelStorage)
-        .where(eq(webPanelStorage.panelId, 'panel_existing'))
+        .where(eq(webPanelStorage.tabId, 'tab_existing'))
         .then(([entry]) => entry)
     ).toEqual({
-      panelId: 'panel_existing',
+      tabId: 'tab_existing',
       key: 'state',
       valueJson: '{"ready":true}',
       updatedAt: '2026-01-04'
@@ -774,7 +772,7 @@ describe('SQLite migration and catalog ordering', () => {
     ).toEqual([{ id: 'worktree_cutover', path: '/cutover' }])
     expect(await migrated.db.select().from(terminalPresets)).toHaveLength(1)
     expect(await migrated.db.select().from(webPanels)).toHaveLength(1)
-    expect(await migrated.db.select().from(browserPanels)).toHaveLength(1)
+    expect(await migrated.db.select().from(browserTabs)).toHaveLength(1)
     expect(await migrated.db.select().from(terminalBellStates)).toHaveLength(1)
     expect(await migrated.db.select().from(operations)).toHaveLength(1)
     expect(

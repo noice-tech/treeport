@@ -119,9 +119,9 @@ export function makeRpcHttpApp(
             const terminalMetadataSnapshot = terminalMetadata.snapshot()
             const presenceSnapshot = presence.snapshot()
             const representedEventCount = queuedEvents.length
-            const [webPanels, browserPanels] = yield* Effect.all([
-              service.panels.listWebPanels(),
-              service.panels.listBrowserPanels()
+            const [webPanels, browserTabs] = yield* Effect.all([
+              service.tabs.listWebPanels(),
+              service.tabs.listBrowserTabs()
             ]).pipe(
               Effect.mapError(
                 (cause): ProjectEventsFailure => ({
@@ -129,7 +129,7 @@ export function makeRpcHttpApp(
                   message:
                     cause instanceof Error
                       ? cause.message
-                      : 'Panel snapshot failed'
+                      : 'Tab snapshot failed'
                 })
               )
             )
@@ -141,7 +141,7 @@ export function makeRpcHttpApp(
                 at: new Date().toISOString(),
                 terminalMetadata: terminalMetadataSnapshot,
                 webPanels,
-                browserPanels,
+                browserTabs,
                 presence: presenceSnapshot
               }
             })

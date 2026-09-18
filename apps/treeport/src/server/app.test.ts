@@ -290,7 +290,7 @@ function fixture(webDist = '/missing') {
         throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
       }
 
-      return { id, panels: [{ id: `${id}_panel` }] }
+      return { id, tabs: [{ id: `${id}_panel` }] }
     }),
     getWorktree: vi.fn(() => ({ id: 'wt_1' })),
     getWorktreeContext: vi.fn(() => ({ issue: 'TREE-123' })),
@@ -306,9 +306,9 @@ function fixture(webDist = '/missing') {
         sandbox: { allowSameOrigin: false }
       }
     ]),
-    openBrowserPanel: vi.fn(async (worktreeId: string, url?: string) => ({
-      panel: {
-        id: 'panel_browser',
+    openBrowserTab: vi.fn(async (worktreeId: string, url?: string) => ({
+      tab: {
+        id: 'tab_browser',
         kind: 'browser',
         worktreeId,
         title: url ? 'example.com' : 'Browser',
@@ -317,10 +317,10 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01'
       }
     })),
-    openBrowserPanelFromTerminal: vi.fn(
+    openBrowserTabFromTerminal: vi.fn(
       async (_terminalId: string, url: string) => ({
-        panel: {
-          id: 'panel_browser',
+        tab: {
+          id: 'tab_browser',
           kind: 'browser',
           worktreeId: 'wt_1',
           title: 'example.com',
@@ -330,9 +330,9 @@ function fixture(webDist = '/missing') {
         }
       })
     ),
-    openBrowserPanelFromPanel: vi.fn(async (_panelId: string, url: string) => ({
-      panel: {
-        id: 'panel_popup',
+    openBrowserTabFromPanel: vi.fn(async (_tabId: string, url: string) => ({
+      tab: {
+        id: 'tab_popup',
         kind: 'browser',
         worktreeId: 'wt_1',
         title: 'popup.example.com',
@@ -341,9 +341,9 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01'
       }
     })),
-    updateBrowserPanelState: vi.fn(
-      async (panelId: string, state: { url: string; title: string }) => ({
-        id: panelId,
+    updateBrowserTabState: vi.fn(
+      async (tabId: string, state: { url: string; title: string }) => ({
+        id: tabId,
         kind: 'browser',
         worktreeId: 'wt_1',
         ...state,
@@ -352,7 +352,7 @@ function fixture(webDist = '/missing') {
       })
     ),
     createWebPanel: vi.fn(async (worktreeId: string) => ({
-      id: 'panel_review',
+      id: 'tab_review',
       kind: 'web',
       worktreeId,
       definitionId: 'project:review',
@@ -364,8 +364,8 @@ function fixture(webDist = '/missing') {
       updatedAt: '2026-01-01'
     })),
     openWebPanel: vi.fn(async (worktreeId: string) => ({
-      panel: {
-        id: 'panel_review',
+      tab: {
+        id: 'tab_review',
         kind: 'web',
         worktreeId,
         definitionId: 'project:review',
@@ -382,11 +382,11 @@ function fixture(webDist = '/missing') {
       created: false,
       reused: true
     })),
-    deletePanel: vi.fn(async () => undefined),
+    deleteTab: vi.fn(async () => undefined),
     getWebPanelContext: vi.fn(async () => ({
       apiVersion: 1,
-      panel: {
-        id: 'panel_review',
+      tab: {
+        id: 'tab_review',
         kind: 'web',
         worktreeId: 'wt_1',
         definitionId: 'project:review',
@@ -416,7 +416,7 @@ function fixture(webDist = '/missing') {
       paths: ['src/app.ts'],
       truncated: false
     })),
-    readTreeFile: vi.fn(async (_panelId: string, filePath: string) => ({
+    readTreeFile: vi.fn(async (_tabId: string, filePath: string) => ({
       path: filePath,
       content: 'export const value = 1\n',
       revision: 'revision-1'
@@ -439,7 +439,7 @@ function fixture(webDist = '/missing') {
       ],
       truncated: false
     })),
-    writeTreeFile: vi.fn(async (_panelId: string, input: { path: string }) => ({
+    writeTreeFile: vi.fn(async (_tabId: string, input: { path: string }) => ({
       path: input.path,
       revision: 'revision-2'
     })),
@@ -482,10 +482,7 @@ function fixture(webDist = '/missing') {
     setWebPanelStorage: vi.fn(async () => undefined),
     deleteWebPanelStorage: vi.fn(async () => undefined),
     resolveWebPanelAsset: vi.fn<
-      (
-        panelId: string,
-        requestedPath: string
-      ) => Promise<WebPanelAssetResolution>
+      (tabId: string, requestedPath: string) => Promise<WebPanelAssetResolution>
     >(async () => ({
       kind: 'asset',
       path: '/missing',
@@ -529,7 +526,7 @@ function fixture(webDist = '/missing') {
     worktrees: serviceMethods,
     terminals: serviceMethods,
     terminalPresets: serviceMethods,
-    panels: serviceMethods,
+    tabs: serviceMethods,
     treeFiles: serviceMethods,
     packageManagement: serviceMethods
   })
@@ -659,7 +656,7 @@ describe('HTTP API validation', () => {
     const input = {
       sessionId: crypto.randomUUID(),
       worktreeId: 'wt_1',
-      focusedPanelId: 'wt_1_panel',
+      focusedTabId: 'wt_1_panel',
       visible: true,
       focused: true
     }
@@ -701,7 +698,7 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({
         ...input,
         worktreeId: 'wt_2',
-        focusedPanelId: 'wt_2_panel'
+        focusedTabId: 'wt_2_panel'
       })
     })
     expect(presence.snapshot().map((viewer) => viewer.worktreeId)).toEqual([
@@ -716,12 +713,12 @@ describe('HTTP API validation', () => {
     expect(presence.snapshot()[0]).toMatchObject({
       visible: false,
       focused: false,
-      focusedPanelId: null
+      focusedTabId: null
     })
 
     for (const [body, status] of [
       [{ ...input, identity: { name: 'Mallory' } }, 400],
-      [{ ...input, focusedPanelId: 'wt_2_panel' }, 400],
+      [{ ...input, focusedTabId: 'wt_2_panel' }, 400],
       [{ ...input, worktreeId: null }, 400],
       [{ ...input, worktreeId: 'missing' }, 404],
       [{ ...input, sessionId: 'not-a-session' }, 400]
@@ -754,7 +751,7 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({
         ...input,
         worktreeId: null,
-        focusedPanelId: null
+        focusedTabId: null
       })
     })
     expect(presence.snapshot().map((viewer) => viewer.identity.name)).toEqual([
@@ -842,7 +839,7 @@ describe('HTTP API validation', () => {
 
   it('routes persistent Browser and web-panel lifecycle with scoped runtime reads', async () => {
     const { app, browserAgentCommand, service } = fixture()
-    const browser = await app.request('/api/worktrees/wt_1/browser-panels', {
+    const browser = await app.request('/api/worktrees/wt_1/browser-tabs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -852,9 +849,9 @@ describe('HTTP API validation', () => {
     })
     expect(browser.status).toBe(201)
     expect(await browser.json()).toMatchObject({
-      panel: { kind: 'browser', worktreeId: 'wt_1' }
+      tab: { kind: 'browser', worktreeId: 'wt_1' }
     })
-    expect(service.openBrowserPanel).toHaveBeenCalledWith(
+    expect(service.openBrowserTab).toHaveBeenCalledWith(
       'wt_1',
       'https://example.com/application',
       'term_1',
@@ -862,7 +859,7 @@ describe('HTTP API validation', () => {
     )
 
     const terminalBrowser = await app.request(
-      '/api/terminals/term_1/browser-panels/open',
+      '/api/terminals/term_1/browser-tabs/open',
       {
         method: 'POST',
         headers: {
@@ -873,7 +870,7 @@ describe('HTTP API validation', () => {
       }
     )
     expect(terminalBrowser.status).toBe(201)
-    expect(service.openBrowserPanelFromTerminal).toHaveBeenCalledWith(
+    expect(service.openBrowserTabFromTerminal).toHaveBeenCalledWith(
       'term_1',
       'http://localhost:4173/',
       'link-click-1'
@@ -881,7 +878,7 @@ describe('HTTP API validation', () => {
 
     expect(
       (
-        await app.request('/api/panels/panel_browser/browser-state', {
+        await app.request('/api/tabs/tab_browser/browser-state', {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -893,7 +890,7 @@ describe('HTTP API validation', () => {
     ).toBe(404)
     expect(
       (
-        await app.request('/api/panels/panel_browser/browser-popups', {
+        await app.request('/api/tabs/tab_browser/browser-popups', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ url: 'https://popup.example.com/' })
@@ -907,7 +904,7 @@ describe('HTTP API validation', () => {
     ]) {
       expect(
         (
-          await app.request('/api/worktrees/wt_1/browser-panels', {
+          await app.request('/api/worktrees/wt_1/browser-tabs', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ url })
@@ -915,28 +912,25 @@ describe('HTTP API validation', () => {
         ).status
       ).toBe(400)
     }
-    expect(service.openBrowserPanel).toHaveBeenCalledOnce()
+    expect(service.openBrowserTab).toHaveBeenCalledOnce()
 
-    const snapshot = await app.request(
-      '/api/panels/panel_browser/browser-agent',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ command: 'snapshot', args: [] })
-      }
-    )
+    const snapshot = await app.request('/api/tabs/tab_browser/browser-agent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: 'snapshot', args: [] })
+    })
     expect(snapshot.status).toBe(200)
     expect(await snapshot.json()).toEqual({ output: 'browser output' })
-    expect(browserAgentCommand).toHaveBeenCalledWith('panel_browser', {
+    expect(browserAgentCommand).toHaveBeenCalledWith('tab_browser', {
       command: 'snapshot',
       args: []
     })
 
     browserAgentCommand.mockRejectedValueOnce(
-      new Error('The Browser panel is not visible.')
+      new Error('The Browser tab is not visible.')
     )
     const failedScreenshot = await app.request(
-      '/api/panels/panel_browser/browser-agent',
+      '/api/tabs/tab_browser/browser-agent',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -947,11 +941,11 @@ describe('HTTP API validation', () => {
     expect(await failedScreenshot.json()).toEqual({
       error: {
         code: 'BROWSER_COMMAND_FAILED',
-        message: 'The Browser panel is not visible.',
+        message: 'The Browser tab is not visible.',
         details: {
           command: 'screenshot',
           recovery:
-            'Open Browser panel_browser in Treeport, then retry the screenshot.'
+            'Open Browser tab_browser in Treeport, then retry the screenshot.'
         }
       }
     })
@@ -963,7 +957,7 @@ describe('HTTP API validation', () => {
       definitions: [{ id: 'project:review', source: { type: 'project' } }]
     })
 
-    const created = await app.request('/api/worktrees/wt_1/panels', {
+    const created = await app.request('/api/worktrees/wt_1/tabs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -982,7 +976,7 @@ describe('HTTP API validation', () => {
       }
     )
 
-    const opened = await app.request('/api/worktrees/wt_1/panels/open', {
+    const opened = await app.request('/api/worktrees/wt_1/tabs/open', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1007,14 +1001,10 @@ describe('HTTP API validation', () => {
       opened.headers.get('x-request-id')
     )
 
-    expect((await app.request('/api/panels/panel_review/context')).status).toBe(
-      200
-    )
-    expect((await app.request('/api/panels/panel_review/diff')).status).toBe(
-      200
-    )
-    expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
-    const image = await app.request('/api/panels/panel_review/diff/image', {
+    expect((await app.request('/api/tabs/tab_review/context')).status).toBe(200)
+    expect((await app.request('/api/tabs/tab_review/diff')).status).toBe(200)
+    expect(service.getWebPanelDiff).toHaveBeenCalledWith('tab_review')
+    const image = await app.request('/api/tabs/tab_review/diff/image', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'image.png', commit: null })
@@ -1024,24 +1014,21 @@ describe('HTTP API validation', () => {
       dataUrl: 'data:image/png;base64,iVBORw==',
       byteLength: 4
     })
-    expect(service.getWebPanelDiffImage).toHaveBeenCalledWith('panel_review', {
+    expect(service.getWebPanelDiffImage).toHaveBeenCalledWith('tab_review', {
       path: 'image.png',
       commit: null
     })
 
     expect(
-      await (await app.request('/api/panels/panel_review/files')).json()
+      await (await app.request('/api/tabs/tab_review/files')).json()
     ).toEqual({ paths: ['src/app.ts'], truncated: false })
-    expect(service.listTreeFiles).toHaveBeenCalledWith('panel_review')
+    expect(service.listTreeFiles).toHaveBeenCalledWith('tab_review')
 
-    const searchFiles = await app.request(
-      '/api/panels/panel_review/files/search',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query: 'value' })
-      }
-    )
+    const searchFiles = await app.request('/api/tabs/tab_review/files/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: 'value' })
+    })
     expect(await searchFiles.json()).toEqual({
       files: [
         {
@@ -1060,14 +1047,11 @@ describe('HTTP API validation', () => {
       ],
       truncated: false
     })
-    expect(service.searchTreeFiles).toHaveBeenCalledWith(
-      'panel_review',
-      'value'
-    )
+    expect(service.searchTreeFiles).toHaveBeenCalledWith('tab_review', 'value')
     for (const query of ['', 'two\nlines']) {
       expect(
         (
-          await app.request('/api/panels/panel_review/files/search', {
+          await app.request('/api/tabs/tab_review/files/search', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ query })
@@ -1077,7 +1061,7 @@ describe('HTTP API validation', () => {
     }
     expect(service.searchTreeFiles).toHaveBeenCalledOnce()
 
-    const readFile = await app.request('/api/panels/panel_review/files/read', {
+    const readFile = await app.request('/api/tabs/tab_review/files/read', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'src/app.ts' })
@@ -1088,11 +1072,11 @@ describe('HTTP API validation', () => {
       revision: 'revision-1'
     })
     expect(service.readTreeFile).toHaveBeenCalledWith(
-      'panel_review',
+      'tab_review',
       'src/app.ts'
     )
 
-    const writeFile = await app.request('/api/panels/panel_review/files', {
+    const writeFile = await app.request('/api/tabs/tab_review/files', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1105,14 +1089,14 @@ describe('HTTP API validation', () => {
       path: 'src/app.ts',
       revision: 'revision-2'
     })
-    expect(service.writeTreeFile).toHaveBeenCalledWith('panel_review', {
+    expect(service.writeTreeFile).toHaveBeenCalledWith('tab_review', {
       path: 'src/app.ts',
       content: 'export const value = 2\n',
       expectedRevision: 'revision-1'
     })
     expect(
       (
-        await app.request('/api/panels/panel_review/files/read', {
+        await app.request('/api/tabs/tab_review/files/read', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ path: '../outside' })
@@ -1121,9 +1105,7 @@ describe('HTTP API validation', () => {
     ).toBe(400)
 
     expect(
-      await (
-        await app.request('/api/panels/panel_review/network/listeners')
-      ).json()
+      await (await app.request('/api/tabs/tab_review/network/listeners')).json()
     ).toEqual({
       discovery: {
         supported: true,
@@ -1139,26 +1121,26 @@ describe('HTTP API validation', () => {
         ]
       }
     })
-    expect(service.getPanelListeners).toHaveBeenCalledWith('panel_review')
+    expect(service.getPanelListeners).toHaveBeenCalledWith('tab_review')
 
     expect(
-      await (await app.request('/api/panels/panel_review/storage')).json()
+      await (await app.request('/api/tabs/tab_review/storage')).json()
     ).toEqual({ hasData: true })
-    expect(service.hasWebPanelStorage).toHaveBeenCalledWith('panel_review')
+    expect(service.hasWebPanelStorage).toHaveBeenCalledWith('tab_review')
 
-    const stored = await app.request('/api/panels/panel_review/storage', {
+    const stored = await app.request('/api/tabs/tab_review/storage', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'comments', value: [{ line: 12 }] })
     })
     expect(stored.status).toBe(200)
     expect(service.setWebPanelStorage).toHaveBeenCalledWith(
-      'panel_review',
+      'tab_review',
       'comments',
       [{ line: 12 }]
     )
 
-    const restored = await app.request('/api/panels/panel_review/storage/get', {
+    const restored = await app.request('/api/tabs/tab_review/storage/get', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'comments' })
@@ -1172,7 +1154,7 @@ describe('HTTP API validation', () => {
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(null)
     const missingStorage = await app.request(
-      '/api/panels/panel_review/storage/get',
+      '/api/tabs/tab_review/storage/get',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1180,47 +1162,41 @@ describe('HTTP API validation', () => {
       }
     )
     expect(await missingStorage.json()).toEqual({ found: false, value: null })
-    const nullStorage = await app.request(
-      '/api/panels/panel_review/storage/get',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: 'null-value' })
-      }
-    )
+    const nullStorage = await app.request('/api/tabs/tab_review/storage/get', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'null-value' })
+    })
     expect(await nullStorage.json()).toEqual({ found: true, value: null })
 
-    const removedStorage = await app.request(
-      '/api/panels/panel_review/storage',
-      {
-        method: 'DELETE',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: 'comments' })
-      }
-    )
+    const removedStorage = await app.request('/api/tabs/tab_review/storage', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'comments' })
+    })
     expect(removedStorage.status).toBe(200)
     expect(service.deleteWebPanelStorage).toHaveBeenCalledWith(
-      'panel_review',
+      'tab_review',
       'comments'
     )
 
-    const closed = await app.request('/api/panels/panel_review', {
+    const closed = await app.request('/api/tabs/tab_review', {
       method: 'DELETE'
     })
     expect(closed.status).toBe(200)
-    expect(service.deletePanel).toHaveBeenCalledWith('panel_review', false)
+    expect(service.deleteTab).toHaveBeenCalledWith('tab_review', false)
 
-    await app.request('/api/panels/panel_review?discardStoredData=true', {
+    await app.request('/api/tabs/tab_review?discardStoredData=true', {
       method: 'DELETE'
     })
-    expect(service.deletePanel).toHaveBeenLastCalledWith('panel_review', true)
+    expect(service.deleteTab).toHaveBeenLastCalledWith('tab_review', true)
   })
 
   it('asks for confirmation only when Browser reports beforeunload', async () => {
     const { app, browserRequestPanelClose, service } = fixture()
     browserRequestPanelClose.mockResolvedValueOnce(false)
 
-    const blocked = await app.request('/api/panels/browser_panel', {
+    const blocked = await app.request('/api/tabs/browser_tab', {
       method: 'DELETE'
     })
     expect(blocked.status).toBe(409)
@@ -1230,20 +1206,20 @@ describe('HTTP API validation', () => {
         message: 'Changes you made may not be saved.'
       }
     })
-    expect(service.deletePanel).not.toHaveBeenCalled()
+    expect(service.deleteTab).not.toHaveBeenCalled()
 
-    const closed = await app.request('/api/panels/browser_panel?force=true', {
+    const closed = await app.request('/api/tabs/browser_tab?force=true', {
       method: 'DELETE'
     })
     expect(closed.status).toBe(200)
     expect(browserRequestPanelClose).toHaveBeenLastCalledWith(
-      'browser_panel',
+      'browser_tab',
       true
     )
-    expect(service.deletePanel).toHaveBeenCalledWith('browser_panel', false)
+    expect(service.deleteTab).toHaveBeenCalledWith('browser_tab', false)
   })
 
-  it('uses the panel SDK to broker scoped panel requests', async () => {
+  it('uses the tab SDK to broker scoped tab requests', async () => {
     const listeners = new Map<string, EventListener>()
     const panelParent = { postMessage: vi.fn() }
     vi.stubGlobal('parent', panelParent)
@@ -1280,13 +1256,13 @@ describe('HTTP API validation', () => {
           source: 'treeport-host-v1',
           id: message.id,
           ok: true,
-          value: { apiVersion: 1, panel: { id: 'panel_review' } }
+          value: { apiVersion: 1, tab: { id: 'tab_review' } }
         }
       })
 
       await expect(context).resolves.toMatchObject({
         apiVersion: 1,
-        panel: { id: 'panel_review' }
+        tab: { id: 'tab_review' }
       })
       expect(sdk.treeport.version).toBe(1)
       expect(panelParent.postMessage).toHaveBeenCalledWith(
@@ -1436,16 +1412,16 @@ describe('HTTP API validation', () => {
 
   it('serves immutable Vite output with restrictive browser headers', async () => {
     const { app, config, service } = fixture()
-    const panelRoot = path.join(config.runtimeDir, 'typed-panel')
+    const panelRoot = path.join(config.runtimeDir, 'typed-tab')
     const indexPath = path.join(panelRoot, 'index.html')
-    const modulePath = path.join(panelRoot, 'panel.js')
+    const modulePath = path.join(panelRoot, 'tab.js')
     const indexSource =
-      '<!doctype html><html><body><script type="module" src="panel.js"></script></body></html>'
+      '<!doctype html><html><body><script type="module" src="tab.js"></script></body></html>'
     await fs.mkdir(panelRoot, { recursive: true })
     await fs.writeFile(indexPath, indexSource)
     await fs.writeFile(modulePath, 'export const answer = 42')
     vi.mocked(service.resolveWebPanelAsset).mockImplementation(
-      async (_panelId, requestedPath) => ({
+      async (_tabId, requestedPath) => ({
         kind: 'asset',
         path: requestedPath ? path.join(panelRoot, requestedPath) : indexPath,
         immutable: true,
@@ -1457,10 +1433,10 @@ describe('HTTP API validation', () => {
     try {
       const browserOrigin = 'https://treeport.example.ts.net:5173'
       const documentResponse = await app.request(
-        '/api/web-panels/panel_review/assets/',
+        '/api/web-panels/tab_review/assets/',
         {
           headers: {
-            referer: `${browserOrigin}/projects/project_1/panels/panel_review`,
+            referer: `${browserOrigin}/projects/project_1/tabs/tab_review`,
             'x-forwarded-host': 'treeport.example.ts.net:5173',
             'x-forwarded-proto': 'https'
           }
@@ -1486,7 +1462,7 @@ describe('HTTP API validation', () => {
       )
 
       const moduleResponse = await app.request(
-        '/api/web-panels/panel_review/assets/panel.js'
+        '/api/web-panels/tab_review/assets/tab.js'
       )
       expect(moduleResponse.status).toBe(200)
       expect(moduleResponse.headers.get('content-type')).toBe(
@@ -1503,7 +1479,7 @@ describe('HTTP API validation', () => {
     }
   })
 
-  it('serves nested panel modules with their browser MIME type', async () => {
+  it('serves nested tab modules with their browser MIME type', async () => {
     const { app, config, service } = fixture()
     const modulePath = path.join(config.runtimeDir, 'nested', 'review.js')
     await fs.mkdir(path.dirname(modulePath), { recursive: true })
@@ -1518,7 +1494,7 @@ describe('HTTP API validation', () => {
 
     try {
       const response = await app.request(
-        '/api/web-panels/panel_review/assets/nested/review.js'
+        '/api/web-panels/tab_review/assets/nested/review.js'
       )
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toBe(
@@ -1529,7 +1505,7 @@ describe('HTTP API validation', () => {
       )
       expect(await response.text()).toBe('export const loaded = true')
       expect(service.resolveWebPanelAsset).toHaveBeenCalledWith(
-        'panel_review',
+        'tab_review',
         'nested/review.js'
       )
     } finally {

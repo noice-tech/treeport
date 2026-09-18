@@ -56,7 +56,7 @@ export async function installMockSockets(
               at: new Date().toISOString(),
               terminalMetadata: initialMetadata,
               webPanels: [],
-              browserPanels: [],
+              browserTabs: [],
               presence: []
             }
           })

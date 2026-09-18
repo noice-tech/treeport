@@ -22,7 +22,7 @@ import { terminalSessions } from './terminal-session'
 export function useProjectEventsBridge(
   projects: ProjectRecord[] | undefined,
   onPanelOpenRequested?: (
-    request: ProductEventDataMap['panel.open_requested']
+    request: ProductEventDataMap['tab.open_requested']
   ) => void,
   onWorkspaceOpenRequested?: (
     request: ProductEventDataMap['workspace.open_requested']
@@ -153,7 +153,7 @@ export function useProjectEventsBridge(
         return
       }
 
-      if (event.type === 'panel.open_requested') {
+      if (event.type === 'tab.open_requested') {
         refresh()
         onPanelOpenRequestedRef.current?.(event.data)
         return

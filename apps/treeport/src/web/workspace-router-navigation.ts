@@ -44,13 +44,13 @@ export function useWorkspaceNavigate(): (
             },
             replace
           })
-        case 'panel':
+        case 'tab':
           return navigate({
-            to: '/projects/$projectId/worktrees/$worktreeId/panels/$panelId',
+            to: '/projects/$projectId/worktrees/$worktreeId/tabs/$tabId',
             params: {
               projectId: target.projectId,
               worktreeId: target.worktreeId,
-              panelId: target.panelId
+              tabId: target.tabId
             },
             replace
           })

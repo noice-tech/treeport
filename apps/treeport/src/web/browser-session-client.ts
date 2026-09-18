@@ -18,13 +18,13 @@ import {
   parseBrowserServerMessage
 } from '@treeport/shared'
 
-export interface BrowserPanelConnection {
+export interface BrowserTabConnection {
   dispose(): void
   send(message: BrowserClientMessage): void
   setVisible(visible: boolean): void
 }
 
-export interface BrowserPanelSocket {
+export interface BrowserTabSocket {
   connected: boolean
   emit(event: 'command', message: BrowserClientMessage): void
   on(event: 'message', listener: (message: BrowserServerMessage) => void): void
@@ -34,7 +34,7 @@ export interface BrowserPanelSocket {
   disconnect(): void
 }
 
-interface BrowserPanelSocketOptions {
+interface BrowserTabSocketOptions {
   reconnection: false
   auth: {
     ticket: string
@@ -42,30 +42,27 @@ interface BrowserPanelSocketOptions {
   }
 }
 
-export type BrowserPanelSocketFactory = (
+export type BrowserTabSocketFactory = (
   namespace: string,
-  options: BrowserPanelSocketOptions
-) => BrowserPanelSocket
+  options: BrowserTabSocketOptions
+) => BrowserTabSocket
 
-const defaultSocketFactory: BrowserPanelSocketFactory = (
-  namespace,
-  options
-) => {
+const defaultSocketFactory: BrowserTabSocketFactory = (namespace, options) => {
   return createProtocolSocket<
     BrowserServerToClientEvents,
     BrowserClientToServerEvents
   >(namespace, options)
 }
 
-export function connectBrowserPanel(
-  panelId: string,
+export function connectBrowserTab(
+  tabId: string,
   initialVisible: boolean,
   handlers: {
     message(message: BrowserServerMessage): void
     frame(frame: BrowserFrame): void
   },
-  socketFactory: BrowserPanelSocketFactory = defaultSocketFactory
-): BrowserPanelConnection {
+  socketFactory: BrowserTabSocketFactory = defaultSocketFactory
+): BrowserTabConnection {
   const clientId = crypto.randomUUID()
   let disposed = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -76,7 +73,7 @@ export function connectBrowserPanel(
   let readyAt: number | null = null
   let connectedOnce = false
   let connecting = false
-  let socket: BrowserPanelSocket | null = null
+  let socket: BrowserTabSocket | null = null
   const pendingCommands: BrowserClientMessage[] = []
   let viewport: Extract<BrowserClientMessage, { type: 'resize' }> | null = null
 
@@ -117,7 +114,7 @@ export function connectBrowserPanel(
 
     connecting = true
     const response = await fetch(
-      `/api/panels/${encodeURIComponent(panelId)}/browser-ticket`,
+      `/api/tabs/${encodeURIComponent(tabId)}/browser-ticket`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -189,7 +186,7 @@ export function connectBrowserPanel(
         type: 'setVisible',
         visible: currentVisible
       })
-      // A new attachment starts with the server viewport, not this panel's.
+      // A new attachment starts with the server viewport, not this tab's.
       // Replay layout even when no ResizeObserver notification follows reconnect.
       if (viewport) {
         connectedSocket.emit('command', viewport)

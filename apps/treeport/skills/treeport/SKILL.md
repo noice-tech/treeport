@@ -172,7 +172,7 @@ treeport browser screenshot
 
 The commands select the only browser tab in the current tree.
 
-When more than one browser tab exists, add `--panel <panel-id>`.
+When more than one browser tab exists, add `--tab <tab-id>`.
 
 Snapshot references belong to one runtime generation.
 

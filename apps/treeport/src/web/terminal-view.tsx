@@ -351,7 +351,7 @@ export function TerminalView({
         'terminal-shell relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[minmax(0,1fr)_3.25rem]',
         snapshot.bellActive && 'terminal-bell'
       )}
-      aria-label={terminal ? `${visibleTitle} terminal` : 'Terminal panel'}
+      aria-label={terminal ? `${visibleTitle} terminal` : 'Terminal tab'}
       aria-current={active ? 'true' : undefined}
       onPointerDownCapture={onActivate}
     >
@@ -550,7 +550,7 @@ export function TerminalView({
             </h1>
             <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
               {worktree
-                ? 'Use New panel in the sidebar to start a login shell, preset, or web panel.'
+                ? 'Use New tab in the sidebar to start a login shell, preset, or web panel.'
                 : 'Select a tree from the sidebar to view its terminals.'}
             </p>
           </div>

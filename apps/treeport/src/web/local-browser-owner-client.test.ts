@@ -33,7 +33,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
   const ticket = { ticket: 'a'.repeat(43), challenge: 'b'.repeat(43) }
 
   const timedOut = connectLocalBrowserOwner(
-    'panel_browser_1',
+    'tab_browser_1',
     ticket,
     'http://127.0.0.1:9222/',
     handlers,
@@ -50,7 +50,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
 
   const controller = new AbortController()
   const canceled = connectLocalBrowserOwner(
-    'panel_browser_1',
+    'tab_browser_1',
     ticket,
     'http://127.0.0.1:9222/',
     handlers,
@@ -66,7 +66,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
 
   const activeController = new AbortController()
   const connecting = connectLocalBrowserOwner(
-    'panel_browser_1',
+    'tab_browser_1',
     ticket,
     'http://127.0.0.1:9222/',
     handlers,
@@ -75,7 +75,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
   )
   const claim: BrowserOwnerServerMessage = {
     type: 'claimGranted',
-    panelId: 'panel_browser_1',
+    tabId: 'tab_browser_1',
     generation: 3,
     resumed: true,
     state: {

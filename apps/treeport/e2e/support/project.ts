@@ -45,7 +45,7 @@ export const project: ProjectRecord = {
       },
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01',
-      panels: [],
+      tabs: [],
       terminals: [
         {
           id: 'term_shell',
@@ -93,7 +93,7 @@ export const project: ProjectRecord = {
       },
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01',
-      panels: [],
+      tabs: [],
       terminals: [
         {
           id: 'term_pi',

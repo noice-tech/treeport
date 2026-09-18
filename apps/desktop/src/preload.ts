@@ -24,15 +24,15 @@ const localSourcePathsResultSchema = z.array(z.string()).max(1).catch([])
 const localFilePasteListeners = new Set<(paths: string[]) => void>()
 const desktopBrowserPopupSchema: z.ZodType<DesktopBrowserPopup> =
   z.strictObject({
-    panelId: z.string(),
+    tabId: z.string(),
     url: z.string()
   })
 const desktopBrowserUnavailableSchema: z.ZodType<DesktopBrowserUnavailable> =
-  z.strictObject({ panelId: z.string(), message: z.string() })
+  z.strictObject({ tabId: z.string(), message: z.string() })
 const desktopBrowserBridgeDescriptorSchema: z.ZodType<DesktopBrowserBridgeDescriptor> =
   z.strictObject({
     endpoint: z.string().url(),
-    panelId: z.string(),
+    tabId: z.string(),
     challenge: z.string()
   })
 const desktopBrowserCommandResultSchema: z.ZodType<DesktopBrowserCommandResult> =
@@ -123,8 +123,8 @@ const desktopBridge = Object.freeze({
           'split-terminal-right',
           'split-terminal-up',
           'split-terminal-down',
-          'new-panel',
-          'close-panel',
+          'new-tab',
+          'close-tab',
           'toggle-side-panel',
           'focus-location',
           'find-in-page',
@@ -159,13 +159,13 @@ const desktopBridge = Object.freeze({
       ipcRenderer.removeListener('terminal-selection:release', receive)
   },
   registerBrowser(
-    panelId: string,
+    tabId: string,
     webContentsId: number,
     challenge: string
   ): Promise<DesktopBrowserBridgeDescriptor | null> {
     return ipcRenderer
       .invoke('native-browser:register', {
-        panelId,
+        tabId,
         webContentsId,
         challenge
       })
@@ -174,35 +174,35 @@ const desktopBridge = Object.freeze({
       )
   },
   browserCommand(
-    panelId: string,
+    tabId: string,
     command: DesktopBrowserToolbarCommand
   ): Promise<DesktopBrowserCommandResult> {
     return ipcRenderer
-      .invoke('native-browser:command', { panelId, command })
+      .invoke('native-browser:command', { tabId, command })
       .then((value) => desktopBrowserCommandResultSchema.parse(value))
   },
-  setBrowserInputControl(panelId: string, locked: boolean): Promise<boolean> {
+  setBrowserInputControl(tabId: string, locked: boolean): Promise<boolean> {
     return ipcRenderer
-      .invoke('native-browser:set-input-control', { panelId, locked })
+      .invoke('native-browser:set-input-control', { tabId, locked })
       .then((value) => z.boolean().parse(value))
   },
   setBrowserPresentationActive(
-    panelId: string,
+    tabId: string,
     active: boolean
   ): Promise<boolean> {
     return ipcRenderer
-      .invoke('native-browser:set-presentation-active', { panelId, active })
+      .invoke('native-browser:set-presentation-active', { tabId, active })
       .then((value) => z.boolean().parse(value))
   },
-  requestBrowserClose(panelId: string, force: boolean): Promise<boolean> {
+  requestBrowserClose(tabId: string, force: boolean): Promise<boolean> {
     return ipcRenderer
-      .invoke('native-browser:request-close', { panelId, force })
+      .invoke('native-browser:request-close', { tabId, force })
       .then((value) => z.boolean().parse(value))
   },
-  disposeBrowser(panelId: string) {
-    ipcRenderer.send('native-browser:dispose', { panelId })
+  disposeBrowser(tabId: string) {
+    ipcRenderer.send('native-browser:dispose', { tabId })
   },
-  onBrowserFocus(listener: (panelId: string) => void) {
+  onBrowserFocus(listener: (tabId: string) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
       const parsed = z.string().safeParse(value)
       if (parsed.success) {

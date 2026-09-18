@@ -25,7 +25,7 @@ import {
 } from '../../web-panel-vite-runtime'
 import { tracingLayerFromEnvironment } from '../../../tracing'
 import {
-  PanelOperations,
+  TabOperations,
   ProjectObservationOperations,
   ProjectRegistrationOperations,
   ProjectSnapshotOperations,
@@ -33,7 +33,7 @@ import {
   WorktreeOperations,
   WorktreeReconciliation
 } from '../domain-services'
-import type { PanelService } from '../panel/panel-service'
+import type { TabService } from '../tab/tab-service'
 import { PackageMutations } from '../package/package-mutations'
 import { ProjectFolderIdentities } from '../project/project-folder-identities'
 import type { ProjectObservationService } from '../project/project-observation-service'
@@ -158,7 +158,7 @@ export interface ApplicationResources {
   readonly terminalHost: TerminalSessionBackend
   readonly events: ProductEventBus
   readonly packages: PackageSystem
-  readonly panelService: PanelService
+  readonly panelService: TabService
   readonly projectObservationService: ProjectObservationService
   readonly projectRegistrationService: ProjectRegistrationService
   readonly projectSnapshotService: ProjectSnapshotService
@@ -177,7 +177,7 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
     Layer.succeed(TerminalHostPort, resources.terminalHost),
     Layer.succeed(EventBusPort, resources.events),
     Layer.succeed(PackageSystemPort, resources.packages),
-    Layer.succeed(PanelOperations, resources.panelService),
+    Layer.succeed(TabOperations, resources.panelService),
     Layer.succeed(
       ProjectObservationOperations,
       resources.projectObservationService
@@ -234,7 +234,7 @@ export type ApplicationServices =
   | TerminalHostPort
   | EventBusPort
   | PackageSystemPort
-  | PanelOperations
+  | TabOperations
   | ProjectObservationOperations
   | ProjectRegistrationOperations
   | ProjectSnapshotOperations

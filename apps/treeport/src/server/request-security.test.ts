@@ -269,10 +269,10 @@ describe('request security over a real HTTP server', () => {
     })
     expect(missingForwardedOrigin.status).toBe(400)
 
-    const panelId = `panel_${'a'.repeat(32)}`
+    const tabId = `tab_${'a'.repeat(32)}`
     const developmentKey = '0123456789abcdef01234567'
     const sandboxedPanelModule = await request(value.url, {
-      path: `/api/web-panels/${panelId}/assets/__treeport/${'b'.repeat(64)}/assets/review.js`,
+      path: `/api/web-panels/${tabId}/assets/__treeport/${'b'.repeat(64)}/assets/review.js`,
       headers: {
         ...tailscaleHeaders,
         Origin: 'null',
@@ -322,7 +322,7 @@ describe('request security over a real HTTP server', () => {
     expect(JSON.parse(opaqueApiRead.body).error.code).toBe('INVALID_ORIGIN')
 
     const foreignPanelAsset = await request(value.url, {
-      path: `/api/web-panels/${panelId}/assets/review.js`,
+      path: `/api/web-panels/${tabId}/assets/review.js`,
       headers: { ...tailscaleHeaders, Origin: 'https://evil.example' }
     })
     expect(foreignPanelAsset.status).toBe(403)
@@ -341,7 +341,7 @@ describe('request security over a real HTTP server', () => {
 
     const opaquePanelMutation = await request(value.url, {
       method: 'POST',
-      path: `/api/web-panels/${panelId}/assets/review.js`,
+      path: `/api/web-panels/${tabId}/assets/review.js`,
       headers: { ...tailscaleHeaders, Origin: 'null' }
     })
     expect(opaquePanelMutation.status).toBe(403)
