@@ -324,6 +324,9 @@ async function main(): Promise<void> {
       }
 
       shuttingDown = true
+      // Stop accepting requests before slower subsystem finalizers run so a
+      // completed development command cannot leave its port behind.
+      server.close()
       void Effect.runPromise(Scope.close(resourceScope, Exit.void)).then(() =>
         process.exit(0)
       )
