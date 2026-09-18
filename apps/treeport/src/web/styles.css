@@ -127,6 +127,13 @@ code {
   width: 10px !important;
 }
 
+/* Keep the terminal and its focused input visible; only the scrollbar waits
+   for the synchronized frame to commit. Do not change the grid's dimensions. */
+.xterm-host .terminal-synchronized-output .xterm-scrollbar {
+  visibility: hidden !important;
+  pointer-events: none;
+}
+
 .terminal-session-host {
   position: relative;
 }

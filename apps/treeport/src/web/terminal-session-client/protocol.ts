@@ -149,7 +149,12 @@ export function makeProtocol(
               true
             )
             if (state.terminal) {
-              yield* dependencies.writeTerminal(message.snapshot)
+              // Restore the temporary mode omitted by SerializeAddon before
+              // any snapshot bytes, including an unfinished image upload.
+              yield* dependencies.writeTerminal(
+                (message.synchronizedOutput ? '\x1b[?2026h' : '') +
+                  message.snapshot
+              )
               if (state.disposed || epoch !== state.renderEpoch) {
                 return
               }

@@ -153,6 +153,7 @@ export interface TerminalHostSnapshot {
   data: string
   links: TerminalSnapshotLink[]
   images: TerminalImageSnapshot | null
+  synchronizedOutput: boolean
   fence: number
   cols: number
   rows: number
