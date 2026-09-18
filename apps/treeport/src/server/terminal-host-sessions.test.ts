@@ -112,6 +112,67 @@ afterEach(async () => {
 })
 
 describe('TerminalHostSessionManager', () => {
+  it('batches tiny PTY chunks without changing output sequences or snapshot fences', async () => {
+    const runtimeDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-batching-')
+    )
+    directories.push(runtimeDir)
+    const pty = new FakePty()
+    const manager = await acquire({
+      runtimeDir,
+      launcherPath: '/treeport/launcher.js',
+      spawnPty: () => testAccess<IPty>(pty),
+      terminateProcessTree: () => Effect.void
+    })
+    await run(
+      manager.createTerminal({
+        terminalId: 'term',
+        worktreeId: 'worktree',
+        name: 'Shell',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        cwd: runtimeDir,
+        argv: ['/bin/bash'],
+        shellCommand: null,
+        interactiveShell: true,
+        initialSize: { cols: 80, rows: 24 },
+        env: { HOME: runtimeDir }
+      })
+    )
+    const attachment = await run(manager.attach('term'))
+    const output: Array<{ data: string; sequence: number }> = []
+    await run(
+      Effect.forkScoped(
+        Stream.runForEach(attachment!.output, (chunk) =>
+          Effect.sync(() => output.push(chunk))
+        )
+      )
+    )
+    const writes = vi.spyOn(Terminal.prototype, 'write')
+    const chunks = Array.from(
+      { length: 1024 },
+      (_, index) => `${index}:` + 'x'.repeat(1000) + '\r\n'
+    )
+    for (const chunk of chunks) {
+      pty.emit(chunk)
+    }
+    const snapshot = await run(manager.snapshot('term'))
+    // Count parser submissions, not wall-clock time: there must not be one
+    // asynchronous xterm timer per tiny PTY packet.
+    expect(writes.mock.calls.length).toBeLessThan(16)
+    writes.mockRestore()
+    expect(snapshot?.fence).toBe(chunks.length)
+    expect(snapshot?.data).toContain('1023:')
+    expect(snapshot?.data).not.toContain('live suffix')
+    pty.emit('live suffix\r\n')
+    await vi.waitFor(() => expect(output).toHaveLength(chunks.length + 1))
+    expect(output).toEqual(
+      [...chunks, 'live suffix\r\n'].map((data, index) => ({
+        data,
+        sequence: index + 1
+      }))
+    )
+  })
+
   it('owns one child PTY while viewers share fenced canonical history and live output', async () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-')
@@ -198,7 +259,7 @@ describe('TerminalHostSessionManager', () => {
       )
     )
     pty.emit(
-      '\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
+      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
     )
     const snapshot = await run(manager.snapshot('term'))
     expect(await run(manager.runtimeState('term'))).toMatchObject({
@@ -214,6 +275,7 @@ describe('TerminalHostSessionManager', () => {
     expect(spawn).toHaveBeenCalledOnce()
     expect(snapshot?.data).toContain('immediate startup output')
     expect(snapshot?.data).toContain('before attach')
+    expect(snapshot?.synchronizedOutput).toBe(true)
     expect(snapshot?.links).toEqual([
       expect.objectContaining({
         buffer: 'normal',
@@ -222,7 +284,7 @@ describe('TerminalHostSessionManager', () => {
     ])
     await vi.waitFor(() => expect(firstOutput).toHaveLength(2))
     expect(firstOutput).toEqual([
-      '\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n',
+      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n',
       'after attach\r\n'
     ])
     expect(secondOutput).toEqual(firstOutput)

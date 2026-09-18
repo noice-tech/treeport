@@ -480,6 +480,7 @@ export class TerminalHostClient
           ...snapshot,
           links: snapshot.links ?? [],
           images: snapshot.images ?? null,
+          synchronizedOutput: snapshot.synchronizedOutput ?? false,
           output: Stream.fromQueue(subscription).pipe(
             Stream.filter((event) => event.sequence > snapshot.fence)
           )

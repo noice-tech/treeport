@@ -274,6 +274,7 @@ export interface TerminalHostResults {
     data: string
     links?: TerminalSnapshotLink[] | undefined
     images?: TerminalImageSnapshot | null | undefined
+    synchronizedOutput?: boolean | undefined
     fence: number
     cols: number
     rows: number
@@ -429,6 +430,7 @@ const terminalHostResultSchemas = {
       data: Schema.String,
       links: Schema.optional(Schema.Array(terminalSnapshotLinkSchema)),
       images: Schema.optional(Schema.NullOr(terminalImageSnapshotSchema)),
+      synchronizedOutput: Schema.optional(Schema.Boolean),
       fence: Schema.NonNegativeInt,
       cols: positiveInteger,
       rows: positiveInteger

@@ -47,6 +47,7 @@ class HostDouble implements TerminalAttachmentBackend {
       data: '',
       links: [],
       images: null,
+      synchronizedOutput: false,
       fence: 0,
       cols: 100,
       rows: 30,

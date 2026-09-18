@@ -325,6 +325,29 @@ export function trackTerminalScrolling(
     touchPasteStart = []
   }
 
+  const suppressSynchronizedScroll = (event: WheelEvent | TouchEvent) => {
+    if (
+      !terminal.modes.synchronizedOutputMode &&
+      !terminal.element?.classList.contains('terminal-synchronized-output')
+    ) {
+      return false
+    }
+
+    // The painted frame is frozen while the buffer changes underneath it.
+    // Block both local scrolling and mouse-wheel reports to the application.
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    clearTouchSelectionTimer()
+    clearTouchPasteTimer()
+    lastTouchY = null
+    touchScrollRemainder = 0
+    wheelScrollRemainder = 0
+    wheelInputRepeats.length = 0
+    touchStart = null
+    touchSelectionAnchor = null
+    return true
+  }
+
   // xterm reduces likely trackpad deltas to 30% and emits only one mouse
   // report when an event crosses multiple rows. Preserve the pixel distance,
   // let xterm encode one valid report, and expand it before transport.
@@ -373,13 +396,22 @@ export function trackTerminalScrolling(
     return false
   })
 
-  wrapper.addEventListener('wheel', onScroll, {
-    capture: true,
-    passive: true
-  })
+  wrapper.addEventListener(
+    'wheel',
+    (event) => {
+      if (!suppressSynchronizedScroll(event)) {
+        onScroll(event)
+      }
+    },
+    { capture: true, passive: false }
+  )
   wrapper.addEventListener(
     'touchstart',
     (event) => {
+      if (suppressSynchronizedScroll(event)) {
+        return
+      }
+
       if (event.touches.length === 2) {
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
@@ -435,11 +467,15 @@ export function trackTerminalScrolling(
         }
       }, TERMINAL_TOUCH_SELECTION_DELAY_MS)
     },
-    { capture: true, passive: true }
+    { capture: true, passive: false }
   )
   wrapper.addEventListener(
     'touchmove',
     (event) => {
+      if (suppressSynchronizedScroll(event)) {
+        return
+      }
+
       if (event.touches.length === 2 && touchPasteStart.length === 2) {
         const moved = touchPasteStart.some((start) => {
           const touch = Array.from(event.touches).find(
@@ -555,6 +591,10 @@ export function trackTerminalScrolling(
     { capture: true, passive: false }
   )
   const resetTouchScroll = (event: TouchEvent) => {
+    if (suppressSynchronizedScroll(event)) {
+      return
+    }
+
     if (touchSelectionAnchor) {
       event.preventDefault()
     } else if (event.type === 'touchend' && touchStart) {

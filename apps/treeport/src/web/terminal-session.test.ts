@@ -541,7 +541,7 @@ describe('TerminalSession', () => {
         reconnectionDelay: 100,
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
-        query: { terminalProtocol: '8' }
+        query: { terminalProtocol: '9' }
       })
     )
     const options = testAccess<{
@@ -797,6 +797,42 @@ describe('TerminalSession', () => {
       expect(
         socket.volatile.emit.mock.calls.filter(([event]) => event === 'input')
       ).toHaveLength(2)
+    )
+    session.dispose()
+  })
+
+  it('restores synchronized output after reset and before snapshot bytes', async () => {
+    const socket = new FakeProtocolSocket()
+    socketClient.create.mockReturnValue(socket)
+    const session = createTerminalSession('terminal-one')
+    const parsed: string[] = []
+    Object.assign(terminalSessionTestAccess(session).state, {
+      terminal: {
+        reset: () => parsed.push('reset'),
+        resize: vi.fn(),
+        options: { fontSize: 14 },
+        write: (data: string, callback: () => void) => {
+          parsed.push(data)
+          callback()
+        },
+        dispose: vi.fn()
+      }
+    })
+    terminalSessionTestAccess(session).services.connection.connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 1,
+      controller: false,
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1,
+      snapshot: 'partial frame',
+      synchronizedOutput: true
+    })
+    await vi.waitFor(() =>
+      expect(parsed).toEqual(['reset', '\x1b[?2026hpartial frame'])
     )
     session.dispose()
   })
