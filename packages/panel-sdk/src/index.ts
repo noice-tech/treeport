@@ -68,8 +68,15 @@ export interface GitDiffChangeSets {
   untracked: string[]
 }
 
+/** A changed file discovered without materializing its patch. */
+export interface GitDiffFile {
+  path: string
+  previousPath: string | null
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
+}
+
 /**
- * A read-only diff from the default-branch merge base through the tree's
+ * A read-only diff index from the default-branch merge base through the tree's
  * committed, tracked local, and untracked changes.
  */
 export interface GitDiff {
@@ -78,10 +85,23 @@ export interface GitDiff {
   headCommit: string
   /** ISO 8601 timestamp. */
   generatedAt: string
-  /** Combined unified diff text for the final working-tree state. */
-  unified: string
+  files: GitDiffFile[]
   /** Relative paths; a path can occur in more than one change set. */
   changeSets: GitDiffChangeSets
+}
+
+export interface GitFileDiffRequest {
+  path: string
+}
+
+/** A bounded patch. Oversized patches have null unified content. */
+export interface GitFileDiff {
+  path: string
+  status: 'ready' | 'oversized'
+  unified: string | null
+  /** SHA-256 of unified, or null when content is unavailable. */
+  revision: string | null
+  message: string | null
 }
 
 /** An image in the working tree, or at a full Git commit ID. */
@@ -200,8 +220,10 @@ export interface TreeportPanelSdk {
   readonly panel: WebPanelControls
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
-  /** Return the combined tree diff and its Git-layer file groups. */
+  /** Return the changed-file index and its Git-layer file groups. */
   diff(): Promise<GitDiff>
+  /** Return one bounded file patch, or an explicit oversized state. */
+  diffFile(input: GitFileDiffRequest): Promise<GitFileDiff>
   /** Read a repository image (maximum 5 MiB) for a diff preview. */
   diffImage(input: GitDiffImageRequest): Promise<GitDiffImage>
   /** Listening TCP sockets conservatively attributed to this tree. */
@@ -318,6 +340,7 @@ function call<Result>(
   method:
     | 'context'
     | 'diff'
+    | 'diff.file'
     | 'diff.image'
     | 'network.listeners'
     | 'files.list'
@@ -387,6 +410,8 @@ export const treeport: TreeportPanelSdk = Object.freeze({
   }),
   context: () => call<WebPanelContext>('context'),
   diff: () => call<GitDiff>('diff'),
+  diffFile: (input: GitFileDiffRequest) =>
+    call<GitFileDiff>('diff.file', { ...input }),
   diffImage: (input: GitDiffImageRequest) =>
     call<GitDiffImage>('diff.image', { ...input }),
   network: Object.freeze({

@@ -6,6 +6,7 @@ import {
   decodeUnknownOrNull,
   directoryBrowseResponseSchema,
   gitDiffResponseSchema,
+  gitFileDiffResponseSchema,
   gitDiffImageSchema,
   hasDataResponseSchema,
   listenerDiscoveryResponseSchema,
@@ -39,6 +40,8 @@ import type {
   ViewerIdentity,
   DirectoryBrowseResponse,
   GitDiff,
+  GitFileDiff,
+  GitFileDiffRequest,
   GitDiffImage,
   GitDiffImageRequest,
   JsonValue,
@@ -475,6 +478,18 @@ export const rpc = {
             )
         },
         diff: {
+          file: {
+            $post: ({
+              param,
+              json
+            }: RequestInput<{ panelId: string }, GitFileDiffRequest>) =>
+              endpoint<GitFileDiff>(
+                'POST',
+                `/api/panels/${id(param.panelId)}/diff/file`,
+                gitFileDiffResponseSchema,
+                { json }
+              )
+          },
           image: {
             $post: ({
               param,
