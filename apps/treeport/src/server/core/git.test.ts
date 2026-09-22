@@ -1,11 +1,34 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import * as Effect from 'effect/Effect'
 import { describe, expect, it } from 'vitest'
+import { SpawnCommandRunner } from './command'
 import {
   detectDefaultBranch,
+  GitAdapter,
   parseDirtyStatus,
+  parseGitDiffFiles,
   parseWorktreePorcelain
 } from './git'
 
 describe('git parsing', () => {
+  it('parses changed files and preserves rename origins', () => {
+    expect(
+      parseGitDiffFiles(
+        'M\0src/a.ts\0R095\0old name.ts\0new name.ts\0A\0new.ts\0'
+      )
+    ).toEqual([
+      { path: 'src/a.ts', previousPath: null, status: 'modified' },
+      {
+        path: 'new name.ts',
+        previousPath: 'old name.ts',
+        status: 'renamed'
+      },
+      { path: 'new.ts', previousPath: null, status: 'added' }
+    ])
+  })
+
   it('parses attached, detached, and locked worktrees with paths containing spaces', () => {
     const result = parseWorktreePorcelain(`worktree /tmp/main repo
 HEAD abc123
@@ -76,4 +99,63 @@ locked editor owns it
       total: 0
     })
   })
+})
+
+describe('worktree review diff', () => {
+  it('lists every changed file while returning an explicit bounded oversized patch', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-diff-'))
+    const runner = new SpawnCommandRunner()
+    const run = async (...args: string[]) => {
+      const result = await runner.run({ executable: 'git', args, cwd })
+      expect(result.exitCode, result.stderr).toBe(0)
+    }
+
+    try {
+      await run('init', '-b', 'main')
+      await run('config', 'user.name', 'Treeport Test')
+      await run('config', 'user.email', 'treeport@example.test')
+      await fs.writeFile(path.join(cwd, 'old.txt'), 'rename me\n')
+      await run('add', 'old.txt')
+      await run('commit', '-m', 'base')
+      await run('switch', '-c', 'feature')
+      await run('mv', 'old.txt', 'renamed.txt')
+      await fs.writeFile(
+        path.join(cwd, 'huge.txt'),
+        `${'x'.repeat(3 * 1024 * 1024)}\n`
+      )
+      await run('add', 'huge.txt', 'renamed.txt')
+      await fs.writeFile(path.join(cwd, 'untracked.txt'), 'untracked\n')
+
+      const git = new GitAdapter(runner)
+      const diff = await Effect.runPromise(git.worktreeDiff(cwd, 'main'))
+      expect(diff.files).toEqual([
+        { path: 'huge.txt', previousPath: null, status: 'added' },
+        {
+          path: 'renamed.txt',
+          previousPath: 'old.txt',
+          status: 'renamed'
+        },
+        {
+          path: 'untracked.txt',
+          previousPath: null,
+          status: 'untracked'
+        }
+      ])
+      expect(diff.changeSets.staged).toEqual(['huge.txt', 'renamed.txt'])
+      expect(diff.changeSets.untracked).toEqual(['untracked.txt'])
+
+      await expect(
+        Effect.runPromise(git.worktreeFileDiff(cwd, 'main', 'huge.txt'))
+      ).resolves.toMatchObject({
+        path: 'huge.txt',
+        status: 'oversized',
+        unified: null
+      })
+      await expect(
+        Effect.runPromise(git.worktreeFileDiff(cwd, 'main', 'renamed.txt'))
+      ).resolves.toMatchObject({ status: 'ready' })
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true })
+    }
+  }, 30_000)
 })

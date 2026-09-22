@@ -482,12 +482,17 @@ export const gitDiffImageSchema = Schema.Struct({
   dataUrl: Schema.String,
   byteLength: Schema.Number
 })
+const gitDiffFileSchema = Schema.Struct({
+  path: Schema.String,
+  previousPath: nullableStringSchema,
+  status: Schema.Literal('modified', 'added', 'deleted', 'renamed', 'untracked')
+})
 export const gitDiffSchema = Schema.Struct({
   baseRef: Schema.String,
   baseCommit: Schema.String,
   headCommit: Schema.String,
   generatedAt: Schema.String,
-  unified: Schema.String,
+  files: Schema.Array(gitDiffFileSchema),
   changeSets: Schema.Struct({
     branch: stringArraySchema,
     staged: stringArraySchema,
@@ -705,6 +710,13 @@ export const webPanelContextResponseSchema = Schema.Struct({
   context: webPanelContextSchema
 })
 export const gitDiffResponseSchema = Schema.Struct({ diff: gitDiffSchema })
+export const gitFileDiffResponseSchema = Schema.Struct({
+  path: Schema.String,
+  status: Schema.Literal('ready', 'oversized'),
+  unified: nullableStringSchema,
+  revision: nullableStringSchema,
+  message: nullableStringSchema
+})
 export const listenerDiscoveryResponseSchema = Schema.Struct({
   discovery: worktreeListenerDiscoverySchema
 })

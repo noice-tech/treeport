@@ -213,6 +213,28 @@ button:disabled {
   opacity: 0.55;
   cursor: wait;
 }
+.file-diff-placeholder {
+  min-height: 5rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.5rem;
+  background: #18181b;
+}
+.file-placeholder-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.file-placeholder-header strong {
+  overflow-wrap: anywhere;
+}
+.file-placeholder-header span,
+.file-diff-placeholder p {
+  color: #a1a1aa;
+}
+.file-diff-placeholder p {
+  margin: 0.65rem 0;
+}
 .file-collapse {
   display: grid;
   width: 1.75rem;

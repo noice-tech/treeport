@@ -6,8 +6,10 @@ import path from 'node:path'
 import type {
   DirtyState,
   GitDiff,
+  GitDiffFile,
   GitDiffImage,
-  GitDiffImageRequest
+  GitDiffImageRequest,
+  GitFileDiff
 } from '@treeport/shared'
 import * as Context from 'effect/Context'
 import * as Data from 'effect/Data'
@@ -15,7 +17,11 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import { asEffectCommandRunner, type CommandRunner } from './command'
-import { ExternalCommandError, runChecked } from './command'
+import {
+  ExternalCommandError,
+  OutputLimitCommandError,
+  runChecked
+} from './command'
 
 export interface GitWorktreeInfo {
   path: string
@@ -58,6 +64,44 @@ class GitMetadataNotWritableError extends Error {
     )
     this.name = 'GitMetadataNotWritableError'
   }
+}
+
+const MAX_FILE_DIFF_BYTES = 2 * 1024 * 1024
+
+export function parseGitDiffFiles(output: string): GitDiffFile[] {
+  const fields = output.split('\0')
+  const files: GitDiffFile[] = []
+  for (let index = 0; index < fields.length;) {
+    const code = fields[index++]
+    if (!code) {
+      continue
+    }
+
+    if (code.startsWith('R') || code.startsWith('C')) {
+      const previousPath = fields[index++]
+      const path = fields[index++]
+      if (!previousPath || !path) {
+        throw new Error('Invalid Git name-status output for renamed file')
+      }
+
+      files.push({ path, previousPath, status: 'renamed' })
+      continue
+    }
+
+    const filePath = fields[index++]
+    if (!filePath) {
+      throw new Error('Invalid Git name-status output for changed file')
+    }
+
+    const status = code.startsWith('A')
+      ? 'added'
+      : code.startsWith('D')
+        ? 'deleted'
+        : 'modified'
+    files.push({ path: filePath, previousPath: null, status })
+  }
+
+  return files
 }
 
 export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
@@ -818,7 +862,7 @@ class PromiseGitAdapter {
     }
   }
 
-  async worktreeDiff(cwd: string, defaultBranch: string): Promise<GitDiff> {
+  private async worktreeDiffContext(cwd: string, defaultBranch: string) {
     const candidates = [`origin/${defaultBranch}`, defaultBranch]
     let baseRef = ''
     for (const candidate of candidates) {
@@ -840,11 +884,12 @@ class PromiseGitAdapter {
     const mergeBase = await this.checked(cwd, ['merge-base', baseRef, 'HEAD'])
     const baseCommit = mergeBase.stdout.trim()
     const headCommit = await this.resolveCommit(cwd)
-    const [diff, branch, staged, unstaged, untracked] = await Promise.all([
+    const [changed, branch, staged, unstaged, untracked] = await Promise.all([
       this.checked(cwd, [
         'diff',
         '--no-ext-diff',
-        '--binary',
+        '--name-status',
+        '-z',
         '--find-renames',
         baseCommit
       ]),
@@ -878,33 +923,115 @@ class PromiseGitAdapter {
     const paths = (output: string) =>
       [...new Set(output.split('\0').filter(Boolean))].sort()
     const untrackedPaths = paths(untracked.stdout)
-    let unified = diff.stdout
-    for (const file of untrackedPaths) {
-      const addition = await this.runner.run({
-        executable: this.executable,
-        args: ['diff', '--no-index', '--binary', '--', '/dev/null', file],
-        cwd,
-        timeoutMs: 30_000
-      })
-      if (addition.exitCode !== 0 && addition.exitCode !== 1) {
-        throw new Error(addition.stderr.trim() || `Could not diff ${file}`)
+    const files = parseGitDiffFiles(changed.stdout)
+    const trackedPaths = new Set(files.map((file) => file.path))
+    for (const filePath of untrackedPaths) {
+      if (!trackedPaths.has(filePath)) {
+        files.push({
+          path: filePath,
+          previousPath: null,
+          status: 'untracked'
+        })
       }
-
-      unified += addition.stdout
     }
+    files.sort((left, right) => left.path.localeCompare(right.path))
 
     return {
       baseRef,
       baseCommit,
       headCommit,
-      generatedAt: new Date().toISOString(),
-      unified,
+      files,
       changeSets: {
         branch: paths(branch.stdout),
         staged: paths(staged.stdout),
         unstaged: paths(unstaged.stdout),
         untracked: untrackedPaths
       }
+    }
+  }
+
+  async worktreeDiff(cwd: string, defaultBranch: string): Promise<GitDiff> {
+    const context = await this.worktreeDiffContext(cwd, defaultBranch)
+    return { ...context, generatedAt: new Date().toISOString() }
+  }
+
+  async worktreeFileDiff(
+    cwd: string,
+    defaultBranch: string,
+    filePath: string
+  ): Promise<GitFileDiff> {
+    const context = await this.worktreeDiffContext(cwd, defaultBranch)
+    const file = context.files.find((candidate) => candidate.path === filePath)
+    if (!file) {
+      throw new Error('The requested path is not in the current tree diff')
+    }
+
+    const args =
+      file.status === 'untracked'
+        ? ['diff', '--no-index', '--binary', '--', '/dev/null', file.path]
+        : [
+            'diff',
+            '--no-ext-diff',
+            '--binary',
+            '--find-renames',
+            context.baseCommit,
+            '--',
+            ...(file.previousPath ? [file.previousPath] : []),
+            file.path
+          ]
+    let result
+    try {
+      result = await this.runner.run({
+        executable: this.executable,
+        args,
+        cwd,
+        timeoutMs: 30_000,
+        maxStdoutBytes: MAX_FILE_DIFF_BYTES,
+        maxStderrBytes: 64 * 1024
+      })
+    } catch (cause) {
+      if (
+        (cause instanceof OutputLimitCommandError &&
+          cause.stream === 'stdout') ||
+        (cause instanceof Error &&
+          cause.message.includes('exceeded the stdout limit'))
+      ) {
+        return {
+          path: file.path,
+          status: 'oversized',
+          unified: null,
+          revision: null,
+          message: `Patch exceeds the ${
+            MAX_FILE_DIFF_BYTES / 1024 / 1024
+          } MiB review limit. Open the file or use Git locally to inspect it.`
+        }
+      }
+
+      throw cause
+    }
+
+    const expectedExitCodes = file.status === 'untracked' ? [0, 1] : [0]
+    if (!expectedExitCodes.includes(result.exitCode)) {
+      throw new ExternalCommandError(
+        result.stderr.trim() || `Could not diff ${file.path}`,
+        {
+          executable: this.executable,
+          args,
+          cwd,
+          timeoutMs: 30_000,
+          maxStdoutBytes: MAX_FILE_DIFF_BYTES,
+          maxStderrBytes: 64 * 1024
+        },
+        result
+      )
+    }
+
+    return {
+      path: file.path,
+      status: 'ready',
+      unified: result.stdout,
+      revision: crypto.createHash('sha256').update(result.stdout).digest('hex'),
+      message: null
     }
   }
 
@@ -1200,6 +1327,16 @@ export class GitAdapter {
   worktreeDiff(cwd: string, defaultBranch: string): GitEffect<GitDiff> {
     return this.operation('worktreeDiff', () =>
       this.implementation.worktreeDiff(cwd, defaultBranch)
+    )
+  }
+
+  worktreeFileDiff(
+    cwd: string,
+    defaultBranch: string,
+    filePath: string
+  ): GitEffect<GitFileDiff> {
+    return this.operation('worktreeFileDiff', () =>
+      this.implementation.worktreeFileDiff(cwd, defaultBranch, filePath)
     )
   }
 
