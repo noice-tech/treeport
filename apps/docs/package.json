@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.6",
-    "typescript": "catalog:",
+    "typescript": "catalog:docs",
     "wrangler": "^4.115.0"
   }
 }
