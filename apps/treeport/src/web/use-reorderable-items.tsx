@@ -88,6 +88,7 @@ export function useReorderableItems<Item extends { id: string }>({
     if (drag?.holdTimer) {
       clearTimeout(drag.holdTimer)
     }
+
     drag?.touchListeners?.abort()
     drag?.listeners?.abort()
     drag?.overlay?.remove()
@@ -278,6 +279,7 @@ export function useReorderableItems<Item extends { id: string }>({
       )
       shield.addEventListener('lostpointercapture', cancel, listenerOptions)
     }
+
     window.addEventListener('blur', cancel, listenerOptions)
     document.addEventListener(
       'visibilitychange',
@@ -361,14 +363,17 @@ export function useReorderableItems<Item extends { id: string }>({
         if (event.touches.length !== 1 || dragRef.current) {
           return
         }
+
         const item = itemElements.current.get(itemId)
         if (!item) {
           return
         }
+
         const touch = event.touches[0]
         if (!touch) {
           return
         }
+
         const rect = item.getBoundingClientRect()
         const touchListeners = new AbortController()
         const drag: DragState = {
@@ -406,16 +411,19 @@ export function useReorderableItems<Item extends { id: string }>({
             if (dragRef.current !== drag) {
               return
             }
+
             if (nextEvent.touches.length !== 1) {
               cancel()
               return
             }
+
             const movingTouch = Array.from(nextEvent.changedTouches).find(
               (candidate) => candidate.identifier === drag.pointerId
             )
             if (!movingTouch) {
               return
             }
+
             if (!drag.started) {
               if (
                 Math.hypot(
@@ -425,8 +433,10 @@ export function useReorderableItems<Item extends { id: string }>({
               ) {
                 cancel()
               }
+
               return
             }
+
             nextEvent.preventDefault()
             continueDrag(movingTouch.clientX, movingTouch.clientY)
           },
@@ -443,6 +453,7 @@ export function useReorderableItems<Item extends { id: string }>({
             ) {
               return
             }
+
             if (drag.started) {
               nextEvent.preventDefault()
               commit()
