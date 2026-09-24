@@ -132,6 +132,46 @@ afterEach(async () => {
 })
 
 describe('request security over a real HTTP server', () => {
+  it('allows only the bundled DevTools origin on the dedicated upgrade route', () => {
+    const panelId = `panel_${'a'.repeat(32)}`
+    const request = testAccess<IncomingMessage>({
+      method: 'GET',
+      url: `/api/browser-devtools/${panelId}`,
+      headers: {
+        host: '127.0.0.1:8733',
+        origin: 'devtools://devtools',
+        'sec-fetch-site': 'cross-site'
+      },
+      rawHeaders: [
+        'Host',
+        '127.0.0.1:8733',
+        'Origin',
+        'devtools://devtools',
+        'Sec-Fetch-Site',
+        'cross-site'
+      ],
+      socket: { remoteAddress: '127.0.0.1' }
+    })
+
+    expect(
+      authorizeRequest(request, {
+        socketUpgrade: true,
+        devtoolsUpgrade: true
+      }).allowed
+    ).toBe(true)
+    expect(authorizeRequest(request, { socketUpgrade: true }).allowed).toBe(
+      false
+    )
+    expect(authorizeRequest(request).allowed).toBe(false)
+    request.url = '/api/socket/browsers'
+    expect(
+      authorizeRequest(request, {
+        socketUpgrade: true,
+        devtoolsUpgrade: true
+      }).allowed
+    ).toBe(false)
+  })
+
   it('never trusts identity or forwarding headers from a non-loopback peer', () => {
     const request = testAccess<IncomingMessage>({
       method: 'GET',

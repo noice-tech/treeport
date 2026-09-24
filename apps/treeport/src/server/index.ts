@@ -27,6 +27,7 @@ import {
 } from './request-security'
 import { WorkspacePresenceManager } from './workspace-presence'
 import { createSocketServer } from './socket-server'
+import { createBrowserDevtoolsBridge } from './browser-devtools'
 import { makeRpcHttpApp } from './rpc-server'
 import { acquireTerminalMetadataManager } from './terminal-metadata'
 import { connectOrStartTerminalHost } from './terminal-host-client'
@@ -214,7 +215,14 @@ async function main(): Promise<void> {
       )
     )
     let socketServer: ReturnType<typeof createSocketServer> | null = null
+    const devtoolsBridge = createBrowserDevtoolsBridge((panelId) =>
+      service.runEffect(browserSessions.devtoolsEndpoint(panelId))
+    )
     server.on('upgrade', (request, socket, head) => {
+      if (devtoolsBridge.handleUpgrade(request, socket, head)) {
+        return
+      }
+
       const security = authorizeRequest(request, { socketUpgrade: true })
       if (security.allowed) {
         if (socketServer?.handleUpgrade(request, socket, head)) {
@@ -324,6 +332,10 @@ async function main(): Promise<void> {
       }
 
       shuttingDown = true
+      devtoolsBridge.close()
+      // Stop accepting requests before slower subsystem finalizers run so a
+      // completed development command cannot leave its port behind.
+      server.close()
       void Effect.runPromise(Scope.close(resourceScope, Exit.void)).then(() =>
         process.exit(0)
       )

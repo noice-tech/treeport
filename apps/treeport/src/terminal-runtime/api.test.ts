@@ -48,10 +48,17 @@ describe('stable terminal host API', () => {
           fence: 0,
           cols: 80,
           rows: 24,
+          synchronizedOutput: true,
           futureSnapshotField: 'ignored'
         })
       )
-    ).resolves.toEqual({ data: 'history', fence: 0, cols: 80, rows: 24 })
+    ).resolves.toEqual({
+      data: 'history',
+      fence: 0,
+      cols: 80,
+      rows: 24,
+      synchronizedOutput: true
+    })
 
     const invalid = await Effect.runPromise(
       Effect.exit(

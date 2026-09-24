@@ -35,6 +35,7 @@ interface TreeportBrowserWebview extends HTMLElement {
 
 type TreeportDesktopBridge = Readonly<{
   platform: NodeJS.Platform
+  openBrowserDevtools: (panelId: string) => Promise<boolean>
   openFileUrl: (url: string) => Promise<TreeportDesktopFileAction>
   getPathForFile?: (file: File) => Promise<string | null>
   onLocalFilePaste?: (listener: (paths: string[]) => void) => () => void

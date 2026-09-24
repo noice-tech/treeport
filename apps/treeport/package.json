@@ -1,6 +1,6 @@
 {
   "name": "@treeport/treeport",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "A tree-first terminal driver for persistent development workspaces.",
   "type": "module",
   "bin": {
@@ -63,7 +63,7 @@
     "@playwright/cli": "0.1.18",
     "@radix-ui/react-context-menu": "^2.3.7",
     "@treeport/panel-sdk": "workspace:*",
-    "@vitejs/plugin-react": "5.2.0",
+    "@vitejs/plugin-react": "catalog:",
     "@xterm/addon-image": "0.10.0-beta.301",
     "@xterm/addon-serialize": "0.15.0-beta.301",
     "@xterm/headless": "6.1.0-beta.303",
@@ -75,9 +75,9 @@
     "kleur": "^4.1.5",
     "node-pty": "1.2.0-beta.14",
     "playwright": "1.61.1",
-    "vite": "8.1.5",
+    "vite": "catalog:",
     "ws": "^8.21.1",
-    "zod": "^4.3.6"
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@fontsource-variable/inter": "catalog:",

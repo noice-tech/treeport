@@ -95,6 +95,8 @@ import {
   worktreeResponseSchema,
   worktreesResponseSchema,
   gitDiffResponseSchema,
+  gitFileDiffRequestSchema,
+  gitFileDiffResponseSchema,
   gitDiffImageRequestSchema,
   gitDiffImageSchema,
   hasDataResponseSchema,
@@ -1327,6 +1329,20 @@ export function createApp({
             service.tabs.getWebPanelDiff(params.tabId!)
           )
         })
+      })
+    ),
+    route(
+      'POST',
+      '/api/tabs/:tabId/diff/file',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(gitFileDiffRequestSchema)
+        return jsonContractResponse(
+          gitFileDiffResponseSchema,
+          yield* operation(() =>
+            service.tabs.getWebPanelFileDiff(params.tabId!, body.path)
+          )
+        )
       })
     ),
     route(

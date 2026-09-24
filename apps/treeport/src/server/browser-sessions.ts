@@ -92,6 +92,7 @@ export interface BrowserSessionBrowser {
   agentCommand(input: BrowserAgentCommand): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
   requestVideoKeyframe(): Promise<void>
+  devtoolsEndpoint?(): Promise<string>
   requestClose(force: boolean): Promise<boolean>
   close(): Promise<void>
 }
@@ -377,6 +378,23 @@ export class BrowserSessionManager {
         expiresAt: Date.now() + 30_000
       })
       return ticket
+    })
+  }
+
+  devtoolsEndpoint(
+    tabId: string
+  ): Effect.Effect<string, unknown, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      yield* this.service.tabs.authorizeBrowserTab(tabId)
+      const browser = this.sessions.get(tabId)?.browser
+      const endpoint = browser?.devtoolsEndpoint?.()
+      if (!endpoint) {
+        return yield* Effect.fail(
+          new Error('The hosted browser page is not available.')
+        )
+      }
+
+      return yield* Effect.tryPromise(() => endpoint)
     })
   }
 

@@ -238,6 +238,9 @@ export function integrationService(
     getWebPanelDiff: run(
       application.tabs.getWebPanelDiff.bind(application.tabs)
     ),
+    getWebPanelFileDiff: run(
+      application.tabs.getWebPanelFileDiff.bind(application.tabs)
+    ),
     getWebPanelDiffImage: run(
       application.tabs.getWebPanelDiffImage.bind(application.tabs)
     ),

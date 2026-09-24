@@ -3,7 +3,7 @@ import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
 export const SOCKET_PATH = '/api/socket'
-export const TERMINAL_PROTOCOL_VERSION = 8
+export const TERMINAL_PROTOCOL_VERSION = 9
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
@@ -259,6 +259,9 @@ export const terminalReadySchema = Schema.Struct({
   ...dimensions,
   revision: positiveInt,
   snapshot: Schema.String,
+  synchronizedOutput: Schema.optionalWith(Schema.Boolean, {
+    default: () => false
+  }),
   snapshotImages: Schema.optionalWith(
     Schema.NullOr(terminalImageSnapshotSchema),
     { default: () => null }

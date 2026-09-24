@@ -1,6 +1,6 @@
 {
   "name": "@treeport/desktop",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "productName": "Treeport",
   "description": "A tree-first desktop terminal driver for local and trusted private-network backends.",
@@ -47,9 +47,9 @@
     "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "sharp": "0.35.2",
-    "typescript": "^7.0.2",
-    "vite": "^8.1.5",
+    "sharp": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
     "zod": "catalog:"
   },
   "dependencies": {

@@ -16,6 +16,9 @@ import {
 export type {
   GitDiff,
   GitDiffChangeSets,
+  GitDiffFile,
+  GitFileDiff,
+  GitFileDiffRequest,
   GitDiffImage,
   GitDiffImageRequest,
   JsonValue,

@@ -1,3 +1,4 @@
+import { Globe2Icon, MonitorIcon } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import type { ComputerSummary, DesktopShellState } from '../desktop-contract'
 import { Button, Dialog, Field, FieldLabel, Input } from './ui'
@@ -30,6 +31,19 @@ function ComputerEditor({
       aria-label={`Edit ${computer.name} at ${computer.origin}`}
       onSubmit={submit}
     >
+      <div className="flex items-center gap-2 text-xs font-medium text-zinc-400">
+        {computer.loopback ? (
+          <MonitorIcon className="size-3.5" />
+        ) : (
+          <Globe2Icon className="size-3.5" />
+        )}
+        {computer.loopback ? 'This computer' : 'Remote computer'}
+        {computer.selected ? (
+          <span className="rounded bg-cyan-400/10 px-1.5 py-0.5 text-cyan-300">
+            Current
+          </span>
+        ) : null}
+      </div>
       <div className="grid gap-3 sm:grid-cols-[2fr_3fr]">
         <Field>
           <FieldLabel htmlFor={`name-${computer.id}`}>Name</FieldLabel>

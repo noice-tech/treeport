@@ -782,39 +782,68 @@ export class TerminalHostSessions {
   private parserWorker(session: HostedTerminalSession): Effect.Effect<void> {
     return Effect.forever(
       Effect.gen(this, function* () {
-        const command = yield* Queue.take(session.parserCommands)
-        if (command._tag === 'Stop') {
-          return yield* Effect.interrupt
-        }
-
-        if (command._tag === 'Fence') {
-          session.pendingFences.delete(command.completed)
-          yield* Deferred.succeed(command.completed, undefined)
-          return
-        }
-
-        yield* Effect.async<void>((resume) => {
-          session.terminal.write(command.data, () => resume(Effect.void))
-        })
-
-        session.parserQueuedBytes = Math.max(
-          0,
-          session.parserQueuedBytes - command.bytes
+        // A PTY can deliver image-heavy redraws in thousands of 1 KiB chunks.
+        // Awaiting xterm.write for each one pays a timer turn per chunk even
+        // when parsing takes microseconds. Drain already queued output together;
+        // never wait to fill a batch or parse across a snapshot/authority fence.
+        const commands = Array.from(
+          yield* Queue.takeBetween(session.parserCommands, 1, 256)
         )
-        yield* PubSub.publish(session.output, {
-          data: command.data,
-          sequence: command.sequence
-        })
-        if (
-          session.parserPaused &&
-          session.parserQueuedBytes <= HOST_PARSER_LOW_WATERMARK
-        ) {
-          session.parserPaused = false
+        for (let index = 0; index < commands.length;) {
+          const command = commands[index]!
+          if (command._tag === 'Stop') {
+            return yield* Effect.interrupt
+          }
+
+          if (command._tag === 'Fence') {
+            session.pendingFences.delete(command.completed)
+            yield* Deferred.succeed(command.completed, undefined)
+            index++
+            continue
+          }
+
+          const batch: Array<Extract<ParserCommand, { _tag: 'Output' }>> = []
+          let bytes = 0
+          while (index < commands.length) {
+            const next = commands[index]!
+            if (next._tag !== 'Output') {
+              break
+            }
+
+            batch.push(next)
+            bytes += next.bytes
+            index++
+          }
+          yield* Effect.async<void>((resume) => {
+            session.terminal.write(
+              batch.map((output) => output.data).join(''),
+              () => resume(Effect.void)
+            )
+          })
+
+          session.parserQueuedBytes = Math.max(
+            0,
+            session.parserQueuedBytes - bytes
+          )
+          // Preserve owner sequences: subscribers use them to distinguish
+          // canonical snapshot contents from the live suffix.
+          for (const output of batch) {
+            yield* PubSub.publish(session.output, {
+              data: output.data,
+              sequence: output.sequence
+            })
+          }
           if (
-            session.boundaryPauseCount === 0 &&
-            session.status === 'running'
+            session.parserPaused &&
+            session.parserQueuedBytes <= HOST_PARSER_LOW_WATERMARK
           ) {
-            session.pty.resume()
+            session.parserPaused = false
+            if (
+              session.boundaryPauseCount === 0 &&
+              session.status === 'running'
+            ) {
+              session.pty.resume()
+            }
           }
         }
       })
@@ -1103,6 +1132,10 @@ export class TerminalHostSessions {
               scrollback: HOST_SCROLLBACK_LINES
             }),
             links,
+            // SerializeAddon intentionally omits this temporary mode. Preserve
+            // it out of band so a viewer attaching mid-frame can present the
+            // remaining suffix atomically.
+            synchronizedOutput: session.terminal.modes.synchronizedOutputMode,
             fence: session.outputSequence,
             cols: session.terminal.cols,
             rows: session.terminal.rows

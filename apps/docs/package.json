@@ -15,11 +15,11 @@
   "dependencies": {
     "@astrojs/starlight": "^0.41.4",
     "astro": "^7.0.2",
-    "sharp": "^0.34.5"
+    "sharp": "catalog:"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.6",
-    "typescript": "^6.0.3",
+    "typescript": "catalog:docs",
     "wrangler": "^4.115.0"
   }
 }

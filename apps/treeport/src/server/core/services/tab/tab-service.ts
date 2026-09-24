@@ -1017,7 +1017,56 @@ export class TabService {
       const worktree = yield* getWorktree(context.panel.worktreeId)
       return yield* git
         .worktreeDiff(worktree.path, context.project.defaultBranch!)
-        .pipe(Effect.orDie)
+        .pipe(
+          Effect.mapError(
+            (reason) =>
+              new DomainError(
+                'GIT_DIFF_UNAVAILABLE',
+                reason.message || 'Could not inspect tree changes',
+                422
+              )
+          )
+        )
+    })
+  }
+
+  getWebPanelFileDiff(tabId: string, filePath: string) {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
+    const getWorktree = this.getWorktree.bind(this)
+
+    return Effect.gen(function* () {
+      const git = yield* GitPort
+      const context = yield* getWebPanelContext(tabId)
+      if (
+        context.project.kind !== 'repository' ||
+        !context.project.defaultBranch
+      ) {
+        return yield* Effect.fail(
+          new DomainError(
+            'GIT_NOT_AVAILABLE',
+            'Git diff is not available for a folder project',
+            409
+          )
+        )
+      }
+
+      const worktree = yield* getWorktree(context.panel.worktreeId)
+      return yield* git
+        .worktreeFileDiff(
+          worktree.path,
+          context.project.defaultBranch,
+          filePath
+        )
+        .pipe(
+          Effect.mapError(
+            (reason) =>
+              new DomainError(
+                'GIT_FILE_DIFF_UNAVAILABLE',
+                reason.message || 'Could not inspect this file change',
+                422
+              )
+          )
+        )
     })
   }
 

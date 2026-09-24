@@ -447,12 +447,25 @@ function fixture(webDist = '/missing') {
       dataUrl: 'data:image/png;base64,iVBORw==',
       byteLength: 4
     })),
+    getWebPanelFileDiff: vi.fn(async (_panelId: string, filePath: string) => ({
+      path: filePath,
+      status: 'ready' as const,
+      unified: 'diff --git a/a b/a',
+      revision: 'revision-1',
+      message: null
+    })),
     getWebPanelDiff: vi.fn(async () => ({
       baseRef: 'origin/trunk',
       baseCommit: 'base',
       headCommit: 'head',
       generatedAt: '2026-01-01T00:00:00.000Z',
-      unified: 'diff --git a/a b/a',
+      files: [
+        {
+          path: 'a',
+          previousPath: null,
+          status: 'modified' as const
+        }
+      ],
       changeSets: {
         branch: ['a'],
         staged: [],
@@ -1004,6 +1017,20 @@ describe('HTTP API validation', () => {
     expect((await app.request('/api/tabs/tab_review/context')).status).toBe(200)
     expect((await app.request('/api/tabs/tab_review/diff')).status).toBe(200)
     expect(service.getWebPanelDiff).toHaveBeenCalledWith('tab_review')
+    const fileDiff = await app.request('/api/tabs/tab_review/diff/file', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'a' })
+    })
+    expect(fileDiff.status).toBe(200)
+    expect(await fileDiff.json()).toEqual({
+      path: 'a',
+      status: 'ready',
+      unified: 'diff --git a/a b/a',
+      revision: 'revision-1',
+      message: null
+    })
+    expect(service.getWebPanelFileDiff).toHaveBeenCalledWith('tab_review', 'a')
     const image = await app.request('/api/tabs/tab_review/diff/image', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

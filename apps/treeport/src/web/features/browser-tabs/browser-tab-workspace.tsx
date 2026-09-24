@@ -14,6 +14,8 @@ import {
   ArrowRightIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  CodeBracketSquareIcon,
+  DevicePhoneMobileIcon,
   ServerStackIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
@@ -117,6 +119,9 @@ export function BrowserTabWorkspace({
   const connectionRef = useRef<BrowserTabConnection | null>(null)
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
+  const viewportOverrideRef = useRef<{ width: number; height: number } | null>(
+    null
+  )
   const pointerActiveRef = useRef(false)
   const touchRef = useRef<{
     pointerId: number
@@ -142,6 +147,13 @@ export function BrowserTabWorkspace({
     tab.url === 'about:blank' ? '' : tab.url
   )
   const [serversOpen, setServersOpen] = useState(false)
+  const [viewportOpen, setViewportOpen] = useState(false)
+  const [viewportOverride, setViewportOverride] = useState<{
+    width: number
+    height: number
+  } | null>(null)
+  const [viewportWidth, setViewportWidth] = useState('390')
+  const [viewportHeight, setViewportHeight] = useState('844')
   const [findOpen, setFindOpen] = useState(false)
   const [findValue, setFindValue] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -484,6 +496,7 @@ export function BrowserTabWorkspace({
     let viewport: { width: number; height: number } | null = null
     const observer = new ResizeObserver(([entry]) => {
       if (
+        viewportOverrideRef.current ||
         !entry ||
         entry.contentRect.width <= 0 ||
         entry.contentRect.height <= 0
@@ -505,7 +518,7 @@ export function BrowserTabWorkspace({
       // Input coordinates continue using the server's confirmed viewport.
       timer ??= setTimeout(() => {
         timer = null
-        if (viewport) {
+        if (viewport && !viewportOverrideRef.current) {
           send({ type: 'resize', ...viewport })
         }
       }, 100)
@@ -662,6 +675,30 @@ export function BrowserTabWorkspace({
     send({ type: 'takeControl' })
     send({ type: 'navigate', url: targetUrl })
     focusPage()
+  }
+
+  const resizeViewport = (size: { width: number; height: number } | null) => {
+    const needsControl = !stateRef.current?.controlled
+    viewportOverrideRef.current = size
+    setViewportOverride(size)
+    if (size) {
+      setViewportWidth(String(size.width))
+      setViewportHeight(String(size.height))
+      send({ type: 'resize', ...size })
+    } else {
+      const bounds = canvasRef.current?.getBoundingClientRect()
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        send({
+          type: 'resize',
+          width: Math.max(1, Math.min(3_840, Math.round(bounds.width))),
+          height: Math.max(1, Math.min(2_160, Math.round(bounds.height)))
+        })
+      }
+    }
+
+    if (needsControl) {
+      send({ type: 'takeControl' })
+    }
   }
 
   const point = (event: PointerEvent<HTMLCanvasElement>) => {
@@ -904,6 +941,93 @@ export function BrowserTabWorkspace({
             <path d="M7.25 12.25h5.5" />
           </svg>
         </span>
+        {!localBrowser ? (
+          <Popover open={viewportOpen} onOpenChange={setViewportOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Browser viewport size"
+                title="Browser viewport size"
+                disabled={!state}
+              >
+                <DevicePhoneMobileIcon />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 space-y-2 p-3">
+              <p className="text-sm font-semibold">Remote viewport</p>
+              <p className="text-xs text-zinc-400">
+                {viewportOverride
+                  ? `${viewportOverride.width} × ${viewportOverride.height} px`
+                  : 'Fit Browser panel'}
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={3840}
+                  aria-label="Viewport width"
+                  value={viewportWidth}
+                  onChange={(event) => setViewportWidth(event.target.value)}
+                />
+                <Input
+                  type="number"
+                  min={1}
+                  max={2160}
+                  aria-label="Viewport height"
+                  value={viewportHeight}
+                  onChange={(event) => setViewportHeight(event.target.value)}
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={
+                    !Number.isInteger(Number(viewportWidth)) ||
+                    Number(viewportWidth) < 1 ||
+                    Number(viewportWidth) > 3840 ||
+                    !Number.isInteger(Number(viewportHeight)) ||
+                    Number(viewportHeight) < 1 ||
+                    Number(viewportHeight) > 2160
+                  }
+                  onClick={() =>
+                    resizeViewport({
+                      width: Number(viewportWidth),
+                      height: Number(viewportHeight)
+                    })
+                  }
+                >
+                  Apply
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => resizeViewport(null)}
+                >
+                  Fit panel
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : null}
+        {!localBrowser && window.treeportDesktop ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Open DevTools"
+            title="Open DevTools"
+            disabled={!state}
+            onClick={() => {
+              void window.treeportDesktop?.openBrowserDevtools(tab.id)
+            }}
+          >
+            <CodeBracketSquareIcon />
+          </Button>
+        ) : null}
         <Popover
           open={serversOpen}
           onOpenChange={(open) => {

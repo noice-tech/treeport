@@ -5,7 +5,8 @@ import type {
   KeyboardEvent,
   PointerEvent,
   ReactNode,
-  RefCallback
+  RefCallback,
+  TouchEvent
 } from 'react'
 
 export interface ReorderableItemProps {
@@ -19,6 +20,8 @@ export type ReorderableHandleProps = Pick<
   | 'onPointerMove'
   | 'onPointerUp'
   | 'onPointerCancel'
+  | 'onTouchStart'
+  | 'onContextMenu'
   | 'onClickCapture'
   | 'onKeyDown'
   | 'style'
@@ -41,6 +44,8 @@ type DragState = {
   shield: HTMLElement | null
   listeners: AbortController | null
   started: boolean
+  holdTimer: ReturnType<typeof setTimeout> | null
+  touchListeners: AbortController | null
 }
 
 export function useReorderableItems<Item extends { id: string }>({
@@ -80,6 +85,11 @@ export function useReorderableItems<Item extends { id: string }>({
 
   const cleanUpDrag = () => {
     const drag = dragRef.current
+    if (drag?.holdTimer) {
+      clearTimeout(drag.holdTimer)
+    }
+
+    drag?.touchListeners?.abort()
     drag?.listeners?.abort()
     drag?.overlay?.remove()
     drag?.shield?.remove()
@@ -146,7 +156,9 @@ export function useReorderableItems<Item extends { id: string }>({
 
     drag.lastX = clientX
     drag.lastY = clientY
-    drag.overlay.style.transform = `translate3d(${clientX - drag.startX}px, ${clientY - drag.startY}px, 0)`
+    drag.overlay.style.transform = `translate3d(${clientX - drag.startX}px, ${
+      clientY - drag.startY
+    }px, 0)`
     moveDraggedItem(orientation === 'horizontal' ? clientX : clientY)
     const item = itemsById.get(drag.id)
     if (item) {
@@ -184,9 +196,112 @@ export function useReorderableItems<Item extends { id: string }>({
 
     pendingCommit.current = items
     setAnnouncement(
-      `Moved to position ${drag.draftIds.indexOf(draggedId) + 1} of ${drag.draftIds.length}`
+      `Moved to position ${drag.draftIds.indexOf(draggedId) + 1} of ${
+        drag.draftIds.length
+      }`
     )
     onReorder(drag.draftIds)
+  }
+
+  const startDrag = (itemId: string, capturePointer: boolean) => {
+    const drag = dragRef.current
+    const item = itemElements.current.get(itemId)
+    if (!drag || !item) {
+      cancel()
+      return
+    }
+
+    const rect = item.getBoundingClientRect()
+    const overlay = item.cloneNode(true)
+    if (!(overlay instanceof HTMLElement)) {
+      cancel()
+      return
+    }
+
+    overlay.removeAttribute('id')
+    overlay.querySelectorAll('[id]').forEach((element) => {
+      element.removeAttribute('id')
+    })
+    overlay.setAttribute('aria-hidden', 'true')
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      top: `${rect.top}px`,
+      left: `${rect.left}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      margin: '0',
+      listStyle: 'none',
+      pointerEvents: 'none',
+      transform: 'translate3d(0, 0, 0)',
+      transition: 'none',
+      zIndex: '2147483647'
+    })
+
+    const shield = document.createElement('div')
+    shield.setAttribute('aria-hidden', 'true')
+    Object.assign(shield.style, {
+      position: 'fixed',
+      inset: '0',
+      touchAction: 'none',
+      userSelect: 'none',
+      zIndex: '2147483646'
+    })
+    const listeners = new AbortController()
+    const listenerOptions = { signal: listeners.signal }
+    if (capturePointer) {
+      shield.addEventListener(
+        'pointermove',
+        (event) => {
+          if (event.pointerId === drag.pointerId) {
+            event.preventDefault()
+            continueDrag(event.clientX, event.clientY)
+          }
+        },
+        listenerOptions
+      )
+      shield.addEventListener(
+        'pointerup',
+        (event) => {
+          if (event.pointerId === drag.pointerId) {
+            commit()
+          }
+        },
+        listenerOptions
+      )
+      shield.addEventListener(
+        'pointercancel',
+        (event) => {
+          if (event.pointerId === drag.pointerId) {
+            cancel()
+          }
+        },
+        listenerOptions
+      )
+      shield.addEventListener('lostpointercapture', cancel, listenerOptions)
+    }
+
+    window.addEventListener('blur', cancel, listenerOptions)
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.visibilityState === 'hidden') {
+          cancel()
+        }
+      },
+      listenerOptions
+    )
+    document.body.append(shield, overlay)
+
+    drag.started = true
+    drag.overlay = overlay
+    drag.shield = shield
+    drag.listeners = listeners
+    setDraftIds(drag.draftIds)
+    setDraggingId(itemId)
+    if (capturePointer) {
+      drag.handle.releasePointerCapture(drag.pointerId)
+      shield.setPointerCapture(drag.pointerId)
+    }
   }
 
   useLayoutEffect(() => {
@@ -243,9 +358,138 @@ export function useReorderableItems<Item extends { id: string }>({
       style: draggingId === itemId ? { visibility: 'hidden' } : undefined
     }),
     getHandleProps: (itemId: string): ReorderableHandleProps => ({
-      style: { touchAction: 'none', userSelect: 'none' },
+      style: { touchAction: 'auto', userSelect: 'none' },
+      onTouchStart: (event: TouchEvent<HTMLElement>) => {
+        if (event.touches.length !== 1 || dragRef.current) {
+          return
+        }
+
+        const item = itemElements.current.get(itemId)
+        if (!item) {
+          return
+        }
+
+        const touch = event.touches[0]
+        if (!touch) {
+          return
+        }
+
+        const rect = item.getBoundingClientRect()
+        const touchListeners = new AbortController()
+        const drag: DragState = {
+          id: itemId,
+          pointerId: touch.identifier,
+          startX: touch.clientX,
+          startY: touch.clientY,
+          startCoordinate:
+            orientation === 'horizontal' ? touch.clientX : touch.clientY,
+          lastX: touch.clientX,
+          lastY: touch.clientY,
+          itemStart: orientation === 'horizontal' ? rect.left : rect.top,
+          itemSize: orientation === 'horizontal' ? rect.width : rect.height,
+          handle: event.currentTarget,
+          originalIds: [...itemIds],
+          draftIds: [...itemIds],
+          overlay: null,
+          shield: null,
+          listeners: null,
+          started: false,
+          holdTimer: null,
+          touchListeners
+        }
+        dragRef.current = drag
+        const signal = touchListeners.signal
+        drag.holdTimer = setTimeout(() => {
+          drag.holdTimer = null
+          if (dragRef.current === drag) {
+            startDrag(itemId, false)
+          }
+        }, 350)
+        window.addEventListener(
+          'touchmove',
+          (nextEvent) => {
+            if (dragRef.current !== drag) {
+              return
+            }
+
+            if (nextEvent.touches.length !== 1) {
+              cancel()
+              return
+            }
+
+            const movingTouch = Array.from(nextEvent.changedTouches).find(
+              (candidate) => candidate.identifier === drag.pointerId
+            )
+            if (!movingTouch) {
+              return
+            }
+
+            if (!drag.started) {
+              if (
+                Math.hypot(
+                  movingTouch.clientX - drag.startX,
+                  movingTouch.clientY - drag.startY
+                ) >= 8
+              ) {
+                cancel()
+              }
+
+              return
+            }
+
+            nextEvent.preventDefault()
+            continueDrag(movingTouch.clientX, movingTouch.clientY)
+          },
+          { signal, passive: false }
+        )
+        window.addEventListener(
+          'touchend',
+          (nextEvent) => {
+            if (
+              dragRef.current !== drag ||
+              !Array.from(nextEvent.changedTouches).some(
+                (candidate) => candidate.identifier === drag.pointerId
+              )
+            ) {
+              return
+            }
+
+            if (drag.started) {
+              nextEvent.preventDefault()
+              commit()
+            } else {
+              cleanUpDrag()
+            }
+          },
+          { signal, passive: false }
+        )
+        window.addEventListener(
+          'touchcancel',
+          (nextEvent) => {
+            if (
+              dragRef.current === drag &&
+              Array.from(nextEvent.changedTouches).some(
+                (candidate) => candidate.identifier === drag.pointerId
+              )
+            ) {
+              cancel()
+            }
+          },
+          { signal }
+        )
+      },
+      onContextMenu: (event) => {
+        if (dragRef.current?.id === itemId && dragRef.current.started) {
+          event.preventDefault()
+        }
+      },
       onPointerDown: (event: PointerEvent<HTMLElement>) => {
-        if (!event.isPrimary || event.button !== 0) {
+        if (
+          !event.isPrimary ||
+          event.button !== 0 ||
+          event.pointerType === 'touch' ||
+          dragRef.current
+        ) {
           return
         }
 
@@ -272,13 +516,19 @@ export function useReorderableItems<Item extends { id: string }>({
           overlay: null,
           shield: null,
           listeners: null,
-          started: false
+          started: false,
+          holdTimer: null,
+          touchListeners: null
         }
         event.currentTarget.setPointerCapture(event.pointerId)
       },
       onPointerMove: (event: PointerEvent<HTMLElement>) => {
         const drag = dragRef.current
-        if (!drag || drag.pointerId !== event.pointerId) {
+        if (
+          event.pointerType === 'touch' ||
+          !drag ||
+          drag.pointerId !== event.pointerId
+        ) {
           return
         }
 
@@ -292,98 +542,10 @@ export function useReorderableItems<Item extends { id: string }>({
             return
           }
 
-          const item = itemElements.current.get(itemId)
-          if (!item) {
-            cancel()
+          startDrag(itemId, true)
+          if (!dragRef.current?.started) {
             return
           }
-
-          const rect = item.getBoundingClientRect()
-          const overlay = item.cloneNode(true)
-          if (!(overlay instanceof HTMLElement)) {
-            cancel()
-            return
-          }
-
-          overlay.removeAttribute('id')
-          overlay.querySelectorAll('[id]').forEach((element) => {
-            element.removeAttribute('id')
-          })
-          overlay.setAttribute('aria-hidden', 'true')
-          Object.assign(overlay.style, {
-            position: 'fixed',
-            top: `${rect.top}px`,
-            left: `${rect.left}px`,
-            width: `${rect.width}px`,
-            height: `${rect.height}px`,
-            margin: '0',
-            listStyle: 'none',
-            pointerEvents: 'none',
-            transform: 'translate3d(0, 0, 0)',
-            transition: 'none',
-            zIndex: '2147483647'
-          })
-
-          const shield = document.createElement('div')
-          shield.setAttribute('aria-hidden', 'true')
-          Object.assign(shield.style, {
-            position: 'fixed',
-            inset: '0',
-            touchAction: 'none',
-            userSelect: 'none',
-            zIndex: '2147483646'
-          })
-          const listeners = new AbortController()
-          const listenerOptions = { signal: listeners.signal }
-          shield.addEventListener(
-            'pointermove',
-            (nextEvent) => {
-              if (nextEvent.pointerId === drag.pointerId) {
-                nextEvent.preventDefault()
-                continueDrag(nextEvent.clientX, nextEvent.clientY)
-              }
-            },
-            listenerOptions
-          )
-          shield.addEventListener(
-            'pointerup',
-            (nextEvent) => {
-              if (nextEvent.pointerId === drag.pointerId) {
-                commit()
-              }
-            },
-            listenerOptions
-          )
-          shield.addEventListener(
-            'pointercancel',
-            (nextEvent) => {
-              if (nextEvent.pointerId === drag.pointerId) {
-                cancel()
-              }
-            },
-            listenerOptions
-          )
-          shield.addEventListener('lostpointercapture', cancel, listenerOptions)
-          window.addEventListener('blur', cancel, listenerOptions)
-          document.addEventListener(
-            'visibilitychange',
-            () => {
-              if (document.visibilityState === 'hidden') {
-                cancel()
-              }
-            },
-            listenerOptions
-          )
-          document.body.append(shield, overlay)
-
-          drag.started = true
-          drag.overlay = overlay
-          drag.shield = shield
-          drag.listeners = listeners
-          setDraftIds(drag.draftIds)
-          setDraggingId(itemId)
-          drag.handle.releasePointerCapture(drag.pointerId)
-          shield.setPointerCapture(drag.pointerId)
         }
 
         event.preventDefault()
@@ -391,12 +553,18 @@ export function useReorderableItems<Item extends { id: string }>({
       },
       onPointerUp: (event: PointerEvent<HTMLElement>) => {
         const drag = dragRef.current
-        if (drag?.pointerId === event.pointerId) {
+        if (
+          event.pointerType !== 'touch' &&
+          drag?.pointerId === event.pointerId
+        ) {
           commit()
         }
       },
       onPointerCancel: (event: PointerEvent<HTMLElement>) => {
-        if (dragRef.current?.pointerId === event.pointerId) {
+        if (
+          event.pointerType !== 'touch' &&
+          dragRef.current?.pointerId === event.pointerId
+        ) {
           cancel()
         }
       },

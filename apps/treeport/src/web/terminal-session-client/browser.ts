@@ -18,6 +18,21 @@ import {
 
 const TERMINAL_CURSOR_RESTORE_DELAY_MS = 50
 const TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS = 250
+// Image-bearing frames can outlast xterm's one-second synchronized-output
+// timeout. Keep the previous frame visible, but still release a stalled frame.
+const TERMINAL_SYNCHRONIZED_OUTPUT_MAX_DELAY_MS = 5_000
+
+interface SynchronizedOutputInternals {
+  _core: {
+    coreService: { decPrivateModes: { synchronizedOutput: boolean } }
+    _renderService: {
+      _syncOutputHandler: {
+        _timeout: number | undefined
+        bufferRows(start: number, end: number): void
+      }
+    }
+  }
+}
 
 interface Dependencies {
   hasTimer(key: SessionTimer): boolean
@@ -56,7 +71,6 @@ export function makeBrowser(
   return Effect.gen(function* () {
     let desktopLocalFilePasteCleanup: (() => void) | null = null
     let cursorRestoreStartedAt: number | null = null
-
     function openTerminal(): void {
       if (!state.wrapper || state.opened) {
         return
@@ -79,8 +93,31 @@ export function makeBrowser(
         })
       )
       terminal.open(state.wrapper)
+      // SAFETY: The pinned xterm has no public synchronized-output timeout
+      // option. Extend only its existing timer; xterm still owns buffering,
+      // frame completion and disposal. Never hide the terminal or its input.
+      const { _core: core } = Object(terminal) as SynchronizedOutputInternals
+      const sync = core._renderService._syncOutputHandler
+      const bufferRows = sync.bufferRows.bind(sync)
+      sync.bufferRows = (start, end) => {
+        const pending = sync._timeout !== undefined
+        bufferRows(start, end)
+        terminal.element?.classList.add('terminal-synchronized-output')
+        if (!pending) {
+          window.clearTimeout(sync._timeout)
+          sync._timeout = window.setTimeout(() => {
+            sync._timeout = undefined
+            core.coreService.decPrivateModes.synchronizedOutput = false
+            terminal.refresh(0, terminal.rows - 1)
+          }, TERMINAL_SYNCHRONIZED_OUTPUT_MAX_DELAY_MS)
+        }
+      }
       terminal.onSelectionChange(() => dependencies.updateSelectionState())
       terminal.onRender(() => {
+        if (!terminal.modes.synchronizedOutputMode) {
+          terminal.element?.classList.remove('terminal-synchronized-output')
+        }
+
         // xterm puts the block cursor and glyph on one span. Remove only the
         // cursor class so ANSI foreground colors remain unchanged.
         if (state.wrapper?.classList.contains('terminal-scrolling')) {
@@ -88,6 +125,10 @@ export function makeBrowser(
         }
       })
       terminal.onWriteParsed(() => {
+        if (terminal.modes.synchronizedOutputMode) {
+          terminal.element?.classList.add('terminal-synchronized-output')
+        }
+
         if (dependencies.hasTimer('cursorRestore')) {
           scheduleTerminalCursorRestore()
         }

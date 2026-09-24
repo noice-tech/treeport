@@ -291,23 +291,60 @@ export async function findAvailablePort(
   throw new Error(`No available port found at or above ${startPort}`)
 }
 
-function sendSignalToChild(child, signal) {
-  try {
-    if (process.platform !== 'win32' && child.pid) {
-      process.kill(-child.pid, signal)
-    } else if (child.exitCode === null && child.signalCode === null) {
+function sendSignalToChild(child, signal, ownedProcessGroups) {
+  if (process.platform === 'win32' || !child.pid) {
+    if (child.exitCode === null && child.signalCode === null) {
       child.kill(signal)
     }
-  } catch (error) {
-    if (error?.code !== 'ESRCH') {
-      throw error
+
+    return
+  }
+
+  const processes = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid='], {
+    encoding: 'utf8'
+  })
+  if (processes.status === 0) {
+    const descendants = new Set([child.pid])
+    const rows = processes.stdout
+      .trim()
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/).map(Number))
+    let foundDescendant = true
+    while (foundDescendant) {
+      foundDescendant = false
+      for (const [pid, parentPid] of rows) {
+        if (descendants.has(parentPid) && !descendants.has(pid)) {
+          descendants.add(pid)
+          foundDescendant = true
+        }
+      }
+    }
+    for (const [pid, , processGroupId] of rows) {
+      if (descendants.has(pid)) {
+        ownedProcessGroups.add(processGroupId)
+      }
+    }
+  }
+
+  ownedProcessGroups.add(child.pid)
+
+  for (const processGroupId of ownedProcessGroups) {
+    try {
+      process.kill(-processGroupId, signal)
+    } catch (error) {
+      if (error?.code !== 'ESRCH' && error?.code !== 'EPERM') {
+        throw error
+      }
     }
   }
 }
 
-async function waitForStackPort(appPort, appHost, childExit) {
+async function waitForStackPorts(ports, childExit) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    if (!(await portIsAvailable(appPort, appHost))) {
+    const portsAreClaimed = await Promise.all(
+      ports.map(({ port, host }) => portIsAvailable(port, host))
+    )
+    if (portsAreClaimed.every((available) => !available)) {
       return true
     }
 
@@ -345,6 +382,11 @@ export async function main() {
     appPort = await findAvailablePort(appPort + 1, mode.appHost)
   }
   const appUrl = urlFor(loopbackHost, appPort)
+  const desktopDebugPort = await findAvailablePort(
+    9222,
+    loopbackHost,
+    new Set([appPort])
+  )
   let tailscaleRemote = null
   if (mode.name === 'tailscale') {
     let leasePath = null
@@ -382,6 +424,7 @@ export async function main() {
     TREEPORT_API_URL: appUrl,
     TREEPORT_DAEMON_LIFECYCLE: 'external',
     TREEPORT_DESKTOP_URL: appUrl,
+    TREEPORT_DESKTOP_DEBUG_PORT: String(desktopDebugPort),
     TREEPORT_DESKTOP_USER_DATA: path.join(
       repositoryRoot,
       'apps/treeport/.treeport-dev/desktop'
@@ -393,6 +436,7 @@ export async function main() {
 
   console.log('\nTreeport development')
   console.log(`Local:     ${appUrl}`)
+  console.log(`Desktop:   CDP on ${loopbackHost}:${desktopDebugPort}`)
   if (tailscaleRemote) {
     console.log(`Tailscale: ${tailscaleRemote.url}`)
   }
@@ -422,16 +466,17 @@ export async function main() {
 
   let requestedSignal = null
   let forceKillTimer = null
+  const ownedProcessGroups = new Set()
   const stop = (signal) => {
     if (requestedSignal) {
-      sendSignalToChild(child, 'SIGKILL')
+      sendSignalToChild(child, 'SIGKILL', ownedProcessGroups)
       return
     }
 
     requestedSignal = signal
-    sendSignalToChild(child, signal)
+    sendSignalToChild(child, signal, ownedProcessGroups)
     forceKillTimer = setTimeout(
-      () => sendSignalToChild(child, 'SIGKILL'),
+      () => sendSignalToChild(child, 'SIGKILL', ownedProcessGroups),
       5_000
     )
     forceKillTimer.unref()
@@ -443,15 +488,40 @@ export async function main() {
   process.on('SIGTERM', stopOnSigterm)
   process.on('SIGHUP', stopOnSighup)
 
-  const portsClaimed = await waitForStackPort(appPort, mode.appHost, childExit)
+  const portsClaimed = await waitForStackPorts(
+    [
+      { port: appPort, host: mode.appHost },
+      { port: desktopDebugPort, host: loopbackHost }
+    ],
+    childExit
+  )
   await releaseStartupLock()
   if (!portsClaimed && child.exitCode === null && child.signalCode === null) {
     console.warn(
-      'The development stack did not claim its port within 30 seconds.'
+      'The development stack did not claim its ports within 30 seconds.'
     )
   }
 
   const result = await childExit
+  if (requestedSignal) {
+    // Turbo can exit before the processes in its detached group have finished
+    // shutting down. Keep the escalation timer alive until their listeners are
+    // gone instead of returning a prompt while the old stack still owns them.
+    for (let attempt = 0; attempt < 140; attempt += 1) {
+      const portsAreAvailable = await Promise.all(
+        [
+          { port: appPort, host: mode.appHost },
+          { port: desktopDebugPort, host: loopbackHost }
+        ].map(({ port, host }) => portIsAvailable(port, host))
+      )
+      if (portsAreAvailable.every(Boolean)) {
+        break
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
   if (tailscaleRemote?.leasePath) {
     let cleanupComplete = false
     try {

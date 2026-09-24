@@ -9,6 +9,7 @@ import {
   treeport,
   type GitDiff,
   type GitDiffChangeSets,
+  type GitDiffFile,
   type GitDiffImage
 } from '@treeport/panel-sdk'
 import {
@@ -48,11 +49,18 @@ interface FindMatch extends SearchableLine {
   length: number
 }
 
+interface ReviewFile extends GitDiffFile {
+  diff: FileDiffMetadata | null
+  loadState: 'idle' | 'loading' | 'ready' | 'oversized' | 'error'
+  revision: string | null
+  message: string | null
+}
+
 interface LoadedReview {
   baseCommit: string
   summary: string
   generatedAt: string
-  files: FileDiffMetadata[]
+  files: ReviewFile[]
   changeSets: GitDiffChangeSets
   searchableLines: SearchableLine[]
 }
@@ -172,12 +180,12 @@ function ChangedFileTree({
   changeSets,
   onSelect
 }: {
-  files: FileDiffMetadata[]
+  files: ReviewFile[]
   changeSets: GitDiffChangeSets
   onSelect(file: string): void
 }) {
   const tree = useMemo(() => {
-    const filesByName = new Map(files.map((file) => [file.name, file]))
+    const filesByName = new Map(files.map((file) => [file.path, file]))
     const visible = (paths: string[]) =>
       [...new Set(paths)].filter((path) => filesByName.has(path)).sort()
     const branch = visible(changeSets.branch)
@@ -231,15 +239,8 @@ function ChangedFileTree({
           | 'deleted'
           | 'renamed'
           | 'untracked' = entry.untracked ? 'untracked' : 'modified'
-        if (!entry.untracked && file.type === 'new') {
-          status = 'added'
-        } else if (!entry.untracked && file.type === 'deleted') {
-          status = 'deleted'
-        } else if (
-          !entry.untracked &&
-          (file.type === 'rename-pure' || file.type === 'rename-changed')
-        ) {
-          status = 'renamed'
+        if (!entry.untracked) {
+          status = file.status
         }
 
         gitStatus.push({ path: syntheticPath, status })
@@ -568,12 +569,12 @@ function ReviewApp() {
   const resizeHandleRef = useRef<HTMLDivElement>(null)
 
   const files = loaded?.files ?? []
-  const fileNames = useMemo(() => files.map((file) => file.name), [files])
+  const fileNames = useMemo(() => files.map((file) => file.path), [files])
   const lineCounts = useMemo(
     () =>
       files.reduce(
         (counts, file) => {
-          for (const hunk of file.hunks) {
+          for (const hunk of file.diff?.hunks ?? []) {
             counts.additions += hunk.additionLines
             counts.deletions += hunk.deletionLines
           }
@@ -597,15 +598,25 @@ function ReviewApp() {
       ),
     [loaded]
   )
+  const loadedFileNames = useMemo(
+    () =>
+      new Set(
+        files
+          .filter(({ loadState }) => loadState === 'ready')
+          .map(({ path }) => path)
+      ),
+    [files]
+  )
   const outdatedComments = useMemo(
     () =>
       loaded
         ? unresolved.filter(
             ({ file, side, lineNumber }) =>
+              loadedFileNames.has(file) &&
               !commentLocations.has(JSON.stringify([file, side, lineNumber]))
           )
         : [],
-    [commentLocations, loaded, unresolved]
+    [commentLocations, loaded, loadedFileNames, unresolved]
   )
   const navigableComments = useMemo(
     () =>
@@ -694,7 +705,7 @@ function ReviewApp() {
         previousDiff?.baseRef === diff.baseRef &&
         previousDiff.baseCommit === diff.baseCommit &&
         previousDiff.headCommit === diff.headCommit &&
-        previousDiff.unified === diff.unified &&
+        JSON.stringify(previousDiff.files) === JSON.stringify(diff.files) &&
         JSON.stringify(previousDiff.changeSets) ===
           JSON.stringify(diff.changeSets)
       ) {
@@ -711,20 +722,23 @@ function ReviewApp() {
       const parsedViewed = initial
         ? new Set(z.array(z.string()).catch([]).parse(storedViewedFiles))
         : viewedFilesRef.current
-      const parsedFiles = diff.unified
-        ? [
-            ...new Map(
-              // Without a revision prefix, the renderer caches by filename
-              // and can reuse stale content when that file changes.
-              parsePatchFiles(diff.unified, crypto.randomUUID())
-                .flatMap((patch) => patch.files)
-                .map((file) => [file.name, file])
-            ).values()
-          ]
-        : []
-      if (diff.unified && parsedFiles.length === 0) {
-        throw new Error('The tree diff did not contain any file patches')
-      }
+      const previousFiles = new Map(
+        (loadedRef.current?.files ?? []).map((file) => [file.path, file])
+      )
+      const reviewFiles: ReviewFile[] = diff.files.map((file) => {
+        const previous = previousFiles.get(file.path)
+        return previous &&
+          previous.previousPath === file.previousPath &&
+          previous.status === file.status
+          ? previous
+          : {
+              ...file,
+              diff: null,
+              loadState: 'idle',
+              revision: null,
+              message: null
+            }
+      })
 
       clearCopyFeedback()
       setSelectedFile(null)
@@ -778,9 +792,11 @@ function ReviewApp() {
           ? `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`
           : loadedRef.current!.summary,
         generatedAt: diff.generatedAt,
-        files: parsedFiles,
+        files: reviewFiles,
         changeSets: diff.changeSets,
-        searchableLines: searchableLinesFor(parsedFiles)
+        searchableLines: searchableLinesFor(
+          reviewFiles.flatMap((file) => (file.diff ? [file.diff] : []))
+        )
       }
       loadedDiff.current = diff
       loadedRef.current = nextLoaded
@@ -793,8 +809,124 @@ function ReviewApp() {
     }
   }, [clearCopyFeedback])
 
+  const fileLoads = useRef(new Set<string>())
+  const loadFile = useCallback(async (filePath: string, reload = false) => {
+    const currentFile = loadedRef.current?.files.find(
+      (file) => file.path === filePath
+    )
+    if (
+      !currentFile ||
+      fileLoads.current.has(filePath) ||
+      (!reload && currentFile.loadState !== 'idle')
+    ) {
+      return
+    }
+
+    const updateFile = (update: Partial<ReviewFile>) => {
+      setLoaded((current) => {
+        if (!current) {
+          return current
+        }
+
+        const next = {
+          ...current,
+          files: current.files.map((file) =>
+            file.path === filePath ? { ...file, ...update } : file
+          )
+        }
+        next.searchableLines = searchableLinesFor(
+          next.files.flatMap((file) => (file.diff ? [file.diff] : []))
+        )
+        loadedRef.current = next
+        return next
+      })
+    }
+
+    fileLoads.current.add(filePath)
+
+    if (currentFile.loadState !== 'ready') {
+      updateFile({ loadState: 'loading', message: null })
+    }
+
+    try {
+      const result = await treeport.diffFile({ path: filePath })
+
+      if (result.status === 'oversized') {
+        updateFile({
+          diff: null,
+          loadState: 'oversized',
+          revision: null,
+          message: result.message ?? 'This patch is too large to display.'
+        })
+        return
+      }
+
+      if (result.revision === currentFile.revision) {
+        return
+      }
+
+      const parsed = result.unified
+        ? parsePatchFiles(result.unified, crypto.randomUUID()).flatMap(
+            (patch) => patch.files
+          )
+        : []
+      const fileDiff =
+        parsed.find((candidate) => candidate.name === filePath) ?? parsed[0]
+      if (!fileDiff) {
+        throw new Error('The file diff did not contain a patch')
+      }
+
+      updateFile({
+        diff: fileDiff,
+        loadState: 'ready',
+        revision: result.revision,
+        message: null
+      })
+    } catch (reason) {
+      updateFile({
+        diff: null,
+        loadState: 'error',
+        revision: null,
+        message: reason instanceof Error ? reason.message : String(reason)
+      })
+    } finally {
+      fileLoads.current.delete(filePath)
+    }
+  }, [])
+
   useEffect(() => {
-    const refresh = () => void load()
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const filePath =
+              entry.target instanceof HTMLElement
+                ? entry.target.dataset.reviewFile
+                : null
+
+            if (filePath) {
+              void loadFile(filePath)
+            }
+          }
+        }
+      },
+      { root: document.querySelector('#review'), rootMargin: '300px 0px' }
+    )
+    for (const section of sectionRefs.current.values()) {
+      observer.observe(section)
+    }
+    return () => observer.disconnect()
+  }, [files, loadFile])
+
+  useEffect(() => {
+    const refresh = () => {
+      void load()
+      for (const file of loadedRef.current?.files ?? []) {
+        if (file.loadState === 'ready') {
+          void loadFile(file.path, true)
+        }
+      }
+    }
     refresh()
     addEventListener('focus', refresh)
     const interval = setInterval(() => {
@@ -806,7 +938,7 @@ function ReviewApp() {
       removeEventListener('focus', refresh)
       clearInterval(interval)
     }
-  }, [load])
+  }, [load, loadFile])
 
   const setCollapsed = useCallback((file: string, collapsed: boolean) => {
     setCollapsedFiles((current) => {
@@ -1441,7 +1573,69 @@ function ReviewApp() {
               No changes against the default branch merge base.
             </p>
           ) : (
-            files.map((fileDiff) => {
+            files.map((file) => {
+              const fileDiff = file.diff
+              if (!fileDiff) {
+                const label =
+                  file.loadState === 'oversized'
+                    ? 'Patch too large to display'
+                    : file.loadState === 'error'
+                      ? 'Could not load patch'
+                      : file.loadState === 'loading'
+                        ? 'Loading patch…'
+                        : 'Patch loads when visible'
+                const isImage = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
+                  file.path
+                )
+                return (
+                  <section
+                    key={file.path}
+                    data-review-file={file.path}
+                    ref={(element) => {
+                      if (element) {
+                        sectionRefs.current.set(file.path, element)
+                      } else {
+                        sectionRefs.current.delete(file.path)
+                      }
+                    }}
+                    className={`file-diff file-diff-placeholder${selectedFile === file.path ? ' selected' : ''}`}
+                  >
+                    <div className="file-placeholder-header">
+                      <strong>{file.path}</strong>
+                      <span>{label}</span>
+                    </div>
+                    {file.message && <p>{file.message}</p>}
+                    {file.loadState === 'error' && (
+                      <button
+                        type="button"
+                        onClick={() => void loadFile(file.path, true)}
+                      >
+                        Retry
+                      </button>
+                    )}
+                    {file.loadState === 'oversized' && isImage && (
+                      <div className="image-diff">
+                        {file.status !== 'added' &&
+                          file.status !== 'untracked' && (
+                            <ImagePreview
+                              path={file.previousPath ?? file.path}
+                              commit={loaded!.baseCommit}
+                              label="Before"
+                            />
+                          )}
+                        {file.status !== 'deleted' && (
+                          <ImagePreview
+                            path={file.path}
+                            commit={null}
+                            label="After"
+                          />
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )
+              }
+
               const fileComments = comments.filter(
                 ({ file }) => file === fileDiff.name
               )
@@ -1460,7 +1654,8 @@ function ReviewApp() {
               )
               return (
                 <section
-                  key={fileDiff.name}
+                  key={file.path}
+                  data-review-file={file.path}
                   ref={(element) => {
                     if (element) {
                       sectionRefs.current.set(fileDiff.name, element)

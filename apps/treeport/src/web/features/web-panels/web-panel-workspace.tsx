@@ -170,6 +170,13 @@ export function WebPanelWorkspace({
             param: { tabId: tab.id }
           })
         ).then((result) => result.diff)
+      } else if (method === 'diff.file') {
+        request = parseResponse(
+          rpc.api.tabs[':tabId'].diff.file.$post({
+            param: { tabId: tab.id },
+            json: { path: message.path }
+          })
+        )
       } else if (method === 'diff.image') {
         request = parseResponse(
           rpc.api.tabs[':tabId'].diff.image.$post({

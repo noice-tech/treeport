@@ -78,6 +78,11 @@ window.addEventListener(
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
+  openBrowserDevtools(panelId: string): Promise<boolean> {
+    return ipcRenderer
+      .invoke('hosted-browser:open-devtools', panelId)
+      .then((value) => z.boolean().parse(value))
+  },
   openFileUrl(url: string): Promise<DesktopFileActionResult> {
     return ipcRenderer
       .invoke('open-file-url', url)
