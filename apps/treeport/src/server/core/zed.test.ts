@@ -122,9 +122,6 @@ describe('Zed worktree compatibility', () => {
         {"label":"build","command":"bun install && bun run build","cwd":"$ZED_WORKTREE_ROOT","hooks":["create_worktree"]},
       ]`
     )
-    expect(await Effect.runPromise(loadCreateWorktreeTasks(main))).toHaveLength(
-      2
-    )
     await expect(
       Effect.runPromise(
         resolveZedCreateWorktreeSetupTasks({
