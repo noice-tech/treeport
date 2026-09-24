@@ -128,7 +128,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect
         .poll(() =>
           page.evaluate(() =>
-            localStorage.getItem('treeport-initial-terminal-preset')
+            localStorage.getItem('treeport-initial-terminal-preset:proj_1')
           )
         )
         .toBe('preset_hunk')
@@ -168,6 +168,49 @@ test.describe('desktop worktree and terminal workflows', () => {
       await page.getByRole('button', { name: 'New tree' }).click()
       await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
     }
+  })
+
+  test('remembers initial terminals independently for each project', async ({
+    page
+  }) => {
+    await mockApp(page, [], { includeSecondProject: true })
+    await page.getByRole('button', { name: 'New tree' }).click()
+    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
+    await page.keyboard.press('Escape')
+
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    await page
+      .getByRole('button', { name: 'another-project', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'New tree' }).click()
+    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
+    await page.getByLabel('Initial terminal').selectOption('preset_hunk')
+    await page.keyboard.press('Escape')
+
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project another-project'
+      })
+      .click()
+    await page.getByRole('button', { name: 'example', exact: true }).click()
+    await page.getByRole('button', { name: 'New tree' }).click()
+    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
+    await page.keyboard.press('Escape')
+    await page.reload()
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    await page
+      .getByRole('button', { name: 'another-project', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'New tree' }).click()
+    await expect(page.getByLabel('Initial terminal')).toHaveValue('preset_hunk')
   })
 
   test('restores an in-progress worktree creation after reload without taking over navigation', async ({

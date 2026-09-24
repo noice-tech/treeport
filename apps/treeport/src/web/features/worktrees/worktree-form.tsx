@@ -61,8 +61,9 @@ export function WorktreeForm({
   const [name, setName] = useState('')
   const [baseValue, setBaseValue] = useState('default')
   const [treeContext, setTreeContext] = useState<TreeContextValues>({})
+  const initialTerminalStorageKey = `${INITIAL_TERMINAL_PRESET_STORAGE_KEY}:${project.id}`
   const [initialPresetId, setInitialPresetId] = useState(() => {
-    const stored = localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY)
+    const stored = localStorage.getItem(initialTerminalStorageKey)
 
     return stored ?? 'shell'
   })
@@ -98,7 +99,7 @@ export function WorktreeForm({
           (preset) => preset.id === effectiveInitialPresetId
         )
         if (initialPresetMissing) {
-          localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
+          localStorage.setItem(initialTerminalStorageKey, 'shell')
         }
 
         const submittedContext = Object.fromEntries(
@@ -231,10 +232,7 @@ export function WorktreeForm({
           value={effectiveInitialPresetId}
           onChange={(event) => {
             setInitialPresetId(event.target.value)
-            localStorage.setItem(
-              INITIAL_TERMINAL_PRESET_STORAGE_KEY,
-              event.target.value
-            )
+            localStorage.setItem(initialTerminalStorageKey, event.target.value)
           }}
           disabled={busy}
         >
