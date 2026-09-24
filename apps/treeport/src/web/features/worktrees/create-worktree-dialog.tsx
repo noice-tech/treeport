@@ -83,6 +83,7 @@ export function CreateWorktreeDialog({
             </DialogDescription>
           </DialogHeader>
           <WorktreeForm
+            key={project.id}
             project={project}
             presets={presets}
             presetDiagnostics={presetDiagnostics}
