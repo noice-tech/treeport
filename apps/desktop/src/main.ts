@@ -23,6 +23,7 @@ import {
 } from 'electron'
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app'
 import { z } from 'zod'
+import { WebSocket, WebSocketServer } from 'ws'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Stream from 'effect/Stream'
@@ -1011,6 +1012,126 @@ function mutationError(cause: unknown): ComputerMutationResult {
 }
 
 function registerIpc(): void {
+  ipcMain.handle('hosted-browser:open-devtools', async (event, value) => {
+    const panelId = z
+      .string()
+      .regex(/^panel_[a-f0-9]{32}$/u)
+      .safeParse(value)
+    const origin = selectedOrigin()
+    if (!isTrustedRendererEvent(event) || !panelId.success || !origin) {
+      return false
+    }
+
+    const endpoint = new URL(origin)
+    endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
+    endpoint.pathname = `/api/browser-devtools/${panelId.data}`
+    endpoint.search = ''
+    endpoint.hash = ''
+
+    // Electron's bundled DevTools CSP permits ws://127.0.0.1:* but not
+    // arbitrary tailnet WSS origins. Keep the remote connection in main.
+    const relay = new WebSocketServer({
+      host: '127.0.0.1',
+      port: 0,
+      maxPayload: 16 * 1024 * 1024,
+      perMessageDeflate: false
+    })
+    const listening = await new Promise<boolean>((resolve) => {
+      relay.once('listening', () => resolve(true))
+      relay.once('error', () => resolve(false))
+    })
+    const address = relay.address()
+    // ws exposes Node's AddressInfo | string result at this I/O boundary.
+    // eslint-disable-next-line anti-slop/no-runtime-typeof -- Discriminate the Node listener address before using its port.
+    if (!listening || !address || typeof address === 'string') {
+      relay.close()
+      return false
+    }
+
+    const frontend = new URL('devtools://devtools/bundled/inspector.html')
+    frontend.searchParams.set('ws', `127.0.0.1:${address.port}/devtools`)
+    const window = new BrowserWindow({
+      width: 1100,
+      height: 750,
+      title: 'Browser DevTools',
+      webPreferences: { sandbox: true, nodeIntegration: false }
+    })
+    relay.on('connection', (viewer, request) => {
+      if (
+        request.url !== '/devtools' ||
+        request.headers.origin !== 'devtools://devtools' ||
+        window.isDestroyed()
+      ) {
+        viewer.close(1008, 'Invalid DevTools connection')
+        return
+      }
+
+      const upstream = new WebSocket(endpoint.href, {
+        origin: 'devtools://devtools',
+        maxPayload: 16 * 1024 * 1024,
+        perMessageDeflate: false
+      })
+      const pending: Array<{ data: Buffer; binary: boolean }> = []
+      let pendingBytes = 0
+      viewer.on('message', (data, binary) => {
+        // SAFETY: ws delivers Node Buffer payloads in the Electron main process.
+        const message = Buffer.from(data as Buffer)
+        if (upstream.readyState === WebSocket.OPEN) {
+          if (upstream.bufferedAmount > 16 * 1024 * 1024) {
+            viewer.close(1009, 'DevTools input overflow')
+          } else {
+            upstream.send(message, { binary })
+          }
+        } else if (upstream.readyState === WebSocket.CONNECTING) {
+          pendingBytes += message.length
+          if (pendingBytes > 1024 * 1024) {
+            viewer.close(1009, 'DevTools input overflow')
+          } else {
+            pending.push({ data: message, binary })
+          }
+        }
+      })
+      upstream.on('open', () => {
+        for (const message of pending) {
+          upstream.send(message.data, { binary: message.binary })
+        }
+        pending.length = 0
+      })
+      upstream.on('message', (data, binary) => {
+        if (viewer.readyState === WebSocket.OPEN) {
+          if (viewer.bufferedAmount > 16 * 1024 * 1024) {
+            viewer.close(1009, 'DevTools output overflow')
+          } else {
+            viewer.send(data, { binary })
+          }
+        }
+      })
+      viewer.on('close', () => {
+        if (upstream.readyState === WebSocket.CONNECTING) {
+          upstream.terminate()
+        } else if (upstream.readyState === WebSocket.OPEN) {
+          upstream.close()
+        }
+      })
+      upstream.on('close', () => viewer.close())
+      upstream.on('error', () => viewer.close())
+      viewer.on('error', () => upstream.terminate())
+    })
+    window.once('closed', () => {
+      for (const viewer of relay.clients) {
+        viewer.terminate()
+      }
+      relay.close()
+    })
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    window.webContents.on('will-navigate', (navigation, url) => {
+      if (url !== frontend.href) {
+        navigation.preventDefault()
+      }
+    })
+    void window.loadURL(frontend.href)
+    return true
+  })
   ipcMain.handle('shell:get-state', (event) =>
     isTrustedRendererEvent(event) ? shellState() : null
   )

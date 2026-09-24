@@ -194,16 +194,23 @@ function allowsOpaqueWebPanelOrigin(
 function originIsAllowed(
   request: IncomingMessage,
   effectiveOrigin: string,
-  socketUpgrade: boolean
+  socketUpgrade: boolean,
+  devtoolsUpgrade: boolean
 ): boolean {
   const originHeader = singleHeader(request, 'origin')
-  if (!originHeader.valid) {
+  if (
+    !originHeader.valid ||
+    (devtoolsUpgrade && originHeader.value !== 'devtools://devtools')
+  ) {
     return false
   }
 
   if (originHeader.present) {
     const value = originHeader.value ?? ''
-    if (value === 'null') {
+    if (devtoolsUpgrade && value === 'devtools://devtools') {
+      // Only Electron's bundled DevTools frontend may use this cross-origin
+      // connection; the page target is checked by the bridge separately.
+    } else if (value === 'null') {
       if (!allowsOpaqueWebPanelOrigin(request, socketUpgrade)) {
         return false
       }
@@ -231,7 +238,8 @@ function originIsAllowed(
   const unsafeMethod = UNSAFE_METHODS.has(request.method?.toUpperCase() ?? '')
   if (
     (unsafeMethod || socketUpgrade) &&
-    fetchSiteHeader.value?.toLowerCase() === 'cross-site'
+    fetchSiteHeader.value?.toLowerCase() === 'cross-site' &&
+    !devtoolsUpgrade
   ) {
     return false
   }
@@ -241,7 +249,7 @@ function originIsAllowed(
 
 export function authorizeRequest(
   request: IncomingMessage,
-  options: { socketUpgrade?: boolean } = {}
+  options: { socketUpgrade?: boolean; devtoolsUpgrade?: boolean } = {}
 ): RequestSecurityDecision {
   if (!isLoopbackAddress(request.socket.remoteAddress)) {
     return denied(
@@ -333,7 +341,16 @@ export function authorizeRequest(
   }
 
   if (
-    !originIsAllowed(request, effectiveOrigin, options.socketUpgrade === true)
+    !originIsAllowed(
+      request,
+      effectiveOrigin,
+      options.socketUpgrade === true,
+      options.devtoolsUpgrade === true &&
+        options.socketUpgrade === true &&
+        /^\/api\/browser-devtools\/panel_[a-f0-9]{32}$/u.test(
+          new URL(request.url ?? '/', 'http://treeport.local').pathname
+        )
+    )
   ) {
     return denied(403, 'INVALID_ORIGIN', 'The request origin is not allowed.')
   }
