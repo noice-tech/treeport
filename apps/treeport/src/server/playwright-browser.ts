@@ -64,6 +64,7 @@ export class PlaywrightBrowserHost {
   private readonly lifecycle = Effect.unsafeMakeSemaphore(1)
   private pendingOpens = 0
   private closing = false
+  private debuggingEndpoint: string | null = null
   private closeOperation: Promise<void> | null = null
   private readonly closingPages = new Map<Page, Promise<void>>()
 
@@ -120,9 +121,10 @@ export class PlaywrightBrowserHost {
           this.container = container
           browser = await container
             .start()
-            .then((endpoint) =>
-              chromium.connectOverCDP(endpoint, { timeout: 15_000 })
-            )
+            .then((endpoint) => {
+              this.debuggingEndpoint = endpoint
+              return chromium.connectOverCDP(endpoint, { timeout: 15_000 })
+            })
             .catch(async (error) => {
               await container.stop()
               this.container = null
@@ -142,14 +144,41 @@ export class PlaywrightBrowserHost {
           await cdp.send('Browser.setDownloadBehavior', { behavior: 'deny' })
           await cdp.detach()
         } else {
+          await fs.rm(path.join(this.profilePath, 'DevToolsActivePort'), {
+            force: true
+          })
           context = await chromium.launchPersistentContext(this.profilePath, {
             executablePath: runtime.executablePath,
             chromiumSandbox: true,
             headless: true,
             acceptDownloads: false,
+            args: [
+              '--remote-debugging-address=127.0.0.1',
+              '--remote-debugging-port=0'
+            ],
             viewport: DEFAULT_VIEWPORT
           })
           browser = context.browser()
+          const activePort = await fs.readFile(
+            path.join(this.profilePath, 'DevToolsActivePort'),
+            'utf8'
+          )
+          const [port, endpoint] = activePort.trim().split('\n')
+          if (
+            !port ||
+            !/^\d+$/.test(port) ||
+            Number(port) < 1 ||
+            Number(port) > 65535 ||
+            !endpoint ||
+            !/^\/devtools\/browser\/[a-zA-Z0-9-]+$/.test(endpoint)
+          ) {
+            await context.close()
+            throw new Error(
+              'Chrome did not expose a private debugging endpoint.'
+            )
+          }
+
+          this.debuggingEndpoint = `ws://127.0.0.1:${port}${endpoint}`
         }
 
         if (!browser) {
@@ -167,6 +196,7 @@ export class PlaywrightBrowserHost {
             this.browser = null
             this.context = null
             this.pages.clear()
+            this.debuggingEndpoint = null
           }
         })
       }
@@ -180,6 +210,10 @@ export class PlaywrightBrowserHost {
     }).finally(() => {
       this.pendingOpens -= 1
     })
+  }
+
+  getDebuggingEndpoint(): string | null {
+    return this.browser?.isConnected() ? this.debuggingEndpoint : null
   }
 
   closePage(page: Page): Promise<void> {
@@ -218,6 +252,7 @@ export class PlaywrightBrowserHost {
       this.browser = null
       this.container = null
       this.pages.clear()
+      this.debuggingEndpoint = null
       if (container) {
         // Closing a CDP connection alone does not stop Chrome or flush its profile.
         await browser
@@ -329,6 +364,26 @@ export class PlaywrightBrowser {
 
   get connected(): boolean {
     return this.browser?.isConnected() ?? false
+  }
+
+  async devtoolsEndpoint(): Promise<string> {
+    if (!this.page || this.page.isClosed() || !this.cdp) {
+      throw new Error('The hosted browser page is not available.')
+    }
+
+    const endpoint = this.host.getDebuggingEndpoint()
+    if (!endpoint) {
+      throw new Error('The hosted browser debugger is not available.')
+    }
+
+    const { targetInfo } = await this.cdp.send('Target.getTargetInfo')
+    if (!/^[a-fA-F0-9]{32}$/.test(targetInfo.targetId)) {
+      throw new Error('Chrome returned an invalid page target.')
+    }
+
+    const url = new URL(endpoint)
+    url.pathname = `/devtools/page/${targetInfo.targetId}`
+    return url.href
   }
 
   async launch(): Promise<void> {
