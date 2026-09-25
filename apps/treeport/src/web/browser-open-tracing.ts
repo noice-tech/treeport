@@ -2,36 +2,36 @@ import { browserTrace, browserTracingEnabled } from './agent-tracing'
 
 // Opt in with localStorage['treeport.trace'] = 'jsonl'. Renderer correlationId
 // matches the HTTP span's treeport.request.id in TREEPORT_TRACE=jsonl output.
-// Lifecycle events describe the latest open for a tab, not a navigation ID.
+// Lifecycle events describe the latest open for a panel, not a navigation ID.
 // Only retain recent opens; a failed navigation may never report completion.
 const panelOpens = new Map<string, { requestId: string; startedAt: number }>()
 
-export function registerBrowserOpen(tabId: string, requestId: string): void {
+export function registerBrowserOpen(panelId: string, requestId: string): void {
   if (!browserTracingEnabled()) {
     return
   }
 
-  panelOpens.delete(tabId)
-  panelOpens.set(tabId, { requestId, startedAt: performance.now() })
+  panelOpens.delete(panelId)
+  panelOpens.set(panelId, { requestId, startedAt: performance.now() })
   if (panelOpens.size > 128) {
     panelOpens.delete(panelOpens.keys().next().value!)
   }
 }
 
 export function traceBrowserOpen(
-  tabId: string,
+  panelId: string,
   event: string,
   attributes: Record<string, boolean | number | string | null> = {}
 ): void {
-  const open = panelOpens.get(tabId)
+  const open = panelOpens.get(panelId)
   if (!open) {
     return
   }
 
   if (performance.now() - open.startedAt > 60_000) {
-    panelOpens.delete(tabId)
+    panelOpens.delete(panelId)
     return
   }
 
-  browserTrace(event, open.requestId, { tabId, ...attributes })
+  browserTrace(event, open.requestId, { panelId, ...attributes })
 }

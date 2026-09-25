@@ -37,7 +37,7 @@ import { WebPanelIcon } from '../web-panels/web-panel-icon'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
 import { describeWebPanelPermissions } from '../web-panels/web-panel-permissions'
 
-export function NewTabDialog({
+export function NewPanelDialog({
   open,
   onOpenChange,
   restoreFocusTo,
@@ -51,7 +51,7 @@ export function NewTabDialog({
   webPanelDefinitionsError,
   launchDisabled,
   onCreateTerminal,
-  onCreateBrowserTab,
+  onCreateBrowserPanel,
   onCreateWebPanel,
   onManagePresets
 }: {
@@ -68,7 +68,7 @@ export function NewTabDialog({
   webPanelDefinitionsError: boolean
   launchDisabled: boolean
   onCreateTerminal: (input: CreateTerminalInput) => void
-  onCreateBrowserTab: () => void
+  onCreateBrowserPanel: () => void
   onCreateWebPanel: (definition: WebPanelDefinition) => void
   onManagePresets: () => void
 }) {
@@ -124,7 +124,7 @@ export function NewTabDialog({
         overlayClassName="bg-transparent backdrop-blur-[1px]"
         restoreFocusTo={restoreFocusTo}
       >
-        <DialogTitle className="sr-only">New tab</DialogTitle>
+        <DialogTitle className="sr-only">New panel</DialogTitle>
         <DialogDescription className="sr-only">
           Search for a terminal, Browser, or web panel to start
           {worktreeName ? ` in ${worktreeName}` : ''}.
@@ -136,14 +136,14 @@ export function NewTabDialog({
           />
           <input
             type="search"
-            name="tab-launcher-search"
+            name="panel-launcher-search"
             className="h-14 min-w-0 flex-1 bg-transparent text-base text-zinc-50 outline-none placeholder:text-zinc-500 sm:h-12 sm:text-sm"
             value={query}
             autoComplete="off"
             autoFocus
-            aria-label="Search tabs"
+            aria-label="Search panels"
             placeholder={
-              worktreeName ? `New tab in ${worktreeName}` : 'New tab'
+              worktreeName ? `New panel in ${worktreeName}` : 'New panel'
             }
             onChange={(event) => {
               setQuery(event.target.value)
@@ -154,7 +154,7 @@ export function NewTabDialog({
                 event.currentTarget
                   .closest('[role="dialog"]')
                   ?.querySelectorAll<HTMLButtonElement>(
-                    '[data-tab-launch]:not(:disabled)'
+                    '[data-panel-launch]:not(:disabled)'
                   ) ?? []
               )
               if (actions.length === 0) {
@@ -191,7 +191,7 @@ export function NewTabDialog({
 
             const actions = Array.from(
               event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                '[data-tab-launch]:not(:disabled)'
+                '[data-panel-launch]:not(:disabled)'
               )
             )
             // SAFETY: The component contract supplies the asserted browser value used here.
@@ -220,7 +220,7 @@ export function NewTabDialog({
                 variant="ghost"
                 className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
                 aria-label="Shell"
-                data-tab-launch
+                data-panel-launch
                 data-selected={selectedIndex === 0 ? '' : undefined}
                 disabled={launchDisabled}
                 onFocus={() => setSelectedIndex(0)}
@@ -253,7 +253,7 @@ export function NewTabDialog({
                       ? `${preset.name}, ${disambiguator}`
                       : preset.name
                   }
-                  data-tab-launch
+                  data-panel-launch
                   data-selected={selectedIndex === actionIndex ? '' : undefined}
                   disabled={launchDisabled}
                   onFocus={() => setSelectedIndex(actionIndex)}
@@ -342,7 +342,7 @@ export function NewTabDialog({
                   variant="ghost"
                   className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
                   aria-label="Browser, hosted browser"
-                  data-tab-launch
+                  data-panel-launch
                   data-selected={
                     selectedIndex === terminalActionCount ? '' : undefined
                   }
@@ -352,7 +352,7 @@ export function NewTabDialog({
                   onClick={() => {
                     setQuery('')
                     setSelectedIndex(0)
-                    onCreateBrowserTab()
+                    onCreateBrowserPanel()
                   }}
                 >
                   <GlobeAltIcon aria-hidden="true" />
@@ -384,7 +384,7 @@ export function NewTabDialog({
                   variant="ghost"
                   className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
                   aria-label={`${definition.title}, web panel`}
-                  data-tab-launch
+                  data-panel-launch
                   data-selected={selectedIndex === actionIndex ? '' : undefined}
                   disabled={launchDisabled}
                   onFocus={() => setSelectedIndex(actionIndex)}
@@ -437,7 +437,7 @@ export function NewTabDialog({
           </div>
           {noResults && !presetsLoading && !webPanelDefinitionsLoading ? (
             <p className="px-3 py-8 text-center text-base text-zinc-500 sm:text-sm">
-              No matching tabs.
+              No matching panels.
             </p>
           ) : null}
         </div>
@@ -486,9 +486,11 @@ export function NewTabDialog({
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Allow privileged tab access?</AlertDialogTitle>
+              <AlertDialogTitle>
+                Allow privileged panel access?
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                {`${permissionDefinition?.title ?? 'This tab'} is from ${permissionSource}. ${permissionDescription}`}
+                {`${permissionDefinition?.title ?? 'This panel'} is from ${permissionSource}. ${permissionDescription}`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

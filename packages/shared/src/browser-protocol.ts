@@ -14,7 +14,7 @@ const opaqueTokenSchema = Schema.String.pipe(
   Schema.minLength(32),
   Schema.maxLength(256)
 )
-export const browserTabIdSchema = Schema.String.pipe(
+export const browserPanelIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)
 )
@@ -294,7 +294,7 @@ export const browserOwnerTicketResponseSchema = Schema.Struct({
   challenge: opaqueTokenSchema
 })
 export const browserOwnerIdentitySchema = Schema.Struct({
-  tabId: browserTabIdSchema,
+  panelId: browserPanelIdSchema,
   challenge: opaqueTokenSchema
 })
 
@@ -428,7 +428,7 @@ export type BrowserOwnerClientMessage = Schema.Schema.Type<
 export const browserOwnerServerMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('claimGranted'),
-    tabId: browserTabIdSchema,
+    panelId: browserPanelIdSchema,
     generation: browserGenerationSchema,
     resumed: Schema.Boolean,
     state: browserRuntimeStateSchema

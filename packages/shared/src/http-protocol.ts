@@ -42,7 +42,7 @@ export const operationQuerySchema = Schema.Struct({
   ),
   projectId: Schema.optional(Schema.String)
 })
-export const deleteTabQuerySchema = Schema.Struct({
+export const deletePanelQuerySchema = Schema.Struct({
   discardStoredData: Schema.optional(Schema.String),
   force: Schema.optional(Schema.String)
 })
@@ -91,7 +91,7 @@ export const webPanelSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-export const browserTabSchema = Schema.Struct({
+export const browserPanelSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('browser'),
   worktreeId: Schema.String,
@@ -100,7 +100,7 @@ export const browserTabSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const terminalTabSchema = Schema.Struct({
+const terminalPanelSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('terminal'),
   worktreeId: Schema.String,
@@ -109,10 +109,10 @@ const terminalTabSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const tabSchema = Schema.Union(
-  terminalTabSchema,
+const panelSchema = Schema.Union(
+  terminalPanelSchema,
   webPanelSchema,
-  browserTabSchema
+  browserPanelSchema
 )
 
 export const prInfoSchema = Schema.Struct({
@@ -148,7 +148,7 @@ export const worktreeRecordSchema = Schema.Struct({
   pr: prInfoSchema,
   dirty: Schema.NullOr(dirtyStateSchema),
   terminals: Schema.Array(terminalRecordSchema),
-  tabs: Schema.Array(tabSchema),
+  panels: Schema.Array(panelSchema),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
@@ -462,7 +462,7 @@ export const webPanelDefinitionSchema = Schema.Struct({
 
 export const webPanelContextSchema = Schema.Struct({
   apiVersion: Schema.Literal(1),
-  tab: webPanelSchema,
+  panel: webPanelSchema,
   launch: webPanelLaunchSchema,
   project: Schema.Struct({
     id: Schema.String,
@@ -683,12 +683,12 @@ export const webPanelDefinitionsResponseSchema = Schema.Struct({
   definitions: Schema.Array(webPanelDefinitionSchema)
 })
 export const openWebPanelResponseSchema = Schema.Struct({
-  tab: webPanelSchema,
+  panel: webPanelSchema,
   created: Schema.Boolean,
   reused: Schema.Boolean
 })
-export const openBrowserTabResponseSchema = Schema.Struct({
-  tab: browserTabSchema
+export const openBrowserPanelResponseSchema = Schema.Struct({
+  panel: browserPanelSchema
 })
 export const terminalResponseSchema = Schema.Struct({
   terminal: terminalRecordSchema
@@ -720,7 +720,7 @@ export const gitFileDiffResponseSchema = Schema.Struct({
 export const listenerDiscoveryResponseSchema = Schema.Struct({
   discovery: worktreeListenerDiscoverySchema
 })
-export const webPanelResponseSchema = Schema.Struct({ tab: webPanelSchema })
+export const webPanelResponseSchema = Schema.Struct({ panel: webPanelSchema })
 export const webPanelDefinitionResponseSchema = Schema.Struct({
   definition: webPanelDefinitionSchema
 })

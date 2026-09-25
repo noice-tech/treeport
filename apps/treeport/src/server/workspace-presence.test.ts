@@ -30,7 +30,7 @@ it('renews quiet viewers without broadcasts, expires lost tabs, and bounds memor
   const tab = {
     sessionId: crypto.randomUUID(),
     worktreeId: 'wt',
-    focusedTabId: 'pi',
+    focusedPanelId: 'pi',
     visible: true,
     focused: true
   }
@@ -60,7 +60,7 @@ it('renews quiet viewers without broadcasts, expires lost tabs, and bounds memor
   vi.advanceTimersByTime(PRESENCE_TIMEOUT_MS)
   manager.update(alice, tab)
   expect(manager.snapshot()).toHaveLength(1)
-  manager.update(alice, { ...tab, worktreeId: null, focusedTabId: null })
+  manager.update(alice, { ...tab, worktreeId: null, focusedPanelId: null })
   expect(manager.snapshot()).toEqual([])
   const count = received.length
   vi.advanceTimersByTime(PRESENCE_TIMEOUT_MS)

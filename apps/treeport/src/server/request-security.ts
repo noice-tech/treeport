@@ -170,8 +170,8 @@ function effectiveOriginFor(
   return `https://${forwardedHost.host}`
 }
 
-// A sandboxed tab has an opaque browser origin. Allow this origin only for
-// read-only tab resources and the dedicated development HMR upgrade.
+// A sandboxed panel has an opaque browser origin. Allow this origin only for
+// read-only panel resources and the dedicated development HMR upgrade.
 function allowsOpaqueWebPanelOrigin(
   request: IncomingMessage,
   socketUpgrade: boolean
@@ -186,7 +186,7 @@ function allowsOpaqueWebPanelOrigin(
   }
 
   return (
-    /^\/api\/web-panels\/tab_[a-f0-9]{32}\/assets(?:\/|$)/u.test(pathname) ||
+    /^\/api\/web-panels\/panel_[a-f0-9]{32}\/assets(?:\/|$)/u.test(pathname) ||
     /^\/api\/web-panel-dev\/[a-f0-9]{24}\//u.test(pathname)
   )
 }

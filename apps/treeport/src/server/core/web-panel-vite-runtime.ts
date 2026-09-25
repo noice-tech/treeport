@@ -162,10 +162,10 @@ export class WebPanelViteRuntime {
           babel: { babelrc: false, configFile: false }
         }),
         {
-          name: 'treeport-tab-dev-maps',
+          name: 'treeport-panel-dev-maps',
           apply: 'serve',
           enforce: 'post',
-          // Inline maps dwarf executable dependency code on every tab mount.
+          // Inline maps dwarf executable dependency code on every panel mount.
           // An empty map resets the transform map chain without changing code.
           // Production build maps are unaffected.
           transform(code) {
@@ -361,14 +361,14 @@ export class WebPanelViteRuntime {
     const raw = cause instanceof Error ? cause.message : String(cause)
     const diagnostic = raw
       .replaceAll(source.packageRoot, '<package>')
-      .replaceAll(source.root, '<tab>')
+      .replaceAll(source.root, '<panel>')
     const stage = /resolve|not found|cannot find|failed to load|import/iu.test(
       raw
     )
       ? 'Dependency resolution'
       : 'Source transformation'
 
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Tab build failed</title><style>body{font-family:system-ui,sans-serif;margin:2rem;line-height:1.5}pre{white-space:pre-wrap;background:#f4f4f5;padding:1rem;border-radius:.5rem}</style></head><body><h1>Web panel could not be compiled</h1><p><strong>${escapeHtml(source.definitionId)}</strong>${source.packageSource ? ` from ${escapeHtml(source.packageSource)}` : ''}</p><p>Stage: ${stage}</p><pre>${escapeHtml(diagnostic)}</pre><p>For a local tab package, install its <code>node_modules</code>. Put browser runtime imports in <code>dependencies</code>, not <code>devDependencies</code>.</p></body></html>`
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Panel build failed</title><style>body{font-family:system-ui,sans-serif;margin:2rem;line-height:1.5}pre{white-space:pre-wrap;background:#f4f4f5;padding:1rem;border-radius:.5rem}</style></head><body><h1>Web panel could not be compiled</h1><p><strong>${escapeHtml(source.definitionId)}</strong>${source.packageSource ? ` from ${escapeHtml(source.packageSource)}` : ''}</p><p>Stage: ${stage}</p><pre>${escapeHtml(diagnostic)}</pre><p>For a local panel package, install its <code>node_modules</code>. Put browser runtime imports in <code>dependencies</code>, not <code>devDependencies</code>.</p></body></html>`
   }
 
   private developmentServer(
@@ -454,7 +454,7 @@ export class WebPanelViteRuntime {
         : Effect.fail(
             new WebPanelRuntimeError(
               'createDevelopmentServer',
-              new Error('Treeport development tab server is not attached')
+              new Error('Treeport development panel server is not attached')
             )
           )
       return yield* Effect.uninterruptible(

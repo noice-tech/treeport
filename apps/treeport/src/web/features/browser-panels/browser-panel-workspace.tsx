@@ -20,7 +20,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
-  BrowserTab,
+  BrowserPanel,
   BrowserServerMessage,
   BrowserSessionState,
   WorktreeListener,
@@ -42,8 +42,8 @@ import {
   PopoverTrigger
 } from '../../components/ui/popover'
 import {
-  connectBrowserTab,
-  type BrowserTabConnection
+  connectBrowserPanel,
+  type BrowserPanelConnection
 } from '../../browser-session-client'
 import { useDesktopRuntime } from '../../desktop-runtime'
 import { BrowserVideoDecoder } from '../../browser-video-decoder'
@@ -97,26 +97,26 @@ function listenerUrl(listener: WorktreeListener): URL | null {
     : null
 }
 
-export function BrowserTabWorkspace({
-  tab,
+export function BrowserPanelWorkspace({
+  panel,
   active,
   autoFocusBlocked,
   inputBlocked,
   onLoadingChange,
   onFocusSurface
 }: {
-  tab: BrowserTab
+  panel: BrowserPanel
   active: boolean
   autoFocusBlocked: boolean
   inputBlocked: boolean
-  onLoadingChange: (tabId: string, loading: boolean) => void
+  onLoadingChange: (panelId: string, loading: boolean) => void
   onFocusSurface: () => void
 }) {
   const sectionRef = useRef<HTMLElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
-  const connectionRef = useRef<BrowserTabConnection | null>(null)
+  const connectionRef = useRef<BrowserPanelConnection | null>(null)
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
   const viewportOverrideRef = useRef<{ width: number; height: number } | null>(
@@ -133,7 +133,7 @@ export function BrowserTabWorkspace({
   } | null>(null)
   const addressPointerSelectAllRef = useRef(false)
   const addressDirtyRef = useRef(false)
-  const autoFocusAddressRef = useRef(tab.url === 'about:blank')
+  const autoFocusAddressRef = useRef(panel.url === 'about:blank')
   const pendingNavigationRef = useRef<{
     startUrl: string
     targetUrl: string
@@ -144,7 +144,7 @@ export function BrowserTabWorkspace({
     useState(false)
   const [state, setState] = useState<BrowserSessionState | null>(null)
   const [inputValue, setInputValue] = useState(
-    tab.url === 'about:blank' ? '' : tab.url
+    panel.url === 'about:blank' ? '' : panel.url
   )
   const [serversOpen, setServersOpen] = useState(false)
   const [viewportOpen, setViewportOpen] = useState(false)
@@ -169,14 +169,14 @@ export function BrowserTabWorkspace({
   const { localBrowser, computerId } = useDesktopRuntime()
 
   useEffect(() => {
-    traceBrowserOpen(tab.id, 'browser.open.tab_committed', {
+    traceBrowserOpen(panel.id, 'browser.open.panel_committed', {
       active,
       localBrowser
     })
-  }, [active, localBrowser, tab])
+  }, [active, localBrowser, panel])
 
   const send = useCallback(
-    (message: Parameters<BrowserTabConnection['send']>[0]) => {
+    (message: Parameters<BrowserPanelConnection['send']>[0]) => {
       connectionRef.current?.send(message)
     },
     []
@@ -256,7 +256,7 @@ export function BrowserTabWorkspace({
         message.type === 'state' ||
         message.type === 'controlChanged'
       ) {
-        const previousUrl = stateRef.current?.url ?? tab.url
+        const previousUrl = stateRef.current?.url ?? panel.url
         if (
           canvas &&
           (message.type === 'ready' ||
@@ -277,12 +277,12 @@ export function BrowserTabWorkspace({
         setState(message.state)
 
         if (message.type === 'ready') {
-          traceBrowserOpen(tab.id, 'browser.open.runtime_ready')
+          traceBrowserOpen(panel.id, 'browser.open.runtime_ready')
           setAddressFocusRevision((revision) => revision + 1)
           setFailure(null)
         }
 
-        onLoadingChange(tab.id, message.state.loading)
+        onLoadingChange(panel.id, message.state.loading)
         if (!addressDirtyRef.current && message.state.url !== previousUrl) {
           setError(null)
         }
@@ -332,7 +332,7 @@ export function BrowserTabWorkspace({
         canvas.style.cursor = 'default'
       }
 
-      onLoadingChange(tab.id, false)
+      onLoadingChange(panel.id, false)
       if (
         message.type === 'browserUnavailable' ||
         message.type === 'videoUnavailable'
@@ -355,7 +355,7 @@ export function BrowserTabWorkspace({
       pendingNavigationRef.current = null
       setError(message.type === 'closed' ? message.reason : message.message)
     },
-    [onLoadingChange, tab.id]
+    [onLoadingChange, panel.id]
   )
 
   useEffect(() => {
@@ -363,7 +363,7 @@ export function BrowserTabWorkspace({
       return
     }
 
-    traceBrowserOpen(tab.id, 'browser.hosted.attach_started')
+    traceBrowserOpen(panel.id, 'browser.hosted.attach_started')
     let firstFrame = true
     const decoder = new BrowserVideoDecoder(
       (frame) => {
@@ -384,7 +384,7 @@ export function BrowserTabWorkspace({
         drawing.drawImage(frame, 0, 0)
         if (firstFrame) {
           firstFrame = false
-          traceBrowserOpen(tab.id, 'browser.hosted.first_frame_drawn')
+          traceBrowserOpen(panel.id, 'browser.hosted.first_frame_drawn')
         }
 
         setError((current) =>
@@ -402,7 +402,7 @@ export function BrowserTabWorkspace({
         }
       }
     )
-    const connection = connectBrowserTab(tab.id, false, {
+    const connection = connectBrowserPanel(panel.id, false, {
       message: receiveMessage,
       frame: (frame) => decoder.receive(frame)
     })
@@ -419,10 +419,10 @@ export function BrowserTabWorkspace({
       decoder.dispose()
       connection.dispose()
     }
-  }, [connectionRevision, localBrowser, tab.id, receiveMessage, send])
+  }, [connectionRevision, localBrowser, panel.id, receiveMessage, send])
 
   const setLocalConnection = useCallback(
-    (connection: BrowserTabConnection | null) => {
+    (connection: BrowserPanelConnection | null) => {
       connectionRef.current = connection
       const pendingNavigation = pendingNavigationRef.current
       if (connection && pendingNavigation) {
@@ -637,8 +637,8 @@ export function BrowserTabWorkspace({
     setListenersLoading(true)
     try {
       const parsed = await parseResponse(
-        rpc.api.tabs[':tabId'].network.listeners.$get({
-          param: { tabId: tab.id }
+        rpc.api.panels[':panelId'].network.listeners.$get({
+          param: { panelId: panel.id }
         })
       )
       setListeners(parsed.discovery)
@@ -651,7 +651,7 @@ export function BrowserTabWorkspace({
     } finally {
       setListenersLoading(false)
     }
-  }, [tab.id])
+  }, [panel.id])
 
   const navigate = (value: string) => {
     const parsed = parseBrowserAddress(value)
@@ -668,7 +668,7 @@ export function BrowserTabWorkspace({
     setError(null)
     addressDirtyRef.current = false
     pendingNavigationRef.current = {
-      startUrl: stateRef.current?.url ?? tab.url,
+      startUrl: stateRef.current?.url ?? panel.url,
       targetUrl
     }
     setInputValue(targetUrl)
@@ -796,7 +796,7 @@ export function BrowserTabWorkspace({
             ? 'pointer-events-none absolute inset-0 z-0 flex h-full min-h-0 flex-col opacity-0'
             : 'hidden'
       }
-      aria-label={tab.title}
+      aria-label={panel.title}
       aria-hidden={active ? undefined : true}
       inert={active ? undefined : true}
     >
@@ -907,7 +907,7 @@ export function BrowserTabWorkspace({
             const acceptedAddress =
               pendingNavigationRef.current?.targetUrl ??
               stateRef.current?.url ??
-              tab.url
+              panel.url
             addressDirtyRef.current = false
             setError(null)
             setInputValue(
@@ -1022,7 +1022,7 @@ export function BrowserTabWorkspace({
             title="Open DevTools"
             disabled={!state}
             onClick={() => {
-              void window.treeportDesktop?.openBrowserDevtools(tab.id)
+              void window.treeportDesktop?.openBrowserDevtools(panel.id)
             }}
           >
             <CodeBracketSquareIcon />
@@ -1219,7 +1219,7 @@ export function BrowserTabWorkspace({
         {localBrowser && computerId ? (
           <LocalBrowserWebview
             key={connectionRevision}
-            tab={tab}
+            panel={panel}
             active={active}
             inputBlocked={inputBlocked}
             onConnection={setLocalConnection}

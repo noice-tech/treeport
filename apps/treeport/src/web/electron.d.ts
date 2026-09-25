@@ -2,8 +2,8 @@ type TreeportDesktopCommand =
   | 'new-worktree'
   | 'new-terminal'
   | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-  | 'new-tab'
-  | 'close-tab'
+  | 'new-panel'
+  | 'close-panel'
   | 'toggle-side-panel'
   | 'focus-location'
   | 'find-in-page'
@@ -44,16 +44,16 @@ type TreeportDesktopBridge = Readonly<{
   setTerminalSelectionActive: (active: boolean) => void
   onTerminalSelectionRelease: (listener: () => void) => () => void
   registerBrowser: (
-    tabId: string,
+    panelId: string,
     webContentsId: number,
     challenge: string
   ) => Promise<{
     endpoint: string
-    tabId: string
+    panelId: string
     challenge: string
   } | null>
   browserCommand: (
-    tabId: string,
+    panelId: string,
     command:
       | { type: 'navigate'; url: string }
       | { type: 'back' }
@@ -61,19 +61,19 @@ type TreeportDesktopBridge = Readonly<{
       | { type: 'reload' }
       | { type: 'stop' }
   ) => Promise<{ ok: boolean; error: string | null }>
-  setBrowserInputControl: (tabId: string, locked: boolean) => Promise<boolean>
+  setBrowserInputControl: (panelId: string, locked: boolean) => Promise<boolean>
   setBrowserPresentationActive: (
-    tabId: string,
+    panelId: string,
     active: boolean
   ) => Promise<boolean>
-  requestBrowserClose: (tabId: string, force: boolean) => Promise<boolean>
-  disposeBrowser: (tabId: string) => void
-  onBrowserFocus: (listener: (tabId: string) => void) => () => void
+  requestBrowserClose: (panelId: string, force: boolean) => Promise<boolean>
+  disposeBrowser: (panelId: string) => void
+  onBrowserFocus: (listener: (panelId: string) => void) => () => void
   onBrowserPopup: (
-    listener: (popup: { tabId: string; url: string }) => void
+    listener: (popup: { panelId: string; url: string }) => void
   ) => () => void
   onBrowserUnavailable: (
-    listener: (failure: { tabId: string; message: string }) => void
+    listener: (failure: { panelId: string; message: string }) => void
   ) => () => void
   requestAttention: () => void
 }>

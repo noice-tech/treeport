@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import { webPanelPermissionGrants } from '../../database-schema'
 import type { DomainError } from '../../domain'
-import { TabOperations, ProjectSnapshotOperations } from '../domain-services'
+import { PanelOperations, ProjectSnapshotOperations } from '../domain-services'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
 import { EventBusPort, PackageSystemPort } from '../infrastructure/ports'
 import { DatabasePort } from '../../database'
@@ -71,7 +71,7 @@ export class PackageService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const packages = yield* PackageSystemPort
-      const tabs = yield* TabOperations
+      const panels = yield* PanelOperations
       const projectStore = yield* ProjectStore
       const webPanelRuntime = yield* WebPanelRuntimePort
       if (projectId) {
@@ -91,13 +91,16 @@ export class PackageService {
           }
 
           const definitions = yield* Effect.catchAll(
-            tabs.effectiveWebPanelDefinitions(worktree.id),
+            panels.effectiveWebPanelDefinitions(worktree.id),
             () => Effect.succeed([])
           )
           for (const definition of definitions) {
             if (definition.permissions.length > 0) {
               keys.add(
-                yield* tabs.webPanelPermissionSourceKey(worktree.id, definition)
+                yield* panels.webPanelPermissionSourceKey(
+                  worktree.id,
+                  definition
+                )
               )
             }
           }

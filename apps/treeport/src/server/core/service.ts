@@ -31,7 +31,7 @@ import { ProjectObservationService } from './services/project/project-observatio
 import { ProjectRegistrationService } from './services/project/project-registration-service'
 import { ProjectSnapshotService } from './services/project/project-snapshot-service'
 import { ProjectService } from './services/project/project-service'
-import { TabService } from './services/tab/tab-service'
+import { PanelService } from './services/panel/panel-service'
 import { TerminalPresetService } from './services/terminal/terminal-preset-service'
 import { TerminalService } from './services/terminal/terminal-service'
 import { TreeFileService } from './services/tree-file/tree-file-service'
@@ -99,16 +99,16 @@ type TerminalPresetApi = Pick<
   | 'updateTerminalPreset'
 >
 type PanelApi = Pick<
-  TabService,
-  | 'authorizeBrowserTab'
-  | 'createBrowserTab'
+  PanelService,
+  | 'authorizeBrowserPanel'
+  | 'createBrowserPanel'
   | 'createWebPanel'
-  | 'deleteBrowserTab'
-  | 'deleteTab'
+  | 'deleteBrowserPanel'
+  | 'deletePanel'
   | 'deleteWebPanel'
   | 'deleteWebPanelStorage'
-  | 'getBrowserTab'
-  | 'getBrowserTabListeners'
+  | 'getBrowserPanel'
+  | 'getBrowserPanelListeners'
   | 'getPanelListeners'
   | 'getWebPanelContext'
   | 'getWebPanelDiff'
@@ -117,18 +117,18 @@ type PanelApi = Pick<
   | 'getWebPanelListeners'
   | 'getWebPanelStorage'
   | 'hasWebPanelStorage'
-  | 'listBrowserTabs'
+  | 'listBrowserPanels'
   | 'listWebPanelDefinitions'
   | 'listWebPanels'
-  | 'openBrowserTab'
-  | 'openBrowserTabFromPanel'
-  | 'openBrowserTabFromTerminal'
+  | 'openBrowserPanel'
+  | 'openBrowserPanelFromPanel'
+  | 'openBrowserPanelFromTerminal'
   | 'openWebPanel'
-  | 'reorderTabs'
+  | 'reorderPanels'
   | 'resolveWebPanelAsset'
   | 'setWebPanelPermissionGrant'
   | 'setWebPanelStorage'
-  | 'updateBrowserTabState'
+  | 'updateBrowserPanelState'
 >
 type TreeFileApi = Pick<
   TreeFileService,
@@ -151,7 +151,7 @@ export class TreeportService {
   private readonly projectRegistrationService: ProjectRegistrationService
   private readonly projectSnapshotService: ProjectSnapshotService
   private readonly projectService: ProjectService
-  private readonly panelService: TabService
+  private readonly panelService: PanelService
   private readonly terminalService: TerminalService
   private readonly terminalPresetService: TerminalPresetService
   private readonly treeFileService: TreeFileService
@@ -166,7 +166,7 @@ export class TreeportService {
     this.packages = new PackageSystem(deps.config, deps.runner)
     this.terminalService = new TerminalService()
     this.terminalPresetService = new TerminalPresetService()
-    this.panelService = new TabService()
+    this.panelService = new PanelService()
     this.packageService = new PackageService()
     this.treeFileService = new TreeFileService()
     this.worktreeReconciler = new WorktreeReconciler()
@@ -304,7 +304,7 @@ export class TreeportService {
     return this.terminalPresetService
   }
 
-  get tabs(): PanelApi {
+  get panels(): PanelApi {
     return this.panelService
   }
 

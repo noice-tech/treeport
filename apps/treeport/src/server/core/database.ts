@@ -576,7 +576,7 @@ export function mapWorktree(
     },
     dirty: null,
     terminals: [],
-    tabs: [],
+    panels: [],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }

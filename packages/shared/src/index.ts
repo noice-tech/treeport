@@ -218,7 +218,7 @@ export interface TerminalCapture {
   content: string
 }
 
-export interface TerminalTab {
+export interface TerminalPanel {
   id: string
   kind: 'terminal'
   worktreeId: string
@@ -228,7 +228,7 @@ export interface TerminalTab {
   updatedAt: string
 }
 
-export interface BrowserTab {
+export interface BrowserPanel {
   id: string
   kind: 'browser'
   worktreeId: string
@@ -238,7 +238,7 @@ export interface BrowserTab {
   updatedAt: string
 }
 
-export type Tab = TerminalTab | WebPanel | BrowserTab
+export type Panel = TerminalPanel | WebPanel | BrowserPanel
 
 export type WebPanelSource =
   | { type: 'project' }
@@ -264,13 +264,13 @@ export interface WebPanelDefinition {
 }
 
 export interface OpenWebPanelResult {
-  tab: WebPanel
+  panel: WebPanel
   created: boolean
   reused: boolean
 }
 
-export interface OpenBrowserTabResult {
-  tab: BrowserTab
+export interface OpenBrowserPanelResult {
+  panel: BrowserPanel
 }
 
 export type TreeContextFieldInput = 'text' | 'textarea'
@@ -310,7 +310,7 @@ export interface WorktreeRecord {
   pr: PrInfo
   dirty: DirtyState | null
   terminals: TerminalRecord[]
-  tabs: Tab[]
+  panels: Panel[]
   createdAt: string
   updatedAt: string
 }
@@ -854,7 +854,7 @@ export const updateWebPanelPermissionGrantSchema = Schema.Struct({
   granted: Schema.Boolean,
   permissions: Schema.Array(webPanelPermissionSchema)
 })
-export const createBrowserTabSchema = Schema.Struct({
+export const createBrowserPanelSchema = Schema.Struct({
   url: Schema.optional(browserUrlSchema),
   sourceTerminalId: Schema.optional(
     Schema.NullOr(
@@ -862,7 +862,7 @@ export const createBrowserTabSchema = Schema.Struct({
     )
   )
 })
-export const openBrowserTabFromTerminalSchema = Schema.Struct({
+export const openBrowserPanelFromTerminalSchema = Schema.Struct({
   url: browserUrlSchema
 })
 export const openWebPanelSchema = Schema.Struct({
@@ -1005,17 +1005,17 @@ interface ProductEventPayloadMap {
   'terminal.removed': { worktreeId: string; terminalId: string }
   'terminal.metadata': TerminalRuntimeMetadata
   'terminal.controller_changed': { terminalId: string; controlled: boolean }
-  'tab.created': { worktreeId: string; tabId: string }
-  'tab.updated': { worktreeId: string; tabId: string }
-  'tab.open_requested': {
+  'panel.created': { worktreeId: string; panelId: string }
+  'panel.updated': { worktreeId: string; panelId: string }
+  'panel.open_requested': {
     worktreeId: string
-    tabId: string
-    tab: BrowserTab | WebPanel
+    panelId: string
+    panel: BrowserPanel | WebPanel
     requestId?: string | null
     sourceTerminalId: string | null
-    sourceTabId: string | null
+    sourcePanelId: string | null
   }
-  'tab.removed': { worktreeId: string; tabId: string }
+  'panel.removed': { worktreeId: string; panelId: string }
   'workspace.open_requested': {
     worktreeId: string
     sourceTerminalId: string

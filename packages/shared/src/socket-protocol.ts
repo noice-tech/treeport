@@ -61,7 +61,7 @@ const webPanelSnapshotSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const browserTabSnapshotSchema = Schema.Struct({
+const browserPanelSnapshotSchema = Schema.Struct({
   id: identifierSchema,
   kind: Schema.Literal('browser'),
   worktreeId: identifierSchema,
@@ -70,9 +70,9 @@ const browserTabSnapshotSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const openTabSnapshotSchema = Schema.Union(
+const openPanelSnapshotSchema = Schema.Union(
   webPanelSnapshotSchema,
-  browserTabSnapshotSchema
+  browserPanelSnapshotSchema
 )
 const terminalRecordSchema = Schema.Struct({
   id: identifierSchema,
@@ -168,37 +168,37 @@ export const productEventSchema = Schema.Union(
     })
   ),
   eventEnvelope(
-    'tab.created',
+    'panel.created',
     Schema.Struct({
       worktreeId: identifierSchema,
-      tabId: identifierSchema
+      panelId: identifierSchema
     })
   ),
   eventEnvelope(
-    'tab.updated',
+    'panel.updated',
     Schema.Struct({
       worktreeId: identifierSchema,
-      tabId: identifierSchema
+      panelId: identifierSchema
     })
   ),
   eventEnvelope(
-    'tab.open_requested',
+    'panel.open_requested',
     Schema.Struct({
       worktreeId: identifierSchema,
-      tabId: identifierSchema,
-      tab: openTabSnapshotSchema,
+      panelId: identifierSchema,
+      panel: openPanelSnapshotSchema,
       requestId: Schema.optionalWith(Schema.NullOr(Schema.String), {
         exact: true
       }),
       sourceTerminalId: Schema.NullOr(identifierSchema),
-      sourceTabId: Schema.NullOr(identifierSchema)
+      sourcePanelId: Schema.NullOr(identifierSchema)
     })
   ),
   eventEnvelope(
-    'tab.removed',
+    'panel.removed',
     Schema.Struct({
       worktreeId: identifierSchema,
-      tabId: identifierSchema
+      panelId: identifierSchema
     })
   ),
   eventEnvelope(
@@ -231,7 +231,7 @@ export const eventsSnapshotSchema = Schema.Struct({
   at: dateTimeString,
   terminalMetadata: Schema.Array(terminalRuntimeMetadataSchema),
   webPanels: Schema.Array(webPanelSnapshotSchema),
-  browserTabs: Schema.Array(browserTabSnapshotSchema),
+  browserPanels: Schema.Array(browserPanelSnapshotSchema),
   presence: Schema.Array(workspacePresenceSchema)
 })
 export type EventsSnapshot = Schema.Schema.Type<typeof eventsSnapshotSchema>

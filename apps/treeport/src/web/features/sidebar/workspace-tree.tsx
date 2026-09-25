@@ -42,7 +42,7 @@ import {
   terminalIdsInLayoutNode,
   terminalWorkspaceLayouts
 } from '../terminals/terminal-workspace-layout'
-import { useWorkspaceSurfaceFocus } from '../tabs/workspace-surface-focus-context'
+import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import type {
   PendingWorktreeCreation,
   RemovalStage
@@ -157,7 +157,7 @@ export interface WorkspaceTreeProps {
     worktree: WorktreeRecord,
     trigger: HTMLElement
   ) => Promise<void>
-  onOpenTabDialog: (
+  onOpenPanelDialog: (
     project: ProjectRecord,
     worktree: WorktreeRecord | null,
     trigger: HTMLElement
@@ -181,7 +181,7 @@ export function WorkspaceTree({
   onReorderTerminals: reorderTerminals,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
-  onOpenTabDialog,
+  onOpenPanelDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
   useSyncExternalStore(
@@ -365,8 +365,8 @@ export function WorkspaceTree({
                           {selectedWorktree?.id === worktree.id ? (
                             <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center max-[700px]:static max-[700px]:shrink-0">
                               <SidebarAction
-                                label={`New tab in ${worktree.name}`}
-                                tooltip={`New tab in ${worktree.name}${
+                                label={`New panel in ${worktree.name}`}
+                                tooltip={`New panel in ${worktree.name}${
                                   newPanelShortcut
                                     ? ` — ${newPanelShortcut}`
                                     : ''
@@ -381,7 +381,7 @@ export function WorkspaceTree({
                                   : {})}
                                 className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 min-[701px]:size-6"
                                 onClick={(trigger) =>
-                                  onOpenTabDialog(project, worktree, trigger)
+                                  onOpenPanelDialog(project, worktree, trigger)
                                 }
                               >
                                 <PlusIcon />
@@ -639,13 +639,13 @@ export function WorkspaceTree({
                         type="button"
                         variant="ghost"
                         className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
-                        aria-label="New tab"
+                        aria-label="New panel"
                         onClick={(event) =>
-                          onOpenTabDialog(project, null, event.currentTarget)
+                          onOpenPanelDialog(project, null, event.currentTarget)
                         }
                       >
                         <PlusIcon className="min-[701px]:size-3.5!" />
-                        <span>New tab</span>
+                        <span>New panel</span>
                       </Button>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
