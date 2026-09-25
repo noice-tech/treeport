@@ -3,11 +3,11 @@ title: Terminal presets
 description: Save terminal commands for repeated use in trees.
 ---
 
-Terminal presets are named commands in **New tab**. Use them to start Pi, a development server, or a test watcher.
+Terminal presets are named commands in **New panel**. Use them to start Pi, a development server, or a test watcher.
 
 ## Create a preset
 
-1. Open **New tab**.
+1. Open **New panel**.
 2. Select **Manage global presets**.
 3. Enter a name and command.
 

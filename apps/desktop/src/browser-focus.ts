@@ -5,7 +5,7 @@ import * as Effect from 'effect/Effect'
 // Mouse dispatch focuses a native widget; keyboard dispatch also needs the
 // embedder's focused-frame mapping. WebContents.focus alone does not establish
 // that mapping for a hidden guest. Await the webview focus IPC, dispatch, then
-// restore the desktop control without revealing/selecting the Browser tab.
+// restore the desktop control without revealing/selecting the Browser panel.
 export function preserveDesktopFocus<A, E>(
   guest: WebContents,
   operation: Effect.Effect<A, E>,

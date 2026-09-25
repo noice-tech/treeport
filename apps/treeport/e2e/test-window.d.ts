@@ -32,8 +32,8 @@ type TreeportTestDesktopCommand =
   | 'new-worktree'
   | 'new-terminal'
   | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-  | 'new-tab'
-  | 'close-tab'
+  | 'new-panel'
+  | 'close-panel'
   | 'toggle-side-panel'
   | 'focus-location'
   | 'find-in-page'

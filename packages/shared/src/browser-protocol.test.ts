@@ -165,7 +165,7 @@ describe('hosted browser protocol', () => {
       parseBrowserAuth({
         ticket,
         protocolVersion: BROWSER_PROTOCOL_VERSION,
-        tabId: 'another-tab'
+        panelId: 'another-panel'
       })
     ).toBeNull()
 
@@ -212,7 +212,7 @@ describe('hosted browser protocol', () => {
     expect(
       browserOwnerServerMessageSchema.safeParse({
         type: 'claimGranted',
-        tabId: 'tab-browser',
+        panelId: 'panel-browser',
         generation: 1,
         resumed: true,
         state: readyState

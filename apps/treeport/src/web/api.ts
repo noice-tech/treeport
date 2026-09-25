@@ -11,7 +11,7 @@ import {
   hasDataResponseSchema,
   listenerDiscoveryResponseSchema,
   okResponseSchema,
-  openBrowserTabResponseSchema,
+  openBrowserPanelResponseSchema,
   openWebPanelResponseSchema,
   operationResponseSchema,
   operationsResponseSchema,
@@ -45,7 +45,7 @@ import type {
   GitDiffImage,
   GitDiffImageRequest,
   JsonValue,
-  OpenBrowserTabResult,
+  OpenBrowserPanelResult,
   OpenWebPanelResult,
   OperationRecord,
   ProjectRecord,
@@ -370,7 +370,7 @@ export const rpc = {
             }
           }
         ),
-        tabs: {
+        panels: {
           open: {
             $post: (
               { param, json }: RequestInput<{ worktreeId: string }, unknown>,
@@ -378,7 +378,7 @@ export const rpc = {
             ) =>
               endpoint<OpenWebPanelResult>(
                 'POST',
-                `/api/worktrees/${id(param.worktreeId)}/tabs/open`,
+                `/api/worktrees/${id(param.worktreeId)}/panels/open`,
                 openWebPanelResponseSchema,
                 { json },
                 options?.init
@@ -391,21 +391,21 @@ export const rpc = {
             }: RequestInput<{ worktreeId: string }, unknown>) =>
               endpoint<{ ok: true }>(
                 'PUT',
-                `/api/worktrees/${id(param.worktreeId)}/tabs/order`,
+                `/api/worktrees/${id(param.worktreeId)}/panels/order`,
                 okResponseSchema,
                 { json }
               )
           }
         },
-        'browser-tabs': {
+        'browser-panels': {
           $post: ({
             param,
             json
           }: RequestInput<{ worktreeId: string }, unknown>) =>
-            endpoint<OpenBrowserTabResult>(
+            endpoint<OpenBrowserPanelResult>(
               'POST',
-              `/api/worktrees/${id(param.worktreeId)}/browser-tabs`,
-              openBrowserTabResponseSchema,
+              `/api/worktrees/${id(param.worktreeId)}/browser-panels`,
+              openBrowserPanelResponseSchema,
               { json }
             )
         },
@@ -456,24 +456,24 @@ export const rpc = {
         }
       }
     },
-    tabs: {
-      ':tabId': {
+    panels: {
+      ':panelId': {
         $delete: (
-          { param, query }: RequestInput<{ tabId: string }>,
+          { param, query }: RequestInput<{ panelId: string }>,
           init?: RequestInit
         ) =>
           endpoint<{ ok: true }>(
             'DELETE',
-            `/api/tabs/${id(param.tabId)}`,
+            `/api/panels/${id(param.panelId)}`,
             okResponseSchema,
             query ? { query } : undefined,
             init
           ),
         context: {
-          $get: ({ param }: RequestInput<{ tabId: string }>) =>
+          $get: ({ param }: RequestInput<{ panelId: string }>) =>
             endpoint<{ context: WebPanelContext }>(
               'GET',
-              `/api/tabs/${id(param.tabId)}/context`,
+              `/api/panels/${id(param.panelId)}/context`,
               webPanelContextResponseSchema
             )
         },
@@ -482,10 +482,10 @@ export const rpc = {
             $post: ({
               param,
               json
-            }: RequestInput<{ tabId: string }, GitFileDiffRequest>) =>
+            }: RequestInput<{ panelId: string }, GitFileDiffRequest>) =>
               endpoint<GitFileDiff>(
                 'POST',
-                `/api/tabs/${id(param.tabId)}/diff/file`,
+                `/api/panels/${id(param.panelId)}/diff/file`,
                 gitFileDiffResponseSchema,
                 { json }
               )
@@ -494,53 +494,56 @@ export const rpc = {
             $post: ({
               param,
               json
-            }: RequestInput<{ tabId: string }, GitDiffImageRequest>) =>
+            }: RequestInput<{ panelId: string }, GitDiffImageRequest>) =>
               endpoint<GitDiffImage>(
                 'POST',
-                `/api/tabs/${id(param.tabId)}/diff/image`,
+                `/api/panels/${id(param.panelId)}/diff/image`,
                 gitDiffImageSchema,
                 { json }
               )
           },
-          $get: ({ param }: RequestInput<{ tabId: string }>) =>
+          $get: ({ param }: RequestInput<{ panelId: string }>) =>
             endpoint<{ diff: GitDiff }>(
               'GET',
-              `/api/tabs/${id(param.tabId)}/diff`,
+              `/api/panels/${id(param.panelId)}/diff`,
               gitDiffResponseSchema
             )
         },
         network: {
           listeners: {
-            $get: ({ param }: RequestInput<{ tabId: string }>) =>
+            $get: ({ param }: RequestInput<{ panelId: string }>) =>
               endpoint<{ discovery: WorktreeListenerDiscovery }>(
                 'GET',
-                `/api/tabs/${id(param.tabId)}/network/listeners`,
+                `/api/panels/${id(param.panelId)}/network/listeners`,
                 listenerDiscoveryResponseSchema
               )
           }
         },
         storage: Object.assign(
           {
-            $get: ({ param }: RequestInput<{ tabId: string }>) =>
+            $get: ({ param }: RequestInput<{ panelId: string }>) =>
               endpoint<{ hasData: boolean }>(
                 'GET',
-                `/api/tabs/${id(param.tabId)}/storage`,
+                `/api/panels/${id(param.panelId)}/storage`,
                 hasDataResponseSchema
               ),
-            $put: ({ param, json }: RequestInput<{ tabId: string }, unknown>) =>
+            $put: ({
+              param,
+              json
+            }: RequestInput<{ panelId: string }, unknown>) =>
               endpoint<{ ok: true }>(
                 'PUT',
-                `/api/tabs/${id(param.tabId)}/storage`,
+                `/api/panels/${id(param.panelId)}/storage`,
                 okResponseSchema,
                 { json }
               ),
             $delete: ({
               param,
               json
-            }: RequestInput<{ tabId: string }, unknown>) =>
+            }: RequestInput<{ panelId: string }, unknown>) =>
               endpoint<{ ok: true }>(
                 'DELETE',
-                `/api/tabs/${id(param.tabId)}/storage`,
+                `/api/panels/${id(param.panelId)}/storage`,
                 okResponseSchema,
                 { json }
               )
@@ -550,10 +553,10 @@ export const rpc = {
               $post: ({
                 param,
                 json
-              }: RequestInput<{ tabId: string }, unknown>) =>
+              }: RequestInput<{ panelId: string }, unknown>) =>
                 endpoint<{ found: boolean; value: JsonValue }>(
                   'POST',
-                  `/api/tabs/${id(param.tabId)}/storage/get`,
+                  `/api/panels/${id(param.panelId)}/storage/get`,
                   storageValueResponseSchema,
                   { json }
                 )
@@ -644,20 +647,23 @@ export const rpc = {
 
 export const treeFilesRpc = {
   api: {
-    tabs: {
-      ':tabId': {
+    panels: {
+      ':panelId': {
         files: Object.assign(
           {
-            $get: ({ param }: RequestInput<{ tabId: string }>) =>
+            $get: ({ param }: RequestInput<{ panelId: string }>) =>
               endpoint<TreeFileListing>(
                 'GET',
-                `/api/tabs/${id(param.tabId)}/files`,
+                `/api/panels/${id(param.panelId)}/files`,
                 treeFileListingSchema
               ),
-            $put: ({ param, json }: RequestInput<{ tabId: string }, unknown>) =>
+            $put: ({
+              param,
+              json
+            }: RequestInput<{ panelId: string }, unknown>) =>
               endpoint<TreeFileWriteResult>(
                 'PUT',
-                `/api/tabs/${id(param.tabId)}/files`,
+                `/api/panels/${id(param.panelId)}/files`,
                 treeFileWriteResultSchema,
                 { json }
               )
@@ -667,10 +673,10 @@ export const treeFilesRpc = {
               $post: ({
                 param,
                 json
-              }: RequestInput<{ tabId: string }, unknown>) =>
+              }: RequestInput<{ panelId: string }, unknown>) =>
                 endpoint<TreeFileSearchResult>(
                   'POST',
-                  `/api/tabs/${id(param.tabId)}/files/search`,
+                  `/api/panels/${id(param.panelId)}/files/search`,
                   treeFileSearchResultSchema,
                   { json }
                 )
@@ -679,10 +685,10 @@ export const treeFilesRpc = {
               $post: ({
                 param,
                 json
-              }: RequestInput<{ tabId: string }, unknown>) =>
+              }: RequestInput<{ panelId: string }, unknown>) =>
                 endpoint<{ path: string; content: string; revision: string }>(
                   'POST',
-                  `/api/tabs/${id(param.tabId)}/files/read`,
+                  `/api/panels/${id(param.panelId)}/files/read`,
                   treeFileSchema,
                   { json }
                 )

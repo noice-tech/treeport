@@ -16,7 +16,7 @@ export type ViewerIdentity = Schema.Schema.Type<typeof viewerIdentitySchema>
 export const presenceUpdateSchema = Schema.Struct({
   sessionId: Schema.UUID,
   worktreeId: Schema.NullOr(identifier),
-  focusedTabId: Schema.NullOr(identifier),
+  focusedPanelId: Schema.NullOr(identifier),
   visible: Schema.Boolean,
   focused: Schema.Boolean
 })

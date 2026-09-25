@@ -225,7 +225,7 @@ export class PanelDefinitionService {
         definition
       )
       const [grant] = yield* database
-        .execute('tab.definition.service.230', (db) =>
+        .execute('panel.definition.service.230', (db) =>
           db
             .select({
               permissionsJson: webPanelPermissionGrants.permissionsJson
@@ -238,7 +238,7 @@ export class PanelDefinitionService {
       if (definition.permissions.length === 0) {
         if (grant) {
           yield* database
-            .execute('tab.definition.service.239', (db) =>
+            .execute('panel.definition.service.239', (db) =>
               db
                 .delete(webPanelPermissionGrants)
                 .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
@@ -254,7 +254,7 @@ export class PanelDefinitionService {
         JSON.stringify([...definition.permissions].sort())
       if (grant && !matches) {
         yield* database
-          .execute('tab.definition.service.253', (db) =>
+          .execute('panel.definition.service.253', (db) =>
             db
               .delete(webPanelPermissionGrants)
               .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
@@ -356,7 +356,7 @@ export class PanelDefinitionService {
       if (granted && definition.permissions.length > 0) {
         const timestamp = now()
         yield* database
-          .execute('tab.definition.service.353', (db) =>
+          .execute('panel.definition.service.353', (db) =>
             db
               .insert(webPanelPermissionGrants)
               .values({
@@ -381,7 +381,7 @@ export class PanelDefinitionService {
           .pipe(Effect.orDie)
       } else {
         yield* database
-          .execute('tab.definition.service.376', (db) =>
+          .execute('panel.definition.service.376', (db) =>
             db
               .delete(webPanelPermissionGrants)
               .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
@@ -390,7 +390,7 @@ export class PanelDefinitionService {
       }
 
       const affectedPanels = yield* database
-        .execute('tab.definition.service.383', (db) =>
+        .execute('panel.definition.service.383', (db) =>
           db
             .select({ id: webPanels.id })
             .from(webPanels)
@@ -404,10 +404,10 @@ export class PanelDefinitionService {
         .pipe(Effect.orDie)
       yield* Effect.sync(() => projectSnapshots.invalidate())
       yield* Effect.sync(() => {
-        for (const tab of affectedPanels) {
-          events.publish('tab.updated', {
+        for (const panel of affectedPanels) {
+          events.publish('panel.updated', {
             worktreeId,
-            tabId: tab.id
+            panelId: panel.id
           })
         }
       })

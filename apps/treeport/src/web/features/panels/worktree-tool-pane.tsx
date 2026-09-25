@@ -11,7 +11,11 @@ import {
 } from 'react'
 import { GlobeAltIcon, PlusIcon, XMarkIcon } from '@heroicons/react/16/solid'
 import { LoaderCircleIcon, PanelRightIcon } from 'lucide-react'
-import type { BrowserTab, WebPanel, WebPanelDefinition } from '@treeport/shared'
+import type {
+  BrowserPanel,
+  WebPanel,
+  WebPanelDefinition
+} from '@treeport/shared'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,7 +57,7 @@ interface ToolPickerActionsProps {
   definitionsError: boolean
   launchDisabled: boolean
   commandRef?: RefObject<HTMLDivElement | null>
-  onCreateBrowserTab: () => void
+  onCreateBrowserPanel: () => void
   onSelectWebPanel: (definition: WebPanelDefinition) => void
 }
 
@@ -71,7 +75,7 @@ function ToolPickerActions({
   definitionsError,
   launchDisabled,
   commandRef,
-  onCreateBrowserTab,
+  onCreateBrowserPanel,
   onSelectWebPanel
 }: ToolPickerActionsProps) {
   const definitionTitleCounts = new Map<string, number>()
@@ -91,7 +95,7 @@ function ToolPickerActions({
               value="browser tab"
               aria-label="Browser tab"
               disabled={launchDisabled}
-              onSelect={onCreateBrowserTab}
+              onSelect={onCreateBrowserPanel}
             >
               <GlobeAltIcon data-icon="inline-start" />
               <span className="min-w-0 flex-1 truncate">Browser tab</span>
@@ -145,7 +149,7 @@ function ToolPickerActions({
         className="h-auto w-full justify-start px-2 py-1.5 text-left"
         aria-label="Browser tab"
         disabled={launchDisabled}
-        onClick={onCreateBrowserTab}
+        onClick={onCreateBrowserPanel}
       >
         <GlobeAltIcon data-icon="inline-start" />
         <span className="min-w-0 flex-1 truncate">Browser tab</span>
@@ -189,7 +193,7 @@ function ToolPickerActions({
   )
 }
 
-function BrowserTabLoadingIcon() {
+function BrowserPanelLoadingIcon() {
   const [showSpinner, setShowSpinner] = useState(false)
 
   useEffect(() => {
@@ -359,36 +363,36 @@ export function WorktreeToolPane({
   worktreeName,
   visible,
   tools,
-  activeTabId,
+  activePanelId,
   webPanelRuntimeTitles,
-  browserTabLoading,
+  browserPanelLoading,
   definitions,
   definitionsLoading,
   definitionsError,
   launchDisabled,
   children,
-  onSelectTab,
-  onCloseTab,
-  onReorderTabs,
-  onCreateBrowserTab,
+  onSelectPanel,
+  onClosePanel,
+  onReorderPanels,
+  onCreateBrowserPanel,
   onOpenWebPanel,
   onFocusSurface
 }: {
   worktreeName: string
   visible: boolean
-  tools: Array<BrowserTab | WebPanel>
-  activeTabId: string | null
+  tools: Array<BrowserPanel | WebPanel>
+  activePanelId: string | null
   webPanelRuntimeTitles: Record<string, string>
-  browserTabLoading: Record<string, boolean>
+  browserPanelLoading: Record<string, boolean>
   definitions: WebPanelDefinition[]
   definitionsLoading: boolean
   definitionsError: boolean
   launchDisabled: boolean
   children: ReactNode
-  onSelectTab: (tab: BrowserTab | WebPanel) => void
-  onCloseTab: (tab: BrowserTab | WebPanel, trigger?: HTMLElement) => void
-  onReorderTabs: (tabIds: string[]) => void
-  onCreateBrowserTab: () => void
+  onSelectPanel: (panel: BrowserPanel | WebPanel) => void
+  onClosePanel: (panel: BrowserPanel | WebPanel, trigger?: HTMLElement) => void
+  onReorderPanels: (panelIds: string[]) => void
+  onCreateBrowserPanel: () => void
   onOpenWebPanel: (definition: WebPanelDefinition) => void
   onFocusSurface: () => void
 }) {
@@ -407,7 +411,7 @@ export function WorktreeToolPane({
   } = useReorderableItems({
     items: tools,
     orientation: 'horizontal',
-    onReorder: onReorderTabs
+    onReorder: onReorderPanels
   })
   const toolPickerCommandRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLElement>(null)
@@ -443,9 +447,9 @@ export function WorktreeToolPane({
   const permissionDescription = describeWebPanelPermissions(
     permissionDefinition?.permissions ?? []
   )
-  const createBrowserTab = () => {
+  const createBrowserPanel = () => {
     dismissPicker()
-    onCreateBrowserTab()
+    onCreateBrowserPanel()
   }
   const selectWebPanel = (definition: WebPanelDefinition) => {
     dismissPicker()
@@ -510,7 +514,7 @@ export function WorktreeToolPane({
       definitionsLoading={definitionsLoading}
       definitionsError={definitionsError}
       launchDisabled={launchDisabled}
-      onCreateBrowserTab={createBrowserTab}
+      onCreateBrowserPanel={createBrowserPanel}
       onSelectWebPanel={selectWebPanel}
     />
   )
@@ -549,18 +553,19 @@ export function WorktreeToolPane({
             role="tablist"
             aria-label={`${worktreeName} tool tabs`}
           >
-            {orderedTools.map((tab, index) => {
+            {orderedTools.map((panel, index) => {
               const title =
-                tab.kind === 'web'
-                  ? (webPanelRuntimeTitles[tab.id] ?? tab.title)
-                  : tab.title
-              const active = tab.id === activeTabId
+                panel.kind === 'web'
+                  ? (webPanelRuntimeTitles[panel.id] ?? panel.title)
+                  : panel.title
+              const active = panel.id === activePanelId
               const loading =
-                tab.kind === 'browser' && Boolean(browserTabLoading[tab.id])
+                panel.kind === 'browser' &&
+                Boolean(browserPanelLoading[panel.id])
               return (
                 <div
-                  key={tab.id}
-                  {...getReorderItemProps(tab.id)}
+                  key={panel.id}
+                  {...getReorderItemProps(panel.id)}
                   className={cn(
                     'group/tool relative flex min-w-28 max-w-56 shrink-0 items-center rounded-md',
                     active ? 'bg-white/8 hover:bg-white/10' : 'hover:bg-white/6'
@@ -581,7 +586,7 @@ export function WorktreeToolPane({
                       .filter(Boolean)
                       .join(' ')}
                     aria-label={
-                      tab.kind === 'browser'
+                      panel.kind === 'browser'
                         ? `${
                             title === 'Browser'
                               ? 'Browser'
@@ -590,7 +595,7 @@ export function WorktreeToolPane({
                         : `${title}, web panel`
                     }
                     title={title}
-                    onClick={() => onSelectTab(tab)}
+                    onClick={() => onSelectPanel(panel)}
                     onMouseDown={(event) => {
                       if (event.button === 1) {
                         event.preventDefault()
@@ -602,13 +607,13 @@ export function WorktreeToolPane({
                       }
 
                       event.preventDefault()
-                      onCloseTab(tab, event.currentTarget)
+                      onClosePanel(panel, event.currentTarget)
                     }}
-                    {...getReorderHandleProps(tab.id)}
+                    {...getReorderHandleProps(panel.id)}
                   >
-                    {tab.kind === 'browser' ? (
+                    {panel.kind === 'browser' ? (
                       loading ? (
-                        <BrowserTabLoadingIcon />
+                        <BrowserPanelLoadingIcon />
                       ) : (
                         <GlobeAltIcon data-icon="inline-start" />
                       )
@@ -616,7 +621,7 @@ export function WorktreeToolPane({
                       <WebPanelIcon
                         icon={
                           definitions.find(
-                            (definition) => definition.id === tab.definitionId
+                            (definition) => definition.id === panel.definitionId
                           )?.icon ?? null
                         }
                       />
@@ -642,7 +647,9 @@ export function WorktreeToolPane({
                     size="icon-sm"
                     className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 group-hover/tool:opacity-100 group-focus-within/tool:opacity-100 pointer-coarse:opacity-100"
                     aria-label={`Close ${title}`}
-                    onClick={(event) => onCloseTab(tab, event.currentTarget)}
+                    onClick={(event) =>
+                      onClosePanel(panel, event.currentTarget)
+                    }
                   >
                     <XMarkIcon />
                   </Button>
@@ -679,7 +686,7 @@ export function WorktreeToolPane({
                 definitionsError={definitionsError}
                 launchDisabled={launchDisabled}
                 commandRef={toolPickerCommandRef}
-                onCreateBrowserTab={createBrowserTab}
+                onCreateBrowserPanel={createBrowserPanel}
                 onSelectWebPanel={selectWebPanel}
               />
             </PopoverContent>
@@ -712,10 +719,10 @@ export function WorktreeToolPane({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Allow privileged tab access?</AlertDialogTitle>
+            <AlertDialogTitle>Allow privileged panel access?</AlertDialogTitle>
             <AlertDialogDescription>
               {`${
-                permissionDefinition?.title ?? 'This tab'
+                permissionDefinition?.title ?? 'This panel'
               } is from ${permissionSource}. ${permissionDescription}`}
             </AlertDialogDescription>
           </AlertDialogHeader>

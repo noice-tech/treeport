@@ -4,9 +4,9 @@ import {
   deepestProjectTarget,
   openRequestMatchesTerminal,
   openRequestMatchesWorkspace,
-  tabTarget,
+  panelTarget,
   resolveWorkspaceRoute,
-  targetForTab,
+  targetForPanel,
   targetForProject,
   targetForWorktree,
   terminalTarget,
@@ -28,16 +28,16 @@ function projectGraph(): ProjectRecord[] {
             { id: 'terminal-a', worktreeId: 'worktree-a', name: 'A terminal' },
             { id: 'terminal-b', worktreeId: 'worktree-a', name: 'B terminal' }
           ],
-          tabs: [
+          panels: [
             {
-              id: 'tab-a',
+              id: 'panel-a',
               kind: 'web',
               worktreeId: 'worktree-a',
               definitionId: 'project:review',
               title: 'Review'
             },
             {
-              id: 'tab-browser',
+              id: 'panel-browser',
               kind: 'browser',
               worktreeId: 'worktree-a',
               title: 'Example',
@@ -72,10 +72,10 @@ describe('workspace route resolution', () => {
     expect(openRequestMatchesTerminal(null, 'terminal-a')).toBe(false)
     expect(openRequestMatchesTerminal(null, null)).toBe(false)
     expect(
-      openRequestMatchesWorkspace(null, 'tab-source', null, 'tab-source')
+      openRequestMatchesWorkspace(null, 'panel-source', null, 'panel-source')
     ).toBe(true)
     expect(
-      openRequestMatchesWorkspace(null, 'tab-source', null, 'tab-other')
+      openRequestMatchesWorkspace(null, 'panel-source', null, 'panel-other')
     ).toBe(false)
   })
 
@@ -97,31 +97,35 @@ describe('workspace route resolution', () => {
     })
   })
 
-  it('selects WebPanel and BrowserTab routes without a terminal and repairs stale routes', () => {
+  it('selects WebPanel and BrowserPanel routes without a terminal and repairs stale routes', () => {
     const projects = projectGraph()
-    const tab = projects[0]!.worktrees[0]!.tabs.find(
+    const panel = projects[0]!.worktrees[0]!.panels.find(
       (candidate) => candidate.kind === 'web'
     )!
-    const target = tabTarget('project-a', 'worktree-a', 'tab-a')
+    const target = panelTarget('project-a', 'worktree-a', 'panel-a')
 
     expect(resolveWorkspaceRoute(projects, target.pathname)).toMatchObject({
       canonical: true,
       target,
-      selection: { terminal: null, tab: { id: 'tab-a' } }
+      selection: { terminal: null, panel: { id: 'panel-a' } }
     })
-    expect(targetForTab(projects, tab)).toEqual(target)
-    const browser = projects[0]!.worktrees[0]!.tabs.find(
+    expect(targetForPanel(projects, panel)).toEqual(target)
+    const browser = projects[0]!.worktrees[0]!.panels.find(
       (candidate) => candidate.kind === 'browser'
     )!
-    const browserTarget = tabTarget('project-a', 'worktree-a', 'tab-browser')
-    expect(targetForTab(projects, browser)).toEqual(browserTarget)
+    const browserTarget = panelTarget(
+      'project-a',
+      'worktree-a',
+      'panel-browser'
+    )
+    expect(targetForPanel(projects, browser)).toEqual(browserTarget)
     expect(
-      resolveWorkspaceRoute(projects, browserTarget.pathname).selection.tab
+      resolveWorkspaceRoute(projects, browserTarget.pathname).selection.panel
     ).toMatchObject({ kind: 'browser', url: 'https://example.com/' })
     expect(
       resolveWorkspaceRoute(
         projects,
-        '/projects/project-a/worktrees/worktree-a/tabs/missing'
+        '/projects/project-a/worktrees/worktree-a/panels/missing'
       ).target
     ).toEqual(terminalTarget('project-a', 'worktree-a', 'terminal-a'))
   })
@@ -215,7 +219,7 @@ describe('workspace route resolution', () => {
     expect(
       resolveWorkspaceRoute(
         projects,
-        '/projects/project-a/worktrees/worktree-empty/tabs/missing'
+        '/projects/project-a/worktrees/worktree-empty/panels/missing'
       ).target
     ).toEqual(target)
   })

@@ -373,14 +373,14 @@ function installRendererSecurity(renderer: WebContents): void {
           : code === 'bracketright'
             ? 'select-next-worktree'
             : key === 't'
-              ? 'new-tab'
+              ? 'new-panel'
               : undefined
         : key === 'n'
           ? 'new-worktree'
           : key === 't'
             ? 'new-terminal'
             : key === 'w'
-              ? 'close-tab'
+              ? 'close-panel'
               : /^[1-9]$/.test(key)
                 ? (`select-tab-${key}` as DesktopCommand)
                 : undefined
@@ -471,14 +471,14 @@ const computerUpdateSchema = z.object({
   origin: z.string(),
   nameOverride: z.string().optional()
 })
-const nativeBrowserTabSchema = z.strictObject({
-  tabId: z.string().min(1).max(128)
+const nativeBrowserPanelSchema = z.strictObject({
+  panelId: z.string().min(1).max(128)
 })
-const nativeBrowserRegisterSchema = nativeBrowserTabSchema.extend({
+const nativeBrowserRegisterSchema = nativeBrowserPanelSchema.extend({
   webContentsId: z.number().int().positive(),
   challenge: z.string().min(32).max(256)
 })
-const nativeBrowserCloseSchema = nativeBrowserTabSchema.extend({
+const nativeBrowserCloseSchema = nativeBrowserPanelSchema.extend({
   force: z.boolean()
 })
 const nativeBrowserUrlSchema = z.string().transform((value, context) => {
@@ -497,10 +497,10 @@ const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('reload') }),
   z.strictObject({ type: z.literal('stop') })
 ]) satisfies z.ZodType<DesktopBrowserToolbarCommand>
-const nativeBrowserInputControlSchema = nativeBrowserTabSchema.extend({
+const nativeBrowserInputControlSchema = nativeBrowserPanelSchema.extend({
   locked: z.boolean()
 })
-const nativeBrowserPresentationSchema = nativeBrowserTabSchema.extend({
+const nativeBrowserPresentationSchema = nativeBrowserPanelSchema.extend({
   active: z.boolean()
 })
 
@@ -703,17 +703,17 @@ function installMenu(): void {
           click: () => sendDesktopCommand('split-terminal-down')
         },
         {
-          id: 'new-tab',
-          label: 'New Tab…',
+          id: 'new-panel',
+          label: 'New Panel…',
           accelerator: 'CommandOrControl+Shift+T',
-          click: () => sendDesktopCommand('new-tab')
+          click: () => sendDesktopCommand('new-panel')
         },
         { type: 'separator' },
         {
-          id: 'close-tab',
-          label: 'Close Tab',
+          id: 'close-panel',
+          label: 'Close Panel',
           accelerator: 'CommandOrControl+W',
-          click: () => sendDesktopCommand('close-tab')
+          click: () => sendDesktopCommand('close-panel')
         },
         ...(process.platform === 'darwin'
           ? []
@@ -1366,7 +1366,7 @@ function registerIpc(): void {
       ? desktopRuntime.run(
           browserWebviews.register(
             event,
-            parsed.data.tabId,
+            parsed.data.panelId,
             parsed.data.webContentsId,
             parsed.data.challenge
           )
@@ -1376,13 +1376,17 @@ function registerIpc(): void {
   ipcMain.handle('native-browser:command', (event, value) => {
     const parsed = z
       .strictObject({
-        tabId: z.string().min(1).max(128),
+        panelId: z.string().min(1).max(128),
         command: nativeBrowserCommandSchema
       })
       .safeParse(value)
     return parsed.success && browserWebviews
       ? desktopRuntime.run(
-          browserWebviews.command(event, parsed.data.tabId, parsed.data.command)
+          browserWebviews.command(
+            event,
+            parsed.data.panelId,
+            parsed.data.command
+          )
         )
       : { ok: false, error: 'The Browser command was rejected.' }
   })
@@ -1392,7 +1396,7 @@ function registerIpc(): void {
       ? desktopRuntime.run(
           browserWebviews.setInputControl(
             event,
-            parsed.data.tabId,
+            parsed.data.panelId,
             parsed.data.locked
           )
         )
@@ -1404,7 +1408,7 @@ function registerIpc(): void {
       ? desktopRuntime.run(
           browserWebviews.setPresentationActive(
             event,
-            parsed.data.tabId,
+            parsed.data.panelId,
             parsed.data.active
           )
         )
@@ -1420,20 +1424,20 @@ function registerIpc(): void {
       ? desktopRuntime.run(
           browserWebviews.requestClose(
             event,
-            parsed.data.tabId,
+            parsed.data.panelId,
             parsed.data.force
           )
         )
       : true
   })
   ipcMain.on('native-browser:dispose', (event, value) => {
-    const parsed = nativeBrowserTabSchema.safeParse(value)
+    const parsed = nativeBrowserPanelSchema.safeParse(value)
     if (!parsed.success) {
       return
     }
 
     if (browserWebviews) {
-      desktopRuntime.fork(browserWebviews.dispose(event, parsed.data.tabId))
+      desktopRuntime.fork(browserWebviews.dispose(event, parsed.data.panelId))
     }
   })
   ipcMain.on('terminal-selection:set-active', (event, active) => {

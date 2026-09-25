@@ -13,7 +13,7 @@ import { cn } from '../../lib/utils'
 import { traceWebPanelOpen } from '../../web-panel-open-tracing'
 
 export function WebPanelWorkspace({
-  tab,
+  panel,
   active,
   title,
   reloadRevision,
@@ -23,33 +23,33 @@ export function WebPanelWorkspace({
   onSelectWorkspace,
   onFocusSurface
 }: {
-  tab: WebPanel
+  panel: WebPanel
   active: boolean
   title: string
   reloadRevision: number
   autoFocusBlocked: boolean
-  onTitleChange: (tabId: string, title: string | null) => void
-  onDirtyChange: (tabId: string, dirty: boolean) => void
+  onTitleChange: (panelId: string, title: string | null) => void
+  onDirtyChange: (panelId: string, dirty: boolean) => void
   onSelectWorkspace: (index: number) => void
   onFocusSurface: () => void
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
-  const panelRevision = `${tab.id}:${reloadRevision}`
+  const panelRevision = `${panel.id}:${reloadRevision}`
   const [loadedPanelRevision, setLoadedPanelRevision] = useState<string | null>(
     null
   )
 
   useEffect(() => {
-    traceWebPanelOpen(tab.id, 'web_panel.open.frame_mounted', {
+    traceWebPanelOpen(panel.id, 'web_panel.open.frame_mounted', {
       reloadRevision
     })
-  }, [tab.id, reloadRevision])
+  }, [panel.id, reloadRevision])
 
   useEffect(() => {
-    onTitleChange(tab.id, null)
-    onDirtyChange(tab.id, false)
-  }, [onDirtyChange, onTitleChange, tab.id, panelRevision])
+    onTitleChange(panel.id, null)
+    onDirtyChange(panel.id, false)
+  }, [onDirtyChange, onTitleChange, panel.id, panelRevision])
 
   useEffect(() => {
     if (!active || autoFocusBlocked || loadedPanelRevision !== panelRevision) {
@@ -127,7 +127,10 @@ export function WebPanelWorkspace({
         event.data
       )
       if (titleMessage) {
-        onTitleChange(tab.id, titleMessage.title?.trim().slice(0, 256) || null)
+        onTitleChange(
+          panel.id,
+          titleMessage.title?.trim().slice(0, 256) || null
+        )
         return
       }
 
@@ -136,7 +139,7 @@ export function WebPanelWorkspace({
         event.data
       )
       if (dirtyMessage) {
-        onDirtyChange(tab.id, dirtyMessage.dirty)
+        onDirtyChange(panel.id, dirtyMessage.dirty)
         return
       }
 
@@ -156,64 +159,64 @@ export function WebPanelWorkspace({
 
       const { method } = message
       const startedAt = performance.now()
-      traceWebPanelOpen(tab.id, 'web_panel.sdk.request', { method })
+      traceWebPanelOpen(panel.id, 'web_panel.sdk.request', { method })
       let request: Promise<unknown>
       if (method === 'context') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].context.$get({
-            param: { tabId: tab.id }
+          rpc.api.panels[':panelId'].context.$get({
+            param: { panelId: panel.id }
           })
         ).then((result) => result.context)
       } else if (method === 'diff') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].diff.$get({
-            param: { tabId: tab.id }
+          rpc.api.panels[':panelId'].diff.$get({
+            param: { panelId: panel.id }
           })
         ).then((result) => result.diff)
       } else if (method === 'diff.file') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].diff.file.$post({
-            param: { tabId: tab.id },
+          rpc.api.panels[':panelId'].diff.file.$post({
+            param: { panelId: panel.id },
             json: { path: message.path }
           })
         )
       } else if (method === 'diff.image') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].diff.image.$post({
-            param: { tabId: tab.id },
+          rpc.api.panels[':panelId'].diff.image.$post({
+            param: { panelId: panel.id },
             json: { path: message.path, commit: message.commit }
           })
         )
       } else if (method === 'network.listeners') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].network.listeners.$get({
-            param: { tabId: tab.id }
+          rpc.api.panels[':panelId'].network.listeners.$get({
+            param: { panelId: panel.id }
           })
         ).then((result) => result.discovery)
       } else if (method === 'files.list') {
         request = parseResponse(
-          treeFilesRpc.api.tabs[':tabId'].files.$get({
-            param: { tabId: tab.id }
+          treeFilesRpc.api.panels[':panelId'].files.$get({
+            param: { panelId: panel.id }
           })
         )
       } else if (method === 'files.search') {
         request = parseResponse(
-          treeFilesRpc.api.tabs[':tabId'].files.search.$post({
-            param: { tabId: tab.id },
+          treeFilesRpc.api.panels[':panelId'].files.search.$post({
+            param: { panelId: panel.id },
             json: { query: message.query }
           })
         )
       } else if (method === 'files.read') {
         request = parseResponse(
-          treeFilesRpc.api.tabs[':tabId'].files.read.$post({
-            param: { tabId: tab.id },
+          treeFilesRpc.api.panels[':panelId'].files.read.$post({
+            param: { panelId: panel.id },
             json: { path: message.path }
           })
         )
       } else if (method === 'files.write') {
         request = parseResponse(
-          treeFilesRpc.api.tabs[':tabId'].files.$put({
-            param: { tabId: tab.id },
+          treeFilesRpc.api.panels[':panelId'].files.$put({
+            param: { panelId: panel.id },
             json: {
               path: message.path,
               content: message.content,
@@ -223,22 +226,22 @@ export function WebPanelWorkspace({
         )
       } else if (method === 'storage.get') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].storage.get.$post({
-            param: { tabId: tab.id },
+          rpc.api.panels[':panelId'].storage.get.$post({
+            param: { panelId: panel.id },
             json: { key: message.key }
           })
         ).then((result) => (result.found ? result.value : undefined))
       } else if (method === 'storage.set') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].storage.$put({
-            param: { tabId: tab.id },
+          rpc.api.panels[':panelId'].storage.$put({
+            param: { panelId: panel.id },
             json: { key: message.key, value: message.value }
           })
         ).then(() => undefined)
       } else if (method === 'storage.delete') {
         request = parseResponse(
-          rpc.api.tabs[':tabId'].storage.$delete({
-            param: { tabId: tab.id },
+          rpc.api.panels[':panelId'].storage.$delete({
+            param: { panelId: panel.id },
             json: { key: message.key }
           })
         ).then(() => undefined)
@@ -248,7 +251,7 @@ export function WebPanelWorkspace({
 
       void request.then(
         (value) => {
-          traceWebPanelOpen(tab.id, 'web_panel.sdk.response', {
+          traceWebPanelOpen(panel.id, 'web_panel.sdk.response', {
             method,
             durationMs: performance.now() - startedAt,
             ok: true
@@ -259,7 +262,7 @@ export function WebPanelWorkspace({
           )
         },
         (error) => {
-          traceWebPanelOpen(tab.id, 'web_panel.sdk.response', {
+          traceWebPanelOpen(panel.id, 'web_panel.sdk.response', {
             method,
             durationMs: performance.now() - startedAt,
             ok: false
@@ -285,8 +288,8 @@ export function WebPanelWorkspace({
     onDirtyChange,
     onSelectWorkspace,
     onTitleChange,
-    tab.id,
-    tab.permissions
+    panel.id,
+    panel.permissions
   ])
 
   return (
@@ -299,8 +302,8 @@ export function WebPanelWorkspace({
           key={panelRevision}
           ref={frameRef}
           title={title}
-          src={`/api/web-panels/${encodeURIComponent(tab.id)}/assets/`}
-          sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads${tab.sandbox.allowSameOrigin ? ' allow-same-origin' : ''}`}
+          src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
+          sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads${panel.sandbox.allowSameOrigin ? ' allow-same-origin' : ''}`}
           allow="clipboard-read; clipboard-write; fullscreen"
           onFocus={onFocusSurface}
           className={cn(
@@ -308,8 +311,8 @@ export function WebPanelWorkspace({
             loadedPanelRevision === panelRevision ? 'opacity-100' : 'opacity-0'
           )}
           onLoad={() => {
-            // Load also fires for error documents; this is not tab/data readiness.
-            traceWebPanelOpen(tab.id, 'web_panel.open.iframe_load', {
+            // Load also fires for error documents; this is not panel/data readiness.
+            traceWebPanelOpen(panel.id, 'web_panel.open.iframe_load', {
               reloadRevision
             })
             panelWindowRef.current = frameRef.current?.contentWindow ?? null

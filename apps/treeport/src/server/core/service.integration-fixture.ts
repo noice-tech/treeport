@@ -47,7 +47,7 @@ type ApplicationApis = TreeportService['projects'] &
   TreeportService['worktrees'] &
   TreeportService['terminals'] &
   TreeportService['terminalPresets'] &
-  TreeportService['tabs'] &
+  TreeportService['panels'] &
   TreeportService['treeFiles'] &
   TreeportService['packageManagement']
 
@@ -210,76 +210,88 @@ export function integrationService(
       )
     ),
 
-    authorizeBrowserTab: run(
-      application.tabs.authorizeBrowserTab.bind(application.tabs)
+    authorizeBrowserPanel: run(
+      application.panels.authorizeBrowserPanel.bind(application.panels)
     ),
-    createBrowserTab: run(
-      application.tabs.createBrowserTab.bind(application.tabs)
+    createBrowserPanel: run(
+      application.panels.createBrowserPanel.bind(application.panels)
     ),
-    createWebPanel: run(application.tabs.createWebPanel.bind(application.tabs)),
-    deleteBrowserTab: run(
-      application.tabs.deleteBrowserTab.bind(application.tabs)
+    createWebPanel: run(
+      application.panels.createWebPanel.bind(application.panels)
     ),
-    deleteTab: run(application.tabs.deleteTab.bind(application.tabs)),
-    deleteWebPanel: run(application.tabs.deleteWebPanel.bind(application.tabs)),
+    deleteBrowserPanel: run(
+      application.panels.deleteBrowserPanel.bind(application.panels)
+    ),
+    deletePanel: run(application.panels.deletePanel.bind(application.panels)),
+    deleteWebPanel: run(
+      application.panels.deleteWebPanel.bind(application.panels)
+    ),
     deleteWebPanelStorage: run(
-      application.tabs.deleteWebPanelStorage.bind(application.tabs)
+      application.panels.deleteWebPanelStorage.bind(application.panels)
     ),
-    getBrowserTab: run(application.tabs.getBrowserTab.bind(application.tabs)),
-    getBrowserTabListeners: run(
-      application.tabs.getBrowserTabListeners.bind(application.tabs)
+    getBrowserPanel: run(
+      application.panels.getBrowserPanel.bind(application.panels)
+    ),
+    getBrowserPanelListeners: run(
+      application.panels.getBrowserPanelListeners.bind(application.panels)
     ),
     getPanelListeners: run(
-      application.tabs.getPanelListeners.bind(application.tabs)
+      application.panels.getPanelListeners.bind(application.panels)
     ),
     getWebPanelContext: run(
-      application.tabs.getWebPanelContext.bind(application.tabs)
+      application.panels.getWebPanelContext.bind(application.panels)
     ),
     getWebPanelDiff: run(
-      application.tabs.getWebPanelDiff.bind(application.tabs)
+      application.panels.getWebPanelDiff.bind(application.panels)
     ),
     getWebPanelFileDiff: run(
-      application.tabs.getWebPanelFileDiff.bind(application.tabs)
+      application.panels.getWebPanelFileDiff.bind(application.panels)
     ),
     getWebPanelDiffImage: run(
-      application.tabs.getWebPanelDiffImage.bind(application.tabs)
+      application.panels.getWebPanelDiffImage.bind(application.panels)
     ),
     getWebPanelListeners: run(
-      application.tabs.getWebPanelListeners.bind(application.tabs)
+      application.panels.getWebPanelListeners.bind(application.panels)
     ),
     getWebPanelStorage: run(
-      application.tabs.getWebPanelStorage.bind(application.tabs)
+      application.panels.getWebPanelStorage.bind(application.panels)
     ),
     hasWebPanelStorage: run(
-      application.tabs.hasWebPanelStorage.bind(application.tabs)
+      application.panels.hasWebPanelStorage.bind(application.panels)
     ),
-    listBrowserTabs: run(
-      application.tabs.listBrowserTabs.bind(application.tabs)
+    listBrowserPanels: run(
+      application.panels.listBrowserPanels.bind(application.panels)
     ),
     listWebPanelDefinitions: run(
-      application.tabs.listWebPanelDefinitions.bind(application.tabs)
+      application.panels.listWebPanelDefinitions.bind(application.panels)
     ),
-    listWebPanels: run(application.tabs.listWebPanels.bind(application.tabs)),
-    openBrowserTab: run(application.tabs.openBrowserTab.bind(application.tabs)),
-    openBrowserTabFromPanel: run(
-      application.tabs.openBrowserTabFromPanel.bind(application.tabs)
+    listWebPanels: run(
+      application.panels.listWebPanels.bind(application.panels)
     ),
-    openBrowserTabFromTerminal: run(
-      application.tabs.openBrowserTabFromTerminal.bind(application.tabs)
+    openBrowserPanel: run(
+      application.panels.openBrowserPanel.bind(application.panels)
     ),
-    openWebPanel: run(application.tabs.openWebPanel.bind(application.tabs)),
-    reorderTabs: run(application.tabs.reorderTabs.bind(application.tabs)),
+    openBrowserPanelFromPanel: run(
+      application.panels.openBrowserPanelFromPanel.bind(application.panels)
+    ),
+    openBrowserPanelFromTerminal: run(
+      application.panels.openBrowserPanelFromTerminal.bind(application.panels)
+    ),
+    openWebPanel: run(application.panels.openWebPanel.bind(application.panels)),
+    reorderPanels: run(
+      application.panels.reorderPanels.bind(application.panels)
+    ),
     resolveWebPanelAsset: run(
-      application.tabs.resolveWebPanelAsset.bind(application.tabs)
+      application.panels.resolveWebPanelAsset.bind(application.panels)
     ),
     setWebPanelPermissionGrant: run(
-      application.tabs.setWebPanelPermissionGrant.bind(application.tabs)
+      application.panels.setWebPanelPermissionGrant.bind(application.panels)
     ),
     setWebPanelStorage: run(
-      application.tabs.setWebPanelStorage.bind(application.tabs)
+      application.panels.setWebPanelStorage.bind(application.panels)
     ),
-    updateBrowserTabState: run(
-      application.tabs.updateBrowserTabState.bind(application.tabs)
+    updateBrowserPanelState: run(
+      application.panels.updateBrowserPanelState.bind(application.panels)
     ),
 
     listTreeFiles: run(

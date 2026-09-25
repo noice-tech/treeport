@@ -17,7 +17,7 @@ import type {
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
-  BrowserTab,
+  BrowserPanel,
   BrowserFrame,
   BrowserOwnerAuth,
   BrowserOwnerClientMessage,
@@ -69,9 +69,11 @@ export interface BrowserOwnerTransport {
 
 export interface BrowserSessionService {
   forkApplicationEffect: TreeportService['forkApplicationEffect']
-  tabs: Pick<
-    TreeportService['tabs'],
-    'authorizeBrowserTab' | 'openBrowserTabFromPanel' | 'updateBrowserTabState'
+  panels: Pick<
+    TreeportService['panels'],
+    | 'authorizeBrowserPanel'
+    | 'openBrowserPanelFromPanel'
+    | 'updateBrowserPanelState'
   >
   events: Pick<TreeportService['events'], 'subscribe'>
 }
@@ -101,13 +103,13 @@ export type BrowserSessionBrowserFactory = (
   host: PlaywrightBrowserHost,
   workspacePath: string,
   title: string,
-  tabId: string,
+  panelId: string,
   worktreeId: string,
   callbacks: PlaywrightBrowserCallbacks
 ) => BrowserSessionBrowser
 
 interface BrowserAgentTarget {
-  tabId: string
+  panelId: string
   agentDirectory: string
 }
 
@@ -121,14 +123,14 @@ export type BrowserLocalAutomationConnector = (
 ) => Promise<PlaywrightConnection>
 
 interface BrowserTicket {
-  tabId: string
+  panelId: string
   clientId: string
   visible: boolean
   expiresAt: number
 }
 
 interface BrowserOwnerTicket {
-  tabId: string
+  panelId: string
   clientId: string
   challenge: string
   expiresAt: number
@@ -207,7 +209,7 @@ interface BrowserScheduler {
   accepting: boolean
 }
 
-interface BrowserTabStatePersistence {
+interface BrowserPanelStatePersistence {
   persistedUrl: string
   persistedTitle: string
   pending: { url: string; title: string } | null
@@ -216,7 +218,7 @@ interface BrowserTabStatePersistence {
 }
 
 interface BrowserSession {
-  tabId: string
+  panelId: string
   worktreeId: string
   agentDirectory: string
   title: string
@@ -239,7 +241,7 @@ interface BrowserSession {
   keyframeRequestedAt: number
   keyframeTimer: ReturnType<typeof setTimeout> | null
   scheduler: BrowserScheduler
-  persistence: BrowserTabStatePersistence
+  persistence: BrowserPanelStatePersistence
   agentAttached: boolean
   agentSessionName: string | null
   agentProcess: ChildProcess | null
@@ -259,7 +261,7 @@ const defaultBrowserFactory: BrowserSessionBrowserFactory = (
   host,
   workspacePath,
   _title,
-  _tabId,
+  _panelId,
   _worktreeId,
   callbacks
 ) => new PlaywrightBrowser(host, workspacePath, callbacks)
@@ -316,14 +318,15 @@ export class BrowserSessionManager {
       this.cachePath
     )
     this.unsubscribe = service.events.subscribe((event) => {
-      if (event.type === 'tab.removed') {
+      if (event.type === 'panel.removed') {
         this.service.forkApplicationEffect(
           Effect.tryPromise({
-            try: () => this.closeTab(String(event.data.tabId), 'Tab closed'),
+            try: () =>
+              this.closePanel(String(event.data.panelId), 'Panel closed'),
             catch: (cause) => cause
           }).pipe(
             Effect.catchAll((error) =>
-              Effect.logError('Failed to close a removed Browser tab').pipe(
+              Effect.logError('Failed to close a removed Browser panel').pipe(
                 Effect.annotateLogs({ cause: String(error) })
               )
             )
@@ -332,16 +335,17 @@ export class BrowserSessionManager {
       } else if (event.type === 'worktree.removed' && event.data.worktreeId) {
         for (const session of this.sessions.values()) {
           this.service.forkApplicationEffect(
-            this.service.tabs.authorizeBrowserTab(session.tabId).pipe(
+            this.service.panels.authorizeBrowserPanel(session.panelId).pipe(
               Effect.catchAll(() =>
                 Effect.tryPromise({
-                  try: () => this.closeTab(session.tabId, 'Worktree removed'),
+                  try: () =>
+                    this.closePanel(session.panelId, 'Worktree removed'),
                   catch: (cause) => cause
                 })
               ),
               Effect.catchAll((error) =>
                 Effect.logError(
-                  `Failed to close Browser tab ${session.tabId} after its tree was removed`
+                  `Failed to close Browser panel ${session.panelId} after its tree was removed`
                 ).pipe(Effect.annotateLogs({ cause: String(error) }))
               ),
               Effect.asVoid
@@ -353,12 +357,12 @@ export class BrowserSessionManager {
   }
 
   issueTicket(
-    tabId: string,
+    panelId: string,
     clientId: string,
     visible = true
   ): Effect.Effect<string, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
-      yield* this.service.tabs.authorizeBrowserTab(tabId)
+      yield* this.service.panels.authorizeBrowserPanel(panelId)
       for (const [value, ticket] of this.tickets) {
         if (ticket.expiresAt < Date.now()) {
           this.tickets.delete(value)
@@ -372,7 +376,7 @@ export class BrowserSessionManager {
 
       const ticket = crypto.randomBytes(32).toString('base64url')
       this.tickets.set(ticket, {
-        tabId,
+        panelId,
         clientId,
         visible,
         expiresAt: Date.now() + 30_000
@@ -382,11 +386,11 @@ export class BrowserSessionManager {
   }
 
   devtoolsEndpoint(
-    tabId: string
+    panelId: string
   ): Effect.Effect<string, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
-      yield* this.service.tabs.authorizeBrowserTab(tabId)
-      const browser = this.sessions.get(tabId)?.browser
+      yield* this.service.panels.authorizeBrowserPanel(panelId)
+      const browser = this.sessions.get(panelId)?.browser
       const endpoint = browser?.devtoolsEndpoint?.()
       if (!endpoint) {
         return yield* Effect.fail(
@@ -399,7 +403,7 @@ export class BrowserSessionManager {
   }
 
   issueOwnerTicket(
-    tabId: string,
+    panelId: string,
     clientId: string
   ): Effect.Effect<
     { ticket: string; challenge: string },
@@ -407,7 +411,7 @@ export class BrowserSessionManager {
     ApplicationServices
   > {
     return Effect.gen(this, function* () {
-      yield* this.service.tabs.authorizeBrowserTab(tabId)
+      yield* this.service.panels.authorizeBrowserPanel(panelId)
       for (const [value, ticket] of this.ownerTickets) {
         if (ticket.expiresAt < Date.now()) {
           this.ownerTickets.delete(value)
@@ -420,13 +424,13 @@ export class BrowserSessionManager {
       }
 
       const ticket = crypto.randomBytes(32).toString('base64url')
-      const currentOwner = this.sessions.get(tabId)?.localOwner
+      const currentOwner = this.sessions.get(panelId)?.localOwner
       const challenge =
         currentOwner?.clientId === clientId
           ? currentOwner.challenge
           : crypto.randomBytes(32).toString('base64url')
       this.ownerTickets.set(ticket, {
-        tabId,
+        panelId,
         clientId,
         challenge,
         expiresAt: Date.now() + 30_000
@@ -699,7 +703,7 @@ export class BrowserSessionManager {
 
   private openPopup(session: BrowserSession, url: string): void {
     this.service.forkApplicationEffect(
-      this.service.tabs.openBrowserTabFromPanel(session.tabId, url).pipe(
+      this.service.panels.openBrowserPanelFromPanel(session.panelId, url).pipe(
         Effect.catchAll((cause) =>
           Effect.sync(() =>
             this.broadcastNavigationError(
@@ -756,12 +760,12 @@ export class BrowserSessionManager {
           while (persistence.pending !== null) {
             const pending = persistence.pending
             persistence.pending = null
-            const tab = yield* this.service.tabs.updateBrowserTabState(
-              session.tabId,
+            const panel = yield* this.service.panels.updateBrowserPanelState(
+              session.panelId,
               pending
             )
-            persistence.persistedUrl = tab.url
-            persistence.persistedTitle = tab.title
+            persistence.persistedUrl = panel.url
+            persistence.persistedTitle = panel.title
           }
         }).pipe(
           Effect.catchAll((cause) =>
@@ -802,23 +806,29 @@ export class BrowserSessionManager {
   }
 
   private async createSession(
-    tabId: string,
-    authorized: { tab: BrowserTab; worktreePath: string }
+    panelId: string,
+    authorized: { panel: BrowserPanel; worktreePath: string }
   ): Promise<BrowserSession> {
     const restoredUrl =
-      authorized.tab.url === 'about:blank'
+      authorized.panel.url === 'about:blank'
         ? null
-        : (decodeUnknownOrNull(browserObservedUrlSchema, authorized.tab.url) ??
-          'about:blank')
-    const agentDirectory = path.join(this.config.runtimeDir, 'browsers', tabId)
+        : (decodeUnknownOrNull(
+            browserObservedUrlSchema,
+            authorized.panel.url
+          ) ?? 'about:blank')
+    const agentDirectory = path.join(
+      this.config.runtimeDir,
+      'browsers',
+      panelId
+    )
     await fs.rm(agentDirectory, { recursive: true, force: true })
     await fs.mkdir(agentDirectory, { recursive: true, mode: 0o700 })
     await fs.chmod(agentDirectory, 0o700)
     const session: BrowserSession = {
-      tabId,
-      worktreeId: authorized.tab.worktreeId,
+      panelId,
+      worktreeId: authorized.panel.worktreeId,
       agentDirectory,
-      title: `Treeport ${authorized.tab.title}`,
+      title: `Treeport ${authorized.panel.title}`,
       browser: null,
       launch: null,
       localOwner: null,
@@ -832,7 +842,8 @@ export class BrowserSessionManager {
       state: {
         ...DEFAULT_STATE,
         url: restoredUrl ?? DEFAULT_STATE.url,
-        title: authorized.tab.title === 'Browser' ? '' : authorized.tab.title,
+        title:
+          authorized.panel.title === 'Browser' ? '' : authorized.panel.title,
         viewport: { ...DEFAULT_STATE.viewport }
       },
       sequence: 0,
@@ -849,8 +860,8 @@ export class BrowserSessionManager {
         accepting: true
       },
       persistence: {
-        persistedUrl: authorized.tab.url,
-        persistedTitle: authorized.tab.title,
+        persistedUrl: authorized.panel.url,
+        persistedTitle: authorized.panel.title,
         pending: null,
         write: null,
         ready: true
@@ -874,7 +885,7 @@ export class BrowserSessionManager {
         yield* Effect.forkScoped(this.runScheduler(session))
       }).pipe(Scope.extend(session.scheduler.scope))
     )
-    this.sessions.set(tabId, session)
+    this.sessions.set(panelId, session)
     return session
   }
 
@@ -901,7 +912,7 @@ export class BrowserSessionManager {
         this.browserHost,
         session.agentDirectory,
         session.title,
-        session.tabId,
+        session.panelId,
         session.worktreeId,
         {
           state: (state) => {
@@ -1026,7 +1037,7 @@ export class BrowserSessionManager {
   }
 
   private getSession(
-    tabId: string
+    panelId: string
   ): Effect.Effect<BrowserSession, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
       if (this.disposed) {
@@ -1038,7 +1049,8 @@ export class BrowserSessionManager {
         )
       }
 
-      const authorized = yield* this.service.tabs.authorizeBrowserTab(tabId)
+      const authorized =
+        yield* this.service.panels.authorizeBrowserPanel(panelId)
       if (this.disposed) {
         return yield* Effect.fail(
           new BrowserSchedulingError({
@@ -1048,12 +1060,12 @@ export class BrowserSessionManager {
         )
       }
 
-      const existing = this.sessions.get(tabId)
+      const existing = this.sessions.get(panelId)
       if (existing) {
         return existing
       }
 
-      const pending = this.sessionCreations.get(tabId)
+      const pending = this.sessionCreations.get(panelId)
       if (pending) {
         return yield* Effect.tryPromise({
           try: () => pending,
@@ -1061,12 +1073,12 @@ export class BrowserSessionManager {
         })
       }
 
-      const creation = this.createSession(tabId, authorized).finally(() => {
-        if (this.sessionCreations.get(tabId) === creation) {
-          this.sessionCreations.delete(tabId)
+      const creation = this.createSession(panelId, authorized).finally(() => {
+        if (this.sessionCreations.get(panelId) === creation) {
+          this.sessionCreations.delete(panelId)
         }
       })
-      this.sessionCreations.set(tabId, creation)
+      this.sessionCreations.set(panelId, creation)
       return yield* Effect.tryPromise({
         try: () => creation,
         catch: (cause) => cause
@@ -1087,10 +1099,10 @@ export class BrowserSessionManager {
 
       yield* Effect.annotateCurrentSpan({
         'treeport.connection.id': transport.id,
-        'treeport.tab.id': ticket.tabId,
+        'treeport.panel.id': ticket.panelId,
         'treeport.client.id': ticket.clientId
       })
-      const session = yield* this.getSession(ticket.tabId)
+      const session = yield* this.getSession(ticket.panelId)
       return yield* Effect.tryPromise({
         try: () => this.acceptSession(ticket, session, transport),
         catch: (cause) => cause
@@ -1244,7 +1256,7 @@ export class BrowserSessionManager {
 
       yield* Effect.annotateCurrentSpan({
         'treeport.connection.id': transport.id,
-        'treeport.tab.id': ticket.tabId,
+        'treeport.panel.id': ticket.panelId,
         'treeport.client.id': ticket.clientId
       })
       const identityResult = yield* Effect.tryPromise({
@@ -1264,13 +1276,13 @@ export class BrowserSessionManager {
       if (
         !identityResult.response.ok ||
         !identity ||
-        identity.tabId !== ticket.tabId ||
+        identity.panelId !== ticket.panelId ||
         identity.challenge !== ticket.challenge
       ) {
         return yield* Effect.fail(new Error('INVALID_BROWSER_OWNER_IDENTITY'))
       }
 
-      const session = yield* this.getSession(ticket.tabId)
+      const session = yield* this.getSession(ticket.panelId)
       return yield* Effect.tryPromise({
         try: () => this.acceptOwnerSession(ticket, auth, session, transport),
         catch: (cause) => cause
@@ -1362,7 +1374,7 @@ export class BrowserSessionManager {
         session.controllerId ??= LOCAL_BROWSER_OWNER_CONTROLLER
         transport.send({
           type: 'claimGranted',
-          tabId: session.tabId,
+          panelId: session.panelId,
           generation: owner.generation,
           resumed,
           state: session.state
@@ -1412,7 +1424,7 @@ export class BrowserSessionManager {
 
       if (becameReady || (resized && owner.ready)) {
         const accepted = this.enqueueOperation(session, {
-          coalesceKey: `screencast:${session.tabId}`,
+          coalesceKey: `screencast:${session.panelId}`,
           message: null,
           required: true,
           execute: () =>
@@ -1696,7 +1708,7 @@ export class BrowserSessionManager {
     if (delay > 0) {
       session.keyframeTimer ??= setTimeout(() => {
         session.keyframeTimer = null
-        if (this.sessions.get(session.tabId) === session) {
+        if (this.sessions.get(session.panelId) === session) {
           this.requestVideoKeyframe(session)
         }
       }, delay)
@@ -2147,8 +2159,8 @@ export class BrowserSessionManager {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             this.resetVideoDelivery(session)
-            if (this.sessions.get(session.tabId) === session) {
-              this.sessions.delete(session.tabId)
+            if (this.sessions.get(session.panelId) === session) {
+              this.sessions.delete(session.panelId)
             }
 
             const owner = session.localOwner
@@ -2211,10 +2223,10 @@ export class BrowserSessionManager {
     }
   }
 
-  async requestPanelClose(tabId: string, force = false): Promise<boolean> {
+  async requestPanelClose(panelId: string, force = false): Promise<boolean> {
     const session =
-      this.sessions.get(tabId) ??
-      (await this.sessionCreations.get(tabId)?.catch(() => null))
+      this.sessions.get(panelId) ??
+      (await this.sessionCreations.get(panelId)?.catch(() => null))
     if (!session) {
       return true
     }
@@ -2249,10 +2261,10 @@ export class BrowserSessionManager {
     return canClose
   }
 
-  async closeTab(tabId: string, reason: string): Promise<void> {
+  async closePanel(panelId: string, reason: string): Promise<void> {
     const session =
-      this.sessions.get(tabId) ??
-      (await this.sessionCreations.get(tabId)?.catch(() => null))
+      this.sessions.get(panelId) ??
+      (await this.sessionCreations.get(panelId)?.catch(() => null))
     if (!session) {
       return
     }
@@ -2298,7 +2310,7 @@ export class BrowserSessionManager {
     if (this.agentCliRunner) {
       return this.agentCliRunner(
         {
-          tabId: session.tabId,
+          panelId: session.panelId,
           agentDirectory: session.agentDirectory
         },
         args
@@ -2692,20 +2704,20 @@ export class BrowserSessionManager {
   }
 
   agentCommand(
-    tabId: string,
+    panelId: string,
     input: BrowserAgentCommand
   ): Effect.Effect<string, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
-      const session = yield* this.getSession(tabId)
+      const session = yield* this.getSession(panelId)
       return yield* Effect.tryPromise({
-        try: () => this.runAgentCommand(tabId, input, session),
+        try: () => this.runAgentCommand(panelId, input, session),
         catch: (cause) => cause
       })
     })
   }
 
   private async runAgentCommand(
-    tabId: string,
+    panelId: string,
     input: BrowserAgentCommand,
     session: BrowserSession
   ): Promise<string> {
@@ -2743,14 +2755,14 @@ export class BrowserSessionManager {
         } else if (this.agentCliRunner) {
           const name =
             session.agentSessionName ??
-            `treeport-${tabId}-${session.generation}-${crypto
+            `treeport-${panelId}-${session.generation}-${crypto
               .randomBytes(6)
               .toString('hex')}`
           session.agentSessionName = name
           if (!session.agentAttached) {
             await this.executeAgentCli(session, [
               'attach',
-              `treeport-${tabId}`,
+              `treeport-${panelId}`,
               '--session',
               name
             ])
@@ -2838,9 +2850,9 @@ export class BrowserSessionManager {
     )
     await Effect.runPromise(
       Effect.all(
-        [...this.sessions.keys()].map((tabId) =>
+        [...this.sessions.keys()].map((panelId) =>
           Effect.promise(() =>
-            this.closeTab(tabId, 'Treeport is shutting down.')
+            this.closePanel(panelId, 'Treeport is shutting down.')
           ).pipe(Effect.exit)
         ),
         { concurrency: 'unbounded' }

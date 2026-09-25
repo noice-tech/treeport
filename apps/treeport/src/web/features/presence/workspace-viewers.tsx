@@ -80,10 +80,12 @@ export function WorkspaceViewers({
                     return 'Window not focused'
                   }
 
-                  const tab = worktree?.tabs.find(
-                    (tab) => tab.id === session.focusedTabId
+                  const panel = worktree?.panels.find(
+                    (panel) => panel.id === session.focusedPanelId
                   )
-                  return tab ? `${tab.title} · focused` : 'Viewing workspace'
+                  return panel
+                    ? `${panel.title} · focused`
+                    : 'Viewing workspace'
                 })
               )
               return (

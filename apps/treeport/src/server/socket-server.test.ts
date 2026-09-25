@@ -23,7 +23,7 @@ import type {
   TerminalReady,
   TerminalRecord,
   TerminalServerToClientEvents,
-  BrowserTab,
+  BrowserPanel,
   WebPanel,
   ProtocolSocket,
   ProtocolSocketOptions
@@ -92,7 +92,7 @@ interface NetworkFixture {
   metadata: TerminalMetadataManager
   metadataSnapshot: ReturnType<typeof vi.fn<() => TerminalRuntimeMetadata[]>>
   listWebPanels: ReturnType<typeof vi.fn<() => Promise<WebPanel[]>>>
-  listBrowserTabs: ReturnType<typeof vi.fn<() => Promise<BrowserTab[]>>>
+  listBrowserPanels: ReturnType<typeof vi.fn<() => Promise<BrowserPanel[]>>>
   getKnownTerminal: ReturnType<
     typeof vi.fn<
       (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
@@ -112,7 +112,7 @@ async function fixture(
   const events = new ProductEventBus()
   const ptys: FakePty[] = []
   const listWebPanels = vi.fn<() => Promise<WebPanel[]>>(async () => [])
-  const listBrowserTabs = vi.fn<() => Promise<BrowserTab[]>>(async () => [])
+  const listBrowserPanels = vi.fn<() => Promise<BrowserPanel[]>>(async () => [])
   const getKnownTerminal = vi.fn<
     (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
   >(() =>
@@ -139,8 +139,8 @@ async function fixture(
   const service = testAccess<TreeportService>({
     events,
     listWebPanels,
-    listBrowserTabs,
-    tabs: { listWebPanels, listBrowserTabs },
+    listBrowserPanels,
+    panels: { listWebPanels, listBrowserPanels },
     getKnownTerminal,
     terminals: { getKnownTerminal },
     getWorktree,
@@ -272,7 +272,7 @@ async function fixture(
     metadata,
     metadataSnapshot,
     listWebPanels,
-    listBrowserTabs,
+    listBrowserPanels,
     getKnownTerminal,
     ptys,
     service,
@@ -430,7 +430,7 @@ describe('Effect WebSocket real network', () => {
           expect(auth.endpoint).toBe('http://127.0.0.1:43210/private-owner/')
           transport.send({
             type: 'claimGranted',
-            tabId: 'tab_browser',
+            panelId: 'panel_browser',
             generation: 4,
             resumed: false,
             state: {
@@ -531,7 +531,7 @@ describe('Effect WebSocket real network', () => {
     )
     expect(claimed).toMatchObject({
       type: 'claimGranted',
-      tabId: 'tab_browser',
+      panelId: 'panel_browser',
       generation: 4
     })
     owner.emit('ownerMessage', {

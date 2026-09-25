@@ -7,10 +7,10 @@ import {
   webPanelInputSchema
 } from '@treeport/shared'
 import type {
-  BrowserTab,
+  BrowserPanel,
   GitDiffImageRequest,
   JsonValue,
-  OpenBrowserTabResult,
+  OpenBrowserPanelResult,
   OpenWebPanelResult,
   ProjectRecord,
   WebPanel,
@@ -25,7 +25,7 @@ import { and, asc, desc, eq, ne } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
-  browserTabs,
+  browserPanels,
   webPanels,
   webPanelStorage,
   workspaceItemOrders
@@ -56,23 +56,27 @@ const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
 
-type TabEffect<A> = Effect.Effect<A, DomainError<unknown>, ApplicationServices>
+type PanelEffect<A> = Effect.Effect<
+  A,
+  DomainError<unknown>,
+  ApplicationServices
+>
 
-export class TabService {
+export class PanelService {
   private readonly definitions = new PanelDefinitionService()
 
   private requireAvailableWorktree(
     worktreeId: string,
     allowPrunable = false
-  ): TabEffect<WorktreeRecord> {
+  ): PanelEffect<WorktreeRecord> {
     return Effect.flatMap(ProjectObservationOperations, (observations) =>
       observations.requireAvailableWorktree(worktreeId, allowPrunable)
-    ).pipe(Effect.withSpan('treeport.tab.verify_worktree'))
+    ).pipe(Effect.withSpan('treeport.panel.verify_worktree'))
   }
 
   private requireBrowserWorktree(
     worktreeId: string
-  ): TabEffect<WorktreeRecord> {
+  ): PanelEffect<WorktreeRecord> {
     return Effect.gen(function* () {
       const store = yield* ProjectStore
       const observations = yield* ProjectObservationOperations
@@ -94,11 +98,11 @@ export class TabService {
     }).pipe(Effect.withSpan('treeport.browser.verify_worktree'))
   }
 
-  private getProject(projectId: string): TabEffect<ProjectRecord> {
+  private getProject(projectId: string): PanelEffect<ProjectRecord> {
     return Effect.flatMap(ProjectStore, (store) => store.getProject(projectId))
   }
 
-  private getWorktree(worktreeId: string): TabEffect<WorktreeRecord> {
+  private getWorktree(worktreeId: string): PanelEffect<WorktreeRecord> {
     return Effect.flatMap(ProjectStore, (store) =>
       store.getWorktree(worktreeId)
     )
@@ -112,7 +116,7 @@ export class TabService {
 
   effectiveWebPanelDefinitions(
     worktreeId: string
-  ): TabEffect<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
+  ): PanelEffect<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
     return this.definitions
       .effectiveWebPanelDefinitions(worktreeId)
       .pipe(Effect.withSpan('treeport.web_panel.definitions'))
@@ -121,18 +125,20 @@ export class TabService {
   webPanelPermissionSourceKey(
     worktreeId: string,
     definition: WebPanelDefinition
-  ): TabEffect<string> {
+  ): PanelEffect<string> {
     return this.definitions.webPanelPermissionSourceKey(worktreeId, definition)
   }
 
   private webPanelPermissionsGranted(
     worktreeId: string,
     definition: WebPanelDefinition
-  ): TabEffect<boolean> {
+  ): PanelEffect<boolean> {
     return this.definitions.webPanelPermissionsGranted(worktreeId, definition)
   }
 
-  listWebPanelDefinitions(worktreeId: string): TabEffect<WebPanelDefinition[]> {
+  listWebPanelDefinitions(
+    worktreeId: string
+  ): PanelEffect<WebPanelDefinition[]> {
     return this.definitions.listWebPanelDefinitions(worktreeId)
   }
 
@@ -141,7 +147,7 @@ export class TabService {
     definitionId: string,
     granted: boolean,
     expectedPermissions: WebPanelPermission[]
-  ): TabEffect<WebPanelDefinition> {
+  ): PanelEffect<WebPanelDefinition> {
     return this.definitions.setWebPanelPermissionGrant(
       worktreeId,
       definitionId,
@@ -153,13 +159,16 @@ export class TabService {
   private requireWebPanelPermissions(
     worktreeId: string,
     definition: WebPanelDefinition
-  ): TabEffect<void> {
+  ): PanelEffect<void> {
     return this.definitions
       .requireWebPanelPermissions(worktreeId, definition)
       .pipe(Effect.withSpan('treeport.web_panel.permissions'))
   }
 
-  reorderTabs(worktreeId: string, tabIds: readonly string[]): TabEffect<void> {
+  reorderPanels(
+    worktreeId: string,
+    panelIds: readonly string[]
+  ): PanelEffect<void> {
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
@@ -171,15 +180,15 @@ export class TabService {
       const [browserRows, webRows] = yield* Effect.all(
         [
           database
-            .execute('tab.service.186', (db) =>
+            .execute('panel.service.186', (db) =>
               db
-                .select({ id: browserTabs.id })
-                .from(browserTabs)
-                .where(eq(browserTabs.worktreeId, worktreeId))
+                .select({ id: browserPanels.id })
+                .from(browserPanels)
+                .where(eq(browserPanels.worktreeId, worktreeId))
             )
             .pipe(Effect.orDie),
           database
-            .execute('tab.service.192', (db) =>
+            .execute('panel.service.192', (db) =>
               db
                 .select({ id: webPanels.id })
                 .from(webPanels)
@@ -190,11 +199,11 @@ export class TabService {
         { concurrency: 'unbounded' }
       )
       const currentIds = new Set(
-        [...browserRows, ...webRows].map((tab) => tab.id)
+        [...browserRows, ...webRows].map((panel) => panel.id)
       )
       if (
-        tabIds.length !== currentIds.size ||
-        tabIds.some((tabId) => !currentIds.has(tabId))
+        panelIds.length !== currentIds.size ||
+        panelIds.some((panelId) => !currentIds.has(panelId))
       ) {
         return yield* Effect.fail(
           new DomainError(
@@ -206,7 +215,7 @@ export class TabService {
       }
 
       yield* database
-        .execute('tab.service.217', (db) =>
+        .execute('panel.service.217', (db) =>
           db.transaction(async (tx) => {
             await tx
               .delete(workspaceItemOrders)
@@ -217,7 +226,7 @@ export class TabService {
                 )
               )
             await tx.insert(workspaceItemOrders).values(
-              tabIds.map((itemId, position) => ({
+              panelIds.map((itemId, position) => ({
                 worktreeId,
                 surface: 'tool' as const,
                 itemId,
@@ -244,10 +253,10 @@ export class TabService {
     return this.definitions.normalizeWebPanelLaunch(worktree, launch)
   }
 
-  createBrowserTab(
+  createBrowserPanel(
     worktreeId: string,
     requestedUrl?: string
-  ): TabEffect<BrowserTab> {
+  ): PanelEffect<BrowserPanel> {
     const requireAvailableWorktree = this.requireBrowserWorktree.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
@@ -271,8 +280,8 @@ export class TabService {
 
       const url = parsedUrl ? new URL(parsedUrl).href : 'about:blank'
       const timestamp = now()
-      const tab: BrowserTab = {
-        id: id('tab'),
+      const panel: BrowserPanel = {
+        id: id('panel'),
         kind: 'browser',
         worktreeId,
         title: url === 'about:blank' ? 'Browser' : new URL(url).host,
@@ -281,35 +290,35 @@ export class TabService {
         updatedAt: timestamp
       }
       yield* database
-        .execute('tab.service.290', (db) =>
-          db.insert(browserTabs).values({
-            id: tab.id,
-            worktreeId: tab.worktreeId,
-            title: tab.title,
-            url: tab.url,
-            createdAt: tab.createdAt,
-            updatedAt: tab.updatedAt
+        .execute('panel.service.290', (db) =>
+          db.insert(browserPanels).values({
+            id: panel.id,
+            worktreeId: panel.worktreeId,
+            title: panel.title,
+            url: panel.url,
+            createdAt: panel.createdAt,
+            updatedAt: panel.updatedAt
           })
         )
         .pipe(Effect.orDie)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
-        events.publish('tab.created', { worktreeId, tabId: tab.id })
+        events.publish('panel.created', { worktreeId, panelId: panel.id })
       })
-      return tab
+      return panel
     })
   }
 
-  openBrowserTab(
+  openBrowserPanel(
     worktreeId: string | null,
     requestedUrl?: string,
     sourceTerminalId: string | null = null,
-    sourceTabId: string | null = null,
+    sourcePanelId: string | null = null,
     reuseExistingUrl = false,
     requestId: string | null = null
-  ): TabEffect<OpenBrowserTabResult> {
-    const getBrowserTab = this.getBrowserTab.bind(this)
-    const createBrowserTab = this.createBrowserTab.bind(this)
+  ): PanelEffect<OpenBrowserPanelResult> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
+    const createBrowserPanel = this.createBrowserPanel.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
@@ -323,7 +332,7 @@ export class TabService {
         if (targetWorktreeId && terminal.worktreeId !== targetWorktreeId) {
           return yield* Effect.fail(
             new DomainError(
-              'INVALID_TAB_OPEN_SOURCE',
+              'INVALID_PANEL_OPEN_SOURCE',
               'The source terminal does not belong to the target tree',
               400
             )
@@ -333,32 +342,32 @@ export class TabService {
         targetWorktreeId ??= terminal.worktreeId
       }
 
-      if (sourceTabId) {
-        const sourceTab = yield* getBrowserTab(sourceTabId)
-        if (targetWorktreeId && sourceTab.worktreeId !== targetWorktreeId) {
+      if (sourcePanelId) {
+        const sourcePanel = yield* getBrowserPanel(sourcePanelId)
+        if (targetWorktreeId && sourcePanel.worktreeId !== targetWorktreeId) {
           return yield* Effect.fail(
             new DomainError(
-              'INVALID_TAB_OPEN_SOURCE',
+              'INVALID_PANEL_OPEN_SOURCE',
               'The source Browser does not belong to the target tree',
               400
             )
           )
         }
 
-        targetWorktreeId ??= sourceTab.worktreeId
+        targetWorktreeId ??= sourcePanel.worktreeId
       }
 
       if (!targetWorktreeId) {
         return yield* Effect.fail(
           new DomainError(
-            'INVALID_TAB_OPEN_SOURCE',
-            'A target tree or tab source is required',
+            'INVALID_PANEL_OPEN_SOURCE',
+            'A target tree or panel source is required',
             400
           )
         )
       }
 
-      let existingTab: BrowserTab | null = null
+      let existingPanel: BrowserPanel | null = null
       if (reuseExistingUrl && requestedUrl) {
         const parsedUrl = decodeUnknownOrNull(browserUrlSchema, requestedUrl)
         if (!parsedUrl) {
@@ -373,53 +382,53 @@ export class TabService {
 
         const url = new URL(parsedUrl).href
         const [existing] = yield* database
-          .execute('tab.service.380', (db) =>
+          .execute('panel.service.380', (db) =>
             db
               .select()
-              .from(browserTabs)
+              .from(browserPanels)
               .where(
                 and(
-                  eq(browserTabs.worktreeId, targetWorktreeId),
-                  eq(browserTabs.url, url)
+                  eq(browserPanels.worktreeId, targetWorktreeId),
+                  eq(browserPanels.url, url)
                 )
               )
-              .orderBy(desc(browserTabs.createdAt), desc(browserTabs.id))
+              .orderBy(desc(browserPanels.createdAt), desc(browserPanels.id))
               .limit(1)
           )
           .pipe(Effect.orDie)
-          .pipe(Effect.withSpan('treeport.browser.open.lookup_tab'))
-        existingTab = existing ? mapBrowserTab(existing) : null
+          .pipe(Effect.withSpan('treeport.browser.open.lookup_panel'))
+        existingPanel = existing ? mapBrowserPanel(existing) : null
       }
 
-      const tab =
-        existingTab ??
-        (yield* createBrowserTab(targetWorktreeId, requestedUrl).pipe(
+      const panel =
+        existingPanel ??
+        (yield* createBrowserPanel(targetWorktreeId, requestedUrl).pipe(
           Effect.withSpan('treeport.browser.open.create_panel')
         ))
       yield* Effect.annotateCurrentSpan({
-        'treeport.tab.id': tab.id,
-        'treeport.browser.tab_reused': existingTab !== null
+        'treeport.panel.id': panel.id,
+        'treeport.browser.panel_reused': existingPanel !== null
       })
       yield* Effect.sync(() =>
-        events.publish('tab.open_requested', {
+        events.publish('panel.open_requested', {
           worktreeId: targetWorktreeId,
-          tabId: tab.id,
-          tab,
+          panelId: panel.id,
+          panel,
           sourceTerminalId,
-          sourceTabId,
+          sourcePanelId,
           requestId
         })
       ).pipe(Effect.withSpan('treeport.browser.open.publish'))
-      return { tab }
+      return { panel }
     }).pipe(Effect.withSpan('treeport.browser.open'))
   }
 
-  openBrowserTabFromTerminal(
+  openBrowserPanelFromTerminal(
     terminalId: string,
     requestedUrl: string,
     requestId: string | null = null
-  ): TabEffect<OpenBrowserTabResult> {
-    return this.openBrowserTab(
+  ): PanelEffect<OpenBrowserPanelResult> {
+    return this.openBrowserPanel(
       null,
       requestedUrl,
       terminalId,
@@ -429,63 +438,63 @@ export class TabService {
     )
   }
 
-  openBrowserTabFromPanel(
-    tabId: string,
+  openBrowserPanelFromPanel(
+    panelId: string,
     requestedUrl: string
-  ): TabEffect<OpenBrowserTabResult> {
-    return this.openBrowserTab(null, requestedUrl, null, tabId)
+  ): PanelEffect<OpenBrowserPanelResult> {
+    return this.openBrowserPanel(null, requestedUrl, null, panelId)
   }
 
-  getBrowserTab(tabId: string): TabEffect<BrowserTab> {
+  getBrowserPanel(panelId: string): PanelEffect<BrowserPanel> {
     const requireAvailableWorktree = this.requireBrowserWorktree.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const [row] = yield* database
-        .execute('tab.service.446', (db) =>
+        .execute('panel.service.446', (db) =>
           db
             .select()
-            .from(browserTabs)
-            .where(eq(browserTabs.id, tabId))
+            .from(browserPanels)
+            .where(eq(browserPanels.id, panelId))
             .limit(1)
         )
         .pipe(Effect.orDie)
       if (!row) {
         return yield* Effect.fail(
-          new DomainError('TAB_NOT_FOUND', 'Browser not found', 404)
+          new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
         )
       }
 
       yield* requireAvailableWorktree(row.worktreeId)
-      return mapBrowserTab(row)
+      return mapBrowserPanel(row)
     })
   }
 
-  authorizeBrowserTab(
-    tabId: string
-  ): TabEffect<{ tab: BrowserTab; worktreePath: string }> {
-    const getBrowserTab = this.getBrowserTab.bind(this)
+  authorizeBrowserPanel(
+    panelId: string
+  ): PanelEffect<{ panel: BrowserPanel; worktreePath: string }> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
     const getWorktree = this.getWorktree.bind(this)
 
     return Effect.gen(function* () {
-      const tab = yield* getBrowserTab(tabId)
-      const worktree = yield* getWorktree(tab.worktreeId)
-      return { tab, worktreePath: worktree.path }
+      const panel = yield* getBrowserPanel(panelId)
+      const worktree = yield* getWorktree(panel.worktreeId)
+      return { panel, worktreePath: worktree.path }
     })
   }
 
-  updateBrowserTabState(
-    tabId: string,
+  updateBrowserPanelState(
+    panelId: string,
     state: { url: string; title: string }
-  ): TabEffect<BrowserTab> {
-    const getBrowserTab = this.getBrowserTab.bind(this)
+  ): PanelEffect<BrowserPanel> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
-      const tab = yield* getBrowserTab(tabId)
+      const panel = yield* getBrowserPanel(panelId)
       const parsedUrl =
         state.url === 'about:blank'
           ? 'about:blank'
@@ -506,36 +515,36 @@ export class TabService {
       const title =
         requestedTitle ||
         (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
-      if (tab.url === url && tab.title === title) {
-        return tab
+      if (panel.url === url && panel.title === title) {
+        return panel
       }
 
       const observedAt = now()
       const updatedAt =
-        observedAt > tab.updatedAt
+        observedAt > panel.updatedAt
           ? observedAt
-          : new Date(Date.parse(tab.updatedAt) + 1).toISOString()
+          : new Date(Date.parse(panel.updatedAt) + 1).toISOString()
       yield* database
-        .execute('tab.service.518', (db) =>
+        .execute('panel.service.518', (db) =>
           db
-            .update(browserTabs)
+            .update(browserPanels)
             .set({ url, title, updatedAt })
-            .where(eq(browserTabs.id, tabId))
+            .where(eq(browserPanels.id, panelId))
         )
         .pipe(Effect.orDie)
-      const updated = { ...tab, url, title, updatedAt }
+      const updated = { ...panel, url, title, updatedAt }
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
-        events.publish('tab.updated', {
-          worktreeId: tab.worktreeId,
-          tabId
+        events.publish('panel.updated', {
+          worktreeId: panel.worktreeId,
+          panelId
         })
       })
       return updated
     })
   }
 
-  deleteBrowserTab(tabId: string): TabEffect<void> {
+  deleteBrowserPanel(panelId: string): PanelEffect<void> {
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -543,18 +552,18 @@ export class TabService {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
       const [row] = yield* database
-        .execute('tab.service.543', (db) =>
+        .execute('panel.service.543', (db) =>
           db
             .select()
-            .from(browserTabs)
-            .where(eq(browserTabs.id, tabId))
+            .from(browserPanels)
+            .where(eq(browserPanels.id, panelId))
             .limit(1)
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.browser.remove.lookup'))
       if (!row) {
         return yield* Effect.fail(
-          new DomainError('TAB_NOT_FOUND', 'Browser not found', 404)
+          new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
         )
       }
 
@@ -562,50 +571,50 @@ export class TabService {
         'treeport.worktree.id': row.worktreeId
       })
       yield* database
-        .execute('tab.service.559', (db) =>
-          db.delete(browserTabs).where(eq(browserTabs.id, tabId))
+        .execute('panel.service.559', (db) =>
+          db.delete(browserPanels).where(eq(browserPanels.id, panelId))
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.browser.remove.persist'))
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
-        events.publish('tab.removed', {
+        events.publish('panel.removed', {
           worktreeId: row.worktreeId,
-          tabId
+          panelId
         })
       })
     }).pipe(
       Effect.withSpan('treeport.browser.remove', {
-        attributes: { 'treeport.tab.id': tabId }
+        attributes: { 'treeport.panel.id': panelId }
       })
     )
   }
 
-  deleteTab(tabId: string, discardStoredData = false): TabEffect<void> {
-    const deleteBrowserTab = this.deleteBrowserTab.bind(this)
+  deletePanel(panelId: string, discardStoredData = false): PanelEffect<void> {
+    const deleteBrowserPanel = this.deleteBrowserPanel.bind(this)
     const deleteWebPanel = this.deleteWebPanel.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const [browserTab] = yield* database
-        .execute('tab.service.582', (db) =>
+      const [browserPanel] = yield* database
+        .execute('panel.service.582', (db) =>
           db
-            .select({ id: browserTabs.id })
-            .from(browserTabs)
-            .where(eq(browserTabs.id, tabId))
+            .select({ id: browserPanels.id })
+            .from(browserPanels)
+            .where(eq(browserPanels.id, panelId))
             .limit(1)
         )
         .pipe(Effect.orDie)
-        .pipe(Effect.withSpan('treeport.tab.remove.resolve_kind'))
+        .pipe(Effect.withSpan('treeport.panel.remove.resolve_kind'))
       yield* Effect.annotateCurrentSpan({
-        'treeport.tab.kind': browserTab ? 'browser' : 'web'
+        'treeport.panel.kind': browserPanel ? 'browser' : 'web'
       })
-      return yield* browserTab
-        ? deleteBrowserTab(tabId)
-        : deleteWebPanel(tabId, discardStoredData)
+      return yield* browserPanel
+        ? deleteBrowserPanel(panelId)
+        : deleteWebPanel(panelId, discardStoredData)
     }).pipe(
-      Effect.withSpan('treeport.tab.remove', {
-        attributes: { 'treeport.tab.id': tabId }
+      Effect.withSpan('treeport.panel.remove', {
+        attributes: { 'treeport.panel.id': panelId }
       })
     )
   }
@@ -614,7 +623,7 @@ export class TabService {
     worktreeId: string,
     definitionId: string,
     launch: WebPanelLaunch = { input: null, cwd: null }
-  ): TabEffect<WebPanel> {
+  ): PanelEffect<WebPanel> {
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
@@ -648,7 +657,7 @@ export class TabService {
     worktree: WorktreeRecord,
     definition: WebPanelDefinition,
     launch: WebPanelLaunch
-  ): TabEffect<WebPanel> {
+  ): PanelEffect<WebPanel> {
     const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
@@ -659,8 +668,8 @@ export class TabService {
       const definitionId = definition.id
       const normalized = yield* normalizeWebPanelLaunch(worktree, launch)
       const timestamp = now()
-      const tab: WebPanel = {
-        id: id('tab'),
+      const panel: WebPanel = {
+        id: id('panel'),
         kind: 'web',
         worktreeId,
         definitionId,
@@ -672,26 +681,26 @@ export class TabService {
         updatedAt: timestamp
       }
       yield* database
-        .execute('tab.service.663', (db) =>
+        .execute('panel.service.663', (db) =>
           db.insert(webPanels).values({
-            id: tab.id,
-            worktreeId: tab.worktreeId,
-            definitionId: tab.definitionId,
-            title: tab.title,
+            id: panel.id,
+            worktreeId: panel.worktreeId,
+            definitionId: panel.definitionId,
+            title: panel.title,
             inputJson: normalized.inputJson,
-            launchCwd: tab.launch.cwd,
-            createdAt: tab.createdAt,
-            updatedAt: tab.updatedAt
+            launchCwd: panel.launch.cwd,
+            createdAt: panel.createdAt,
+            updatedAt: panel.updatedAt
           })
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_panel.create.persist'))
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
-        events.publish('tab.created', { worktreeId, tabId: tab.id })
+        events.publish('panel.created', { worktreeId, panelId: panel.id })
       })
-      yield* Effect.annotateCurrentSpan({ 'treeport.tab.id': tab.id })
-      return tab
+      yield* Effect.annotateCurrentSpan({ 'treeport.panel.id': panel.id })
+      return panel
     }).pipe(Effect.withSpan('treeport.web_panel.create'))
   }
 
@@ -702,7 +711,7 @@ export class TabService {
     newInstance = false,
     sourceTerminalId: string | null = null,
     requestId: string | null = null
-  ): TabEffect<OpenWebPanelResult> {
+  ): PanelEffect<OpenWebPanelResult> {
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
@@ -732,12 +741,12 @@ export class TabService {
 
       yield* requireWebPanelPermissions(worktreeId, definition)
       const finish = (result: OpenWebPanelResult): OpenWebPanelResult => {
-        events.publish('tab.open_requested', {
+        events.publish('panel.open_requested', {
           worktreeId,
-          tabId: result.tab.id,
-          tab: result.tab,
+          panelId: result.panel.id,
+          panel: result.panel,
           sourceTerminalId,
-          sourceTabId: null,
+          sourcePanelId: null,
           requestId
         })
         return result
@@ -745,14 +754,14 @@ export class TabService {
 
       if (newInstance) {
         return finish({
-          tab: yield* createValidatedWebPanel(worktree, definition, launch),
+          panel: yield* createValidatedWebPanel(worktree, definition, launch),
           created: true,
           reused: false
         })
       }
 
       const [existing] = yield* database
-        .execute('tab.service.740', (db) =>
+        .execute('panel.service.740', (db) =>
           db
             .select()
             .from(webPanels)
@@ -769,7 +778,7 @@ export class TabService {
         .pipe(Effect.withSpan('treeport.web_panel.open.lookup'))
       if (!existing) {
         return finish({
-          tab: yield* createValidatedWebPanel(worktree, definition, launch),
+          panel: yield* createValidatedWebPanel(worktree, definition, launch),
           created: true,
           reused: false
         })
@@ -782,7 +791,7 @@ export class TabService {
           ? observedAt
           : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
       yield* database
-        .execute('tab.service.767', (db) =>
+        .execute('panel.service.767', (db) =>
           db
             .update(webPanels)
             .set({
@@ -795,7 +804,7 @@ export class TabService {
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_panel.open.persist'))
-      const tab = mapWebPanel(
+      const panel = mapWebPanel(
         {
           ...existing,
           title: definition.title,
@@ -808,13 +817,13 @@ export class TabService {
       )
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
-        events.publish('tab.updated', { worktreeId, tabId: tab.id })
+        events.publish('panel.updated', { worktreeId, panelId: panel.id })
       })
-      return finish({ tab, created: false, reused: true })
+      return finish({ panel, created: false, reused: true })
     }).pipe(
       Effect.tap((result) =>
         Effect.annotateCurrentSpan({
-          'treeport.tab.id': result.tab.id,
+          'treeport.panel.id': result.panel.id,
           'treeport.worktree.id': worktreeId,
           'treeport.web_panel.reused': result.reused
         })
@@ -823,34 +832,37 @@ export class TabService {
     )
   }
 
-  deleteWebPanel(tabId: string, discardStoredData = false): TabEffect<void> {
+  deleteWebPanel(
+    panelId: string,
+    discardStoredData = false
+  ): PanelEffect<void> {
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
-      const [tab] = yield* database
-        .execute('tab.service.816', (db) =>
-          db.select().from(webPanels).where(eq(webPanels.id, tabId)).limit(1)
+      const [panel] = yield* database
+        .execute('panel.service.816', (db) =>
+          db.select().from(webPanels).where(eq(webPanels.id, panelId)).limit(1)
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_panel.remove.lookup'))
-      if (!tab) {
+      if (!panel) {
         return yield* Effect.fail(
-          new DomainError('TAB_NOT_FOUND', 'Tab not found', 404)
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
         )
       }
 
       yield* Effect.annotateCurrentSpan({
-        'treeport.worktree.id': tab.worktreeId
+        'treeport.worktree.id': panel.worktreeId
       })
       const [storedValue] = yield* database
-        .execute('tab.service.832', (db) =>
+        .execute('panel.service.832', (db) =>
           db
             .select({ key: webPanelStorage.key })
             .from(webPanelStorage)
-            .where(eq(webPanelStorage.tabId, tabId))
+            .where(eq(webPanelStorage.panelId, panelId))
             .limit(1)
         )
         .pipe(Effect.orDie)
@@ -858,36 +870,36 @@ export class TabService {
       if (!discardStoredData && storedValue) {
         return yield* Effect.fail(
           new DomainError(
-            'TAB_HAS_STORED_DATA',
-            'Closing this tab requires confirmation because its saved data will be deleted',
+            'PANEL_HAS_STORED_DATA',
+            'Closing this panel requires confirmation because its saved data will be deleted',
             409
           )
         )
       }
 
       yield* database
-        .execute('tab.service.849', (db) =>
-          db.delete(webPanels).where(eq(webPanels.id, tabId))
+        .execute('panel.service.849', (db) =>
+          db.delete(webPanels).where(eq(webPanels.id, panelId))
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_panel.remove.persist'))
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
-        events.publish('tab.removed', {
-          worktreeId: tab.worktreeId,
-          tabId
+        events.publish('panel.removed', {
+          worktreeId: panel.worktreeId,
+          panelId
         })
       })
     }).pipe(
       Effect.withSpan('treeport.web_panel.remove', {
-        attributes: { 'treeport.tab.id': tabId }
+        attributes: { 'treeport.panel.id': panelId }
       })
     )
   }
 
   requireWebPanelTreeFiles(
-    tabId: string
-  ): TabEffect<{ project: ProjectRecord; worktree: WorktreeRecord }> {
+    panelId: string
+  ): PanelEffect<{ project: ProjectRecord; worktree: WorktreeRecord }> {
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
     const requireWebPanelPermissions =
@@ -897,48 +909,48 @@ export class TabService {
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const [tab] = yield* database
-        .execute('tab.service.878', (db) =>
-          db.select().from(webPanels).where(eq(webPanels.id, tabId)).limit(1)
+      const [panel] = yield* database
+        .execute('panel.service.878', (db) =>
+          db.select().from(webPanels).where(eq(webPanels.id, panelId)).limit(1)
         )
         .pipe(Effect.orDie)
-      if (!tab) {
+      if (!panel) {
         return yield* Effect.fail(
-          new DomainError('TAB_NOT_FOUND', 'Tab not found', 404)
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
         )
       }
 
       const definition = (yield* effectiveWebPanelDefinitions(
-        tab.worktreeId
-      )).find((candidate) => candidate.id === tab.definitionId)
+        panel.worktreeId
+      )).find((candidate) => candidate.id === panel.definitionId)
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
             'WEB_PANEL_DEFINITION_NOT_FOUND',
-            'The definition for this tab is unavailable',
+            'The definition for this panel is unavailable',
             404
           )
         )
       }
 
-      yield* requireWebPanelPermissions(tab.worktreeId, definition)
+      yield* requireWebPanelPermissions(panel.worktreeId, definition)
       if (!definition.permissions.includes('tree-files')) {
         return yield* Effect.fail(
           new DomainError(
             'WEB_PANEL_TREE_FILES_REQUIRED',
-            'This tab does not have permission to access tree files',
+            'This panel does not have permission to access tree files',
             403
           )
         )
       }
 
-      const worktree = yield* requireAvailableWorktree(tab.worktreeId)
+      const worktree = yield* requireAvailableWorktree(panel.worktreeId)
       const project = yield* getProject(worktree.projectId)
       return { project, worktree }
     })
   }
 
-  getWebPanelContext(tabId: string): TabEffect<WebPanelContext> {
+  getWebPanelContext(panelId: string): PanelEffect<WebPanelContext> {
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
     const webPanelPermissionsGranted =
@@ -949,13 +961,13 @@ export class TabService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const [panelRow] = yield* database
-        .execute('tab.service.931', (db) =>
-          db.select().from(webPanels).where(eq(webPanels.id, tabId)).limit(1)
+        .execute('panel.service.931', (db) =>
+          db.select().from(webPanels).where(eq(webPanels.id, panelId)).limit(1)
         )
         .pipe(Effect.orDie)
       if (!panelRow) {
         return yield* Effect.fail(
-          new DomainError('TAB_NOT_FOUND', 'Tab not found', 404)
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
         )
       }
 
@@ -994,13 +1006,13 @@ export class TabService {
     })
   }
 
-  getWebPanelDiff(tabId: string) {
+  getWebPanelDiff(panelId: string) {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
     const getWorktree = this.getWorktree.bind(this)
 
     return Effect.gen(function* () {
       const git = yield* GitPort
-      const context = yield* getWebPanelContext(tabId)
+      const context = yield* getWebPanelContext(panelId)
       if (
         context.project.kind !== 'repository' ||
         !context.project.defaultBranch
@@ -1030,13 +1042,13 @@ export class TabService {
     })
   }
 
-  getWebPanelFileDiff(tabId: string, filePath: string) {
+  getWebPanelFileDiff(panelId: string, filePath: string) {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
     const getWorktree = this.getWorktree.bind(this)
 
     return Effect.gen(function* () {
       const git = yield* GitPort
-      const context = yield* getWebPanelContext(tabId)
+      const context = yield* getWebPanelContext(panelId)
       if (
         context.project.kind !== 'repository' ||
         !context.project.defaultBranch
@@ -1070,13 +1082,13 @@ export class TabService {
     })
   }
 
-  getWebPanelDiffImage(tabId: string, input: GitDiffImageRequest) {
+  getWebPanelDiffImage(panelId: string, input: GitDiffImageRequest) {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
 
     return Effect.gen(function* () {
       const git = yield* GitPort
-      const context = yield* getWebPanelContext(tabId)
+      const context = yield* getWebPanelContext(panelId)
       if (context.project.kind !== 'repository') {
         return yield* Effect.fail(
           new DomainError(
@@ -1103,15 +1115,17 @@ export class TabService {
     })
   }
 
-  getBrowserTabListeners(tabId: string): TabEffect<WorktreeListenerDiscovery> {
-    const getBrowserTab = this.getBrowserTab.bind(this)
+  getBrowserPanelListeners(
+    panelId: string
+  ): PanelEffect<WorktreeListenerDiscovery> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
     const getWorktree = this.getWorktree.bind(this)
 
     return Effect.gen(function* () {
       const terminalHost = yield* TerminalHostPort
       const networkListeners = yield* NetworkListenerPort
-      const tab = yield* getBrowserTab(tabId)
-      const worktree = yield* getWorktree(tab.worktreeId)
+      const panel = yield* getBrowserPanel(panelId)
+      const worktree = yield* getWorktree(panel.worktreeId)
       const terminalProcesses = yield* terminalHost
         .listProcesses(worktree.id)
         .pipe(Effect.orDie)
@@ -1121,35 +1135,37 @@ export class TabService {
     })
   }
 
-  getPanelListeners(tabId: string): TabEffect<WorktreeListenerDiscovery> {
-    const getBrowserTabListeners = this.getBrowserTabListeners.bind(this)
+  getPanelListeners(panelId: string): PanelEffect<WorktreeListenerDiscovery> {
+    const getBrowserPanelListeners = this.getBrowserPanelListeners.bind(this)
     const getWebPanelListeners = this.getWebPanelListeners.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const [browserTab] = yield* database
-        .execute('tab.service.1065', (db) =>
+      const [browserPanel] = yield* database
+        .execute('panel.service.1065', (db) =>
           db
-            .select({ id: browserTabs.id })
-            .from(browserTabs)
-            .where(eq(browserTabs.id, tabId))
+            .select({ id: browserPanels.id })
+            .from(browserPanels)
+            .where(eq(browserPanels.id, panelId))
             .limit(1)
         )
         .pipe(Effect.orDie)
-      return yield* browserTab
-        ? getBrowserTabListeners(tabId)
-        : getWebPanelListeners(tabId)
+      return yield* browserPanel
+        ? getBrowserPanelListeners(panelId)
+        : getWebPanelListeners(panelId)
     })
   }
 
-  getWebPanelListeners(tabId: string): TabEffect<WorktreeListenerDiscovery> {
+  getWebPanelListeners(
+    panelId: string
+  ): PanelEffect<WorktreeListenerDiscovery> {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
     const getWorktree = this.getWorktree.bind(this)
 
     return Effect.gen(function* () {
       const terminalHost = yield* TerminalHostPort
       const networkListeners = yield* NetworkListenerPort
-      const context = yield* getWebPanelContext(tabId)
+      const context = yield* getWebPanelContext(panelId)
       const worktree = yield* getWorktree(context.panel.worktreeId)
       const terminalProcesses = yield* terminalHost
         .listProcesses(worktree.id)
@@ -1160,18 +1176,18 @@ export class TabService {
     })
   }
 
-  hasWebPanelStorage(tabId: string): TabEffect<boolean> {
+  hasWebPanelStorage(panelId: string): PanelEffect<boolean> {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      yield* getWebPanelContext(tabId)
+      yield* getWebPanelContext(panelId)
       const [row] = yield* database
-        .execute('tab.service.1107', (db) =>
+        .execute('panel.service.1107', (db) =>
           db
             .select({ key: webPanelStorage.key })
             .from(webPanelStorage)
-            .where(eq(webPanelStorage.tabId, tabId))
+            .where(eq(webPanelStorage.panelId, panelId))
             .limit(1)
         )
         .pipe(Effect.orDie)
@@ -1180,22 +1196,22 @@ export class TabService {
   }
 
   getWebPanelStorage(
-    tabId: string,
+    panelId: string,
     key: string
-  ): TabEffect<JsonValue | undefined> {
+  ): PanelEffect<JsonValue | undefined> {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      yield* getWebPanelContext(tabId)
+      yield* getWebPanelContext(panelId)
       const [row] = yield* database
-        .execute('tab.service.1127', (db) =>
+        .execute('panel.service.1127', (db) =>
           db
             .select({ valueJson: webPanelStorage.valueJson })
             .from(webPanelStorage)
             .where(
               and(
-                eq(webPanelStorage.tabId, tabId),
+                eq(webPanelStorage.panelId, panelId),
                 eq(webPanelStorage.key, key)
               )
             )
@@ -1208,15 +1224,15 @@ export class TabService {
   }
 
   setWebPanelStorage(
-    tabId: string,
+    panelId: string,
     key: string,
     value: JsonValue
-  ): TabEffect<void> {
+  ): PanelEffect<void> {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      yield* getWebPanelContext(tabId)
+      yield* getWebPanelContext(panelId)
       const valueJson = JSON.stringify(value)
       const valueBytes = Buffer.byteLength(valueJson)
       if (valueBytes > WEB_PANEL_STORAGE_MAX_VALUE_BYTES) {
@@ -1230,13 +1246,13 @@ export class TabService {
       }
 
       const storedValues = yield* database
-        .execute('tab.service.1166', (db) =>
+        .execute('panel.service.1166', (db) =>
           db
             .select({ valueJson: webPanelStorage.valueJson })
             .from(webPanelStorage)
             .where(
               and(
-                eq(webPanelStorage.tabId, tabId),
+                eq(webPanelStorage.panelId, panelId),
                 ne(webPanelStorage.key, key)
               )
             )
@@ -1253,7 +1269,7 @@ export class TabService {
         return yield* Effect.fail(
           new DomainError(
             'WEB_PANEL_STORAGE_QUOTA_EXCEEDED',
-            'Web panel storage is limited to 256 values and 1 MiB per tab',
+            'Web panel storage is limited to 256 values and 1 MiB per panel',
             413
           )
         )
@@ -1261,12 +1277,12 @@ export class TabService {
 
       const updatedAt = now()
       yield* database
-        .execute('tab.service.1195', (db) =>
+        .execute('panel.service.1195', (db) =>
           db
             .insert(webPanelStorage)
-            .values({ tabId, key, valueJson, updatedAt })
+            .values({ panelId, key, valueJson, updatedAt })
             .onConflictDoUpdate({
-              target: [webPanelStorage.tabId, webPanelStorage.key],
+              target: [webPanelStorage.panelId, webPanelStorage.key],
               set: { valueJson, updatedAt }
             })
         )
@@ -1274,19 +1290,19 @@ export class TabService {
     })
   }
 
-  deleteWebPanelStorage(tabId: string, key: string): TabEffect<void> {
+  deleteWebPanelStorage(panelId: string, key: string): PanelEffect<void> {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      yield* getWebPanelContext(tabId)
+      yield* getWebPanelContext(panelId)
       yield* database
-        .execute('tab.service.1213', (db) =>
+        .execute('panel.service.1213', (db) =>
           db
             .delete(webPanelStorage)
             .where(
               and(
-                eq(webPanelStorage.tabId, tabId),
+                eq(webPanelStorage.panelId, panelId),
                 eq(webPanelStorage.key, key)
               )
             )
@@ -1296,9 +1312,9 @@ export class TabService {
   }
 
   resolveWebPanelAsset(
-    tabId: string,
+    panelId: string,
     requestedPath: string
-  ): TabEffect<WebPanelAssetResolution> {
+  ): PanelEffect<WebPanelAssetResolution> {
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
     const requireWebPanelPermissions =
@@ -1307,38 +1323,38 @@ export class TabService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const webPanelRuntime = yield* WebPanelRuntimePort
-      yield* Effect.annotateCurrentSpan({ 'treeport.tab.id': tabId })
-      const [tab] = yield* database
-        .execute('tab.service.1239', (db) =>
-          db.select().from(webPanels).where(eq(webPanels.id, tabId)).limit(1)
+      yield* Effect.annotateCurrentSpan({ 'treeport.panel.id': panelId })
+      const [panel] = yield* database
+        .execute('panel.service.1239', (db) =>
+          db.select().from(webPanels).where(eq(webPanels.id, panelId)).limit(1)
         )
         .pipe(Effect.orDie)
-      if (!tab) {
+      if (!panel) {
         return yield* Effect.fail(
-          new DomainError('TAB_NOT_FOUND', 'Tab not found', 404)
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
         )
       }
 
       const definition = (yield* effectiveWebPanelDefinitions(
-        tab.worktreeId
-      )).find((candidate) => candidate.id === tab.definitionId)
+        panel.worktreeId
+      )).find((candidate) => candidate.id === panel.definitionId)
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
             'WEB_PANEL_DEFINITION_NOT_FOUND',
-            'The definition for this tab is unavailable',
+            'The definition for this panel is unavailable',
             404
           )
         )
       }
 
-      yield* requireWebPanelPermissions(tab.worktreeId, definition)
-      const encodedTabId = encodeURIComponent(tabId)
+      yield* requireWebPanelPermissions(panel.worktreeId, definition)
+      const encodedPanelId = encodeURIComponent(panelId)
       return yield* webPanelRuntime
         .resolve(
           definition,
           requestedPath,
-          `/api/web-panels/${encodedTabId}/assets/`
+          `/api/web-panels/${encodedPanelId}/assets/`
         )
         .pipe(
           Effect.catchTag('WebPanelRuntimeError', Effect.die),
@@ -1353,22 +1369,22 @@ export class TabService {
     }).pipe(Effect.withSpan('treeport.web_panel.asset'))
   }
 
-  listBrowserTabs(): TabEffect<BrowserTab[]> {
+  listBrowserPanels(): PanelEffect<BrowserPanel[]> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const rows = yield* database
-        .execute('tab.service.1291', (db) =>
+        .execute('panel.service.1291', (db) =>
           db
             .select()
-            .from(browserTabs)
-            .orderBy(asc(browserTabs.createdAt), asc(browserTabs.id))
+            .from(browserPanels)
+            .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id))
         )
         .pipe(Effect.orDie)
-      return rows.map(mapBrowserTab)
+      return rows.map(mapBrowserPanel)
     })
   }
 
-  listWebPanels(): TabEffect<WebPanel[]> {
+  listWebPanels(): PanelEffect<WebPanel[]> {
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
     const webPanelPermissionsGranted =
@@ -1377,7 +1393,7 @@ export class TabService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const rows = yield* database
-        .execute('tab.service.1309', (db) =>
+        .execute('panel.service.1309', (db) =>
           db
             .select()
             .from(webPanels)
@@ -1406,7 +1422,7 @@ export class TabService {
   }
 }
 
-function mapBrowserTab(row: typeof browserTabs.$inferSelect): BrowserTab {
+function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
   return {
     id: row.id,
     kind: 'browser',

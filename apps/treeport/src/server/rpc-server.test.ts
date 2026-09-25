@@ -6,7 +6,7 @@ import {
   EVENT_PROTOCOL_VERSION,
   TreeportRpcs,
   treeportRpcClientLayer,
-  type BrowserTab,
+  type BrowserPanel,
   type ProjectEventsItem,
   type TerminalRuntimeMetadata,
   type WebPanel
@@ -34,8 +34,8 @@ interface RpcFixture {
   readonly listWebPanels: ReturnType<
     typeof vi.fn<() => Effect.Effect<WebPanel[]>>
   >
-  readonly listBrowserTabs: ReturnType<
-    typeof vi.fn<() => Effect.Effect<BrowserTab[]>>
+  readonly listBrowserPanels: ReturnType<
+    typeof vi.fn<() => Effect.Effect<BrowserPanel[]>>
   >
   close(): Promise<void>
 }
@@ -64,12 +64,12 @@ async function fixture(): Promise<RpcFixture> {
   const listWebPanels = vi.fn<() => Effect.Effect<WebPanel[]>>(() =>
     Effect.succeed([])
   )
-  const listBrowserTabs = vi.fn<() => Effect.Effect<BrowserTab[]>>(() =>
+  const listBrowserPanels = vi.fn<() => Effect.Effect<BrowserPanel[]>>(() =>
     Effect.succeed([])
   )
   const service = testAccess<TreeportService>({
     events,
-    tabs: { listWebPanels, listBrowserTabs },
+    panels: { listWebPanels, listBrowserPanels },
     runEffect: (effect: Effect.Effect<unknown, unknown, any>) =>
       // SAFETY: The fixture's effects require only services installed above.
       Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
@@ -91,7 +91,7 @@ async function fixture(): Promise<RpcFixture> {
     presence,
     metadataSnapshot,
     listWebPanels,
-    listBrowserTabs,
+    listBrowserPanels,
     close: async () => {
       presence.dispose()
       await Effect.runPromise(Scope.close(scope, Exit.void))
@@ -195,12 +195,12 @@ describe('Effect RPC project event stream', () => {
     await expect(collect(value.url, 2)).rejects.toThrow(/could not keep up/i)
   })
 
-  it('isolates clients while streaming durable tabs and bell acknowledgements to both', async () => {
+  it('isolates clients while streaming durable panels and bell acknowledgements to both', async () => {
     const value = await fixture()
     value.listWebPanels.mockReturnValue(
       Effect.succeed([
         {
-          id: 'tab_review',
+          id: 'panel_review',
           kind: 'web',
           worktreeId: 'wt',
           definitionId: 'project:review',
@@ -213,10 +213,10 @@ describe('Effect RPC project event stream', () => {
         }
       ])
     )
-    value.listBrowserTabs.mockReturnValue(
+    value.listBrowserPanels.mockReturnValue(
       Effect.succeed([
         {
-          id: 'tab_browser',
+          id: 'panel_browser',
           kind: 'browser',
           worktreeId: 'wt',
           title: 'Example',
@@ -236,7 +236,7 @@ describe('Effect RPC project event stream', () => {
     const viewer = {
       sessionId: '11111111-1111-4111-8111-111111111111',
       worktreeId: 'wt',
-      focusedTabId: 'tab_review',
+      focusedPanelId: 'panel_review',
       visible: true,
       focused: true
     }
@@ -260,16 +260,16 @@ describe('Effect RPC project event stream', () => {
 
     value.presence.update(identity, {
       ...viewer,
-      focusedTabId: 'tab_browser'
+      focusedPanelId: 'panel_browser'
     })
     const clients = await Promise.all([first, second])
     for (const received of clients) {
       expect(received[0]).toMatchObject({
         _tag: 'Snapshot',
         snapshot: {
-          webPanels: [{ id: 'tab_review' }],
-          browserTabs: [{ id: 'tab_browser', url: 'https://example.com/' }],
-          presence: [{ identity, focusedTabId: 'tab_review' }]
+          webPanels: [{ id: 'panel_review' }],
+          browserPanels: [{ id: 'panel_browser', url: 'https://example.com/' }],
+          presence: [{ identity, focusedPanelId: 'panel_review' }]
         }
       })
       expect(received[1]).toMatchObject({
@@ -283,13 +283,13 @@ describe('Effect RPC project event stream', () => {
         _tag: 'ProductEvent',
         event: {
           type: 'presence.changed',
-          data: { viewers: [{ identity, focusedTabId: 'tab_browser' }] }
+          data: { viewers: [{ identity, focusedPanelId: 'panel_browser' }] }
         }
       })
     }
     expect((await collect(value.url, 1))[0]).toMatchObject({
       _tag: 'Snapshot',
-      snapshot: { presence: [{ identity, focusedTabId: 'tab_browser' }] }
+      snapshot: { presence: [{ identity, focusedPanelId: 'panel_browser' }] }
     })
   })
 })

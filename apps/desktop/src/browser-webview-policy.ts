@@ -1,5 +1,5 @@
 import {
-  browserTabIdSchema,
+  browserPanelIdSchema,
   browserUrlSchema,
   decodeUnknownOrNull
 } from '@treeport/shared'
@@ -33,18 +33,18 @@ import { DesktopRuntime } from './desktop-runtime'
 
 const BROWSER_PARTITION = 'persist:treeport-browser'
 
-function browserBootstrapTabId(value: string): string | null {
+function browserBootstrapPanelId(value: string): string | null {
   if (!value.startsWith('about:blank#')) {
     return null
   }
 
   return new URLSearchParams(value.slice('about:blank#'.length)).get(
-    'treeport-tab'
+    'treeport-panel'
   )
 }
 
 interface BrowserEntry {
-  tabId: string | null
+  panelId: string | null
   guest: WebContents
   bridge: BrowserCdpBridge | null
   inputLocked: boolean
@@ -57,31 +57,31 @@ interface BrowserEntry {
 export interface BrowserWebviewPolicy {
   register(
     event: IpcMainInvokeEvent,
-    tabId: string,
+    panelId: string,
     webContentsId: number,
     challenge: string
   ): Effect.Effect<DesktopBrowserBridgeDescriptor | null, unknown>
   command(
     event: IpcMainInvokeEvent,
-    tabId: string,
+    panelId: string,
     command: DesktopBrowserToolbarCommand
   ): Effect.Effect<DesktopBrowserCommandResult>
   setInputControl(
     event: IpcMainInvokeEvent,
-    tabId: string,
+    panelId: string,
     locked: boolean
   ): Effect.Effect<boolean>
   setPresentationActive(
     event: IpcMainInvokeEvent,
-    tabId: string,
+    panelId: string,
     active: boolean
   ): Effect.Effect<boolean>
   requestClose(
     event: IpcMainInvokeEvent,
-    tabId: string,
+    panelId: string,
     force: boolean
   ): Effect.Effect<boolean>
-  dispose(event: IpcMainEvent, tabId: string): Effect.Effect<void>
+  dispose(event: IpcMainEvent, panelId: string): Effect.Effect<void>
   disposeAll(): Effect.Effect<void>
 }
 
@@ -98,8 +98,8 @@ export function installBrowserWebviewPolicy(options: {
   const browserSession = session.fromPartition(BROWSER_PARTITION)
 
   const isPresentationEligible = (entry: BrowserEntry): boolean =>
-    entry.tabId !== null &&
-    entries.get(entry.tabId) === entry &&
+    entry.panelId !== null &&
+    entries.get(entry.panelId) === entry &&
     guestEntries.get(entry.guest.id) === entry &&
     !entry.guest.isDestroyed() &&
     entry.guest.hostWebContents === options.trustedRenderer &&
@@ -179,8 +179,8 @@ export function installBrowserWebviewPolicy(options: {
   const disposeEntry = (entry: BrowserEntry) =>
     Effect.gen(function* () {
       releasePresentation(entry)
-      if (entry.tabId && entries.get(entry.tabId) === entry) {
-        entries.delete(entry.tabId)
+      if (entry.panelId && entries.get(entry.panelId) === entry) {
+        entries.delete(entry.panelId)
       }
 
       pendingGuests.delete(entry.guest.id)
@@ -194,16 +194,16 @@ export function installBrowserWebviewPolicy(options: {
     (event, webPreferences, params) => {
       const computer = options.selectedComputer()
       const partition = params.partition ?? webPreferences.partition ?? ''
-      const tabId = browserBootstrapTabId(params.src ?? '') ?? ''
+      const panelId = browserBootstrapPanelId(params.src ?? '') ?? ''
       if (
         !computer?.loopback ||
         partition !== BROWSER_PARTITION ||
-        !decodeUnknownOrNull(browserTabIdSchema, tabId) ||
-        entries.has(tabId)
+        !decodeUnknownOrNull(browserPanelIdSchema, panelId) ||
+        entries.has(panelId)
       ) {
         event.preventDefault()
         options.trustedRenderer.send('native-browser:unavailable', {
-          tabId,
+          panelId,
           message:
             'The desktop app rejected this Browser. Select Retry to reopen it.'
         })
@@ -235,7 +235,7 @@ export function installBrowserWebviewPolicy(options: {
     }
 
     const entry: BrowserEntry = {
-      tabId: null,
+      panelId: null,
       guest,
       bridge: null,
       inputLocked: false,
@@ -250,8 +250,8 @@ export function installBrowserWebviewPolicy(options: {
         Effect.sync(() => {
           pendingGuests.delete(guest.id)
           guestEntries.delete(guest.id)
-          if (entry.tabId && entries.get(entry.tabId) === entry) {
-            entries.delete(entry.tabId)
+          if (entry.panelId && entries.get(entry.panelId) === entry) {
+            entries.delete(entry.panelId)
           }
 
           entry.bridge = null
@@ -347,20 +347,20 @@ export function installBrowserWebviewPolicy(options: {
         releasePresentation(entry)
       }
     })
-    const openInNewTab = (url: string) => {
+    const openInNewPanel = (url: string) => {
       const popup = decodeUnknownOrNull(browserUrlSchema, url)
-      const tabId = entry.tabId
-      if (!popup || !tabId || options.trustedRenderer.isDestroyed()) {
+      const panelId = entry.panelId
+      if (!popup || !panelId || options.trustedRenderer.isDestroyed()) {
         return
       }
 
       options.trustedRenderer.send('native-browser:popup', {
-        tabId,
+        panelId,
         url: new URL(popup).href
       })
     }
     guest.setWindowOpenHandler(({ url }) => {
-      openInNewTab(url)
+      openInNewPanel(url)
       return { action: 'deny' }
     })
     guest.on('enter-html-full-screen', () => {
@@ -399,11 +399,11 @@ export function installBrowserWebviewPolicy(options: {
     })
     const reportBrowserFocus = () => {
       if (
-        entry.tabId &&
+        entry.panelId &&
         !entry.inputLocked &&
         !options.trustedRenderer.isDestroyed()
       ) {
-        options.trustedRenderer.send('native-browser:focus', entry.tabId)
+        options.trustedRenderer.send('native-browser:focus', entry.panelId)
       }
     }
     guest.on('focus', reportBrowserFocus)
@@ -414,7 +414,7 @@ export function installBrowserWebviewPolicy(options: {
     })
     guest.on('before-input-event', (event, input) => {
       // Agent/remote page shortcuts must not invoke Treeport's native menu
-      // commands (for example Ctrl+W must not close a workspace tab).
+      // commands (for example Ctrl+W must not close a workspace panel).
       if (entry.inputLocked) {
         return
       }
@@ -434,12 +434,12 @@ export function installBrowserWebviewPolicy(options: {
             : code === 'bracketright'
               ? 'select-next-worktree'
               : key === 't'
-                ? 'new-tab'
+                ? 'new-panel'
                 : undefined
           : key === 't'
             ? 'new-terminal'
             : key === 'w'
-              ? 'close-tab'
+              ? 'close-panel'
               : key === 'l'
                 ? 'focus-location'
                 : key === 'f'
@@ -474,7 +474,7 @@ export function installBrowserWebviewPolicy(options: {
         if (link) {
           template.push({
             label: 'Open Link in New Tab',
-            click: () => openInNewTab(link)
+            click: () => openInNewPanel(link)
           })
         }
 
@@ -540,23 +540,23 @@ export function installBrowserWebviewPolicy(options: {
   })
 
   return {
-    register(event, tabId, webContentsId, challenge) {
+    register(event, panelId, webContentsId, challenge) {
       return Effect.gen(function* () {
         if (!options.isTrustedEvent(event) || options.runtime.isClosed) {
           return null
         }
 
-        let entry = entries.get(tabId)
+        let entry = entries.get(panelId)
         if (!entry) {
           const pending = pendingGuests.get(webContentsId)
           if (
             pending &&
-            browserBootstrapTabId(pending.guest.getURL()) === tabId &&
-            decodeUnknownOrNull(browserTabIdSchema, tabId) !== null
+            browserBootstrapPanelId(pending.guest.getURL()) === panelId &&
+            decodeUnknownOrNull(browserPanelIdSchema, panelId) !== null
           ) {
             pendingGuests.delete(webContentsId)
-            pending.tabId = tabId
-            entries.set(tabId, pending)
+            pending.panelId = panelId
+            entries.set(panelId, pending)
             entry = pending
           }
         }
@@ -576,7 +576,7 @@ export function installBrowserWebviewPolicy(options: {
             // Validate after admission, not only before waiting for a replacement.
             if (
               registered.runtime.isClosed ||
-              entries.get(tabId) !== registered ||
+              entries.get(panelId) !== registered ||
               registered.guest.isDestroyed()
             ) {
               return null
@@ -590,12 +590,12 @@ export function installBrowserWebviewPolicy(options: {
 
             const bridge = yield* createBrowserCdpBridge(
               registered.guest,
-              { tabId, challenge },
+              { panelId, challenge },
               registered.runtime
             )
             if (
               registered.runtime.isClosed ||
-              entries.get(tabId) !== registered ||
+              entries.get(panelId) !== registered ||
               registered.guest.isDestroyed()
             ) {
               yield* bridge.stop
@@ -608,9 +608,9 @@ export function installBrowserWebviewPolicy(options: {
         )
       })
     },
-    command(event, tabId, command) {
+    command(event, panelId, command) {
       return Effect.gen(function* () {
-        const entry = entries.get(tabId)
+        const entry = entries.get(panelId)
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -669,9 +669,9 @@ export function installBrowserWebviewPolicy(options: {
         )
       })
     },
-    setInputControl(event, tabId, locked) {
+    setInputControl(event, panelId, locked) {
       return Effect.sync(() => {
-        const entry = entries.get(tabId)
+        const entry = entries.get(panelId)
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -685,12 +685,12 @@ export function installBrowserWebviewPolicy(options: {
           releasePresentation(entry)
         }
 
-        return entries.get(tabId) === entry && !entry.guest.isDestroyed()
+        return entries.get(panelId) === entry && !entry.guest.isDestroyed()
       })
     },
-    setPresentationActive(event, tabId, active) {
+    setPresentationActive(event, panelId, active) {
       return Effect.sync(() => {
-        const entry = entries.get(tabId)
+        const entry = entries.get(panelId)
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -704,16 +704,16 @@ export function installBrowserWebviewPolicy(options: {
           releasePresentation(entry)
         }
 
-        return entries.get(tabId) === entry && !entry.guest.isDestroyed()
+        return entries.get(panelId) === entry && !entry.guest.isDestroyed()
       })
     },
-    requestClose(event, tabId, force) {
+    requestClose(event, panelId, force) {
       return Effect.gen(function* () {
         if (!options.isTrustedEvent(event)) {
           return false
         }
 
-        const entry = entries.get(tabId)
+        const entry = entries.get(panelId)
         if (!entry || entry.guest.isDestroyed()) {
           return true
         }
@@ -748,13 +748,13 @@ export function installBrowserWebviewPolicy(options: {
         )
       })
     },
-    dispose(event, tabId) {
+    dispose(event, panelId) {
       return Effect.suspend(() => {
         if (!options.isTrustedEvent(event)) {
           return Effect.void
         }
 
-        const entry = entries.get(tabId)
+        const entry = entries.get(panelId)
         return entry ? disposeEntry(entry) : Effect.void
       })
     },

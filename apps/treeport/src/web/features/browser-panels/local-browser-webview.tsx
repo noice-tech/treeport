@@ -6,19 +6,19 @@ import {
 } from '@treeport/shared'
 import type {
   BrowserClientMessage,
-  BrowserTab,
+  BrowserPanel,
   BrowserRuntimeState,
   BrowserServerMessage,
   BrowserSessionState
 } from '@treeport/shared'
 import { traceBrowserOpen } from '../../browser-open-tracing'
-import type { BrowserTabConnection } from '../../browser-session-client'
+import type { BrowserPanelConnection } from '../../browser-session-client'
 import {
   connectLocalBrowserOwner,
   requestLocalBrowserOwnerTicket,
   type LocalBrowserOwnerConnection
 } from '../../local-browser-owner-client'
-import { useToolPicker } from '../tabs/tool-picker-context'
+import { useToolPicker } from '../panels/tool-picker-context'
 
 function browserState(
   webview: TreeportBrowserWebview,
@@ -28,7 +28,7 @@ function browserState(
   const observedUrl = webview.getURL()
   const blankPage =
     observedUrl === 'about:blank' ||
-    observedUrl.startsWith('about:blank#treeport-tab=')
+    observedUrl.startsWith('about:blank#treeport-panel=')
   const currentUrl =
     loading && blankPage && fallbackUrl !== 'about:blank'
       ? fallbackUrl
@@ -53,7 +53,7 @@ function browserState(
 }
 
 export function LocalBrowserWebview({
-  tab,
+  panel,
   active,
   inputBlocked,
   onConnection,
@@ -61,10 +61,10 @@ export function LocalBrowserWebview({
   onPaintRetentionChange,
   onFocusSurface
 }: {
-  tab: BrowserTab
+  panel: BrowserPanel
   active: boolean
   inputBlocked: boolean
-  onConnection: (connection: BrowserTabConnection | null) => void
+  onConnection: (connection: BrowserPanelConnection | null) => void
   onMessage: (message: BrowserServerMessage) => void
   onPaintRetentionChange: (retained: boolean) => Promise<boolean>
   onFocusSurface: () => void
@@ -75,7 +75,7 @@ export function LocalBrowserWebview({
   activeRef.current = active
   const inputBlockedRef = useRef(inputBlocked)
   inputBlockedRef.current = inputBlocked
-  const initialPanelRef = useRef(tab)
+  const initialPanelRef = useRef(panel)
   const ownerClientIdRef = useRef(crypto.randomUUID())
   const [externalController, setExternalController] = useState<'other' | null>(
     null
@@ -91,7 +91,7 @@ export function LocalBrowserWebview({
       return
     }
 
-    traceBrowserOpen(tab.id, 'browser.local.mounted')
+    traceBrowserOpen(panel.id, 'browser.local.mounted')
     const abortController = new AbortController()
     let disposed = false
     let registering = false
@@ -125,7 +125,7 @@ export function LocalBrowserWebview({
         return
       }
 
-      traceBrowserOpen(tab.id, 'browser.local.unavailable')
+      traceBrowserOpen(panel.id, 'browser.local.unavailable')
       onMessage({
         type: 'browserUnavailable',
         message: cause instanceof Error ? cause.message : String(cause),
@@ -175,12 +175,12 @@ export function LocalBrowserWebview({
       }
     }
     const startLoading = () => {
-      traceBrowserOpen(tab.id, 'browser.local.loading_started')
+      traceBrowserOpen(panel.id, 'browser.local.loading_started')
       loading = true
       emitState()
     }
     const stopLoading = () => {
-      traceBrowserOpen(tab.id, 'browser.local.loading_stopped')
+      traceBrowserOpen(panel.id, 'browser.local.loading_stopped')
       loading = false
       emitState()
     }
@@ -189,7 +189,7 @@ export function LocalBrowserWebview({
         event.type === 'did-navigate' ||
         event.type === 'did-navigate-in-page'
       ) {
-        traceBrowserOpen(tab.id, 'browser.local.navigation_committed')
+        traceBrowserOpen(panel.id, 'browser.local.navigation_committed')
       }
 
       emitState()
@@ -202,7 +202,7 @@ export function LocalBrowserWebview({
         setExternalController(null)
       }
 
-      void bridge.setBrowserInputControl(tab.id, false).catch(() => false)
+      void bridge.setBrowserInputControl(panel.id, false).catch(() => false)
       void onPaintRetentionChange(false)
       previousExternalFocus = null
     }
@@ -223,7 +223,7 @@ export function LocalBrowserWebview({
           : null
       const prepareWithInputLocked = locked || retainPaint
       const prepared = await bridge
-        .setBrowserInputControl(tab.id, prepareWithInputLocked)
+        .setBrowserInputControl(panel.id, prepareWithInputLocked)
         .then(
           (result) => result,
           () => false
@@ -238,7 +238,7 @@ export function LocalBrowserWebview({
       )
       if (!paintable || disposed) {
         await bridge
-          .setBrowserInputControl(tab.id, previousController !== null)
+          .setBrowserInputControl(panel.id, previousController !== null)
           .catch(() => false)
         await onPaintRetentionChange(previousRetainPaint).catch(() => false)
         return false
@@ -261,14 +261,14 @@ export function LocalBrowserWebview({
 
       if (!locked && prepareWithInputLocked) {
         const unlocked = await bridge
-          .setBrowserInputControl(tab.id, false)
+          .setBrowserInputControl(panel.id, false)
           .then(
             (result) => result,
             () => false
           )
         if (!unlocked || disposed) {
           await bridge
-            .setBrowserInputControl(tab.id, previousController !== null)
+            .setBrowserInputControl(panel.id, previousController !== null)
             .catch(() => false)
           await onPaintRetentionChange(previousRetainPaint).catch(() => false)
           return false
@@ -315,7 +315,7 @@ export function LocalBrowserWebview({
       reportError(message)
     }
 
-    const connection: BrowserTabConnection = {
+    const connection: BrowserPanelConnection = {
       send(message: BrowserClientMessage) {
         if (disposed) {
           return
@@ -358,7 +358,7 @@ export function LocalBrowserWebview({
           startLoading()
         }
 
-        traceBrowserOpen(tab.id, 'browser.local.command_dispatched', {
+        traceBrowserOpen(panel.id, 'browser.local.command_dispatched', {
           command: message.type
         })
         const revision = ++commandRevision
@@ -367,7 +367,7 @@ export function LocalBrowserWebview({
             return
           }
 
-          traceBrowserOpen(tab.id, 'browser.local.navigation_failed')
+          traceBrowserOpen(panel.id, 'browser.local.navigation_failed')
           loading = false
           emitState()
           onMessage({
@@ -375,7 +375,7 @@ export function LocalBrowserWebview({
             message: cause instanceof Error ? cause.message : String(cause)
           })
         }
-        void bridge.browserCommand(tab.id, message).then((result) => {
+        void bridge.browserCommand(panel.id, message).then((result) => {
           if (!result.ok && result.error) {
             navigationFailed(result.error)
           }
@@ -392,7 +392,7 @@ export function LocalBrowserWebview({
         window.clearTimeout(startupTimer)
         clearRuntimeControl()
         owner?.dispose()
-        bridge.disposeBrowser(tab.id)
+        bridge.disposeBrowser(panel.id)
       }
     }
     onConnection(connection)
@@ -422,10 +422,10 @@ export function LocalBrowserWebview({
       }
 
       registering = true
-      traceBrowserOpen(tab.id, 'browser.local.owner_ticket_started')
+      traceBrowserOpen(panel.id, 'browser.local.owner_ticket_started')
       void (async () => {
         const ownerTicket = await requestLocalBrowserOwnerTicket(
-          tab.id,
+          panel.id,
           ownerClientIdRef.current,
           abortController.signal
         )
@@ -433,14 +433,14 @@ export function LocalBrowserWebview({
           return
         }
 
-        traceBrowserOpen(tab.id, 'browser.local.owner_ticket_received')
+        traceBrowserOpen(panel.id, 'browser.local.owner_ticket_received')
         if (!descriptor || descriptorChallenge !== ownerTicket.challenge) {
           descriptor = await bridge.registerBrowser(
-            tab.id,
+            panel.id,
             webview.getWebContentsId(),
             ownerTicket.challenge
           )
-          traceBrowserOpen(tab.id, 'browser.local.registered')
+          traceBrowserOpen(panel.id, 'browser.local.registered')
           descriptorChallenge = ownerTicket.challenge
         }
 
@@ -448,28 +448,29 @@ export function LocalBrowserWebview({
           return
         }
 
-        if (!descriptor || descriptor.tabId !== tab.id) {
+        if (!descriptor || descriptor.panelId !== panel.id) {
           throw new Error('The desktop app rejected this Browser.')
         }
 
         await bridge.setBrowserPresentationActive(
-          tab.id,
+          panel.id,
           activeRef.current && !inputBlockedRef.current
         )
 
         let connectionOwner: LocalBrowserOwnerConnection | null = null
         connectionOwner = await connectLocalBrowserOwner(
-          tab.id,
+          panel.id,
           ownerTicket,
           descriptor.endpoint,
           {
             setRuntimeControl,
-            requestClose: (force) => bridge.requestBrowserClose(tab.id, force),
+            requestClose: (force) =>
+              bridge.requestBrowserClose(panel.id, force),
             closed(reason) {
               if (!disposed) {
                 clearRuntimeControl()
                 onMessage({ type: 'closed', reason })
-                bridge.disposeBrowser(tab.id)
+                bridge.disposeBrowser(panel.id)
               }
             },
             disconnected() {
@@ -485,7 +486,7 @@ export function LocalBrowserWebview({
           return
         }
 
-        traceBrowserOpen(tab.id, 'browser.local.owner_connected', {
+        traceBrowserOpen(panel.id, 'browser.local.owner_connected', {
           resumed: connectionOwner.resumed
         })
         owner = connectionOwner
@@ -548,8 +549,8 @@ export function LocalBrowserWebview({
       dismissToolPicker()
       onFocusSurface()
     }
-    const stopBrowserFocus = bridge.onBrowserFocus((tabId) => {
-      if (tabId === tab.id) {
+    const stopBrowserFocus = bridge.onBrowserFocus((panelId) => {
+      if (panelId === panel.id) {
         focusBrowser()
       }
     })
@@ -566,7 +567,7 @@ export function LocalBrowserWebview({
       webview.addEventListener(eventName, refresh)
     }
     const browserReady = () => {
-      traceBrowserOpen(tab.id, 'browser.local.dom_ready')
+      traceBrowserOpen(panel.id, 'browser.local.dom_ready')
       domReady = true
       connectOwner()
     }
@@ -575,13 +576,13 @@ export function LocalBrowserWebview({
     resizeObserver.observe(webview)
 
     const stopPopup = bridge.onBrowserPopup((popup) => {
-      if (!disposed && popup.tabId === tab.id) {
+      if (!disposed && popup.panelId === panel.id) {
         owner?.sendPopup(popup.url)
       }
     })
 
     const stopUnavailable = bridge.onBrowserUnavailable((failure) => {
-      if (!disposed && failure.tabId === tab.id) {
+      if (!disposed && failure.panelId === panel.id) {
         window.clearTimeout(startupTimer)
         ready = false
         reporting = false
@@ -592,7 +593,7 @@ export function LocalBrowserWebview({
     // Install listeners before starting the guest, including an about:blank guest.
     webview.setAttribute('partition', 'persist:treeport-browser')
     webview.setAttribute('allowpopups', 'true')
-    webview.src = `about:blank#treeport-tab=${encodeURIComponent(tab.id)}`
+    webview.src = `about:blank#treeport-panel=${encodeURIComponent(panel.id)}`
 
     return () => {
       onConnection(null)
@@ -621,17 +622,17 @@ export function LocalBrowserWebview({
     onPaintRetentionChange,
     onFocusSurface,
     dismissToolPicker,
-    tab.id
+    panel.id
   ])
 
   useEffect(() => {
     const bridge = window.treeportDesktop
     if (bridge) {
       void bridge
-        .setBrowserPresentationActive(tab.id, active && !inputBlocked)
+        .setBrowserPresentationActive(panel.id, active && !inputBlocked)
         .catch(() => false)
     }
-  }, [active, inputBlocked, tab.id])
+  }, [active, inputBlocked, panel.id])
 
   return (
     <div className="relative size-full">
