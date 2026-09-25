@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import type { TerminalRuntimeMetadata } from '@treeport/shared'
 import { installDesktopBridge, installKeyboardPlatform } from './desktop'
-import { createPanelMock } from './panels'
+import { createTabMock } from './tabs'
 import { createPresetMock } from './presets'
 import { createProjectMock } from './projects'
 import { installMockSockets } from './sockets'
@@ -56,7 +56,7 @@ export async function mockApp(
   await createPresetMock(page, options)
   const worktrees = await createWorktreeMock(page, state)
   const terminals = await createTerminalMock(page, state)
-  const panels = await createPanelMock(page, state, options)
+  const tabs = await createTabMock(page, state, options)
 
   await page.goto(options.initialPath ?? '/')
   return {
@@ -64,6 +64,6 @@ export async function mockApp(
     ...updates,
     ...worktrees,
     ...terminals,
-    ...panels
+    ...tabs
   }
 }

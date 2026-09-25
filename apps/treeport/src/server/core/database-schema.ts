@@ -142,7 +142,7 @@ export const workspaceItemOrders = sqliteTable(
   ]
 )
 
-export const browserPanels = sqliteTable(
+export const browserTabs = sqliteTable(
   'browser_panels',
   {
     id: text().primaryKey(),
@@ -203,7 +203,7 @@ export const webPanelPermissionGrants = sqliteTable(
 export const webPanelStorage = sqliteTable(
   'web_panel_storage',
   {
-    panelId: text('panel_id')
+    tabId: text('panel_id')
       .notNull()
       .references(() => webPanels.id, { onDelete: 'cascade' }),
     key: text().notNull(),
@@ -211,7 +211,7 @@ export const webPanelStorage = sqliteTable(
     updatedAt: text('updated_at').notNull()
   },
   (table) => [
-    uniqueIndex('web_panel_storage_panel_key_idx').on(table.panelId, table.key)
+    uniqueIndex('web_panel_storage_panel_key_idx').on(table.tabId, table.key)
   ]
 )
 

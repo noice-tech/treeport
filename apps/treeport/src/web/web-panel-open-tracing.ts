@@ -5,10 +5,10 @@ import {
 } from './agent-tracing'
 
 // Request IDs join renderer milestones to treeport.request.id in server JSONL.
-// Asset spans carry treeport.panel.id. Never record launch input, file paths, or URLs.
+// Asset spans carry treeport.tab.id. Never record launch input, file paths, or URLs.
 // Bound retention because failed requests/navigation may never finish.
 const requests = new Map<string, number>()
-const panels = new Map<string, { requestId: string; startedAt: number }>()
+const tabs = new Map<string, { requestId: string; startedAt: number }>()
 
 export function beginWebPanelOpen(): string {
   const requestId = newBrowserCorrelationId()
@@ -24,38 +24,35 @@ export function beginWebPanelOpen(): string {
   return requestId
 }
 
-export function registerWebPanelOpen(panelId: string, requestId: string): void {
-  if (
-    !browserTracingEnabled() ||
-    panels.get(panelId)?.requestId === requestId
-  ) {
+export function registerWebPanelOpen(tabId: string, requestId: string): void {
+  if (!browserTracingEnabled() || tabs.get(tabId)?.requestId === requestId) {
     return
   }
 
   const startedAt = requests.get(requestId) ?? performance.now()
-  panels.delete(panelId)
-  panels.set(panelId, { requestId, startedAt })
-  if (panels.size > 128) {
-    panels.delete(panels.keys().next().value!)
+  tabs.delete(tabId)
+  tabs.set(tabId, { requestId, startedAt })
+  if (tabs.size > 128) {
+    tabs.delete(tabs.keys().next().value!)
   }
 }
 
 export function traceWebPanelOpen(
-  panelId: string,
+  tabId: string,
   event: string,
   attributes: Record<string, boolean | number | string | null> = {}
 ): void {
-  const open = panels.get(panelId)
+  const open = tabs.get(tabId)
   if (!open) {
     return
   }
 
   const elapsedMs = performance.now() - open.startedAt
   if (elapsedMs > 60_000) {
-    panels.delete(panelId)
+    tabs.delete(tabId)
     requests.delete(open.requestId)
     return
   }
 
-  browserTrace(event, open.requestId, { panelId, elapsedMs, ...attributes })
+  browserTrace(event, open.requestId, { tabId, elapsedMs, ...attributes })
 }

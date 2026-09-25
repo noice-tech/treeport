@@ -12,12 +12,12 @@ test.use({ hasTouch: true, viewport: { width: 400, height: 600 } })
 test('remote canvas separates taps, swipes and cancelled gestures', async ({
   page
 }) => {
-  // Mount the real panel without a daemon/video encoder. Only its transport is
+  // Mount the real tab without a daemon/video encoder. Only its transport is
   // replaced; Chromium supplies native touch arbitration and pointer capture.
   await page.route('**/src/web/browser-session-client.ts', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: `export function connectBrowserPanel(id, local, callbacks) {
+      body: `export function connectBrowserTab(id, local, callbacks) {
         window.browserMessages = [];
         queueMicrotask(() => callbacks.message({ type: 'ready', state: {
           url: 'https://example.com/', viewport: { width: 800, height: 600 },
@@ -42,10 +42,10 @@ test('remote canvas separates taps, swipes and cancelled gestures', async ({
           window.__vite_plugin_react_preamble_installed__ = true;
           const { default: { createElement } } = await import('/node_modules/.vite/deps/react.js');
           const { default: { createRoot } } = await import('/node_modules/.vite/deps/react-dom_client.js');
-          const { BrowserPanelWorkspace } = await import('/src/web/features/browser-panels/browser-panel-workspace.tsx');
+          const { BrowserTabWorkspace } = await import('/src/web/features/browser-tabs/browser-tab-workspace.tsx');
           await import('/src/web/styles.css');
-          createRoot(document.getElementById('root')).render(createElement(BrowserPanelWorkspace, {
-            panel: { id: 'touch-check', title: 'Touch check', url: 'https://example.com/' },
+          createRoot(document.getElementById('root')).render(createElement(BrowserTabWorkspace, {
+            tab: { id: 'touch-check', title: 'Touch check', url: 'https://example.com/' },
             active: true, autoFocusBlocked: true, inputBlocked: false,
             onLoadingChange() {}, onFocusSurface() {}
           }));

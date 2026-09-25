@@ -125,9 +125,9 @@ test.describe('mobile terminal UI', () => {
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
     await page.getByLabel('Open tree drawer').click()
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: /^New tab/ }).click()
     await page
-      .getByRole('dialog', { name: 'New panel' })
+      .getByRole('dialog', { name: 'New tab' })
       .getByRole('button', { name: 'Hunk' })
       .click()
     expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })

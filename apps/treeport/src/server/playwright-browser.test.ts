@@ -60,7 +60,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     expect(
       parseBrowserOwnerServerMessage({
         type: 'claimGranted',
-        panelId: 'panel_browser',
+        tabId: 'tab_browser',
         generation: 1,
         resumed: false,
         state

@@ -13,7 +13,7 @@ import {
   TreeportRpcs,
   treeportRpcClientLayer,
   okResponseSchema,
-  openBrowserPanelResponseSchema,
+  openBrowserTabResponseSchema,
   openWebPanelResponseSchema,
   operationResponseSchema,
   packageListingResponseSchema,
@@ -35,7 +35,7 @@ import {
   webPanelDefinitionsResponseSchema,
   webPanelInputSchema,
   type ApiErrorBody,
-  type BrowserPanel,
+  type BrowserTab,
   type CreateOperationRequest,
   type EventsSnapshot,
   type NetworkProductEvent,
@@ -579,21 +579,21 @@ async function webPanelLaunchCwd(worktree: WorktreeRecord): Promise<string> {
   return path.relative(worktreeRoot, cwd) || '.'
 }
 
-async function resolveBrowserPanel(
-  panelId?: string
-): Promise<{ panel: BrowserPanel; worktree: WorktreeRecord }> {
+async function resolveBrowserTab(
+  tabId?: string
+): Promise<{ tab: BrowserTab; worktree: WorktreeRecord }> {
   const projectList = await projects()
   const candidates = projectList.flatMap((project) =>
     project.worktrees.flatMap((worktree) =>
-      worktree.panels
-        .filter((panel): panel is BrowserPanel => panel.kind === 'browser')
-        .map((panel) => ({ panel, worktree }))
+      worktree.tabs
+        .filter((tab): tab is BrowserTab => tab.kind === 'browser')
+        .map((tab) => ({ tab, worktree }))
     )
   )
-  if (panelId) {
-    const match = candidates.find((candidate) => candidate.panel.id === panelId)
+  if (tabId) {
+    const match = candidates.find((candidate) => candidate.tab.id === tabId)
     if (!match) {
-      throw new CliError(`Browser ${panelId} was not found`, 5)
+      throw new CliError(`Browser ${tabId} was not found`, 5)
     }
 
     return match
@@ -611,38 +611,38 @@ async function resolveBrowserPanel(
     throw new CliError(
       `No Browser is open in worktree ${worktree.name}`,
       5,
-      'BROWSER_PANEL_NOT_FOUND'
+      'BROWSER_TAB_NOT_FOUND'
     )
   }
 
   throw new CliError(
-    `More than one Browser is open in worktree ${worktree.name}; specify --panel`,
+    `More than one Browser is open in worktree ${worktree.name}; specify --tab`,
     5,
-    'BROWSER_PANEL_AMBIGUOUS',
-    { panelIds: matches.map((candidate) => candidate.panel.id) }
+    'BROWSER_TAB_AMBIGUOUS',
+    { tabIds: matches.map((candidate) => candidate.tab.id) }
   )
 }
 
 async function runBrowserAgentCommand(
   command: string,
   args: string[],
-  panelId?: string
-): Promise<{ panelId: string; output: string }> {
-  const { panel } = await resolveBrowserPanel(panelId)
+  tabId?: string
+): Promise<{ tabId: string; output: string }> {
+  const { tab } = await resolveBrowserTab(tabId)
   const result = await request(
-    `/api/panels/${encodeURIComponent(panel.id)}/browser-agent`,
+    `/api/tabs/${encodeURIComponent(tab.id)}/browser-agent`,
     browserAgentResponseSchema,
     {
       method: 'POST',
       body: JSON.stringify({ command, args })
     }
   )
-  return { panelId: panel.id, output: result.output }
+  return { tabId: tab.id, output: result.output }
 }
 
-function panelUrl(worktree: WorktreeRecord, panelId: string): string {
+function tabUrl(worktree: WorktreeRecord, tabId: string): string {
   const target = new URL(apiUrl)
-  target.pathname = `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/panels/${encodeURIComponent(panelId)}`
+  target.pathname = `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/tabs/${encodeURIComponent(tabId)}`
   target.search = ''
   target.hash = ''
   return target.href
@@ -1795,17 +1795,17 @@ async function main(args: string[]): Promise<void> {
     }
 
     const result = await request(
-      `/api/worktrees/${encodeURIComponent(worktree.id)}/browser-panels`,
-      openBrowserPanelResponseSchema,
+      `/api/worktrees/${encodeURIComponent(worktree.id)}/browser-tabs`,
+      openBrowserTabResponseSchema,
       { method: 'POST', body: JSON.stringify(body) }
     )
     const output = {
       ...result,
-      url: panelUrl(worktree, result.panel.id)
+      url: tabUrl(worktree, result.tab.id)
     }
     print(
       output,
-      () => `Opened ${result.panel.title} (${result.panel.id})\n${output.url}`
+      () => `Opened ${result.tab.title} (${result.tab.id})\n${output.url}`
     )
   })
 
@@ -1844,13 +1844,13 @@ async function main(args: string[]): Promise<void> {
     .description('List open Browser sessions')
     .option('--json', 'emit machine-readable JSON')
   browserListCommand.action(async () => {
-    const panels = (await projects()).flatMap((project) =>
+    const tabs = (await projects()).flatMap((project) =>
       project.worktrees.flatMap((worktree) =>
-        worktree.panels
-          .filter((panel): panel is BrowserPanel => panel.kind === 'browser')
-          .map((panel) => ({
-            panelId: panel.id,
-            title: panel.title,
+        worktree.tabs
+          .filter((tab): tab is BrowserTab => tab.kind === 'browser')
+          .map((tab) => ({
+            tabId: tab.id,
+            title: tab.title,
             worktreeId: worktree.id,
             worktree: worktree.name,
             projectId: project.id,
@@ -1858,12 +1858,12 @@ async function main(args: string[]): Promise<void> {
           }))
       )
     )
-    print(panels, () =>
-      panels.length
-        ? panels
+    print(tabs, () =>
+      tabs.length
+        ? tabs
             .map(
-              (panel) =>
-                `${panel.panelId}\t${panel.project} / ${panel.worktree}\t${panel.title}`
+              (tab) =>
+                `${tab.tabId}\t${tab.project} / ${tab.worktree}\t${tab.title}`
             )
             .join('\n')
         : 'Browser is not open.'
@@ -1873,22 +1873,22 @@ async function main(args: string[]): Promise<void> {
   const printAgentResult = async (
     command: string,
     args: string[],
-    panelId?: string
+    tabId?: string
   ) => {
-    const result = await runBrowserAgentCommand(command, args, panelId)
+    const result = await runBrowserAgentCommand(command, args, tabId)
     print(result, () => result.output)
   }
 
   const browserSnapshotCommand = browserCommand
     .command('snapshot')
     .description('Capture an accessibility snapshot of the hosted page')
-    .option('--panel <panel-id>', 'Browser ID')
+    .option('--tab <tab-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
   browserSnapshotCommand.action(async () =>
     printAgentResult(
       'snapshot',
       [],
-      browserSnapshotCommand.opts<{ panel?: string }>().panel
+      browserSnapshotCommand.opts<{ tab?: string }>().tab
     )
   )
 
@@ -1896,13 +1896,13 @@ async function main(args: string[]): Promise<void> {
     .command('click')
     .description('Click an element from the latest browser snapshot')
     .argument('<target>', 'Playwright element reference or selector')
-    .option('--panel <panel-id>', 'Browser ID')
+    .option('--tab <tab-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
   browserClickCommand.action(async (target: string) =>
     printAgentResult(
       'click',
       [target],
-      browserClickCommand.opts<{ panel?: string }>().panel
+      browserClickCommand.opts<{ tab?: string }>().tab
     )
   )
 
@@ -1911,13 +1911,13 @@ async function main(args: string[]): Promise<void> {
     .description('Fill an editable element from the latest browser snapshot')
     .argument('<target>', 'Playwright element reference or selector')
     .argument('<text>', 'text to enter')
-    .option('--panel <panel-id>', 'Browser ID')
+    .option('--tab <tab-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
   browserFillCommand.action(async (target: string, text: string) =>
     printAgentResult(
       'fill',
       [target, text],
-      browserFillCommand.opts<{ panel?: string }>().panel
+      browserFillCommand.opts<{ tab?: string }>().tab
     )
   )
 
@@ -1925,13 +1925,13 @@ async function main(args: string[]): Promise<void> {
     .command('press')
     .description('Press a key in the hosted page')
     .argument('<key>', 'Playwright key name')
-    .option('--panel <panel-id>', 'Browser ID')
+    .option('--tab <tab-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
   browserPressCommand.action(async (key: string) =>
     printAgentResult(
       'press',
       [key],
-      browserPressCommand.opts<{ panel?: string }>().panel
+      browserPressCommand.opts<{ tab?: string }>().tab
     )
   )
 
@@ -1939,13 +1939,13 @@ async function main(args: string[]): Promise<void> {
     .command('goto')
     .description('Navigate the hosted page')
     .argument('<url>', 'absolute HTTP or HTTPS URL')
-    .option('--panel <panel-id>', 'Browser ID')
+    .option('--tab <tab-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
   browserGotoCommand.action(async (url: string) =>
     printAgentResult(
       'goto',
       [url],
-      browserGotoCommand.opts<{ panel?: string }>().panel
+      browserGotoCommand.opts<{ tab?: string }>().tab
     )
   )
 
@@ -1953,13 +1953,13 @@ async function main(args: string[]): Promise<void> {
     .command('console')
     .description('List page console messages')
     .argument('[level]', 'minimum console level')
-    .option('--panel <panel-id>', 'Browser ID')
+    .option('--tab <tab-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
   browserConsoleCommand.action(async (level?: string) =>
     printAgentResult(
       'console',
       level ? [level] : [],
-      browserConsoleCommand.opts<{ panel?: string }>().panel
+      browserConsoleCommand.opts<{ tab?: string }>().tab
     )
   )
 
@@ -1973,10 +1973,10 @@ async function main(args: string[]): Promise<void> {
     const command = browserCommand
       .command(name)
       .description(description)
-      .option('--panel <panel-id>', 'Browser ID')
+      .option('--tab <tab-id>', 'Browser ID')
       .option('--json', 'emit machine-readable JSON')
     command.action(async () =>
-      printAgentResult(agentName, [], command.opts<{ panel?: string }>().panel)
+      printAgentResult(agentName, [], command.opts<{ tab?: string }>().tab)
     )
   }
 
@@ -2445,8 +2445,8 @@ async function main(args: string[]): Promise<void> {
     .description('Create or reuse a web panel and request client navigation')
     .argument('<definition>', 'definition ID or unique short name')
     .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
-    .option('--input <json>', 'structured panel input as a JSON object')
-    .option('--new', 'create a separate panel instance')
+    .option('--input <json>', 'structured tab input as a JSON object')
+    .option('--new', 'create a separate tab instance')
     .option('--json', 'emit machine-readable JSON')
   webPanelOpenCommand.action(async (identifier: string) => {
     const options = webPanelOpenCommand.opts<{
@@ -2457,7 +2457,7 @@ async function main(args: string[]): Promise<void> {
     const worktree = await resolveWorktree(options.worktree)
     const definition = await webPanelDefinition(worktree.id, identifier)
     const result = await request(
-      `/api/worktrees/${encodeURIComponent(worktree.id)}/panels/open`,
+      `/api/worktrees/${encodeURIComponent(worktree.id)}/tabs/open`,
       openWebPanelResponseSchema,
       {
         method: 'POST',
@@ -2472,12 +2472,12 @@ async function main(args: string[]): Promise<void> {
     )
     const output = {
       ...result,
-      url: panelUrl(worktree, result.panel.id)
+      url: tabUrl(worktree, result.tab.id)
     }
     print(
       output,
       () =>
-        `${result.reused ? 'Reused' : 'Opened'} ${result.panel.title} (${result.panel.id})\n${output.url}`
+        `${result.reused ? 'Reused' : 'Opened'} ${result.tab.title} (${result.tab.id})\n${output.url}`
     )
   })
 

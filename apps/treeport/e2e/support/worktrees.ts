@@ -170,7 +170,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           name: canonicalName,
           path: `/worktrees/${canonicalName}/repo`,
           terminals: [terminal],
-          panels: []
+          tabs: []
         }
         const existingIndex = state.worktrees.findIndex(
           (item) => item.id === worktree.id

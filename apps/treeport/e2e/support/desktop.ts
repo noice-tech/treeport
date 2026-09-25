@@ -19,8 +19,8 @@ export async function installDesktopBridge(
       | 'new-worktree'
       | 'new-terminal'
       | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-      | 'new-panel'
-      | 'close-panel'
+      | 'new-tab'
+      | 'close-tab'
       | 'toggle-side-panel'
       | 'focus-location'
       | 'find-in-page'

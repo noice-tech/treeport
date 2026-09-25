@@ -82,7 +82,7 @@ export default defineConfig({
             },
             {
               label: 'Browser (experimental)',
-              slug: 'features/browser-panel'
+              slug: 'features/browser-tab'
             },
             {
               label: 'Tree setup and cleanup',

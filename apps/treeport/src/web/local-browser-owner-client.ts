@@ -59,12 +59,12 @@ export interface LocalBrowserOwnerConnection {
 }
 
 export async function requestLocalBrowserOwnerTicket(
-  panelId: string,
+  tabId: string,
   clientId: string,
   signal: AbortSignal
 ): Promise<LocalBrowserOwnerTicket> {
   const response = await fetch(
-    `/api/panels/${encodeURIComponent(panelId)}/browser-owner-ticket`,
+    `/api/tabs/${encodeURIComponent(tabId)}/browser-owner-ticket`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -89,7 +89,7 @@ export async function requestLocalBrowserOwnerTicket(
 }
 
 export function connectLocalBrowserOwner(
-  panelId: string,
+  tabId: string,
   ownerTicket: LocalBrowserOwnerTicket,
   endpoint: string,
   handlers: {
@@ -178,7 +178,7 @@ export function connectLocalBrowserOwner(
       }
 
       if (message.type === 'claimGranted') {
-        if (settled || message.panelId !== panelId) {
+        if (settled || message.tabId !== tabId) {
           socket.disconnect()
           return
         }

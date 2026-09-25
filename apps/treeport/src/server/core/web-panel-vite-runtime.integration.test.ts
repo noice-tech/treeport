@@ -29,11 +29,11 @@ afterEach(async () => {
 })
 
 async function fixture() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-panel-vite-'))
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-tab-vite-'))
   directories.push(root)
   const packageRoot = path.join(root, 'package')
   const panelRoot = path.join(packageRoot, 'web-panels', 'review')
-  await fs.mkdir(path.join(packageRoot, 'node_modules', 'panel-message'), {
+  await fs.mkdir(path.join(packageRoot, 'node_modules', 'tab-message'), {
     recursive: true
   })
   await Promise.all([
@@ -54,23 +54,23 @@ async function fixture() {
       JSON.stringify({
         name: '@acme/review',
         dependencies: {
-          'panel-message': '1.0.0',
+          'tab-message': '1.0.0',
           react: '19.2.4',
           'react-dom': '19.2.4'
         }
       })
     ),
     fs.writeFile(
-      path.join(packageRoot, 'node_modules', 'panel-message', 'package.json'),
+      path.join(packageRoot, 'node_modules', 'tab-message', 'package.json'),
       JSON.stringify({
-        name: 'panel-message',
+        name: 'tab-message',
         version: '1.0.0',
         type: 'module',
         exports: './index.js'
       })
     ),
     fs.writeFile(
-      path.join(packageRoot, 'node_modules', 'panel-message', 'index.js'),
+      path.join(packageRoot, 'node_modules', 'tab-message', 'index.js'),
       "export default 'dependency loaded'\n"
     )
   ])
@@ -78,11 +78,11 @@ async function fixture() {
   await Promise.all([
     fs.writeFile(
       path.join(panelRoot, 'index.html'),
-      '<!doctype html><main id="root"></main><script type="module" src="./panel.tsx"></script>'
+      '<!doctype html><main id="root"></main><script type="module" src="./tab.tsx"></script>'
     ),
     fs.writeFile(
-      path.join(panelRoot, 'panel.tsx'),
-      "import message from 'panel-message'; import { treeport } from '@treeport/panel-sdk'; const view = <h1>{message} {treeport.version}</h1>; document.querySelector('#root').textContent = view.props.children\n"
+      path.join(panelRoot, 'tab.tsx'),
+      "import message from 'tab-message'; import { treeport } from '@treeport/panel-sdk'; const view = <h1>{message} {treeport.version}</h1>; document.querySelector('#root').textContent = view.props.children\n"
     ),
     fs.writeFile(
       path.join(packageRoot, 'vite.config.ts'),
@@ -124,7 +124,7 @@ describe('WebPanelViteRuntime', () => {
   it('compiles source packages atomically, reuses immutable builds, and keeps old builds available', async () => {
     const { panelRoot, config, source } = await fixture()
     const runtime = new WebPanelViteRuntime(config)
-    const logicalBase = '/api/web-panels/panel/assets/'
+    const logicalBase = '/api/web-panels/tab/assets/'
 
     const firstRequests = await Promise.all([
       Effect.runPromise(runtime.resolve(source, '', logicalBase)),
@@ -170,7 +170,7 @@ describe('WebPanelViteRuntime', () => {
       await Effect.runPromise(runtime.resolve(source, '', logicalBase))
     ).toEqual(firstRequests[0])
     await fs.writeFile(
-      path.join(panelRoot, 'panel.tsx'),
+      path.join(panelRoot, 'tab.tsx'),
       "document.querySelector('#root').textContent = 'source changed'\n"
     )
     const changed = await Effect.runPromise(
@@ -192,7 +192,7 @@ describe('WebPanelViteRuntime', () => {
     ).toMatchObject({ code: 'INVALID_ASSET_PATH' })
   })
 
-  it('serves local source panels through Vite with sandbox-compatible headers', async () => {
+  it('serves local source tabs through Vite with sandbox-compatible headers', async () => {
     const { config, source } = await fixture()
     const runtime = new WebPanelViteRuntime(config)
     const server = http.createServer((request, response) => {
@@ -216,7 +216,7 @@ describe('WebPanelViteRuntime', () => {
         runtime.resolve(
           { ...source, development: true, allowNetworkRequests: true },
           '',
-          '/api/web-panels/panel/assets/'
+          '/api/web-panels/tab/assets/'
         )
       )
       if (resolution.kind !== 'redirect') {
@@ -228,7 +228,7 @@ describe('WebPanelViteRuntime', () => {
         `http://127.0.0.1:${address.data.port}${resolution.location}`,
         {
           headers: {
-            referer: `${browserOrigin}/projects/project_1/panels/panel_review`,
+            referer: `${browserOrigin}/projects/project_1/tabs/tab_review`,
             'x-forwarded-host': 'treeport.example.ts.net:5173',
             'x-forwarded-proto': 'https'
           }
@@ -253,7 +253,7 @@ describe('WebPanelViteRuntime', () => {
         ])
       )
       await expect(response.text()).resolves.toContain('@vite/client')
-      const moduleResponse = await fetch(new URL('panel.tsx', response.url))
+      const moduleResponse = await fetch(new URL('tab.tsx', response.url))
       expect(moduleResponse.status).toBe(200)
       expect(moduleResponse.headers.get('cache-control')).toBe('no-cache')
       const moduleCode = await moduleResponse.text()
@@ -264,7 +264,7 @@ describe('WebPanelViteRuntime', () => {
         `http://127.0.0.1:${address.data.port}${resolution.location}`,
         {
           headers: {
-            referer: 'https://attacker.example/panel',
+            referer: 'https://attacker.example/tab',
             'x-forwarded-host': 'treeport.example.ts.net:5173',
             'x-forwarded-proto': 'https'
           }
@@ -310,7 +310,7 @@ describe('WebPanelViteRuntime', () => {
             const resolution = yield* runtime.resolve(
               { ...source, development: true },
               '',
-              '/api/web-panels/panel/assets/'
+              '/api/web-panels/tab/assets/'
             )
             if (resolution.kind !== 'redirect') {
               throw new Error('expected development redirect')
@@ -336,14 +336,14 @@ describe('WebPanelViteRuntime', () => {
   it('returns an actionable in-frame error when a runtime dependency is missing', async () => {
     const { panelRoot, config, source } = await fixture()
     await fs.writeFile(
-      path.join(panelRoot, 'panel.tsx'),
+      path.join(panelRoot, 'tab.tsx'),
       "import missing from 'not-installed'; document.body.textContent = missing\n"
     )
     const result = await Effect.runPromise(
       new WebPanelViteRuntime(config).resolve(
         source,
         '',
-        '/api/web-panels/panel/assets/'
+        '/api/web-panels/tab/assets/'
       )
     )
     expect(result).toMatchObject({ kind: 'error', development: false })

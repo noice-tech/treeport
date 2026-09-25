@@ -467,9 +467,9 @@ test.describe('desktop worktree and terminal workflows', () => {
       }
     ])
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
-    await page.getByRole('button', { name: 'New panel in topic' }).click()
+    await page.getByRole('button', { name: 'New tab in topic' }).click()
     await page
-      .getByRole('dialog', { name: 'New panel' })
+      .getByRole('dialog', { name: 'New tab' })
       .getByRole('button', { name: 'Shell' })
       .click()
     const topicTerminals = page.getByRole('list', {
@@ -512,12 +512,12 @@ test.describe('desktop worktree and terminal workflows', () => {
   }) => {
     const mocked = await mockApp(page, [], { realFilesPanel: true })
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
-    await page.getByRole('button', { name: 'New panel in topic' }).click()
-    const launcher = page.getByRole('dialog', { name: 'New panel' })
+    await page.getByRole('button', { name: 'New tab in topic' }).click()
+    const launcher = page.getByRole('dialog', { name: 'New tab' })
     await launcher.getByRole('button', { name: 'Files, web panel' }).click()
 
     const permissionDialog = page.getByRole('alertdialog', {
-      name: 'Allow privileged panel access?'
+      name: 'Allow privileged tab access?'
     })
     await expect(permissionDialog).toContainText(
       'It can read and change existing files in this tree.'
@@ -543,13 +543,13 @@ test.describe('desktop worktree and terminal workflows', () => {
         page
           .frames()
           .some((frame) =>
-            frame.url().includes('/api/web-panels/panel_1/assets/')
+            frame.url().includes('/api/web-panels/tab_1/assets/')
           )
       )
       .toBe(true)
     const filesFrame = page
       .frames()
-      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+      .find((frame) => frame.url().includes('/api/web-panels/tab_1/assets/'))!
 
     await filesFrame.getByRole('treeitem', { name: 'src', exact: true }).click()
     await filesFrame
@@ -570,8 +570,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     const saveRequest = page.waitForRequest((request) => {
       const url = new URL(request.url())
       return (
-        request.method() === 'PUT' &&
-        url.pathname === '/api/panels/panel_1/files'
+        request.method() === 'PUT' && url.pathname === '/api/tabs/tab_1/files'
       )
     })
     await editor.press('Control+s')
@@ -590,7 +589,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.getByRole('button', { name: 'Close Files' }).click()
     const closeDialog = page.getByRole('alertdialog', { name: 'Close Files?' })
     await expect(closeDialog).toContainText(
-      'Changes in this panel have not been saved.'
+      'Changes in this tab have not been saved.'
     )
     await expect(
       closeDialog.getByRole('button', { name: 'Close without saving' })
@@ -616,8 +615,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     const staleRequest = page.waitForRequest((request) => {
       const url = new URL(request.url())
       return (
-        request.method() === 'PUT' &&
-        url.pathname === '/api/panels/panel_1/files'
+        request.method() === 'PUT' && url.pathname === '/api/tabs/tab_1/files'
       )
     })
     await editor.press('Control+s')

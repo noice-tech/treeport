@@ -119,7 +119,7 @@ describe('desktop workspace links', () => {
       link('http://127.0.0.1:8733/'),
       link('http://127.0.0.1:8733/projects/p'),
       link('http://127.0.0.1:8733/projects/p/worktrees/w/terminals/t'),
-      link('http://127.0.0.1:8733/projects/p/worktrees/w?panel=one'),
+      link('http://127.0.0.1:8733/projects/p/worktrees/w?tab=one'),
       link('http://127.0.0.1:8733/projects/p/worktrees/w#terminal'),
       link('http://127.0.0.1:8733/projects/%2F/worktrees/w'),
       'treeport://open?url=http%3A%2F%2F127.0.0.1%3A8733%2Fprojects%2F%25ZZ%2Fworktrees%2Fw'

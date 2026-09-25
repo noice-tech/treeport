@@ -1,10 +1,10 @@
 import path from 'node:path'
 import type { Page } from '@playwright/test'
 import type { ProjectRecord, WebPanelDefinition } from '@treeport/shared'
-import { buildPanel } from './panel-build'
+import { buildPanel } from './tab-build'
 import type { MockAppOptions } from './types'
 
-export async function createPanelMock(
+export async function createTabMock(
   page: Page,
   state: ProjectRecord,
   options: MockAppOptions
@@ -78,7 +78,7 @@ export async function createPanelMock(
       }
     }
 
-    if (/^\/api\/panels\/[^/]+\/files$/.test(pathname) && method === 'GET') {
+    if (/^\/api\/tabs\/[^/]+\/files$/.test(pathname) && method === 'GET') {
       await route.fulfill({
         json: { paths: [...treeFiles.keys()].sort(), truncated: false }
       })
@@ -86,7 +86,7 @@ export async function createPanelMock(
     }
 
     if (
-      /^\/api\/panels\/[^/]+\/files\/read$/.test(pathname) &&
+      /^\/api\/tabs\/[^/]+\/files\/read$/.test(pathname) &&
       method === 'POST'
     ) {
       const body: { path: string } = route.request().postDataJSON()
@@ -108,7 +108,7 @@ export async function createPanelMock(
       return
     }
 
-    if (/^\/api\/panels\/[^/]+\/files$/.test(pathname) && method === 'PUT') {
+    if (/^\/api\/tabs\/[^/]+\/files$/.test(pathname) && method === 'PUT') {
       const body: { path: string; content: string; expectedRevision: string } =
         route.request().postDataJSON()
       treeFileWrites.push(body)
@@ -157,7 +157,7 @@ export async function createPanelMock(
     }
 
     if (
-      /^\/api\/worktrees\/[^/]+\/panels\/open$/.test(pathname) &&
+      /^\/api\/worktrees\/[^/]+\/tabs\/open$/.test(pathname) &&
       method === 'POST'
     ) {
       const worktreeId = pathname.split('/')[3]!
@@ -168,8 +168,8 @@ export async function createPanelMock(
       const definition = webPanelDefinitions.find(
         (candidate) => candidate.id === body.definitionId
       )!
-      const panel = {
-        id: 'panel_1',
+      const tab = {
+        id: 'tab_1',
         kind: 'web' as const,
         worktreeId,
         definitionId: definition.id,
@@ -180,25 +180,25 @@ export async function createPanelMock(
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
-      worktree.panels.push(panel)
-      await route.fulfill({ json: { panel, created: true, reused: false } })
+      worktree.tabs.push(tab)
+      await route.fulfill({ json: { tab, created: true, reused: false } })
       return
     }
 
-    if (/^\/api\/panels\/[^/]+\/context$/.test(pathname) && method === 'GET') {
-      const panelId = pathname.split('/')[3]!
+    if (/^\/api\/tabs\/[^/]+\/context$/.test(pathname) && method === 'GET') {
+      const tabId = pathname.split('/')[3]!
       const worktree = state.worktrees.find((candidate) =>
-        candidate.panels.some((panel) => panel.id === panelId)
+        candidate.tabs.some((tab) => tab.id === tabId)
       )!
-      const panel = worktree.panels.find(
-        (candidate) => candidate.id === panelId && candidate.kind === 'web'
+      const tab = worktree.tabs.find(
+        (candidate) => candidate.id === tabId && candidate.kind === 'web'
       )!
       await route.fulfill({
         json: {
           context: {
             apiVersion: 1,
-            panel,
-            launch: panel.launch,
+            tab,
+            launch: tab.launch,
             project: {
               id: state.id,
               name: state.name,
@@ -218,17 +218,15 @@ export async function createPanelMock(
       return
     }
 
-    if (/^\/api\/panels\/[^/]+\/storage$/.test(pathname) && method === 'GET') {
+    if (/^\/api\/tabs\/[^/]+\/storage$/.test(pathname) && method === 'GET') {
       await route.fulfill({ json: { hasData: false } })
       return
     }
 
-    if (/^\/api\/panels\/[^/]+$/.test(pathname) && method === 'DELETE') {
-      const panelId = pathname.split('/').at(-1)
+    if (/^\/api\/tabs\/[^/]+$/.test(pathname) && method === 'DELETE') {
+      const tabId = pathname.split('/').at(-1)
       for (const worktree of state.worktrees) {
-        worktree.panels = worktree.panels.filter(
-          (panel) => panel.id !== panelId
-        )
+        worktree.tabs = worktree.tabs.filter((tab) => tab.id !== tabId)
       }
       await route.fulfill({ json: { ok: true } })
       return

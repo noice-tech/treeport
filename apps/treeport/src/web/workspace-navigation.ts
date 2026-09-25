@@ -1,5 +1,5 @@
 import type {
-  BrowserPanel,
+  BrowserTab,
   ProjectRecord,
   TerminalRecord,
   WebPanel,
@@ -19,13 +19,13 @@ export function openRequestMatchesTerminal(
 
 export function openRequestMatchesWorkspace(
   sourceTerminalId: string | null,
-  sourcePanelId: string | null,
+  sourceTabId: string | null,
   selectedTerminalId: string | null,
-  selectedPanelId: string | null
+  selectedTabId: string | null
 ): boolean {
   return (
     openRequestMatchesTerminal(sourceTerminalId, selectedTerminalId) ||
-    (sourcePanelId !== null && sourcePanelId === selectedPanelId)
+    (sourceTabId !== null && sourceTabId === selectedTabId)
   )
 }
 
@@ -50,18 +50,18 @@ export type WorkspaceTarget =
       terminalId: string
     }
   | {
-      kind: 'panel'
+      kind: 'tab'
       pathname: string
       projectId: string
       worktreeId: string
-      panelId: string
+      tabId: string
     }
 
 interface WorkspaceSelection {
   project: ProjectRecord | null
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
-  panel: BrowserPanel | WebPanel | null
+  tab: BrowserTab | WebPanel | null
 }
 
 export interface WorkspaceResolution {
@@ -108,17 +108,17 @@ export function terminalTarget(
   }
 }
 
-export function panelTarget(
+export function tabTarget(
   projectId: string,
   worktreeId: string,
-  panelId: string
+  tabId: string
 ): WorkspaceTarget {
   return {
-    kind: 'panel',
-    pathname: `/projects/${segment(projectId)}/worktrees/${segment(worktreeId)}/panels/${segment(panelId)}`,
+    kind: 'tab',
+    pathname: `/projects/${segment(projectId)}/worktrees/${segment(worktreeId)}/tabs/${segment(tabId)}`,
     projectId,
     worktreeId,
-    panelId
+    tabId
   }
 }
 
@@ -162,21 +162,20 @@ function deepestWorktreeTarget(
     : worktreeTarget(project.id, worktree.id)
 }
 
-export function targetForPanel(
+export function targetForTab(
   projects: ProjectRecord[],
-  panel: BrowserPanel | WebPanel
+  tab: BrowserTab | WebPanel
 ): WorkspaceTarget | null {
   for (const project of projects) {
     const worktree = project.worktrees.find(
-      (candidate) => candidate.id === panel.worktreeId
+      (candidate) => candidate.id === tab.worktreeId
     )
     if (
-      worktree?.panels.some(
-        (candidate) =>
-          candidate.kind !== 'terminal' && candidate.id === panel.id
+      worktree?.tabs.some(
+        (candidate) => candidate.kind !== 'terminal' && candidate.id === tab.id
       )
     ) {
-      return panelTarget(project.id, worktree.id, panel.id)
+      return tabTarget(project.id, worktree.id, tab.id)
     }
   }
 
@@ -229,36 +228,36 @@ function selectionForTarget(
   target: WorkspaceTarget
 ): WorkspaceSelection {
   if (target.kind === 'root') {
-    return { project: null, worktree: null, terminal: null, panel: null }
+    return { project: null, worktree: null, terminal: null, tab: null }
   }
 
   const project =
     projects.find((candidate) => candidate.id === target.projectId) ?? null
   if (!project || target.kind === 'project') {
-    return { project, worktree: null, terminal: null, panel: null }
+    return { project, worktree: null, terminal: null, tab: null }
   }
 
   const worktree =
     project.worktrees.find((candidate) => candidate.id === target.worktreeId) ??
     null
   if (!worktree || target.kind === 'worktree') {
-    return { project, worktree, terminal: null, panel: null }
+    return { project, worktree, terminal: null, tab: null }
   }
 
-  if (target.kind === 'panel') {
-    const panel =
-      worktree.panels.find(
-        (candidate): candidate is BrowserPanel | WebPanel =>
-          candidate.kind !== 'terminal' && candidate.id === target.panelId
+  if (target.kind === 'tab') {
+    const tab =
+      worktree.tabs.find(
+        (candidate): candidate is BrowserTab | WebPanel =>
+          candidate.kind !== 'terminal' && candidate.id === target.tabId
       ) ?? null
-    return { project, worktree, terminal: null, panel }
+    return { project, worktree, terminal: null, tab }
   }
 
   const terminal =
     worktree.terminals.find(
       (candidate) => candidate.id === target.terminalId
     ) ?? null
-  return { project, worktree, terminal, panel: null }
+  return { project, worktree, terminal, tab: null }
 }
 
 function decode(value: string): string | null {
@@ -310,8 +309,8 @@ function requestedTarget(pathname: string): WorkspaceTarget | null {
     return terminalTarget(projectId, worktreeId, descendantId)
   }
 
-  if (parts[4] === 'panels') {
-    return panelTarget(projectId, worktreeId, descendantId)
+  if (parts[4] === 'tabs') {
+    return tabTarget(projectId, worktreeId, descendantId)
   }
 
   return null
@@ -357,13 +356,13 @@ function resolveTarget(
     return deepestWorktreeTarget(project, worktree)
   }
 
-  if (requested.kind === 'panel') {
-    const panel = worktree.panels.find(
+  if (requested.kind === 'tab') {
+    const tab = worktree.tabs.find(
       (candidate) =>
-        candidate.kind !== 'terminal' && candidate.id === requested.panelId
+        candidate.kind !== 'terminal' && candidate.id === requested.tabId
     )
-    return panel
-      ? panelTarget(project.id, worktree.id, panel.id)
+    return tab
+      ? tabTarget(project.id, worktree.id, tab.id)
       : deepestWorktreeTarget(project, worktree)
   }
 

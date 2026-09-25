@@ -2,8 +2,8 @@ export type DesktopCommand =
   | 'new-worktree'
   | 'new-terminal'
   | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-  | 'new-panel'
-  | 'close-panel'
+  | 'new-tab'
+  | 'close-tab'
   | 'toggle-side-panel'
   | 'focus-location'
   | 'find-in-page'
@@ -22,18 +22,18 @@ export interface DesktopNavigationState {
 }
 
 export interface DesktopBrowserPopup {
-  panelId: string
+  tabId: string
   url: string
 }
 
 export interface DesktopBrowserUnavailable {
-  panelId: string
+  tabId: string
   message: string
 }
 
 export interface DesktopBrowserBridgeDescriptor {
   endpoint: string
-  panelId: string
+  tabId: string
   challenge: string
 }
 

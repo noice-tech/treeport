@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
-  BrowserPanel,
+  BrowserTab,
   ProductEventDataMap,
   ProjectRecord,
   RemoveOperationRecord,
@@ -21,8 +21,8 @@ import {
 } from './web-panel-open-tracing'
 import { NotificationCenter } from './features/notifications/notification-center'
 import { TerminalBellAttention } from './features/notifications/terminal-bell-attention'
-import { BrowserPanelWorkspace } from './features/browser-panels/browser-panel-workspace'
-import { ClosePanelDialog } from './features/panels/close-panel-dialog'
+import { BrowserTabWorkspace } from './features/browser-tabs/browser-tab-workspace'
+import { CloseTabDialog } from './features/tabs/close-tab-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
 import { parseResponse, rpc } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
@@ -43,13 +43,13 @@ import {
 } from './features/sidebar/workspace-shell'
 import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
 import { UpdateControl } from './features/updates/update-control'
-import { NewPanelDialog } from './features/panels/new-panel-dialog'
-import { useToolPicker } from './features/panels/tool-picker-context'
-import { useWorkspaceSurfaceFocus } from './features/panels/workspace-surface-focus-context'
+import { NewTabDialog } from './features/tabs/new-tab-dialog'
+import { useToolPicker } from './features/tabs/tool-picker-context'
+import { useWorkspaceSurfaceFocus } from './features/tabs/workspace-surface-focus-context'
 import {
   SidePanelToggle,
   WorktreeToolPane
-} from './features/panels/worktree-tool-pane'
+} from './features/tabs/worktree-tool-pane'
 import {
   TerminalWorkspace,
   useTerminalWorkflows
@@ -81,7 +81,7 @@ import {
   openRequestMatchesWorkspace,
   resolveWorkspaceRoute,
   targetForProject,
-  targetForPanel,
+  targetForTab,
   targetForTerminal,
   targetForWorktree
 } from './workspace-navigation'
@@ -93,7 +93,7 @@ import { browserTrace, newBrowserCorrelationId } from './agent-tracing'
 
 const TOOL_PANE_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
 
-type ClosePanelReason =
+type CloseTabReason =
   | 'browser-before-unload'
   | 'stored-data'
   | 'unsaved-changes'
@@ -101,7 +101,7 @@ type ClosePanelReason =
 type AppDialog =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
-  | { type: 'panel'; projectId: string; worktreeId: string | null }
+  | { type: 'tab'; projectId: string; worktreeId: string | null }
   | { type: 'presets' }
   | {
       type: 'remove'
@@ -111,13 +111,13 @@ type AppDialog =
       skipCleanup: boolean
     }
   | {
-      type: 'close-panel'
-      panel: BrowserPanel | WebPanel
-      reason: ClosePanelReason
+      type: 'close-tab'
+      tab: BrowserTab | WebPanel
+      reason: CloseTabReason
     }
   | null
 
-interface DeletePanelQuery {
+interface DeleteTabQuery {
   discardStoredData?: string
   force?: string
 }
@@ -180,7 +180,7 @@ function WorkspaceApp() {
     selectedWorktree?.terminals[0] ??
     null
   const selectedTerminalId = selectedTerminal?.id ?? null
-  const selectedPanel = workspaceResolution?.selection.panel ?? null
+  const selectedTab = workspaceResolution?.selection.tab ?? null
   const activeProject = selectedProject
   const {
     isMobile,
@@ -196,7 +196,7 @@ function WorkspaceApp() {
   const [mobileNotificationsOpen, setMobileNotificationsOpen] = useState(false)
   const workspaceActionsBlocked =
     dialog !== null || projectSwitcherOpen || (isMobile && drawerOpen)
-  const [retainedPanelIds, setRetainedPanelIds] = useState<Set<string>>(
+  const [retainedTabIds, setRetainedTabIds] = useState<Set<string>>(
     () => new Set()
   )
   const [toolPaneOpenByWorktree, setToolPaneOpenByWorktree] = useState<
@@ -219,15 +219,16 @@ function WorkspaceApp() {
         `${TOOL_PANE_OPEN_STORAGE_PREFIX}${selectedWorktree.id}`
       ) === 'true')
     : false
-  const [activePanelByWorktree, setActivePanelByWorktree] = useState<
+  const [activeTabByWorktree, setActiveTabByWorktree] = useState<
     Record<string, string | null>
   >({})
-  const [preserveTerminalFocusPanelId, setPreserveTerminalFocusPanelId] =
-    useState<string | null>(null)
+  const [preserveTerminalFocusTabId, setPreserveTerminalFocusTabId] = useState<
+    string | null
+  >(null)
   const selectedWorktreeTools = useMemo(
     () =>
-      selectedWorktree?.panels.filter(
-        (panel): panel is BrowserPanel | WebPanel => panel.kind !== 'terminal'
+      selectedWorktree?.tabs.filter(
+        (tab): tab is BrowserTab | WebPanel => tab.kind !== 'terminal'
       ) ?? [],
     [selectedWorktree]
   )
@@ -294,23 +295,23 @@ function WorkspaceApp() {
               }
 
               const panelsById = new Map(
-                worktree.panels.map((panel) => [panel.id, panel])
+                worktree.tabs.map((tab) => [tab.id, tab])
               )
-              const orderedTools = itemIds.map((panelId) =>
-                panelsById.get(panelId)!
+              const orderedTools = itemIds.map((tabId) =>
+                panelsById.get(tabId)!
               )
               let toolIndex = 0
               return {
                 ...worktree,
-                panels: worktree.panels.map((panel) =>
-                  panel.kind === 'terminal' ? panel : orderedTools[toolIndex++]!
+                tabs: worktree.tabs.map((tab) =>
+                  tab.kind === 'terminal' ? tab : orderedTools[toolIndex++]!
                 )
               }
             })
           }))
       )
       void parseResponse(
-        rpc.api.worktrees[':worktreeId'].panels.order.$put({
+        rpc.api.worktrees[':worktreeId'].tabs.order.$put({
           param: { worktreeId: selectedWorktree.id },
           json: { itemIds }
         })
@@ -331,37 +332,37 @@ function WorkspaceApp() {
     },
     [queryClient, selectedWorktree]
   )
-  const rememberedActivePanel = selectedWorktreeTools.find(
-    (panel) => panel.id === activePanelByWorktree[selectedWorktree?.id ?? '']
+  const rememberedActiveTab = selectedWorktreeTools.find(
+    (tab) => tab.id === activeTabByWorktree[selectedWorktree?.id ?? '']
   )
-  const activePanel =
-    selectedPanel ??
-    rememberedActivePanel ??
+  const activeTab =
+    selectedTab ??
+    rememberedActiveTab ??
     (toolPaneOpen ? selectedWorktreeTools.at(-1) : null) ??
     null
-  const activePanelId = activePanel?.id ?? null
-  const retainPanel = useCallback((panelId: string) => {
-    setRetainedPanelIds((current) => {
-      if (current.has(panelId)) {
+  const activeTabId = activeTab?.id ?? null
+  const retainTab = useCallback((tabId: string) => {
+    setRetainedTabIds((current) => {
+      if (current.has(tabId)) {
         return current
       }
 
       const next = new Set(current)
-      next.add(panelId)
+      next.add(tabId)
       return next
     })
   }, [])
   const revealTool = useCallback(
-    (panel: BrowserPanel | WebPanel, preserveTerminalFocus: boolean) => {
-      retainPanel(panel.id)
-      setActivePanelByWorktree((current) => ({
+    (tab: BrowserTab | WebPanel, preserveTerminalFocus: boolean) => {
+      retainTab(tab.id)
+      setActiveTabByWorktree((current) => ({
         ...current,
-        [panel.worktreeId]: panel.id
+        [tab.worktreeId]: tab.id
       }))
-      setToolPaneOpen(panel.worktreeId, true)
-      setPreserveTerminalFocusPanelId(preserveTerminalFocus ? panel.id : null)
+      setToolPaneOpen(tab.worktreeId, true)
+      setPreserveTerminalFocusTabId(preserveTerminalFocus ? tab.id : null)
     },
-    [retainPanel, setToolPaneOpen]
+    [retainTab, setToolPaneOpen]
   )
   const [webPanelReloadRevisions, setWebPanelReloadRevisions] = useState<
     Record<string, number>
@@ -369,40 +370,40 @@ function WorkspaceApp() {
   const [webPanelRuntimeTitles, setWebPanelRuntimeTitles] = useState<
     Record<string, string>
   >({})
-  const [dirtyWebPanelIds, setDirtyWebPanelIds] = useState<Set<string>>(
+  const [dirtyWebTabIds, setDirtyWebTabIds] = useState<Set<string>>(
     () => new Set()
   )
-  const setWebPanelDirty = useCallback((panelId: string, dirty: boolean) => {
-    setDirtyWebPanelIds((current) => {
-      if (current.has(panelId) === dirty) {
+  const setWebPanelDirty = useCallback((tabId: string, dirty: boolean) => {
+    setDirtyWebTabIds((current) => {
+      if (current.has(tabId) === dirty) {
         return current
       }
 
       const next = new Set(current)
       if (dirty) {
-        next.add(panelId)
+        next.add(tabId)
       } else {
-        next.delete(panelId)
+        next.delete(tabId)
       }
 
       return next
     })
   }, [])
-  const [browserPanelLoading, setBrowserPanelLoading] = useState<
+  const [browserTabLoading, setBrowserTabLoading] = useState<
     Record<string, boolean>
   >({})
-  const updateBrowserPanelLoading = useCallback(
-    (panelId: string, loading: boolean) => {
-      setBrowserPanelLoading((current) => {
-        if (Boolean(current[panelId]) === loading) {
+  const updateBrowserTabLoading = useCallback(
+    (tabId: string, loading: boolean) => {
+      setBrowserTabLoading((current) => {
+        if (Boolean(current[tabId]) === loading) {
           return current
         }
 
         const next = { ...current }
         if (loading) {
-          next[panelId] = true
+          next[tabId] = true
         } else {
-          delete next[panelId]
+          delete next[tabId]
         }
 
         return next
@@ -411,81 +412,79 @@ function WorkspaceApp() {
     []
   )
   const setWebPanelRuntimeTitle = useCallback(
-    (panelId: string, title: string | null) => {
+    (tabId: string, title: string | null) => {
       setWebPanelRuntimeTitles((current) => {
         if (title === null) {
-          if (current[panelId] === undefined) {
+          if (current[tabId] === undefined) {
             return current
           }
 
           const next = { ...current }
-          delete next[panelId]
+          delete next[tabId]
           return next
         }
 
-        return current[panelId] === title
+        return current[tabId] === title
           ? current
-          : { ...current, [panelId]: title }
+          : { ...current, [tabId]: title }
       })
     },
     []
   )
   useEffect(() => {
-    const panels = projects.flatMap((project) =>
-      project.worktrees.flatMap((worktree) => worktree.panels)
+    const tabs = projects.flatMap((project) =>
+      project.worktrees.flatMap((worktree) => worktree.tabs)
     )
-    const panelIds = new Set(panels.map((panel) => panel.id))
-    const webPanelIds = new Set(
-      panels.filter((panel) => panel.kind === 'web').map((panel) => panel.id)
+    const tabIds = new Set(tabs.map((tab) => tab.id))
+    const webTabIds = new Set(
+      tabs.filter((tab) => tab.kind === 'web').map((tab) => tab.id)
     )
     setWebPanelRuntimeTitles((current) => {
       const removedIds = Object.keys(current).filter(
-        (panelId) => !webPanelIds.has(panelId)
+        (tabId) => !webTabIds.has(tabId)
       )
       if (removedIds.length === 0) {
         return current
       }
 
       const next = { ...current }
-      removedIds.forEach((panelId) => delete next[panelId])
+      removedIds.forEach((tabId) => delete next[tabId])
       return next
     })
-    setBrowserPanelLoading((current) => {
+    setBrowserTabLoading((current) => {
       const removedIds = Object.keys(current).filter(
-        (panelId) => !panelIds.has(panelId)
+        (tabId) => !tabIds.has(tabId)
       )
       if (removedIds.length === 0) {
         return current
       }
 
       const next = { ...current }
-      removedIds.forEach((panelId) => delete next[panelId])
+      removedIds.forEach((tabId) => delete next[tabId])
       return next
     })
-    setDirtyWebPanelIds((current) => {
-      const next = new Set(
-        [...current].filter((panelId) => webPanelIds.has(panelId))
-      )
+    setDirtyWebTabIds((current) => {
+      const next = new Set([...current].filter((tabId) => webTabIds.has(tabId)))
       return next.size === current.size ? current : next
     })
   }, [projects])
-  const panelDialogProject =
-    dialog?.type === 'panel'
+  const tabDialogProject =
+    dialog?.type === 'tab'
       ? (projects.find((project) => project.id === dialog.projectId) ?? null)
       : null
-  const panelDialogWorktree =
-    dialog?.type === 'panel' && dialog.worktreeId
-      ? (panelDialogProject?.worktrees.find(
+  const tabDialogWorktree =
+    dialog?.type === 'tab' && dialog.worktreeId
+      ? (tabDialogProject?.worktrees.find(
           (worktree) => worktree.id === dialog.worktreeId
         ) ?? null)
       : null
   const webPanelDefinitionsWorktree =
-    panelDialogWorktree ?? (toolPaneOpen ? selectedWorktree : null)
+    tabDialogWorktree ?? (toolPaneOpen ? selectedWorktree : null)
   const presetDefinitionsContext =
     dialog?.type === 'worktree'
       ? { projectId: dialog.project.id }
-      : panelDialogWorktree
-        ? { worktreeId: panelDialogWorktree.id }
+      : tabDialogWorktree
+        ? { worktreeId: tabDialogWorktree.id }
         : selectedWorktree
           ? { worktreeId: selectedWorktree.id }
           : selectedProject
@@ -546,7 +545,7 @@ function WorkspaceApp() {
         }
 
         const result = await parseResponse(
-          rpc.api.worktrees[':worktreeId'].panels.open.$post(
+          rpc.api.worktrees[':worktreeId'].tabs.open.$post(
             {
               param: { worktreeId: worktree.id },
               json: {
@@ -561,16 +560,16 @@ function WorkspaceApp() {
           browserTrace('web_panel.open.request_failed', requestId)
           throw error
         })
-        registerWebPanelOpen(result.panel.id, requestId)
-        traceWebPanelOpen(result.panel.id, 'web_panel.open.response', {
+        registerWebPanelOpen(result.tab.id, requestId)
+        traceWebPanelOpen(result.tab.id, 'web_panel.open.response', {
           reused: result.reused
         })
-        return result.panel
+        return result.tab
       })(),
-    onSuccess: async (panel, { worktree }) => {
-      traceWebPanelOpen(panel.id, 'web_panel.open.ui_requested')
+    onSuccess: async (tab, { worktree }) => {
+      traceWebPanelOpen(tab.id, 'web_panel.open.ui_requested')
       setDialog(null)
-      revealTool(panel, false)
+      revealTool(tab, false)
       queryClient.setQueryData<ProjectRecord[]>(
         projectsQueryOptions.queryKey,
         (current) =>
@@ -581,23 +580,21 @@ function WorkspaceApp() {
                   ...project,
                   worktrees: project.worktrees.map((candidate) =>
                     candidate.id !== worktree.id ||
-                    candidate.panels.some(
-                      (existing) => existing.id === panel.id
-                    )
+                    candidate.tabs.some((existing) => existing.id === tab.id)
                       ? candidate
                       : {
                           ...candidate,
-                          panels: [...candidate.panels, panel]
+                          tabs: [...candidate.tabs, tab]
                         }
                   )
                 }
           )
       )
-      const target = targetForPanel(
+      const target = targetForTab(
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? projects,
-        panel
+        tab
       )
       const navigation = target
         ? navigateToWorkspace(target)
@@ -613,17 +610,17 @@ function WorkspaceApp() {
       })
     }
   })
-  const createBrowserPanel = useMutation({
+  const createBrowserTab = useMutation({
     mutationFn: ({ worktree }: { worktree: WorktreeRecord }) =>
       parseResponse(
-        rpc.api.worktrees[':worktreeId']['browser-panels'].$post({
+        rpc.api.worktrees[':worktreeId']['browser-tabs'].$post({
           param: { worktreeId: worktree.id },
           json: {}
         })
       ),
-    onSuccess: async ({ panel }, { worktree }) => {
+    onSuccess: async ({ tab }, { worktree }) => {
       setDialog(null)
-      revealTool(panel, false)
+      revealTool(tab, false)
       queryClient.setQueryData<ProjectRecord[]>(
         projectsQueryOptions.queryKey,
         (current) =>
@@ -634,23 +631,21 @@ function WorkspaceApp() {
                   ...project,
                   worktrees: project.worktrees.map((candidate) =>
                     candidate.id !== worktree.id ||
-                    candidate.panels.some(
-                      (existing) => existing.id === panel.id
-                    )
+                    candidate.tabs.some((existing) => existing.id === tab.id)
                       ? candidate
                       : {
                           ...candidate,
-                          panels: [...candidate.panels, panel]
+                          tabs: [...candidate.tabs, tab]
                         }
                   )
                 }
           )
       )
-      const target = targetForPanel(
+      const target = targetForTab(
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? projects,
-        panel
+        tab
       )
       const navigation = target
         ? navigateToWorkspace(target)
@@ -666,22 +661,22 @@ function WorkspaceApp() {
       })
     }
   })
-  const closePanel = useMutation({
+  const closeTab = useMutation({
     mutationFn: ({
-      panel,
+      tab,
       discardStoredData = false,
       force = false,
       correlationId,
       requestedAt
     }: {
-      panel: BrowserPanel | WebPanel
+      tab: BrowserTab | WebPanel
       discardStoredData?: boolean
       force?: boolean
       trigger?: HTMLElement
       correlationId: string
       requestedAt: number
     }) => {
-      const query: DeletePanelQuery = {}
+      const query: DeleteTabQuery = {}
       if (discardStoredData) {
         query.discardStoredData = 'true'
       }
@@ -690,65 +685,65 @@ function WorkspaceApp() {
         query.force = 'true'
       }
 
-      browserTrace('panel.remove.request.started', correlationId, {
+      browserTrace('tab.remove.request.started', correlationId, {
         elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
-        panelId: panel.id,
-        panelKind: panel.kind
+        tabId: tab.id,
+        panelKind: tab.kind
       })
       return parseResponse(
-        rpc.api.panels[':panelId'].$delete(
+        rpc.api.tabs[':tabId'].$delete(
           {
-            param: { panelId: panel.id },
+            param: { tabId: tab.id },
             query
           },
           { headers: { 'x-request-id': correlationId } }
         )
       )
     },
-    onSuccess: async (_, { panel, correlationId, requestedAt }) => {
-      browserTrace('panel.remove.response.received', correlationId, {
+    onSuccess: async (_, { tab, correlationId, requestedAt }) => {
+      browserTrace('tab.remove.response.received', correlationId, {
         elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
-        panelId: panel.id,
-        panelKind: panel.kind
+        tabId: tab.id,
+        panelKind: tab.kind
       })
-      setWebPanelRuntimeTitle(panel.id, null)
-      setWebPanelDirty(panel.id, false)
-      setPreserveTerminalFocusPanelId((current) =>
-        current === panel.id ? null : current
+      setWebPanelRuntimeTitle(tab.id, null)
+      setWebPanelDirty(tab.id, false)
+      setPreserveTerminalFocusTabId((current) =>
+        current === tab.id ? null : current
       )
-      setRetainedPanelIds((current) => {
-        if (!current.has(panel.id)) {
+      setRetainedTabIds((current) => {
+        if (!current.has(tab.id)) {
           return current
         }
 
         const next = new Set(current)
-        next.delete(panel.id)
+        next.delete(tab.id)
         return next
       })
       setDialog((current) =>
-        current?.type === 'close-panel' && current.panel.id === panel.id
+        current?.type === 'close-tab' && current.tab.id === tab.id
           ? null
           : current
       )
       const worktree = projects
         .flatMap((project) => project.worktrees)
-        .find((candidate) => candidate.id === panel.worktreeId)
+        .find((candidate) => candidate.id === tab.worktreeId)
       const tools =
-        worktree?.panels.filter(
-          (candidate): candidate is BrowserPanel | WebPanel =>
+        worktree?.tabs.filter(
+          (candidate): candidate is BrowserTab | WebPanel =>
             candidate.kind !== 'terminal'
         ) ?? []
       const closedIndex = tools.findIndex(
-        (candidate) => candidate.id === panel.id
+        (candidate) => candidate.id === tab.id
       )
       const remainingTools = tools.filter(
-        (candidate) => candidate.id !== panel.id
+        (candidate) => candidate.id !== tab.id
       )
       const nextTool =
         remainingTools[closedIndex] ?? remainingTools[closedIndex - 1] ?? null
-      setActivePanelByWorktree((current) =>
-        current[panel.worktreeId] === panel.id
-          ? { ...current, [panel.worktreeId]: nextTool?.id ?? null }
+      setActiveTabByWorktree((current) =>
+        current[tab.worktreeId] === tab.id
+          ? { ...current, [tab.worktreeId]: nextTool?.id ?? null }
           : current
       )
       queryClient.setQueryData<ProjectRecord[]>(
@@ -757,33 +752,33 @@ function WorkspaceApp() {
           current?.map((project) => ({
             ...project,
             worktrees: project.worktrees.map((worktree) =>
-              worktree.id === panel.worktreeId
+              worktree.id === tab.worktreeId
                 ? {
                     ...worktree,
-                    panels: worktree.panels.filter(
-                      (candidate) => candidate.id !== panel.id
+                    tabs: worktree.tabs.filter(
+                      (candidate) => candidate.id !== tab.id
                     )
                   }
                 : worktree
             )
           }))
       )
-      browserTrace('panel.remove.cache.updated', correlationId, {
-        panelId: panel.id
+      browserTrace('tab.remove.cache.updated', correlationId, {
+        tabId: tab.id
       })
-      if (selectedPanel?.id === panel.id) {
+      if (selectedTab?.id === tab.id) {
         const target = nextTool
-          ? targetForPanel(projects, nextTool)
+          ? targetForTab(projects, nextTool)
           : worktree
             ? targetForWorktree(projects, worktree, selectedTerminalId)
             : null
         if (target) {
-          browserTrace('panel.remove.navigation.started', correlationId, {
-            panelId: panel.id
+          browserTrace('tab.remove.navigation.started', correlationId, {
+            tabId: tab.id
           })
           await navigateToWorkspace(target, true)
-          browserTrace('panel.remove.navigation.finished', correlationId, {
-            panelId: panel.id
+          browserTrace('tab.remove.navigation.finished', correlationId, {
+            tabId: tab.id
           })
         }
       }
@@ -792,98 +787,92 @@ function WorkspaceApp() {
         restoreEmptyToolFocus()
       }
 
-      browserTrace('panel.remove.settled', correlationId, {
+      browserTrace('tab.remove.settled', correlationId, {
         elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
         failed: false,
-        panelId: panel.id
+        tabId: tab.id
       })
       void queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
       })
     },
     onError: (error, request) => {
-      const { panel, trigger, correlationId, requestedAt } = request
+      const { tab, trigger, correlationId, requestedAt } = request
       if (
-        panel.kind === 'browser' &&
+        tab.kind === 'browser' &&
         errorDetails(error).code === 'BROWSER_BEFORE_UNLOAD'
       ) {
-        browserTrace('panel.remove.confirmation.required', correlationId, {
+        browserTrace('tab.remove.confirmation.required', correlationId, {
           elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
-          panelId: panel.id,
+          tabId: tab.id,
           reason: 'browser-before-unload'
         })
         openDialog(
-          { type: 'close-panel', panel, reason: 'browser-before-unload' },
+          { type: 'close-tab', tab, reason: 'browser-before-unload' },
           trigger
         )
         return
       }
 
-      browserTrace('panel.remove.failed', correlationId, {
+      browserTrace('tab.remove.failed', correlationId, {
         elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
-        panelId: panel.id,
-        panelKind: panel.kind
+        tabId: tab.id,
+        panelKind: tab.kind
       })
-      notifyError(error, { operation: `close panel “${panel.title}”` })
+      notifyError(error, { operation: `close tab “${tab.title}”` })
     }
   })
-  const startPanelClose = (
-    panel: BrowserPanel | WebPanel,
+  const startTabClose = (
+    tab: BrowserTab | WebPanel,
     options: { discardStoredData?: boolean; force?: boolean } = {},
     trigger?: HTMLElement
   ) => {
     const correlationId = newBrowserCorrelationId()
     const requestedAt = performance.now()
-    browserTrace('panel.remove.command.admitted', correlationId, {
-      panelId: panel.id,
-      panelKind: panel.kind,
-      worktreeId: panel.worktreeId
+    browserTrace('tab.remove.command.admitted', correlationId, {
+      tabId: tab.id,
+      panelKind: tab.kind,
+      worktreeId: tab.worktreeId
     })
-    const request = { panel, ...options, correlationId, requestedAt }
-    closePanel.mutate(trigger ? { ...request, trigger } : request)
+    const request = { tab, ...options, correlationId, requestedAt }
+    closeTab.mutate(trigger ? { ...request, trigger } : request)
   }
-  const requestClosePanel = (
-    panel: BrowserPanel | WebPanel,
+  const requestCloseTab = (
+    tab: BrowserTab | WebPanel,
     trigger?: HTMLElement
   ) => {
-    if (panel.kind === 'browser') {
-      startPanelClose(panel, {}, trigger)
+    if (tab.kind === 'browser') {
+      startTabClose(tab, {}, trigger)
       return
     }
 
-    if (dirtyWebPanelIds.has(panel.id)) {
-      openDialog(
-        { type: 'close-panel', panel, reason: 'unsaved-changes' },
-        trigger
-      )
+    if (dirtyWebTabIds.has(tab.id)) {
+      openDialog({ type: 'close-tab', tab, reason: 'unsaved-changes' }, trigger)
       return
     }
 
     void parseResponse(
-      rpc.api.panels[':panelId'].storage.$get({
-        param: { panelId: panel.id }
+      rpc.api.tabs[':tabId'].storage.$get({
+        param: { tabId: tab.id }
       })
     ).then(
       ({ hasData }) => {
         if (hasData) {
-          openDialog(
-            { type: 'close-panel', panel, reason: 'stored-data' },
-            trigger
-          )
+          openDialog({ type: 'close-tab', tab, reason: 'stored-data' }, trigger)
         } else {
-          startPanelClose(panel)
+          startTabClose(tab)
         }
       },
       (error) => {
         notifyError(error, {
-          operation: `check stored data for web panel “${panel.title}”`
+          operation: `check stored data for web panel “${tab.title}”`
         })
       }
     )
   }
   const navigatePanelOpenRequest = useCallback(
-    (request: ProductEventDataMap['panel.open_requested']) => {
-      const webPanel = request.panel.kind === 'web'
+    (request: ProductEventDataMap['tab.open_requested']) => {
+      const webPanel = request.tab.kind === 'web'
       if (request.requestId) {
         browserTrace(
           webPanel
@@ -891,7 +880,7 @@ function WorkspaceApp() {
             : 'browser.open.event_received',
           request.requestId,
           {
-            panelId: request.panelId
+            tabId: request.tabId
           }
         )
       }
@@ -899,9 +888,9 @@ function WorkspaceApp() {
       if (
         !openRequestMatchesWorkspace(
           request.sourceTerminalId,
-          request.sourcePanelId,
+          request.sourceTabId,
           selectedTerminalId,
-          activePanelId
+          activeTabId
         )
       ) {
         return
@@ -909,22 +898,22 @@ function WorkspaceApp() {
 
       if (request.requestId) {
         if (webPanel) {
-          registerWebPanelOpen(request.panelId, request.requestId)
-          traceWebPanelOpen(request.panelId, 'web_panel.open.ui_requested')
+          registerWebPanelOpen(request.tabId, request.requestId)
+          traceWebPanelOpen(request.tabId, 'web_panel.open.ui_requested')
         } else {
-          registerBrowserOpen(request.panelId, request.requestId)
-          traceBrowserOpen(request.panelId, 'browser.open.ui_requested')
+          registerBrowserOpen(request.tabId, request.requestId)
+          traceBrowserOpen(request.tabId, 'browser.open.ui_requested')
         }
       }
 
       revealTool(
-        request.panel,
+        request.tab,
         request.sourceTerminalId !== null &&
           request.sourceTerminalId === selectedTerminalId
       )
       setWebPanelReloadRevisions((current) => ({
         ...current,
-        [request.panelId]: (current[request.panelId] ?? 0) + 1
+        [request.tabId]: (current[request.tabId] ?? 0) + 1
       }))
       queryClient.setQueryData<ProjectRecord[]>(
         projectsQueryOptions.queryKey,
@@ -936,13 +925,11 @@ function WorkspaceApp() {
                 ? worktree
                 : {
                     ...worktree,
-                    panels: worktree.panels.some(
-                      (panel) => panel.id === request.panelId
-                    )
-                      ? worktree.panels.map((panel) =>
-                          panel.id === request.panelId ? request.panel : panel
+                    tabs: worktree.tabs.some((tab) => tab.id === request.tabId)
+                      ? worktree.tabs.map((tab) =>
+                          tab.id === request.tabId ? request.tab : tab
                         )
-                      : [...worktree.panels, request.panel]
+                      : [...worktree.tabs, request.tab]
                   }
             )
           }))
@@ -951,7 +938,7 @@ function WorkspaceApp() {
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? []
-      const target = targetForPanel(currentProjects, request.panel)
+      const target = targetForTab(currentProjects, request.tab)
       const navigation = target
         ? navigateToWorkspace(target)
         : queryClient
@@ -963,7 +950,7 @@ function WorkspaceApp() {
                 queryClient.getQueryData<ProjectRecord[]>(
                   projectsQueryOptions.queryKey
                 ) ?? []
-              const freshTarget = targetForPanel(freshProjects, request.panel)
+              const freshTarget = targetForTab(freshProjects, request.tab)
               if (freshTarget) {
                 await navigateToWorkspace(freshTarget)
               }
@@ -977,17 +964,17 @@ function WorkspaceApp() {
                 : 'browser.open.workspace_navigated',
               request.requestId,
               {
-                panelId: request.panelId
+                tabId: request.tabId
               }
             )
           }
         })
         .catch((error) => {
-          notifyError(error, { operation: 'open panel' })
+          notifyError(error, { operation: 'open tab' })
         })
     },
     [
-      activePanelId,
+      activeTabId,
       navigateToWorkspace,
       queryClient,
       revealTool,
@@ -1035,11 +1022,10 @@ function WorkspaceApp() {
     dialog !== null
       ? null
       : toolPaneOpen && focusedSurface === 'tool'
-        ? activePanelId
-        : (selectedWorktree?.panels.find(
-            (panel) =>
-              panel.kind === 'terminal' &&
-              panel.terminalId === selectedTerminalId
+        ? activeTabId
+        : (selectedWorktree?.tabs.find(
+            (tab) =>
+              tab.kind === 'terminal' && tab.terminalId === selectedTerminalId
           )?.id ?? null)
   )
   const eventsDisconnected = useProjectEventsBridge(
@@ -1061,23 +1047,18 @@ function WorkspaceApp() {
   }
 
   useEffect(() => {
-    if (!workspaceResolution?.canonical || !selectedPanel) {
+    if (!workspaceResolution?.canonical || !selectedTab) {
       return
     }
 
-    retainPanel(selectedPanel.id)
-    setActivePanelByWorktree((current) =>
-      current[selectedPanel.worktreeId] === selectedPanel.id
+    retainTab(selectedTab.id)
+    setActiveTabByWorktree((current) =>
+      current[selectedTab.worktreeId] === selectedTab.id
         ? current
-        : { ...current, [selectedPanel.worktreeId]: selectedPanel.id }
+        : { ...current, [selectedTab.worktreeId]: selectedTab.id }
     )
-    setToolPaneOpen(selectedPanel.worktreeId, true)
-  }, [
-    retainPanel,
-    selectedPanel,
-    setToolPaneOpen,
-    workspaceResolution?.canonical
-  ])
+    setToolPaneOpen(selectedTab.worktreeId, true)
+  }, [retainTab, selectedTab, setToolPaneOpen, workspaceResolution?.canonical])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
@@ -1134,17 +1115,17 @@ function WorkspaceApp() {
       activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
     [activeProject]
   )
-  const retainedPanels = useMemo(
+  const retainedTabs = useMemo(
     () =>
       projects
         .flatMap((project) => project.worktrees)
-        .flatMap((worktree) => worktree.panels)
+        .flatMap((worktree) => worktree.tabs)
         .filter(
-          (panel): panel is BrowserPanel | WebPanel =>
-            panel.kind !== 'terminal' &&
-            (retainedPanelIds.has(panel.id) || panel.id === activePanelId)
+          (tab): tab is BrowserTab | WebPanel =>
+            tab.kind !== 'terminal' &&
+            (retainedTabIds.has(tab.id) || tab.id === activeTabId)
         ),
-    [activePanelId, projects, retainedPanelIds]
+    [activeTabId, projects, retainedTabIds]
   )
   const navigateToTerminal = useCallback(
     (terminal: TerminalRecord) => {
@@ -1290,12 +1271,12 @@ function WorkspaceApp() {
     },
     [focusSurface, navigateToTerminal]
   )
-  const selectPanel = useCallback(
-    (panel: BrowserPanel | WebPanel) => {
+  const selectTab = useCallback(
+    (tab: BrowserTab | WebPanel) => {
       focusSurface('tool')
-      revealTool(panel, false)
+      revealTool(tab, false)
 
-      const target = targetForPanel(projects, panel)
+      const target = targetForTab(projects, tab)
       if (target) {
         void navigateToWorkspace(target)
       }
@@ -1334,12 +1315,12 @@ function WorkspaceApp() {
       }
 
       if (toolPaneOpen && focusedSurfaceRef.current === 'tool') {
-        const panel = selectedWorktreeTools[index]
-        if (!panel) {
+        const tab = selectedWorktreeTools[index]
+        if (!tab) {
           return false
         }
 
-        selectPanel(panel)
+        selectTab(tab)
         return true
       }
 
@@ -1347,7 +1328,7 @@ function WorkspaceApp() {
     },
     [
       selectedWorktree,
-      selectPanel,
+      selectTab,
       selectedWorktreeTools,
       selectWorkspaceByIndex,
       toolPaneOpen,
@@ -1378,11 +1359,11 @@ function WorkspaceApp() {
   }, [selectFocusedSurfaceByIndex])
 
   const panelLaunchDisabled =
-    !panelDialogProject ||
-    !panelDialogWorktree ||
-    panelDialogProject.availability.state === 'unavailable' ||
-    Boolean(panelDialogWorktree.prunable) ||
-    Boolean(pendingRemovals[panelDialogWorktree.id])
+    !tabDialogProject ||
+    !tabDialogWorktree ||
+    tabDialogProject.availability.state === 'unavailable' ||
+    Boolean(tabDialogWorktree.prunable) ||
+    Boolean(pendingRemovals[tabDialogWorktree.id])
   const toolLaunchDisabled =
     !selectedProject ||
     !selectedWorktree ||
@@ -1400,20 +1381,20 @@ function WorkspaceApp() {
       return
     }
 
-    const panel = activePanel ?? selectedWorktreeTools.at(-1) ?? null
-    if (panel) {
-      retainPanel(panel.id)
-      setActivePanelByWorktree((current) => ({
+    const tab = activeTab ?? selectedWorktreeTools.at(-1) ?? null
+    if (tab) {
+      retainTab(tab.id)
+      setActiveTabByWorktree((current) => ({
         ...current,
-        [panel.worktreeId]: panel.id
+        [tab.worktreeId]: tab.id
       }))
     }
 
     setToolPaneOpen(selectedWorktree.id, true)
   }, [
-    activePanel,
+    activeTab,
     focusSurface,
-    retainPanel,
+    retainTab,
     selectedWorktree,
     selectedWorktreeTools,
     setToolPaneOpen,
@@ -1421,7 +1402,7 @@ function WorkspaceApp() {
   ])
   const focusToolSurface = useCallback(() => {
     focusSurface('tool')
-    setPreserveTerminalFocusPanelId(null)
+    setPreserveTerminalFocusTabId(null)
   }, [focusSurface])
 
   useEffect(() => {
@@ -1494,7 +1475,7 @@ function WorkspaceApp() {
 
     return desktopBridge.onCommand((command) => {
       if (command === 'reload') {
-        if (!(toolPaneOpen && activePanel?.kind === 'browser')) {
+        if (!(toolPaneOpen && activeTab?.kind === 'browser')) {
           window.location.reload()
         }
 
@@ -1555,8 +1536,8 @@ function WorkspaceApp() {
         toggleToolPane()
       } else if (command === 'new-terminal') {
         if (toolSurfaceHasFocus) {
-          if (!toolLaunchDisabled && !createBrowserPanel.isPending) {
-            createBrowserPanel.mutate({ worktree: selectedWorktree })
+          if (!toolLaunchDisabled && !createBrowserTab.isPending) {
+            createBrowserTab.mutate({ worktree: selectedWorktree })
           }
         } else {
           const correlationId = newBrowserCorrelationId()
@@ -1572,15 +1553,15 @@ function WorkspaceApp() {
         }
       } else if (splitDirection && !toolSurfaceHasFocus) {
         createSplitTerminal(splitDirection)
-      } else if (command === 'new-panel') {
+      } else if (command === 'new-tab') {
         openDialog({
-          type: 'panel',
+          type: 'tab',
           projectId: selectedProject.id,
           worktreeId: selectedWorktree.id
         })
-      } else if (command === 'close-panel') {
-        if (toolSurfaceHasFocus && activePanel) {
-          requestClosePanel(activePanel)
+      } else if (command === 'close-tab') {
+        if (toolSurfaceHasFocus && activeTab) {
+          requestCloseTab(activeTab)
         } else if (selectedTerminal) {
           terminalWorkflows.requestCloseTerminal(selectedTerminal)
         }
@@ -1588,12 +1569,12 @@ function WorkspaceApp() {
     })
   }, [
     activeProject,
-    activePanel,
+    activeTab,
     selectedProject,
     selectedTerminal,
     selectedWorktree,
-    createBrowserPanel.isPending,
-    createBrowserPanel.mutate,
+    createBrowserTab.isPending,
+    createBrowserTab.mutate,
     selectFocusedSurfaceByIndex,
     selectWorktree,
     toggleToolPane,
@@ -1663,10 +1644,10 @@ function WorkspaceApp() {
           onReorderTerminals={reorderTerminals}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
-          onOpenPanelDialog={(project, worktree, trigger) =>
+          onOpenTabDialog={(project, worktree, trigger) =>
             openDialog(
               {
-                type: 'panel',
+                type: 'tab',
                 projectId: project.id,
                 worktreeId: worktree?.id ?? null
               },
@@ -1728,9 +1709,9 @@ function WorkspaceApp() {
                 worktreeName={selectedWorktree.name}
                 visible={toolPaneOpen}
                 tools={selectedWorktreeTools}
-                activePanelId={activePanelId}
+                activeTabId={activeTabId}
                 webPanelRuntimeTitles={webPanelRuntimeTitles}
-                browserPanelLoading={browserPanelLoading}
+                browserTabLoading={browserTabLoading}
                 definitions={webPanelDefinitionsQuery.data ?? []}
                 definitionsLoading={
                   toolPaneOpen && webPanelDefinitionsQuery.isPending
@@ -1739,13 +1720,13 @@ function WorkspaceApp() {
                 launchDisabled={
                   toolLaunchDisabled ||
                   createWebPanel.isPending ||
-                  createBrowserPanel.isPending
+                  createBrowserTab.isPending
                 }
-                onSelectPanel={selectPanel}
-                onClosePanel={requestClosePanel}
-                onReorderPanels={reorderTools}
-                onCreateBrowserPanel={() =>
-                  createBrowserPanel.mutate({ worktree: selectedWorktree })
+                onSelectTab={selectTab}
+                onCloseTab={requestCloseTab}
+                onReorderTabs={reorderTools}
+                onCreateBrowserTab={() =>
+                  createBrowserTab.mutate({ worktree: selectedWorktree })
                 }
                 onOpenWebPanel={(definition) =>
                   createWebPanel.mutate({
@@ -1756,28 +1737,28 @@ function WorkspaceApp() {
                 }
                 onFocusSurface={focusToolSurface}
               >
-                {retainedPanels.map((panel) => {
-                  const active = panel.id === activePanelId && toolPaneOpen
+                {retainedTabs.map((tab) => {
+                  const active = tab.id === activeTabId && toolPaneOpen
                   const autoFocusBlocked =
                     workspaceActionsBlocked ||
-                    preserveTerminalFocusPanelId === panel.id
-                  return panel.kind === 'browser' ? (
-                    <BrowserPanelWorkspace
-                      key={panel.id}
-                      panel={panel}
+                    preserveTerminalFocusTabId === tab.id
+                  return tab.kind === 'browser' ? (
+                    <BrowserTabWorkspace
+                      key={tab.id}
+                      tab={tab}
                       active={active}
                       autoFocusBlocked={autoFocusBlocked}
                       inputBlocked={workspaceActionsBlocked}
-                      onLoadingChange={updateBrowserPanelLoading}
+                      onLoadingChange={updateBrowserTabLoading}
                       onFocusSurface={focusToolSurface}
                     />
                   ) : (
                     <WebPanelWorkspace
-                      key={panel.id}
-                      panel={panel}
+                      key={tab.id}
+                      tab={tab}
                       active={active}
-                      title={webPanelRuntimeTitles[panel.id] ?? panel.title}
-                      reloadRevision={webPanelReloadRevisions[panel.id] ?? 0}
+                      title={webPanelRuntimeTitles[tab.id] ?? tab.title}
+                      reloadRevision={webPanelReloadRevisions[tab.id] ?? 0}
                       autoFocusBlocked={autoFocusBlocked}
                       onTitleChange={setWebPanelRuntimeTitle}
                       onDirtyChange={setWebPanelDirty}
@@ -1823,49 +1804,49 @@ function WorkspaceApp() {
         onRetryContextFields={() => void treeContextFieldsQuery.refetch()}
         onSubmit={submitWorktreeCreation}
       />
-      <NewPanelDialog
-        open={dialog?.type === 'panel'}
+      <NewTabDialog
+        open={dialog?.type === 'tab'}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        worktreeName={panelDialogWorktree?.name ?? null}
+        worktreeName={tabDialogWorktree?.name ?? null}
         presets={availablePresets}
         presetDiagnostics={presetDiagnostics}
         presetsLoading={presetDefinitionsQuery.isPending}
         presetsError={presetDefinitionsQuery.isError}
         webPanelDefinitions={webPanelDefinitionsQuery.data ?? []}
         webPanelDefinitionsLoading={
-          Boolean(panelDialogWorktree) && webPanelDefinitionsQuery.isPending
+          Boolean(tabDialogWorktree) && webPanelDefinitionsQuery.isPending
         }
         webPanelDefinitionsError={webPanelDefinitionsQuery.isError}
         launchDisabled={
           panelLaunchDisabled ||
           createWebPanel.isPending ||
-          createBrowserPanel.isPending
+          createBrowserTab.isPending
         }
         onCreateTerminal={(input) => {
-          if (!panelDialogProject || !panelDialogWorktree) {
+          if (!tabDialogProject || !tabDialogWorktree) {
             return
           }
 
           setDialog(null)
           terminalWorkflows.createTerminalInWorktree(
-            panelDialogProject,
-            panelDialogWorktree,
+            tabDialogProject,
+            tabDialogWorktree,
             input
           )
         }}
-        onCreateBrowserPanel={() => {
-          if (panelDialogWorktree) {
-            createBrowserPanel.mutate({ worktree: panelDialogWorktree })
+        onCreateBrowserTab={() => {
+          if (tabDialogWorktree) {
+            createBrowserTab.mutate({ worktree: tabDialogWorktree })
           }
         }}
         onCreateWebPanel={(definition) => {
-          if (!panelDialogWorktree) {
+          if (!tabDialogWorktree) {
             return
           }
 
           createWebPanel.mutate({
-            worktree: panelDialogWorktree,
+            worktree: tabDialogWorktree,
             definition,
             input: null
           })
@@ -1881,16 +1862,16 @@ function WorkspaceApp() {
         loadError={presetsQuery.isError}
         onRetry={() => void presetsQuery.refetch()}
       />
-      <ClosePanelDialog
-        panel={dialog?.type === 'close-panel' ? dialog.panel : null}
-        reason={dialog?.type === 'close-panel' ? dialog.reason : null}
-        busy={closePanel.isPending}
+      <CloseTabDialog
+        tab={dialog?.type === 'close-tab' ? dialog.tab : null}
+        reason={dialog?.type === 'close-tab' ? dialog.reason : null}
+        busy={closeTab.isPending}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        onConfirm={(panel) => {
-          startPanelClose(
-            panel,
-            panel.kind === 'browser'
+        onConfirm={(tab) => {
+          startTabClose(
+            tab,
+            tab.kind === 'browser'
               ? { force: true }
               : { discardStoredData: true }
           )
