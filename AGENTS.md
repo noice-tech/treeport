@@ -2,7 +2,7 @@
 
 ## About Treeport
 
-Treeport is a worktree-first terminal driver. It registers Git repositories, discovers their main and linked worktrees, and runs persistent terminals in a dedicated, application-owned tmux server for each worktree. Its web UI attaches normal terminal clients to tools such as Pi, shells, and development servers without replacing or modifying their TUIs.
+Treeport is a worktree-first workspace for managing projects, worktrees, and terminals. It lets users work with tools such as Pi, shells, and development servers from its desktop and web interfaces.
 
 ## Developing Treeport inside Treeport
 
