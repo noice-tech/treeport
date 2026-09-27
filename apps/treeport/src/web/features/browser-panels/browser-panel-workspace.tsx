@@ -17,6 +17,8 @@ import {
   CodeBracketSquareIcon,
   DevicePhoneMobileIcon,
   ServerStackIcon,
+  ShieldCheckIcon,
+  ShieldExclamationIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
@@ -102,6 +104,7 @@ export function BrowserPanelWorkspace({
   active,
   autoFocusBlocked,
   inputBlocked,
+  permissionPrompt,
   onLoadingChange,
   onFocusSurface
 }: {
@@ -109,6 +112,7 @@ export function BrowserPanelWorkspace({
   active: boolean
   autoFocusBlocked: boolean
   inputBlocked: boolean
+  permissionPrompt: TreeportBrowserPermissionPrompt | null
   onLoadingChange: (panelId: string, loading: boolean) => void
   onFocusSurface: () => void
 }) {
@@ -147,6 +151,15 @@ export function BrowserPanelWorkspace({
     panel.url === 'about:blank' ? '' : panel.url
   )
   const [serversOpen, setServersOpen] = useState(false)
+  const [permissionsOpen, setPermissionsOpen] = useState(false)
+  const [permissionSettings, setPermissionSettings] = useState<{
+    origin: string | null
+    decisions: Array<{ capability: string; label: string; allowed: boolean }>
+  } | null>(null)
+  const [permissionSettingsBusy, setPermissionSettingsBusy] = useState(false)
+  const [permissionSettingsError, setPermissionSettingsError] = useState<
+    string | null
+  >(null)
   const [viewportOpen, setViewportOpen] = useState(false)
   const [viewportOverride, setViewportOverride] = useState<{
     width: number
@@ -167,6 +180,68 @@ export function BrowserPanelWorkspace({
   )
   const [listenersLoading, setListenersLoading] = useState(false)
   const { localBrowser, computerId } = useDesktopRuntime()
+
+  useEffect(() => {
+    if (!permissionsOpen || !localBrowser) {
+      return
+    }
+
+    let current = true
+    void window.treeportDesktop
+      ?.browserPermissions(panel.id)
+      .then((settings) => {
+        if (current) {
+          setPermissionSettings(settings)
+        }
+      })
+      .catch(() => {
+        if (current) {
+          setPermissionSettingsError('Could not load website permissions.')
+        }
+      })
+    return () => {
+      current = false
+    }
+  }, [localBrowser, panel.id, permissionsOpen, state?.url])
+
+  const resetPermissions = async (
+    origin: string | null,
+    capability: string | null
+  ) => {
+    if (!origin) {
+      return
+    }
+
+    setPermissionSettingsBusy(true)
+    setPermissionSettingsError(null)
+    try {
+      const bridge = window.treeportDesktop
+      if (
+        !bridge ||
+        !(await bridge.resetBrowserPermissions(panel.id, origin, capability))
+      ) {
+        setPermissionSettingsError(
+          'Could not reset website permissions. The page may have navigated.'
+        )
+        return
+      }
+
+      const settings = await bridge.browserPermissions(panel.id)
+      setPermissionSettings(settings)
+    } catch {
+      setPermissionSettingsError('Could not reset website permissions.')
+    } finally {
+      setPermissionSettingsBusy(false)
+    }
+  }
+
+  const respondPermission = (allow: boolean) => {
+    if (!permissionPrompt) {
+      return
+    }
+
+    window.treeportDesktop?.respondBrowserPermission(permissionPrompt.id, allow)
+  }
 
   useEffect(() => {
     traceBrowserOpen(panel.id, 'browser.open.panel_committed', {
@@ -786,6 +861,14 @@ export function BrowserPanelWorkspace({
       left.url.href.localeCompare(right.url.href)
   )
 
+  const sitePermissions =
+    permissionSettings &&
+    (!state?.url ||
+      (URL.canParse(state.url) &&
+        new URL(state.url).origin === permissionSettings.origin))
+      ? permissionSettings
+      : null
+
   return (
     <section
       ref={sectionRef}
@@ -916,6 +999,67 @@ export function BrowserPanelWorkspace({
             window.requestAnimationFrame(() => inputRef.current?.select())
           }}
         />
+        {localBrowser && permissionPrompt?.panelId === panel.id ? (
+          <Popover
+            open={active}
+            onOpenChange={(open) => {
+              if (!open) {
+                respondPermission(false)
+              }
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Website permission request"
+                title="Website permission request"
+              >
+                <ShieldExclamationIcon />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="flex w-80 flex-col gap-3 p-4"
+              aria-label="Website permission request"
+            >
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-semibold">
+                  Treeport Browser permission
+                </p>
+                <p className="break-all text-sm font-medium">
+                  {permissionPrompt.origin}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Wants to {permissionPrompt.capability}.
+                </p>
+                {permissionPrompt.destination ? (
+                  <p className="break-all text-xs text-muted-foreground">
+                    Destination: {permissionPrompt.destination}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => respondPermission(false)}
+                >
+                  Block
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => respondPermission(true)}
+                >
+                  Allow
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : null}
         <span
           className="pointer-events-none flex size-8 shrink-0 items-center justify-center text-cyan-300"
           role="status"
@@ -1128,6 +1272,103 @@ export function BrowserPanelWorkspace({
             </div>
           </PopoverContent>
         </Popover>
+        {localBrowser ? (
+          <Popover
+            open={permissionsOpen}
+            onOpenChange={(open) => {
+              setPermissionsOpen(open)
+              if (open) {
+                setPermissionSettings(null)
+                setPermissionSettingsError(null)
+              }
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Website permissions"
+                title="Website permissions"
+              >
+                <ShieldCheckIcon />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="flex w-[min(22rem,calc(100vw-1rem))] flex-col gap-3 p-3"
+              aria-label="Website permissions"
+            >
+              <h2 className="text-sm font-semibold">Website permissions</h2>
+              {sitePermissions ? (
+                sitePermissions.decisions.length ? (
+                  <ul
+                    className="flex max-h-48 flex-col gap-2 overflow-y-auto py-1 pr-2 pl-1"
+                    aria-label="Remembered decisions for this website"
+                  >
+                    {sitePermissions.decisions.map((decision) => (
+                      <li
+                        key={decision.capability}
+                        className="flex items-center justify-between gap-2 text-sm"
+                      >
+                        <span className="min-w-0">
+                          {decision.label.charAt(0).toUpperCase() +
+                            decision.label.slice(1)}{' '}
+                          · {decision.allowed ? 'Allowed' : 'Blocked'}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="shrink-0"
+                          disabled={permissionSettingsBusy}
+                          aria-label={`Reset ${decision.label.charAt(0).toUpperCase() + decision.label.slice(1)}`}
+                          onClick={() =>
+                            void resetPermissions(
+                              sitePermissions.origin,
+                              decision.capability
+                            )
+                          }
+                        >
+                          Reset
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {sitePermissions.origin
+                      ? 'No saved decisions for this website.'
+                      : 'No website open.'}
+                  </p>
+                )
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Loading permissions…
+                </p>
+              )}
+              {sitePermissions?.origin &&
+              sitePermissions.decisions.length > 0 ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={permissionSettingsBusy}
+                  onClick={() =>
+                    void resetPermissions(sitePermissions.origin, null)
+                  }
+                >
+                  Reset this website
+                </Button>
+              ) : null}
+              {permissionSettingsError ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {permissionSettingsError}
+                </p>
+              ) : null}
+            </PopoverContent>
+          </Popover>
+        ) : null}
       </form>
       {error ? (
         <p className="bg-red-950 px-2.5 py-1.5 text-red-200" role="alert">

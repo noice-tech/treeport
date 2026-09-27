@@ -40,6 +40,14 @@ const packagerConfig: NonNullable<ForgeConfig['packagerConfig']> = {
   appBundleId: 'tech.noice.treeport',
   appCategoryType: 'public.app-category.developer-tools',
   asar: true,
+  extendInfo: {
+    NSCameraUsageDescription:
+      'Allow websites in Treeport Browser to use the camera when you approve.',
+    NSLocationWhenInUseUsageDescription:
+      'Allow websites in Treeport Browser to access your location when you approve.',
+    NSMicrophoneUsageDescription:
+      'Allow websites in Treeport Browser to use the microphone when you approve.'
+  },
   icon: path.resolve('assets/Treeport.icns'),
   protocols: [
     {

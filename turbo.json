@@ -11,6 +11,10 @@
       "dependsOn": ["^build"],
       "outputs": [".vite/**"]
     },
+    "@treeport/docs#build": {
+      "dependsOn": ["^build", "typecheck"],
+      "outputs": ["dist/**"]
+    },
     "dev": {
       "dependsOn": ["^build"],
       "cache": false,

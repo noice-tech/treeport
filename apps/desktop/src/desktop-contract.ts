@@ -26,6 +26,19 @@ export interface DesktopBrowserPopup {
   url: string
 }
 
+export interface DesktopBrowserPermissions {
+  origin: string | null
+  decisions: Array<{ capability: string; label: string; allowed: boolean }>
+}
+
+export interface DesktopBrowserPermissionPrompt {
+  id: string
+  panelId: string
+  origin: string
+  capability: string
+  destination: string | null
+}
+
 export interface DesktopBrowserUnavailable {
   panelId: string
   message: string

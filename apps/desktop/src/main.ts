@@ -429,9 +429,14 @@ function installRendererSecurity(renderer: WebContents): void {
 
     return { action: 'deny' }
   })
+  renderer.session.setPermissionCheckHandler(() => false)
   renderer.session.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false)
   )
+  renderer.session.setDisplayMediaRequestHandler((_request, callback) =>
+    callback({})
+  )
+  renderer.session.setDevicePermissionHandler(() => false)
   const refreshNavigationState = () => broadcastState()
   renderer.on('did-navigate', refreshNavigationState)
   renderer.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
@@ -1167,7 +1172,10 @@ function registerIpc(): void {
         if (duplicate) {
           return {
             ok: false,
-            error: `That URL is already saved as ${store.summaries().find((item) => item.id === duplicate.id)?.name ?? 'a computer'}.`,
+            error: `That URL is already saved as ${
+              store.summaries().find((item) => item.id === duplicate.id)
+                ?.name ?? 'a computer'
+            }.`,
             duplicateId: duplicate.id
           }
         }
@@ -1429,6 +1437,43 @@ function registerIpc(): void {
           )
         )
       : true
+  })
+  ipcMain.handle('native-browser:permissions', (event, value) => {
+    const parsed = nativeBrowserPanelSchema.safeParse(value)
+    return parsed.success && browserWebviews
+      ? browserWebviews.permissions(event, parsed.data.panelId)
+      : null
+  })
+  ipcMain.handle('native-browser:reset-permissions', (event, value) => {
+    const parsed = nativeBrowserPanelSchema
+      .extend({
+        origin: z.string().max(2048),
+        capability: z.string().max(80).nullable()
+      })
+      .safeParse(value)
+    return parsed.success && browserWebviews
+      ? browserWebviews.resetPermissions(
+          event,
+          parsed.data.panelId,
+          parsed.data.origin,
+          parsed.data.capability
+        )
+      : false
+  })
+  ipcMain.on('native-browser:permission-response', (event, value) => {
+    const parsed = z
+      .strictObject({
+        id: z.string().uuid(),
+        allow: z.boolean()
+      })
+      .safeParse(value)
+    if (parsed.success) {
+      browserWebviews?.respondPermission(
+        event,
+        parsed.data.id,
+        parsed.data.allow
+      )
+    }
   })
   ipcMain.on('native-browser:dispose', (event, value) => {
     const parsed = nativeBrowserPanelSchema.safeParse(value)
