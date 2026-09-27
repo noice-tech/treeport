@@ -247,6 +247,7 @@ interface BrowserSession {
   agentProcess: ChildProcess | null
   crashMessage: string | null
   closing: boolean
+  closeApproved: boolean
   closeOperation: Promise<void> | null
   closeReason: string
 }
@@ -871,6 +872,7 @@ export class BrowserSessionManager {
       agentProcess: null,
       crashMessage: null,
       closing: false,
+      closeApproved: false,
       closeOperation: null,
       closeReason: 'Browser closed.'
     }
@@ -2230,6 +2232,9 @@ export class BrowserSessionManager {
     if (!session) {
       return true
     }
+    if (session.closeApproved) {
+      return true
+    }
 
     let canClose = false
     await this.scheduleOperation(
@@ -2252,13 +2257,18 @@ export class BrowserSessionManager {
         }
 
         if (canClose) {
+          session.closeApproved = true
           session.closing = true
           this.stopScheduler(session, 'Browser closed.')
         }
       },
       { required: true }
-    )
-    return canClose
+    ).catch((error: unknown) => {
+      if (!session.closeApproved) {
+        throw error
+      }
+    })
+    return canClose || session.closeApproved
   }
 
   async closePanel(panelId: string, reason: string): Promise<void> {
