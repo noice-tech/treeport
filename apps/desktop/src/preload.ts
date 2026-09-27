@@ -11,6 +11,8 @@ import type {
   DesktopBrowserBridgeDescriptor,
   DesktopBrowserCommandResult,
   DesktopBrowserPopup,
+  DesktopBrowserPermissionPrompt,
+  DesktopBrowserPermissions,
   DesktopBrowserToolbarCommand,
   DesktopBrowserUnavailable,
   DesktopCommand,
@@ -26,6 +28,25 @@ const desktopBrowserPopupSchema: z.ZodType<DesktopBrowserPopup> =
   z.strictObject({
     panelId: z.string(),
     url: z.string()
+  })
+const desktopBrowserPermissionsSchema: z.ZodType<DesktopBrowserPermissions> =
+  z.strictObject({
+    origin: z.string().nullable(),
+    decisions: z.array(
+      z.strictObject({
+        capability: z.string(),
+        label: z.string(),
+        allowed: z.boolean()
+      })
+    )
+  })
+const desktopBrowserPermissionPromptSchema: z.ZodType<DesktopBrowserPermissionPrompt> =
+  z.strictObject({
+    id: z.string().uuid(),
+    panelId: z.string(),
+    origin: z.string(),
+    capability: z.string(),
+    destination: z.string().nullable()
   })
 const desktopBrowserUnavailableSchema: z.ZodType<DesktopBrowserUnavailable> =
   z.strictObject({ panelId: z.string(), message: z.string() })
@@ -226,6 +247,47 @@ const desktopBridge = Object.freeze({
     }
     ipcRenderer.on('native-browser:popup', receive)
     return () => ipcRenderer.removeListener('native-browser:popup', receive)
+  },
+  browserPermissions(
+    panelId: string
+  ): Promise<DesktopBrowserPermissions | null> {
+    return ipcRenderer
+      .invoke('native-browser:permissions', { panelId })
+      .then((value) => desktopBrowserPermissionsSchema.nullable().parse(value))
+  },
+  resetBrowserPermissions(
+    panelId: string,
+    origin: string,
+    capability: string | null
+  ): Promise<boolean> {
+    return ipcRenderer
+      .invoke('native-browser:reset-permissions', {
+        panelId,
+        origin,
+        capability
+      })
+      .then((value) => z.boolean().parse(value))
+  },
+  onBrowserPermissionPrompt(
+    listener: (prompt: DesktopBrowserPermissionPrompt | null) => void
+  ) {
+    const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
+      if (value === null) {
+        listener(null)
+        return
+      }
+
+      const parsed = desktopBrowserPermissionPromptSchema.safeParse(value)
+      if (parsed.success) {
+        listener(parsed.data)
+      }
+    }
+    ipcRenderer.on('native-browser:permission-prompt', receive)
+    return () =>
+      ipcRenderer.removeListener('native-browser:permission-prompt', receive)
+  },
+  respondBrowserPermission(id: string, allow: boolean) {
+    ipcRenderer.send('native-browser:permission-response', { id, allow })
   },
   onBrowserUnavailable(listener: (failure: DesktopBrowserUnavailable) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {

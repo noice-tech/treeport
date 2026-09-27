@@ -194,6 +194,12 @@ function WorkspaceApp() {
   const [desktopNotificationsOpen, setDesktopNotificationsOpen] =
     useState(false)
   const [mobileNotificationsOpen, setMobileNotificationsOpen] = useState(false)
+  const [browserPermissionPrompt, setBrowserPermissionPrompt] =
+    useState<TreeportBrowserPermissionPrompt | null>(null)
+  useEffect(
+    () => desktopBridge?.onBrowserPermissionPrompt(setBrowserPermissionPrompt),
+    [desktopBridge]
+  )
   const workspaceActionsBlocked =
     dialog !== null || projectSwitcherOpen || (isMobile && drawerOpen)
   const [retainedPanelIds, setRetainedPanelIds] = useState<Set<string>>(
@@ -1768,6 +1774,7 @@ function WorkspaceApp() {
                       active={active}
                       autoFocusBlocked={autoFocusBlocked}
                       inputBlocked={workspaceActionsBlocked}
+                      permissionPrompt={browserPermissionPrompt}
                       onLoadingChange={updateBrowserPanelLoading}
                       onFocusSurface={focusToolSurface}
                     />
@@ -1791,6 +1798,34 @@ function WorkspaceApp() {
           </div>
         </div>
       </WorkspaceMain>
+      {browserPermissionPrompt &&
+      (browserPermissionPrompt.panelId !== activePanelId || !toolPaneOpen) ? (
+        <div
+          className={cn(
+            'fixed right-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-100 shadow-2xl ring-1 ring-white/10',
+            showSyncDegraded ? 'bottom-20' : 'bottom-4'
+          )}
+          role="status"
+        >
+          <span className="min-w-0 break-all">
+            {browserPermissionPrompt.origin} requests a website permission.
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded px-2 py-1 text-cyan-300 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-300"
+            onClick={() => {
+              const panel = retainedPanels.find(
+                (item) => item.id === browserPermissionPrompt.panelId
+              )
+              if (panel?.kind === 'browser') {
+                selectPanel(panel)
+              }
+            }}
+          >
+            Review
+          </button>
+        </div>
+      ) : null}
       {showSyncDegraded ? (
         <div
           className="fixed right-4 bottom-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-300 shadow-2xl ring-1 ring-white/10"

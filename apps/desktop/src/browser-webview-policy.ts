@@ -3,10 +3,16 @@ import {
   browserUrlSchema,
   decodeUnknownOrNull
 } from '@treeport/shared'
+import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import path from 'node:path'
+import { z } from 'zod'
 import {
+  app,
   clipboard,
   Menu,
   session,
+  systemPreferences,
   type BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -21,6 +27,7 @@ import {
 import type {
   DesktopBrowserBridgeDescriptor,
   DesktopBrowserCommandResult,
+  DesktopBrowserPermissions,
   DesktopBrowserToolbarCommand,
   DesktopCommand
 } from './desktop-contract'
@@ -32,6 +39,18 @@ import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
 
 const BROWSER_PARTITION = 'persist:treeport-browser'
+const DECISIONS_FILE = 'browser-site-permissions.json'
+// Only offer permissions with a request path we can prompt for. Check-only
+// permissions need an explicit interception path like loopback-network below.
+const capabilities = {
+  'clipboard-read': 'read your clipboard',
+  geolocation: 'know your location',
+  notifications: 'show notifications',
+  camera: 'use your camera',
+  microphone: 'use your microphone',
+  'loopback-network': 'connect to services on your computer (localhost)'
+} as const
+type Capability = keyof typeof capabilities
 
 function browserBootstrapPanelId(value: string): string | null {
   if (!value.startsWith('about:blank#')) {
@@ -52,6 +71,8 @@ interface BrowserEntry {
   fullscreenOrigin: string | null
   runtime: DesktopRuntime
   registrations: Effect.Semaphore
+  navigationVersion: number
+  pendingPermissions: Set<() => void>
 }
 
 export interface BrowserWebviewPolicy {
@@ -83,6 +104,17 @@ export interface BrowserWebviewPolicy {
   ): Effect.Effect<boolean>
   dispose(event: IpcMainEvent, panelId: string): Effect.Effect<void>
   disposeAll(): Effect.Effect<void>
+  respondPermission(event: IpcMainEvent, id: string, allow: boolean): void
+  permissions(
+    event: IpcMainInvokeEvent,
+    panelId: string
+  ): DesktopBrowserPermissions | null
+  resetPermissions(
+    event: IpcMainInvokeEvent,
+    panelId: string,
+    origin: string,
+    capability: string | null
+  ): boolean
 }
 
 export function installBrowserWebviewPolicy(options: {
@@ -96,6 +128,186 @@ export function installBrowserWebviewPolicy(options: {
   const pendingGuests = new Map<number, BrowserEntry>()
   const guestEntries = new Map<number, BrowserEntry>()
   const browserSession = session.fromPartition(BROWSER_PARTITION)
+  const decisionsPath = path.join(app.getPath('userData'), DECISIONS_FILE)
+  const decisions = new Map<string, boolean>()
+  // The file is data, not authority: only exact, known origin/capability keys are loaded.
+  try {
+    const saved = z
+      .record(z.string(), z.boolean())
+      .safeParse(JSON.parse(readFileSync(decisionsPath, 'utf8')))
+    if (saved.success) {
+      for (const [key, value] of Object.entries(saved.data)) {
+        const [origin, capability, extra] = key.split('|')
+        if (
+          !extra &&
+          origin &&
+          capability &&
+          Object.hasOwn(capabilities, capability) &&
+          URL.canParse(origin) &&
+          new URL(origin).origin === origin &&
+          ['https:', 'http:'].includes(new URL(origin).protocol)
+        ) {
+          decisions.set(key, value)
+        }
+      }
+    }
+  } catch {
+    // Missing or corrupt preferences are treated as no grants.
+  }
+  const saveDecisions = () => {
+    const temporary = `${decisionsPath}.tmp`
+    writeFileSync(temporary, JSON.stringify(Object.fromEntries(decisions)), {
+      mode: 0o600
+    })
+    renameSync(temporary, decisionsPath)
+  }
+  const clearDecisions = (
+    origin: string,
+    capability: string | null
+  ): boolean => {
+    const previous = new Map(decisions)
+    for (const key of decisions.keys()) {
+      if (
+        key === `${origin}|${capability}` ||
+        (capability === null && key.startsWith(`${origin}|`))
+      ) {
+        decisions.delete(key)
+      }
+    }
+
+    try {
+      saveDecisions()
+    } catch {
+      decisions.clear()
+      for (const [key, allowed] of previous) {
+        decisions.set(key, allowed)
+      }
+      return false
+    }
+
+    for (const entry of guestEntries.values()) {
+      cancelPending(entry)
+    }
+    return true
+  }
+  let promptQueue = Promise.resolve()
+  let pendingPrompt: {
+    id: string
+    entry: BrowserEntry
+    finish: (allow: boolean) => void
+  } | null = null
+  const askSite = (
+    entry: BrowserEntry,
+    origin: string,
+    capability: string,
+    destination: string | null
+  ): Promise<boolean> => {
+    if (
+      !entry.panelId ||
+      options.trustedRenderer.isDestroyed() ||
+      options.window.isDestroyed()
+    ) {
+      return Promise.resolve(false)
+    }
+
+    return new Promise<boolean>((resolve) => {
+      const id = randomUUID()
+      const timer = setTimeout(() => finish(false), 45_000)
+      const finish = (allow: boolean) => {
+        if (pendingPrompt?.id !== id) {
+          return
+        }
+
+        clearTimeout(timer)
+        pendingPrompt = null
+        if (!options.trustedRenderer.isDestroyed()) {
+          options.trustedRenderer.send('native-browser:permission-prompt', null)
+        }
+
+        resolve(allow)
+      }
+      pendingPrompt = { id, entry, finish }
+      options.trustedRenderer.send('native-browser:permission-prompt', {
+        id,
+        panelId: entry.panelId,
+        origin,
+        capability,
+        destination
+      })
+    })
+  }
+  const registered = (contents: WebContents | null): BrowserEntry | null => {
+    if (!contents || contents.isDestroyed()) {
+      return null
+    }
+
+    const entry = guestEntries.get(contents.id)
+    return entry &&
+      entry.guest === contents &&
+      entry.panelId &&
+      entries.get(entry.panelId) === entry &&
+      contents.hostWebContents === options.trustedRenderer &&
+      options.selectedComputer()?.loopback === true &&
+      !options.window.isDestroyed()
+      ? entry
+      : null
+  }
+  const siteOrigin = (
+    entry: BrowserEntry,
+    url: string | undefined,
+    main: boolean
+  ): string | null => {
+    if (!main || !url || !URL.canParse(url)) {
+      return null
+    }
+
+    const parsed = new URL(url)
+    if (
+      !['https:', 'http:'].includes(parsed.protocol) ||
+      parsed.origin === 'null'
+    ) {
+      return null
+    }
+
+    // Only the current main-frame document may ask. Subframes are denied rather
+    // than trusting an unverified requestingUrl/securityOrigin string.
+    return URL.canParse(entry.guest.getURL()) &&
+      new URL(entry.guest.getURL()).origin === parsed.origin
+      ? parsed.origin
+      : null
+  }
+  const osAllows = (capability: Capability): boolean => {
+    if (capability !== 'camera' && capability !== 'microphone') {
+      return true
+    }
+
+    if (process.platform !== 'darwin' && process.platform !== 'win32') {
+      return true
+    }
+
+    const status = systemPreferences.getMediaAccessStatus(capability)
+    return status !== 'denied' && status !== 'restricted'
+  }
+  options.trustedRenderer.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) {
+      pendingPrompt?.finish(false)
+      for (const entry of guestEntries.values()) {
+        for (const cancel of entry.pendingPermissions) {
+          cancel()
+        }
+      }
+    }
+  })
+  const cancelPending = (entry: BrowserEntry) => {
+    if (pendingPrompt?.entry === entry) {
+      pendingPrompt.finish(false)
+    }
+
+    for (const cancel of entry.pendingPermissions) {
+      cancel()
+    }
+    entry.pendingPermissions.clear()
+  }
 
   const isPresentationEligible = (entry: BrowserEntry): boolean =>
     entry.panelId !== null &&
@@ -129,13 +341,49 @@ export function installBrowserWebviewPolicy(options: {
 
   browserSession.setPermissionCheckHandler(
     (contents, permission, requestingOrigin, details) => {
-      if (!contents) {
+      console.info('[browser permission check]', {
+        permission,
+        webContentsId: contents?.id ?? null,
+        requestingOrigin,
+        documentOrigin:
+          details.requestingUrl && URL.canParse(details.requestingUrl)
+            ? new URL(details.requestingUrl).origin
+            : null,
+        isMainFrame: details.isMainFrame
+      })
+
+      const entry = registered(contents)
+      if (!entry) {
         return false
       }
 
-      const entry = guestEntries.get(contents.id)
-      if (!entry || entry.guest !== contents) {
-        return false
+      if (permission === 'media') {
+        const capability =
+          details.mediaType === 'video'
+            ? 'camera'
+            : details.mediaType === 'audio'
+              ? 'microphone'
+              : null
+        const origin = siteOrigin(
+          entry,
+          details.requestingUrl ?? details.securityOrigin ?? requestingOrigin,
+          details.isMainFrame
+        )
+        return (
+          !!capability &&
+          !!origin &&
+          osAllows(capability) &&
+          decisions.get(`${origin}|${capability}`) === true
+        )
+      }
+
+      if (Object.hasOwn(capabilities, permission)) {
+        const origin = siteOrigin(
+          entry,
+          details.requestingUrl ?? requestingOrigin,
+          details.isMainFrame
+        )
+        return !!origin && decisions.get(`${origin}|${permission}`) === true
       }
 
       const origin = browserPresentationOrigin(
@@ -152,14 +400,172 @@ export function installBrowserWebviewPolicy(options: {
   )
   browserSession.setPermissionRequestHandler(
     (contents, permission, callback, details) => {
-      if (permitsBrowserVideoCapture(contents, permission, details)) {
+      console.info('[browser permission request]', {
+        permission,
+        webContentsId: contents.id,
+        documentOrigin: URL.canParse(details.requestingUrl)
+          ? new URL(details.requestingUrl).origin
+          : null,
+        isMainFrame: details.isMainFrame
+      })
+
+      if (
+        registered(contents) &&
+        permitsBrowserVideoCapture(contents, permission, details)
+      ) {
         callback(true)
         return
       }
 
-      const entry = guestEntries.get(contents.id)
-      if (!entry || entry.guest !== contents) {
+      const entry = registered(contents)
+      if (!entry) {
         callback(false)
+        return
+      }
+
+      // SAFETY: membership in capabilities validates the key before narrowing it.
+      let requested: Capability[] = Object.hasOwn(capabilities, permission)
+        ? [permission as Capability]
+        : []
+      if (permission === 'media') {
+        // SAFETY: Electron supplies MediaAccessPermissionRequest for media requests.
+        const types = (details as Electron.MediaAccessPermissionRequest)
+          .mediaTypes
+        requested =
+          types?.length &&
+          types.every((type) => type === 'video' || type === 'audio')
+            ? [
+                ...new Set(
+                  types.map((type) =>
+                    type === 'video' ? 'camera' : 'microphone'
+                  )
+                )
+              ]
+            : []
+      }
+
+      if (requested.length) {
+        const origin = siteOrigin(
+          entry,
+          details.requestingUrl,
+          details.isMainFrame
+        )
+        if (!origin || !requested.every(osAllows)) {
+          callback(false)
+          return
+        }
+
+        const keys = requested.map((capability) => `${origin}|${capability}`)
+        if (keys.some((key) => decisions.get(key) === false)) {
+          callback(false)
+          return
+        }
+
+        const missing = requested.filter(
+          (capability) => !decisions.has(`${origin}|${capability}`)
+        )
+        if (!missing.length) {
+          callback(true)
+          return
+        }
+
+        const version = entry.navigationVersion
+        let settled = false
+        const resolve = (allowed: boolean) => {
+          if (settled) {
+            return
+          }
+
+          settled = true
+          entry.pendingPermissions.delete(cancel)
+          callback(
+            allowed &&
+              registered(contents) === entry &&
+              entry.navigationVersion === version &&
+              siteOrigin(entry, details.requestingUrl, details.isMainFrame) ===
+                origin &&
+              requested.every(osAllows)
+          )
+        }
+        const cancel = () => resolve(false)
+        entry.pendingPermissions.add(cancel)
+        const prompt = async () => {
+          if (
+            settled ||
+            registered(contents) !== entry ||
+            entry.navigationVersion !== version
+          ) {
+            cancel()
+            return
+          }
+
+          if (keys.every((key) => decisions.has(key))) {
+            resolve(keys.every((key) => decisions.get(key) === true))
+            return
+          }
+
+          try {
+            const approved = await askSite(
+              entry,
+              origin,
+              missing
+                .map((capability) => capabilities[capability])
+                .join(' and '),
+              null
+            )
+            if (
+              settled ||
+              registered(contents) !== entry ||
+              entry.navigationVersion !== version ||
+              siteOrigin(entry, details.requestingUrl, details.isMainFrame) !==
+                origin
+            ) {
+              cancel()
+              return
+            }
+
+            let allowed = approved
+            if (allowed && process.platform === 'darwin') {
+              for (const capability of missing) {
+                if (
+                  (capability === 'camera' || capability === 'microphone') &&
+                  systemPreferences.getMediaAccessStatus(capability) ===
+                    'not-determined'
+                ) {
+                  allowed =
+                    (await systemPreferences.askForMediaAccess(capability)) &&
+                    allowed
+                }
+              }
+            }
+
+            if (
+              settled ||
+              registered(contents) !== entry ||
+              entry.navigationVersion !== version
+            ) {
+              cancel()
+              return
+            }
+
+            for (const capability of missing) {
+              decisions.set(`${origin}|${capability}`, allowed)
+            }
+            try {
+              saveDecisions()
+            } catch {
+              for (const capability of missing) {
+                decisions.delete(`${origin}|${capability}`)
+              }
+              cancel()
+              return
+            }
+            resolve(allowed)
+          } catch {
+            cancel()
+          }
+        }
+        promptQueue = promptQueue.then(prompt, prompt)
         return
       }
 
@@ -176,8 +582,158 @@ export function installBrowserWebviewPolicy(options: {
     }
   )
 
+  // Electron 43 sends loopback-network checks but does not send a permission
+  // request when the check fails. Pause the actual webview request instead of
+  // granting access from a synchronous check or asking after the fetch failed.
+  browserSession.webRequest.onBeforeRequest(
+    { urls: ['<all_urls>'] },
+    (details, callback) => {
+      if (
+        !URL.canParse(details.url) ||
+        details.resourceType === 'mainFrame' ||
+        details.resourceType === 'subFrame'
+      ) {
+        callback({})
+        return
+      }
+
+      const target = new URL(details.url)
+      if (
+        !['http:', 'https:', 'ws:', 'wss:'].includes(target.protocol) ||
+        !(
+          target.hostname === 'localhost' ||
+          target.hostname.endsWith('.localhost') ||
+          /^127(?:\.\d{1,3}){3}$/.test(target.hostname) ||
+          target.hostname === '[::1]'
+        )
+      ) {
+        callback({})
+        return
+      }
+
+      const contents =
+        details.webContents ??
+        (details.webContentsId
+          ? guestEntries.get(details.webContentsId)?.guest
+          : null)
+      const entry = registered(contents ?? null)
+
+      // A referrer is page-controlled; use Electron's actual requesting frame.
+      const frame = details.frame
+      const origin =
+        entry && frame === entry.guest.mainFrame
+          ? siteOrigin(entry, frame.url, true)
+          : null
+      if (!entry || !origin) {
+        callback({ cancel: true })
+        return
+      }
+
+      const key = `${origin}|loopback-network`
+      const remembered = decisions.get(key)
+      if (remembered !== undefined) {
+        callback({ cancel: !remembered })
+        return
+      }
+
+      const version = entry.navigationVersion
+      let settled = false
+      const resolve = (allowed: boolean) => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        entry.pendingPermissions.delete(cancel)
+        callback({
+          cancel: !(
+            allowed &&
+            registered(entry.guest) === entry &&
+            entry.navigationVersion === version &&
+            frame === entry.guest.mainFrame &&
+            siteOrigin(entry, frame.url, true) === origin
+          )
+        })
+      }
+      const cancel = () => resolve(false)
+      entry.pendingPermissions.add(cancel)
+      const prompt = async () => {
+        if (
+          settled ||
+          registered(entry.guest) !== entry ||
+          entry.navigationVersion !== version
+        ) {
+          cancel()
+          return
+        }
+
+        const current = decisions.get(key)
+        if (current !== undefined) {
+          resolve(current)
+          return
+        }
+
+        try {
+          const approved = await askSite(
+            entry,
+            origin,
+            capabilities['loopback-network'],
+            target.origin
+          )
+          if (
+            settled ||
+            registered(entry.guest) !== entry ||
+            entry.navigationVersion !== version ||
+            frame !== entry.guest.mainFrame ||
+            siteOrigin(entry, frame.url, true) !== origin
+          ) {
+            cancel()
+            return
+          }
+
+          const allowed = approved
+          decisions.set(key, allowed)
+          try {
+            saveDecisions()
+          } catch {
+            decisions.delete(key)
+            cancel()
+            return
+          }
+          resolve(allowed)
+        } catch {
+          cancel()
+        }
+      }
+      promptQueue = promptQueue.then(prompt, prompt)
+    }
+  )
+
+  // Device selection and display capture require separate source/device choices;
+  // a generic site grant cannot safely authorize them.
+  browserSession.setDisplayMediaRequestHandler((_request, callback) =>
+    callback({})
+  )
+  browserSession.setDevicePermissionHandler(() => false)
+  browserSession.on('select-usb-device', (event, _details, callback) => {
+    event.preventDefault()
+    callback('')
+  })
+  browserSession.on('select-hid-device', (event, _details, callback) => {
+    event.preventDefault()
+    callback('')
+  })
+  browserSession.on(
+    'select-serial-port',
+    (event, _ports, _contents, callback) => {
+      event.preventDefault()
+      callback('')
+    }
+  )
+
   const disposeEntry = (entry: BrowserEntry) =>
     Effect.gen(function* () {
+      cancelPending(entry)
       releasePresentation(entry)
       if (entry.panelId && entries.get(entry.panelId) === entry) {
         entries.delete(entry.panelId)
@@ -242,12 +798,15 @@ export function installBrowserWebviewPolicy(options: {
       presentationActive: false,
       fullscreenOrigin: null,
       runtime: new DesktopRuntime(options.runtime),
-      registrations: Effect.unsafeMakeSemaphore(1)
+      registrations: Effect.unsafeMakeSemaphore(1),
+      navigationVersion: 0,
+      pendingPermissions: new Set()
     }
     Effect.runSync(
       Scope.addFinalizer(
         entry.runtime.scope,
         Effect.sync(() => {
+          cancelPending(entry)
           pendingGuests.delete(guest.id)
           guestEntries.delete(guest.id)
           if (entry.panelId && entries.get(entry.panelId) === entry) {
@@ -263,6 +822,10 @@ export function installBrowserWebviewPolicy(options: {
     )
     pendingGuests.set(guest.id, entry)
     guestEntries.set(guest.id, entry)
+    guest.on('select-bluetooth-device', (event, _devices, callback) => {
+      event.preventDefault()
+      callback('')
+    })
     const refreshErrorPage = (
       errorDescription: string,
       validatedUrl: string
@@ -344,6 +907,8 @@ export function installBrowserWebviewPolicy(options: {
     guest.on('will-redirect', preventUnsupportedNavigation)
     guest.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) {
+        entry.navigationVersion++
+        cancelPending(entry)
         releasePresentation(entry)
       }
     })
@@ -384,7 +949,9 @@ export function installBrowserWebviewPolicy(options: {
             if (!root) return false
             const notice = document.createElement('div')
             notice.setAttribute('data-treeport-fullscreen-notice', '')
-            notice.textContent = ${JSON.stringify(`${origin} is full screen — Press Esc to exit`)}
+            notice.textContent = ${JSON.stringify(
+              `${origin} is full screen — Press Esc to exit`
+            )}
             notice.style.cssText = 'position:fixed!important;top:16px!important;left:50%!important;transform:translateX(-50%)!important;z-index:2147483647!important;box-sizing:border-box!important;max-width:calc(100% - 32px)!important;padding:9px 14px!important;border:1px solid rgba(255,255,255,.18)!important;border-radius:8px!important;background:rgba(9,9,11,.92)!important;color:#fafafa!important;font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;text-align:center!important;white-space:nowrap!important;pointer-events:none!important;box-shadow:0 8px 30px rgba(0,0,0,.35)!important'
             root.append(notice)
             setTimeout(() => notice.remove(), 4000)
@@ -766,6 +1333,57 @@ export function installBrowserWebviewPolicy(options: {
           { concurrency: 'unbounded', discard: true }
         )
       )
+    },
+    permissions(event, panelId) {
+      const entry = entries.get(panelId)
+      if (
+        !options.isTrustedEvent(event) ||
+        !entry ||
+        registered(entry.guest) !== entry
+      ) {
+        return null
+      }
+
+      const origin = siteOrigin(entry, entry.guest.getURL(), true)
+      return {
+        origin,
+        decisions: origin
+          ? Object.entries(capabilities).flatMap(([capability, label]) => {
+              const allowed = decisions.get(`${origin}|${capability}`)
+              return allowed === undefined
+                ? []
+                : [{ capability, label, allowed }]
+            })
+          : []
+      }
+    },
+    resetPermissions(event, panelId, origin, capability) {
+      const entry = entries.get(panelId)
+      if (
+        !options.isTrustedEvent(event) ||
+        !entry ||
+        registered(entry.guest) !== entry
+      ) {
+        return false
+      }
+
+      if (
+        siteOrigin(entry, entry.guest.getURL(), true) !== origin ||
+        (capability !== null && !Object.hasOwn(capabilities, capability))
+      ) {
+        return false
+      }
+
+      return clearDecisions(origin, capability)
+    },
+    respondPermission(event, id, allow) {
+      if (
+        options.isTrustedEvent(event) &&
+        pendingPrompt?.id === id &&
+        registered(pendingPrompt.entry.guest) === pendingPrompt.entry
+      ) {
+        pendingPrompt.finish(allow)
+      }
     }
   }
 }

@@ -13,6 +13,14 @@ type TreeportDesktopCommand =
   | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
 type TreeportDesktopFileAction = 'opened' | 'rejected'
 
+type TreeportBrowserPermissionPrompt = {
+  id: string
+  panelId: string
+  origin: string
+  capability: string
+  destination: string | null
+}
+
 interface TreeportBrowserWebview extends HTMLElement {
   src: string
   getWebContentsId(): number
@@ -72,6 +80,19 @@ type TreeportDesktopBridge = Readonly<{
   onBrowserPopup: (
     listener: (popup: { panelId: string; url: string }) => void
   ) => () => void
+  browserPermissions: (panelId: string) => Promise<{
+    origin: string | null
+    decisions: Array<{ capability: string; label: string; allowed: boolean }>
+  } | null>
+  resetBrowserPermissions: (
+    panelId: string,
+    origin: string,
+    capability: string | null
+  ) => Promise<boolean>
+  onBrowserPermissionPrompt: (
+    listener: (prompt: TreeportBrowserPermissionPrompt | null) => void
+  ) => () => void
+  respondBrowserPermission: (id: string, allow: boolean) => void
   onBrowserUnavailable: (
     listener: (failure: { panelId: string; message: string }) => void
   ) => () => void
