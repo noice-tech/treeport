@@ -248,6 +248,7 @@ interface BrowserSession {
   crashMessage: string | null
   closing: boolean
   closeApproved: boolean
+  closeRequest: Promise<boolean> | null
   closeOperation: Promise<void> | null
   closeReason: string
 }
@@ -873,6 +874,7 @@ export class BrowserSessionManager {
       crashMessage: null,
       closing: false,
       closeApproved: false,
+      closeRequest: null,
       closeOperation: null,
       closeReason: 'Browser closed.'
     }
@@ -2237,8 +2239,15 @@ export class BrowserSessionManager {
       return true
     }
 
+    if (session.closeRequest) {
+      const accepted = await session.closeRequest
+      return accepted || !force
+        ? accepted
+        : this.requestPanelClose(panelId, true)
+    }
+
     let canClose = false
-    await this.scheduleOperation(
+    const operation = this.scheduleOperation(
       session,
       async () => {
         if (session.localOwner) {
@@ -2256,20 +2265,24 @@ export class BrowserSessionManager {
         } else {
           canClose = true
         }
-
-        if (canClose) {
-          session.closeApproved = true
-          session.closing = true
-          this.stopScheduler(session, 'Browser closed.')
-        }
       },
       { required: true }
-    ).catch((error: BrowserSchedulingError) => {
-      if (!session.closeApproved) {
-        throw error
+    ).then(() => {
+      if (canClose) {
+        session.closeApproved = true
+        session.closing = true
+        this.stopScheduler(session, 'Browser closed.')
+      }
+
+      return canClose
+    })
+    const pending = operation.finally(() => {
+      if (session.closeRequest === pending) {
+        session.closeRequest = null
       }
     })
-    return canClose || session.closeApproved
+    session.closeRequest = pending
+    return pending
   }
 
   async closePanel(panelId: string, reason: string): Promise<void> {

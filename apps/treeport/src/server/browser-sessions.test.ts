@@ -1147,6 +1147,31 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
   })
 
+  it('shares concurrent close requests and retries with force after a refusal', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
+    )
+    const browser = browsers[0]!
+    browser.closeRequiresConfirmation = true
+
+    const normal = value.manager.requestPanelClose('panel_browser')
+    const forced = value.manager.requestPanelClose('panel_browser', true)
+    await expect(normal).resolves.toBe(false)
+    await expect(forced).resolves.toBe(true)
+    expect(browser.closeRequests).toEqual([false, true])
+
+    await expect(
+      value.manager.requestPanelClose('panel_browser')
+    ).resolves.toBe(true)
+    await value.manager.closePanel('panel_browser', 'Browser closed.')
+    await value.manager.dispose()
+  })
+
   it('accumulates scroll bursts without crossing pointer, resize, key or controller boundaries', async () => {
     const value = fixture()
     const first = value.transport('first')
