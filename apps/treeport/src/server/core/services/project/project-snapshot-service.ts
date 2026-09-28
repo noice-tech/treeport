@@ -33,6 +33,11 @@ import { ProjectStore } from './project-store'
 export class ProjectSnapshotService {
   private inFlight: Deferred.Deferred<ProjectRecord[], never> | null = null
   private revision = 0
+  private readonly dirtyStates = new Map<
+    string,
+    { path: string; state: WorktreeRecord['dirty'] }
+  >()
+  private readonly refreshDue = new Map<string, number>()
 
   invalidate(): void {
     this.revision += 1
@@ -105,14 +110,12 @@ export class ProjectSnapshotService {
   getProjectSnapshot(
     projectId: string
   ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
-    const listProjects = this.listProjects.bind(this)
+    const collectProjectsSnapshot = this.collectProjectsSnapshot.bind(this)
 
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       yield* projectStore.requireOpenProject(projectId)
-      const project = (yield* listProjects()).find(
-        (candidate) => candidate.id === projectId
-      )
+      const project = (yield* collectProjectsSnapshot(projectId))[0]
       if (!project) {
         return yield* Effect.fail(
           new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
@@ -126,13 +129,13 @@ export class ProjectSnapshotService {
   getWorktreeSnapshot(
     worktreeId: string
   ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
-    const listProjects = this.listProjects.bind(this)
+    const collectProjectsSnapshot = this.collectProjectsSnapshot.bind(this)
 
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       const binding = yield* projectStore.getWorktree(worktreeId)
       yield* projectStore.requireOpenProject(binding.projectId)
-      const worktree = (yield* listProjects())
+      const worktree = (yield* collectProjectsSnapshot(binding.projectId))
         .flatMap((project) => project.worktrees)
         .find((candidate) => candidate.id === worktreeId)
       if (!worktree) {
@@ -163,32 +166,93 @@ export class ProjectSnapshotService {
     })
   }
 
-  private collectProjectsSnapshot(): Effect.Effect<
-    ProjectRecord[],
-    never,
-    ApplicationServices
-  > {
+  // Run by the daemon, not by HTTP metadata reads. One tree status or
+  // project reconciliation per tick bounds subprocess pressure.
+  refreshGitState(): Effect.Effect<void, never, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      const store = yield* ProjectStore
+      const git = yield* GitPort
+      const observations = yield* ProjectObservationOperations
+      const projects = yield* store.storedProjects(true)
+      const tasks = projects.flatMap((project) => [
+        ...(project.kind === 'repository'
+          ? [{ key: `project:${project.id}`, project, worktree: null }]
+          : []),
+        ...project.worktrees
+          .filter((tree) => project.kind === 'repository' && !tree.prunable)
+          .map((worktree) => ({
+            key: `tree:${worktree.id}:${worktree.path}`,
+            project,
+            worktree
+          }))
+      ])
+      const keys = new Set(tasks.map((task) => task.key))
+      const treeIds = new Set(
+        projects.flatMap((project) => project.worktrees.map((tree) => tree.id))
+      )
+      for (const id of this.dirtyStates.keys()) {
+        if (!treeIds.has(id)) {
+          this.dirtyStates.delete(id)
+        }
+      }
+      for (const key of this.refreshDue.keys()) {
+        if (!keys.has(key)) {
+          this.refreshDue.delete(key)
+        }
+      }
+      const now = Date.now()
+      const task = tasks
+        .filter((candidate) => (this.refreshDue.get(candidate.key) ?? 0) <= now)
+        .sort(
+          (a, b) =>
+            (this.refreshDue.get(a.key) ?? 0) -
+            (this.refreshDue.get(b.key) ?? 0)
+        )[0]
+      if (!task) {
+        return
+      }
+
+      // Reserve the slot before awaiting I/O so concurrent refreshes cannot
+      // schedule the same expensive operation twice.
+      this.refreshDue.set(task.key, now + (task.worktree ? 45_000 : 60_000))
+      if (task.worktree) {
+        const tree = task.worktree
+        const state = yield* git
+          .dirtyState(tree.path)
+          .pipe(Effect.orElseSucceed(() => null))
+        this.dirtyStates.set(tree.id, { path: tree.path, state })
+      } else {
+        yield* observations.importWorktrees(
+          task.project.id,
+          task.project.repositoryPath,
+          task.project.mainWorktreePath
+        )
+      }
+    })
+  }
+
+  private collectProjectsSnapshot(
+    projectId?: string
+  ): Effect.Effect<ProjectRecord[], never, ApplicationServices> {
+    const dirtyStates = this.dirtyStates
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      const git = yield* GitPort
       const observations = yield* ProjectObservationOperations
       const panels = yield* PanelOperations
       const projectStore = yield* ProjectStore
       const terminalService = yield* TerminalOperations
-      const storedProjects = yield* projectStore.storedProjects(true)
+      const storedProjects = projectId
+        ? [yield* projectStore.storedProject(projectId)].filter(
+            (project): project is ProjectRecord => project !== null
+          )
+        : yield* projectStore.storedProjects(true)
       const snapshots = yield* Effect.all(
         storedProjects.map((storedProject) =>
           Effect.gen(function* () {
             let project = storedProject
             const observation = yield* Effect.exit(
               Effect.gen(function* () {
-                if (project.kind === 'repository') {
-                  yield* observations.importWorktrees(
-                    project.id,
-                    project.repositoryPath,
-                    project.mainWorktreePath
-                  )
-                } else {
+                if (project.kind !== 'repository') {
                   project = yield* observations.observeAvailableProject(project)
                 }
 
@@ -216,13 +280,13 @@ export class ProjectSnapshotService {
             yield* Effect.all(
               project.worktrees.map((worktree) =>
                 Effect.gen(function* () {
+                  const cachedDirty = dirtyStates.get(worktree.id)
                   const dirty =
                     project.kind === 'repository' &&
                     project.availability.state === 'available' &&
-                    !worktree.prunable
-                      ? yield* git
-                          .dirtyState(worktree.path)
-                          .pipe(Effect.orElseSucceed(() => null))
+                    !worktree.prunable &&
+                    cachedDirty?.path === worktree.path
+                      ? cachedDirty.state
                       : null
                   const terminalInventory = yield* Effect.exit(
                     terminalService.listWorktreeTerminals(worktree)
