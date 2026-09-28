@@ -412,7 +412,10 @@ export class TerminalService {
             (yield* projectStore.projectOpenState(worktree.projectId)) !==
               true ||
             worktree.prunable ||
-            !(yield* locks.tryAcquire({ worktreeIds: [worktreeId] }))
+            !(yield* locks.tryAcquire({
+              worktreeIds: [worktreeId],
+              checkProjectIds: [worktree.projectId]
+            }))
           ) {
             return null
           }
@@ -654,7 +657,12 @@ export class TerminalService {
     argv?: string[],
     options?: TerminalLaunchOptions,
     verifiedWorktree?: WorktreeRecord,
-    launchVerification?: Deferred.Deferred<WorktreeRecord, DomainError<unknown>>
+    launchVerification?: Deferred.Deferred<
+      WorktreeRecord,
+      DomainError<unknown>
+    >,
+    // Only tree creation may use this, while its scoped worktree lock is held.
+    reservedByCreation = false
   ): TerminalEffect<TerminalRecord> {
     const createTerminalSession = this.createTerminalSession.bind(this)
     const invalidateProjectsSnapshot =
@@ -681,10 +689,12 @@ export class TerminalService {
         )
       }
 
-      const acquired = yield* locks.tryAcquire({
-        worktreeIds: [worktreeId],
-        checkProjectIds: [worktree.projectId]
-      })
+      const acquired =
+        reservedByCreation ||
+        (yield* locks.tryAcquire({
+          worktreeIds: [worktreeId],
+          checkProjectIds: [worktree.projectId]
+        }))
       if (!acquired) {
         return yield* Effect.fail(
           new DomainError(
@@ -707,7 +717,13 @@ export class TerminalService {
             ? worktree
             : yield* observations.verifyWorktreeLaunchTarget(worktree)
         return yield* createTerminalSession(launchWorktree, name, argv, options)
-      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktreeId] })))
+      }).pipe(
+        Effect.ensuring(
+          reservedByCreation
+            ? Effect.void
+            : locks.release({ worktreeIds: [worktreeId] })
+        )
+      )
     }).pipe(Effect.onError(() => invalidateProjectsSnapshot()))
   }
 

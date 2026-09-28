@@ -104,13 +104,15 @@ export class WorktreeCreationService {
     options?: TerminalLaunchOptions
   ) {
     return Effect.flatMap(TerminalOperations, (terminals) =>
-      terminals.executeCreateTerminal(worktreeId, name, argv, options)
-    )
-  }
-
-  private ensureWorktreeTerminal(worktreeId: string) {
-    return Effect.flatMap(TerminalOperations, (terminals) =>
-      terminals.ensureWorktreeTerminal(worktreeId)
+      terminals.executeCreateTerminal(
+        worktreeId,
+        name,
+        argv,
+        options,
+        undefined,
+        undefined,
+        true
+      )
     )
   }
 
@@ -459,7 +461,6 @@ export class WorktreeCreationService {
     const observeAvailableProject = this.observeAvailableProject.bind(this)
     const importWorktrees = this.importWorktrees.bind(this)
     const executeCreateTerminal = this.executeCreateTerminal.bind(this)
-    const ensureWorktreeTerminal = this.ensureWorktreeTerminal.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -687,6 +688,26 @@ export class WorktreeCreationService {
                 worktreeRow.worktree,
                 worktreeRow.mainWorktreePath
               )
+              // Reserve the new tree before releasing the project lock. Snapshot
+              // collection can observe it as soon as importWorktrees finishes.
+              yield* Effect.acquireRelease(
+                locks
+                  .tryAcquire({ worktreeIds: [worktree.id] })
+                  .pipe(
+                    Effect.flatMap((acquired) =>
+                      acquired
+                        ? Effect.void
+                        : Effect.fail(
+                            new DomainError(
+                              'WORKTREE_BUSY',
+                              'The new tree is already being modified',
+                              409
+                            )
+                          )
+                    )
+                  ),
+                () => locks.release({ worktreeIds: [worktree.id] })
+              )
               yield* Effect.sync(() =>
                 events.publish('worktree.created', {
                   projectId,
@@ -747,7 +768,7 @@ export class WorktreeCreationService {
 
           if (!terminal) {
             const fallback = yield* Effect.exit(
-              ensureWorktreeTerminal(worktree.id)
+              executeCreateTerminal(worktree.id, 'Shell')
             )
             if (
               Exit.isFailure(fallback) &&
@@ -864,7 +885,7 @@ export class WorktreeCreationService {
 
         if (!terminal) {
           const fallback = yield* Effect.exit(
-            ensureWorktreeTerminal(worktree.id)
+            executeCreateTerminal(worktree.id, 'Shell')
           )
           if (
             Exit.isFailure(fallback) &&
