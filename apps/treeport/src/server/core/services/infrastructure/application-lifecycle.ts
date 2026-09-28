@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import {
+  ApplicationDaemons,
   ApplicationFibers,
   type ApplicationServices,
   ProjectObservations,
@@ -17,6 +18,7 @@ import {
 import { MutationLocks } from './mutation-locks'
 import {
   ProjectObservationOperations,
+  ProjectSnapshotOperations,
   WorktreeOperations
 } from '../domain-services'
 import { PackageMutations } from '../package/package-mutations'
@@ -100,6 +102,23 @@ export class ApplicationLifecycle {
       // daemon validates its database and constructs every listener. Terminal
       // reconciliation starts only after the caller commits that host.
       yield* observations.reconcile()
+
+      const daemons = yield* ApplicationDaemons
+      const snapshots = yield* ProjectSnapshotOperations
+      yield* daemons.fork(
+        Effect.forever(
+          snapshots.refreshGitState().pipe(
+            Effect.catchAllCause((cause) =>
+              Cause.isInterruptedOnly(cause)
+                ? Effect.failCause(cause)
+                : Effect.logError(
+                    `Git metadata refresh failed: ${Cause.pretty(cause)}`
+                  )
+            ),
+            Effect.zipRight(Effect.sleep('2 seconds'))
+          )
+        )
+      )
 
       const interrupted = this.interruptedOperations
       this.interruptedOperations = []
