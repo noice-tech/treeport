@@ -51,7 +51,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     {
       const releaseCreate = mocked.delayNextCreate()
-      const selectedTerminal = page.getByRole('main', { name: /terminal$/ })
+      const selectedTerminal = page.getByRole('main', {
+        name: /terminal workspace$/
+      })
       const selectedWorkspaceUrl = page.url()
       await expect(selectedTerminal).toBeVisible()
       await page.getByRole('button', { name: 'New tree' }).click()
@@ -66,7 +68,7 @@ test.describe('desktop worktree and terminal workflows', () => {
           new URL(request.url()).pathname ===
             '/api/projects/proj_1/worktree-operations'
       )
-      await page.getByRole('button', { name: 'Create tree' }).click()
+      await page.getByLabel('Task description').press('ControlOrMeta+Enter')
       const request = await requestPromise
       expect(request.postDataJSON()).toEqual({
         name: 'New Tópic / Preview!',
@@ -113,7 +115,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(
         page.getByRole('button', { name: 'new-topic-preview', exact: true })
       ).toHaveCount(1)
-      expect(await pending.count()).toBe(0)
+      await expect(pending).toHaveCount(0)
       await expect(
         page.getByRole('button', {
           name: /^(main tree|topic|new-topic-preview)$/
