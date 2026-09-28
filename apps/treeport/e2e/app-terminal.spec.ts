@@ -51,7 +51,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     {
       const releaseCreate = mocked.delayNextCreate()
-      const selectedTerminal = page.getByRole('main', { name: /terminal workspace$/ })
+      const selectedTerminal = page.getByRole('main', {
+        name: /terminal workspace$/
+      })
       const selectedWorkspaceUrl = page.url()
       await expect(selectedTerminal).toBeVisible()
       await page.getByRole('button', { name: 'New tree' }).click()
