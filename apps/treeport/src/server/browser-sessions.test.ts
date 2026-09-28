@@ -1138,9 +1138,9 @@ describe('Browser sessions', () => {
       value.manager.requestPanelClose('panel_browser', true)
     ).resolves.toBe(true)
     expect(browser.closeRequests).toEqual([false, true])
-    await expect(value.manager.requestPanelClose('panel_browser')).resolves.toBe(
-      true
-    )
+    await expect(
+      value.manager.requestPanelClose('panel_browser')
+    ).resolves.toBe(true)
     expect(browser.closeRequests).toEqual([false, true])
     await value.manager.closePanel('panel_browser', 'Browser closed.')
     expect(browser.closes).toBe(1)
