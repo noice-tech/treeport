@@ -2232,6 +2232,7 @@ export class BrowserSessionManager {
     if (!session) {
       return true
     }
+
     if (session.closeApproved) {
       return true
     }
@@ -2263,7 +2264,7 @@ export class BrowserSessionManager {
         }
       },
       { required: true }
-    ).catch((error: unknown) => {
+    ).catch((error: BrowserSchedulingError) => {
       if (!session.closeApproved) {
         throw error
       }
