@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   TREE_CONTEXT_VALUE_MAX_LENGTH,
   type ProjectRecord,
@@ -58,6 +58,8 @@ export function WorktreeForm({
     treeContext?: TreeContextValues
   ) => void
 }) {
+  const submitButtonRef = useRef<HTMLButtonElement>(null)
+  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const [name, setName] = useState('')
   const [baseValue, setBaseValue] = useState('default')
   const [treeContext, setTreeContext] = useState<TreeContextValues>({})
@@ -88,6 +90,24 @@ export function WorktreeForm({
     <form
       className="flex flex-col gap-5"
       autoComplete="off"
+      onKeyDown={(event) => {
+        if (
+          event.key !== 'Enter' ||
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          event.shiftKey ||
+          !(usesMacKeyboard
+            ? event.metaKey && !event.ctrlKey
+            : event.ctrlKey && !event.metaKey)
+        ) {
+          return
+        }
+
+        event.preventDefault()
+        if (submitButtonRef.current && !submitButtonRef.current.disabled) {
+          event.currentTarget.requestSubmit(submitButtonRef.current)
+        }
+      }}
       onSubmit={(event) => {
         event.preventDefault()
         const submittedName = name.trim()
@@ -291,7 +311,9 @@ export function WorktreeForm({
       </FormField>
       <div className="flex items-center justify-end pt-1">
         <Button
+          ref={submitButtonRef}
           type="submit"
+          aria-keyshortcuts={usesMacKeyboard ? 'Meta+Enter' : 'Control+Enter'}
           disabled={
             busy ||
             contextFieldsLoading ||
@@ -300,6 +322,13 @@ export function WorktreeForm({
           }
         >
           {busy ? 'Creating…' : 'Create tree'}
+          <kbd
+            aria-hidden="true"
+            className="relative top-[0.5px] inline-flex items-baseline gap-0.5 font-sans text-xs font-medium leading-5"
+          >
+            <span>{usesMacKeyboard ? '⌘' : 'Ctrl+'}</span>
+            <span>↵</span>
+          </kbd>
         </Button>
       </div>
     </form>
