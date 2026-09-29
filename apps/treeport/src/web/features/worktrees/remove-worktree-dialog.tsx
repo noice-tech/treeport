@@ -53,10 +53,10 @@ export function RemoveWorktreeDialog({
     <AlertDialog open={worktree !== null} onOpenChange={onOpenChange}>
       {worktree && preview ? (
         <AlertDialogContent
-          className="min-w-0 overflow-x-hidden"
+          className="flex min-w-0 max-w-3xl flex-col overflow-hidden"
           restoreFocusTo={restoreFocusTo}
         >
-          <AlertDialogHeader>
+          <AlertDialogHeader className="shrink-0 [overflow-wrap:anywhere]">
             <p className="eyebrow">
               {operation
                 ? removalFailed
@@ -88,7 +88,7 @@ export function RemoveWorktreeDialog({
             </AlertDialogDescription>
           </AlertDialogHeader>
           {!operation ? (
-            <>
+            <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain">
               <dl className="facts">
                 <div>
                   <dt>Name</dt>
@@ -156,11 +156,17 @@ export function RemoveWorktreeDialog({
                   </ul>
                 </div>
               ) : null}
-            </>
+            </div>
           ) : (
-            <div className="min-w-0" aria-live="polite">
+            <div
+              className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain"
+              aria-live="polite"
+            >
               {cleanup?.commands.map((command, index) => (
-                <section className="min-w-0" key={`${index}:${command.name}`}>
+                <section
+                  className="flex min-w-0 flex-col gap-2 [overflow-wrap:anywhere]"
+                  key={`${index}:${command.name}`}
+                >
                   <strong>
                     {command.name}: {command.status}
                   </strong>
@@ -189,17 +195,17 @@ export function RemoveWorktreeDialog({
                   {operation.error}
                 </p>
               ) : null}
-              {cleanupFailed && preview.cleanup.commands.length > 0 ? (
-                <div className="warning danger">
-                  <strong>Cleanup can be skipped.</strong>
-                  <p>
-                    Removing without cleanup can leave project resources behind.
-                  </p>
-                </div>
-              ) : null}
             </div>
           )}
-          <AlertDialogFooter>
+          {operation && cleanupFailed && preview.cleanup.commands.length > 0 ? (
+            <div className="warning danger shrink-0">
+              <strong>Cleanup can be skipped.</strong>
+              <p>
+                Removing without cleanup can leave project resources behind.
+              </p>
+            </div>
+          ) : null}
+          <AlertDialogFooter className="shrink-0">
             {operation ? (
               <>
                 {removalFailed ? (
