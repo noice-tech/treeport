@@ -32,6 +32,7 @@ import type {
   DesktopCommand
 } from './desktop-contract'
 
+import { isBrowserLoopbackHostname } from './browser-loopback'
 import { browserPresentationOrigin } from './browser-presentation'
 import { permitsBrowserVideoCapture } from './browser-video'
 import * as Effect from 'effect/Effect'
@@ -40,8 +41,6 @@ import { DesktopRuntime } from './desktop-runtime'
 
 const BROWSER_PARTITION = 'persist:treeport-browser'
 const DECISIONS_FILE = 'browser-site-permissions.json'
-// Only offer permissions with a request path we can prompt for. Check-only
-// permissions need an explicit interception path like loopback-network below.
 const capabilities = {
   'clipboard-read': 'read your clipboard',
   geolocation: 'know your location',
@@ -582,9 +581,10 @@ export function installBrowserWebviewPolicy(options: {
     }
   )
 
-  // Electron 43 sends loopback-network checks but does not send a permission
-  // request when the check fails. Pause the actual webview request instead of
-  // granting access from a synchronous check or asking after the fetch failed.
+  // Electron 43 checks loopback-network without requesting it after a denied
+  // check. Hold public/local -> loopback requests so the user can grant access.
+  // Loopback documents do not cross into a more-private address space and must
+  // load normally, including requests to other localhost ports and WebSockets.
   browserSession.webRequest.onBeforeRequest(
     { urls: ['<all_urls>'] },
     (details, callback) => {
@@ -600,12 +600,7 @@ export function installBrowserWebviewPolicy(options: {
       const target = new URL(details.url)
       if (
         !['http:', 'https:', 'ws:', 'wss:'].includes(target.protocol) ||
-        !(
-          target.hostname === 'localhost' ||
-          target.hostname.endsWith('.localhost') ||
-          /^127(?:\.\d{1,3}){3}$/.test(target.hostname) ||
-          target.hostname === '[::1]'
-        )
+        !isBrowserLoopbackHostname(target.hostname)
       ) {
         callback({})
         return
@@ -626,6 +621,11 @@ export function installBrowserWebviewPolicy(options: {
           : null
       if (!entry || !origin) {
         callback({ cancel: true })
+        return
+      }
+
+      if (isBrowserLoopbackHostname(new URL(origin).hostname)) {
+        callback({})
         return
       }
 
