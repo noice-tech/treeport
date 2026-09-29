@@ -55,6 +55,11 @@ describe('terminal operations', () => {
         { name: 'pi', argv: ['pi'] }
       )
       await vi.waitFor(() => expect(snapshot).not.toBeNull())
+      // The creation event precedes the terminal host call; wait for launch
+      // to reach the gate before checking the concurrent snapshot.
+      await vi.waitFor(() =>
+        expect(runner.terminalCreateAttempts).toBe(initialAttempts + 1)
+      )
       // Snapshot auto-ensure must not take the tree lock or launch Shell,
       // even while the requested terminal is still starting.
       await expect(snapshot).resolves.toBeDefined()

@@ -226,7 +226,8 @@ export function useWorktreeWorkflows({
       if (operation.status === 'failed') {
         toast.error(`Couldn’t remove tree “${preview.name}”`, {
           id,
-          description: operation.error ?? 'Git kept the tree.',
+          description:
+            'Git kept the tree. Review the dialog for failure details.',
           duration: Infinity,
           action
         })
