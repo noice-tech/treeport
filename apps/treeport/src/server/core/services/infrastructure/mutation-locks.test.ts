@@ -37,6 +37,47 @@ describe('MutationLocks', () => {
     expect(result.worktreeBusy).toBe(false)
   })
 
+  it('relaxes only creation checks, not project acquisition or target-tree locks', async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const locks = yield* MutationLocks
+        const creation = {
+          projectId: 'project',
+          projectLockKind: 'worktree-creation' as const
+        }
+        yield* locks.acquire(creation)
+        const strict = yield* locks.tryAcquire({
+          worktreeIds: ['tree'],
+          checkProjectIds: ['project']
+        })
+        const request = {
+          worktreeIds: ['tree'],
+          checkProjectIds: ['project'],
+          allowWorktreeCreation: true
+        }
+        const allowed = yield* locks.tryAcquire(request)
+        const targetBusy = yield* locks.tryAcquire(request)
+        const projectBusy = yield* locks.tryAcquire({
+          projectId: 'project',
+          allowWorktreeCreation: true
+        })
+        yield* locks.release(request)
+        yield* locks.release(creation)
+        yield* locks.acquire({ projectId: 'project' })
+        const mutationBusy = yield* locks.tryAcquire(request)
+        return { strict, allowed, targetBusy, projectBusy, mutationBusy }
+      }).pipe(Effect.provide(MutationLocks.Default))
+    )
+
+    expect(result).toEqual({
+      strict: false,
+      allowed: true,
+      targetBusy: false,
+      projectBusy: false,
+      mutationBusy: false
+    })
+  })
+
   it('supports fail-fast project checks without acquiring the project key', async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {

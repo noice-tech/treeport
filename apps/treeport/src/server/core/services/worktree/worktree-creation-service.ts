@@ -490,7 +490,7 @@ export class WorktreeCreationService {
 
         const { project, worktree } = yield* Effect.acquireUseRelease(
           locks
-            .tryAcquire({ projectId })
+            .tryAcquire({ projectId, projectLockKind: 'worktree-creation' })
             .pipe(
               Effect.flatMap((acquired) =>
                 acquired

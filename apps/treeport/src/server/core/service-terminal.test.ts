@@ -7,6 +7,125 @@ import { TerminalOperations } from './services/domain-services'
 import { MutationLocks } from './services/infrastructure/mutation-locks'
 
 describe('terminal operations', () => {
+  it('creates terminals in existing trees while Git creates another tree', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const mainTree = project.worktrees[0]!
+    const linkedTree = (
+      await service.createWorktree(project.id, 'existing-tree', 'default')
+    ).worktree
+    const sessionsBefore = [...runner.sessions.keys()]
+    let releaseCreation!: () => void
+    runner.worktreeAddGate = new Promise<void>((resolve) => {
+      releaseCreation = resolve
+    })
+    const operation = await service.beginCreateWorktree(
+      project.id,
+      'blocking-tree',
+      'default'
+    )
+
+    try {
+      await vi.waitFor(async () => {
+        expect(
+          await service.runEffect(
+            Effect.flatMap(MutationLocks, (locks) =>
+              locks.isProjectLocked(project.id)
+            )
+          )
+        ).toBe(true)
+      })
+      for (const tree of [mainTree, linkedTree]) {
+        await expect(
+          service.createTerminal(tree.id, 'During creation')
+        ).resolves.toMatchObject({
+          worktreeId: tree.id,
+          name: 'During creation'
+        })
+      }
+      expect((await service.getOperation(operation.id)).status).toBe('running')
+      expect([...runner.sessions.keys()]).toEqual(
+        expect.arrayContaining(sessionsBefore)
+      )
+    } finally {
+      releaseCreation()
+    }
+    await vi.waitFor(async () =>
+      expect((await service.getOperation(operation.id)).status).toBe(
+        'completed'
+      )
+    )
+    await expect(
+      service.createTerminal(mainTree.id, 'After creation')
+    ).resolves.toMatchObject({ name: 'After creation' })
+  })
+
+  it.each(['project mutation', 'target tree'] as const)(
+    'rejects terminal creation during a %s lock',
+    async (kind) => {
+      const { main, runner, service } = await fixture()
+      const project = await service.registerProject(main)
+      const tree = project.worktrees[0]!
+      const attempts = runner.terminalCreateAttempts
+      const request =
+        kind === 'project mutation'
+          ? { projectId: project.id }
+          : { worktreeIds: [tree.id] }
+      await service.runEffect(
+        Effect.flatMap(MutationLocks, (locks) => locks.acquire(request))
+      )
+      try {
+        await expect(
+          service.createTerminal(tree.id, 'Blocked')
+        ).rejects.toMatchObject({
+          code: 'WORKTREE_BUSY'
+        })
+        expect(runner.terminalCreateAttempts).toBe(attempts)
+      } finally {
+        await service.runEffect(
+          Effect.flatMap(MutationLocks, (locks) => locks.release(request))
+        )
+      }
+      await expect(
+        service.createTerminal(tree.id, 'Allowed')
+      ).resolves.toMatchObject({
+        name: 'Allowed'
+      })
+    }
+  )
+
+  it('protects a terminal launch from project closure and deletion', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const tree = project.worktrees[0]!
+    const attempts = runner.terminalCreateAttempts
+    let releaseLaunch!: () => void
+    runner.terminalCreateGate = new Promise<void>((resolve) => {
+      releaseLaunch = resolve
+    })
+    const launch = service.createTerminal(tree.id, 'Launching')
+    try {
+      await vi.waitFor(() =>
+        expect(runner.terminalCreateAttempts).toBe(attempts + 1)
+      )
+      await expect(service.closeProject(project.id)).rejects.toMatchObject({
+        code: 'PROJECT_BUSY'
+      })
+      await expect(service.deleteProject(project.id)).rejects.toMatchObject({
+        code: 'PROJECT_BUSY'
+      })
+    } finally {
+      releaseLaunch()
+    }
+    await expect(launch).resolves.toMatchObject({ name: 'Launching' })
+    await service.closeProject(project.id)
+    await expect(
+      service.createTerminal(tree.id, 'Closed')
+    ).rejects.toMatchObject({
+      code: 'PROJECT_CLOSED'
+    })
+  })
+
   it('keeps the requested terminal and setup when a snapshot observes a new tree', async () => {
     const { main, runner, service } = await fixture()
     await fs.mkdir(path.join(main, '.treeport'))
@@ -41,8 +160,10 @@ describe('terminal operations', () => {
       releaseLaunch = resolve
     })
     let snapshot: Promise<unknown> | null = null
+    let reservedTreeId: string | null = null
     const unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'worktree.created') {
+        reservedTreeId = event.data.worktreeId
         snapshot = service.getProjectSnapshot(project.id)
       }
     })
@@ -63,6 +184,10 @@ describe('terminal operations', () => {
       // Snapshot auto-ensure must not take the tree lock or launch Shell,
       // even while the requested terminal is still starting.
       await expect(snapshot).resolves.toBeDefined()
+      expect(reservedTreeId).not.toBeNull()
+      await expect(
+        service.createTerminal(reservedTreeId!, 'Cannot steal first launch')
+      ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
       expect(runner.terminalCreateAttempts).toBe(initialAttempts + 1)
       releaseLaunch()
       await vi.waitFor(async () => {
