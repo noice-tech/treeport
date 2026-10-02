@@ -693,7 +693,8 @@ export class TerminalService {
         reservedByCreation ||
         (yield* locks.tryAcquire({
           worktreeIds: [worktreeId],
-          checkProjectIds: [worktree.projectId]
+          checkProjectIds: [worktree.projectId],
+          allowWorktreeCreation: true
         }))
       if (!acquired) {
         return yield* Effect.fail(

@@ -1,13 +1,18 @@
 import * as Effect from 'effect/Effect'
 import * as SynchronizedRef from 'effect/SynchronizedRef'
 
+type ProjectLockKind = 'mutation' | 'worktree-creation'
+
 interface LockState {
-  readonly projects: Set<string>
+  readonly projects: Map<string, ProjectLockKind>
   readonly worktrees: Set<string>
 }
 
 interface LockRequest {
   readonly projectId?: string
+  readonly projectLockKind?: ProjectLockKind
+  // Only relax checkProjectIds; acquiring a project key remains exclusive.
+  readonly allowWorktreeCreation?: boolean
   readonly worktreeIds?: Iterable<string>
   readonly checkProjectIds?: Iterable<string>
   readonly checkWorktreeIds?: Iterable<string>
@@ -29,7 +34,7 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
   {
     effect: Effect.gen(function* () {
       const state = yield* SynchronizedRef.make<LockState>({
-        projects: new Set(),
+        projects: new Map(),
         worktrees: new Set()
       })
 
@@ -38,10 +43,17 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
         mode: 'acquire' | 'release'
       ): Effect.Effect<void> =>
         SynchronizedRef.update(state, (current) => {
-          const projects = new Set(current.projects)
+          const projects = new Map(current.projects)
           const worktrees = new Set(current.worktrees)
           if (request.projectId) {
-            projects[mode === 'acquire' ? 'add' : 'delete'](request.projectId)
+            if (mode === 'acquire') {
+              projects.set(
+                request.projectId,
+                request.projectLockKind ?? 'mutation'
+              )
+            } else {
+              projects.delete(request.projectId)
+            }
           }
 
           for (const worktreeId of request.worktreeIds ?? []) {
@@ -70,16 +82,24 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
         tryAcquire: (request: LockRequest) =>
           SynchronizedRef.modify(state, (current) => {
             const worktreeIds = [...(request.worktreeIds ?? [])]
-            const projectIds = [
-              ...(request.projectId ? [request.projectId] : []),
-              ...(request.checkProjectIds ?? [])
-            ]
+            const checkedProjectIds = [...(request.checkProjectIds ?? [])]
             const checkedWorktreeIds = [
               ...worktreeIds,
               ...(request.checkWorktreeIds ?? [])
             ]
             if (
-              projectIds.some((projectId) => current.projects.has(projectId)) ||
+              (request.projectId !== undefined &&
+                current.projects.has(request.projectId)) ||
+              checkedProjectIds.some((projectId) => {
+                const kind = current.projects.get(projectId)
+                return (
+                  kind !== undefined &&
+                  !(
+                    request.allowWorktreeCreation &&
+                    kind === 'worktree-creation'
+                  )
+                )
+              }) ||
               checkedWorktreeIds.some((worktreeId) =>
                 current.worktrees.has(worktreeId)
               )
@@ -87,10 +107,13 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
               return [false, current] as const
             }
 
-            const projects = new Set(current.projects)
+            const projects = new Map(current.projects)
             const worktrees = new Set(current.worktrees)
             if (request.projectId) {
-              projects.add(request.projectId)
+              projects.set(
+                request.projectId,
+                request.projectLockKind ?? 'mutation'
+              )
             }
 
             for (const worktreeId of worktreeIds) {
