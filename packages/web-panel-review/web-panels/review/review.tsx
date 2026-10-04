@@ -4,6 +4,7 @@ import {
   type DiffLineAnnotation,
   type SelectedLineRange
 } from '@pierre/diffs/react'
+import type { FileTreeDirectoryHandle } from '@pierre/trees'
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import {
   treeport,
@@ -194,25 +195,32 @@ function ChangedFileTree({
     const untracked = visible(changeSets.untracked)
     const uncommittedCount = new Set([...staged, ...unstaged, ...untracked])
       .size
-    const uncommittedRoot = `Uncommitted Changes (${uncommittedCount})`
-    const branchRoot = `Branch Changes (${branch.length})`
+    const uncommittedRoot = 'Uncommitted Changes'
+    const branchRoot = 'Branch Changes'
+    const counts = new Map([
+      [uncommittedRoot, uncommittedCount],
+      [branchRoot, branch.length],
+      [`${uncommittedRoot}/Staged`, staged.length],
+      [`${uncommittedRoot}/Unstaged`, unstaged.length],
+      [`${uncommittedRoot}/Untracked`, untracked.length]
+    ])
     const entries: Array<{
       group: string
       paths: string[]
       untracked: boolean
     }> = [
       {
-        group: `${uncommittedRoot}/Staged (${staged.length})`,
+        group: `${uncommittedRoot}/Staged`,
         paths: staged,
         untracked: false
       },
       {
-        group: `${uncommittedRoot}/Unstaged (${unstaged.length})`,
+        group: `${uncommittedRoot}/Unstaged`,
         paths: unstaged,
         untracked: false
       },
       {
-        group: `${uncommittedRoot}/Untracked (${untracked.length})`,
+        group: `${uncommittedRoot}/Untracked`,
         paths: untracked,
         untracked: true
       },
@@ -248,16 +256,15 @@ function ChangedFileTree({
     }
 
     const paths = [...actualPaths.keys()]
+    const directories = new Set<string>()
     const initialExpandedPaths = new Set<string>()
-    if (uncommittedCount > 0) {
-      for (const path of paths) {
-        const segments = path.split('/')
-        if (!segments[0]?.startsWith('Uncommitted Changes')) {
-          continue
-        }
-
-        for (let depth = 1; depth < segments.length; depth += 1) {
-          initialExpandedPaths.add(segments.slice(0, depth).join('/'))
+    for (const path of paths) {
+      const segments = path.split('/')
+      for (let depth = 1; depth < segments.length; depth += 1) {
+        const directory = segments.slice(0, depth).join('/')
+        directories.add(directory)
+        if (uncommittedCount === 0 || segments[0] === uncommittedRoot) {
+          initialExpandedPaths.add(directory)
         }
       }
     }
@@ -266,14 +273,19 @@ function ChangedFileTree({
       paths,
       actualPaths,
       gitStatus,
-      hasUncommittedChanges: uncommittedCount > 0,
+      counts,
+      directories,
       initialExpandedPaths: [...initialExpandedPaths]
     }
   }, [changeSets, files])
+  // useFileTree captures options once; callbacks must read the current data.
+  const current = useRef({ tree, onSelect })
+  current.current = { tree, onSelect }
+  const previousTree = useRef(tree)
   const { model } = useFileTree({
     paths: tree.paths,
     gitStatus: tree.gitStatus,
-    initialExpansion: tree.hasUncommittedChanges ? 'closed' : 'open',
+    initialExpansion: 'closed',
     initialExpandedPaths: tree.initialExpandedPaths,
     flattenEmptyDirectories: false,
     density: 'compact',
@@ -316,7 +328,12 @@ function ChangedFileTree({
 
       return left.basename.localeCompare(right.basename)
     },
+    renderRowDecoration: ({ row }) => {
+      const count = current.current.tree.counts.get(row.path)
+      return count === undefined ? null : { text: `(${count})` }
+    },
     onSelectionChange: (selectedPaths) => {
+      const { tree, onSelect } = current.current
       const selected = selectedPaths.find((path) => tree.actualPaths.has(path))
       const actualPath = selected ? tree.actualPaths.get(selected) : null
       if (actualPath) {
@@ -324,6 +341,45 @@ function ChangedFileTree({
       }
     }
   })
+
+  useEffect(() => {
+    const previous = previousTree.current
+    if (
+      previous.paths.length !== tree.paths.length ||
+      previous.paths.some((path, index) => path !== tree.paths[index])
+    ) {
+      // Include hidden directories so closing a parent doesn't lose its
+      // children's expansion state. Defaults apply only to new directories.
+      const collapsedPaths: string[] = []
+      const expandedPaths = [...tree.directories].filter((path) => {
+        const item = model.getItem(path)
+        // SAFETY: isDirectory() checks that the handle has directory methods.
+        const expanded = item?.isDirectory()
+          ? (item as FileTreeDirectoryHandle).isExpanded()
+          : tree.initialExpandedPaths.includes(path)
+        if (!expanded) {
+          collapsedPaths.push(path)
+        }
+
+        return expanded
+      })
+      model.resetPaths(tree.paths, { initialExpandedPaths: expandedPaths })
+      // resetPaths expands ancestors of expanded children; restore closed
+      // parents without changing those children's remembered state.
+      for (const path of collapsedPaths) {
+        const item = model.getItem(path)
+        if (item?.isDirectory()) {
+          // SAFETY: isDirectory() checks that this is a directory handle.
+          const directory = item as FileTreeDirectoryHandle
+          directory.collapse()
+        }
+      }
+    }
+
+    model.setGitStatus(tree.gitStatus)
+
+    previousTree.current = tree
+  }, [model, tree])
 
   return <FileTree model={model} />
 }
@@ -539,7 +595,6 @@ function ReviewApp() {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const collapsedFilesRef = useRef(collapsedFiles)
   collapsedFilesRef.current = collapsedFiles
-  const autoCollapsedFiles = useRef<Set<string>>(new Set())
   const fileStateLoaded = useRef(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [selectedLines, setSelectedLines] = useState<{
@@ -741,7 +796,9 @@ function ReviewApp() {
       })
 
       clearCopyFeedback()
-      setSelectedFile(null)
+      setSelectedFile((current) =>
+        reviewFiles.some(({ path }) => path === current) ? current : null
+      )
       setSelectedLines(null)
       setActiveFindMatch(-1)
       if (initial) {
@@ -774,16 +831,14 @@ function ReviewApp() {
       const collapsed = fileStateLoaded.current
         ? new Set(collapsedFilesRef.current)
         : new Set(parsedViewed)
-      for (const file of autoCollapsedFiles.current) {
-        if (!parsedViewed.has(file)) {
-          collapsed.delete(file)
+      if (!fileStateLoaded.current) {
+        for (const file of nextAutoCollapsedFiles) {
+          collapsed.add(file)
         }
       }
-      for (const file of nextAutoCollapsedFiles) {
-        collapsed.add(file)
-      }
+
       setCollapsedFiles(collapsed)
-      autoCollapsedFiles.current = nextAutoCollapsedFiles
+
       fileStateLoaded.current = true
 
       const nextLoaded = {
@@ -1831,7 +1886,6 @@ function ReviewApp() {
           <div id="file-tree">
             {files.length > 0 && (
               <ChangedFileTree
-                key={loaded?.generatedAt}
                 files={files}
                 changeSets={loaded!.changeSets}
                 onSelect={selectFile}
