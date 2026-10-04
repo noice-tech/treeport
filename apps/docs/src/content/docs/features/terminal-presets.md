@@ -17,7 +17,7 @@ Enable **Close on success** to close a terminal after a successful command. Fail
 
 ## Share presets
 
-To share presets, create `.treeport/terminal-presets.json`. Each tree reads its own copy of this file. For the file format and an example, see [Project configuration](/reference/project-configuration/#terminal-presetsjson).
+To share presets, add a `terminalPresets` section to `.treeport/settings.json`. Each tree reads its own copy of this file. For the fields and an example, see [Project configuration](/reference/project-configuration/#terminal-presets).
 
 Treeport also shows compatible tasks from the main tree's `.zed/tasks.json`.
 

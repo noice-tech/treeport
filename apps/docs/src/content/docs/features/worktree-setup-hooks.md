@@ -10,9 +10,9 @@ Treeport can run project commands when it creates or removes a tree.
 
 ## Configure commands
 
-Set commands in `.treeport/setup.json` in the main tree. For the file format and an example, see [Project configuration](/reference/project-configuration/#setupjson).
+Set commands in the `setup` section of the main tree's `.treeport/settings.json`. For the fields and an example, see [Project configuration](/reference/project-configuration/#setup).
 
-If this file is absent, Treeport can use compatible Zed `create_worktree` tasks for setup. Treeport does not use Zed tasks for cleanup.
+If this section is absent, Treeport can use compatible Zed `create_worktree` tasks for setup. An empty `setup.commands` array disables this fallback. Treeport does not use Zed tasks for cleanup.
 
 These commands run with your user permissions. Use them only in repositories that you trust.
 

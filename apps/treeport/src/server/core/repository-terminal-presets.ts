@@ -9,10 +9,10 @@ import type {
 } from '@treeport/shared'
 import {
   repositoryTerminalPresetSchema,
-  repositoryTerminalPresetsFileSchema
+  repositoryTerminalPresetsSettingsSchema
 } from '@treeport/shared'
 
-const CONFIG_PATH = path.join('.treeport', 'terminal-presets.json')
+const CONFIG_PATH = path.join('.treeport', 'settings.json')
 
 export async function loadRepositoryTerminalPresets(
   projectId: string,
@@ -62,9 +62,9 @@ export async function loadRepositoryTerminalPresets(
     }
   }
 
-  const file = Schema.decodeUnknownEither(repositoryTerminalPresetsFileSchema)(
-    value
-  )
+  const file = Schema.decodeUnknownEither(
+    repositoryTerminalPresetsSettingsSchema
+  )(value)
   if (Either.isLeft(file)) {
     return {
       definitions: [],
@@ -80,9 +80,9 @@ export async function loadRepositoryTerminalPresets(
 
   const definitions: TerminalPresetDefinition[] = []
   const diagnostics: TerminalPresetDefinitionDiagnostic[] = []
-  for (const presetId of Object.keys(file.right.presets).sort()) {
+  for (const presetId of Object.keys(file.right.terminalPresets).sort()) {
     const preset = Schema.decodeUnknownEither(repositoryTerminalPresetSchema)(
-      file.right.presets[presetId]
+      file.right.terminalPresets[presetId]
     )
     if (Either.isLeft(preset)) {
       diagnostics.push({

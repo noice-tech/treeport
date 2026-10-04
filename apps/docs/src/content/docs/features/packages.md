@@ -17,7 +17,7 @@ Install an npm package with `treeport install npm:<package-name>`, or install a 
 treeport install ./my-treeport-package
 ```
 
-Packages are global by default. To install a package for the current project, add `-l`. Treeport saves project package sources in [`.treeport/settings.json`](/reference/project-configuration/#settingsjson).
+Packages are global by default. To install a package for the current project, add `-l`. Treeport saves project package sources in [`.treeport/settings.json`](/reference/project-configuration/#packages-and-tree-context).
 
 - `treeport list` shows configured packages.
 - `treeport update --packages` updates packages that are not pinned to an exact version.
