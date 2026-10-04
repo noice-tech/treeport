@@ -169,25 +169,30 @@ export class ApplicationLifecycle {
 
               if (operation.kind === 'remove' && operation.request.preview) {
                 const worktreeId = operation.request.preview.worktreeId
-                yield* locks.acquire({ worktreeIds: [worktreeId] })
-                yield* worktreeMutations
-                  .enqueue(
-                    projectId,
-                    worktrees.resumeRemove(
+                yield* locks.acquire({
+                  worktreeIds: [worktreeId],
+                  worktreeRemovalProjectId: projectId
+                })
+                // Removal owns its Git critical sections. Enqueuing the whole
+                // recovery here would both serialize cleanup and nest the same
+                // project queue when it reaches the Git mutation.
+                yield* applicationFibers.fork(
+                  worktrees
+                    .resumeRemove(
                       operation.id,
                       worktreeId,
                       operation.request.preview.forceRequired
                     )
-                  )
-                  .pipe(
-                    Effect.catchAllCause((cause) =>
-                      Effect.logError(
-                        `Interrupted removal recovery failed for ${
-                          operation.id
-                        }: ${Cause.pretty(cause)}`
+                    .pipe(
+                      Effect.catchAllCause((cause) =>
+                        Effect.logError(
+                          `Interrupted removal recovery failed for ${
+                            operation.id
+                          }: ${Cause.pretty(cause)}`
+                        )
                       )
                     )
-                  )
+                )
               }
             }
           })

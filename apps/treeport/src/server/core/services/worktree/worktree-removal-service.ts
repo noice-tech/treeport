@@ -605,7 +605,13 @@ export class WorktreeRemovalService {
       }
 
       const acceptAfterProjectMutation = Effect.gen(function* () {
-        if (yield* worktreeMutations.isBusy(worktree.projectId)) {
+        // Acceptance reads and locks only its target tree. A removal's shared
+        // Git section need not block it; wait only for a project-level owner
+        // (creation) that will release its lock through this queue.
+        if (
+          (yield* locks.isProjectLocked(worktree.projectId)) &&
+          (yield* worktreeMutations.isBusy(worktree.projectId))
+        ) {
           return yield* worktreeMutations.enqueue(
             worktree.projectId,
             acceptRemove(worktreeId, request)
@@ -637,7 +643,10 @@ export class WorktreeRemovalService {
         )
       }
 
-      if (yield* worktreeMutations.isBusy(worktree.projectId)) {
+      if (
+        (yield* locks.isProjectLocked(worktree.projectId)) &&
+        (yield* worktreeMutations.isBusy(worktree.projectId))
+      ) {
         return yield* worktreeMutations.enqueue(
           worktree.projectId,
           acceptRemove(worktreeId, request)
@@ -683,11 +692,11 @@ export class WorktreeRemovalService {
         const git = yield* GitPort
         const locks = yield* MutationLocks
         const projectStore = yield* ProjectStore
-        const worktreeMutations = yield* WorktreeMutations
         const worktree = yield* projectStore.getWorktree(worktreeId)
         yield* projectStore.requireOpenProject(worktree.projectId)
         const acquired = yield* locks.tryAcquire({
           worktreeIds: [worktreeId],
+          worktreeRemovalProjectId: worktree.projectId,
           checkProjectIds: [worktree.projectId]
         })
         if (!acquired) {
@@ -913,24 +922,19 @@ export class WorktreeRemovalService {
             skipCleanup: accepted.skipCleanup
           })
         )
-        const backgroundRemoval = worktreeMutations
-          .enqueue(
-            worktree.projectId,
-            executeRemove(
-              accepted.operationId,
-              worktreeId,
-              accepted.preview.forceRequired
+        const backgroundRemoval = executeRemove(
+          accepted.operationId,
+          worktreeId,
+          accepted.preview.forceRequired
+        ).pipe(
+          Effect.catchAllCause((cause) =>
+            Effect.logError(
+              `Background tree removal failed for ${
+                accepted.operationId
+              }: ${Cause.pretty(cause)}`
             )
           )
-          .pipe(
-            Effect.catchAllCause((cause) =>
-              Effect.logError(
-                `Background tree removal failed for ${
-                  accepted.operationId
-                }: ${Cause.pretty(cause)}`
-              )
-            )
-          )
+        )
         yield* applicationFibers.fork(backgroundRemoval)
         yield* Effect.sync(() =>
           events.publish('remove.started', {
@@ -964,6 +968,7 @@ export class WorktreeRemovalService {
       const projectStore = yield* ProjectStore
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
+      const worktreeMutations = yield* WorktreeMutations
       const operation = yield* projectStore.storedOperation(operationId)
       if (
         operation?.kind !== 'remove' ||
@@ -1168,6 +1173,12 @@ export class WorktreeRemovalService {
               `)
               )
               .pipe(Effect.orDie)
+            // Cleanup cwd is constrained to this tree by Setup; commands are
+            // tree-local teardown, not owners of Treeport's Git inventory.
+            // Distinct trees run independently. Scripts touching shared state
+            // must use Git's native locking for Git writes and provide their
+            // own synchronization for other resources (including with setup).
+            // Do not hold the repository queue around arbitrary user commands.
             for (const [index, task] of cleanup.tasks.entries()) {
               const progress = request.cleanupCommands.commands[index]
               if (!progress) {
@@ -1276,30 +1287,87 @@ export class WorktreeRemovalService {
 
           yield* persistPhase('cleanup_commands_completed')
 
-          if (request.prunable) {
-            yield* removalAdapter(git.pruneWorktrees(project.repositoryPath))
-          } else {
-            yield* removalAdapter(
-              git.removeWorktree(project.repositoryPath, preview.path, force)
-            )
-          }
-
-          const stillReported = (yield* removalAdapter(
-            git.listWorktrees(project.repositoryPath)
-          )).some(
-            (item) =>
-              item.path === preview.path &&
-              (request.prunable
-                ? item.prunable
-                : item.gitWorktreeKey === acceptedKey)
-          )
-          if (stillReported) {
-            return yield* Effect.fail(
-              removalFailure(
-                'Git still reports the accepted worktree after removal'
+          // Serialize only the shared Git inventory mutation with creation and
+          // other removals. Revalidate inside the queue: cleanup and queue wait
+          // may have changed the repository or replaced this checkout.
+          yield* worktreeMutations.enqueue(
+            projectId,
+            Effect.gen(function* () {
+              const identity = yield* removalAdapter(
+                git.repositoryIdentity(project.repositoryPath)
               )
-            )
-          }
+              const current = (yield* removalAdapter(
+                git.listWorktrees(project.repositoryPath)
+              )).find((item) => item.path === preview.path)
+              if (
+                identity !== request.repositoryIdentity ||
+                (current &&
+                  (current.gitWorktreeKey !== acceptedKey ||
+                    current.locked ||
+                    current.prunable !== request.prunable))
+              ) {
+                return yield* Effect.fail(
+                  removalFailure(
+                    'Removal revalidation failed before Git mutation: the repository or accepted tree changed during cleanup'
+                  )
+                )
+              }
+
+              if (!current) {
+                // A concurrent prune may retire multiple prunable trees. The
+                // accepted checkout still goes through identity-bound cleanup.
+                gitRemoved = true
+                yield* persistPhase('git_removed')
+                return
+              }
+
+              if (!request.prunable) {
+                const authorizationError = yield* removalEffect(
+                  authorizedCheckoutError(
+                    preview.path,
+                    request.checkoutIdentity
+                  )
+                )
+                if (authorizationError) {
+                  return yield* Effect.fail(removalFailure(authorizationError))
+                }
+              }
+
+              if (request.prunable) {
+                yield* removalAdapter(
+                  git.pruneWorktrees(project.repositoryPath)
+                )
+              } else {
+                yield* removalAdapter(
+                  git.removeWorktree(
+                    project.repositoryPath,
+                    preview.path,
+                    force
+                  )
+                )
+              }
+
+              const stillReported = (yield* removalAdapter(
+                git.listWorktrees(project.repositoryPath)
+              )).some(
+                (item) =>
+                  item.path === preview.path &&
+                  (request.prunable
+                    ? item.prunable
+                    : item.gitWorktreeKey === acceptedKey)
+              )
+              if (stillReported) {
+                return yield* Effect.fail(
+                  removalFailure(
+                    'Git still reports the accepted worktree after removal'
+                  )
+                )
+              }
+
+              gitRemoved = true
+              yield* persistPhase('git_removed')
+            })
+          )
         } else if (!liveAccepted && !gitRemoved) {
           request.cleanupCommands.status = 'skipped'
           request.cleanupCommands.skippedReason =
