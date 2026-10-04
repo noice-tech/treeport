@@ -816,6 +816,44 @@ describe('Browser sessions', () => {
       retainPaint: true,
       agentActive: false
     })
+    // Native cancellation releases the queue without closing the local page.
+    let rejectReload: (error: Error) => void = () => undefined
+    localBrowser.page.reload.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectReload = reject
+          queueMicrotask(() =>
+            localBrowser.cdp.emit('Treeport.navigationCanceled')
+          )
+        })
+    )
+    await expect(
+      runEffect(
+        value.manager.agentCommand('panel_browser', {
+          command: 'reload',
+          args: []
+        })
+      )
+    ).rejects.toThrow('Navigation canceled by beforeunload')
+    rejectReload(new Error('No dialog is showing'))
+    const dismiss = vi.fn(async () => {
+      throw new Error('No dialog is showing')
+    })
+    localBrowser.page.emit('dialog', { dismiss })
+    await expect(
+      runEffect(
+        value.manager.agentCommand('panel_browser', {
+          command: 'snapshot',
+          args: []
+        })
+      )
+    ).resolves.toBe('- button "Local target" [ref=e1]')
+    expect(dismiss).toHaveBeenCalledOnce()
+    expect(localBrowser.page.url()).toBe('https://example.com/local')
+    expect(localBrowser.cdp.listenerCount('Treeport.navigationCanceled')).toBe(
+      0
+    )
+    expect(localBrowser.browser.close).not.toHaveBeenCalled()
     expect(automationRequests).toBe(0)
     await vi.waitFor(() =>
       expect(localBrowser.cdp.commands).toContainEqual(
