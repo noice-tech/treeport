@@ -356,6 +356,18 @@ export function installBrowserWebviewPolicy(options: {
         return false
       }
 
+      // Copy buttons need sanitized writes, not permission to read the clipboard.
+      // Keep the grant scoped to the registered page's current main-frame origin.
+      if (permission === 'clipboard-sanitized-write') {
+        return (
+          siteOrigin(
+            entry,
+            details.requestingUrl ?? requestingOrigin,
+            details.isMainFrame
+          ) !== null
+        )
+      }
+
       if (permission === 'media') {
         const capability =
           details.mediaType === 'video'
@@ -419,6 +431,13 @@ export function installBrowserWebviewPolicy(options: {
       const entry = registered(contents)
       if (!entry) {
         callback(false)
+        return
+      }
+
+      if (permission === 'clipboard-sanitized-write') {
+        callback(
+          siteOrigin(entry, details.requestingUrl, details.isMainFrame) !== null
+        )
         return
       }
 
