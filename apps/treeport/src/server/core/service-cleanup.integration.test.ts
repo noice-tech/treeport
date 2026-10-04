@@ -13,20 +13,22 @@ describe('tree cleanup completion', () => {
       const { main, service } = await fixture()
       await fs.mkdir(path.join(main, '.treeport'))
       await fs.writeFile(
-        path.join(main, '.treeport', 'setup.json'),
+        path.join(main, '.treeport', 'settings.json'),
         JSON.stringify({
-          commands: [],
-          cleanup: [
-            {
-              name: 'Cleanup',
-              argv: [
-                process.execPath,
-                '-e',
-                `process.stderr.write('cleanup diagnostic'); process.exitCode = ${exitCode}`
-              ],
-              timeout: '1s'
-            }
-          ]
+          setup: {
+            commands: [],
+            cleanup: [
+              {
+                name: 'Cleanup',
+                argv: [
+                  process.execPath,
+                  '-e',
+                  `process.stderr.write('cleanup diagnostic'); process.exitCode = ${exitCode}`
+                ],
+                timeout: '1s'
+              }
+            ]
+          }
         })
       )
       const project = await service.registerProject(main)

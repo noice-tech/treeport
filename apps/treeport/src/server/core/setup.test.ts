@@ -47,12 +47,13 @@ class Runner implements CommandRunner {
 }
 
 describe('worktree setup', () => {
-  it('resolves native JSONC commands as direct setup tasks', async () => {
+  it('resolves native JSON commands as direct setup tasks', async () => {
     const { main, worktree } = await repository()
     await fs.writeFile(
-      path.join(main, '.treeport', 'setup.json'),
+      path.join(main, '.treeport', 'settings.json'),
       `{
-        // Commands are direct argv, not shell snippets.
+        "packages": [],
+        "setup": {
         "commands": [
           {
             "name": "  Generate code  ",
@@ -61,15 +62,16 @@ describe('worktree setup', () => {
             "env": {
               "CACHE": "\${TREEPORT_MAIN_WORKTREE_PATH}/.cache",
               "UNCHANGED": "\${OTHER}"
-            },
+            }
           },
           {
             "name": "Copy environment",
             "argv": ["cp", "\${TREEPORT_MAIN_WORKTREE_PATH}/.env", ".env"],
             "cwd": "config",
             "timeout": "500ms"
-          },
+          }
         ]
+        }
       }`
     )
 
@@ -116,22 +118,24 @@ describe('worktree setup', () => {
 
   it('resolves ordered cleanup commands and hashes their execution definition', async () => {
     const { main, worktree } = await repository()
-    const filePath = path.join(main, '.treeport', 'setup.json')
+    const filePath = path.join(main, '.treeport', 'settings.json')
     await fs.mkdir(path.join(worktree, 'apps', 'api'), { recursive: true })
     await fs.writeFile(
       filePath,
       JSON.stringify({
-        commands: [],
-        cleanup: [
-          {
-            name: '  Drop database  ',
-            argv: ['node', '${TREEPORT_WORKTREE_PATH}/drop.mjs'],
-            cwd: 'apps/api',
-            env: { ADMIN: '${TREEPORT_MAIN_WORKTREE_PATH}/admin' },
-            timeout: '2m'
-          },
-          { name: 'Remove cache', argv: ['rm', '-rf', '.cache'] }
-        ]
+        setup: {
+          commands: [],
+          cleanup: [
+            {
+              name: '  Drop database  ',
+              argv: ['node', '${TREEPORT_WORKTREE_PATH}/drop.mjs'],
+              cwd: 'apps/api',
+              env: { ADMIN: '${TREEPORT_MAIN_WORKTREE_PATH}/admin' },
+              timeout: '2m'
+            },
+            { name: 'Remove cache', argv: ['rm', '-rf', '.cache'] }
+          ]
+        }
       })
     )
 
@@ -173,17 +177,19 @@ describe('worktree setup', () => {
     await fs.writeFile(
       filePath,
       JSON.stringify({
-        commands: [],
-        cleanup: [
-          { name: 'Remove cache', argv: ['rm', '-rf', '.cache'] },
-          {
-            name: 'Drop database',
-            argv: ['node', '${TREEPORT_WORKTREE_PATH}/drop.mjs'],
-            cwd: 'apps/api',
-            env: { ADMIN: '${TREEPORT_MAIN_WORKTREE_PATH}/admin' },
-            timeout: '2m'
-          }
-        ]
+        setup: {
+          commands: [],
+          cleanup: [
+            { name: 'Remove cache', argv: ['rm', '-rf', '.cache'] },
+            {
+              name: 'Drop database',
+              argv: ['node', '${TREEPORT_WORKTREE_PATH}/drop.mjs'],
+              cwd: 'apps/api',
+              env: { ADMIN: '${TREEPORT_MAIN_WORKTREE_PATH}/admin' },
+              timeout: '2m'
+            }
+          ]
+        }
       })
     )
     expect(
@@ -222,11 +228,12 @@ describe('worktree setup', () => {
     ).resolves.toEqual({ tasks: [], definitionHash: null })
   })
 
-  it('rejects invalid native setup', async () => {
+  it('rejects invalid native setup and command fields', async () => {
     const { main, worktree } = await repository()
     const invalidFiles: unknown[] = [
       null,
-      {},
+      [],
+      { commands: 'invalid' },
       { commands: [], typo: true },
       {
         commands: [{ name: 'unknown field', argv: ['echo'], typo: true }]
@@ -277,8 +284,8 @@ describe('worktree setup', () => {
 
     for (const value of invalidFiles) {
       await fs.writeFile(
-        path.join(main, '.treeport', 'setup.json'),
-        JSON.stringify(value)
+        path.join(main, '.treeport', 'settings.json'),
+        JSON.stringify({ setup: value })
       )
       await expect(
         Effect.runPromise(
@@ -292,10 +299,12 @@ describe('worktree setup', () => {
     }
 
     await fs.writeFile(
-      path.join(main, '.treeport', 'setup.json'),
+      path.join(main, '.treeport', 'settings.json'),
       JSON.stringify({
-        commands: [],
-        cleanup: [{ name: 'escape', argv: ['echo'], cwd: '../outside' }]
+        setup: {
+          commands: [],
+          cleanup: [{ name: 'escape', argv: ['echo'], cwd: '../outside' }]
+        }
       })
     )
     await expect(
@@ -323,15 +332,19 @@ describe('worktree setup', () => {
       ])
     )
     await fs.writeFile(
-      path.join(worktree, '.treeport', 'setup.json'),
+      path.join(worktree, '.treeport', 'settings.json'),
       JSON.stringify({
-        commands: [{ name: 'Linked copy', argv: ['linked-command'] }]
+        setup: {
+          commands: [{ name: 'Linked copy', argv: ['linked-command'] }]
+        }
       })
     )
     await fs.writeFile(
-      path.join(main, '.treeport', 'setup.json'),
+      path.join(main, '.treeport', 'settings.json'),
       JSON.stringify({
-        commands: [{ name: 'Native', argv: ['native-command'] }]
+        setup: {
+          commands: [{ name: 'Native', argv: ['native-command'] }]
+        }
       })
     )
 
@@ -350,19 +363,46 @@ describe('worktree setup', () => {
     ])
 
     await fs.writeFile(
-      path.join(main, '.treeport', 'setup.json'),
-      JSON.stringify({ commands: [] })
+      path.join(main, '.treeport', 'settings.json'),
+      JSON.stringify({ setup: { commands: [] } })
     )
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))
     ).resolves.toEqual([])
 
-    await fs.writeFile(path.join(main, '.treeport', 'setup.json'), 'null')
+    await fs.writeFile(path.join(main, '.treeport', 'settings.json'), 'null')
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))
     ).rejects.toThrow(/Invalid Treeport setup/)
 
-    await fs.rm(path.join(main, '.treeport', 'setup.json'))
+    await fs.writeFile(
+      path.join(main, '.treeport', 'settings.json'),
+      JSON.stringify({
+        packages: [],
+        terminalPresets: {},
+        treeContext: { fields: [] }
+      })
+    )
+    await expect(
+      Effect.runPromise(resolveWorktreeSetupTasks(input))
+    ).resolves.toEqual([
+      expect.objectContaining({ label: 'Zed fallback', argv: ['zed-command'] })
+    ])
+
+    await fs.writeFile(
+      path.join(main, '.treeport', 'settings.json'),
+      JSON.stringify({
+        setup: { cleanup: [{ name: 'Cleanup only', argv: ['cleanup'] }] }
+      })
+    )
+    await expect(
+      Effect.runPromise(resolveWorktreeSetupTasks(input))
+    ).resolves.toEqual([])
+    await expect(
+      Effect.runPromise(resolveWorktreeCleanupTasks(input))
+    ).resolves.toMatchObject({ tasks: [{ label: 'Cleanup only' }] })
+
+    await fs.rm(path.join(main, '.treeport', 'settings.json'))
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))
     ).resolves.toEqual([
@@ -371,6 +411,23 @@ describe('worktree setup', () => {
         argv: ['zed-command']
       })
     ])
+  })
+
+  it.each([
+    '{ "setup": { "commands": [] }, }',
+    '{ /* comment */ "setup": { "commands": [] } }'
+  ])('rejects non-JSON settings: %s', async (content) => {
+    const { main, worktree } = await repository()
+    await fs.writeFile(path.join(main, '.treeport', 'settings.json'), content)
+    await expect(
+      Effect.runPromise(
+        resolveWorktreeSetupTasks({
+          shell: '/bin/sh',
+          mainWorktreePath: main,
+          worktreePath: worktree
+        })
+      )
+    ).rejects.toThrow(/Could not parse .*settings\.json/)
   })
 
   it('preserves interruption while a setup command is running', async () => {

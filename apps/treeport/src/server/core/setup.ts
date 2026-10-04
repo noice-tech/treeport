@@ -8,12 +8,11 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import { parseDurationMs } from '../../duration'
 import { asEffectCommandRunner, type CommandRunner } from './command'
-import { readOptionalJsonc, type JsoncError } from './jsonc'
 import { resolveZedCreateWorktreeSetupTasks } from './zed'
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30 * 60_000
 const MAX_SETUP_OUTPUT = 4_000
-const TREEPORT_SETUP_PATH = path.join('.treeport', 'setup.json')
+const TREEPORT_SETTINGS_PATH = path.join('.treeport', 'settings.json')
 const TREEPORT_PATH_VARIABLES = [
   'TREEPORT_WORKTREE_PATH',
   'TREEPORT_MAIN_WORKTREE_PATH'
@@ -87,9 +86,9 @@ const lifecycleCommandSchema = z
   })
   .strict()
 
-const setupFileSchema = z
+const setupSchema = z
   .object({
-    commands: z.array(lifecycleCommandSchema),
+    commands: z.array(lifecycleCommandSchema).default([]),
     cleanup: z.array(lifecycleCommandSchema).optional()
   })
   .strict()
@@ -150,20 +149,39 @@ function isPathWithin(candidate: string, parent: string): boolean {
 
 interface NativeSetup {
   filePath: string
-  setup: z.infer<typeof setupFileSchema> | null
+  setup: z.infer<typeof setupSchema> | null
 }
 
 function readNativeSetup(
   mainWorktreePath: string
-): Effect.Effect<NativeSetup, JsoncError | Error> {
-  const filePath = path.join(mainWorktreePath, TREEPORT_SETUP_PATH)
+): Effect.Effect<NativeSetup, Error> {
+  const filePath = path.join(mainWorktreePath, TREEPORT_SETTINGS_PATH)
   return Effect.gen(function* () {
-    const file = yield* readOptionalJsonc(filePath)
-    if (!file.found) {
+    const content = yield* Effect.tryPromise(() =>
+      fs.readFile(filePath, 'utf8').catch((error) => {
+        if (
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'ENOENT'
+        ) {
+          return null
+        }
+
+        throw error
+      })
+    )
+    if (content === null) {
       return { filePath, setup: null }
     }
 
-    const parsed = setupFileSchema.safeParse(file.value)
+    const parsed = yield* Effect.try({
+      try: () =>
+        z
+          .looseObject({ setup: setupSchema.optional() })
+          .safeParse(JSON.parse(content)),
+      catch: (cause) =>
+        new Error(`Could not parse ${filePath}: ${String(cause)}`)
+    })
     if (!parsed.success) {
       const issue = parsed.error.issues[0]!
       return yield* Effect.fail(
@@ -173,7 +191,7 @@ function readNativeSetup(
       )
     }
 
-    return { filePath, setup: parsed.data }
+    return { filePath, setup: parsed.data.setup ?? null }
   })
 }
 
@@ -200,7 +218,7 @@ async function resolveNativeTasks(input: {
       : path.resolve(worktreePath, expandedCwd)
     if (!isPathWithin(cwd, worktreePath)) {
       throw new Error(
-        `Invalid Treeport setup in ${input.filePath}: ${input.commandPath}[${index}].cwd must stay inside the tree`
+        `Invalid Treeport setup in ${input.filePath}: setup.${input.commandPath}[${index}].cwd must stay inside the tree`
       )
     }
 

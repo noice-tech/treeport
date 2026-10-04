@@ -130,9 +130,11 @@ describe('terminal operations', () => {
     const { main, runner, service } = await fixture()
     await fs.mkdir(path.join(main, '.treeport'))
     await fs.writeFile(
-      path.join(main, '.treeport', 'setup.json'),
+      path.join(main, '.treeport', 'settings.json'),
       JSON.stringify({
-        commands: [{ name: 'Initialize', argv: ['initialize-tree'] }]
+        setup: {
+          commands: [{ name: 'Initialize', argv: ['initialize-tree'] }]
+        }
       })
     )
     const project = await service.registerProject(main)
@@ -240,16 +242,18 @@ describe('terminal operations', () => {
     const { main, runner, service } = await fixture()
     await fs.mkdir(path.join(main, '.treeport'))
     await fs.writeFile(
-      path.join(main, '.treeport', 'setup.json'),
+      path.join(main, '.treeport', 'settings.json'),
       JSON.stringify({
-        commands: [],
-        cleanup: [
-          {
-            name: 'Hold cleanup',
-            argv: ['hold-setup'],
-            timeout: '1m'
-          }
-        ]
+        setup: {
+          commands: [],
+          cleanup: [
+            {
+              name: 'Hold cleanup',
+              argv: ['hold-setup'],
+              timeout: '1m'
+            }
+          ]
+        }
       })
     )
 

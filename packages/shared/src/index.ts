@@ -693,11 +693,14 @@ const repositoryTerminalPresetIdSchema = Schema.String.pipe(
       'Preset IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
   })
 )
-export const repositoryTerminalPresetsFileSchema = Schema.Struct({
-  presets: Schema.Record({
-    key: repositoryTerminalPresetIdSchema,
-    value: Schema.Unknown
-  })
+export const repositoryTerminalPresetsSettingsSchema = Schema.Struct({
+  terminalPresets: Schema.optionalWith(
+    Schema.Record({
+      key: repositoryTerminalPresetIdSchema,
+      value: Schema.Unknown
+    }),
+    { default: () => ({}) }
+  )
 })
 const terminalPresetRevisionSchema = Schema.String.pipe(
   Schema.minLength(1),

@@ -1,4 +1,49 @@
 {
+  "setup": {
+    "commands": [
+      {
+        "name": "Install dependencies",
+        "argv": ["pnpm", "install", "--frozen-lockfile"]
+      },
+      {
+        "name": "Clone Treeport development database",
+        "argv": [
+          "node",
+          "${TREEPORT_WORKTREE_PATH}/apps/treeport/scripts/development-database.mjs",
+          "--from",
+          "${TREEPORT_MAIN_WORKTREE_PATH}/apps/treeport/.treeport-dev/data/treeport.db",
+          "--to",
+          "${TREEPORT_WORKTREE_PATH}/apps/treeport/.treeport-dev/data/treeport.db"
+        ]
+      }
+    ],
+    "cleanup": [
+      {
+        "name": "Stop Treeport development runtime",
+        "argv": [
+          "node",
+          "${TREEPORT_MAIN_WORKTREE_PATH}/apps/treeport/scripts/cleanup-development-runtime.mjs",
+          "--worktree",
+          "${TREEPORT_WORKTREE_PATH}"
+        ]
+      }
+    ]
+  },
+  "terminalPresets": {
+    "execute-task": {
+      "name": "Pi task",
+      "executable": "pi",
+      "args": [
+        "Run `treeport context` first. Read the task from its tree context, then start executing it immediately."
+      ]
+    },
+    "signoff": {
+      "name": "Signoff",
+      "executable": "pnpm",
+      "args": ["signoff"],
+      "closeOnSuccess": true
+    }
+  },
   "treeContext": {
     "fields": [
       {
