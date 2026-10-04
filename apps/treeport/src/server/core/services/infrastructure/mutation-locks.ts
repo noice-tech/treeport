@@ -6,11 +6,15 @@ type ProjectLockKind = 'mutation' | 'worktree-creation'
 interface LockState {
   readonly projects: Map<string, ProjectLockKind>
   readonly worktrees: Set<string>
+  readonly removals: Map<string, string>
 }
 
 interface LockRequest {
   readonly projectId?: string
   readonly projectLockKind?: ProjectLockKind
+  // A shared project lease lasting through residual cleanup, even after the
+  // worktree catalog row is retired. Only creation may overlap these leases.
+  readonly worktreeRemovalProjectId?: string
   // Only relax checkProjectIds; acquiring a project key remains exclusive.
   readonly allowWorktreeCreation?: boolean
   readonly worktreeIds?: Iterable<string>
@@ -35,7 +39,8 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
     effect: Effect.gen(function* () {
       const state = yield* SynchronizedRef.make<LockState>({
         projects: new Map(),
-        worktrees: new Set()
+        worktrees: new Set(),
+        removals: new Map()
       })
 
       const update = (
@@ -45,6 +50,7 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
         SynchronizedRef.update(state, (current) => {
           const projects = new Map(current.projects)
           const worktrees = new Set(current.worktrees)
+          const removals = new Map(current.removals)
           if (request.projectId) {
             if (mode === 'acquire') {
               projects.set(
@@ -58,8 +64,13 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
 
           for (const worktreeId of request.worktreeIds ?? []) {
             worktrees[mode === 'acquire' ? 'add' : 'delete'](worktreeId)
+            if (mode === 'acquire' && request.worktreeRemovalProjectId) {
+              removals.set(worktreeId, request.worktreeRemovalProjectId)
+            } else if (mode === 'release') {
+              removals.delete(worktreeId)
+            }
           }
-          return { projects, worktrees }
+          return { projects, worktrees, removals }
         })
 
       return {
@@ -89,7 +100,11 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
             ]
             if (
               (request.projectId !== undefined &&
-                current.projects.has(request.projectId)) ||
+                (current.projects.has(request.projectId) ||
+                  (request.projectLockKind !== 'worktree-creation' &&
+                    [...current.removals.values()].includes(
+                      request.projectId
+                    )))) ||
               checkedProjectIds.some((projectId) => {
                 const kind = current.projects.get(projectId)
                 return (
@@ -109,6 +124,7 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
 
             const projects = new Map(current.projects)
             const worktrees = new Set(current.worktrees)
+            const removals = new Map(current.removals)
             if (request.projectId) {
               projects.set(
                 request.projectId,
@@ -118,8 +134,11 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
 
             for (const worktreeId of worktreeIds) {
               worktrees.add(worktreeId)
+              if (request.worktreeRemovalProjectId) {
+                removals.set(worktreeId, request.worktreeRemovalProjectId)
+              }
             }
-            return [true, { projects, worktrees }] as const
+            return [true, { projects, worktrees, removals }] as const
           }),
         acquire: (request: LockRequest) => update(request, 'acquire'),
         release: (request: LockRequest) => update(request, 'release')
