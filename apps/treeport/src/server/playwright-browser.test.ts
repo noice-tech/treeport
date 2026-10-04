@@ -76,6 +76,56 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   await vi.waitFor(() => expect(browser.state.url).toBe('about:blank'))
 })
 
+it('dismisses hosted beforeunload safely and settles canceled reload without losing the page', async () => {
+  const cdp = Object.assign(new EventEmitter(), {
+    send: async () => ({ currentIndex: 0, entries: [] })
+  })
+  const dismiss = vi.fn(async () => {
+    throw new Error('No dialog is showing')
+  })
+  let rejectReload: (error: Error) => void = () => undefined
+  const page = Object.assign(new EventEmitter(), {
+    url: () => 'https://example.com/unsaved',
+    title: async () => 'Unsaved work',
+    isClosed: () => false,
+    setViewportSize: async () => undefined,
+    reload: () =>
+      new Promise((_resolve, reject) => {
+        rejectReload = reject
+        queueMicrotask(() =>
+          page.emit('dialog', { type: () => 'beforeunload', dismiss })
+        )
+      })
+  })
+  const host = testAccess<PlaywrightBrowserHost>({
+    openPage: async () => ({
+      browser: new EventEmitter(),
+      context: { newCDPSession: async () => cdp },
+      page
+    }),
+    closePage: vi.fn(async () => undefined)
+  })
+  const browser = new PlaywrightBrowser(host, '/unused', {
+    state: () => undefined,
+    frame: () => undefined,
+    popup: () => undefined,
+    navigationError: () => undefined,
+    crashed: () => undefined
+  })
+  onTestFinished(() => browser.close())
+  await browser.launch()
+  await expect(browser.command({ type: 'reload' })).rejects.toThrow(
+    'Navigation canceled by beforeunload'
+  )
+  expect(dismiss).toHaveBeenCalledOnce()
+  expect(browser.state.loading).toBe(false)
+  expect(browser.state.url).toBe('https://example.com/unsaved')
+  expect(page.listenerCount('dialog')).toBe(1)
+  expect(host.closePage).not.toHaveBeenCalled()
+  rejectReload(new Error('Browser disconnected during cleanup'))
+  await new Promise<void>((resolve) => setImmediate(resolve))
+})
+
 it('relays encoded video without changing its dependencies and rejects invalid capture output', () => {
   const frames: Array<Omit<BrowserFrame, 'sequence'>> = []
   const failures: string[] = []

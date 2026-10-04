@@ -22,6 +22,7 @@ import type {
 
 import { PlaywrightBrowserVideo } from './browser-video'
 import { browserRuntime } from './browser-runtime'
+import { browserNavigation } from './browser-navigation'
 import { browserCursor } from './browser-cursor'
 import { BrowserContainer } from './browser-container'
 
@@ -509,7 +510,11 @@ export class PlaywrightBrowser {
       this.updateState({ loading: false })
       void this.refreshPageState()
     })
-    this.dialogHandler = (dialog) => void dialog.dismiss()
+    // Keep unload protection: dismiss means stay on the current page. Dialogs
+    // can disappear or the browser can disconnect while the reply is in flight.
+    this.dialogHandler = (dialog) => {
+      void dialog.dismiss().catch(() => undefined)
+    }
     page.on('dialog', this.dialogHandler)
     page.once('crash', () =>
       this.callbacks.crashed('The hosted browser page crashed.')
@@ -631,7 +636,9 @@ export class PlaywrightBrowser {
 
     if (message.type === 'navigate') {
       this.updateState({ loading: true })
-      await page.goto(message.url, { waitUntil: 'commit' }).catch((error) => {
+      await browserNavigation(page, () =>
+        page.goto(message.url, { waitUntil: 'commit' })
+      ).catch((error) => {
         this.updateState({ loading: false })
         throw error
       })
@@ -640,20 +647,24 @@ export class PlaywrightBrowser {
     }
 
     if (message.type === 'back') {
-      await page.goBack({ waitUntil: 'commit' })
+      await browserNavigation(page, () => page.goBack({ waitUntil: 'commit' }))
       await this.refreshPageState()
       return
     }
 
     if (message.type === 'forward') {
-      await page.goForward({ waitUntil: 'commit' })
+      await browserNavigation(page, () =>
+        page.goForward({ waitUntil: 'commit' })
+      )
       await this.refreshPageState()
       return
     }
 
     if (message.type === 'reload') {
       this.updateState({ loading: true })
-      await page.reload({ waitUntil: 'commit' }).catch((error) => {
+      await browserNavigation(page, () =>
+        page.reload({ waitUntil: 'commit' })
+      ).catch((error) => {
         this.updateState({ loading: false })
         throw error
       })
@@ -801,24 +812,24 @@ export class PlaywrightBrowser {
     }
 
     if (input.command === 'goto') {
-      await page.goto(input.args[0])
+      await browserNavigation(page, () => page.goto(input.args[0]))
       await this.refreshPageState()
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-back') {
-      await page.goBack()
+      await browserNavigation(page, () => page.goBack())
       await this.refreshPageState()
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-forward') {
-      await page.goForward()
+      await browserNavigation(page, () => page.goForward())
       await this.refreshPageState()
       return `Navigated to ${page.url()}`
     }
 
-    await page.reload()
+    await browserNavigation(page, () => page.reload())
     await this.refreshPageState()
     return `Reloaded ${page.url()}`
   }

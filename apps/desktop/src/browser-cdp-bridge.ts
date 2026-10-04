@@ -71,6 +71,7 @@ export function createBrowserCdpBridge(
       let sockets: WebSocketServer | null = null
       let client: WebSocket | null = null
       let stopping = false
+      let nativeBeforeUnload = false
       let port = 0
       const video = new ElectronBrowserVideo(guest, runtime)
       let videoSession: string | null = null
@@ -147,6 +148,32 @@ export function createBrowserCdpBridge(
         params: unknown,
         sessionId?: string
       ) => {
+        // Electron owns beforeunload and can close it before an automation
+        // reply arrives. Never expose that native dialog to Playwright's
+        // automatic accept path (which has an unobserved rejection).
+        if (method === 'Page.javascriptDialogOpening') {
+          const dialog = params as { type?: string }
+          if (dialog.type === 'beforeunload') {
+            nativeBeforeUnload = true
+            return
+          }
+        }
+
+        if (method === 'Page.javascriptDialogClosed' && nativeBeforeUnload) {
+          nativeBeforeUnload = false
+          const dialog = params as { result?: boolean }
+          if (dialog.result === false) {
+            onDebuggerMessage(
+              _event,
+              'Treeport.navigationCanceled',
+              {},
+              sessionId
+            )
+          }
+
+          return
+        }
+
         const socket = client
         if (!socket || socket.readyState !== WebSocket.OPEN) {
           return

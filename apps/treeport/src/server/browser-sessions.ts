@@ -46,6 +46,7 @@ import {
   type BrowserInstallStatus,
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
+import { browserNavigation } from './browser-navigation'
 
 import { receiveBrowserVideo } from './browser-video'
 import { browserCursor } from './browser-cursor'
@@ -2456,6 +2457,11 @@ export class BrowserSessionManager {
         throw new Error('The local Browser owner changed.')
       }
 
+      // Explicit ownership avoids Playwright's fire-and-forget default dialog
+      // close. Electron keeps beforeunload; the bridge hides those native dialogs.
+      page.on('dialog', (dialog) => {
+        void dialog.dismiss().catch(() => undefined)
+      })
       const cdp = await context.newCDPSession(page)
       // SAFETY: The verified exact-guest Electron CDP bridge implements this
       // private domain. Arbitrary remote CDP endpoints are not accepted here.
@@ -2612,13 +2618,29 @@ export class BrowserSessionManager {
     const automation = await this.ensureLocalAutomation(session, owner)
     const page = automation.page
     if (message.type === 'navigate') {
-      await page.goto(message.url, { waitUntil: 'commit' })
+      await browserNavigation(
+        page,
+        () => page.goto(message.url, { waitUntil: 'commit' }),
+        automation.cdp
+      )
     } else if (message.type === 'back') {
-      await page.goBack({ waitUntil: 'commit' })
+      await browserNavigation(
+        page,
+        () => page.goBack({ waitUntil: 'commit' }),
+        automation.cdp
+      )
     } else if (message.type === 'forward') {
-      await page.goForward({ waitUntil: 'commit' })
+      await browserNavigation(
+        page,
+        () => page.goForward({ waitUntil: 'commit' }),
+        automation.cdp
+      )
     } else if (message.type === 'reload') {
-      await page.reload({ waitUntil: 'commit' })
+      await browserNavigation(
+        page,
+        () => page.reload({ waitUntil: 'commit' }),
+        automation.cdp
+      )
     } else if (message.type === 'stop') {
       await automation.cdp.send('Page.stopLoading')
     } else if (message.type === 'pointer') {
@@ -2709,21 +2731,25 @@ export class BrowserSessionManager {
     }
 
     if (input.command === 'goto') {
-      await page.goto(input.args[0])
+      await browserNavigation(
+        page,
+        () => page.goto(input.args[0]),
+        automation.cdp
+      )
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-back') {
-      await page.goBack()
+      await browserNavigation(page, () => page.goBack(), automation.cdp)
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-forward') {
-      await page.goForward()
+      await browserNavigation(page, () => page.goForward(), automation.cdp)
       return `Navigated to ${page.url()}`
     }
 
-    await page.reload()
+    await browserNavigation(page, () => page.reload(), automation.cdp)
     return `Reloaded ${page.url()}`
   }
 
