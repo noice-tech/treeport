@@ -53,7 +53,6 @@ describe('worktree setup', () => {
       path.join(main, '.treeport', 'setup.json'),
       `{
         // Commands are direct argv, not shell snippets.
-        "version": 1,
         "commands": [
           {
             "name": "  Generate code  ",
@@ -122,7 +121,6 @@ describe('worktree setup', () => {
     await fs.writeFile(
       filePath,
       JSON.stringify({
-        version: 1,
         commands: [],
         cleanup: [
           {
@@ -175,7 +173,6 @@ describe('worktree setup', () => {
     await fs.writeFile(
       filePath,
       JSON.stringify({
-        version: 1,
         commands: [],
         cleanup: [
           { name: 'Remove cache', argv: ['rm', '-rf', '.cache'] },
@@ -225,23 +222,19 @@ describe('worktree setup', () => {
     ).resolves.toEqual({ tasks: [], definitionHash: null })
   })
 
-  it('rejects invalid native setup without weakening the versioned contract', async () => {
+  it('rejects invalid native setup', async () => {
     const { main, worktree } = await repository()
     const invalidFiles: unknown[] = [
       null,
-      { commands: [] },
-      { version: 2, commands: [] },
-      { version: 1 },
-      { version: 1, commands: [], typo: true },
+      {},
+      { commands: [], typo: true },
       {
-        version: 1,
         commands: [{ name: 'unknown field', argv: ['echo'], typo: true }]
       },
-      { version: 1, commands: [{ name: ' ', argv: ['echo'] }] },
-      { version: 1, commands: [{ name: 'empty', argv: [] }] },
-      { version: 1, commands: [{ name: 'empty', argv: ['  '] }] },
+      { commands: [{ name: ' ', argv: ['echo'] }] },
+      { commands: [{ name: 'empty', argv: [] }] },
+      { commands: [{ name: 'empty', argv: ['  '] }] },
       {
-        version: 1,
         commands: [
           {
             name: 'reserved',
@@ -251,34 +244,27 @@ describe('worktree setup', () => {
         ]
       },
       {
-        version: 1,
         commands: [
           { name: 'bad env', argv: ['echo'], env: { 'BAD=NAME': 'value' } }
         ]
       },
       {
-        version: 1,
         commands: [{ name: 'timeout', argv: ['echo'], timeout: '0s' }]
       },
       {
-        version: 1,
         commands: [{ name: 'timeout', argv: ['echo'], timeout: '25d' }]
       },
       {
-        version: 1,
         commands: [{ name: 'timeout', argv: ['echo'], timeout: '2147483648ms' }]
       },
       {
-        version: 1,
         commands: [{ name: 'escape', argv: ['echo'], cwd: '../outside' }]
       },
       {
-        version: 1,
         commands: [],
         cleanup: [{ name: 'unknown field', argv: ['echo'], typo: true }]
       },
       {
-        version: 1,
         commands: [
           {
             name: 'main cwd',
@@ -308,7 +294,6 @@ describe('worktree setup', () => {
     await fs.writeFile(
       path.join(main, '.treeport', 'setup.json'),
       JSON.stringify({
-        version: 1,
         commands: [],
         cleanup: [{ name: 'escape', argv: ['echo'], cwd: '../outside' }]
       })
@@ -340,14 +325,12 @@ describe('worktree setup', () => {
     await fs.writeFile(
       path.join(worktree, '.treeport', 'setup.json'),
       JSON.stringify({
-        version: 1,
         commands: [{ name: 'Linked copy', argv: ['linked-command'] }]
       })
     )
     await fs.writeFile(
       path.join(main, '.treeport', 'setup.json'),
       JSON.stringify({
-        version: 1,
         commands: [{ name: 'Native', argv: ['native-command'] }]
       })
     )
@@ -368,7 +351,7 @@ describe('worktree setup', () => {
 
     await fs.writeFile(
       path.join(main, '.treeport', 'setup.json'),
-      JSON.stringify({ version: 1, commands: [] })
+      JSON.stringify({ commands: [] })
     )
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))

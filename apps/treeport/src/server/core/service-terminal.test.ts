@@ -132,7 +132,6 @@ describe('terminal operations', () => {
     await fs.writeFile(
       path.join(main, '.treeport', 'setup.json'),
       JSON.stringify({
-        version: 1,
         commands: [{ name: 'Initialize', argv: ['initialize-tree'] }]
       })
     )
@@ -243,7 +242,6 @@ describe('terminal operations', () => {
     await fs.writeFile(
       path.join(main, '.treeport', 'setup.json'),
       JSON.stringify({
-        version: 1,
         commands: [],
         cleanup: [
           {

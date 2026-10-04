@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "commands": [
     {
       "name": "Install dependencies",

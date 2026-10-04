@@ -89,7 +89,6 @@ const lifecycleCommandSchema = z
 
 const setupFileSchema = z
   .object({
-    version: z.literal(1),
     commands: z.array(lifecycleCommandSchema),
     cleanup: z.array(lifecycleCommandSchema).optional()
   })
