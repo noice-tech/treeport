@@ -89,6 +89,15 @@ export default defineConfig({
               slug: 'features/worktree-setup-hooks'
             }
           ]
+        },
+        {
+          label: 'Reference',
+          items: [
+            {
+              label: 'Project configuration',
+              slug: 'reference/project-configuration'
+            }
+          ]
         }
       ]
     })

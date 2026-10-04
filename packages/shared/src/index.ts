@@ -694,7 +694,6 @@ const repositoryTerminalPresetIdSchema = Schema.String.pipe(
   })
 )
 export const repositoryTerminalPresetsFileSchema = Schema.Struct({
-  version: Schema.Literal(1),
   presets: Schema.Record({
     key: repositoryTerminalPresetIdSchema,
     value: Schema.Unknown

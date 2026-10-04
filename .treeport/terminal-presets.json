@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "presets": {
     "execute-task": {
       "name": "Pi task",

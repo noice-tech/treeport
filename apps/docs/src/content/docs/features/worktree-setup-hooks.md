@@ -1,27 +1,27 @@
 ---
 title: Tree setup and cleanup
-description: Prepare new trees and clean up their external resources.
+description: Prepare new trees and remove their external resources.
 ---
 
 Treeport can run project commands when it creates or removes a tree.
 
 - **Setup** can install dependencies or prepare local configuration.
-- **Cleanup** can remove external resources, such as a tree-specific database.
+- **Cleanup** can remove external resources, such as a database for one tree.
 
 ## Configure commands
 
-Projects configure commands in `.treeport/setup.json` in the main tree.
+Set commands in `.treeport/setup.json` in the main tree. For the file format and an example, see [Project configuration](/reference/project-configuration/#setupjson).
 
-Without that file, Treeport can use compatible Zed `create_worktree` tasks for setup.
+If this file is absent, Treeport can use compatible Zed `create_worktree` tasks for setup. Treeport does not use Zed tasks for cleanup.
 
-These commands run with your user permissions. Use them only in repositories you trust.
+These commands run with your user permissions. Use them only in repositories that you trust.
 
 ## Setup and removal
 
-Setup runs only for trees created by Treeport, not existing trees that it discovers.
+Treeport runs setup only for trees that it creates. It does not run setup for existing trees that it finds.
 
-Setup output appears in a **Setup** terminal. If setup fails, the tree and error output remain available.
+Treeport shows setup output in a **Setup** terminal. If setup fails, Treeport keeps the tree and error output.
 
-Removing a tree stops its terminals before cleanup. If cleanup fails, Treeport keeps the Git worktree and reports the error.
+Before cleanup, Treeport stops the tree's terminals. If cleanup fails, Treeport keeps the Git worktree and reports the error.
 
-Make cleanup commands safe to repeat. Removing a worktree outside Treeport does not run its cleanup.
+Make sure that cleanup commands are safe to repeat. If you remove a worktree outside Treeport, its cleanup commands do not run.

@@ -15,7 +15,6 @@ describe('tree cleanup completion', () => {
       await fs.writeFile(
         path.join(main, '.treeport', 'setup.json'),
         JSON.stringify({
-          version: 1,
           commands: [],
           cleanup: [
             {
