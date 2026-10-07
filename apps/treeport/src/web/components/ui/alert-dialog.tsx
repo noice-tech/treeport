@@ -29,7 +29,7 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-zinc-900 p-6 text-zinc-200 shadow-2xl ring-1 ring-white/10 outline-none max-[700px]:top-auto max-[700px]:bottom-0 max-[700px]:left-0 max-[700px]:max-h-[90dvh] max-[700px]:w-full max-[700px]:max-w-none max-[700px]:translate-x-0 max-[700px]:translate-y-0 max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]',
+        'fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-zinc-900 p-6 text-zinc-200 shadow-2xl ring-1 ring-white/10 outline-none max-[700px]:top-auto max-[700px]:bottom-0 max-[700px]:left-0 max-[700px]:max-h-[90dvh] max-[700px]:w-full max-[700px]:max-w-none max-[700px]:translate-x-0 max-[700px]:translate-y-0 max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pr-[max(1.25rem,env(safe-area-inset-right,0px))] max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] max-[700px]:pl-[max(1.25rem,env(safe-area-inset-left,0px))]',
         className
       )}
       onCloseAutoFocus={(event) => {
