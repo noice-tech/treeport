@@ -155,6 +155,9 @@ const desktopBridge = Object.freeze({
           'focus-location',
           'find-in-page',
           'reload',
+          'zoom-in',
+          'zoom-out',
+          'zoom-reset',
           'select-previous-worktree',
           'select-next-worktree',
           'select-tab-1',
@@ -174,6 +177,9 @@ const desktopBridge = Object.freeze({
     }
     ipcRenderer.on('desktop-command', receive)
     return () => ipcRenderer.removeListener('desktop-command', receive)
+  },
+  zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset') {
+    ipcRenderer.send('desktop:zoom-page', action)
   },
   setTerminalSelectionActive(active: boolean) {
     ipcRenderer.send('terminal-selection:set-active', active)

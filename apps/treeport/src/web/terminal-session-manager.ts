@@ -5,6 +5,7 @@ import type {
 } from '@treeport/shared'
 import { TerminalSession } from './terminal-session-client'
 import { TerminalSessionPool } from './terminal-session-pool'
+import type { TerminalFontZoom } from './terminal-session-client/state'
 import {
   TerminalRuntimeMetadataStore,
   type TerminalBellEvent,
@@ -72,6 +73,10 @@ export class TerminalSessionManager {
     metadata: Iterable<TerminalRuntimeMetadataInput>
   ): void {
     this.runtimeMetadata.replaceRuntimeMetadata(metadata)
+  }
+
+  zoomFocused(action: TerminalFontZoom): boolean {
+    return this.pool.zoomFocused(action)
   }
 
   acquire(terminalId: string): TerminalSession {

@@ -1,5 +1,6 @@
 import type { TerminalSize } from '@treeport/shared'
 import { TerminalSession } from './terminal-session-client'
+import type { TerminalFontZoom } from './terminal-session-client/state'
 
 interface SessionEntry {
   session: TerminalSession
@@ -27,6 +28,16 @@ export class TerminalSessionPool {
 
   getInitialSize(terminalId: string): TerminalSize | null {
     return this.entries.get(terminalId)?.session.getInitialSize() ?? null
+  }
+
+  zoomFocused(action: TerminalFontZoom): boolean {
+    for (const { session } of this.entries.values()) {
+      if (session.zoomIfFocused(action)) {
+        return true
+      }
+    }
+
+    return false
   }
 
   acquire(terminalId: string): TerminalSession {

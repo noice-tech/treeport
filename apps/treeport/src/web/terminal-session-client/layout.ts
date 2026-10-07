@@ -3,7 +3,6 @@ import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import { type TerminalClientToServerEvents } from '@treeport/shared'
-import { TERMINAL_FONT_SIZE } from '../terminal-browser'
 import {
   type TerminalSessionState,
   normalizeTerminalDimensions,
@@ -34,6 +33,7 @@ export function makeLayout(
     | 'controllerGeneration'
     | 'disposed'
     | 'fitAddon'
+    | 'fontSize'
     | 'host'
     | 'proposedDimensions'
     | 'ready'
@@ -164,7 +164,7 @@ export function makeLayout(
           }
 
           if (!state.ready) {
-            state.terminal.options.fontSize = TERMINAL_FONT_SIZE
+            state.terminal.options.fontSize = state.fontSize
             state.fitAddon.fit()
             if (
               state.terminal.cols >= TERMINAL_MIN_COLS &&
@@ -183,7 +183,7 @@ export function makeLayout(
             return
           }
 
-          state.terminal.options.fontSize = TERMINAL_FONT_SIZE
+          state.terminal.options.fontSize = state.fontSize
           const proposedDimensions = state.fitAddon.proposeDimensions()
           if (
             !proposedDimensions ||
@@ -229,7 +229,7 @@ export function makeLayout(
           )
           state.terminal.options.fontSize = Math.max(
             TERMINAL_MIN_VIEWER_FONT_SIZE,
-            Math.floor(TERMINAL_FONT_SIZE * scale * 100) / 100
+            Math.floor(state.fontSize * scale * 100) / 100
           )
           if (
             state.terminal.cols !== state.canonicalCols ||

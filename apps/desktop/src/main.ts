@@ -331,9 +331,34 @@ function navigateRendererHistory(direction: DesktopNavigationDirection): void {
   }
 }
 
+function zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset'): void {
+  const renderer = mainWindow?.webContents
+  if (!renderer || renderer.isDestroyed()) {
+    return
+  }
+
+  renderer.setZoomLevel(
+    action === 'zoom-reset'
+      ? 0
+      : renderer.getZoomLevel() + (action === 'zoom-in' ? 0.5 : -0.5)
+  )
+}
+
 function sendDesktopCommand(command: DesktopCommand): void {
   const window = mainWindow
-  if (!window || connection.status !== 'ready' || !window.isFocused()) {
+  if (!window || !window.isFocused()) {
+    return
+  }
+
+  if (connection.status !== 'ready') {
+    if (
+      command === 'zoom-in' ||
+      command === 'zoom-out' ||
+      command === 'zoom-reset'
+    ) {
+      zoomPage(command)
+    }
+
     return
   }
 
@@ -362,6 +387,28 @@ function installRendererSecurity(renderer: WebContents): void {
 
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
+    const zoomCommand =
+      key === '+' || key === '='
+        ? 'zoom-in'
+        : !input.shift && key === '-'
+          ? 'zoom-out'
+          : !input.shift && key === '0'
+            ? 'zoom-reset'
+            : null
+    if (
+      input.type === 'keyDown' &&
+      !input.isComposing &&
+      commandModifier &&
+      !(process.platform === 'darwin' ? input.control : input.meta) &&
+      !input.alt &&
+      zoomCommand
+    ) {
+      // Prevent the native menu accelerator too, so each press zooms once.
+      event.preventDefault()
+      sendDesktopCommand(zoomCommand)
+      return
+    }
+
     // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
     const command: DesktopCommand | undefined = input.alt
       ? !input.shift && code === 'keyb'
@@ -791,27 +838,17 @@ function installMenu(): void {
         {
           label: 'Actual Size',
           accelerator: 'CommandOrControl+0',
-          click: () => mainWindow?.webContents.setZoomLevel(0)
+          click: () => sendDesktopCommand('zoom-reset')
         },
         {
           label: 'Zoom In',
           accelerator: 'CommandOrControl+=',
-          click: () => {
-            const renderer = mainWindow?.webContents
-            if (renderer) {
-              renderer.setZoomLevel(renderer.getZoomLevel() + 0.5)
-            }
-          }
+          click: () => sendDesktopCommand('zoom-in')
         },
         {
           label: 'Zoom Out',
           accelerator: 'CommandOrControl+-',
-          click: () => {
-            const renderer = mainWindow?.webContents
-            if (renderer) {
-              renderer.setZoomLevel(renderer.getZoomLevel() - 0.5)
-            }
-          }
+          click: () => sendDesktopCommand('zoom-out')
         },
         { type: 'separator' },
         { role: 'togglefullscreen' }
@@ -1483,6 +1520,14 @@ function registerIpc(): void {
 
     if (browserWebviews) {
       desktopRuntime.fork(browserWebviews.dispose(event, parsed.data.panelId))
+    }
+  })
+  ipcMain.on('desktop:zoom-page', (event, value) => {
+    const parsed = z
+      .enum(['zoom-in', 'zoom-out', 'zoom-reset'])
+      .safeParse(value)
+    if (isTrustedRendererEvent(event) && parsed.success) {
+      zoomPage(parsed.data)
     }
   })
   ipcMain.on('terminal-selection:set-active', (event, active) => {

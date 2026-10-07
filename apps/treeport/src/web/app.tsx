@@ -87,6 +87,7 @@ import {
 } from './workspace-navigation'
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
+import { terminalSessions } from './terminal-session'
 import { errorDetails } from './error-message'
 import { cn } from './lib/utils'
 import { browserTrace, newBrowserCorrelationId } from './agent-tracing'
@@ -1516,6 +1517,18 @@ function WorkspaceApp() {
     }
 
     return desktopBridge.onCommand((command) => {
+      if (
+        command === 'zoom-in' ||
+        command === 'zoom-out' ||
+        command === 'zoom-reset'
+      ) {
+        if (workspaceActionsBlocked || !terminalSessions.zoomFocused(command)) {
+          desktopBridge.zoomPage(command)
+        }
+
+        return
+      }
+
       if (command === 'reload') {
         if (!(toolPaneOpen && activePanel?.kind === 'browser')) {
           window.location.reload()

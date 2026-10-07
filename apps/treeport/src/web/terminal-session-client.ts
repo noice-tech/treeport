@@ -1,3 +1,4 @@
+import { TERMINAL_FONT_SIZE } from './terminal-browser'
 import { makeTimers } from './terminal-session-client/timers'
 import { makeRender } from './terminal-session-client/render'
 import { makeTransfers } from './terminal-session-client/transfers'
@@ -15,6 +16,7 @@ import {
   type TerminalSessionSnapshot,
   type TerminalSocketFactory,
   type ArrowDirection,
+  type TerminalFontZoom,
   normalizeTerminalDimensions
 } from './terminal-session-client/state'
 
@@ -183,6 +185,31 @@ export class TerminalSession {
 
     this.state.focusAfterRender = false
     this.state.terminal?.focus()
+  }
+
+  zoomIfFocused(action: TerminalFontZoom): boolean {
+    if (
+      this.state.disposed ||
+      !this.state.host ||
+      !this.state.terminal?.textarea ||
+      this.state.terminal.textarea !== document.activeElement
+    ) {
+      return false
+    }
+
+    const fontSize =
+      action === 'zoom-reset'
+        ? TERMINAL_FONT_SIZE
+        : Math.min(
+            32,
+            Math.max(8, this.state.fontSize + (action === 'zoom-in' ? 1 : -1))
+          )
+    if (fontSize !== this.state.fontSize) {
+      this.state.fontSize = fontSize
+      this.services.layout.scheduleFit()
+    }
+
+    return true
   }
 
   requestControl(): void {
