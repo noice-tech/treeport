@@ -234,6 +234,7 @@ describe('WebPanelViteRuntime', () => {
           }
         }
       )
+      expect(response.status).toBe(200)
       expect(response.headers.get('access-control-allow-origin')).toBe('*')
       expect(response.headers.get('cache-control')).toBe('no-cache')
       expect(
@@ -259,6 +260,24 @@ describe('WebPanelViteRuntime', () => {
       const moduleCode = await moduleResponse.text()
       expect(moduleCode).not.toContain('sourceMappingURL=data:')
       expect(moduleCode).toContain('treeport.version')
+
+      for (const [host, expectedStatus] of [
+        ['treeport.example.ts.net', 200],
+        ['attacker.example', 403]
+      ] as const) {
+        const status = await new Promise<number | undefined>(
+          (resolve, reject) => {
+            http
+              .get(response.url, { headers: { host } }, (response) => {
+                response.resume()
+                response.on('end', () => resolve(response.statusCode))
+                response.on('error', reject)
+              })
+              .on('error', reject)
+          }
+        )
+        expect(status).toBe(expectedStatus)
+      }
 
       const untrustedReferrerResponse = await fetch(
         `http://127.0.0.1:${address.data.port}${resolution.location}`,
