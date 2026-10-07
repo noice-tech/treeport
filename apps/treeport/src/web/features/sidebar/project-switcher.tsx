@@ -195,7 +195,7 @@ export function ProjectSwitcher({
           ref={projectSwitcher.triggerRef}
           type="button"
           variant="ghost"
-          className="h-11 min-w-0 flex-1 justify-start gap-2 px-2 text-base text-zinc-100 hover:bg-white/5 min-[701px]:h-8 min-[701px]:text-sm"
+          className="h-11 w-full min-w-0 flex-1 justify-start gap-2 px-2 text-base text-zinc-100 hover:bg-white/5 min-[701px]:h-8 min-[701px]:text-sm"
           aria-label={
             activeProject
               ? `Switch project, current project ${activeProject.name}`
@@ -220,7 +220,7 @@ export function ProjectSwitcher({
       <PopoverContent
         align="start"
         portalled={!isMobile}
-        className="grid w-[min(17rem,calc(100vw-1rem))] gap-1 p-1 min-[701px]:w-60"
+        className="grid w-[min(17rem,calc(100vw-1rem))] grid-cols-1 gap-1 p-1 min-[701px]:w-60"
         onOpenAutoFocus={(event) => {
           if (isMobile) {
             event.preventDefault()
@@ -305,9 +305,12 @@ export function ProjectSwitcher({
             autoFocus={!isMobile}
           />
         </div>
-        <div className="grid max-h-[min(28rem,70vh)] gap-1 overflow-y-auto p-0.5 min-[701px]:max-h-[min(22rem,70vh)] min-[701px]:gap-0.5 min-[701px]:p-0 [scrollbar-color:var(--color-zinc-700)_transparent]">
+        <div className="grid max-h-[min(28rem,70dvh)] min-w-0 grid-cols-1 gap-1 overflow-x-hidden overflow-y-auto p-0.5 min-[701px]:max-h-[min(22rem,70dvh)] min-[701px]:gap-0.5 min-[701px]:p-0 [scrollbar-color:var(--color-zinc-700)_transparent]">
           {filteredOpenProjects.length ? (
-            <ul role="list" className="grid gap-1 min-[701px]:gap-0.5">
+            <ul
+              role="list"
+              className="grid grid-cols-1 gap-1 min-[701px]:gap-0.5"
+            >
               {filteredOpenProjects.map((project) => {
                 const terminals = project.worktrees.flatMap(
                   (worktree) => worktree.terminals
@@ -323,7 +326,7 @@ export function ProjectSwitcher({
                   <li
                     key={project.id}
                     className={cn(
-                      'group/project-option relative flex h-11 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
+                      'group/project-option relative flex h-11 min-w-0 items-center gap-0.5 rounded-md pr-1 [@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 has-[button:active]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
                       highlightedProjectOption?.project.id === project.id &&
                         'bg-white/8'
                     )}
@@ -333,7 +336,7 @@ export function ProjectSwitcher({
                       id={`project-switcher-option-${project.id}`}
                       type="button"
                       variant="ghost"
-                      className="h-11 min-w-0 flex-1 justify-start px-2 text-left text-base hover:bg-transparent min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm max-[700px]:pr-8"
+                      className="h-11 min-w-0 flex-1 justify-start px-2 text-left text-base hover:bg-transparent min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm pointer-coarse:pr-12"
                       data-highlighted={
                         highlightedProjectOption?.project.id === project.id
                           ? true
@@ -378,7 +381,7 @@ export function ProjectSwitcher({
                       label={`Close project ${project.name}`}
                       tooltip="Close project"
                       disabled={closingProjectId === project.id}
-                      className="absolute right-1 shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-option:opacity-100 group-focus-within/project-option:opacity-100 max-[700px]:opacity-100"
+                      className="absolute right-1 shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-option:opacity-100 group-focus-within/project-option:opacity-100 pointer-coarse:right-2.5 max-[700px]:opacity-100"
                       onClick={() => requestProjectClose(project)}
                     >
                       {closingProjectId === project.id ? (
@@ -398,7 +401,7 @@ export function ProjectSwitcher({
           )}
           {!recentProjectsQuery.isSuccess || recentProjects.length ? (
             <section
-              className="grid gap-1 min-[701px]:gap-0.5"
+              className="grid min-w-0 grid-cols-1 gap-1 min-[701px]:gap-0.5"
               aria-labelledby="recent-projects-switcher-title"
             >
               <div className="flex items-center justify-between gap-2 px-2 py-1.5 min-[701px]:px-1.5 min-[701px]:py-1">
@@ -433,12 +436,15 @@ export function ProjectSwitcher({
               ) : null}
               {recentProjectsQuery.isSuccess &&
               filteredRecentProjects.length ? (
-                <ul role="list" className="grid gap-1 min-[701px]:gap-0.5">
+                <ul
+                  role="list"
+                  className="grid grid-cols-1 gap-1 min-[701px]:gap-0.5"
+                >
                   {filteredRecentProjects.map((project) => (
                     <li
                       key={project.id}
                       className={cn(
-                        'group/project-option relative flex h-11 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
+                        'group/project-option relative flex h-11 min-w-0 items-center gap-0.5 rounded-md pr-1 [@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 has-[button:active]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
                         highlightedProjectOption?.project.id === project.id &&
                           'bg-white/8'
                       )}
@@ -448,7 +454,7 @@ export function ProjectSwitcher({
                         id={`project-switcher-option-${project.id}`}
                         type="button"
                         variant="ghost"
-                        className="h-11 min-w-0 flex-1 justify-start px-2 text-left text-base hover:bg-transparent min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm max-[700px]:pr-8"
+                        className="h-11 min-w-0 flex-1 justify-start px-2 text-left text-base hover:bg-transparent min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm pointer-coarse:pr-12"
                         data-highlighted={
                           highlightedProjectOption?.project.id === project.id
                             ? true
@@ -468,7 +474,7 @@ export function ProjectSwitcher({
                         label={`Remove recent project ${project.name}`}
                         tooltip="Remove recent project"
                         disabled={removeRecentProject.isPending}
-                        className="absolute right-1 shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-option:opacity-100 group-focus-within/project-option:opacity-100 max-[700px]:opacity-100"
+                        className="absolute right-1 shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-option:opacity-100 group-focus-within/project-option:opacity-100 pointer-coarse:right-2.5 max-[700px]:opacity-100"
                         onClick={() => removeRecentProject.mutate(project)}
                       >
                         {removeRecentProject.isPending &&

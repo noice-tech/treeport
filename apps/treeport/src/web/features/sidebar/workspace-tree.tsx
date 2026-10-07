@@ -304,7 +304,7 @@ export function WorkspaceTree({
                       <ContextMenuTrigger asChild>
                         <div
                           className={cn(
-                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:has-[button:hover]:bg-white/5 max-[700px]:select-none',
+                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:[@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 max-[700px]:has-[button:active]:bg-white/5 max-[700px]:select-none',
                             selectedWorktree?.id === worktree.id &&
                               'max-[700px]:bg-white/8'
                           )}

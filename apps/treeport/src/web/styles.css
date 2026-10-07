@@ -18,6 +18,15 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Touch can synthesize sticky hover; only precise, hover-capable input gets it. */
+@custom-variant hover {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
 :root {
   color-scheme: dark;
   font-family: var(--font-sans);
@@ -40,6 +49,52 @@
 
 html {
   background: var(--color-zinc-950);
+  /* Controls provide press feedback instead of the browser's tap flash. */
+  -webkit-tap-highlight-color: transparent;
+  /* Keep text sizing stable when rotating a phone. */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* This is an app with inner scrollers, not a pull-to-refresh document. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* Leave content selectable and pinch zoom available; only controls opt out. */
+button,
+a,
+[role='button'],
+[role='tab'],
+[role='menuitem'] {
+  touch-action: manipulation;
+}
+
+/* Apply to control labels explicitly as well: selection inheritance differs
+   across browsers. Do not include editable fields or terminal output. */
+button,
+[role='button'],
+[role='tab'],
+[role='menuitem'],
+:is(button, [role='button'], [role='tab'], [role='menuitem'])
+  :is(span, kbd, svg) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Immediate feedback on finger-down, including controls without hover styles. */
+@media (pointer: coarse) {
+  :is(button, a, [role='button'], [role='tab'], [role='menuitem']) {
+    transition: opacity 100ms ease-out;
+  }
+
+  :is(button, a, [role='button'], [role='tab'], [role='menuitem']):active:not(
+    :disabled,
+    [aria-disabled='true']
+  ) {
+    opacity: 0.7;
+  }
 }
 
 body {
@@ -52,6 +107,20 @@ body {
 .app-frame {
   height: var(--app-visual-viewport-height, 100dvh);
   transform: translateY(var(--app-visual-viewport-offset-top, 0px));
+  /* Paint edge-to-edge, but keep every panel clear of the notch/home indicator. */
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+/* The drawer is portalled outside the padded app frame. */
+[data-sidebar='sidebar'][data-mobile='true'] {
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+/* Preserve each inner scroller's bounce without scrolling the app behind it. */
+:is(.overflow-y-auto, .overflow-auto, .overflow-x-auto, .xterm-viewport) {
+  overscroll-behavior: contain;
 }
 
 @media (max-width: 700px) {
@@ -70,12 +139,16 @@ body {
   }
 }
 
-/* iOS zooms focused form controls whose rendered text is below 16px. */
-@supports (-webkit-touch-callout: none) {
-  [data-slot='input'],
-  [data-slot='native-select'],
-  [data-slot='textarea'] {
-    font-size: max(1rem, 16px);
+/* iOS zooms any focused input below 16px, including xterm's hidden textarea.
+   Important declarations in base outrank important utilities (layer order is
+   reversed), so desktop text-sm! overrides cannot shrink touch inputs. */
+@layer base {
+  @media (any-pointer: coarse) {
+    input,
+    textarea,
+    select {
+      font-size: max(1rem, 16px) !important;
+    }
   }
 }
 
