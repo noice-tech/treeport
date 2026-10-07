@@ -509,6 +509,112 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
   })
 
+  test('expands the side panel and restores its split layout', async ({
+    page
+  }) => {
+    await mockApp(page)
+    const toggle = page.getByRole('button', { name: 'Toggle side panel' })
+    await toggle.click()
+    const panel = page.getByRole('region', { name: 'main tree tool tab group' })
+    const rail = page.getByRole('separator', { name: 'Resize side panel' })
+    const defaultBounds = await panel.boundingBox()
+    expect(defaultBounds).not.toBeNull()
+    await rail.press('ArrowRight')
+    await expect
+      .poll(async () => (await panel.boundingBox())?.width)
+      .toBeLessThan(defaultBounds!.width)
+    const splitBounds = await panel.boundingBox()
+    const terminal = page.getByRole('main', {
+      name: 'main tree terminal workspace'
+    })
+    const terminalBounds = await terminal.boundingBox()
+    expect(splitBounds).not.toBeNull()
+    expect(terminalBounds).not.toBeNull()
+
+    const enter = page.getByRole('button', { name: 'Enter full view' })
+    const tooltip = page.getByRole('tooltip')
+    await rail.hover()
+    await toggle.hover()
+    await expect(tooltip).toContainText('Toggle side panel ·')
+    await enter.click()
+
+    const exit = page.getByRole('button', { name: 'Exit full view' })
+    await expect(exit).toBeVisible()
+    await expect(rail).toBeHidden()
+    await expect
+      .poll(() => panel.boundingBox())
+      .toEqual({
+        x: terminalBounds!.x,
+        y: splitBounds!.y,
+        width: terminalBounds!.width + splitBounds!.width,
+        height: splitBounds!.height
+      })
+
+    // Traverse a full keyboard focus cycle; the covered terminal must not
+    // become a typing target, regardless of how the overlay is implemented.
+    const terminalInput = page.getByRole('textbox', {
+      name: 'Terminal input',
+      includeHidden: true
+    })
+    await expect(terminalInput).toHaveCount(1)
+    await expect(exit).toBeFocused()
+    for (let step = 0; step < 100; step += 1) {
+      await page.keyboard.press('Tab')
+      await expect(terminalInput).not.toBeFocused()
+      if (await exit.evaluate((button) => button === document.activeElement)) {
+        break
+      }
+    }
+    await expect(exit).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => panel.boundingBox()).toEqual(splitBounds)
+    await expect(terminal).toBeVisible()
+    await expect(rail).toBeVisible()
+
+    await rail.hover()
+    await enter.hover()
+    await expect(tooltip).toHaveText('Enter full view')
+    await toggle.click()
+    await expect(panel).toBeHidden()
+    await toggle.click()
+    await expect(enter).toBeVisible()
+
+    await enter.click()
+    await toggle.click()
+    await expect(panel).toBeHidden()
+    await expect(terminal).toBeVisible()
+    await toggle.click()
+    await expect(enter).toBeVisible()
+    await expect.poll(() => panel.boundingBox()).toEqual(splitBounds)
+
+    await enter.click()
+    await page
+      .getByRole('list', { name: 'main tree terminal tabs' })
+      .getByRole('button', { name: /, running$/ })
+      .click()
+    await expect(enter).toBeVisible()
+    await expect(terminal).toBeVisible()
+
+    await enter.click()
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    await page.getByRole('button', { name: /^main tree(?:,|\s|$)/ }).click()
+    await expect(enter).toBeVisible()
+
+    await page.setViewportSize({ width: 700, height: 720 })
+    await expect(enter).toBeHidden()
+    await expect(rail).toBeHidden()
+    await expect(terminal).toBeHidden()
+    await expect
+      .poll(async () => {
+        const bounds = await panel.boundingBox()
+        return bounds ? bounds.x + bounds.width : null
+      })
+      .toBe(page.viewportSize()!.width)
+    await page.setViewportSize({ width: 701, height: 720 })
+    await expect(enter).toBeVisible()
+    await expect(rail).toBeVisible()
+  })
+
   test('edits, saves, refreshes, and protects files from stale writes', async ({
     page
   }) => {
@@ -568,6 +674,75 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(editor).toContainText('export const value = 1')
     await editor.press('Control+y')
     await expect(editor).toContainText('export const value = 2')
+
+    const terminal = page.getByRole('main', {
+      name: 'topic terminal workspace'
+    })
+    // Server output is supplied by the transport fixture, not a real shell.
+    await page.evaluate(() => {
+      const socket = window.__lastWs
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 2,
+        data: 'before full view\r\n'
+      })
+    })
+    await expect(terminal).toContainText('before full view')
+
+    await page.getByRole('button', { name: 'Enter full view' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Exit full view' })
+    ).toBeVisible()
+    await expect(editor).toContainText('export const value = 2')
+    await editor.click()
+    await editor.press('Control+End')
+    await page.keyboard.insertText(' // edited in full view')
+    await expect(editor).toContainText('edited in full view')
+    await expect(filesFrame.getByLabel('Unsaved changes')).toBeVisible()
+    await page.evaluate(() => {
+      const socket = window.__lastWs
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 3,
+        data: 'during full view\r\n'
+      })
+    })
+
+    await page.getByRole('button', { name: 'Exit full view' }).click()
+    await expect(editor).toContainText('edited in full view')
+    await expect(terminal).toContainText('before full view')
+    await expect(terminal).toContainText('during full view')
+    await terminal.click({ position: { x: 20, y: 60 } })
+    await expect(
+      page.getByRole('textbox', { name: 'Terminal input' })
+    ).toBeFocused()
+    await page.keyboard.press('x')
+    await expect(terminal.getByText('Viewing', { exact: true })).toBeHidden()
+    await page.keyboard.type('echo ready')
+    await page.keyboard.press('Enter')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent
+            .filter((message) => message.type === 'input')
+            .map((message) => message.data)
+            .join('')
+        )
+      )
+      .toContain('echo ready\r')
+
+    await editor.click()
+    await editor.press('Control+z')
+    await expect(editor).not.toContainText('edited in full view')
+    await editor.press('Control+z')
+    await expect(editor).not.toContainText('export const value = 2')
+    await editor.press('Control+y')
+    await expect(editor).toContainText('export const value = 2')
+    await editor.press('Control+y')
+    await expect(editor).toContainText('edited in full view')
+    await editor.press('Control+z')
+    await expect(editor).not.toContainText('edited in full view')
+    await expect(filesFrame.getByLabel('Unsaved changes')).toBeVisible()
 
     const saveRequest = page.waitForRequest((request) => {
       const url = new URL(request.url())

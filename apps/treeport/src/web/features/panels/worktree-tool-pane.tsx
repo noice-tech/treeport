@@ -10,7 +10,12 @@ import {
   type RefObject
 } from 'react'
 import { GlobeAltIcon, PlusIcon, XMarkIcon } from '@heroicons/react/16/solid'
-import { LoaderCircleIcon, PanelRightIcon } from 'lucide-react'
+import {
+  LoaderCircleIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PanelRightIcon
+} from 'lucide-react'
 import type {
   BrowserPanel,
   WebPanel,
@@ -213,38 +218,65 @@ function BrowserPanelLoadingIcon() {
 
 export function SidePanelToggle({
   open,
+  fullView,
   disabled,
-  onToggle
+  onToggle,
+  onToggleFullView
 }: {
   open: boolean
+  fullView: boolean
   disabled: boolean
   onToggle: () => void
+  onToggleFullView: () => void
 }) {
   const shortcut = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
     ? '⌥⌘B'
     : 'Ctrl+Alt+B'
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant={open ? 'secondary' : 'ghost'}
-          size="icon-sm"
-          className="absolute top-1 right-1 z-40"
-          aria-label="Toggle side panel"
-          aria-expanded={open}
-          aria-controls="worktree-side-panel"
-          disabled={disabled}
-          onClick={onToggle}
-        >
-          <PanelRightIcon />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="left">
-        Toggle side panel · {shortcut}
-      </TooltipContent>
-    </Tooltip>
+    <div className="absolute top-1 right-1 z-40 flex items-center gap-1">
+      {open ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant={fullView ? 'secondary' : 'ghost'}
+              size="icon-sm"
+              className="max-[701px]:hidden"
+              aria-label={fullView ? 'Exit full view' : 'Enter full view'}
+              aria-pressed={fullView}
+              aria-controls="worktree-side-panel"
+              disabled={disabled}
+              onClick={onToggleFullView}
+            >
+              {fullView ? <Minimize2Icon /> : <Maximize2Icon />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="end" sideOffset={8}>
+            {fullView ? 'Exit full view' : 'Enter full view'}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant={open ? 'secondary' : 'ghost'}
+            size="icon-sm"
+            aria-label="Toggle side panel"
+            aria-expanded={open}
+            aria-controls="worktree-side-panel"
+            disabled={disabled}
+            onClick={onToggle}
+          >
+            <PanelRightIcon />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="end" sideOffset={8}>
+          Toggle side panel · {shortcut}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   )
 }
 
@@ -255,7 +287,8 @@ const SIDE_PANEL_WIDTH_STORAGE_KEY = 'treeport-side-panel-width'
 
 function sidePanelMaxWidth(rail: HTMLDivElement): number {
   const layoutWidth =
-    rail.parentElement?.parentElement?.getBoundingClientRect().width
+    rail.parentElement?.parentElement?.parentElement?.getBoundingClientRect()
+      .width
   return Math.max(
     MIN_SIDE_PANEL_WIDTH,
     (layoutWidth ?? window.innerWidth) - MIN_TERMINAL_WIDTH
@@ -362,6 +395,7 @@ function SidePanelResizeRail({
 export function WorktreeToolPane({
   worktreeName,
   visible,
+  fullView,
   tools,
   activePanelId,
   webPanelRuntimeTitles,
@@ -380,6 +414,7 @@ export function WorktreeToolPane({
 }: {
   worktreeName: string
   visible: boolean
+  fullView: boolean
   tools: Array<BrowserPanel | WebPanel>
   activePanelId: string | null
   webPanelRuntimeTitles: Record<string, string>
@@ -461,7 +496,7 @@ export function WorktreeToolPane({
     onOpenWebPanel(definition)
   }
   useLayoutEffect(() => {
-    const layout = paneRef.current?.parentElement
+    const layout = paneRef.current?.parentElement?.parentElement
     if (!layout) {
       return
     }
@@ -520,228 +555,244 @@ export function WorktreeToolPane({
   )
 
   return (
-    <section
-      ref={paneRef}
-      id="worktree-side-panel"
+    // Reserve the split width even while the panel overlays the terminal, so
+    // full-view transitions do not resize or remount the terminal underneath.
+    <div
       className={cn(
-        'relative grid min-h-0 min-w-0 w-[var(--side-panel-width)] border-l border-white/8 bg-zinc-950 outline-none max-[700px]:w-full max-[700px]:border-l-0',
-        tools.length > 0
-          ? 'grid-rows-[auto_minmax(0,1fr)]'
-          : 'grid-rows-[minmax(0,1fr)]',
+        'grid min-h-0 min-w-0 w-[var(--side-panel-width)] max-[701px]:w-full',
         !visible && 'pointer-events-none absolute inset-0 opacity-0'
       )}
       style={
         // SAFETY: This custom property contains a clamped CSS pixel value.
         { '--side-panel-width': `${sidePanelWidth}px` } as CSSProperties
       }
-      role="region"
-      tabIndex={-1}
-      aria-label={`${worktreeName} tool tab group`}
-      aria-hidden={visible ? undefined : true}
-      inert={visible ? undefined : true}
-      onPointerDownCapture={onFocusSurface}
-      onFocusCapture={onFocusSurface}
     >
-      <SidePanelResizeRail
-        width={sidePanelWidth}
-        onWidthChange={setAndSaveSidePanelWidth}
-      />
-      {tools.length > 0 ? (
-        <div className="flex min-w-0 items-center gap-1.5 border-b border-white/8 bg-zinc-900 py-1.5 pr-10 pl-2">
-          <div
-            className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            role="tablist"
-            aria-label={`${worktreeName} tool tabs`}
-          >
-            {orderedTools.map((panel, index) => {
-              const title =
-                panel.kind === 'web'
-                  ? (webPanelRuntimeTitles[panel.id] ?? panel.title)
-                  : panel.title
-              const active = panel.id === activePanelId
-              const loading =
-                panel.kind === 'browser' &&
-                Boolean(browserPanelLoading[panel.id])
-              return (
-                <div
-                  key={panel.id}
-                  {...getReorderItemProps(panel.id)}
-                  className={cn(
-                    'group/tool relative flex min-w-28 max-w-56 shrink-0 items-center rounded-md',
-                    active ? 'bg-white/8 hover:bg-white/10' : 'hover:bg-white/6'
-                  )}
-                >
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="min-w-0 flex-1 justify-start pr-8 hover:bg-transparent hover:text-zinc-400"
-                    role="tab"
-                    aria-selected={active}
-                    aria-keyshortcuts={[
-                      focused && index < 9 ? `Meta+${index + 1}` : null,
-                      'Alt+Shift+ArrowLeft',
-                      'Alt+Shift+ArrowRight'
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    aria-label={
-                      panel.kind === 'browser'
-                        ? `${
-                            title === 'Browser'
-                              ? 'Browser'
-                              : `${title}, Browser`
-                          }${loading ? ', loading' : ''}`
-                        : `${title}, web panel`
-                    }
-                    title={title}
-                    onClick={() => onSelectPanel(panel)}
-                    onMouseDown={(event) => {
-                      if (event.button === 1) {
-                        event.preventDefault()
-                      }
-                    }}
-                    onAuxClick={(event) => {
-                      if (event.button !== 1) {
-                        return
-                      }
-
-                      event.preventDefault()
-                      onClosePanel(panel, event.currentTarget)
-                    }}
-                    {...getReorderHandleProps(panel.id)}
-                  >
-                    {panel.kind === 'browser' ? (
-                      loading ? (
-                        <BrowserPanelLoadingIcon />
-                      ) : (
-                        <GlobeAltIcon data-icon="inline-start" />
-                      )
-                    ) : (
-                      <WebPanelIcon
-                        icon={
-                          definitions.find(
-                            (definition) => definition.id === panel.definitionId
-                          )?.icon ?? null
-                        }
-                      />
-                    )}
-                    <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_right,black_calc(100%_-_1rem),transparent)]">
-                      {title}
-                    </span>
-                    {index < 9 ? (
-                      <kbd
-                        className={cn(
-                          'font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/tool:opacity-0 group-focus-within/tool:opacity-0 max-[700px]:hidden pointer-coarse:hidden',
-                          !focused && 'invisible'
-                        )}
-                        aria-hidden="true"
-                      >
-                        ⌘{index + 1}
-                      </kbd>
-                    ) : null}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="link"
-                    size="icon-sm"
-                    className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 group-hover/tool:opacity-100 group-focus-within/tool:opacity-100 pointer-coarse:opacity-100"
-                    aria-label={`Close ${title}`}
-                    onClick={(event) =>
-                      onClosePanel(panel, event.currentTarget)
-                    }
-                  >
-                    <XMarkIcon />
-                  </Button>
-                </div>
-              )
-            })}
-            <span className="sr-only" role="status">
-              {reorderAnnouncement}
-            </span>
-          </div>
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Open another tool"
-              >
-                <PlusIcon />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              className="w-[min(17rem,calc(100vw-1rem))] p-0"
-              aria-label="Open a tool"
-              onOpenAutoFocus={(event) => {
-                event.preventDefault()
-                toolPickerCommandRef.current?.focus()
-              }}
-            >
-              <ToolPickerActions
-                definitions={definitions}
-                definitionsLoading={definitionsLoading}
-                definitionsError={definitionsError}
-                launchDisabled={launchDisabled}
-                commandRef={toolPickerCommandRef}
-                onCreateBrowserPanel={createBrowserPanel}
-                onSelectWebPanel={selectWebPanel}
-              />
-            </PopoverContent>
-          </Popover>
-        </div>
-      ) : null}
-      <div
-        className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]"
-        onPointerDownCapture={dismissPicker}
-        onFocusCapture={dismissPicker}
+      <section
+        ref={paneRef}
+        id="worktree-side-panel"
+        className={cn(
+          'relative grid min-h-0 min-w-0 border-l border-white/8 bg-zinc-950 outline-none max-[701px]:border-l-0',
+          tools.length > 0
+            ? 'grid-rows-[auto_minmax(0,1fr)]'
+            : 'grid-rows-[minmax(0,1fr)]',
+          fullView && 'absolute inset-0 z-20 border-l-0'
+        )}
+        role="region"
+        tabIndex={-1}
+        aria-label={`${worktreeName} tool tab group`}
+        aria-hidden={visible ? undefined : true}
+        inert={visible ? undefined : true}
+        onPointerDownCapture={onFocusSurface}
+        onFocusCapture={onFocusSurface}
       >
-        {tools.length === 0 ? (
-          <Empty className="mx-auto w-full max-w-md items-stretch text-left">
-            <EmptyTitle>Open a tool</EmptyTitle>
-            <EmptyDescription>
-              Open Browser or a web panel beside the terminal.
-            </EmptyDescription>
-            <div className="mt-2">{actions}</div>
-          </Empty>
+        {!fullView ? (
+          <SidePanelResizeRail
+            width={sidePanelWidth}
+            onWidthChange={setAndSaveSidePanelWidth}
+          />
         ) : null}
-        {children}
-      </div>
-      <AlertDialog
-        open={permissionDefinition !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPermissionDefinition(null)
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Allow privileged panel access?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {`${
-                permissionDefinition?.title ?? 'This panel'
-              } is from ${permissionSource}. ${permissionDescription}`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const definition = permissionDefinition
-                setPermissionDefinition(null)
-                if (definition) {
-                  onOpenWebPanel(definition)
-                }
-              }}
+        {tools.length > 0 ? (
+          <div className="flex min-w-0 items-center gap-1.5 border-b border-white/8 bg-zinc-900 py-1.5 pr-18 pl-2 max-[701px]:pr-10">
+            <div
+              className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              role="tablist"
+              aria-label={`${worktreeName} tool tabs`}
             >
-              Allow and open
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </section>
+              {orderedTools.map((panel, index) => {
+                const title =
+                  panel.kind === 'web'
+                    ? (webPanelRuntimeTitles[panel.id] ?? panel.title)
+                    : panel.title
+                const active = panel.id === activePanelId
+                const loading =
+                  panel.kind === 'browser' &&
+                  Boolean(browserPanelLoading[panel.id])
+                return (
+                  <div
+                    key={panel.id}
+                    {...getReorderItemProps(panel.id)}
+                    className={cn(
+                      'group/tool relative flex min-w-28 max-w-56 shrink-0 items-center rounded-md',
+                      active
+                        ? 'bg-white/8 hover:bg-white/10'
+                        : 'hover:bg-white/6'
+                    )}
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="min-w-0 flex-1 justify-start pr-8 hover:bg-transparent hover:text-zinc-400"
+                      role="tab"
+                      aria-selected={active}
+                      aria-keyshortcuts={[
+                        focused && index < 9 ? `Meta+${index + 1}` : null,
+                        'Alt+Shift+ArrowLeft',
+                        'Alt+Shift+ArrowRight'
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      aria-label={
+                        panel.kind === 'browser'
+                          ? `${
+                              title === 'Browser'
+                                ? 'Browser'
+                                : `${title}, Browser`
+                            }${loading ? ', loading' : ''}`
+                          : `${title}, web panel`
+                      }
+                      title={title}
+                      onClick={() => onSelectPanel(panel)}
+                      onMouseDown={(event) => {
+                        if (event.button === 1) {
+                          event.preventDefault()
+                        }
+                      }}
+                      onAuxClick={(event) => {
+                        if (event.button !== 1) {
+                          return
+                        }
+
+                        event.preventDefault()
+                        onClosePanel(panel, event.currentTarget)
+                      }}
+                      {...getReorderHandleProps(panel.id)}
+                    >
+                      {panel.kind === 'browser' ? (
+                        loading ? (
+                          <BrowserPanelLoadingIcon />
+                        ) : (
+                          <GlobeAltIcon data-icon="inline-start" />
+                        )
+                      ) : (
+                        <WebPanelIcon
+                          icon={
+                            definitions.find(
+                              (definition) =>
+                                definition.id === panel.definitionId
+                            )?.icon ?? null
+                          }
+                        />
+                      )}
+                      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_right,black_calc(100%_-_1rem),transparent)]">
+                        {title}
+                      </span>
+                      {index < 9 ? (
+                        <kbd
+                          className={cn(
+                            'font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/tool:opacity-0 group-focus-within/tool:opacity-0 max-[700px]:hidden pointer-coarse:hidden',
+                            !focused && 'invisible'
+                          )}
+                          aria-hidden="true"
+                        >
+                          ⌘{index + 1}
+                        </kbd>
+                      ) : null}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="icon-sm"
+                      className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 group-hover/tool:opacity-100 group-focus-within/tool:opacity-100 pointer-coarse:opacity-100"
+                      aria-label={`Close ${title}`}
+                      onClick={(event) =>
+                        onClosePanel(panel, event.currentTarget)
+                      }
+                    >
+                      <XMarkIcon />
+                    </Button>
+                  </div>
+                )
+              })}
+              <span className="sr-only" role="status">
+                {reorderAnnouncement}
+              </span>
+            </div>
+            <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Open another tool"
+                >
+                  <PlusIcon />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                className="w-[min(17rem,calc(100vw-1rem))] p-0"
+                aria-label="Open a tool"
+                onOpenAutoFocus={(event) => {
+                  event.preventDefault()
+                  toolPickerCommandRef.current?.focus()
+                }}
+              >
+                <ToolPickerActions
+                  definitions={definitions}
+                  definitionsLoading={definitionsLoading}
+                  definitionsError={definitionsError}
+                  launchDisabled={launchDisabled}
+                  commandRef={toolPickerCommandRef}
+                  onCreateBrowserPanel={createBrowserPanel}
+                  onSelectWebPanel={selectWebPanel}
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+        ) : null}
+        <div
+          className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]"
+          onPointerDownCapture={dismissPicker}
+          onFocusCapture={dismissPicker}
+        >
+          {tools.length === 0 ? (
+            <Empty className="mx-auto w-full max-w-md items-stretch text-left">
+              <EmptyTitle>Open a tool</EmptyTitle>
+              <EmptyDescription>
+                Open Browser or a web panel beside the terminal.
+              </EmptyDescription>
+              <div className="mt-2">{actions}</div>
+            </Empty>
+          ) : null}
+          {children}
+        </div>
+        <AlertDialog
+          open={permissionDefinition !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPermissionDefinition(null)
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Allow privileged panel access?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {`${
+                  permissionDefinition?.title ?? 'This panel'
+                } is from ${permissionSource}. ${permissionDescription}`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  const definition = permissionDefinition
+                  setPermissionDefinition(null)
+                  if (definition) {
+                    onOpenWebPanel(definition)
+                  }
+                }}
+              >
+                Allow and open
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </section>
+    </div>
   )
 }
