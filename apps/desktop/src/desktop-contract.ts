@@ -8,6 +8,9 @@ export type DesktopCommand =
   | 'focus-location'
   | 'find-in-page'
   | 'reload'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'zoom-reset'
   | 'select-previous-worktree'
   | 'select-next-worktree'
   | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`

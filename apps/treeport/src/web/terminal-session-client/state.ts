@@ -1,3 +1,4 @@
+import { TERMINAL_FONT_SIZE } from '../terminal-browser'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
 import type { TerminalImages } from '../../terminal-runtime/images'
@@ -15,6 +16,7 @@ export type TerminalSocketFactory = (
   options: ProtocolSocketOptions
 ) => ProtocolSocket<TerminalServerToClientEvents, TerminalClientToServerEvents>
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
+export type TerminalFontZoom = 'zoom-in' | 'zoom-out' | 'zoom-reset'
 export type TerminalFileTransfer = {
   state: 'uploading' | 'error'
   message: string
@@ -83,6 +85,7 @@ export class TerminalSessionState {
   snapshotValue: TerminalSessionSnapshot = DEFAULT_SNAPSHOT
   terminal: Terminal | null = null
   fitAddon: FitAddon | null = null
+  fontSize = TERMINAL_FONT_SIZE
   images: TerminalImages | null = null
   wrapper: HTMLDivElement | null = null
   host: HTMLElement | null = null

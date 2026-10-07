@@ -8,6 +8,9 @@ type TreeportDesktopCommand =
   | 'focus-location'
   | 'find-in-page'
   | 'reload'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'zoom-reset'
   | 'select-previous-worktree'
   | 'select-next-worktree'
   | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
@@ -49,6 +52,7 @@ type TreeportDesktopBridge = Readonly<{
   onLocalFilePaste?: (listener: (paths: string[]) => void) => () => void
   onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
   onCommand: (listener: (command: TreeportDesktopCommand) => void) => () => void
+  zoomPage: (action: 'zoom-in' | 'zoom-out' | 'zoom-reset') => void
   setTerminalSelectionActive: (active: boolean) => void
   onTerminalSelectionRelease: (listener: () => void) => () => void
   registerBrowser: (
