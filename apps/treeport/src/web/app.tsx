@@ -208,7 +208,17 @@ function WorkspaceApp() {
   const [toolPaneOpenByWorktree, setToolPaneOpenByWorktree] = useState<
     Record<string, boolean>
   >({})
+  const [fullViewWorktreeId, setFullViewWorktreeId] = useState<string | null>(
+    null
+  )
+  useEffect(() => {
+    setFullViewWorktreeId(null)
+  }, [selectedWorktree?.id])
   const setToolPaneOpen = useCallback((worktreeId: string, open: boolean) => {
+    if (!open) {
+      setFullViewWorktreeId(null)
+    }
+
     setToolPaneOpenByWorktree((current) =>
       current[worktreeId] === open
         ? current
@@ -225,6 +235,10 @@ function WorkspaceApp() {
         `${TOOL_PANE_OPEN_STORAGE_PREFIX}${selectedWorktree.id}`
       ) === 'true')
     : false
+  const toolPaneFullView =
+    toolPaneOpen &&
+    selectedWorktree !== null &&
+    fullViewWorktreeId === selectedWorktree.id
   const [activePanelByWorktree, setActivePanelByWorktree] = useState<
     Record<string, string | null>
   >({})
@@ -1166,6 +1180,7 @@ function WorkspaceApp() {
 
   const selectWorktree = useCallback(
     (worktree: WorktreeRecord) => {
+      setFullViewWorktreeId(null)
       focusSurface('terminal')
       const target = targetForWorktree(projects, worktree, selectedTerminalId)
       if (target) {
@@ -1192,6 +1207,7 @@ function WorkspaceApp() {
     )
 
   const selectProject = (project: ProjectRecord) => {
+    setFullViewWorktreeId(null)
     focusSurface('terminal')
     const target = rememberedTargetForProject(project)
     projectSwitcher.dismissedIntoTerminalRef.current =
@@ -1289,6 +1305,7 @@ function WorkspaceApp() {
   }
   const selectTerminal = useCallback(
     (terminal: TerminalRecord) => {
+      setFullViewWorktreeId(null)
       focusSurface('terminal')
       setDesktopNotificationsOpen(false)
       setMobileNotificationsOpen(false)
@@ -1696,8 +1713,20 @@ function WorkspaceApp() {
         <div className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]">
           <SidePanelToggle
             open={toolPaneOpen}
+            fullView={toolPaneFullView}
             disabled={!selectedProject || !selectedWorktree}
             onToggle={toggleToolPane}
+            onToggleFullView={() => {
+              if (!selectedWorktree || !toolPaneOpen) {
+                return
+              }
+
+              dismissToolPicker()
+              focusToolSurface()
+              setFullViewWorktreeId(
+                toolPaneFullView ? null : selectedWorktree.id
+              )
+            }}
           />
           <div
             className={cn(
@@ -1708,10 +1737,12 @@ function WorkspaceApp() {
             <div
               className={cn(
                 'relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]',
-                toolPaneOpen && 'max-[700px]:hidden'
+                toolPaneOpen && 'max-[701px]:hidden'
               )}
               role="group"
               aria-label="Terminal tab group"
+              aria-hidden={toolPaneFullView ? true : undefined}
+              inert={toolPaneFullView ? true : undefined}
               onPointerDownCapture={() => {
                 dismissToolPicker()
                 focusSurface('terminal')
@@ -1733,6 +1764,7 @@ function WorkspaceApp() {
               <WorktreeToolPane
                 worktreeName={selectedWorktree.name}
                 visible={toolPaneOpen}
+                fullView={toolPaneFullView}
                 tools={selectedWorktreeTools}
                 activePanelId={activePanelId}
                 webPanelRuntimeTitles={webPanelRuntimeTitles}

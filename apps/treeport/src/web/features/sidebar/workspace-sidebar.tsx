@@ -77,7 +77,7 @@ export function WorkspaceMobileHeader({
 
   return (
     <header
-      className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.25rem_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
+      className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.25rem_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[701px]:grid"
       inert={isMobile && openMobile ? true : undefined}
     >
       <SidebarTrigger
