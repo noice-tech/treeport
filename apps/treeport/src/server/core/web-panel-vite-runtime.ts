@@ -129,6 +129,7 @@ export class WebPanelViteRuntime {
   ): InlineConfig {
     const server: NonNullable<InlineConfig['server']> = {
       middlewareMode: true,
+      allowedHosts: ['.ts.net'],
       headers: {
         'access-control-allow-origin': '*',
         'x-content-type-options': 'nosniff'
