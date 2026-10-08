@@ -9,7 +9,6 @@ import {
 
 export const TERMINAL_FONT_SIZE = 14
 
-const TERMINAL_TOUCH_ROWS_PER_WHEEL = 1
 const TERMINAL_TOUCH_SELECTION_DELAY_MS = 450
 const TERMINAL_TOUCH_PASTE_DELAY_MS = 550
 const TERMINAL_TOUCH_SELECTION_SLOP = 10
@@ -272,8 +271,7 @@ export function trackTerminalScrolling(
   onResumeInput: () => void,
   onPasteRequest: () => void
 ): (data: string) => string {
-  let lastTouchY: number | null = null
-  let touchScrollRemainder = 0
+  let suppressNativeTouchScroll = false
   let wheelScrollRemainder = 0
   const wheelInputRepeats: number[] = []
   const syntheticWheelEvents = new WeakSet<WheelEvent>()
@@ -325,7 +323,7 @@ export function trackTerminalScrolling(
     touchPasteStart = []
   }
 
-  const suppressSynchronizedScroll = (event: WheelEvent | TouchEvent) => {
+  const suppressSynchronizedScroll = (event: Event) => {
     if (
       !terminal.modes.synchronizedOutputMode &&
       !terminal.element?.classList.contains('terminal-synchronized-output')
@@ -339,8 +337,6 @@ export function trackTerminalScrolling(
     event.stopImmediatePropagation()
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
-    lastTouchY = null
-    touchScrollRemainder = 0
     wheelScrollRemainder = 0
     wheelInputRepeats.length = 0
     touchStart = null
@@ -405,6 +401,19 @@ export function trackTerminalScrolling(
     },
     { capture: true, passive: false }
   )
+  // xterm owns touch distance, mouse reports, alternate-buffer keys and inertia.
+  // Its gesture events also cover inertia after touchend, so intercept them
+  // only while Treeport owns a selection/paste gesture or freezes output.
+  wrapper.addEventListener(
+    '-xterm-gesturechange',
+    (event) => {
+      if (!suppressSynchronizedScroll(event) && suppressNativeTouchScroll) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }
+    },
+    true
+  )
   wrapper.addEventListener(
     'touchstart',
     (event) => {
@@ -412,11 +421,10 @@ export function trackTerminalScrolling(
         return
       }
 
+      suppressNativeTouchScroll = event.touches.length !== 1
       if (event.touches.length === 2) {
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
-        lastTouchY = null
-        touchScrollRemainder = 0
         touchStart = null
         touchSelectionAnchor = null
         touchPasteStart = Array.from(event.touches, (touch) => ({
@@ -436,8 +444,6 @@ export function trackTerminalScrolling(
       if (event.touches.length !== 1) {
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
-        lastTouchY = null
-        touchScrollRemainder = 0
         touchStart = null
         touchSelectionAnchor = null
         return
@@ -445,8 +451,6 @@ export function trackTerminalScrolling(
 
       clearTouchPasteTimer()
       const touch = event.touches[0]!
-      lastTouchY = touch.clientY
-      touchScrollRemainder = 0
       touchStart = { x: touch.clientX, y: touch.clientY }
       touchSelectionAnchor = null
       clearTouchSelectionTimer()
@@ -458,6 +462,7 @@ export function trackTerminalScrolling(
 
         touchSelectionAnchor = terminalCellAt(touchStart.x, touchStart.y)
         if (touchSelectionAnchor) {
+          suppressNativeTouchScroll = true
           terminal.select(
             touchSelectionAnchor.column,
             touchSelectionAnchor.row,
@@ -496,18 +501,11 @@ export function trackTerminalScrolling(
         return
       }
 
-      if (event.touches.length !== 1 || lastTouchY === null) {
+      if (event.touches.length !== 1) {
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
-        lastTouchY = null
-        touchScrollRemainder = 0
         touchStart = null
         touchSelectionAnchor = null
-        return
-      }
-
-      const element = terminal.element
-      if (!element) {
         return
       }
 
@@ -538,54 +536,6 @@ export function trackTerminalScrolling(
       ) {
         clearTouchSelectionTimer()
         touchStart = null
-      }
-
-      touchScrollRemainder += lastTouchY - touch.clientY
-      lastTouchY = touch.clientY
-      event.preventDefault()
-
-      const bounds = element.getBoundingClientRect()
-      const rowHeight = bounds.height / terminal.rows || 16
-      const rowsPerWheel = element.classList.contains('enable-mouse-events')
-        ? TERMINAL_TOUCH_ROWS_PER_WHEEL
-        : 1
-      const touchStep = rowHeight * rowsPerWheel
-      const steps = Math.trunc(touchScrollRemainder / touchStep)
-      if (steps === 0) {
-        return
-      }
-
-      touchScrollRemainder -= steps * touchStep
-      if (!element.classList.contains('enable-mouse-events')) {
-        terminal.scrollLines(steps)
-        return
-      }
-
-      const wheelTarget = element.querySelector<HTMLElement>('.xterm-screen')
-      if (!wheelTarget) {
-        return
-      }
-
-      const clientX = Math.min(
-        Math.max(touch.clientX, bounds.left),
-        bounds.right - 1
-      )
-      const clientY = Math.min(
-        Math.max(touch.clientY, bounds.top),
-        bounds.bottom - 1
-      )
-      for (let index = 0; index < Math.abs(steps); index += 1) {
-        wheelTarget.dispatchEvent(
-          new WheelEvent('wheel', {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            clientX,
-            clientY,
-            deltaMode: WheelEvent.DOM_DELTA_LINE,
-            deltaY: Math.sign(steps)
-          })
-        )
       }
     },
     { capture: true, passive: false }
@@ -618,8 +568,6 @@ export function trackTerminalScrolling(
 
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
-    lastTouchY = null
-    touchScrollRemainder = 0
     touchStart = null
     touchSelectionAnchor = null
   }

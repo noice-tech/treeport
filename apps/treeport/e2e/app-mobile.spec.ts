@@ -148,7 +148,7 @@ test.describe('mobile terminal UI', () => {
     ).toBeVisible()
   })
 
-  test('keeps one-finger history scrolling local across mouse modes', async ({
+  test('uses xterm-native one-finger scrolling across mouse modes', async ({
     page
   }, testInfo) => {
     await mockApp(page)
@@ -207,6 +207,11 @@ test.describe('mobile terminal UI', () => {
       await expect(selectionActions).toHaveCount(0)
     }
 
+    const firstRow = page.locator('.xterm-rows > div').first()
+    const historyRowBeforeScroll = Number(
+      (await firstRow.textContent())?.match(/mobile-history-(\d+)/)?.[1]
+    )
+    expect(Number.isFinite(historyRowBeforeScroll)).toBe(true)
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
       touchPoints: [{ x, y: positions[0]! }]
@@ -215,6 +220,10 @@ test.describe('mobile terminal UI', () => {
       type: 'touchMove',
       touchPoints: [{ x, y: positions[1]! }]
     })
+    // Check while the finger is down, before xterm starts native inertia.
+    await expect(firstRow).toContainText(
+      `mobile-history-${historyRowBeforeScroll - 4}`
+    )
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchEnd',
       touchPoints: []
@@ -256,23 +265,33 @@ test.describe('mobile terminal UI', () => {
       })
       window.__wsSent = []
     })
+    await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
+    // Taking control refits the terminal, so use its current cell height.
+    const mouseBounds = (await screen.boundingBox())!
+    const mouseRow = (await firstRow.boundingBox())!
+    const mouseStartY = mouseBounds.y + mouseRow.height * 2
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
-      touchPoints: [{ x, y: positions[0]! }]
+      touchPoints: [{ x, y: mouseStartY }]
     })
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchMove',
-      touchPoints: [{ x, y: positions[1]! }]
+      // Stay just beyond the row boundary to avoid CSS pixel rounding.
+      touchPoints: [{ x, y: mouseStartY + mouseRow.height * 4.25 }]
     })
     await expect
       .poll(() =>
         page.evaluate(() =>
-          window.__wsSent.some((message: any) =>
-            String(message.data).includes('\u001b[<64;')
-          )
+          window.__wsSent
+            .filter((message: any) => message.type === 'input')
+            .reduce(
+              (count: number, message: any) =>
+                count + String(message.data).split('\u001b[<64;').length - 1,
+              0
+            )
         )
       )
-      .toBe(true)
+      .toBe(4)
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchEnd',
       touchPoints: []
