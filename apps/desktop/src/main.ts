@@ -993,9 +993,8 @@ function createWindow(url?: string): BrowserWindow {
     options.y = restoredBounds.y
   }
 
-  if (process.platform === 'darwin') {
-    options.trafficLightPosition = { x: 12, y: 9 }
-  }
+  // Leave trafficLightPosition unset so titleBarOverlay centers the native
+  // buttons using their actual size, which varies between macOS versions.
 
   const window = new BrowserWindow(options)
   if (windowState?.maximized) {
