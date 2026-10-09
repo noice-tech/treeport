@@ -27,7 +27,7 @@ function Titlebar() {
     <header className="fixed inset-x-0 top-0 z-80 flex h-8 select-none items-center bg-zinc-950 [-webkit-app-region:drag]">
       <nav
         aria-label="Workspace history"
-        className={`flex items-center gap-0.5 [-webkit-app-region:no-drag] ${state.platform === 'darwin' ? 'ml-[72px]' : 'ml-2'}`}
+        className={`flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag] ${state.platform === 'darwin' ? 'ml-[76px]' : 'ml-2'}`}
       >
         <Button
           variant="ghost"
