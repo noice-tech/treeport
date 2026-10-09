@@ -123,6 +123,7 @@ interface PackageMutationBody {
 interface TerminalCreateBody {
   name: string
   argv?: string[]
+  returnToShell?: boolean
 }
 
 export interface CliApplicationOptions {
@@ -2529,6 +2530,7 @@ async function main(args: string[]): Promise<void> {
     const body: TerminalCreateBody = { name: options.name }
     if (argv) {
       body.argv = argv
+      body.returnToShell = true
     }
 
     const result = await request(
