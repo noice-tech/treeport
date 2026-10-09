@@ -71,14 +71,22 @@ export function terminalInputWithModifiers(
     return '\u001b[13;2u'
   }
 
-  const arrow = /^\u001b(?:\[|O)([ABCDHF])$/.exec(data)
-  if (arrow && (modifiers.ctrl || modifiers.alt || modifiers.shift)) {
+  const arrow =
+    data.length === 3 &&
+    (data.startsWith('\u001b[') || data.startsWith('\u001bO'))
+      ? data[2]
+      : null
+  if (
+    arrow &&
+    'ABCDHF'.includes(arrow) &&
+    (modifiers.ctrl || modifiers.alt || modifiers.shift)
+  ) {
     const modifier =
       1 +
       Number(modifiers.shift) +
       2 * Number(modifiers.alt) +
       4 * Number(modifiers.ctrl)
-    return `\u001b[1;${modifier}${arrow[1]}`
+    return `\u001b[1;${modifier}${arrow}`
   }
 
   if (modifiers.shift && data.length === 1) {
