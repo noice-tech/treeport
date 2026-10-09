@@ -11,6 +11,7 @@ import { ComputerSelector } from './computer-selector'
 import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
 import { ManageComputersDialog } from './manage-computers-dialog'
+import { OpenOnPhoneDialog } from './open-on-phone-dialog'
 import { selectedComputer, useShellState } from './shell-state'
 import { Button } from './ui'
 
@@ -57,7 +58,9 @@ function Titlebar() {
 
 export function App() {
   const state = useShellState()
-  const [dialog, setDialog] = useState<'connect' | 'manage' | null>(null)
+  const [dialog, setDialog] = useState<'connect' | 'manage' | 'phone' | null>(
+    null
+  )
   const [selectorOpen, setSelectorOpen] = useState(false)
   const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
 
@@ -68,7 +71,7 @@ export function App() {
       ),
     []
   )
-  const openDialog = (nextDialog: 'connect' | 'manage') => {
+  const openDialog = (nextDialog: 'connect' | 'manage' | 'phone') => {
     setSelectorOpen(false)
     setDialog(nextDialog)
   }
@@ -158,8 +161,16 @@ export function App() {
             onOpenChange={setSelectorOpen}
             onConnect={() => openDialog('connect')}
             onManage={() => openDialog('manage')}
+            onOpenOnPhone={() => openDialog('phone')}
           />
         </div>
+      ) : null}
+      {computer && dialog === 'phone' ? (
+        <OpenOnPhoneDialog
+          key={computer.id}
+          computer={computer}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {state && dialog === 'connect' ? (
         <ConnectDialog state={state} onClose={() => setDialog(null)} />

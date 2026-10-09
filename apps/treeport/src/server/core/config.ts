@@ -14,6 +14,7 @@ export interface AppConfig {
   gitPath: string
   ghPath: string
   apiUrl: string
+  remoteUrl: string | null
   daemonLifecycle: 'treeport' | 'service' | 'external'
   appVersion?: string
   instanceId?: string
@@ -115,6 +116,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gitPath: env.TREEPORT_GIT_PATH?.trim() || 'git',
     ghPath: env.TREEPORT_GH_PATH?.trim() || 'gh',
     apiUrl: env.TREEPORT_API_URL?.trim() || `http://${urlHost}:${portValue}`,
+    remoteUrl: env.TREEPORT_REMOTE_URL?.trim() || null,
     daemonLifecycle,
     appVersion: env.TREEPORT_APP_VERSION?.trim() || 'development',
     instanceId: env.TREEPORT_INSTANCE_ID?.trim() || crypto.randomUUID(),

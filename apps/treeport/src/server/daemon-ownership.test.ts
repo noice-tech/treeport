@@ -31,6 +31,7 @@ async function fixture(instanceId: string | undefined = 'instance-a') {
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
+    remoteUrl: null,
     daemonLifecycle: 'treeport',
     appVersion: 'test',
     installationMethod: 'test',

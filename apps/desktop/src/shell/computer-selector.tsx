@@ -9,13 +9,15 @@ export function ComputerSelector({
   open,
   onOpenChange,
   onConnect,
-  onManage
+  onManage,
+  onOpenOnPhone
 }: {
   state: DesktopShellState
   open: boolean
   onOpenChange: (open: boolean) => void
   onConnect: () => void
   onManage: () => void
+  onOpenOnPhone: () => void
 }) {
   const selected = selectedComputer(state)
   const label = selected?.name ?? 'Connect to a computer'
@@ -99,6 +101,16 @@ export function ComputerSelector({
               </DropdownMenu.RadioItem>
             ))}
           </DropdownMenu.RadioGroup>
+          <DropdownMenu.Separator className="h-px shrink-0 bg-white/8" />
+          <DropdownMenu.Group>
+            <DropdownMenu.Item
+              className="flex h-8 cursor-pointer items-center rounded-md px-2.5 text-sm text-zinc-400 outline-none data-[highlighted]:bg-white/6 data-[highlighted]:text-zinc-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-45"
+              disabled={!selected}
+              onSelect={onOpenOnPhone}
+            >
+              Open on phone…
+            </DropdownMenu.Item>
+          </DropdownMenu.Group>
           <DropdownMenu.Separator className="h-px shrink-0 bg-white/8" />
           <DropdownMenu.Group>
             <DropdownMenu.Item

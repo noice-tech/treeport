@@ -1,3 +1,4 @@
+import type { PhoneAccessResponse } from '@treeport/shared'
 import type {
   ComputerMutationResult,
   ComputerUpdate,
@@ -14,6 +15,8 @@ declare global {
         listener: (active: boolean) => void
       ) => () => void
       releaseTerminalSelection: () => void
+      copyPhoneLink: (url: string) => Promise<boolean>
+      phoneAccess: (id: string) => Promise<PhoneAccessResponse>
       selectComputer: (id: string) => Promise<boolean>
       addComputer: (origin: string) => Promise<ComputerMutationResult>
       updateComputer: (
