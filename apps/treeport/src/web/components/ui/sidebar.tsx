@@ -25,7 +25,7 @@ import {
 } from './tooltip'
 
 const SIDEBAR_WIDTH = '16rem'
-const SIDEBAR_WIDTH_MOBILE = 'min(88vw, 21rem)'
+const SIDEBAR_WIDTH_MOBILE = 'min(88vw, 18rem)'
 const SIDEBAR_WIDTH_ICON = '3rem'
 
 type SidebarContextProps = {
@@ -207,7 +207,7 @@ const Sidebar = React.forwardRef<
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-(--sidebar-width-mobile) bg-zinc-900/95 p-0 text-zinc-100 backdrop-blur-xl"
+            className="w-(--sidebar-width-mobile) border-0 bg-zinc-900/95 p-0 text-zinc-100 backdrop-blur-xl"
             style={
               // SAFETY: The component contract supplies the asserted browser value used here.
               {

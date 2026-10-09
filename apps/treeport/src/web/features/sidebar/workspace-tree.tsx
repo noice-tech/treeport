@@ -96,7 +96,7 @@ function WorktreeShell({
   onClick?: () => void
 }) {
   const classes = cn(
-    'worktree-row flex h-auto min-h-11 w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5',
+    'worktree-row flex h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1 text-left text-[0.8125rem]/4 font-medium min-[701px]:text-sm/5 min-[701px]:min-h-8 min-[701px]:py-0.5',
     pending
       ? 'text-zinc-300'
       : selected
@@ -253,17 +253,17 @@ export function WorkspaceTree({
 
   return (
     <nav
-      className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-3 pb-5 min-[701px]:px-1.5 min-[701px]:pt-2 min-[701px]:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
+      className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pt-1.5 pb-3 min-[701px]:px-1.5 min-[701px]:pt-2 min-[701px]:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
       aria-label="Projects and trees"
     >
       {projectsPending ? (
-        <p className="sidebar-note px-2 py-3 text-base text-zinc-500 min-[701px]:text-sm">
+        <p className="sidebar-note px-2 py-2 text-sm text-zinc-500 min-[701px]:text-sm">
           Loading projects…
         </p>
       ) : null}
       {projectsError && !projectsLoaded ? (
         <div className="flex flex-col items-start gap-2 px-2 py-3">
-          <p className="sidebar-note text-base text-rose-300 min-[701px]:text-sm">
+          <p className="sidebar-note text-sm text-rose-300 min-[701px]:text-sm">
             Projects could not be loaded.
           </p>
           <Button
@@ -277,11 +277,11 @@ export function WorkspaceTree({
         </div>
       ) : null}
       {!projectsPending && !projectsError && !projects.length ? (
-        <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 min-[701px]:text-sm">
+        <p className="sidebar-note px-2 py-2 text-sm text-pretty text-zinc-500 min-[701px]:text-sm">
           Open a folder or Git repository to begin.
         </p>
       ) : null}
-      <div className="grid gap-4">
+      <div className="grid gap-4 max-[700px]:gap-2">
         {projects
           .filter((project) => project.id === activeProject?.id)
           .map((project) => (
@@ -294,7 +294,7 @@ export function WorkspaceTree({
                   {project.availability.message || 'Project folder unavailable'}
                 </p>
               ) : null}
-              <SidebarMenu className="gap-2 min-[701px]:gap-1">
+              <SidebarMenu className="gap-0.5 min-[701px]:gap-1">
                 {project.worktrees.map((worktree) => (
                   <SidebarMenuItem
                     key={worktree.id}
@@ -432,7 +432,7 @@ export function WorkspaceTree({
                       </ContextMenuContent>
                     </ContextMenu>
                     <SidebarMenuSub
-                      className="terminal-list mr-0 ml-4 gap-px border-white/6 pr-0 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5"
+                      className="terminal-list mr-0 ml-2.5 gap-px border-white/6 pr-0 pl-1.5 min-[701px]:ml-2.5 min-[701px]:gap-px"
                       aria-label={`${worktree.name} terminal tabs`}
                     >
                       <ReorderableItems
@@ -502,7 +502,7 @@ export function WorkspaceTree({
                                       variant="ghost"
                                       type="button"
                                       className={cn(
-                                        'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                        'terminal-row grid h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_2rem] gap-1 rounded-md px-2 py-1 text-left text-xs/4 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
                                         selectedTerminalId === terminal.id
                                           ? 'selected bg-cyan-400/8! text-cyan-50'
                                           : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
@@ -638,7 +638,7 @@ export function WorkspaceTree({
                       <Button
                         type="button"
                         variant="ghost"
-                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
+                        className="h-auto min-h-8 max-[700px]:h-auto w-full justify-start gap-1 px-2 py-1 text-[0.8125rem]/4 font-normal min-[701px]:text-sm/5 text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5"
                         aria-label="New panel"
                         onClick={(event) =>
                           onOpenPanelDialog(project, null, event.currentTarget)
@@ -674,7 +674,7 @@ export function WorkspaceTree({
                       <Button
                         type="button"
                         variant="ghost"
-                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
+                        className="h-auto min-h-8 max-[700px]:h-auto w-full justify-start gap-1 px-2 py-1 text-[0.8125rem]/4 font-normal min-[701px]:text-sm/5 text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5"
                         disabled={project.availability.state === 'unavailable'}
                         aria-keyshortcuts={
                           newWorktreeShortcut

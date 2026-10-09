@@ -1,4 +1,8 @@
-import { TERMINAL_FONT_SIZE } from './terminal-browser'
+import {
+  TERMINAL_FONT_SIZE,
+  terminalInputWithModifiers,
+  type TerminalInputModifiers
+} from './terminal-browser'
 import { makeTimers } from './terminal-session-client/timers'
 import { makeRender } from './terminal-session-client/render'
 import { makeTransfers } from './terminal-session-client/transfers'
@@ -189,11 +193,18 @@ export class TerminalSession {
 
   zoomIfFocused(action: TerminalFontZoom): boolean {
     if (
-      this.state.disposed ||
-      !this.state.host ||
       !this.state.terminal?.textarea ||
       this.state.terminal.textarea !== document.activeElement
     ) {
+      return false
+    }
+
+    return this.zoom(action)
+  }
+
+  // Mobile controls resize text without focusing xterm or opening the keyboard.
+  zoom(action: TerminalFontZoom): boolean {
+    if (this.state.disposed || !this.state.host || !this.state.terminal) {
       return false
     }
 
@@ -208,6 +219,15 @@ export class TerminalSession {
       this.state.fontSize = fontSize
       this.services.layout.scheduleFit()
     }
+
+    this.update({
+      fontZoomPercent: Math.round((fontSize / TERMINAL_FONT_SIZE) * 100)
+    })
+    this.services.timers.scheduleTimer(
+      'fontZoom',
+      () => this.update({ fontZoomPercent: null }),
+      1_500
+    )
 
     return true
   }
@@ -257,8 +277,14 @@ export class TerminalSession {
     }
   }
 
-  setInputModifiers(ctrl: boolean, alt: boolean, onConsumed: () => void): void {
-    this.state.inputModifiers = ctrl || alt ? { ctrl, alt, onConsumed } : null
+  setInputModifiers(
+    modifiers: TerminalInputModifiers,
+    onConsumed: () => void
+  ): void {
+    this.state.inputModifiers =
+      modifiers.ctrl || modifiers.alt || modifiers.shift
+        ? { ...modifiers, onConsumed }
+        : null
   }
 
   sendText(data: string, options: { focus?: boolean } = {}): void {
@@ -304,14 +330,17 @@ export class TerminalSession {
 
   sendArrow(
     direction: ArrowDirection,
-    alt = false,
+    modifiers: TerminalInputModifiers,
     options: { focus?: boolean } = {}
   ): void {
     const final = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
     const prefix = this.state.terminal?.modes.applicationCursorKeysMode
       ? '\u001bO'
       : '\u001b['
-    this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`, options)
+    this.sendText(
+      terminalInputWithModifiers(`${prefix}${final}`, modifiers),
+      options
+    )
   }
 
   async copyText(

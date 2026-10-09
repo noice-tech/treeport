@@ -138,6 +138,7 @@ class FakeSession {
     hasSelection: false,
     hoveredLink: null,
     pasteRequestSerial: 0,
+    fontZoomPercent: null,
     error: null
   }
 
@@ -259,6 +260,7 @@ function controllerSessionFixture() {
       hasSelection: false,
       hoveredLink: null,
       pasteRequestSerial: 0,
+      fontZoomPercent: null,
       error: null
     }
   })
@@ -1585,6 +1587,7 @@ describe('TerminalSession', () => {
         hasSelection: false,
         hoveredLink: null,
         pasteRequestSerial: 0,
+        fontZoomPercent: null,
         error: null
       }
     })

@@ -8,7 +8,12 @@ import {
   type MouseEvent
 } from 'react'
 import { toast } from 'sonner'
-import { ArrowPathIcon } from '@heroicons/react/16/solid'
+import {
+  ArrowPathIcon,
+  ArrowUpTrayIcon,
+  ClipboardDocumentIcon,
+  EllipsisHorizontalIcon
+} from '@heroicons/react/16/solid'
 import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
 import {
   ContextMenu,
@@ -25,11 +30,17 @@ import {
   DialogHeader,
   DialogTitle
 } from './components/ui/dialog'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from './components/ui/popover'
 import { cn } from './lib/utils'
 import { useIsMobile } from './hooks/use-mobile'
 import { useTerminalAutoFocus } from './terminal-focus'
 import {
   terminalSessions,
+  terminalInputWithModifiers,
   type ArrowDirection,
   type TerminalSession,
   type TerminalSessionSnapshot
@@ -60,6 +71,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   hasSelection: false,
   hoveredLink: null,
   pasteRequestSerial: 0,
+  fontZoomPercent: null,
   error: null
 }
 
@@ -80,6 +92,8 @@ export function TerminalView({
   const linkToCopyRef = useRef<string | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
+  const [shift, setShift] = useState(false)
+  const [accessoryActionsOpen, setAccessoryActionsOpen] = useState(false)
   const [paste, setPaste] = useState({
     // SAFETY: The component contract supplies the asserted browser value used here.
     terminalId: null as string | null,
@@ -213,12 +227,17 @@ export function TerminalView({
       return
     }
 
-    activeSession.setInputModifiers(ctrl, alt, () => {
+    activeSession.setInputModifiers({ ctrl, alt, shift }, () => {
       setCtrl(false)
       setAlt(false)
+      setShift(false)
     })
-    return () => activeSession.setInputModifiers(false, false, () => undefined)
-  }, [activeSession, alt, ctrl])
+    return () =>
+      activeSession.setInputModifiers(
+        { ctrl: false, alt: false, shift: false },
+        () => undefined
+      )
+  }, [activeSession, alt, ctrl, shift])
 
   const copyText = (text?: string) => {
     void activeSession
@@ -233,24 +252,20 @@ export function TerminalView({
   }
 
   const sendInput = (value: string) => {
-    let data = value
-    if (ctrl && value.length === 1) {
-      data = String.fromCharCode(value.toUpperCase().charCodeAt(0) & 31)
-    }
-
-    if (alt) {
-      data = `\u001b${data}`
-    }
-
-    activeSession?.sendText(data, { focus: false })
+    activeSession?.sendText(
+      terminalInputWithModifiers(value, { ctrl, alt, shift }),
+      { focus: false }
+    )
     setCtrl(false)
     setAlt(false)
+    setShift(false)
   }
 
   const sendArrow = (direction: ArrowDirection) => {
-    activeSession?.sendArrow(direction, alt, { focus: false })
+    activeSession?.sendArrow(direction, { ctrl, alt, shift }, { focus: false })
     setCtrl(false)
     setAlt(false)
+    setShift(false)
   }
 
   const pasteIntoTerminal = (text: string) => {
@@ -348,7 +363,7 @@ export function TerminalView({
     <section
       ref={shellRef}
       className={cn(
-        'terminal-shell relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[minmax(0,1fr)_3.25rem]',
+        'terminal-shell relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[minmax(0,1fr)_auto]',
         snapshot.bellActive && 'terminal-bell'
       )}
       aria-label={terminal ? `${visibleTitle} terminal` : 'Terminal panel'}
@@ -367,7 +382,7 @@ export function TerminalView({
               }}
             >
               <div
-                className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1.5"
+                className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1"
                 ref={hostRef}
                 onMouseDownCapture={stopLinkMouseEvent}
                 onMouseUpCapture={stopLinkMouseEvent}
@@ -395,6 +410,17 @@ export function TerminalView({
               </ContextMenuGroup>
             </ContextMenuContent>
           </ContextMenu>
+          {snapshot.fontZoomPercent !== null && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+              <span
+                className="rounded-md bg-zinc-800/95 px-3 py-1.5 text-xs font-medium text-zinc-100 tabular-nums shadow-lg ring-1 ring-white/10 backdrop-blur"
+                role="status"
+                aria-atomic="true"
+              >
+                Zoom {snapshot.fontZoomPercent}%
+              </span>
+            </div>
+          )}
           {snapshot.phase === 'ready' && !snapshot.controller ? (
             <span
               className="absolute top-3 right-24 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
@@ -558,36 +584,102 @@ export function TerminalView({
       )}
       {terminal && (
         <div
-          className="accessory-row hidden min-w-0 touch-pan-x overflow-x-auto overflow-y-hidden border-t border-white/8 bg-zinc-900 py-1 max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
+          className="accessory-row hidden min-w-0 items-center gap-1 border-t border-white/8 bg-zinc-900 px-1 max-[700px]:flex [&_button]:h-8 [&_button]:min-w-8 [&_button]:rounded-sm [&_button]:px-2 [&_button]:py-1 [&_button]:text-xs"
           aria-label="Terminal accessory keys"
           onPointerDownCapture={() => activeSession?.requestControl()}
           onMouseDownCapture={(event) => event.preventDefault()}
         >
-          <Button
-            variant="ghost"
-            type="button"
-            onClick={() => sendInput('\u001b')}
-          >
-            Esc
-          </Button>
-          <Button
-            variant="ghost"
-            type="button"
-            className={ctrl ? 'latched bg-cyan-950 text-cyan-100' : ''}
-            aria-pressed={ctrl}
-            onClick={() => setCtrl((value) => !value)}
-          >
-            Ctrl
-          </Button>
-          <Button
-            variant="ghost"
-            type="button"
-            className={alt ? 'latched bg-cyan-950 text-cyan-100' : ''}
-            aria-pressed={alt}
-            onClick={() => setAlt((value) => !value)}
-          >
-            Alt
-          </Button>
+          <div className="flex min-w-0 flex-1 touch-pan-x items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex shrink-0 items-center gap-px border-r border-white/10 pr-1">
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={() => sendInput('\u001b')}
+              >
+                Esc
+              </Button>
+              <Button
+                variant="ghost"
+                type="button"
+                className="aria-pressed:bg-cyan-400/15 aria-pressed:text-cyan-100 aria-pressed:inset-ring aria-pressed:inset-ring-cyan-400/30"
+                aria-pressed={ctrl}
+                title="Apply Control to the next key"
+                onClick={() => setCtrl((value) => !value)}
+              >
+                Ctrl
+              </Button>
+              <Button
+                variant="ghost"
+                type="button"
+                className="aria-pressed:bg-cyan-400/15 aria-pressed:text-cyan-100 aria-pressed:inset-ring aria-pressed:inset-ring-cyan-400/30"
+                aria-pressed={alt}
+                title="Apply Alt to the next key"
+                onClick={() => setAlt((value) => !value)}
+              >
+                Alt
+              </Button>
+              <Button
+                variant="ghost"
+                type="button"
+                className="aria-pressed:bg-cyan-400/15 aria-pressed:text-cyan-100 aria-pressed:inset-ring aria-pressed:inset-ring-cyan-400/30"
+                aria-pressed={shift}
+                title="Apply Shift to the next key"
+                onClick={() => setShift((value) => !value)}
+              >
+                Shift
+              </Button>
+            </div>
+            <div className="flex shrink-0 items-center gap-px pl-1">
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={() => sendInput('\t')}
+              >
+                Tab
+              </Button>
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={() => sendInput('\r')}
+              >
+                Enter
+              </Button>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center border-l border-white/10 pl-1">
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow left"
+              onClick={() => sendArrow('left')}
+            >
+              ←
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow down"
+              onClick={() => sendArrow('down')}
+            >
+              ↓
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow up"
+              onClick={() => sendArrow('up')}
+            >
+              ↑
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow right"
+              onClick={() => sendArrow('right')}
+            >
+              →
+            </Button>
+          </div>
           <input
             ref={uploadInputRef}
             type="file"
@@ -599,71 +691,57 @@ export function TerminalView({
               activeSession?.pasteFiles(files)
             }}
           />
-          <Button
-            variant="ghost"
-            type="button"
-            onClick={() => uploadInputRef.current?.click()}
+          <Popover
+            open={accessoryActionsOpen}
+            onOpenChange={setAccessoryActionsOpen}
           >
-            Upload
-          </Button>
-          <Button
-            ref={pasteTriggerRef}
-            variant="ghost"
-            type="button"
-            onClick={requestPaste}
-          >
-            Paste
-          </Button>
-          <Button variant="ghost" type="button" onClick={() => sendInput('\t')}>
-            Tab
-          </Button>
-          <Button
-            variant="ghost"
-            type="button"
-            onClick={() => {
-              // Shift+Tab has a fixed terminal sequence and ignores modifier latches.
-              activeSession?.sendText('\u001b[Z', { focus: false })
-              setCtrl(false)
-              setAlt(false)
-            }}
-          >
-            Shift+Tab
-          </Button>
-          <Button variant="ghost" type="button" onClick={() => sendInput('\r')}>
-            Enter
-          </Button>
-          <Button
-            variant="ghost"
-            type="button"
-            aria-label="Arrow left"
-            onClick={() => sendArrow('left')}
-          >
-            ←
-          </Button>
-          <Button
-            variant="ghost"
-            type="button"
-            aria-label="Arrow up"
-            onClick={() => sendArrow('up')}
-          >
-            ↑
-          </Button>
-          <Button
-            variant="ghost"
-            type="button"
-            aria-label="Arrow down"
-            onClick={() => sendArrow('down')}
-          >
-            ↓
-          </Button>
-          <Button
-            variant="ghost"
-            type="button"
-            aria-label="Arrow right"
-            onClick={() => sendArrow('right')}
-          >
-            →
-          </Button>
+            <PopoverTrigger asChild>
+              <Button
+                ref={pasteTriggerRef}
+                variant="ghost"
+                type="button"
+                size="icon-sm"
+                aria-label="More terminal actions"
+              >
+                <EllipsisHorizontalIcon />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              side="top"
+              align="end"
+              className="grid w-40 gap-1 p-1"
+              aria-label="Terminal actions"
+              onOpenAutoFocus={(event) => event.preventDefault()}
+              onCloseAutoFocus={(event) => event.preventDefault()}
+            >
+              <Button
+                variant="ghost"
+                type="button"
+                size="sm"
+                className="w-full justify-start"
+                onClick={() => {
+                  setAccessoryActionsOpen(false)
+                  requestPaste()
+                }}
+              >
+                <ClipboardDocumentIcon data-icon="inline-start" />
+                Paste
+              </Button>
+              <Button
+                variant="ghost"
+                type="button"
+                size="sm"
+                className="w-full justify-start"
+                onClick={() => {
+                  setAccessoryActionsOpen(false)
+                  uploadInputRef.current?.click()
+                }}
+              >
+                <ArrowUpTrayIcon data-icon="inline-start" />
+                Upload
+              </Button>
+            </PopoverContent>
+          </Popover>
         </div>
       )}
     </section>

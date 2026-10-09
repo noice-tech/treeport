@@ -30,6 +30,10 @@ export class TerminalSessionPool {
     return this.entries.get(terminalId)?.session.getInitialSize() ?? null
   }
 
+  zoom(terminalId: string, action: TerminalFontZoom): boolean {
+    return this.entries.get(terminalId)?.session.zoom(action) ?? false
+  }
+
   zoomFocused(action: TerminalFontZoom): boolean {
     for (const { session } of this.entries.values()) {
       if (session.zoomIfFocused(action)) {

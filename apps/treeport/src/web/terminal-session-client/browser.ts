@@ -7,6 +7,7 @@ import { Terminal } from '@xterm/xterm'
 import { type TerminalClientToServerEvents } from '@treeport/shared'
 import {
   terminalKeyboardInput,
+  terminalInputWithModifiers,
   terminalOptions,
   trackTerminalScrolling,
   trackTerminalSelection
@@ -281,14 +282,7 @@ export function makeBrowser(
           if (modifiers) {
             state.inputModifiers = null
 
-            if (modifiers.ctrl && data.length === 1) {
-              data = String.fromCharCode(data.toUpperCase().charCodeAt(0) & 31)
-            }
-
-            if (modifiers.alt) {
-              data = `\u001b${data}`
-            }
-
+            data = terminalInputWithModifiers(data, modifiers)
             modifiers.onConsumed()
           }
 

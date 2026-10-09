@@ -88,7 +88,7 @@ export function WorktreeForm({
   const base = baseValue === 'default' ? 'default' : 'current'
   return (
     <form
-      className="flex flex-col gap-5"
+      className="flex flex-col gap-5 max-[700px]:gap-2.5"
       autoComplete="off"
       onKeyDown={(event) => {
         if (
@@ -196,6 +196,7 @@ export function WorktreeForm({
               maxLength={TREE_CONTEXT_VALUE_MAX_LENGTH}
               disabled={busy}
               rows={4}
+              className="max-[700px]:h-16"
             />
           ) : (
             <Input

@@ -6,6 +6,7 @@ import { type TerminalSessionState } from './state'
 export type SessionTimer =
   | 'degraded'
   | 'bell'
+  | 'fontZoom'
   | 'fileTransfer'
   | 'cursorRestore'
   | 'resizeSettle'

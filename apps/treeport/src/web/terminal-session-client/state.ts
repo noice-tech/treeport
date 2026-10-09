@@ -1,4 +1,7 @@
-import { TERMINAL_FONT_SIZE } from '../terminal-browser'
+import {
+  TERMINAL_FONT_SIZE,
+  type TerminalInputModifiers
+} from '../terminal-browser'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
 import type { TerminalImages } from '../../terminal-runtime/images'
@@ -59,6 +62,7 @@ export interface TerminalSessionSnapshot {
   hasSelection: boolean
   hoveredLink: string | null
   pasteRequestSerial: number
+  fontZoomPercent: number | null
   error: string | null
 }
 
@@ -75,6 +79,7 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   hasSelection: false,
   hoveredLink: null,
   pasteRequestSerial: 0,
+  fontZoomPercent: null,
   error: null
 }
 
@@ -115,11 +120,8 @@ export class TerminalSessionState {
   readonly parsedSequences = new Set<number>()
   selectionDragCancel: (() => void) | null = null
   pendingPaste = ''
-  inputModifiers: {
-    ctrl: boolean
-    alt: boolean
-    onConsumed: () => void
-  } | null = null
+  inputModifiers: (TerminalInputModifiers & { onConsumed: () => void }) | null =
+    null
   lastBellAt = 0
 
   constructor(readonly terminalId: string) {}
