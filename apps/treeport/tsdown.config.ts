@@ -3,7 +3,15 @@ import { once } from 'node:events'
 import path from 'node:path'
 import { defineConfig } from 'tsdown'
 
-let serverStopped = Promise.resolve()
+// tsdown reimports this module when its config changes. Keep the shutdown queue
+// across those imports so the replacement cannot race the previous listener.
+// SAFETY: This optional process-local slot is initialized below and owned only here.
+const developmentGlobal = globalThis as typeof globalThis & {
+  treeportDevelopmentServer?: { stopped: Promise<void> }
+}
+const developmentServer = (developmentGlobal.treeportDevelopmentServer ??= {
+  stopped: Promise.resolve()
+})
 
 export default defineConfig({
   entry: {
@@ -26,7 +34,7 @@ export default defineConfig({
       return
     }
 
-    serverStopped = serverStopped.then(async () => {
+    developmentServer.stopped = developmentServer.stopped.then(async () => {
       if (signal.aborted) {
         return
       }
