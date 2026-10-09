@@ -920,6 +920,7 @@ export async function fixture() {
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
+    remoteUrl: null,
     daemonLifecycle: 'external',
     webDevelopment: false
   }

@@ -45,6 +45,7 @@
     "effect": "^3.22.1",
     "electron": "43.2.0",
     "lucide-react": "catalog:",
+    "qrcode.react": "^4.2.0",
     "react": "catalog:",
     "react-dom": "catalog:",
     "sharp": "catalog:",

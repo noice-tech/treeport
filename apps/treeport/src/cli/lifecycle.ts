@@ -20,6 +20,7 @@ const DEFAULT_PORT = 8733
 interface RemotePreference {
   port: number
   target: string
+  url?: string | undefined
 }
 
 interface Preferences {
@@ -115,7 +116,13 @@ async function readJson<Output>(
 const preferencesSchema: z.ZodType<Preferences> = z.looseObject({
   host: z.string().optional(),
   port: z.number().optional(),
-  remote: z.strictObject({ port: z.number(), target: z.string() }).optional()
+  remote: z
+    .strictObject({
+      port: z.number(),
+      target: z.string(),
+      url: z.string().optional()
+    })
+    .optional()
 })
 
 const daemonRecordSchema = z.strictObject({
@@ -598,7 +605,7 @@ export async function enableTailscaleRemote(options: {
     await tailscale(['serve', '--bg', `--https=${port}`, target])
   }
 
-  await savePreferences({ ...saved, remote: { port, target } })
+  await savePreferences({ ...saved, remote: { port, target, url } })
   return { alreadyEnabled, port, url }
 }
 

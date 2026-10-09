@@ -35,6 +35,7 @@ import {
   directoryBrowseResponseSchema,
   getWebPanelStorageSchema,
   healthResponseSchema,
+  phoneAccessResponseSchema,
   openBrowserPanelFromTerminalSchema,
   openBrowserPanelResponseSchema,
   openWebPanelResponseSchema,
@@ -735,6 +736,56 @@ export function createApp({
           daemonLifecycle: config.daemonLifecycle,
           url: config.apiUrl
         })
+      )
+    ),
+    route(
+      'GET',
+      '/api/phone-access',
+      operation(async () => {
+        if (config.remoteUrl || config.daemonLifecycle === 'external') {
+          return config.remoteUrl
+        }
+
+        // Read the URL recorded by remote enable/disable so changes are visible
+        // without restarting. Never inspect Tailscale or infer reachability here.
+        const saved = await fs
+          .readFile(path.join(config.dataDir, 'config.json'), 'utf8')
+          .then((value) =>
+            Schema.decodeUnknownOption(
+              Schema.Struct({
+                remote: Schema.optional(
+                  Schema.Struct({
+                    target: Schema.String,
+                    url: Schema.optional(Schema.String)
+                  })
+                )
+              })
+            )(JSON.parse(value))
+          )
+          .catch(() => Option.none())
+        const remote = Option.getOrNull(saved)?.remote
+
+        return remote?.target === config.apiUrl.replace(/\/$/, '')
+          ? (remote.url ?? null)
+          : null
+      }).pipe(
+        Effect.map((url) => ({
+          url,
+          error: url
+            ? null
+            : config.daemonLifecycle === 'external'
+              ? 'No remote address is configured for this instance. Configure remote access through the process that started Treeport.'
+              : 'No remote address is configured for this instance. Run treeport remote enable on this computer, then retry.',
+          setupCommand:
+            !url && config.daemonLifecycle !== 'external'
+              ? 'treeport remote enable'
+              : null
+        })),
+        Effect.map((body) =>
+          jsonContractResponse(phoneAccessResponseSchema, body, 200, {
+            'cache-control': 'no-store'
+          })
+        )
       )
     ),
     route(

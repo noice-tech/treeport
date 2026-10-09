@@ -28,7 +28,11 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Stream from 'effect/Stream'
 import { DesktopRuntime } from './desktop-runtime'
-import { checkHealth, watchBackendHealth } from './backend-connection'
+import {
+  checkHealth,
+  phoneAccess,
+  watchBackendHealth
+} from './backend-connection'
 import { ComputerStore } from './computer-store'
 import { MINIMUM_SUPPORTED_BACKEND_VERSION } from './desktop-contract'
 import type {
@@ -1176,6 +1180,51 @@ function registerIpc(): void {
   })
   ipcMain.handle('shell:get-state', (event) =>
     isTrustedRendererEvent(event) ? shellState() : null
+  )
+  ipcMain.handle('shell:copy-phone-link', (event, value) => {
+    if (
+      !isTrustedRendererEvent(event) ||
+      !z.string().safeParse(value).success
+    ) {
+      return false
+    }
+
+    const parsed = z.url().safeParse(value)
+    if (!parsed.success) {
+      return false
+    }
+
+    const url = new URL(parsed.data)
+    if (
+      url.protocol !== 'https:' ||
+      isLoopbackUrl(url) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    ) {
+      return false
+    }
+
+    clipboard.writeText(url.href)
+    return true
+  })
+  ipcMain.handle('shell:phone-access', (event, id) =>
+    desktopRuntime.run(
+      Effect.gen(function* () {
+        const computer = store?.selectedComputer
+        if (!isTrustedRendererEvent(event) || !computer || computer.id !== id) {
+          return {
+            url: null,
+            error: 'Select a computer to open on your phone.',
+            setupCommand: null
+          }
+        }
+
+        return yield* phoneAccess(computer.origin)
+      })
+    )
   )
   ipcMain.handle('shell:select-computer', (event, id) =>
     desktopRuntime.run(

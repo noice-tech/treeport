@@ -28,6 +28,7 @@ function config(dataDir: string): AppConfig {
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
+    remoteUrl: null,
     daemonLifecycle: 'treeport',
     appVersion: '0.4.0',
     installationMethod: 'npm',

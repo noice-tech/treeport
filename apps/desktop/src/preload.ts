@@ -5,6 +5,11 @@ import {
   type IpcRendererEvent
 } from 'electron'
 import { z } from 'zod'
+import {
+  decodeUnknownOrNull,
+  phoneAccessResponseSchema,
+  type PhoneAccessResponse
+} from '@treeport/shared'
 import type {
   ComputerMutationResult,
   ComputerUpdate,
@@ -330,6 +335,21 @@ const shellBridge = Object.freeze({
   },
   releaseTerminalSelection(): void {
     ipcRenderer.send('shell:terminal-selection-release')
+  },
+  copyPhoneLink(url: string): Promise<boolean> {
+    return ipcRenderer
+      .invoke('shell:copy-phone-link', url)
+      .then((value) => z.boolean().parse(value))
+  },
+  phoneAccess(id: string): Promise<PhoneAccessResponse> {
+    return ipcRenderer.invoke('shell:phone-access', id).then(
+      (value) =>
+        decodeUnknownOrNull(phoneAccessResponseSchema, value) ?? {
+          url: null,
+          error: 'Could not check remote access.',
+          setupCommand: null
+        }
+    )
   },
   selectComputer(id: string): Promise<boolean> {
     return ipcRenderer.invoke('shell:select-computer', id)

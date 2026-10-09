@@ -17,6 +17,7 @@ describe('configuration', () => {
     expect(config.runtimeDir).toBe('/tmp/run/treeport')
     expect(config.shell).toBe('/bin/zsh')
     expect(config.daemonLifecycle).toBe('treeport')
+    expect(config.remoteUrl).toBeNull()
   })
 
   it('uses conventional listener variables when Treeport overrides are absent', () => {
@@ -39,6 +40,7 @@ describe('configuration', () => {
       TREEPORT_HOST: '::1',
       TREEPORT_PORT: '5000',
       TREEPORT_API_URL: 'http://example.test:5000',
+      TREEPORT_REMOTE_URL: 'https://machine.example.ts.net:5000',
       TREEPORT_DAEMON_LIFECYCLE: 'external',
       TREEPORT_WEB_DEVELOPMENT: '1',
       TREEPORT_SHELL: '/bin/bash'
@@ -50,6 +52,7 @@ describe('configuration', () => {
     expect(config.host).toBe('::1')
     expect(config.port).toBe(5000)
     expect(config.apiUrl).toBe('http://example.test:5000')
+    expect(config.remoteUrl).toBe('https://machine.example.ts.net:5000')
     expect(config.shell).toBe('/bin/bash')
     expect(config.daemonLifecycle).toBe('external')
     expect(

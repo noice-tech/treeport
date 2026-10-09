@@ -582,6 +582,15 @@ const packageOperationResultSchema = Schema.Struct({
   reason: Schema.optional(Schema.String)
 })
 
+export const phoneAccessResponseSchema = Schema.Struct({
+  url: nullableStringSchema,
+  error: nullableStringSchema,
+  setupCommand: nullableStringSchema
+})
+export type PhoneAccessResponse = Schema.Schema.Type<
+  typeof phoneAccessResponseSchema
+>
+
 export const healthResponseSchema = Schema.Struct({
   ok: Schema.Literal(true),
   version: Schema.String,

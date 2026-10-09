@@ -422,6 +422,7 @@ export async function main() {
     TREEPORT_HOST: mode.appHost,
     TREEPORT_PORT: String(appPort),
     TREEPORT_API_URL: appUrl,
+    TREEPORT_REMOTE_URL: tailscaleRemote?.url ?? '',
     TREEPORT_DAEMON_LIFECYCLE: 'external',
     TREEPORT_DESKTOP_URL: appUrl,
     TREEPORT_DESKTOP_DEBUG_PORT: String(desktopDebugPort),
