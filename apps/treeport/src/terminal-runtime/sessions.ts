@@ -1350,7 +1350,7 @@ export class TerminalHostSessions {
   ): Effect.Effect<void, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const session = yield* this.session(terminalId)
-      if (!session || session.status !== 'running') {
+      if (!session) {
         return
       }
 
@@ -1362,7 +1362,11 @@ export class TerminalHostSessions {
             return
           }
 
-          session.pty.resize(cols, rows)
+          if (session.status === 'running') {
+            session.pty.resize(cols, rows)
+          }
+
+          // Exited sessions still reflow their retained output for viewers.
           session.terminal.resize(cols, rows)
         })
       )

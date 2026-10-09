@@ -37,6 +37,7 @@ class HostDouble implements TerminalAttachmentBackend {
   snapshotData = 'canonical snapshot'
   snapshotGate: Promise<void> | null = null
   writeError: Error | null = null
+  status: 'running' | 'exited' = 'running'
 
   attach() {
     return Effect.gen(this, function* () {
@@ -94,7 +95,7 @@ class HostDouble implements TerminalAttachmentBackend {
   runtimeState() {
     return Effect.succeed({
       title: null,
-      status: 'running' as const,
+      status: this.status,
       progress: null,
       bell: null
     })
@@ -508,6 +509,25 @@ describe('TerminalAttachmentManager', () => {
     ])
     expect(host.activations).toHaveLength(2)
     expect(host.hostAuthorityCount).toBeGreaterThanOrEqual(1)
+
+    host.status = 'exited'
+    const transitionsBeforeExit = host.transitionSerial
+    const authorityEventsBeforeExit = eventPayloads(
+      second,
+      'query_authority'
+    ).length
+    manager.message(secondId, 'query_authority', {
+      generation: secondGeneration,
+      transitionId: null
+    })
+    await waitForEvent(second, 'query_authority', authorityEventsBeforeExit + 1)
+    expect(eventPayloads(second, 'query_authority').at(-1)).toEqual({
+      generation: secondGeneration,
+      transitionId: null,
+      active: false
+    })
+    expect(host.transitionSerial).toBe(transitionsBeforeExit)
+    expect(second.disconnects).toEqual([])
     await dispose()
   })
 })

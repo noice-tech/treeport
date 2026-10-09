@@ -885,6 +885,21 @@ export class TerminalAttachmentManager {
             return
           }
 
+          const runtime = yield* this.terminalHost.runtimeState(
+            connection.terminalId
+          )
+          if (runtime?.status === 'exited') {
+            connection.queryAuthorityActive = false
+            connection.queryAuthorityGrantPending = false
+            connection.queryTransitionId = null
+            this.send(connection, 'query_authority', {
+              generation,
+              transitionId: null,
+              active: false
+            })
+            return
+          }
+
           if (transitionId === null) {
             if (connection.queryAuthorityActive) {
               this.send(connection, 'query_authority', {
@@ -967,7 +982,32 @@ export class TerminalAttachmentManager {
             transitionId: null,
             active: true
           })
-        }),
+        }).pipe(
+          Effect.catchAll((error) =>
+            // Exit can race the authority handshake. It leaves a readable
+            // snapshot, not a broken connection that should replay forever.
+            this.terminalHost.runtimeState(connection.terminalId).pipe(
+              Effect.flatMap((runtime) => {
+                if (runtime?.status !== 'exited') {
+                  return Effect.fail(error)
+                }
+
+                return Effect.sync(() => {
+                  connection.queryAuthorityActive = false
+                  connection.queryAuthorityGrantPending = false
+                  connection.queryTransitionId = null
+                  if (this.isActive(connection)) {
+                    this.send(connection, 'query_authority', {
+                      generation,
+                      transitionId: null,
+                      active: false
+                    })
+                  }
+                })
+              })
+            )
+          )
+        ),
       (error) => this.failInputWrite(connection, error)
     )
   }

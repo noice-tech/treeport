@@ -439,6 +439,15 @@ describe('TerminalHostSessionManager', () => {
       status: 'exited',
       exitCode: 7
     })
+    await run(manager.resize('term', 60, 20))
+    expect(await run(manager.snapshot('term'))).toMatchObject({
+      cols: 60,
+      rows: 20
+    })
+    expect(pty.resizes).toEqual([
+      [40, 12],
+      [100, 30]
+    ])
     await run(manager.shutdown())
     expect(terminate).toHaveBeenCalledOnce()
     expect(pty.kills).toBe(1)
