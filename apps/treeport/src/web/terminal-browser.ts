@@ -53,6 +53,49 @@ export function terminalProgressLabel(progress: TerminalProgress): string {
   return progress.value === null ? 'working' : `${progress.value}% complete`
 }
 
+export interface TerminalInputModifiers {
+  ctrl: boolean
+  alt: boolean
+  shift: boolean
+}
+
+export function terminalInputWithModifiers(
+  data: string,
+  modifiers: TerminalInputModifiers
+): string {
+  if (modifiers.shift && (data === '\t' || data === '\u001b[Z')) {
+    return '\u001b[Z'
+  }
+
+  if (modifiers.shift && data === '\r' && !modifiers.ctrl && !modifiers.alt) {
+    return '\u001b[13;2u'
+  }
+
+  const arrow = /^\u001b(?:\[|O)([ABCDHF])$/.exec(data)
+  if (arrow && (modifiers.ctrl || modifiers.alt || modifiers.shift)) {
+    const modifier =
+      1 +
+      Number(modifiers.shift) +
+      2 * Number(modifiers.alt) +
+      4 * Number(modifiers.ctrl)
+    return `\u001b[1;${modifier}${arrow[1]}`
+  }
+
+  if (modifiers.shift && data.length === 1) {
+    // A software Shift latch also covers the standard US punctuation pairs.
+    const unshifted = "1234567890-=[]\\;',./`"
+    const shifted = '!@#$%^&*()_+{}|:"<>?~'
+    const index = unshifted.indexOf(data)
+    data = index === -1 ? data.toUpperCase() : shifted[index]!
+  }
+
+  if (modifiers.ctrl && data.length === 1) {
+    data = String.fromCharCode(data.toUpperCase().charCodeAt(0) & 31)
+  }
+
+  return modifiers.alt ? `\u001b${data}` : data
+}
+
 type TerminalKeyboardEvent = Pick<
   KeyboardEvent,
   'altKey' | 'ctrlKey' | 'isComposing' | 'key' | 'metaKey' | 'shiftKey' | 'type'

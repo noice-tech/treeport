@@ -1150,11 +1150,6 @@ function WorkspaceApp() {
     return () => window.clearTimeout(timer)
   }, [eventsDisconnected, projectsQuery.data, projectsQuery.isRefetchError])
 
-  const activeProjectTerminals = useMemo(
-    () =>
-      activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
-    [activeProject]
-  )
   const retainedPanels = useMemo(
     () =>
       projects
@@ -1646,9 +1641,7 @@ function WorkspaceApp() {
       />
       <ProjectSwitcherShortcut blocked={dialog !== null} />
       <WorkspaceMobileHeader
-        selectedTerminalId={selectedTerminalId}
-        terminals={activeProjectTerminals}
-        onSelectTerminal={selectTerminal}
+        terminal={selectedTerminal}
         updateControl={<UpdateControl />}
         notificationCenter={
           <NotificationCenter

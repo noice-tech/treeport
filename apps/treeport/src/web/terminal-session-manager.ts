@@ -75,6 +75,10 @@ export class TerminalSessionManager {
     this.runtimeMetadata.replaceRuntimeMetadata(metadata)
   }
 
+  zoom(terminalId: string, action: TerminalFontZoom): boolean {
+    return this.pool.zoom(terminalId, action)
+  }
+
   zoomFocused(action: TerminalFontZoom): boolean {
     return this.pool.zoomFocused(action)
   }

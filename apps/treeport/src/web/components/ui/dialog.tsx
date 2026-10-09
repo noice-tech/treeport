@@ -73,7 +73,7 @@ const DialogContent = React.forwardRef<
         <DialogPrimitive.Content
           ref={ref}
           className={cn(
-            'fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-zinc-900 p-6 text-zinc-200 shadow-2xl ring-1 ring-white/10 outline-none max-[700px]:top-auto max-[700px]:bottom-0 max-[700px]:left-0 max-[700px]:max-h-[90dvh] max-[700px]:w-full max-[700px]:max-w-none max-[700px]:translate-x-0 max-[700px]:translate-y-0 max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pr-[max(1.25rem,env(safe-area-inset-right,0px))] max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] max-[700px]:pl-[max(1.25rem,env(safe-area-inset-left,0px))]',
+            'fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-zinc-900 p-6 text-zinc-200 shadow-2xl ring-1 ring-white/10 outline-none max-[700px]:top-auto max-[700px]:bottom-0 max-[700px]:left-0 max-[700px]:max-h-[90dvh] max-[700px]:w-full max-[700px]:max-w-none max-[700px]:translate-x-0 max-[700px]:translate-y-0 max-[700px]:rounded-b-none max-[700px]:gap-2 max-[700px]:p-3 max-[700px]:pr-[max(0.75rem,env(safe-area-inset-right,0px))] max-[700px]:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] max-[700px]:pl-[max(0.75rem,env(safe-area-inset-left,0px))]',
             mobilePresentation === 'dialog' && 'keyboard-safe-dialog',
             className
           )}
@@ -101,8 +101,9 @@ const DialogContent = React.forwardRef<
           {...props}
         >
           {children}
-          <DialogPrimitive.Close className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-md text-zinc-500 outline-none hover:bg-white/5 hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:pointer-events-none [&_svg]:size-4">
+          <DialogPrimitive.Close className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-md text-zinc-500 outline-none hover:bg-white/5 hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:pointer-events-none max-[700px]:top-2 max-[700px]:right-2 max-[700px]:size-8 [&_svg]:size-4">
             <XIcon />
+            <span className="touch-target" aria-hidden="true" />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         </DialogPrimitive.Content>
@@ -118,7 +119,10 @@ function DialogHeader({
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex flex-col gap-1.5 pr-12 text-left', className)}
+      className={cn(
+        'flex flex-col gap-1.5 pr-12 text-left max-[700px]:gap-1 max-[700px]:pr-9',
+        className
+      )}
       {...props}
     />
   )
@@ -131,7 +135,7 @@ const DialogTitle = React.forwardRef<
   <DialogPrimitive.Title
     ref={ref}
     className={cn(
-      'text-balance text-xl font-semibold tracking-tight text-zinc-50 sm:text-2xl',
+      'text-balance text-lg font-semibold text-zinc-50 sm:text-2xl sm:tracking-tight max-[700px]:text-base',
       className
     )}
     {...props}
@@ -145,7 +149,7 @@ const DialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn('text-base text-pretty text-zinc-400 sm:text-sm', className)}
+    className={cn('text-sm text-pretty text-zinc-400', className)}
     {...props}
   />
 ))

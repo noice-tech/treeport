@@ -22,9 +22,9 @@ const buttonVariants = cva(
       },
       size: {
         default:
-          'h-9 px-3 py-2 has-[>svg:first-child]:pl-2 has-[>svg:last-child]:pr-2',
+          'h-9 px-3 py-2 has-[>svg:first-child]:pl-2 has-[>svg:last-child]:pr-2 max-[700px]:h-8 max-[700px]:px-2 max-[700px]:py-1 max-[700px]:text-[0.8125rem]',
         sm: 'h-7 px-2.5 text-sm has-[>svg:first-child]:pl-1.5 has-[>svg:last-child]:pr-1.5',
-        icon: 'size-9 p-0',
+        icon: 'size-9 p-0 max-[700px]:size-8',
         'icon-sm': 'size-7 p-0'
       }
     },

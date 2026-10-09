@@ -38,6 +38,7 @@ test.describe('mobile terminal UI', () => {
     await page.evaluate(() => {
       window.__wsSent = []
     })
+    await page.getByRole('button', { name: 'More terminal actions' }).click()
     const fileChooserPromise = page.waitForEvent('filechooser')
     await page.getByRole('button', { name: 'Upload', exact: true }).click()
     const fileChooser = await fileChooserPromise
@@ -61,10 +62,8 @@ test.describe('mobile terminal UI', () => {
     await page.setViewportSize({ width: 320, height: 700 })
     const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true })
     const alt = page.getByRole('button', { name: 'Alt', exact: true })
-    const shiftTab = page.getByRole('button', {
-      name: 'Shift+Tab',
-      exact: true
-    })
+    const shift = page.getByRole('button', { name: 'Shift', exact: true })
+    const tab = page.getByRole('button', { name: 'Tab', exact: true })
     await page.evaluate(() => {
       window.__wsSent = []
     })
@@ -89,8 +88,9 @@ test.describe('mobile terminal UI', () => {
     await page.evaluate(() => {
       window.__wsSent = []
     })
-    await shiftTab.scrollIntoViewIfNeeded()
-    await shiftTab.click()
+    await shift.click()
+    await tab.scrollIntoViewIfNeeded()
+    await tab.click()
     await expect
       .poll(() =>
         page.evaluate(() =>

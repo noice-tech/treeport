@@ -135,7 +135,7 @@ body {
     max-height: calc(var(--dialog-visual-viewport-height, 100dvh) - 2rem);
     transform: translate(-50%, -50%);
     border-radius: 0.75rem;
-    padding-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
   }
 }
 
@@ -198,17 +198,23 @@ code {
   height: max(100%, 3rem);
   transform: translate(-50%, -50%);
 
+  /* Dense mobile rows must not have hit areas that overlap adjacent actions. */
+  @media (max-width: 700px) {
+    width: max(100%, 2rem);
+    height: max(100%, 2rem);
+  }
+
   @variant pointer-fine {
     display: none;
   }
 }
 
 @utility form-note {
-  @apply m-0 text-base text-pretty text-zinc-400 sm:text-sm;
+  @apply m-0 text-sm text-pretty text-zinc-400;
 }
 
 @utility form-error {
-  @apply m-0 text-base text-pretty text-rose-300 sm:text-sm;
+  @apply m-0 text-sm text-pretty text-rose-300;
 }
 
 @utility check-row {
