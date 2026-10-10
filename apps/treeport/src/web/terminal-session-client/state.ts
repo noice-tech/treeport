@@ -124,12 +124,11 @@ export class TerminalSessionState {
     null
   lastBellAt = 0
 
-  readonly fontSizeStorageKey: string
+  readonly fontSizeStorageKey = 'treeport-terminal-font-size'
 
   constructor(readonly terminalId: string) {
-    this.fontSizeStorageKey = `treeport-terminal-font-size:${terminalId}`
     try {
-      const stored = Number(sessionStorage.getItem(this.fontSizeStorageKey))
+      const stored = Number(localStorage.getItem(this.fontSizeStorageKey))
       if (Number.isInteger(stored) && stored >= 8 && stored <= 32) {
         this.fontSize = stored
       }
