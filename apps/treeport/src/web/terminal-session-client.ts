@@ -217,6 +217,11 @@ export class TerminalSession {
           )
     if (fontSize !== this.state.fontSize) {
       this.state.fontSize = fontSize
+      try {
+        sessionStorage.setItem(this.state.fontSizeStorageKey, String(fontSize))
+      } catch {
+        // Zoom remains usable when browser storage is unavailable.
+      }
       this.services.layout.scheduleFit()
     }
 
