@@ -1741,14 +1741,19 @@ function WorkspaceApp() {
             )}
           >
             <div
-              className={cn(
-                'relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]',
-                toolPaneOpen && 'max-[701px]:hidden'
-              )}
+              className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]"
               role="group"
               aria-label="Terminal tab group"
-              aria-hidden={toolPaneFullView ? true : undefined}
-              inert={toolPaneFullView ? true : undefined}
+              aria-hidden={
+                toolPaneOpen && (isMobile || toolPaneFullView)
+                  ? true
+                  : undefined
+              }
+              inert={
+                toolPaneOpen && (isMobile || toolPaneFullView)
+                  ? true
+                  : undefined
+              }
               onPointerDownCapture={() => {
                 dismissToolPicker()
                 focusSurface('terminal')

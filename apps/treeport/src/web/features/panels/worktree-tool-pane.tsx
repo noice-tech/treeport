@@ -555,11 +555,11 @@ export function WorktreeToolPane({
   )
 
   return (
-    // Reserve the split width even while the panel overlays the terminal, so
-    // full-view transitions do not resize or remount the terminal underneath.
+    // Mobile tools overlay the terminal without changing its layout. On desktop,
+    // reserve the split width during full-view transitions to avoid resizing it.
     <div
       className={cn(
-        'grid min-h-0 min-w-0 w-[var(--side-panel-width)] max-[701px]:w-full',
+        'grid min-h-0 min-w-0 w-[var(--side-panel-width)] max-[701px]:absolute max-[701px]:inset-0 max-[701px]:z-20 max-[701px]:w-full',
         !visible && 'pointer-events-none absolute inset-0 opacity-0'
       )}
       style={

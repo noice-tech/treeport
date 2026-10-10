@@ -11,6 +11,7 @@ test.describe('mobile terminal UI', () => {
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+
     await page.evaluate(() => {
       window.__wsSent = []
     })
@@ -34,6 +35,41 @@ test.describe('mobile terminal UI', () => {
           expect.objectContaining({ type: 'input', data: '\u001bOA' })
         ])
       )
+
+    // Exercise panel toggles while controlling the terminal, so a resize would
+    // reach the process rather than being suppressed for a read-only viewer.
+    await page.waitForTimeout(250)
+    const screen = page.locator('.xterm-screen')
+    const screenBounds = await screen.boundingBox()
+    expect(screenBounds).not.toBeNull()
+    await page.evaluate(() => {
+      window.__wsSent = []
+    })
+    const sidePanelToggle = page.getByRole('button', {
+      name: 'Toggle side panel'
+    })
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await sidePanelToggle.click()
+      await expect(
+        page.getByRole('region', { name: 'topic tool tab group' })
+      ).toBeVisible()
+      expect(await screen.boundingBox()).toEqual(screenBounds)
+      // Observe long enough for a debounced resize to reach the socket.
+      await page.waitForTimeout(250)
+      expect(await screen.boundingBox()).toEqual(screenBounds)
+      await sidePanelToggle.click()
+      await expect(
+        page.getByRole('main', { name: 'topic terminal workspace' })
+      ).toBeVisible()
+      expect(await screen.boundingBox()).toEqual(screenBounds)
+      await page.waitForTimeout(250)
+      expect(await screen.boundingBox()).toEqual(screenBounds)
+    }
+    expect(
+      await page.evaluate(() =>
+        window.__wsSent.filter((message: any) => message.type === 'resize')
+      )
+    ).toEqual([])
 
     await page.evaluate(() => {
       window.__wsSent = []
