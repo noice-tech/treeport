@@ -236,6 +236,7 @@ describe('hosted browser protocol', () => {
         generation: 1,
         requestId: 'remote-control',
         controller: 'other',
+        viewport: { width: 375, height: 812 },
         retainPaint: true,
         agentActive: false
       }).success

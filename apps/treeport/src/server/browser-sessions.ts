@@ -160,6 +160,7 @@ interface BrowserLocalOwner {
   revision: number
   ready: boolean
   controller: 'other' | 'none'
+  viewport: { width: number; height: number } | null
   retainPaint: boolean
   agentActive: boolean
   readiness: Deferred.Deferred<void>
@@ -1347,6 +1348,7 @@ export class BrowserSessionManager {
           previousOwner.revision = -1
           previousOwner.ready = false
           previousOwner.controller = 'none'
+          previousOwner.viewport = null
           previousOwner.retainPaint = false
           previousOwner.agentActive = false
           previousOwner.readiness = readiness
@@ -1362,6 +1364,7 @@ export class BrowserSessionManager {
             revision: -1,
             ready: false,
             controller: 'none',
+            viewport: null,
             retainPaint: false,
             agentActive: false,
             readiness,
@@ -1611,6 +1614,7 @@ export class BrowserSessionManager {
       | {
           type: 'runtimeControl'
           controller: 'other' | 'none'
+          viewport: { width: number; height: number } | null
           retainPaint: boolean
           agentActive: boolean
         }
@@ -1656,11 +1660,14 @@ export class BrowserSessionManager {
     session: BrowserSession,
     owner: BrowserLocalOwner,
     controller: 'other' | 'none',
+    viewport: { width: number; height: number } | null,
     retainPaint: boolean,
     agentActive: boolean
   ): Promise<void> {
     if (
       owner.controller === controller &&
+      owner.viewport?.width === viewport?.width &&
+      owner.viewport?.height === viewport?.height &&
       owner.retainPaint === retainPaint &&
       owner.agentActive === agentActive
     ) {
@@ -1670,6 +1677,7 @@ export class BrowserSessionManager {
     const accepted = await this.requestLocalOwner(owner, {
       type: 'runtimeControl',
       controller,
+      viewport,
       retainPaint,
       agentActive
     })
@@ -1682,6 +1690,7 @@ export class BrowserSessionManager {
     }
 
     owner.controller = controller
+    owner.viewport = viewport ? { ...viewport } : null
     owner.retainPaint = retainPaint
     owner.agentActive = agentActive
   }
@@ -1895,10 +1904,6 @@ export class BrowserSessionManager {
 
     if (message.type === 'resize') {
       attachment.viewport = { width: message.width, height: message.height }
-      if (session.localOwner) {
-        return
-      }
-
       this.queueClientOperation(session, attachment, {
         coalesceKey: `resize:${attachment.id}`,
         message,
@@ -1913,8 +1918,12 @@ export class BrowserSessionManager {
           }
 
           try {
-            const browser = await this.browserFor(session)
-            await browser.command(queuedMessage)
+            if (session.localOwner) {
+              await this.updateScreencast(session)
+            } else {
+              const browser = await this.browserFor(session)
+              await browser.command(queuedMessage)
+            }
           } catch (cause) {
             attachment.transport.sendMessage({
               type: 'navigationError',
@@ -2081,12 +2090,20 @@ export class BrowserSessionManager {
         controllerId && controllerId !== LOCAL_BROWSER_OWNER_CONTROLLER
           ? 'other'
           : 'none'
+      const viewport =
+        controller === 'other'
+          ? ([...session.attachments.values()].find(
+              (attachment) =>
+                attachmentController(attachment.clientId) === controllerId
+            )?.viewport ?? null)
+          : null
       const retainPaint = visible || session.retainLocalAgentPaint
       if (visible) {
         await this.setLocalOwnerRuntimeControl(
           session,
           localOwner,
           controller,
+          viewport,
           retainPaint,
           session.agentActive
         )
@@ -2097,6 +2114,7 @@ export class BrowserSessionManager {
           session,
           localOwner,
           controller,
+          viewport,
           retainPaint,
           session.agentActive
         )

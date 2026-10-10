@@ -16,6 +16,7 @@ import {
   ChevronUpIcon,
   CodeBracketSquareIcon,
   DevicePhoneMobileIcon,
+  EllipsisHorizontalIcon,
   ServerStackIcon,
   ShieldCheckIcon,
   ShieldExclamationIcon,
@@ -35,6 +36,7 @@ import {
   decodeUnknownOrNull
 } from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
+import { cn } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { Empty, EmptyDescription, EmptyTitle } from '../../components/ui/empty'
 import { Input } from '../../components/ui/input'
@@ -161,6 +163,7 @@ export function BrowserPanelWorkspace({
     string | null
   >(null)
   const [viewportOpen, setViewportOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [viewportOverride, setViewportOverride] = useState<{
     width: number
     height: number
@@ -869,14 +872,83 @@ export function BrowserPanelWorkspace({
       ? permissionSettings
       : null
 
+  const viewportControls = (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm font-semibold">Remote viewport</p>
+      <p className="text-base text-zinc-400 tabular-nums sm:text-sm">
+        {viewportOverride
+          ? `${viewportOverride.width} × ${viewportOverride.height} px`
+          : 'Fit Browser panel'}
+      </p>
+      <div className="flex gap-2">
+        <Input
+          type="number"
+          name="viewport-width"
+          min={1}
+          max={3840}
+          aria-label="Viewport width"
+          className="min-w-0 flex-1"
+          value={viewportWidth}
+          onChange={(event) => setViewportWidth(event.target.value)}
+        />
+        <Input
+          type="number"
+          name="viewport-height"
+          min={1}
+          max={2160}
+          aria-label="Viewport height"
+          className="min-w-0 flex-1"
+          value={viewportHeight}
+          onChange={(event) => setViewportHeight(event.target.value)}
+        />
+      </div>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          size="sm"
+          disabled={
+            !state ||
+            !Number.isInteger(Number(viewportWidth)) ||
+            Number(viewportWidth) < 1 ||
+            Number(viewportWidth) > 3840 ||
+            !Number.isInteger(Number(viewportHeight)) ||
+            Number(viewportHeight) < 1 ||
+            Number(viewportHeight) > 2160
+          }
+          onClick={() => {
+            resizeViewport({
+              width: Number(viewportWidth),
+              height: Number(viewportHeight)
+            })
+            setToolsOpen(false)
+          }}
+        >
+          Apply
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={!state}
+          onClick={() => {
+            resizeViewport(null)
+            setToolsOpen(false)
+          }}
+        >
+          Fit panel
+        </Button>
+      </div>
+    </div>
+  )
+
   return (
     <section
       ref={sectionRef}
       className={
         active
-          ? 'relative z-10 flex h-full min-h-0 flex-col'
+          ? '@container/browser-toolbar relative z-10 flex h-full min-h-0 flex-col'
           : localBrowserPaintRetained
-            ? 'pointer-events-none absolute inset-0 z-0 flex h-full min-h-0 flex-col opacity-0'
+            ? '@container/browser-toolbar pointer-events-none absolute inset-0 z-0 flex h-full min-h-0 flex-col opacity-0'
             : 'hidden'
       }
       aria-label={panel.title}
@@ -884,7 +956,7 @@ export function BrowserPanelWorkspace({
       inert={active ? undefined : true}
     >
       <form
-        className="flex min-w-0 items-center gap-1.5 border-b border-white/8 bg-zinc-900 px-2 py-1.5"
+        className="flex min-w-0 shrink-0 items-center gap-1.5 border-b border-white/8 bg-zinc-900 px-2 py-1.5 @max-[40rem]/browser-toolbar:gap-1 @max-[40rem]/browser-toolbar:px-1.5 @max-[40rem]/browser-toolbar:py-1 @max-[40rem]/browser-toolbar:[&>button]:size-8"
         aria-label="Browser controls"
         onSubmit={submit}
       >
@@ -903,6 +975,7 @@ export function BrowserPanelWorkspace({
           type="button"
           variant="ghost"
           size="icon-sm"
+          className="@max-[40rem]/browser-toolbar:hidden"
           aria-label="Go forward"
           title="Go forward"
           disabled={!state?.canGoForward || !state.controlled}
@@ -943,8 +1016,8 @@ export function BrowserPanelWorkspace({
           spellCheck={false}
           name="url"
           aria-label="Application URL"
-          className="rounded-full focus:ring-2 focus:ring-cyan-400"
-          placeholder="Search Google or type a URL"
+          className="min-w-0 flex-1 rounded-full focus:ring-2 focus:ring-cyan-400 @max-[40rem]/browser-toolbar:h-8"
+          placeholder="Search or enter URL"
           maxLength={4_096}
           value={inputValue}
           onPointerDown={(event) => {
@@ -1061,7 +1134,10 @@ export function BrowserPanelWorkspace({
           </Popover>
         ) : null}
         <span
-          className="pointer-events-none flex size-8 shrink-0 items-center justify-center text-cyan-300"
+          className={cn(
+            'pointer-events-none flex size-8 shrink-0 items-center justify-center text-cyan-300',
+            !state?.agentActive && '@max-[40rem]/browser-toolbar:hidden'
+          )}
           role="status"
           aria-label={state?.agentActive ? 'Agent interacting' : undefined}
           title={state?.agentActive ? 'Agent interacting' : undefined}
@@ -1092,6 +1168,7 @@ export function BrowserPanelWorkspace({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
+                className="@max-[40rem]/browser-toolbar:hidden"
                 aria-label="Browser viewport size"
                 title="Browser viewport size"
                 disabled={!state}
@@ -1099,61 +1176,8 @@ export function BrowserPanelWorkspace({
                 <DevicePhoneMobileIcon />
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-64 space-y-2 p-3">
-              <p className="text-sm font-semibold">Remote viewport</p>
-              <p className="text-xs text-zinc-400">
-                {viewportOverride
-                  ? `${viewportOverride.width} × ${viewportOverride.height} px`
-                  : 'Fit Browser panel'}
-              </p>
-              <div className="flex gap-2">
-                <Input
-                  type="number"
-                  min={1}
-                  max={3840}
-                  aria-label="Viewport width"
-                  value={viewportWidth}
-                  onChange={(event) => setViewportWidth(event.target.value)}
-                />
-                <Input
-                  type="number"
-                  min={1}
-                  max={2160}
-                  aria-label="Viewport height"
-                  value={viewportHeight}
-                  onChange={(event) => setViewportHeight(event.target.value)}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={
-                    !Number.isInteger(Number(viewportWidth)) ||
-                    Number(viewportWidth) < 1 ||
-                    Number(viewportWidth) > 3840 ||
-                    !Number.isInteger(Number(viewportHeight)) ||
-                    Number(viewportHeight) < 1 ||
-                    Number(viewportHeight) > 2160
-                  }
-                  onClick={() =>
-                    resizeViewport({
-                      width: Number(viewportWidth),
-                      height: Number(viewportHeight)
-                    })
-                  }
-                >
-                  Apply
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => resizeViewport(null)}
-                >
-                  Fit panel
-                </Button>
-              </div>
+            <PopoverContent align="end" className="w-64 p-3">
+              {viewportControls}
             </PopoverContent>
           </Popover>
         ) : null}
@@ -1369,6 +1393,41 @@ export function BrowserPanelWorkspace({
             </PopoverContent>
           </Popover>
         ) : null}
+        <Popover open={toolsOpen} onOpenChange={setToolsOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="@min-[40rem]/browser-toolbar:hidden"
+              aria-label="More browser controls"
+              title="More browser controls"
+            >
+              <EllipsisHorizontalIcon />
+              <span className="touch-target" aria-hidden="true" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="flex max-h-[min(28rem,70dvh)] w-[min(18rem,calc(100vw-1rem))] flex-col gap-3 overflow-y-auto p-3 shadow-none"
+            aria-label="More browser controls"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full justify-start"
+              disabled={!state?.canGoForward || !state.controlled}
+              onClick={() => {
+                send({ type: 'forward' })
+                setToolsOpen(false)
+              }}
+            >
+              <ArrowRightIcon data-icon="inline-start" />
+              Go forward
+            </Button>
+            {!localBrowser ? viewportControls : null}
+          </PopoverContent>
+        </Popover>
       </form>
       {error ? (
         <p className="bg-red-950 px-2.5 py-1.5 text-red-200" role="alert">
