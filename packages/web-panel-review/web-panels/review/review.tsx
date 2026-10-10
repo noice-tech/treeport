@@ -71,13 +71,66 @@ const VIEWED_KEY = 'review-viewed-files-v1'
 // ponytail: Unfocused panels stay stale, and focused panels can lag two seconds.
 // Add a host diff-change event when either limit matters.
 const AUTO_REFRESH_INTERVAL_MS = 2_000
+// Document styles don't reach the diff/tree shadow roots. Keep their native
+// control behavior aligned without disabling selection or zoom on content.
+const NATIVE_CONTROL_CSS = `
+  button, [role="button"], [role="treeitem"] {
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  :is(button, [role="button"], [role="treeitem"]) :is(span, svg) {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  @media (any-pointer: coarse) {
+    input, textarea, select { font-size: max(1rem, 16px) !important; }
+    button, [role="button"], [role="treeitem"] {
+      transition: opacity 100ms ease-out;
+    }
+    :is(button, [role="button"], [role="treeitem"]):active:not(:disabled, [aria-disabled="true"]) {
+      opacity: 0.7;
+    }
+  }
+`
 const DIFF_CSS = `
+  ${NATIVE_CONTROL_CSS}
   [data-diffs-header] { position: sticky; top: -1rem; z-index: 2; }
   [data-change-icon] { width: 0.875rem; height: 0.875rem; }
+  @media (max-width: 700px) {
+    :host { --diffs-gap-inline: 4px; --diffs-gap-block: 4px; }
+    [data-diffs-header] { top: -0.5rem; padding-inline: 0.5rem; }
+    [data-header-content] { flex: 1; }
+    [data-metadata] { flex-shrink: 0; }
+  }
+  /* Undo the library's ungated hover on inputs that can't hover precisely. */
+  @media not all and (hover: hover) and (pointer: fine) {
+    [data-expand-index] [data-separator-content]:hover { text-decoration: none; }
+    [data-expand-button]:hover { color: var(--diffs-fg-number); }
+  }
   ::highlight(review-find-matches) { background: rgb(250 204 21 / 30%); }
   ::highlight(review-find-active) { background: rgb(251 146 60 / 75%); }
 `
 const TREE_CSS = `
+  ${NATIVE_CONTROL_CSS}
+  /* Contain scrolling inside the library's actual shadow-root scroller. */
+  [data-file-tree-virtualized-scroll="true"] { overscroll-behavior: contain; }
+  @media not all and (hover: hover) and (pointer: fine) {
+    /* Keep real selection/context/drag states, but don't retain a tap's hover. */
+    [data-type="item"]:hover:not([data-item-selected="true"]):not([data-item-context-hover="true"]):not([data-item-drag-target="true"]) {
+      background-color: var(--trees-bg);
+      --truncate-marker-background-overlay-color: transparent;
+    }
+    [data-item-flattened-subitem]:hover:not([data-item-flattened-subitem-drag-target="true"]) {
+      text-decoration: none;
+    }
+    [data-type="context-menu-trigger"]:hover:not([aria-expanded="true"]) {
+      color: var(--trees-fg-muted);
+    }
+    :host(:hover) [data-item-section="spacing-item"] { opacity: 0; }
+  }
   [data-truncate-marker] { opacity: 0 !important; }
   @container measure (height > calc(1lh + 1px)) {
     [data-truncate-marker] { opacity: 1 !important; }
@@ -606,6 +659,8 @@ function ReviewApp() {
   const commentSerial = useRef(0)
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [fileTreeOpen, setFileTreeOpen] = useState(false)
+  const fileTreeToggleRef = useRef<HTMLButtonElement>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [activeFindMatch, setActiveFindMatch] = useState(-1)
@@ -1009,9 +1064,35 @@ function ReviewApp() {
   }, [])
 
   const selectFile = useCallback((file: string) => {
+    setFileTreeOpen(false)
     setSelectedFile(file)
-    sectionRefs.current.get(file)?.scrollIntoView({ block: 'start' })
+    requestAnimationFrame(() => {
+      sectionRefs.current.get(file)?.scrollIntoView({ block: 'start' })
+      if (window.matchMedia('(max-width: 700px)').matches) {
+        fileTreeToggleRef.current?.focus({ preventScroll: true })
+      }
+    })
   }, [])
+
+  useEffect(() => {
+    if (!fileTreeOpen) {
+      return
+    }
+
+    const closeFileTree = (event: KeyboardEvent) => {
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        window.matchMedia('(max-width: 700px)').matches
+      ) {
+        event.preventDefault()
+        setFileTreeOpen(false)
+        fileTreeToggleRef.current?.focus({ preventScroll: true })
+      }
+    }
+    window.addEventListener('keydown', closeFileTree)
+    return () => window.removeEventListener('keydown', closeFileTree)
+  }, [fileTreeOpen])
 
   const createMatchRange = useCallback((match: FindMatch | undefined) => {
     if (!match) {
@@ -1141,6 +1222,7 @@ function ReviewApp() {
   }, [createMatchRange, findMatches, setCollapsed])
 
   const openFind = useCallback(() => {
+    setFileTreeOpen(false)
     if (!findOpen) {
       findReturnFocus.current =
         document.activeElement instanceof HTMLElement
@@ -1179,6 +1261,7 @@ function ReviewApp() {
 
   const navigateToComment = useCallback(
     (comment: ReviewComment) => {
+      setFileTreeOpen(false)
       setCollapsed(comment.file, false)
       setImageSources((current) => new Set(current).add(comment.file))
       setActiveCommentId(comment.id)
@@ -1411,7 +1494,11 @@ function ReviewApp() {
 
       event.preventDefault()
     }
-    const resize = () => setWidth(sidebar.getBoundingClientRect().width)
+    const resize = () => {
+      if (!window.matchMedia('(max-width: 700px)').matches) {
+        setWidth(sidebar.getBoundingClientRect().width)
+      }
+    }
     handle.addEventListener('pointerdown', pointerDown)
     handle.addEventListener('pointermove', pointerMove)
     handle.addEventListener('pointerup', pointerUp)
@@ -1442,35 +1529,52 @@ function ReviewApp() {
               (error ? 'Could not load review' : 'Loading context…')}
           </span>
         </div>
+        <button
+          ref={fileTreeToggleRef}
+          id="file-tree-toggle"
+          type="button"
+          aria-expanded={fileTreeOpen}
+          aria-controls="changed-files"
+          onClick={() => setFileTreeOpen((open) => !open)}
+        >
+          {fileTreeOpen ? 'Back to diff' : `Files (${files.length})`}
+        </button>
         <div className="actions">
-          <div
-            id="line-counts"
-            aria-label={`${lineCounts.additions} lines added and ${lineCounts.deletions} lines deleted`}
-          >
-            <span className="additions">+{lineCounts.additions}</span>
-            <span className="deletions">-{lineCounts.deletions}</span>
-          </div>
-          <div
-            id="viewed-progress"
-            aria-label={`${viewedCount} of ${fileNames.length} files viewed`}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle className="viewed-progress-track" cx="12" cy="12" r="9" />
-              <circle
-                id="viewed-progress-value"
-                cx="12"
-                cy="12"
-                r="9"
-                pathLength="100"
-                style={{ strokeDasharray: `${progress} 100` }}
-              />
-            </svg>
-            <span>
-              <strong id="viewed-count">
-                {viewedCount} / {fileNames.length}
-              </strong>{' '}
-              viewed
-            </span>
+          <div className="review-progress">
+            <div
+              id="line-counts"
+              aria-label={`${lineCounts.additions} lines added and ${lineCounts.deletions} lines deleted`}
+            >
+              <span className="additions">+{lineCounts.additions}</span>
+              <span className="deletions">-{lineCounts.deletions}</span>
+            </div>
+            <div
+              id="viewed-progress"
+              aria-label={`${viewedCount} of ${fileNames.length} files viewed`}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle
+                  className="viewed-progress-track"
+                  cx="12"
+                  cy="12"
+                  r="9"
+                />
+                <circle
+                  id="viewed-progress-value"
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  pathLength="100"
+                  style={{ strokeDasharray: `${progress} 100` }}
+                />
+              </svg>
+              <span>
+                <strong id="viewed-count">
+                  {viewedCount} / {fileNames.length}
+                </strong>{' '}
+                viewed
+              </span>
+            </div>
           </div>
           <span id="comment-status" role="status">
             {commentStatus}
@@ -1509,7 +1613,12 @@ function ReviewApp() {
             </div>
           </div>
           <button type="button" disabled={!unresolved.length} onClick={copy}>
-            {copyFeedback ?? `Copy unresolved (${unresolved.length})`}
+            <span className="copy-label-desktop">
+              {copyFeedback ?? `Copy unresolved (${unresolved.length})`}
+            </span>
+            <span className="copy-label-mobile">
+              {copyFeedback ?? `Copy (${unresolved.length})`}
+            </span>
           </button>
         </div>
         <div
@@ -1521,7 +1630,11 @@ function ReviewApp() {
           <input
             ref={findInputRef}
             id="find-input"
+            name="review-find"
             type="search"
+            enterKeyHint="search"
+            autoCapitalize="none"
+            autoCorrect="off"
             aria-label="Find in changed lines"
             placeholder="Find in changed lines"
             autoComplete="off"
@@ -1573,7 +1686,11 @@ function ReviewApp() {
           </button>
         </div>
       </header>
-      <div className="workspace" ref={workspaceRef}>
+      <div
+        className="workspace"
+        ref={workspaceRef}
+        data-file-tree-open={fileTreeOpen}
+      >
         <main id="review" aria-live="polite">
           {!loading && !error && outdatedComments.length > 0 && (
             <section
@@ -1585,7 +1702,7 @@ function ReviewApp() {
                 These comment locations no longer appear in the current diff.
                 Resolve or delete each comment after you review the new code.
               </p>
-              <ul>
+              <ul role="list">
                 {outdatedComments.map((comment) => (
                   <li key={comment.id}>
                     <div className="outdated-comment-location">
@@ -1882,7 +1999,7 @@ function ReviewApp() {
           aria-valuemin={160}
           tabIndex={0}
         />
-        <aside aria-label="Changed files" ref={sidebarRef}>
+        <aside id="changed-files" aria-label="Changed files" ref={sidebarRef}>
           <div id="file-tree">
             {files.length > 0 && (
               <ChangedFileTree
