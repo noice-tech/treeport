@@ -124,5 +124,17 @@ export class TerminalSessionState {
     null
   lastBellAt = 0
 
-  constructor(readonly terminalId: string) {}
+  readonly fontSizeStorageKey: string
+
+  constructor(readonly terminalId: string) {
+    this.fontSizeStorageKey = `treeport-terminal-font-size:${terminalId}`
+    try {
+      const stored = Number(sessionStorage.getItem(this.fontSizeStorageKey))
+      if (Number.isInteger(stored) && stored >= 8 && stored <= 32) {
+        this.fontSize = stored
+      }
+    } catch {
+      // Keep the default size when browser storage is unavailable.
+    }
+  }
 }

@@ -58,6 +58,7 @@ export function makeBrowser(
     TerminalSessionState,
     | 'controllerGeneration'
     | 'fitAddon'
+    | 'fontSize'
     | 'inputModifiers'
     | 'images'
     | 'opened'
@@ -80,7 +81,7 @@ export function makeBrowser(
       const options = terminalOptions(state.terminalId, (hoveredLink) =>
         dependencies.update({ hoveredLink })
       )
-      const terminal = new Terminal(options)
+      const terminal = new Terminal({ ...options, fontSize: state.fontSize })
       // Own xterm before loading addons so partial initialization is disposable.
       state.terminal = terminal
       const fitAddon = new FitAddon()
