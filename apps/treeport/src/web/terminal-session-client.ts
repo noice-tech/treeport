@@ -219,6 +219,7 @@ export class TerminalSession {
       this.state.fontSize = fontSize
       this.services.layout.scheduleFit()
     }
+
     try {
       // Future sessions inherit this device's last zoom; open sessions keep theirs.
       localStorage.setItem(this.state.fontSizeStorageKey, String(fontSize))
