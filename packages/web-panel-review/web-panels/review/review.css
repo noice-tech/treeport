@@ -11,8 +11,60 @@
 * {
   box-sizing: border-box;
 }
+html {
+  /* Controls provide their own press feedback; don't flash or inflate text. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+html,
 body {
-  height: 100vh;
+  /* This embedded app owns its scrollers, not document pull-to-refresh. */
+  overscroll-behavior: none;
+}
+button,
+[role='button'],
+.file-viewed {
+  /* Remove tap delay and long-press selection only from controls. */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+button :is(span, svg) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+@media (any-pointer: coarse) {
+  /* iOS zooms focused fields below 16px, even on wide touch screens. */
+  input,
+  textarea,
+  select {
+    font-size: max(1rem, 16px) !important;
+  }
+  :is(button, [role='button'], .file-viewed) {
+    transition: opacity 100ms ease-out;
+  }
+  :is(button, [role='button'], .file-viewed):active:not(
+    :disabled,
+    [aria-disabled='true']
+  ) {
+    /* Respond when the finger lands, not only when click fires on release. */
+    opacity: 0.7;
+  }
+  /* This control changes its glyph on release; don't fade its old paint. */
+  .file-collapse {
+    transition: none;
+  }
+  .file-collapse:active:not(:disabled) {
+    opacity: 1;
+    background: #3f3f46;
+    border-color: #52525b;
+  }
+}
+body {
+  /* Track the visible area; Treeport's host already pads the safe areas. */
+  height: 100dvh;
   margin: 0;
   overflow: hidden;
 }
@@ -34,6 +86,16 @@ header {
 }
 .heading {
   display: grid;
+  min-width: 0;
+}
+#file-tree-toggle,
+.copy-label-mobile {
+  display: none;
+}
+.review-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 .actions {
   display: flex;
@@ -67,6 +129,7 @@ header {
   white-space: nowrap;
 }
 #viewed-progress svg {
+  flex-shrink: 0;
   width: 1.35rem;
   height: 1.35rem;
   overflow: visible;
@@ -211,7 +274,25 @@ button {
 }
 button:disabled {
   opacity: 0.55;
-  cursor: wait;
+  cursor: not-allowed;
+}
+button:focus-visible {
+  outline: 2px solid #a1a1aa;
+  outline-offset: 2px;
+}
+/* Touch browsers synthesize sticky hover; only mouse-like input gets it. */
+@media (hover: hover) and (pointer: fine) {
+  button:not(:disabled):hover,
+  .file-viewed:hover {
+    background: #3f3f46;
+  }
+  .file-collapse:hover {
+    border-color: #52525b;
+    background: #3f3f46;
+  }
+  #resize-handle:hover {
+    background: #71717a;
+  }
 }
 .file-diff-placeholder {
   min-height: 5rem;
@@ -244,7 +325,6 @@ button:disabled {
   border-color: transparent;
   background: transparent;
 }
-.file-collapse:hover,
 .file-collapse:focus-visible {
   border-color: #52525b;
   background: #3f3f46;
@@ -271,16 +351,53 @@ button:disabled {
   cursor: pointer;
   user-select: none;
 }
-.file-viewed:hover {
-  background: #3f3f46;
-}
 .file-viewed input {
+  /* Keep native checkbox semantics, but don't use Safari's light-gray fill. */
+  -webkit-appearance: none;
+  appearance: none;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
   width: 1rem;
   height: 1rem;
   margin: 0;
-  accent-color: #a1a1aa;
+  border: 1px solid #71717a;
+  border-radius: 0.2rem;
+  background: #18181b;
+  cursor: pointer;
+}
+.file-viewed input::before {
+  content: '';
+  display: none;
+  width: 0.375rem;
+  height: 0.5625rem;
+  border: solid #fafafa;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-0.0625rem) rotate(45deg);
+}
+.file-viewed input:checked {
+  border-color: #a1a1aa;
+  background: #3f3f46;
+}
+.file-viewed input:checked::before {
+  display: block;
+}
+.file-viewed input:focus-visible {
+  outline: 2px solid #a1a1aa;
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  /* Let the system supply the mark and contrast in high-contrast mode. */
+  .file-viewed input {
+    -webkit-appearance: auto;
+    appearance: auto;
+  }
+  .file-viewed input::before {
+    display: none;
+  }
 }
 .workspace {
+  position: relative;
   --sidebar-width: clamp(12rem, 22vw, 24rem);
   display: grid;
   grid-template-columns: minmax(0, 1fr) 5px var(--sidebar-width);
@@ -322,7 +439,6 @@ aside {
   inset: 0 -3px;
   content: '';
 }
-#resize-handle:hover,
 #resize-handle:focus-visible,
 #resize-handle.resizing {
   background: #71717a;
@@ -338,6 +454,8 @@ main {
   min-width: 0;
   padding: 1rem;
   overflow: auto;
+  /* Keep the scroller's bounce without passing scroll to the host app. */
+  overscroll-behavior: contain;
 }
 .file-diff {
   min-width: 0;
@@ -384,7 +502,8 @@ main {
   padding: 1rem;
   border: 1px solid #3f3f46;
   border-radius: 0.25rem;
-  background: repeating-conic-gradient(#27272a 0% 25%, #3f3f46 0% 50%) 0 0 / 20px 20px;
+  background: repeating-conic-gradient(#27272a 0% 25%, #3f3f46 0% 50%) 0 0 /
+    20px 20px;
 }
 .image-preview-canvas img {
   display: block;
@@ -516,4 +635,177 @@ main {
 }
 .error {
   color: #fecdd3;
+}
+
+@media (max-width: 700px) {
+  :root {
+    font-size: 16px;
+  }
+  body {
+    font-size: 0.8125rem;
+  }
+  header {
+    flex-wrap: wrap;
+    gap: 0.375rem 0.5rem;
+    padding: 0.5rem;
+  }
+  .heading {
+    flex: 1;
+  }
+  #summary {
+    overflow: hidden;
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #file-tree-toggle {
+    display: block;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.375rem 0.5rem;
+    width: 100%;
+  }
+  .review-progress {
+    grid-column: 1 / -1;
+    gap: 0.5rem;
+  }
+  #line-counts,
+  #viewed-progress {
+    gap: 0.375rem;
+    padding-right: 0.5rem;
+    font-size: 0.75rem;
+  }
+  #viewed-progress {
+    padding-right: 0;
+    border-right: 0;
+  }
+  #viewed-progress svg {
+    width: 1rem;
+    height: 1rem;
+  }
+  #comment-status {
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+  }
+  #comment-status:empty {
+    display: none;
+  }
+  .comment-navigation {
+    min-width: 0;
+    justify-content: space-between;
+    gap: 0.375rem;
+  }
+  #comment-position {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.75rem;
+    text-align: left;
+    text-overflow: ellipsis;
+  }
+  .comment-navigation-buttons,
+  .find-navigation {
+    flex-shrink: 0;
+  }
+  button,
+  .comment-actions button,
+  .resolved-comment button {
+    min-height: 2rem;
+    padding: 0.25rem 0.5rem;
+    font: inherit;
+  }
+  .comment-navigation button,
+  #find-bar button,
+  .file-collapse {
+    width: 2rem;
+    height: 2rem;
+    flex-shrink: 0;
+    padding: 0;
+  }
+  .copy-label-desktop {
+    display: none;
+  }
+  .copy-label-mobile {
+    display: inline;
+  }
+  #find-bar {
+    top: calc(100% + 0.25rem);
+    right: 0.5rem;
+    width: calc(100vw - 1rem);
+    gap: 0.25rem;
+    padding: 0.375rem;
+    box-shadow: none;
+  }
+  #find-input,
+  .review-comment textarea {
+    font-size: 1rem;
+  }
+  #find-position {
+    width: auto;
+    font-size: 0.75rem;
+  }
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #resize-handle,
+  #changed-files {
+    display: none;
+  }
+  .workspace[data-file-tree-open='true'] main {
+    display: none;
+  }
+  .workspace[data-file-tree-open='true'] #changed-files {
+    display: grid;
+    border-left: 0;
+  }
+  main {
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+  .file-diff {
+    scroll-margin-top: 0.5rem;
+  }
+  .file-diff-placeholder,
+  .image-diff,
+  .outdated-comments,
+  .outdated-comments li,
+  .review-comment {
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+  .file-placeholder-header,
+  .outdated-comment-location {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  .file-viewed {
+    min-height: 2rem;
+    gap: 0.25rem;
+    padding: 0.25rem 0.375rem;
+    font-size: 0.75rem;
+  }
+  .review-comment {
+    margin: 0.25rem 0.5rem;
+  }
+  .review-comment p,
+  .outdated-comments p,
+  .empty,
+  .error {
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+  }
+  .comment-actions {
+    flex-wrap: wrap;
+  }
+  .resolved-comment {
+    gap: 0.5rem;
+  }
+  .empty,
+  .error {
+    padding: 1rem;
+  }
 }
