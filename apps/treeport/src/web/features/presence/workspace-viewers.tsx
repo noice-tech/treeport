@@ -25,6 +25,9 @@ export function WorkspaceViewers({
     for (const viewer of viewers) {
       if (
         viewer.worktreeId !== worktree.id ||
+        // Local sessions have no person identity and may be our own desktop
+        // or localhost tab, even when this session uses Tailscale.
+        viewer.identity.source === 'local' ||
         (viewer.identity.source === identity.source &&
           viewer.identity.login === identity.login)
       ) {

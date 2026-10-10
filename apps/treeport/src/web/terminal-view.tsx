@@ -422,19 +422,12 @@ export function TerminalView({
             </div>
           )}
           {snapshot.phase === 'ready' && !snapshot.controller ? (
-            <span
-              className="absolute top-3 right-24 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
+            <div
+              className="absolute top-3 right-24 z-10 py-1 text-sm text-zinc-400 sm:text-xs"
               title="Interact with the terminal to control it"
             >
-              <span
-                className={cn(
-                  'size-1.5 rounded-full bg-zinc-500',
-                  snapshot.controlPending && 'animate-pulse bg-cyan-400'
-                )}
-                aria-hidden="true"
-              />
               {snapshot.controlPending ? 'Taking control…' : 'Viewing'}
-            </span>
+            </div>
           ) : null}
           {pasteOpen &&
             (isMobile ? (
