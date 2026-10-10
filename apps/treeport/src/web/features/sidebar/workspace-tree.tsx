@@ -100,7 +100,7 @@ function WorktreeShell({
     pending
       ? 'text-zinc-300'
       : selected
-        ? 'selected text-zinc-50 min-[701px]:bg-white/8!'
+        ? 'selected text-zinc-50 max-[700px]:bg-transparent! min-[701px]:bg-white/8!'
         : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50',
     'max-[700px]:flex-1 max-[700px]:hover:bg-transparent',
     (pending || busy) && 'motion-safe:animate-pulse',
@@ -379,7 +379,7 @@ export function WorkspaceTree({
                                           : 'Control+Shift+T'
                                     }
                                   : {})}
-                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 min-[701px]:size-6"
+                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 max-[700px]:text-zinc-300 min-[701px]:size-6"
                                 onClick={(trigger) =>
                                   onOpenPanelDialog(project, worktree, trigger)
                                 }
