@@ -111,6 +111,25 @@ export function LocalBrowserWebview({
       { type: 'navigate' }
     > | null = null
     let commandRevision = 0
+    let remoteViewport: { width: number; height: number } | null = null
+    const applyRemoteViewport = (
+      viewport: { width: number; height: number } | null
+    ) => {
+      remoteViewport = viewport
+      if (viewport) {
+        webview.style.setProperty(
+          '--browser-viewport-width',
+          `${viewport.width}px`
+        )
+        webview.style.setProperty(
+          '--browser-viewport-height',
+          `${viewport.height}px`
+        )
+      } else {
+        webview.style.removeProperty('--browser-viewport-width')
+        webview.style.removeProperty('--browser-viewport-height')
+      }
+    }
 
     const flushPendingNavigation = () => {
       const navigation = pendingNavigation
@@ -198,6 +217,7 @@ export function LocalBrowserWebview({
       externalControllerRef.current = null
       agentActiveRef.current = false
       retainPaintRef.current = false
+      applyRemoteViewport(null)
       if (!disposed) {
         setExternalController(null)
       }
@@ -208,9 +228,11 @@ export function LocalBrowserWebview({
     }
     const setRuntimeControl = async (
       controller: 'other' | 'none',
+      viewport: { width: number; height: number } | null,
       retainPaint: boolean,
       nextAgentActive: boolean
     ) => {
+      const previousViewport = remoteViewport
       const previousController = externalControllerRef.current
       const previousRetainPaint = retainPaintRef.current
       const locked = controller === 'other'
@@ -232,11 +254,16 @@ export function LocalBrowserWebview({
         return false
       }
 
+      applyRemoteViewport(locked ? viewport : null)
+      const viewportChanged =
+        previousViewport?.width !== remoteViewport?.width ||
+        previousViewport?.height !== remoteViewport?.height
       const paintable = await onPaintRetentionChange(retainPaint).then(
         (result) => result,
         () => false
       )
       if (!paintable || disposed) {
+        applyRemoteViewport(previousViewport)
         await bridge
           .setBrowserInputControl(panel.id, previousController !== null)
           .catch(() => false)
@@ -267,6 +294,7 @@ export function LocalBrowserWebview({
             () => false
           )
         if (!unlocked || disposed) {
+          applyRemoteViewport(previousViewport)
           await bridge
             .setBrowserInputControl(panel.id, previousController !== null)
             .catch(() => false)
@@ -298,7 +326,7 @@ export function LocalBrowserWebview({
         previousExternalFocus = null
       }
 
-      emitState('controlChanged', false)
+      emitState('controlChanged', viewportChanged)
       if (!locked) {
         flushPendingNavigation()
       }
@@ -497,7 +525,7 @@ export function LocalBrowserWebview({
           retainPaintRef.current ||
           agentActiveRef.current
         ) {
-          if (!(await setRuntimeControl('none', false, false))) {
+          if (!(await setRuntimeControl('none', null, false, false))) {
             throw new Error(
               'The Browser could not restore local input control.'
             )
@@ -635,11 +663,11 @@ export function LocalBrowserWebview({
   }, [active, inputBlocked, panel.id])
 
   return (
-    <div className="relative size-full">
+    <div className="relative flex size-full items-center justify-center overflow-hidden">
       <webview
         ref={webviewRef}
         aria-label="Browser page"
-        className={`flex size-full bg-zinc-950 ${
+        className={`flex h-[var(--browser-viewport-height,100%)] w-[var(--browser-viewport-width,100%)] shrink-0 bg-zinc-950 ${
           inputBlocked || externalController ? 'pointer-events-none' : ''
         }`}
       />

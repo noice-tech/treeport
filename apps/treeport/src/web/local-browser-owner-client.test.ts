@@ -107,7 +107,8 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
     type: 'runtimeControl',
     generation: 3,
     requestId: 'control_1',
-    controller: 'none',
+    controller: 'other',
+    viewport: { width: 375, height: 812 },
     retainPaint: false,
     agentActive: false
   } satisfies BrowserOwnerServerMessage)
@@ -119,7 +120,12 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
       accepted: true
     })
   )
-  expect(handlers.setRuntimeControl).toHaveBeenCalledWith('none', false, false)
+  expect(handlers.setRuntimeControl).toHaveBeenCalledWith(
+    'other',
+    { width: 375, height: 812 },
+    false,
+    false
+  )
   socket.connected = false
   events.emit('disconnect')
   expect(handlers.disconnected).toHaveBeenCalledTimes(1)

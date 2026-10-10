@@ -95,6 +95,7 @@ export function connectLocalBrowserOwner(
   handlers: {
     setRuntimeControl(
       controller: 'other' | 'none',
+      viewport: { width: number; height: number } | null,
       retainPaint: boolean,
       agentActive: boolean
     ): Promise<boolean>
@@ -244,6 +245,7 @@ export function connectLocalBrowserOwner(
         void handlers
           .setRuntimeControl(
             message.controller,
+            message.viewport,
             message.retainPaint,
             message.agentActive
           )

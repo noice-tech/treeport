@@ -877,11 +877,33 @@ describe('Browser sessions', () => {
     expect([...remote.frames[0]!.data]).toEqual([7])
     expect(observer.frames).toHaveLength(1)
 
+    value.manager.message('remote', {
+      type: 'resize',
+      width: 375,
+      height: 812
+    })
     value.manager.message('remote', { type: 'takeControl' })
     await vi.waitFor(() =>
       expect(remote.messages.at(-1)).toMatchObject({
         type: 'controlChanged',
         state: { controlled: true, controller: 'you' }
+      })
+    )
+    expect(ownerMessages.at(-1)).toMatchObject({
+      type: 'runtimeControl',
+      controller: 'other',
+      viewport: { width: 375, height: 812 }
+    })
+    value.manager.message('remote', {
+      type: 'resize',
+      width: 390,
+      height: 700
+    })
+    await vi.waitFor(() =>
+      expect(ownerMessages.at(-1)).toMatchObject({
+        type: 'runtimeControl',
+        controller: 'other',
+        viewport: { width: 390, height: 700 }
       })
     )
     value.manager.message('remote', {
@@ -925,6 +947,7 @@ describe('Browser sessions', () => {
       expect(ownerMessages.at(-1)).toMatchObject({
         type: 'runtimeControl',
         controller: 'none',
+        viewport: null,
         retainPaint: true
       })
     )
