@@ -290,7 +290,7 @@ describe('TerminalHostSessionManager', () => {
     expect(secondOutput).toEqual(firstOutput)
 
     pty.emit('normal Unicode: λ🙂\r\n')
-    pty.emit('\u001b[?1049halternate Unicode: 雪\r\n')
+    pty.emit('\u001b[?1049h\u001b[?1003h\u001b[?1006halternate Unicode: 雪\r\n')
     const alternateSnapshot = await run(manager.snapshot('term'))
     const browser = new Terminal({
       cols: alternateSnapshot!.cols,
@@ -314,9 +314,30 @@ describe('TerminalHostSessionManager', () => {
       (_, index) =>
         browser.buffer.normal.getLine(index)?.translateToString(true) ?? ''
     ).join('\n')
+    expect(browser.modes.mouseTrackingMode).toBe('any')
+    // SAFETY: The pinned xterm exposes mouse encoding only through this internal service.
+    const browserInternals = Object(browser) as {
+      _core: { mouseStateService: { activeEncoding: string } }
+    }
+    expect(browserInternals._core.mouseStateService.activeEncoding).toBe('SGR')
     expect(activeContent).toContain('alternate Unicode: 雪')
     expect(normalContent).toContain('normal Unicode: λ🙂')
     expect(historicalResponses).toEqual([])
+    for (const [sequence, encoding] of [
+      ['\u001b[?1016h', 'SGR_PIXELS'],
+      ['\u001b[?1016l\u001b[?1006l', 'DEFAULT']
+    ]) {
+      pty.emit(sequence!)
+      const encodingSnapshot = await run(manager.snapshot('term'))
+      browser.reset()
+      await new Promise<void>((resolve) =>
+        browser.write(encodingSnapshot!.data, resolve)
+      )
+      expect(browser.modes.mouseTrackingMode).toBe('any')
+      expect(browserInternals._core.mouseStateService.activeEncoding).toBe(
+        encoding
+      )
+    }
     browser.dispose()
 
     pty.emit('\u001b[?1049l')

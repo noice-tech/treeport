@@ -298,11 +298,8 @@ export function trackTerminalScrolling(
   onScroll: (event: WheelEvent) => void,
   onResumeInput: () => void,
   onPasteRequest: () => void
-): (data: string) => string {
+): void {
   let suppressNativeTouchScroll = false
-  let wheelScrollRemainder = 0
-  const wheelInputRepeats: number[] = []
-  const syntheticWheelEvents = new WeakSet<WheelEvent>()
   let touchStart: { x: number; y: number } | null = null
   let touchSelectionTimer: number | null = null
   let touchSelectionAnchor: { column: number; row: number } | null = null
@@ -365,60 +362,10 @@ export function trackTerminalScrolling(
     event.stopImmediatePropagation()
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
-    wheelScrollRemainder = 0
-    wheelInputRepeats.length = 0
     touchStart = null
     touchSelectionAnchor = null
     return true
   }
-
-  // xterm reduces likely trackpad deltas to 30% and emits only one mouse
-  // report when an event crosses multiple rows. Preserve the pixel distance,
-  // let xterm encode one valid report, and expand it before transport.
-  terminal.attachCustomWheelEventHandler((event) => {
-    const element = terminal.element
-    if (
-      !element?.classList.contains('enable-mouse-events') ||
-      syntheticWheelEvents.has(event) ||
-      event.deltaY === 0
-    ) {
-      return true
-    }
-
-    const bounds = element.getBoundingClientRect()
-    const rowHeight = bounds.height / terminal.rows || 16
-    const rowDelta =
-      event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
-        ? event.deltaY / rowHeight
-        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-          ? event.deltaY * terminal.rows
-          : event.deltaY
-    wheelScrollRemainder += rowDelta
-    const rows = Math.trunc(wheelScrollRemainder)
-    wheelScrollRemainder -= rows
-
-    if (rows === 0) {
-      return false
-    }
-
-    const syntheticEvent = new WheelEvent('wheel', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      deltaMode: WheelEvent.DOM_DELTA_LINE,
-      deltaY: Math.sign(rows),
-      altKey: event.altKey,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      shiftKey: event.shiftKey
-    })
-    syntheticWheelEvents.add(syntheticEvent)
-    wheelInputRepeats.push(Math.abs(rows))
-    queueMicrotask(() => element.dispatchEvent(syntheticEvent))
-    return false
-  })
 
   wrapper.addEventListener(
     'wheel',
@@ -608,11 +555,6 @@ export function trackTerminalScrolling(
     passive: false
   })
   wrapper.addEventListener('paste', onResumeInput, true)
-
-  return (data) => {
-    const repeat = wheelInputRepeats.shift() ?? 1
-    return repeat === 1 ? data : data.repeat(repeat)
-  }
 }
 
 export function terminalOptions(

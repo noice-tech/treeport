@@ -247,6 +247,37 @@ test.describe('desktop terminal input and removal', () => {
         )
       )
       .toBe(true)
+
+    // Legacy mouse reports use onBinary. Native wheel handling must leave
+    // later keyboard input unchanged, without a queued repeat count.
+    await page.evaluate(() => {
+      const socket = window.__lastWs
+      socket.receive('output', {
+        streamId: socket.streamId,
+        sequence: 4,
+        data: '\u001b[?1006l'
+      })
+      window.__wsSent = []
+    })
+    await screen.dispatchEvent('wheel', { deltaY: -120 })
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent.some((message: any) => message.type === 'binary')
+        )
+      )
+      .toBe(true)
+    await textarea.focus()
+    await page.keyboard.type('its')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+        )
+      )
+      .toEqual(['i', 't', 's'])
   })
 
   test('keeps cleanup quiet, retries failure, and permits an explicit skip', async ({

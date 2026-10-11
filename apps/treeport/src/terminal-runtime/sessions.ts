@@ -66,6 +66,7 @@ export class TerminalHostSessionError extends Data.TaggedError(
 
 interface HeadlessTerminalInternals {
   _core: {
+    mouseStateService: { activeEncoding: string }
     _oscLinkService: {
       getLinkData(id: number): { uri: string } | undefined
     }
@@ -1127,10 +1128,24 @@ export class TerminalHostSessions {
             }
           }
 
+          // SerializeAddon restores mouse tracking, but omits its encoding.
+          // Without SGR restoration, reattached Pi fullscreen viewers send
+          // legacy mouse reports that Pi cannot use for transcript selection.
+          // SAFETY: The pinned headless xterm exposes the active encoding only
+          // through its internal mouse state service.
+          const mouseEncoding =
+            terminalInternals._core.mouseStateService.activeEncoding
+          const mouseEncodingSequence =
+            mouseEncoding === 'SGR'
+              ? '\u001b[?1006h'
+              : mouseEncoding === 'SGR_PIXELS'
+                ? '\u001b[?1016h'
+                : ''
           const snapshot = {
-            data: session.serializer.serialize({
-              scrollback: HOST_SCROLLBACK_LINES
-            }),
+            data:
+              session.serializer.serialize({
+                scrollback: HOST_SCROLLBACK_LINES
+              }) + mouseEncodingSequence,
             links,
             // SerializeAddon intentionally omits this temporary mode. Preserve
             // it out of band so a viewer attaching mid-frame can present the
