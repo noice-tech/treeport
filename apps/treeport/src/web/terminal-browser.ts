@@ -26,7 +26,7 @@ interface XtermTerminalInternals {
     }
     _bufferService: {
       buffers: Record<
-        TerminalSnapshotLink['buffer'],
+        'normal' | 'alt',
         {
           lines: {
             get(line: number): {
@@ -204,7 +204,10 @@ export function restoreTerminalSnapshotLinks(
         internalCell.extended.urlId = linkId
         // xterm stores the presence of extended attributes in this bg flag.
         internalCell.bg |= 1 << 28
-        internals._core._bufferService.buffers[link.buffer].lines
+        // The public buffer API calls this "alternate"; BufferSet uses "alt".
+        internals._core._bufferService.buffers[
+          link.buffer === 'alternate' ? 'alt' : 'normal'
+        ].lines
           .get(link.line)
           .setCell(column, internalCell)
       }
