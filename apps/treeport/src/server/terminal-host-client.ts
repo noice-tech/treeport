@@ -45,6 +45,8 @@ import {
   type TerminalHostResults
 } from '../terminal-runtime/api'
 import { decodeTerminalHostDiscoveryRecord } from '../terminal-runtime/legacy-record'
+import { makeTerminalHostSessions } from '../terminal-runtime/sessions'
+import { makeTerminalHostServer } from '../terminal-runtime/server'
 
 const TERMINAL_HOST_REQUEST_TIMEOUT_MS = 30_000
 const TERMINAL_HOST_START_TIMEOUT_MS = 10_000
@@ -81,6 +83,9 @@ export interface TerminalHostClientOptions {
   readonly hostArguments?: string[]
   readonly environment?: NodeJS.ProcessEnv
   readonly spawnHost?: typeof spawn
+  readonly sessionEntryPath?: string | undefined
+  readonly journalLimitBytes?: number | undefined
+  readonly embeddedEngine?: boolean
 }
 
 function connectionError(cause: unknown): TerminalHostConnectionError {
@@ -93,7 +98,8 @@ function nodePromise<A>(evaluate: () => Promise<A>) {
 
 function terminalHostPaths(
   dataDir: string,
-  runtimeDir: string
+  runtimeDir: string,
+  embedded: boolean = false
 ): TerminalHostPaths {
   const hostKey = crypto
     .createHash('sha256')
@@ -106,7 +112,10 @@ function terminalHostPaths(
   )
   return {
     hostKey,
-    socketPath: path.join(ipcDirectory, `terminal-${hostKey}.sock`),
+    socketPath: path.join(
+      ipcDirectory,
+      `${embedded ? 'terminal-engine' : 'terminal'}-${hostKey}.sock`
+    ),
     recordPath: path.join(runtimeDir, `terminal-host-${hostKey}.json`),
     tokenPath: path.join(dataDir, 'terminal-host.token'),
     hostRuntimeDir: path.join(runtimeDir, `terminal-host-${hostKey}`)
@@ -422,6 +431,23 @@ export class TerminalHostClient
     })
   }
 
+  // Transitional routing only for sessions already owned by the old host.
+  legacyClient: TerminalHostClient | null = null
+
+  private clientFor(
+    terminalId: string
+  ): Effect.Effect<TerminalHostClient, TerminalHostClientError> {
+    if (!this.legacyClient) {
+      return Effect.succeed(this)
+    }
+
+    return this.requestPrimary('state', { terminalId }).pipe(
+      Effect.map((state) =>
+        state.status === 'missing' ? this.legacyClient! : this
+      )
+    )
+  }
+
   initialize(): Effect.Effect<boolean> {
     return Effect.succeed(true)
   }
@@ -436,7 +462,14 @@ export class TerminalHostClient
   listTerminals(
     worktreeId: string
   ): Effect.Effect<HostedTerminal[], TerminalHostClientError> {
-    return this.request('inventory', { worktreeId })
+    const current = this.request('inventory', { worktreeId })
+    return this.legacyClient
+      ? Effect.zipWith(
+          current,
+          this.legacyClient.listTerminals(worktreeId),
+          (a, b) => [...a, ...b]
+        )
+      : current
   }
 
   terminalState(
@@ -455,6 +488,11 @@ export class TerminalHostClient
   > {
     return this.routeMutex.withPermits(1)(
       Effect.gen(this, function* () {
+        const client = yield* this.clientFor(terminalId)
+        if (client !== this) {
+          return yield* client.attach(terminalId, trace)
+        }
+
         let route = this.outputRoutes.get(terminalId)
         if (!route) {
           route = {
@@ -495,6 +533,11 @@ export class TerminalHostClient
     return Stream.unwrapScoped(
       this.routeMutex.withPermits(1)(
         Effect.gen(this, function* () {
+          const client = yield* this.clientFor(terminalId)
+          if (client !== this) {
+            return client.runtimeEvents(terminalId)
+          }
+
           let route = this.runtimeRoutes.get(terminalId)
           const first = !route
           if (!route) {
@@ -604,7 +647,14 @@ export class TerminalHostClient
   listProcesses(
     worktreeId: string
   ): Effect.Effect<TerminalProcess[], TerminalHostClientError> {
-    return this.request('processes', { worktreeId })
+    const current = this.request('processes', { worktreeId })
+    return this.legacyClient
+      ? Effect.zipWith(
+          current,
+          this.legacyClient.listProcesses(worktreeId),
+          (a, b) => [...a, ...b]
+        )
+      : current
   }
 
   terminalTitleState(
@@ -624,8 +674,17 @@ export class TerminalHostClient
     return this.request('kill', { terminalId }, trace).pipe(Effect.asVoid)
   }
 
-  killWorktree(worktreeId: string) {
-    return this.request('killWorktree', { worktreeId })
+  killWorktree(
+    worktreeId: string
+  ): Effect.Effect<string[], TerminalHostClientError> {
+    const current = this.request('killWorktree', { worktreeId })
+    return this.legacyClient
+      ? Effect.zipWith(
+          current,
+          this.legacyClient.killWorktree(worktreeId),
+          (a, b) => [...a, ...b]
+        )
+      : current
   }
 
   shutdownIfEmpty() {
@@ -633,6 +692,23 @@ export class TerminalHostClient
   }
 
   private request<Method extends keyof TerminalHostResults>(
+    method: Method,
+    input: TerminalHostRequestInput<Method>,
+    trace?: TerminalTraceContext
+  ): Effect.Effect<TerminalHostResults[Method], TerminalHostClientError> {
+    // SAFETY: All per-terminal requests have a terminalId; the protocol decoder
+    // validates the actual request shape on the receiving side.
+    const terminalId = (input as { terminalId?: string }).terminalId
+    if (method === 'create' || !terminalId || !this.legacyClient) {
+      return this.requestPrimary(method, input, trace)
+    }
+
+    return this.clientFor(terminalId).pipe(
+      Effect.flatMap((client) => client.requestPrimary(method, input, trace))
+    )
+  }
+
+  private requestPrimary<Method extends keyof TerminalHostResults>(
     method: Method,
     input: TerminalHostRequestInput<Method>,
     _trace?: TerminalTraceContext
@@ -853,7 +929,40 @@ export function connectOrStartTerminalHost(
   options: TerminalHostClientOptions
 ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
   return Effect.gen(function* () {
-    const paths = terminalHostPaths(options.dataDir, options.runtimeDir)
+    const paths = terminalHostPaths(
+      options.dataDir,
+      options.runtimeDir,
+      options.embeddedEngine
+    )
+    if (options.sessionEntryPath && !options.embeddedEngine) {
+      // Never replace the old host or migrate its live PTYs. It remains only
+      // for pre-existing sessions; all creates go to the current engine.
+      const discovery = yield* readRecord(paths.recordPath)
+      if (discovery.invalid) {
+        return yield* Effect.fail(
+          connectionError(
+            new Error('Invalid legacy terminal host discovery record')
+          )
+        )
+      }
+
+      let legacy: TerminalHostClient | null = null
+      if (discovery.record && (yield* processExists(discovery.record.pid))) {
+        legacy = yield* connectOrStartTerminalHost({
+          ...options,
+          sessionEntryPath: undefined
+        })
+      }
+
+      const engine = yield* connectOrStartTerminalHost({
+        ...options,
+        runtimeDir: path.join(options.runtimeDir, 'terminal-engine'),
+        embeddedEngine: true
+      })
+      engine.legacyClient = legacy
+      return engine
+    }
+
     yield* Effect.all(
       [
         nodePromise(() =>
@@ -983,6 +1092,35 @@ export function connectOrStartTerminalHost(
     }
 
     const hostId = crypto.randomUUID()
+    if (options.sessionEntryPath) {
+      // There is no independently replaceable engine process: this listener and
+      // the emulator are scoped to the daemon. Only raw PTY sessions detach.
+      const sessions = yield* makeTerminalHostSessions({
+        runtimeDir: paths.hostRuntimeDir,
+        launcherPath: options.launcherPath,
+        sessionEntryPath: options.sessionEntryPath,
+        sessionExecutable: options.hostExecutable,
+        sessionArguments: options.hostArguments,
+        journalLimitBytes: options.journalLimitBytes
+      }).pipe(Effect.mapError(connectionError))
+      yield* makeTerminalHostServer({
+        hostId,
+        hostKey: paths.hostKey,
+        token,
+        socketPath: paths.socketPath,
+        recordPath: paths.recordPath,
+        sessions,
+        launcherPath: options.launcherPath,
+        embedded: true
+      }).pipe(Effect.mapError(connectionError))
+      return yield* TerminalHostClient.connect(
+        paths.socketPath,
+        token,
+        paths.hostKey,
+        hostId
+      )
+    }
+
     const startupTransactionId = crypto.randomUUID()
     const spawnHost = options.spawnHost ?? spawn
     const child: ChildProcess = yield* Effect.try({

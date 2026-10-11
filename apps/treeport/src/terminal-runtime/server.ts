@@ -45,6 +45,7 @@ export interface TerminalHostServerOptions {
   readonly launcherPath?: string
   readonly startupTransactionId?: string | undefined
   readonly startupTimeoutMs?: number | undefined
+  readonly embedded?: boolean
 }
 
 export interface TerminalHostServerHandle {
@@ -173,9 +174,12 @@ export function makeTerminalHostServer(
           Effect.map((current) => current.hostId === options.hostId),
           Effect.catchAll(() => Effect.succeed(false))
         )
-        if (ownsRecord && (yield* Ref.get(cleanupOwnedState))) {
+        if (
+          ownsRecord &&
+          (options.embedded || (yield* Ref.get(cleanupOwnedState)))
+        ) {
           const ownedPaths = [options.recordPath, options.socketPath]
-          if (options.tokenPath) {
+          if (options.tokenPath && !options.embedded) {
             ownedPaths.push(options.tokenPath)
           }
 

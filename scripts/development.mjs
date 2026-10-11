@@ -291,7 +291,7 @@ export async function findAvailablePort(
   throw new Error(`No available port found at or above ${startPort}`)
 }
 
-function sendSignalToChild(child, signal, ownedProcessGroups) {
+export function sendSignalToChild(child, signal, ownedProcessGroups) {
   if (process.platform === 'win32' || !child.pid) {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill(signal)
@@ -300,7 +300,7 @@ function sendSignalToChild(child, signal, ownedProcessGroups) {
     return
   }
 
-  const processes = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid='], {
+  const processes = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid=,args='], {
     encoding: 'utf8'
   })
   if (processes.status === 0) {
@@ -308,18 +308,37 @@ function sendSignalToChild(child, signal, ownedProcessGroups) {
     const rows = processes.stdout
       .trim()
       .split('\n')
-      .map((line) => line.trim().split(/\s+/).map(Number))
+      .map((line) => {
+        const [pid, parentPid, processGroupId, ...command] = line
+          .trim()
+          .split(/\s+/)
+        return {
+          pid: Number(pid),
+          parentPid: Number(parentPid),
+          processGroupId: Number(processGroupId),
+          command: command.join(' ')
+        }
+      })
     let foundDescendant = true
     while (foundDescendant) {
       foundDescendant = false
-      for (const [pid, parentPid] of rows) {
-        if (descendants.has(parentPid) && !descendants.has(pid)) {
+      for (const { pid, parentPid, processGroupId, command } of rows) {
+        // Independent terminal owners (including a bootstrap not yet orphaned)
+        // are lifetime boundaries, not development workers. Do not walk their
+        // command subtrees or add either group to the escalation set. Match the
+        // reserved prefix, not a particular terminal's display title.
+        const keeper =
+          processGroupId === pid &&
+          (command.startsWith('treeport-session') ||
+            command.startsWith('treeport-terminal-host') ||
+            /\bterminal-(?:session|host)-entry\.[cm]?js\b/u.test(command))
+        if (!keeper && descendants.has(parentPid) && !descendants.has(pid)) {
           descendants.add(pid)
           foundDescendant = true
         }
       }
     }
-    for (const [pid, , processGroupId] of rows) {
+    for (const { pid, processGroupId } of rows) {
       if (descendants.has(pid)) {
         ownedProcessGroups.add(processGroupId)
       }

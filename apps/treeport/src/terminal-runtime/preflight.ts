@@ -7,12 +7,19 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as Effect from 'effect/Effect'
 import {
+  decodeTerminalEngineMetadata,
   decodeTerminalHostResult,
   encodeTerminalHostFrame,
   makeTerminalHostFrameDecoder,
   type TerminalHostRecord
 } from './api'
 import { decodeTerminalHostDiscoveryRecord } from './legacy-record'
+import {
+  sessionManifestSchema,
+  sessionFrameSchema,
+  sessionStatusSchema,
+  SESSION_MAX_FRAME_BYTES
+} from './session-protocol'
 
 export interface TerminalHostCompatibilityProbe {
   compatible: boolean
@@ -173,7 +180,7 @@ async function probeTerminalHostApi(
  * Staged-candidate readiness probe. The only host request is an authenticated,
  * read-only handshake; the host rejects terminal operations on that connection.
  */
-export async function probeTerminalHostCompatibility(
+async function probeLegacyTerminalHostCompatibility(
   dataDir: string,
   runtimeDir: string
 ): Promise<TerminalHostCompatibilityProbe> {
@@ -329,6 +336,197 @@ export async function probeTerminalHostCompatibility(
       `Terminal host PID ${record.pid} exists but its API is unavailable.`,
     next: 'Keep the current installation and terminals active. Treeport will not signal the host or replace its socket.'
   }
+}
+
+/** Candidate updates inspect raw session owners without attaching an engine,
+ * replaying output, transferring authority, or signaling any process. */
+export async function probeTerminalHostCompatibility(
+  dataDir: string,
+  runtimeDir: string
+): Promise<TerminalHostCompatibilityProbe> {
+  const legacy = await probeLegacyTerminalHostCompatibility(dataDir, runtimeDir)
+  if (!legacy.compatible) {
+    return legacy
+  }
+
+  const hostKey = crypto
+    .createHash('sha256')
+    .update(path.resolve(dataDir))
+    .digest('hex')
+    .slice(0, 20)
+  const directory = path.join(
+    runtimeDir,
+    'terminal-engine',
+    'terminal-host-' + hostKey,
+    'sessions'
+  )
+  const names = await fs.readdir(directory).catch((error) => {
+    // SAFETY: Node filesystem errors expose their standard errno code.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
+
+    throw error
+  })
+  for (const name of names.sort()) {
+    if (!/^[a-f0-9]{40}$/u.test(name)) {
+      continue
+    }
+
+    const sessionDirectory = path.join(directory, name)
+    try {
+      const manifest = sessionManifestSchema.parse(
+        JSON.parse(
+          await fs.readFile(
+            path.join(sessionDirectory, 'manifest.json'),
+            'utf8'
+          )
+        )
+      )
+      const metadata = await Effect.runPromise(
+        decodeTerminalEngineMetadata(manifest.metadata)
+      )
+      if (
+        name !==
+        crypto
+          .createHash('sha256')
+          .update(metadata.input.terminalId)
+          .digest('hex')
+          .slice(0, 40)
+      ) {
+        throw new Error('Session metadata does not identify its directory')
+      }
+
+      if (
+        metadata.launchSpecPath &&
+        path.dirname(path.resolve(metadata.launchSpecPath)) !==
+          path.resolve(
+            runtimeDir,
+            'terminal-engine',
+            'terminal-host-' + hostKey,
+            'terminal-specs'
+          )
+      ) {
+        throw new Error('Session launch spec is outside its installation')
+      }
+
+      const status = sessionStatusSchema.parse(
+        JSON.parse(
+          await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
+        )
+      )
+      const key = crypto
+        .createHash('sha256')
+        .update(path.resolve(sessionDirectory))
+        .digest('hex')
+        .slice(0, 24)
+      const expectedSocket = path.join(
+        os.tmpdir(),
+        'treeport-' + (process.getuid?.() ?? 'user'),
+        'session-' + key + '.sock'
+      )
+      if (manifest.socketPath !== expectedSocket) {
+        throw new Error('Session socket does not identify this installation')
+      }
+
+      if (!processExists(status.ownerPid)) {
+        if (await socketAcceptsConnections(manifest.socketPath)) {
+          throw new Error('A live session socket has an unidentified owner')
+        }
+
+        // Retained output from a dead keeper is recovered read-only. There is
+        // no live ownership to hand over, and no stale artifact is deleted.
+        continue
+      }
+
+      const id = crypto.randomUUID()
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.createConnection(manifest.socketPath)
+        let buffer = ''
+        let settled = false
+        const finish = (error: Error | null) => {
+          if (settled) {
+            return
+          }
+
+          settled = true
+          socket.destroy()
+          if (error) {
+            reject(error)
+          } else {
+            resolve()
+          }
+        }
+        socket.setEncoding('utf8')
+        socket.setTimeout(3000)
+        socket.once('connect', () =>
+          socket.write(
+            JSON.stringify({ method: 'inspect', id, token: manifest.token }) +
+              '\n'
+          )
+        )
+        socket.once('error', (error) => finish(error))
+        socket.once('timeout', () =>
+          finish(new Error('Session inspection timed out'))
+        )
+        socket.once('close', () =>
+          finish(new Error('Session closed its inspection connection'))
+        )
+        socket.on('data', (chunk) => {
+          buffer += chunk
+          if (Buffer.byteLength(buffer) > SESSION_MAX_FRAME_BYTES) {
+            finish(new Error('Invalid session inspection frame'))
+            return
+          }
+
+          const end = buffer.indexOf('\n')
+          if (end < 0) {
+            return
+          }
+
+          const decoded = Effect.runSync(
+            Effect.either(Effect.try(() => JSON.parse(buffer.slice(0, end))))
+          )
+          if (decoded._tag === 'Left') {
+            finish(new Error('Invalid session inspection JSON'))
+            return
+          }
+
+          const frame = sessionFrameSchema.safeParse(decoded.right)
+          if (
+            !frame.success ||
+            frame.data.type !== 'response' ||
+            frame.data.id !== id ||
+            frame.data.error ||
+            !frame.data.status ||
+            frame.data.status.ownerPid !== status.ownerPid ||
+            frame.data.status.pid !== status.pid
+          ) {
+            finish(
+              new Error(
+                'Session owner returned an unsupported or mismatched identity'
+              )
+            )
+          } else {
+            finish(null)
+          }
+        })
+      })
+    } catch (error) {
+      return {
+        compatible: false,
+        running: true,
+        record: legacy.record,
+        reason:
+          'Persistent session ' +
+          name +
+          ' is not ready for this update: ' +
+          (error instanceof Error ? error.message : String(error)),
+        next: 'Keep the current installation and sessions active. Repair the session discovery state or finish and explicitly close the affected terminal; Treeport will not replace or signal its owner.'
+      }
+    }
+  }
+  return { ...legacy, running: legacy.running || names.length > 0 }
 }
 
 async function main(): Promise<void> {

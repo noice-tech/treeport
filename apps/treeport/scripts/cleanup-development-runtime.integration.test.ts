@@ -7,6 +7,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanupDevelopmentRuntime } from './cleanup-development-runtime.mjs'
+import { PersistentSession } from '../src/terminal-runtime/session-client'
+import { sessionStatusSchema } from '../src/terminal-runtime/session-protocol'
 
 const directories: string[] = []
 const processes: number[] = []
@@ -204,6 +206,57 @@ async function startTerminalHost(
   return { hostPid: child.pid, terminalPid }
 }
 
+async function startPersistentSession(
+  dataDir: string,
+  runtimeDir: string,
+  cwd: string,
+  name = crypto.randomBytes(20).toString('hex')
+) {
+  const hostKey = crypto
+    .createHash('sha256')
+    .update(path.resolve(dataDir))
+    .digest('hex')
+    .slice(0, 20)
+  const directory = path.join(
+    runtimeDir,
+    'terminal-engine',
+    'terminal-host-' + hostKey,
+    'sessions',
+    name
+  )
+  const session = await PersistentSession.create({
+    directory,
+    entryPath: path.resolve(
+      import.meta.dirname,
+      '../dist/node/server/terminal-session-entry.js'
+    ),
+    argv: [
+      process.execPath,
+      '-e',
+      "process.on('SIGHUP',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"
+    ],
+    cwd,
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    ),
+    cols: 80,
+    rows: 24,
+    metadata: '{}'
+  })
+  await session.connect()
+  await session.ready
+  await session.activate()
+  const status = sessionStatusSchema.parse(
+    JSON.parse(await fs.readFile(path.join(directory, 'status.json'), 'utf8'))
+  )
+  processes.push(status.ownerPid, status.pid)
+  sockets.push(session.manifest.socketPath)
+  session.dispose()
+  return status
+}
+
 afterEach(async () => {
   for (const pid of processes.splice(0).reverse()) {
     if (processExists(pid)) {
@@ -261,19 +314,67 @@ describe('development runtime cleanup', () => {
       path.join(root, 'unrelated-host')
     )
 
+    // A stale archive sorts before live keepers. It must not abort cleanup or
+    // leave the later live sessions running after worktree removal.
+    const staleSession = await startPersistentSession(
+      targetData,
+      targetRuntime,
+      root,
+      '0'.repeat(40)
+    )
+    process.kill(staleSession.ownerPid, 'SIGKILL')
+    process.kill(staleSession.pid, 'SIGKILL')
+    await waitFor(() =>
+      !processExists(staleSession.ownerPid) && !processExists(staleSession.pid)
+        ? true
+        : null
+    )
+    const staleDirectory = path.join(
+      targetRuntime,
+      'terminal-engine',
+      'terminal-host-' +
+        crypto
+          .createHash('sha256')
+          .update(path.resolve(targetData))
+          .digest('hex')
+          .slice(0, 20),
+      'sessions',
+      '0'.repeat(40)
+    )
+
+    const targetSession = await startPersistentSession(
+      targetData,
+      targetRuntime,
+      root
+    )
+    const unrelatedSession = await startPersistentSession(
+      unrelatedData,
+      unrelatedRuntime,
+      root
+    )
+
     await cleanupDevelopmentRuntime(target, {
-      timeoutMs: 300,
+      timeoutMs: 1000,
       graceMs: 50
     })
 
     await waitFor(async () =>
-      [daemon.pid!, targetHost.hostPid, targetHost.terminalPid].every(
-        (pid) => !processExists(pid)
-      )
+      [
+        daemon.pid!,
+        targetHost.hostPid,
+        targetHost.terminalPid,
+        targetSession.ownerPid,
+        targetSession.pid
+      ].every((pid) => !processExists(pid))
         ? true
         : null
     )
+    await expect(fs.access(staleDirectory)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
     expect(processExists(unrelatedHost.hostPid)).toBe(true)
     expect(processExists(unrelatedHost.terminalPid)).toBe(true)
+    expect(processExists(unrelatedSession.ownerPid)).toBe(true)
+    expect(processExists(unrelatedSession.pid)).toBe(true)
   }, 20_000)
 })

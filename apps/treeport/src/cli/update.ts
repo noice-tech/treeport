@@ -1050,6 +1050,7 @@ export async function runLocalUpdate(
         'dist/node/cli/index.js',
         'dist/node/server/index.js',
         'dist/node/server/terminal-host-entry.js',
+        'dist/node/server/terminal-session-entry.js',
         'dist/node/server/terminal-host-preflight.js',
         'dist/node/server/core/launcher.js',
         'dist/web/index.html',

@@ -24,7 +24,18 @@ for (const name of files) {
       specifier === 'node-pty' ||
       specifier === 'zod' ||
       (specifier.startsWith('./') && !specifier.startsWith('../'))
-    if (!allowed) {
+    const persistentPrimitive = [
+      'session-entry.ts',
+      'session-journal.ts',
+      'session-protocol.ts'
+    ].includes(name)
+    const ownerAllowed =
+      specifier.startsWith('node:') ||
+      specifier === 'node-pty' ||
+      specifier === 'zod' ||
+      specifier === './session-journal' ||
+      specifier === './session-protocol'
+    if (!allowed || (persistentPrimitive && !ownerAllowed)) {
       violations.push(`${name}: ${specifier}`)
     }
   }
@@ -41,7 +52,11 @@ for (const required of [
   'sessions.ts',
   'server.ts',
   'entry.ts',
-  'launcher.ts'
+  'launcher.ts',
+  'session-entry.ts',
+  'session-journal.ts',
+  'session-protocol.ts',
+  'session-client.ts'
 ]) {
   assert(
     files.includes(required),
