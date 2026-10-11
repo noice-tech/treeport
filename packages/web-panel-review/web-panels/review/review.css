@@ -73,44 +73,40 @@ body {
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
 }
-header {
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.review-toolbar {
   position: relative;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: #18181b;
-  border-bottom: 1px solid #3f3f46;
-}
-.heading {
   display: grid;
-  min-width: 0;
-}
-#file-tree-toggle,
-.copy-label-mobile {
-  display: none;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: #18181b;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
 }
 .review-progress {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-}
-.actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
+  gap: 1rem;
+  min-width: 0;
 }
 #line-counts {
   display: flex;
+  flex-shrink: 0;
   gap: 0.5rem;
-  padding-right: 0.85rem;
-  border-right: 1px solid #3f3f46;
-  font-size: 0.8rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 #line-counts .additions {
   color: #4ade80;
@@ -120,82 +116,108 @@ header {
 }
 #viewed-progress {
   display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding-right: 0.85rem;
-  border-right: 1px solid #3f3f46;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-width: 0;
   color: #a1a1aa;
-  font-size: 0.8rem;
   white-space: nowrap;
-}
-#viewed-progress svg {
-  flex-shrink: 0;
-  width: 1.35rem;
-  height: 1.35rem;
-  overflow: visible;
-  transform: rotate(-90deg);
-}
-#viewed-progress circle {
-  fill: none;
-  stroke: #8b5cf6;
-  stroke-width: 3;
-  stroke-linecap: round;
-}
-#viewed-progress .viewed-progress-track {
-  stroke: #3f3f46;
-}
-#viewed-progress-value {
-  transition: stroke-dasharray 160ms ease-out;
 }
 #viewed-count {
   color: #e4e4e7;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
-#comment-status,
-#comment-position {
-  color: #a1a1aa;
-  font-size: 0.8rem;
-}
-#comment-position {
-  min-width: 5rem;
-  text-align: center;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+.comment-controls {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
 }
 .comment-navigation {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.5rem;
+  min-width: 0;
+}
+#comment-position {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.75rem;
+  min-width: 0;
+  color: #a1a1aa;
+}
+#comment-position span {
+  white-space: nowrap;
 }
 .comment-navigation-buttons {
   display: flex;
+  flex-shrink: 0;
+  gap: 0.25rem;
 }
-.comment-navigation button {
-  display: grid;
-  width: 1.8rem;
-  height: 1.8rem;
-  place-items: center;
+#file-tree-toggle {
+  grid-column: 3;
+  grid-row: 1;
+}
+.review-toolbar .toolbar-icon-button,
+.review-toolbar .toolbar-copy-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 2.25rem;
   padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: #d4d4d8;
+  font: inherit;
 }
-.comment-navigation button:first-child {
-  border-radius: 0.4rem 0 0 0.4rem;
+.review-toolbar .toolbar-icon-button {
+  width: 2.25rem;
 }
-.comment-navigation button:last-child {
-  margin-left: -1px;
-  border-radius: 0 0.4rem 0.4rem 0;
+.review-toolbar .toolbar-copy-button {
+  gap: 0.375rem;
+  padding: 0.5rem 0.625rem 0.5rem 0.5rem;
+  border-color: rgb(255 255 255 / 10%);
 }
-.comment-navigation svg {
+.review-toolbar button svg {
   width: 1rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  height: 1rem;
+  flex-shrink: 0;
+  fill: currentColor;
 }
-#summary {
+.touch-target {
+  display: none;
+}
+#comment-status {
+  grid-column: 1 / -1;
+  margin: 0;
   color: #a1a1aa;
-  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+#comment-status:empty {
+  display: none;
+}
+@media (any-pointer: coarse) {
+  .review-toolbar {
+    padding-block: 0.75rem;
+  }
+  .comment-controls,
+  .comment-navigation,
+  .comment-navigation-buttons {
+    gap: 1rem;
+  }
+  .touch-target {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: block;
+    width: max(100%, 48px);
+    height: max(100%, 48px);
+    transform: translate(-50%, -50%);
+  }
 }
 #find-bar {
   position: absolute;
@@ -209,7 +231,6 @@ header {
   border: 1px solid #52525b;
   border-radius: 0.5rem;
   background: #18181b;
-  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 45%);
 }
 #find-bar[hidden] {
   display: none;
@@ -258,11 +279,7 @@ header {
 #find-bar svg {
   width: 1rem;
   height: 1rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  fill: currentColor;
 }
 button {
   border: 1px solid #52525b;
@@ -289,9 +306,6 @@ button:focus-visible {
   .file-collapse:hover {
     border-color: #52525b;
     background: #3f3f46;
-  }
-  #resize-handle:hover {
-    background: #71717a;
   }
 }
 .file-diff-placeholder {
@@ -343,7 +357,6 @@ button:focus-visible {
   align-items: center;
   gap: 0.4rem;
   padding: 0.3rem 0.55rem;
-  border: 1px solid #52525b;
   border-radius: 0.4rem;
   color: #d4d4d8;
   font-size: 0.8rem;
@@ -397,19 +410,75 @@ button:focus-visible {
   }
 }
 .workspace {
-  position: relative;
-  --sidebar-width: clamp(12rem, 22vw, 24rem);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 5px var(--sidebar-width);
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
-aside {
+.file-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  background: rgb(0 0 0 / 50%);
+  transition: opacity 180ms ease-out;
+}
+.file-sheet-backdrop[data-starting-style],
+.file-sheet-backdrop[data-ending-style] {
+  opacity: 0;
+}
+.file-sheet {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 3;
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  min-width: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(24rem, 90vw);
   overflow: hidden;
   background: #18181b;
   border-left: 1px solid #3f3f46;
+  box-shadow: -0.75rem 0 2rem rgb(0 0 0 / 25%);
+  transition: transform 180ms ease-out;
+}
+.file-sheet[data-starting-style],
+.file-sheet[data-ending-style] {
+  transform: translateX(100%);
+}
+.file-sheet[hidden],
+.file-sheet-backdrop[hidden] {
+  display: none;
+}
+.file-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid #3f3f46;
+}
+.file-sheet-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.file-sheet-header button {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  place-items: center;
+  padding: 0;
+}
+.file-sheet-header svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-sheet,
+  .file-sheet-backdrop {
+    transition: none;
+  }
 }
 #file-tree {
   min-height: 0;
@@ -425,27 +494,6 @@ aside {
   --trees-selected-bg-override: #3f3f46;
   --trees-selected-fg-override: #e4e4e7;
   --trees-theme-list-hover-bg: #27272a;
-}
-#resize-handle {
-  position: relative;
-  z-index: 1;
-  cursor: col-resize;
-  touch-action: none;
-  background: #27272a;
-  outline: none;
-}
-#resize-handle::after {
-  position: absolute;
-  inset: 0 -3px;
-  content: '';
-}
-#resize-handle:focus-visible,
-#resize-handle.resizing {
-  background: #71717a;
-}
-body.resizing {
-  cursor: col-resize;
-  user-select: none;
 }
 main {
   display: grid;
@@ -644,70 +692,36 @@ main {
   body {
     font-size: 0.8125rem;
   }
-  header {
-    flex-wrap: wrap;
-    gap: 0.375rem 0.5rem;
-    padding: 0.5rem;
-  }
-  .heading {
-    flex: 1;
-  }
-  #summary {
-    overflow: hidden;
-    font-size: 0.75rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .review-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    padding-inline: 0.5rem;
   }
   #file-tree-toggle {
-    display: block;
-    flex-shrink: 0;
-    font-variant-numeric: tabular-nums;
-  }
-  .actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.375rem 0.5rem;
-    width: 100%;
+    grid-column: 2;
   }
   .review-progress {
+    gap: 0.75rem;
+  }
+  .comment-controls {
     grid-column: 1 / -1;
-    gap: 0.5rem;
-  }
-  #line-counts,
-  #viewed-progress {
-    gap: 0.375rem;
-    padding-right: 0.5rem;
-    font-size: 0.75rem;
-  }
-  #viewed-progress {
-    padding-right: 0;
-    border-right: 0;
-  }
-  #viewed-progress svg {
-    width: 1rem;
-    height: 1rem;
-  }
-  #comment-status {
-    grid-column: 1 / -1;
-    font-size: 0.75rem;
-    overflow-wrap: anywhere;
-  }
-  #comment-status:empty {
-    display: none;
+    grid-row: 2;
+    justify-content: space-between;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgb(255 255 255 / 10%);
   }
   .comment-navigation {
-    min-width: 0;
+    flex: 1;
     justify-content: space-between;
-    gap: 0.375rem;
   }
-  #comment-position {
-    min-width: 0;
-    overflow: hidden;
-    font-size: 0.75rem;
-    text-align: left;
-    text-overflow: ellipsis;
+  .review-toolbar .toolbar-copy-button {
+    width: 2.25rem;
+    padding: 0;
+    border-color: transparent;
   }
-  .comment-navigation-buttons,
+  .copy-label {
+    display: none;
+  }
   .find-navigation {
     flex-shrink: 0;
   }
@@ -718,19 +732,12 @@ main {
     padding: 0.25rem 0.5rem;
     font: inherit;
   }
-  .comment-navigation button,
   #find-bar button,
   .file-collapse {
     width: 2rem;
     height: 2rem;
     flex-shrink: 0;
     padding: 0;
-  }
-  .copy-label-desktop {
-    display: none;
-  }
-  .copy-label-mobile {
-    display: inline;
   }
   #find-bar {
     top: calc(100% + 0.25rem);
@@ -747,20 +754,6 @@ main {
   #find-position {
     width: auto;
     font-size: 0.75rem;
-  }
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  #resize-handle,
-  #changed-files {
-    display: none;
-  }
-  .workspace[data-file-tree-open='true'] main {
-    display: none;
-  }
-  .workspace[data-file-tree-open='true'] #changed-files {
-    display: grid;
-    border-left: 0;
   }
   main {
     gap: 0.5rem;

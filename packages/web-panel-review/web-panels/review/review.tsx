@@ -1,3 +1,11 @@
+import { Dialog as Sheet } from '@base-ui/react/dialog'
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ClipboardDocumentIcon,
+  FolderIcon,
+  XMarkIcon
+} from '@heroicons/react/16/solid'
 import { parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs'
 import {
   FileDiff,
@@ -216,17 +224,8 @@ function searchableLinesFor(files: FileDiffMetadata[]) {
 }
 
 function Chevron({ direction }: { direction: 'up' | 'down' }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d={
-          direction === 'up'
-            ? 'm4.5 15.75 7.5-7.5 7.5 7.5'
-            : 'm19.5 8.25-7.5 7.5-7.5-7.5'
-        }
-      />
-    </svg>
-  )
+  const Icon = direction === 'up' ? ChevronUpIcon : ChevronDownIcon
+  return <Icon aria-hidden="true" />
 }
 
 function ChangedFileTree({
@@ -459,6 +458,12 @@ function CommentEditor({
   const [body, setBody] = useState(comment.body)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  useEffect(() => {
+    // React's autofocus runs before the diff's layout effect adds the
+    // annotation slot, when this textarea isn't visible or focusable yet.
+    textareaRef.current?.focus()
+  }, [comment.draft, comment.resolved])
+
   const submit = () => {
     const trimmed = body.trim()
     if (trimmed) {
@@ -497,7 +502,6 @@ function CommentEditor({
         <>
           <textarea
             ref={textareaRef}
-            autoFocus
             aria-label={`Comment on ${comment.file} line ${comment.lineNumber}`}
             placeholder="What should change?"
             value={body}
@@ -660,7 +664,6 @@ function ReviewApp() {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [fileTreeOpen, setFileTreeOpen] = useState(false)
-  const fileTreeToggleRef = useRef<HTMLButtonElement>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [activeFindMatch, setActiveFindMatch] = useState(-1)
@@ -674,9 +677,6 @@ function ReviewApp() {
     }
   }, [])
   const sectionRefs = useRef(new Map<string, HTMLElement>())
-  const workspaceRef = useRef<HTMLDivElement>(null)
-  const sidebarRef = useRef<HTMLElement>(null)
-  const resizeHandleRef = useRef<HTMLDivElement>(null)
 
   const files = loaded?.files ?? []
   const fileNames = useMemo(() => files.map((file) => file.path), [files])
@@ -739,8 +739,6 @@ function ReviewApp() {
     [commentLocations, outdatedComments.length, unresolved]
   )
   const viewedCount = fileNames.filter((file) => viewedFiles.has(file)).length
-  const progress =
-    fileNames.length === 0 ? 0 : (viewedCount / fileNames.length) * 100
   const activeCommentIndex = navigableComments.findIndex(
     ({ id }) => id === activeCommentId
   )
@@ -1068,31 +1066,8 @@ function ReviewApp() {
     setSelectedFile(file)
     requestAnimationFrame(() => {
       sectionRefs.current.get(file)?.scrollIntoView({ block: 'start' })
-      if (window.matchMedia('(max-width: 700px)').matches) {
-        fileTreeToggleRef.current?.focus({ preventScroll: true })
-      }
     })
   }, [])
-
-  useEffect(() => {
-    if (!fileTreeOpen) {
-      return
-    }
-
-    const closeFileTree = (event: KeyboardEvent) => {
-      if (
-        event.key === 'Escape' &&
-        !event.defaultPrevented &&
-        window.matchMedia('(max-width: 700px)').matches
-      ) {
-        event.preventDefault()
-        setFileTreeOpen(false)
-        fileTreeToggleRef.current?.focus({ preventScroll: true })
-      }
-    }
-    window.addEventListener('keydown', closeFileTree)
-    return () => window.removeEventListener('keydown', closeFileTree)
-  }, [fileTreeOpen])
 
   const createMatchRange = useCallback((match: FindMatch | undefined) => {
     if (!match) {
@@ -1413,214 +1388,105 @@ function ReviewApp() {
     []
   )
 
-  useEffect(() => {
-    const workspace = workspaceRef.current
-    const sidebar = sidebarRef.current
-    const handle = resizeHandleRef.current
-    if (!workspace || !sidebar || !handle) {
-      return
-    }
-
-    const setWidth = (
-      requested: number,
-      maximum = Math.max(160, workspace.clientWidth - 320)
-    ) => {
-      const width = Math.round(Math.min(maximum, Math.max(160, requested)))
-      workspace.style.setProperty('--sidebar-width', `${width}px`)
-      handle.setAttribute('aria-valuenow', String(width))
-      handle.setAttribute('aria-valuemax', String(maximum))
-    }
-    let workspaceRight = 0
-    let maximum = 160
-    let pending: number | null = null
-    let frame: number | null = null
-    const apply = () => {
-      if (frame !== null) {
-        cancelAnimationFrame(frame)
-      }
-
-      frame = null
-      if (pending === null) {
-        return
-      }
-
-      setWidth(pending, maximum)
-      pending = null
-    }
-    const pointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) {
-        return
-      }
-
-      const bounds = workspace.getBoundingClientRect()
-      workspaceRight = bounds.right
-      maximum = Math.max(160, bounds.width - 320)
-      handle.setPointerCapture(event.pointerId)
-      handle.classList.add('resizing')
-      document.body.classList.add('resizing')
-    }
-    const pointerMove = (event: PointerEvent) => {
-      if (!handle.hasPointerCapture(event.pointerId)) {
-        return
-      }
-
-      pending = workspaceRight - event.clientX
-      if (frame === null) {
-        frame = requestAnimationFrame(apply)
-      }
-    }
-    const pointerUp = (event: PointerEvent) => {
-      pending = workspaceRight - event.clientX
-      apply()
-      handle.releasePointerCapture(event.pointerId)
-    }
-    const lostCapture = () => {
-      handle.classList.remove('resizing')
-      document.body.classList.remove('resizing')
-    }
-    const keyDown = (event: KeyboardEvent) => {
-      const current = sidebar.getBoundingClientRect().width
-      if (event.key === 'ArrowLeft') {
-        setWidth(current + 16)
-      } else if (event.key === 'ArrowRight') {
-        setWidth(current - 16)
-      } else if (event.key === 'Home') {
-        setWidth(160)
-      } else if (event.key === 'End') {
-        setWidth(Number.POSITIVE_INFINITY)
-      } else {
-        return
-      }
-
-      event.preventDefault()
-    }
-    const resize = () => {
-      if (!window.matchMedia('(max-width: 700px)').matches) {
-        setWidth(sidebar.getBoundingClientRect().width)
-      }
-    }
-    handle.addEventListener('pointerdown', pointerDown)
-    handle.addEventListener('pointermove', pointerMove)
-    handle.addEventListener('pointerup', pointerUp)
-    handle.addEventListener('lostpointercapture', lostCapture)
-    handle.addEventListener('keydown', keyDown)
-    window.addEventListener('resize', resize)
-    requestAnimationFrame(resize)
-    return () => {
-      handle.removeEventListener('pointerdown', pointerDown)
-      handle.removeEventListener('pointermove', pointerMove)
-      handle.removeEventListener('pointerup', pointerUp)
-      handle.removeEventListener('lostpointercapture', lostCapture)
-      handle.removeEventListener('keydown', keyDown)
-      window.removeEventListener('resize', resize)
-      if (frame !== null) {
-        cancelAnimationFrame(frame)
-      }
-    }
-  }, [])
-
   return (
-    <>
-      <header>
-        <div className="heading">
-          <strong>Code review</strong>
-          <span id="summary">
-            {loaded?.summary ??
-              (error ? 'Could not load review' : 'Loading context…')}
-          </span>
+    <Sheet.Root open={fileTreeOpen} onOpenChange={setFileTreeOpen}>
+      <header className="review-toolbar" aria-label="Review toolbar">
+        <p id="summary" className="sr-only">
+          {loaded?.summary ??
+            (error ? 'Could not load review' : 'Loading context…')}
+        </p>
+        <div className="review-progress">
+          <div
+            id="line-counts"
+            aria-label={`${lineCounts.additions} lines added and ${lineCounts.deletions} lines deleted`}
+          >
+            <span className="additions">+{lineCounts.additions}</span>
+            <span className="deletions">-{lineCounts.deletions}</span>
+          </div>
+          <div
+            id="viewed-progress"
+            aria-label={`${viewedCount} of ${fileNames.length} files viewed`}
+          >
+            <strong id="viewed-count">
+              {viewedCount}/{fileNames.length}
+            </strong>
+            <span>viewed</span>
+          </div>
         </div>
-        <button
-          ref={fileTreeToggleRef}
-          id="file-tree-toggle"
-          type="button"
-          aria-expanded={fileTreeOpen}
-          aria-controls="changed-files"
-          onClick={() => setFileTreeOpen((open) => !open)}
-        >
-          {fileTreeOpen ? 'Back to diff' : `Files (${files.length})`}
-        </button>
-        <div className="actions">
-          <div className="review-progress">
-            <div
-              id="line-counts"
-              aria-label={`${lineCounts.additions} lines added and ${lineCounts.deletions} lines deleted`}
-            >
-              <span className="additions">+{lineCounts.additions}</span>
-              <span className="deletions">-{lineCounts.deletions}</span>
+        {unresolved.length > 0 && (
+          <div className="comment-controls">
+            <div className="comment-navigation" aria-label="Comment navigation">
+              <div id="comment-position">
+                {navigableComments.length > 0 && (
+                  <span>
+                    {activeCommentIndex === -1
+                      ? `${navigableComments.length} unresolved`
+                      : `${activeCommentIndex + 1} of ${navigableComments.length} unresolved`}
+                  </span>
+                )}
+                {outdatedComments.length > 0 && (
+                  <span>{outdatedComments.length} outdated</span>
+                )}
+              </div>
+              {navigableComments.length > 0 && (
+                <div className="comment-navigation-buttons">
+                  <button
+                    className="toolbar-icon-button"
+                    type="button"
+                    aria-label="Previous unresolved comment"
+                    title="Previous unresolved comment"
+                    onClick={() => navigateComments(-1)}
+                  >
+                    <Chevron direction="up" />
+                    <span className="touch-target" aria-hidden="true" />
+                  </button>
+                  <button
+                    className="toolbar-icon-button"
+                    type="button"
+                    aria-label="Next unresolved comment"
+                    title="Next unresolved comment"
+                    onClick={() => navigateComments(1)}
+                  >
+                    <Chevron direction="down" />
+                    <span className="touch-target" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
             </div>
-            <div
-              id="viewed-progress"
-              aria-label={`${viewedCount} of ${fileNames.length} files viewed`}
+            <button
+              id="copy-comments"
+              className="toolbar-copy-button"
+              type="button"
+              aria-label={`Copy unresolved comments (${unresolved.length})`}
+              title={
+                copyFeedback ?? `Copy unresolved comments (${unresolved.length})`
+              }
+              onClick={copy}
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle
-                  className="viewed-progress-track"
-                  cx="12"
-                  cy="12"
-                  r="9"
-                />
-                <circle
-                  id="viewed-progress-value"
-                  cx="12"
-                  cy="12"
-                  r="9"
-                  pathLength="100"
-                  style={{ strokeDasharray: `${progress} 100` }}
-                />
-              </svg>
-              <span>
-                <strong id="viewed-count">
-                  {viewedCount} / {fileNames.length}
-                </strong>{' '}
-                viewed
+              <ClipboardDocumentIcon aria-hidden="true" />
+              <span className="copy-label">
+                {copyFeedback ?? 'Copy comments'}
               </span>
-            </div>
+              <span className="touch-target" aria-hidden="true" />
+            </button>
           </div>
-          <span id="comment-status" role="status">
-            {commentStatus}
-          </span>
-          <div className="comment-navigation" aria-label="Comment navigation">
-            <span id="comment-position">
-              {`${
-                activeCommentIndex === -1
-                  ? `${navigableComments.length} unresolved`
-                  : `${activeCommentIndex + 1} of ${navigableComments.length} unresolved`
-              }${
-                outdatedComments.length
-                  ? ` · ${outdatedComments.length} outdated`
-                  : ''
-              }`}
-            </span>
-            <div className="comment-navigation-buttons">
-              <button
-                type="button"
-                aria-label="Previous unresolved comment"
-                title="Previous unresolved comment"
-                disabled={!navigableComments.length}
-                onClick={() => navigateComments(-1)}
-              >
-                <Chevron direction="up" />
-              </button>
-              <button
-                type="button"
-                aria-label="Next unresolved comment"
-                title="Next unresolved comment"
-                disabled={!navigableComments.length}
-                onClick={() => navigateComments(1)}
-              >
-                <Chevron direction="down" />
-              </button>
-            </div>
-          </div>
-          <button type="button" disabled={!unresolved.length} onClick={copy}>
-            <span className="copy-label-desktop">
-              {copyFeedback ?? `Copy unresolved (${unresolved.length})`}
-            </span>
-            <span className="copy-label-mobile">
-              {copyFeedback ?? `Copy (${unresolved.length})`}
-            </span>
-          </button>
-        </div>
+        )}
+        <Sheet.Trigger
+          id="file-tree-toggle"
+          className="toolbar-icon-button"
+          type="button"
+          aria-label={`Show changed files (${files.length})`}
+          title={`Show changed files (${files.length})`}
+        >
+          <FolderIcon aria-hidden="true" />
+          <span className="touch-target" aria-hidden="true" />
+        </Sheet.Trigger>
+        <p id="comment-status" role="status">
+          {commentStatus}
+        </p>
+        <p className="sr-only" role="status">
+          {copyFeedback}
+        </p>
         <div
           id="find-bar"
           role="search"
@@ -1680,17 +1546,11 @@ function ReviewApp() {
             title="Close find"
             onClick={closeFind}
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
+            <XMarkIcon aria-hidden="true" />
           </button>
         </div>
       </header>
-      <div
-        className="workspace"
-        ref={workspaceRef}
-        data-file-tree-open={fileTreeOpen}
-      >
+      <div className="workspace">
         <main id="review" aria-live="polite">
           {!loading && !error && outdatedComments.length > 0 && (
             <section
@@ -1990,16 +1850,18 @@ function ReviewApp() {
             })
           )}
         </main>
-        <div
-          id="resize-handle"
-          ref={resizeHandleRef}
-          role="separator"
-          aria-label="Resize changed files"
-          aria-orientation="vertical"
-          aria-valuemin={160}
-          tabIndex={0}
-        />
-        <aside id="changed-files" aria-label="Changed files" ref={sidebarRef}>
+      </div>
+      <Sheet.Portal keepMounted>
+        <Sheet.Backdrop className="file-sheet-backdrop" />
+        <Sheet.Popup id="changed-files" className="file-sheet">
+          <div className="file-sheet-header">
+            <Sheet.Title>Changed files ({files.length})</Sheet.Title>
+            <Sheet.Close aria-label="Close changed files">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </Sheet.Close>
+          </div>
           <div id="file-tree">
             {files.length > 0 && (
               <ChangedFileTree
@@ -2009,9 +1871,9 @@ function ReviewApp() {
               />
             )}
           </div>
-        </aside>
-      </div>
-    </>
+        </Sheet.Popup>
+      </Sheet.Portal>
+    </Sheet.Root>
   )
 }
 
