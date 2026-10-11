@@ -1655,7 +1655,7 @@ async function main(args: string[]): Promise<void> {
 
     const project = (
       await request(
-        `/api/projects/${encodeURIComponent(projectId!)}`,
+        `/api/projects/${encodeURIComponent(projectId!)}?freshGitWorktreeId=${encodeURIComponent(worktreeId!)}`,
         projectResponseSchema
       )
     ).project

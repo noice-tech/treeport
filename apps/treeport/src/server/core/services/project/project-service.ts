@@ -124,10 +124,11 @@ export class ProjectService {
   }
 
   getProjectSnapshot(
-    projectId: string
+    projectId: string,
+    freshGitWorktreeId?: string
   ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
     return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
-      snapshots.getProjectSnapshot(projectId)
+      snapshots.getProjectSnapshot(projectId, freshGitWorktreeId)
     )
   }
 

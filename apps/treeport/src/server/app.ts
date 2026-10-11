@@ -1122,9 +1122,15 @@ export function createApp({
       '/api/projects/:projectId',
       Effect.gen(function* () {
         const params = yield* routeParams
+        const query = yield* requestQuery(
+          Schema.Struct({ freshGitWorktreeId: Schema.optional(Schema.String) })
+        )
         return jsonContractResponse(projectResponseSchema, {
           project: yield* operation(() =>
-            service.projects.getProjectSnapshot(params.projectId!)
+            service.projects.getProjectSnapshot(
+              params.projectId!,
+              query.freshGitWorktreeId
+            )
           )
         })
       })
