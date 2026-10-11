@@ -275,40 +275,17 @@ function activateTerminalLink(
   }
 }
 
-function forcePlainSelectionWhileMouseReporting(
-  event: MouseEvent,
-  terminal: Terminal
-): void {
-  if (
-    !terminal.element?.classList.contains('enable-mouse-events') ||
-    event.button !== 0 ||
-    event.altKey ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.shiftKey
-  ) {
-    return
-  }
-
-  Object.defineProperty(event, usesMacKeyboard() ? 'altKey' : 'shiftKey', {
-    configurable: true,
-    value: true
-  })
-}
-
 export function trackTerminalSelection(
   wrapper: HTMLElement,
-  terminal: Terminal,
   options: {
     requestControl: () => void
   }
 ): () => void {
-  const handleMouseDown = (event: MouseEvent) => {
+  const handleMouseDown = () => {
     options.requestControl()
-    // Selection stays inside this browser even when a full-screen application
-    // has enabled mouse reporting. xterm interprets the platform modifier as
-    // a request for local selection and never sends it to the child PTY.
-    forcePlainSelectionWhileMouseReporting(event, terminal)
+    // Let xterm route plain clicks and drags to mouse-aware applications such
+    // as Pi fullscreen, which owns transcript selection. Its platform modifier
+    // still lets the user explicitly choose local terminal selection.
   }
 
   wrapper.addEventListener('mousedown', handleMouseDown, true)

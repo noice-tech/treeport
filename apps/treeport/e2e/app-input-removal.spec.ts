@@ -116,12 +116,11 @@ test.describe('desktop terminal input and removal', () => {
       .toContain('/tmp/treeport-upload-1.txt')
   })
 
-  test('keeps browser scrolling and selection local while forwarding application wheel events', async ({
+  test('keeps normal selection local and forwards fullscreen mouse input unless a selection modifier is held', async ({
     page
   }) => {
     await mockApp(page, [], {
-      keyboardPlatform: 'MacIntel',
-      desktopBridge: true
+      keyboardPlatform: 'MacIntel'
     })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await requestTerminalControl(page)
@@ -184,10 +183,58 @@ test.describe('desktop terminal input and removal', () => {
       socket.receive('output', {
         streamId: socket.streamId,
         sequence: 3,
-        data: '\u001b[?1000h\u001b[?1006h'
+        data:
+          '\u001b[?1049h\u001b[?1000h\u001b[?1002h\u001b[?1006h\u001b[H' +
+          'fullscreen transcript selection'
       })
       window.__wsSent = []
     })
+    await expect(screen).toContainText('fullscreen transcript selection')
+    await page.mouse.move(bounds!.x + 10, bounds!.y + 10)
+    await page.mouse.down()
+    await page.mouse.move(bounds!.x + 120, bounds!.y + 10, { steps: 5 })
+    await page.mouse.up()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => {
+              const data = String(message.data)
+              if (data.startsWith('\u001b[<0;') && data.endsWith('M')) {
+                return 'press'
+              }
+
+              if (data.startsWith('\u001b[<32;') && data.endsWith('M')) {
+                return 'drag'
+              }
+
+              if (data.startsWith('\u001b[<0;') && data.endsWith('m')) {
+                return 'release'
+              }
+
+              return 'unexpected'
+            })
+        )
+      )
+      .toEqual(['press', 'drag', 'drag', 'drag', 'drag', 'drag', 'release'])
+
+    await page.evaluate(() => {
+      window.__wsSent = []
+    })
+    await page.keyboard.down('Alt')
+    await page.mouse.move(bounds!.x + 10, bounds!.y + 10)
+    await page.mouse.down()
+    await page.mouse.move(bounds!.x + 120, bounds!.y + 10, { steps: 5 })
+    await page.mouse.up()
+    await page.keyboard.up('Alt')
+    await expect(page.getByLabel('Terminal text selection')).toHaveCount(1)
+    expect(
+      await page.evaluate(() =>
+        window.__wsSent.filter((message: any) => message.type === 'input')
+      )
+    ).toEqual([])
+
     await screen.dispatchEvent('wheel', { deltaY: -120 })
     await expect
       .poll(() =>
