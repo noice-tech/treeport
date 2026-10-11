@@ -38,7 +38,6 @@ function browserState(
     decodeUnknownOrNull(browserObservedUrlSchema, currentUrl) !== null
       ? currentUrl
       : fallbackUrl
-  const bounds = webview.getBoundingClientRect()
   return {
     url,
     title: blankPage ? '' : normalizeBrowserTitle(webview.getTitle()),
@@ -46,8 +45,9 @@ function browserState(
     canGoBack: webview.canGoBack(),
     canGoForward: webview.canGoForward(),
     viewport: {
-      width: Math.max(0, Math.min(3_840, Math.round(bounds.width))),
-      height: Math.max(0, Math.min(2_160, Math.round(bounds.height)))
+      // A responsive preview can be visually scaled without resizing the page.
+      width: Math.max(0, Math.min(3_840, webview.clientWidth)),
+      height: Math.max(0, Math.min(2_160, webview.clientHeight))
     }
   }
 }
@@ -56,6 +56,7 @@ export function LocalBrowserWebview({
   panel,
   active,
   inputBlocked,
+  viewport,
   onConnection,
   onMessage,
   onPaintRetentionChange,
@@ -64,6 +65,7 @@ export function LocalBrowserWebview({
   panel: BrowserPanel
   active: boolean
   inputBlocked: boolean
+  viewport: { width: number; height: number } | null
   onConnection: (connection: BrowserPanelConnection | null) => void
   onMessage: (message: BrowserServerMessage) => void
   onPaintRetentionChange: (retained: boolean) => Promise<boolean>
@@ -674,6 +676,11 @@ export function LocalBrowserWebview({
       <webview
         ref={webviewRef}
         aria-label="Browser page"
+        style={
+          viewport && !externalController
+            ? { width: viewport.width, height: viewport.height }
+            : undefined
+        }
         className={`flex h-[var(--browser-viewport-height,100%)] w-[var(--browser-viewport-width,100%)] shrink-0 bg-zinc-950 ${
           inputBlocked || externalController ? 'pointer-events-none' : ''
         }`}
