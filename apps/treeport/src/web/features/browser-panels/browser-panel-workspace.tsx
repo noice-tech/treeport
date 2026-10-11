@@ -12,6 +12,7 @@ import {
   ArrowLeftIcon,
   ArrowPathIcon,
   ArrowRightIcon,
+  ArrowsRightLeftIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   CodeBracketSquareIcon,
@@ -40,6 +41,7 @@ import { cn } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { Empty, EmptyDescription, EmptyTitle } from '../../components/ui/empty'
 import { Input } from '../../components/ui/input'
+import { NativeSelect } from '../../components/ui/native-select'
 import {
   Popover,
   PopoverContent,
@@ -120,6 +122,7 @@ export function BrowserPanelWorkspace({
 }) {
   const sectionRef = useRef<HTMLElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const viewportAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserPanelConnection | null>(null)
@@ -128,6 +131,13 @@ export function BrowserPanelWorkspace({
   const viewportOverrideRef = useRef<{ width: number; height: number } | null>(
     null
   )
+  const viewportDragRef = useRef<{
+    x: number
+    y: number
+    width: number
+    height: number
+    scale: number
+  } | null>(null)
   const pointerActiveRef = useRef(false)
   const touchRef = useRef<{
     pointerId: number
@@ -162,12 +172,13 @@ export function BrowserPanelWorkspace({
   const [permissionSettingsError, setPermissionSettingsError] = useState<
     string | null
   >(null)
-  const [viewportOpen, setViewportOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [viewportOverride, setViewportOverride] = useState<{
     width: number
     height: number
   } | null>(null)
+  const [viewportPreset, setViewportPreset] = useState('responsive')
+  const [viewportSpace, setViewportSpace] = useState({ width: 0, height: 0 })
   const [viewportWidth, setViewportWidth] = useState('390')
   const [viewportHeight, setViewportHeight] = useState('844')
   const [findOpen, setFindOpen] = useState(false)
@@ -574,7 +585,6 @@ export function BrowserPanelWorkspace({
     let viewport: { width: number; height: number } | null = null
     const observer = new ResizeObserver(([entry]) => {
       if (
-        viewportOverrideRef.current ||
         !entry ||
         entry.contentRect.width <= 0 ||
         entry.contentRect.height <= 0
@@ -582,7 +592,7 @@ export function BrowserPanelWorkspace({
         return
       }
 
-      viewport = {
+      viewport = viewportOverrideRef.current ?? {
         width: Math.max(
           1,
           Math.min(3_840, Math.round(entry.contentRect.width))
@@ -596,7 +606,7 @@ export function BrowserPanelWorkspace({
       // Input coordinates continue using the server's confirmed viewport.
       timer ??= setTimeout(() => {
         timer = null
-        if (viewport && !viewportOverrideRef.current) {
+        if (viewport) {
           send({ type: 'resize', ...viewport })
         }
       }, 100)
@@ -609,6 +619,24 @@ export function BrowserPanelWorkspace({
       }
     }
   }, [active, connectionRevision, localBrowser, send])
+
+  useEffect(() => {
+    const area = viewportAreaRef.current
+    if (!area || !active) {
+      return
+    }
+
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) {
+        setViewportSpace({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height
+        })
+      }
+    })
+    observer.observe(area)
+    return () => observer.disconnect()
+  }, [active])
 
   /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
@@ -755,14 +783,24 @@ export function BrowserPanelWorkspace({
     focusPage()
   }
 
-  const resizeViewport = (size: { width: number; height: number } | null) => {
+  const resizeViewport = (
+    size: { width: number; height: number } | null,
+    preset = 'responsive'
+  ) => {
+    setViewportPreset(preset)
     const needsControl = !stateRef.current?.controlled
     viewportOverrideRef.current = size
     setViewportOverride(size)
+    if (needsControl) {
+      send({ type: 'takeControl' })
+    }
+
     if (size) {
       setViewportWidth(String(size.width))
       setViewportHeight(String(size.height))
-      send({ type: 'resize', ...size })
+      if (!localBrowser) {
+        send({ type: 'resize', ...size })
+      }
     } else {
       const bounds = canvasRef.current?.getBoundingClientRect()
       if (bounds && bounds.width > 0 && bounds.height > 0) {
@@ -772,10 +810,6 @@ export function BrowserPanelWorkspace({
           height: Math.max(1, Math.min(2_160, Math.round(bounds.height)))
         })
       }
-    }
-
-    if (needsControl) {
-      send({ type: 'takeControl' })
     }
   }
 
@@ -872,72 +906,120 @@ export function BrowserPanelWorkspace({
       ? permissionSettings
       : null
 
+  // Scale only the page, not the handles. CSS viewport dimensions stay exact.
+  const viewportScale = viewportOverride
+    ? Math.max(
+        0.01,
+        Math.min(
+          1,
+          (viewportSpace.width - 40) / viewportOverride.width,
+          (viewportSpace.height - 40) / viewportOverride.height
+        )
+      )
+    : 1
+
+  const applyViewportDimensions = () => {
+    const width = Number(viewportWidth)
+    const height = Number(viewportHeight)
+    if (
+      Number.isInteger(width) &&
+      width >= 1 &&
+      width <= 3840 &&
+      Number.isInteger(height) &&
+      height >= 1 &&
+      height <= 2160
+    ) {
+      resizeViewport({ width, height })
+    } else {
+      setViewportWidth(String(viewportOverride?.width ?? 390))
+      setViewportHeight(String(viewportOverride?.height ?? 844))
+    }
+  }
+
   const viewportControls = (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm font-semibold">Remote viewport</p>
-      <p className="text-base text-zinc-400 tabular-nums sm:text-sm">
-        {viewportOverride
-          ? `${viewportOverride.width} × ${viewportOverride.height} px`
-          : 'Fit Browser panel'}
-      </p>
-      <div className="flex gap-2">
-        <Input
-          type="number"
-          name="viewport-width"
-          min={1}
-          max={3840}
-          aria-label="Viewport width"
-          className="min-w-0 flex-1"
-          value={viewportWidth}
-          onChange={(event) => setViewportWidth(event.target.value)}
-        />
-        <Input
-          type="number"
-          name="viewport-height"
-          min={1}
-          max={2160}
-          aria-label="Viewport height"
-          className="min-w-0 flex-1"
-          value={viewportHeight}
-          onChange={(event) => setViewportHeight(event.target.value)}
-        />
-      </div>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          size="sm"
-          disabled={
-            !state ||
-            !Number.isInteger(Number(viewportWidth)) ||
-            Number(viewportWidth) < 1 ||
-            Number(viewportWidth) > 3840 ||
-            !Number.isInteger(Number(viewportHeight)) ||
-            Number(viewportHeight) < 1 ||
-            Number(viewportHeight) > 2160
+    <div className="flex flex-wrap items-center justify-center gap-1.5">
+      <NativeSelect
+        aria-label="Viewport preset"
+        value={viewportPreset}
+        onChange={(event) => {
+          const preset = event.target.value
+          const size = {
+            phone: { width: 390, height: 844 },
+            tablet: { width: 768, height: 1024 },
+            desktop: { width: 1280, height: 800 }
+          }[preset]
+          resizeViewport(
+            size ?? viewportOverride ?? { width: 390, height: 844 },
+            preset
+          )
+        }}
+      >
+        <option value="responsive">Responsive</option>
+        <option value="phone">Phone</option>
+        <option value="tablet">Tablet</option>
+        <option value="desktop">Desktop</option>
+      </NativeSelect>
+      <Input
+        type="number"
+        name="viewport-width"
+        min={1}
+        max={3840}
+        aria-label="Viewport width"
+        className="h-8 w-20"
+        value={viewportWidth}
+        onChange={(event) => setViewportWidth(event.target.value)}
+        onBlur={applyViewportDimensions}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            applyViewportDimensions()
           }
-          onClick={() => {
+        }}
+      />
+      <span className="text-muted-foreground" aria-hidden="true">
+        ×
+      </span>
+      <Input
+        type="number"
+        name="viewport-height"
+        min={1}
+        max={2160}
+        aria-label="Viewport height"
+        className="h-8 w-20"
+        value={viewportHeight}
+        onChange={(event) => setViewportHeight(event.target.value)}
+        onBlur={applyViewportDimensions}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            applyViewportDimensions()
+          }
+        }}
+      />
+      <span
+        className="px-1 text-sm text-muted-foreground tabular-nums"
+        title="Preview scale; page dimensions are unchanged"
+      >
+        Fit to window · {Math.round(viewportScale * 100)}%
+      </span>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        aria-label="Rotate viewport"
+        title="Rotate viewport"
+        disabled={!viewportOverride || viewportOverride.width > 2160}
+        onClick={() => {
+          if (viewportOverride) {
             resizeViewport({
-              width: Number(viewportWidth),
-              height: Number(viewportHeight)
+              width: viewportOverride.height,
+              height: viewportOverride.width
             })
-            setToolsOpen(false)
-          }}
-        >
-          Apply
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={!state}
-          onClick={() => {
-            resizeViewport(null)
-            setToolsOpen(false)
-          }}
-        >
-          Fit panel
-        </Button>
-      </div>
+          }
+        }}
+      >
+        <ArrowsRightLeftIcon />
+      </Button>
     </div>
   )
 
@@ -1161,26 +1243,22 @@ export function BrowserPanelWorkspace({
             <path d="M7.25 12.25h5.5" />
           </svg>
         </span>
-        {!localBrowser ? (
-          <Popover open={viewportOpen} onOpenChange={setViewportOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="@max-[40rem]/browser-toolbar:hidden"
-                aria-label="Browser viewport size"
-                title="Browser viewport size"
-                disabled={!state}
-              >
-                <DevicePhoneMobileIcon />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-64 p-3">
-              {viewportControls}
-            </PopoverContent>
-          </Popover>
-        ) : null}
+        <Button
+          type="button"
+          variant={viewportOverride ? 'secondary' : 'ghost'}
+          size="icon-sm"
+          aria-label="Responsive mode"
+          aria-pressed={viewportOverride !== null}
+          title="Responsive mode"
+          disabled={!state}
+          onClick={() =>
+            resizeViewport(
+              viewportOverride ? null : { width: 390, height: 844 }
+            )
+          }
+        >
+          <DevicePhoneMobileIcon />
+        </Button>
         {!localBrowser && window.treeportDesktop ? (
           <Button
             type="button"
@@ -1425,7 +1503,20 @@ export function BrowserPanelWorkspace({
               <ArrowRightIcon data-icon="inline-start" />
               Go forward
             </Button>
-            {!localBrowser ? viewportControls : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                resizeViewport(
+                  viewportOverride ? null : { width: 390, height: 844 }
+                )
+                setToolsOpen(false)
+              }}
+            >
+              <DevicePhoneMobileIcon data-icon="inline-start" />
+              {viewportOverride ? 'Exit responsive mode' : 'Responsive mode'}
+            </Button>
           </PopoverContent>
         </Popover>
       </form>
@@ -1440,337 +1531,551 @@ export function BrowserPanelWorkspace({
           viewport to take control.
         </p>
       ) : null}
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">
-        {findOpen ? (
-          <div
-            className="absolute top-2 right-2 z-20 flex w-[min(20rem,calc(100%-1rem))] items-center gap-1 rounded-md border border-white/10 bg-zinc-900 p-1 shadow-lg"
-            role="search"
-            aria-label="Find in page"
-          >
-            <Input
-              ref={findInputRef}
-              type="text"
-              name="find"
-              aria-label="Find in page"
-              className="h-8 min-w-0 flex-1"
-              placeholder="Find in page"
-              maxLength={4_096}
-              value={findValue}
-              onChange={(event) => {
-                const value = event.target.value
-                setFindValue(value)
-                findInPage(value, true, false)
-              }}
-              onKeyDown={(event) => {
-                if (
-                  event.key === 'Escape' &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.metaKey &&
-                  !event.ctrlKey
-                ) {
-                  event.preventDefault()
-                  closeFind()
-                } else if (
-                  event.key === 'Enter' &&
-                  !event.altKey &&
-                  !event.metaKey &&
-                  !event.ctrlKey
-                ) {
-                  event.preventDefault()
-                  findInPage(findValue, !event.shiftKey, true)
+      {viewportOverride ? (
+        <div
+          className="shrink-0 border-b border-border bg-background p-2"
+          aria-label="Responsive mode controls"
+        >
+          {viewportControls}
+        </div>
+      ) : null}
+      <div
+        ref={viewportAreaRef}
+        className={cn(
+          'relative min-h-0 flex-1 overflow-hidden',
+          viewportOverride ? 'bg-muted/40' : 'bg-zinc-950'
+        )}
+      >
+        <div
+          className={cn('relative', viewportOverride ? 'mx-auto' : 'size-full')}
+          style={
+            viewportOverride
+              ? {
+                  width: viewportOverride.width * viewportScale + 40,
+                  height: viewportOverride.height * viewportScale + 40
                 }
-              }}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Find previous"
-              title="Find previous"
-              disabled={!findValue}
-              onClick={() => findInPage(findValue, false, true)}
+              : undefined
+          }
+        >
+          {viewportOverride ? (
+            <div
+              className="group/viewport-handles pointer-events-none absolute inset-0 z-10"
+              inert={inputBlocked ? true : undefined}
             >
-              <ChevronUpIcon />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Find next"
-              title="Find next"
-              disabled={!findValue}
-              onClick={() => findInPage(findValue, true, true)}
-            >
-              <ChevronDownIcon />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Close find"
-              title="Close find"
-              onClick={closeFind}
-            >
-              <XMarkIcon />
-            </Button>
-          </div>
-        ) : null}
-        {localBrowser && computerId ? (
-          <LocalBrowserWebview
-            key={connectionRevision}
-            panel={panel}
-            active={active}
-            inputBlocked={inputBlocked}
-            onConnection={setLocalConnection}
-            onMessage={receiveMessage}
-            onPaintRetentionChange={setLocalBrowserPaintRetention}
-            onFocusSurface={onFocusSurface}
-          />
-        ) : (
-          <canvas
-            ref={canvasRef}
-            tabIndex={0}
-            className="block size-full touch-pinch-zoom select-none bg-zinc-950 object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
-            aria-label="Browser viewport. Streamed page content is not available to assistive technology."
-            onFocus={onFocusSurface}
-            onPointerMove={(event) => {
-              if (event.pointerType === 'touch') {
-                const touch = touchRef.current
-                if (!touch || touch.pointerId !== event.pointerId) {
-                  return
+              {[
+                {
+                  edge: 'left',
+                  label: 'Resize viewport width from left',
+                  x: -2,
+                  y: 0,
+                  className: 'left-0 top-5 bottom-5 w-5 cursor-ew-resize',
+                  grip: 'h-10 w-1 border-x-2'
+                },
+                {
+                  edge: 'right',
+                  label: 'Resize viewport width',
+                  x: 2,
+                  y: 0,
+                  className: 'right-0 top-5 bottom-5 w-5 cursor-ew-resize',
+                  grip: 'h-10 w-1 border-x-2'
+                },
+                {
+                  edge: 'top',
+                  label: 'Resize viewport height from top',
+                  x: 0,
+                  y: -1,
+                  className: 'top-0 left-5 right-5 h-5 cursor-ns-resize',
+                  grip: 'h-1 w-10 border-y-2'
+                },
+                {
+                  edge: 'bottom',
+                  label: 'Resize viewport height',
+                  x: 0,
+                  y: 1,
+                  className: 'bottom-0 left-5 right-5 h-5 cursor-ns-resize',
+                  grip: 'h-1 w-10 border-y-2'
+                },
+                {
+                  edge: 'corner',
+                  label: 'Resize responsive viewport',
+                  x: 2,
+                  y: 1,
+                  className: 'right-0 bottom-0 size-5 cursor-nwse-resize',
+                  grip: 'size-3 border-r-2 border-b-2'
                 }
+              ].map(({ edge, label, x, y, className, grip }) => (
+                <button
+                  key={edge}
+                  type="button"
+                  data-axis={x && y ? 'both' : x ? 'width' : 'height'}
+                  className={cn(
+                    'pointer-events-auto absolute flex touch-none items-center justify-center bg-muted/60 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring',
+                    x && y
+                      ? 'hover:opacity-100 focus-visible:opacity-100 active:opacity-100'
+                      : x
+                        ? 'group-has-[[data-axis=width]:is(:hover,:focus-visible,:active)]/viewport-handles:opacity-100'
+                        : 'group-has-[[data-axis=height]:is(:hover,:focus-visible,:active)]/viewport-handles:opacity-100',
+                    className
+                  )}
+                  aria-label={label}
+                  title="Drag to resize; arrow keys resize by 10 px"
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) {
+                      return
+                    }
 
-                // Wait for a deliberate swipe before scrolling; a tap must not
-                // press a link (or start a drag) until the finger is lifted.
-                if (!touch.scrolling) {
+                    event.preventDefault()
+                    viewportDragRef.current = {
+                      x: event.clientX,
+                      y: event.clientY,
+                      ...viewportOverride,
+                      scale: viewportScale
+                    }
+                    event.currentTarget.setPointerCapture(event.pointerId)
+                  }}
+                  onPointerMove={(event) => {
+                    const drag = viewportDragRef.current
+                    if (
+                      !drag ||
+                      !event.currentTarget.hasPointerCapture(event.pointerId)
+                    ) {
+                      return
+                    }
+
+                    resizeViewport({
+                      width: Math.max(
+                        1,
+                        Math.min(
+                          3840,
+                          Math.round(
+                            drag.width +
+                              (x * (event.clientX - drag.x)) / drag.scale
+                          )
+                        )
+                      ),
+                      height: Math.max(
+                        1,
+                        Math.min(
+                          2160,
+                          Math.round(
+                            drag.height +
+                              (y * (event.clientY - drag.y)) / drag.scale
+                          )
+                        )
+                      )
+                    })
+                  }}
+                  onPointerUp={(event) => {
+                    if (
+                      event.currentTarget.hasPointerCapture(event.pointerId)
+                    ) {
+                      event.currentTarget.releasePointerCapture(event.pointerId)
+                    }
+                  }}
+                  onLostPointerCapture={() => {
+                    viewportDragRef.current = null
+                  }}
+                  onKeyDown={(event) => {
+                    const dx =
+                      x &&
+                      (event.key === 'ArrowRight'
+                        ? 10
+                        : event.key === 'ArrowLeft'
+                          ? -10
+                          : 0)
+                    const dy =
+                      y &&
+                      (event.key === 'ArrowDown'
+                        ? 10
+                        : event.key === 'ArrowUp'
+                          ? -10
+                          : 0)
+                    if (!dx && !dy) {
+                      return
+                    }
+
+                    event.preventDefault()
+                    resizeViewport({
+                      width: Math.max(
+                        1,
+                        Math.min(3840, viewportOverride.width + dx)
+                      ),
+                      height: Math.max(
+                        1,
+                        Math.min(2160, viewportOverride.height + dy)
+                      )
+                    })
+                  }}
+                >
+                  <span
+                    className={cn('rounded-sm border-current', grip)}
+                    aria-hidden="true"
+                  />
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div
+            className={cn(
+              viewportOverride
+                ? 'absolute top-5 left-5 origin-top-left'
+                : 'relative size-full'
+            )}
+            style={
+              viewportOverride
+                ? {
+                    width: viewportOverride.width,
+                    height: viewportOverride.height,
+                    transform: `scale(${viewportScale})`
+                  }
+                : undefined
+            }
+          >
+            {findOpen ? (
+              <div
+                className="absolute top-2 right-2 z-20 flex w-[min(20rem,calc(100%-1rem))] items-center gap-1 rounded-md border border-white/10 bg-zinc-900 p-1 shadow-lg"
+                role="search"
+                aria-label="Find in page"
+              >
+                <Input
+                  ref={findInputRef}
+                  type="text"
+                  name="find"
+                  aria-label="Find in page"
+                  className="h-8 min-w-0 flex-1"
+                  placeholder="Find in page"
+                  maxLength={4_096}
+                  value={findValue}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setFindValue(value)
+                    findInPage(value, true, false)
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Escape' &&
+                      !event.shiftKey &&
+                      !event.altKey &&
+                      !event.metaKey &&
+                      !event.ctrlKey
+                    ) {
+                      event.preventDefault()
+                      closeFind()
+                    } else if (
+                      event.key === 'Enter' &&
+                      !event.altKey &&
+                      !event.metaKey &&
+                      !event.ctrlKey
+                    ) {
+                      event.preventDefault()
+                      findInPage(findValue, !event.shiftKey, true)
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Find previous"
+                  title="Find previous"
+                  disabled={!findValue}
+                  onClick={() => findInPage(findValue, false, true)}
+                >
+                  <ChevronUpIcon />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Find next"
+                  title="Find next"
+                  disabled={!findValue}
+                  onClick={() => findInPage(findValue, true, true)}
+                >
+                  <ChevronDownIcon />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Close find"
+                  title="Close find"
+                  onClick={closeFind}
+                >
+                  <XMarkIcon />
+                </Button>
+              </div>
+            ) : null}
+            {localBrowser && computerId ? (
+              <LocalBrowserWebview
+                key={connectionRevision}
+                panel={panel}
+                active={active}
+                inputBlocked={inputBlocked}
+                viewport={viewportOverride}
+                onConnection={setLocalConnection}
+                onMessage={receiveMessage}
+                onPaintRetentionChange={setLocalBrowserPaintRetention}
+                onFocusSurface={onFocusSurface}
+              />
+            ) : (
+              <canvas
+                ref={canvasRef}
+                tabIndex={0}
+                className={cn(
+                  'block size-full touch-pinch-zoom select-none bg-zinc-950 object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300',
+                  viewportOverride && 'ring-1 ring-border'
+                )}
+                aria-label="Browser viewport. Streamed page content is not available to assistive technology."
+                onFocus={onFocusSurface}
+                onPointerMove={(event) => {
+                  if (event.pointerType === 'touch') {
+                    const touch = touchRef.current
+                    if (!touch || touch.pointerId !== event.pointerId) {
+                      return
+                    }
+
+                    // Wait for a deliberate swipe before scrolling; a tap must not
+                    // press a link (or start a drag) until the finger is lifted.
+                    if (!touch.scrolling) {
+                      if (
+                        Math.hypot(
+                          event.clientX - touch.startX,
+                          event.clientY - touch.startY
+                        ) < 8
+                      ) {
+                        return
+                      }
+
+                      touch.scrolling = true
+                      // Wheel input targets the remote cursor, including nested
+                      // scrollers. Keep it at the gesture's starting point.
+                      send({
+                        type: 'pointer',
+                        phase: 'move',
+                        x: touch.x,
+                        y: touch.y
+                      })
+                    }
+
+                    const position = point(event)
+                    send({
+                      type: 'wheel',
+                      deltaX: Math.max(
+                        -10_000,
+                        Math.min(10_000, touch.x - position.x)
+                      ),
+                      deltaY: Math.max(
+                        -10_000,
+                        Math.min(10_000, touch.y - position.y)
+                      )
+                    })
+                    touch.x = position.x
+                    touch.y = position.y
+                    return
+                  }
+
                   if (
-                    Math.hypot(
-                      event.clientX - touch.startX,
-                      event.clientY - touch.startY
-                    ) < 8
+                    !stateRef.current?.controlled &&
+                    !pointerActiveRef.current
                   ) {
                     return
                   }
 
-                  touch.scrolling = true
-                  // Wheel input targets the remote cursor, including nested
-                  // scrollers. Keep it at the gesture's starting point.
+                  send({ type: 'pointer', phase: 'move', ...point(event) })
+                }}
+                onPointerLeave={(event) => {
+                  event.currentTarget.style.cursor = 'default'
+                }}
+                onPointerDown={(event) => {
+                  if (event.pointerType === 'touch' && !event.isPrimary) {
+                    touchRef.current = null
+                    return
+                  }
+
+                  event.preventDefault()
+                  onFocusSurface()
+                  event.currentTarget.focus({ preventScroll: true })
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                  if (event.pointerType === 'touch') {
+                    touchRef.current = {
+                      pointerId: event.pointerId,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      ...point(event),
+                      scrolling: false
+                    }
+                    send({ type: 'takeControl' })
+                    return
+                  }
+
+                  pointerActiveRef.current = true
+                  send({ type: 'takeControl' })
                   send({
                     type: 'pointer',
-                    phase: 'move',
-                    x: touch.x,
-                    y: touch.y
+                    phase: 'down',
+                    ...point(event),
+                    button: button(event.button)
                   })
-                }
-
-                const position = point(event)
-                send({
-                  type: 'wheel',
-                  deltaX: Math.max(
-                    -10_000,
-                    Math.min(10_000, touch.x - position.x)
-                  ),
-                  deltaY: Math.max(
-                    -10_000,
-                    Math.min(10_000, touch.y - position.y)
-                  )
-                })
-                touch.x = position.x
-                touch.y = position.y
-                return
-              }
-
-              if (!stateRef.current?.controlled && !pointerActiveRef.current) {
-                return
-              }
-
-              send({ type: 'pointer', phase: 'move', ...point(event) })
-            }}
-            onPointerLeave={(event) => {
-              event.currentTarget.style.cursor = 'default'
-            }}
-            onPointerDown={(event) => {
-              if (event.pointerType === 'touch' && !event.isPrimary) {
-                touchRef.current = null
-                return
-              }
-
-              event.preventDefault()
-              onFocusSurface()
-              event.currentTarget.focus({ preventScroll: true })
-              event.currentTarget.setPointerCapture(event.pointerId)
-              if (event.pointerType === 'touch') {
-                touchRef.current = {
-                  pointerId: event.pointerId,
-                  startX: event.clientX,
-                  startY: event.clientY,
-                  ...point(event),
-                  scrolling: false
-                }
-                send({ type: 'takeControl' })
-                return
-              }
-
-              pointerActiveRef.current = true
-              send({ type: 'takeControl' })
-              send({
-                type: 'pointer',
-                phase: 'down',
-                ...point(event),
-                button: button(event.button)
-              })
-            }}
-            onPointerUp={(event) => {
-              event.preventDefault()
-              if (event.pointerType === 'touch') {
-                const touch = touchRef.current
-                if (touch?.pointerId === event.pointerId) {
-                  touchRef.current = null
-                  if (!touch.scrolling) {
-                    send({
-                      type: 'pointer',
-                      phase: 'down',
-                      x: touch.x,
-                      y: touch.y,
-                      button: 'left'
-                    })
-                    send({
-                      type: 'pointer',
-                      phase: 'up',
-                      x: touch.x,
-                      y: touch.y,
-                      button: 'left'
-                    })
-                  }
-                }
-
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  event.currentTarget.releasePointerCapture(event.pointerId)
-                }
-
-                return
-              }
-
-              send({
-                type: 'pointer',
-                phase: 'up',
-                ...point(event),
-                button: button(event.button)
-              })
-              pointerActiveRef.current = false
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                event.currentTarget.releasePointerCapture(event.pointerId)
-              }
-            }}
-            onLostPointerCapture={(event) => {
-              if (touchRef.current?.pointerId === event.pointerId) {
-                touchRef.current = null
-              }
-            }}
-            onPointerCancel={(event) => {
-              if (event.pointerType === 'touch') {
-                touchRef.current = null
-                return
-              }
-
-              send({
-                type: 'pointer',
-                phase: 'up',
-                ...point(event),
-                button: button(event.button)
-              })
-              pointerActiveRef.current = false
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                event.currentTarget.releasePointerCapture(event.pointerId)
-              }
-            }}
-            onContextMenu={(event) => event.preventDefault()}
-            onKeyDown={(event) => key(event, 'down')}
-            onKeyUp={(event) => key(event, 'up')}
-            onPaste={(event) => {
-              event.preventDefault()
-              const text = event.clipboardData.getData('text/plain')
-              if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
-                setError(
-                  'Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.'
-                )
-                return
-              }
-
-              if (!connectionRef.current || inputBlocked) {
-                setError(
-                  'Paste was not sent. Wait for the browser to become available, then retry.'
-                )
-                return
-              }
-
-              send({ type: 'takeControl' })
-              send({ type: 'insertText', text })
-            }}
-          />
-        )}
-        {state === null || state.url === 'about:blank' ? (
-          <div
-            className="pointer-events-none absolute inset-0 bg-zinc-950"
-            aria-hidden="true"
-          />
-        ) : null}
-        {failure ? (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center text-zinc-400"
-            role="alert"
-          >
-            <strong className="text-zinc-50">Browser unavailable</strong>
-            <span>{failure.message}</span>
-            {failure.installCommand ? (
-              <span>
-                Setup downloads and builds the browser container. This can take
-                several minutes.
-              </span>
-            ) : null}
-            <div className="flex items-center gap-2">
-              {failure.installCommand ? (
-                <Button
-                  type="button"
-                  disabled={installingBrowser}
-                  onClick={() => {
-                    setInstallingBrowser(true)
-                    void parseResponse(rpc.api.browser.install.$post())
-                      .then(() => setConnectionRevision((value) => value + 1))
-                      .catch((cause) =>
-                        setFailure((current) =>
-                          current
-                            ? {
-                                ...current,
-                                message:
-                                  cause instanceof Error
-                                    ? cause.message
-                                    : 'Could not set up the browser.'
-                              }
-                            : null
-                        )
-                      )
-                      .finally(() => setInstallingBrowser(false))
-                  }}
-                >
-                  {installingBrowser ? 'Setting up browser…' : 'Set up browser'}
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={installingBrowser}
-                onClick={() => {
-                  setFailure(null)
-                  setConnectionRevision((value) => value + 1)
                 }}
+                onPointerUp={(event) => {
+                  event.preventDefault()
+                  if (event.pointerType === 'touch') {
+                    const touch = touchRef.current
+                    if (touch?.pointerId === event.pointerId) {
+                      touchRef.current = null
+                      if (!touch.scrolling) {
+                        send({
+                          type: 'pointer',
+                          phase: 'down',
+                          x: touch.x,
+                          y: touch.y,
+                          button: 'left'
+                        })
+                        send({
+                          type: 'pointer',
+                          phase: 'up',
+                          x: touch.x,
+                          y: touch.y,
+                          button: 'left'
+                        })
+                      }
+                    }
+
+                    if (
+                      event.currentTarget.hasPointerCapture(event.pointerId)
+                    ) {
+                      event.currentTarget.releasePointerCapture(event.pointerId)
+                    }
+
+                    return
+                  }
+
+                  send({
+                    type: 'pointer',
+                    phase: 'up',
+                    ...point(event),
+                    button: button(event.button)
+                  })
+                  pointerActiveRef.current = false
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.releasePointerCapture(event.pointerId)
+                  }
+                }}
+                onLostPointerCapture={(event) => {
+                  if (touchRef.current?.pointerId === event.pointerId) {
+                    touchRef.current = null
+                  }
+                }}
+                onPointerCancel={(event) => {
+                  if (event.pointerType === 'touch') {
+                    touchRef.current = null
+                    return
+                  }
+
+                  send({
+                    type: 'pointer',
+                    phase: 'up',
+                    ...point(event),
+                    button: button(event.button)
+                  })
+                  pointerActiveRef.current = false
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.releasePointerCapture(event.pointerId)
+                  }
+                }}
+                onContextMenu={(event) => event.preventDefault()}
+                onKeyDown={(event) => key(event, 'down')}
+                onKeyUp={(event) => key(event, 'up')}
+                onPaste={(event) => {
+                  event.preventDefault()
+                  const text = event.clipboardData.getData('text/plain')
+                  if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
+                    setError(
+                      'Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.'
+                    )
+                    return
+                  }
+
+                  if (!connectionRef.current || inputBlocked) {
+                    setError(
+                      'Paste was not sent. Wait for the browser to become available, then retry.'
+                    )
+                    return
+                  }
+
+                  send({ type: 'takeControl' })
+                  send({ type: 'insertText', text })
+                }}
+              />
+            )}
+            {state === null || state.url === 'about:blank' ? (
+              <div
+                className="pointer-events-none absolute inset-0 bg-zinc-950"
+                aria-hidden="true"
+              />
+            ) : null}
+            {failure ? (
+              <div
+                className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center text-zinc-400"
+                role="alert"
               >
-                Retry
-              </Button>
-            </div>
+                <strong className="text-zinc-50">Browser unavailable</strong>
+                <span>{failure.message}</span>
+                {failure.installCommand ? (
+                  <span>
+                    Setup downloads and builds the browser container. This can
+                    take several minutes.
+                  </span>
+                ) : null}
+                <div className="flex items-center gap-2">
+                  {failure.installCommand ? (
+                    <Button
+                      type="button"
+                      disabled={installingBrowser}
+                      onClick={() => {
+                        setInstallingBrowser(true)
+                        void parseResponse(rpc.api.browser.install.$post())
+                          .then(() =>
+                            setConnectionRevision((value) => value + 1)
+                          )
+                          .catch((cause) =>
+                            setFailure((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    message:
+                                      cause instanceof Error
+                                        ? cause.message
+                                        : 'Could not set up the browser.'
+                                  }
+                                : null
+                            )
+                          )
+                          .finally(() => setInstallingBrowser(false))
+                      }}
+                    >
+                      {installingBrowser
+                        ? 'Setting up browser…'
+                        : 'Set up browser'}
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={installingBrowser}
+                    onClick={() => {
+                      setFailure(null)
+                      setConnectionRevision((value) => value + 1)
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        </div>
       </div>
     </section>
   )
