@@ -172,7 +172,7 @@ export function makeBrowser(
         },
         true
       )
-      const expandWheelInput = trackTerminalScrolling(
+      trackTerminalScrolling(
         state.wrapper,
         terminal,
         () => undefined,
@@ -274,7 +274,6 @@ export function makeBrowser(
       })
       terminal.onData((data) => {
         if (dependencies.canInput()) {
-          data = expandWheelInput(data)
           const modifiers = state.inputModifiers
           if (modifiers) {
             state.inputModifiers = null
