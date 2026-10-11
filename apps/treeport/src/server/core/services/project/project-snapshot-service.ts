@@ -108,7 +108,8 @@ export class ProjectSnapshotService {
   }
 
   getProjectSnapshot(
-    projectId: string
+    projectId: string,
+    freshGitWorktreeId?: string
   ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
     const collectProjectsSnapshot = this.collectProjectsSnapshot.bind(this)
 
@@ -120,6 +121,46 @@ export class ProjectSnapshotService {
         return yield* Effect.fail(
           new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
         )
+      }
+
+      // Context callers need current Git identity, not the bounded background
+      // refresh's durable inventory. Overlay the response without reconciling
+      // trees or writing cached metadata; ordinary metadata reads stay Git-free.
+      if (freshGitWorktreeId && project.kind === 'repository') {
+        const worktree = project.worktrees.find(
+          (candidate) => candidate.id === freshGitWorktreeId
+        )
+        if (!worktree) {
+          return yield* Effect.fail(
+            new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
+          )
+        }
+
+        const git = yield* GitPort
+        const inventory = yield* git
+          .listWorktrees(project.repositoryPath)
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new DomainError('PROJECT_UNAVAILABLE', error.message, 503)
+            )
+          )
+        const live = inventory.find(
+          (candidate) => candidate.path === worktree.path && !candidate.prunable
+        )
+        if (!live) {
+          return yield* Effect.fail(
+            new DomainError(
+              'WORKTREE_UNAVAILABLE',
+              'Registered tree is missing from the live Git inventory',
+              409
+            )
+          )
+        }
+
+        worktree.head = live.head ?? ''
+        worktree.branch = live.branch
+        worktree.detached = live.detached
       }
 
       return project
