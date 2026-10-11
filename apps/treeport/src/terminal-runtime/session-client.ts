@@ -49,6 +49,31 @@ function sessionSocketPath(directory: string): string {
   )
 }
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (cause) {
+    // ESRCH is the expected liveness-probe result for a departed process.
+    // Permission/OS failures cannot establish death and must propagate.
+    // SAFETY: Node signaling errors expose errno codes.
+    if ((cause as NodeJS.ErrnoException).code === 'ESRCH') {
+      return false
+    }
+
+    throw new Error(`Cannot verify session process ${pid}`, { cause })
+  }
+}
+
+interface PendingRequest {
+  resolve: (status: SessionStatus | null) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout> | null
+  deadline: number
+  remainingMs: number
+  method: SessionRequest['method']
+}
+
 /** A detachable engine-side handle. dispose() NEVER terminates the PTY. */
 export class PersistentSession implements EnginePty {
   private readonly dataListeners = new Set<(data: string) => void>()
@@ -59,16 +84,10 @@ export class PersistentSession implements EnginePty {
     (cols: number, rows: number) => void
   >()
   private readonly markerListeners = new Set<(data: string) => void>()
-  private readonly pending = new Map<
-    string,
-    {
-      resolve: (status: SessionStatus | null) => void
-      reject: (error: Error) => void
-      timer: ReturnType<typeof setTimeout>
-    }
-  >()
+  private readonly pending = new Map<string, PendingRequest>()
   private socket: net.Socket | null = null
   private status: SessionStatus | null = null
+  private termination: Promise<void> | null = null
   private closed = false
   private archivePaused = false
   private archiveResume: (() => void) | null = null
@@ -275,7 +294,10 @@ export class PersistentSession implements EnginePty {
             }
 
             this.pending.delete(frame.id)
-            clearTimeout(pending.timer)
+            if (pending.timer !== null) {
+              clearTimeout(pending.timer)
+            }
+
             if (frame.error) {
               pending.reject(new Error(frame.error))
             } else {
@@ -342,15 +364,10 @@ export class PersistentSession implements EnginePty {
           await fs.readFile(path.join(this.directory, 'status.json'), 'utf8')
         )
       )
-      try {
-        process.kill(status.ownerPid, 0)
+      if (processExists(status.ownerPid)) {
         throw error
-      } catch (cause) {
-        // SAFETY: Node signaling errors expose errno codes.
-        if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') {
-          throw cause
-        }
       }
+
       this.status = status
       this.archived = true
       this.socket = null
@@ -482,20 +499,32 @@ export class PersistentSession implements EnginePty {
 
     const id = crypto.randomUUID()
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => {
-          this.pending.delete(id)
-          reject(new Error(`Session request timed out: ${input.method}`))
-          // A timed-out input must not be retried automatically (it may have run).
-          this.fail(
-            new Error('Session request timed out; command remains alive')
-          )
-        },
-        this.replaying || input.method === 'attach' ? 120000 : 10000
-      )
-      this.pending.set(id, { resolve, reject, timer })
+      const pending: PendingRequest = {
+        resolve,
+        reject,
+        timer: null,
+        deadline: 0,
+        remainingMs:
+          this.replaying || input.method === 'attach' ? 120000 : 10000,
+        method: input.method
+      }
+      this.pending.set(id, pending)
+      if (!this.archivePaused) {
+        this.armRequestTimeout(id, pending)
+      }
+
       socket.write(`${JSON.stringify({ ...input, id })}\n`)
     })
+  }
+
+  private armRequestTimeout(id: string, pending: PendingRequest): void {
+    pending.deadline = Date.now() + pending.remainingMs
+    pending.timer = setTimeout(() => {
+      this.pending.delete(id)
+      pending.reject(new Error(`Session request timed out: ${pending.method}`))
+      // Never retry a timed-out input: it may already have run.
+      this.fail(new Error('Session request timed out; command remains alive'))
+    }, pending.remainingMs)
   }
 
   private submit(input: RequestInput): void {
@@ -515,11 +544,32 @@ export class PersistentSession implements EnginePty {
     await this.request({ method: 'resize', cols, rows })
   }
   pause(): void {
+    if (this.archivePaused) {
+      return
+    }
+
     this.archivePaused = true
+    // Control replies share this bounded stream. Intentional read backpressure
+    // must not consume a request's timeout budget while its reply is unreadable.
+    for (const pending of this.pending.values()) {
+      if (pending.timer !== null) {
+        clearTimeout(pending.timer)
+        pending.timer = null
+        pending.remainingMs = Math.max(0, pending.deadline - Date.now())
+      }
+    }
     this.socket?.pause()
   }
   resume(): void {
-    this.archivePaused = false
+    if (this.archivePaused) {
+      this.archivePaused = false
+      for (const [id, pending] of this.pending) {
+        if (pending.timer === null) {
+          this.armRequestTimeout(id, pending)
+        }
+      }
+    }
+
     this.archiveResume?.()
     this.archiveResume = null
     this.socket?.resume()
@@ -600,6 +650,11 @@ export class PersistentSession implements EnginePty {
           const frame = sessionFrameSchema.parse(
             JSON.parse(buffer.slice(0, boundary))
           )
+          if (frame.type === 'fault') {
+            finish(null, new Error(`Session control failed: ${frame.message}`))
+            return
+          }
+
           if (
             frame.type !== 'response' ||
             frame.id !== id ||
@@ -628,7 +683,16 @@ export class PersistentSession implements EnginePty {
     })
   }
 
-  async terminate(): Promise<void> {
+  terminate(): Promise<void> {
+    // Concurrent terminal/tree closes must share the same ownership check and
+    // result instead of replacing each other's authenticated control socket.
+    this.termination ??= this.terminateOwnedSession().finally(() => {
+      this.termination = null
+    })
+    return this.termination
+  }
+
+  private async terminateOwnedSession(): Promise<void> {
     const current = await this.control('inspect').catch(async (error) => {
       // SAFETY: Node connection errors expose errno codes. Never unlink an
       // unidentified live owner; a dead cached owner permits explicit cleanup.
@@ -641,19 +705,17 @@ export class PersistentSession implements EnginePty {
         throw error
       }
 
-      let alive = true
-      try {
-        process.kill(this.status.ownerPid, 0)
-      } catch (cause) {
-        // SAFETY: Node signaling errors expose errno codes.
-        if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') {
-          throw cause
-        }
-
-        alive = false
-      }
-      if (alive) {
+      if (processExists(this.status.ownerPid)) {
         throw error
+      }
+
+      // An orphan can ignore SIGHUP. A cached PID is not authority to signal it
+      // (it may also have been reused); retain the evidence and block cleanup.
+      if (processExists(this.status.pid)) {
+        throw new Error(
+          'Session keeper is gone but its recorded command still exists; identify ownership before closing',
+          { cause: error }
+        )
       }
 
       const source = await fs
@@ -711,7 +773,10 @@ export class PersistentSession implements EnginePty {
   }
   private rejectPending(error: Error): void {
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
+      if (pending.timer !== null) {
+        clearTimeout(pending.timer)
+      }
+
       pending.reject(error)
     }
     this.pending.clear()

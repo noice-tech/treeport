@@ -177,7 +177,9 @@ async function connectOrStartTerminalHost(
 ): Promise<LegacyClient> {
   const scope = await Effect.runPromise(Scope.make())
   const client = await runLegacy(
-    Scope.extend(connectOrStartTerminalHostEffect(options), scope)
+    Scope.extend(connectOrStartTerminalHostEffect(options), scope).pipe(
+      Effect.onError(() => Scope.close(scope, Exit.void))
+    )
   )
   await runLegacy(client.commitStartup())
   return legacyClient(client, scope)
@@ -817,14 +819,14 @@ child.once('exit', (code) => process.exit(code ?? 1))
     // last published fence, but preserve an uncommitted partial write as-is.
     await recoveredDaemon.createTerminal({
       terminalId: 'archived-terminal',
-      worktreeId: 'worktree-host',
+      worktreeId: 'worktree-archive',
       name: 'Lost keeper',
       createdAt: new Date().toISOString(),
       cwd: root,
       argv: [
         process.execPath,
         '-e',
-        "process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); console.log('ARCHIVE_UNICODE λ🙂'); setInterval(() => {}, 1000)"
+        "process.on('SIGHUP',()=>{}); process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); console.log('ARCHIVE_UNICODE λ🙂'); setInterval(() => {}, 1000)"
       ],
       shellCommand: null,
       interactiveShell: false,
@@ -921,6 +923,20 @@ child.once('exit', (code) => process.exit(code ?? 1))
       unavailableManifest.socketPath,
       unavailableManifest.socketPath + '.unavailable'
     )
+    // Incomplete restoration cannot publish a ready backend with an inventory
+    // that destructive worktree operations might mistake for authoritative.
+    await expect(
+      connectOrStartTerminalHost({
+        ...options,
+        journalLimitBytes: 2 * 1024 * 1024
+      })
+    ).rejects.toThrow()
+    expect(processExists(unavailableStatus.ownerPid)).toBe(true)
+    expect(processExists(unavailableStatus.pid)).toBe(true)
+    await fs.rename(
+      unavailableManifest.socketPath + '.unavailable',
+      unavailableManifest.socketPath
+    )
     const archivedDaemon = await connectOrStartTerminalHost({
       ...options,
       journalLimitBytes: 2 * 1024 * 1024
@@ -945,15 +961,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
       )?.pid
     ).toBe(commandPid)
     expect(await archivedDaemon.terminalState('unavailable-terminal')).toEqual({
-      status: 'missing',
+      status: 'running',
       exitCode: null
     })
     expect(processExists(unavailableStatus.ownerPid)).toBe(true)
     expect(processExists(unavailableStatus.pid)).toBe(true)
-    await fs.rename(
-      unavailableManifest.socketPath + '.unavailable',
-      unavailableManifest.socketPath
-    )
     expect(
       (await probeTerminalHostCompatibility(dataDir, runtimeDir)).compatible
     ).toBe(true)
@@ -978,6 +990,22 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(
       await finalDaemon.captureTerminal('archived-terminal', 10)
     ).toContain('ARCHIVE_UNPUBLISHED_TAIL')
+    // The removal service awaits killWorktree before recording terminals_stopped.
+    // Refuse that boundary while the unverified command survives, and keep it
+    // in the inventory so subsequent removals cannot falsely report success.
+    await expect(finalDaemon.killWorktree('worktree-archive')).rejects.toThrow()
+    expect(await finalDaemon.listTerminals('worktree-archive')).toEqual([
+      expect.objectContaining({ id: 'archived-terminal', status: 'exited' })
+    ])
+    expect(processExists(archiveStatus.pid)).toBe(true)
+    await fs.access(path.join(archiveDirectory, 'manifest.json'))
+    await expect(finalDaemon.killWorktree('worktree-archive')).rejects.toThrow()
+    // Explicit cleanup of the private fixture's known, still-live group.
+    process.kill(-archiveStatus.pid, 'SIGKILL')
+    await waitFor(
+      () => !processExists(archiveStatus.pid),
+      'The private archive command did not exit'
+    )
     await finalDaemon.killTerminal('archived-terminal')
     await expect(fs.access(archiveDirectory)).rejects.toMatchObject({
       code: 'ENOENT'

@@ -384,13 +384,9 @@ export class TerminalHostSessions {
               },
               owner
             )
-          }).pipe(
-            Effect.catchAll((error) =>
-              Effect.logWarning(
-                `Could not restore retained terminal session ${name}: ${error.message}. Its files and any surviving command were left untouched.`
-              )
-            )
-          )
+          })
+          // Restoration failure is not an authoritative empty inventory. Fail
+          // readiness so destructive operations cannot overlook a live keeper.
         }
       }
 
@@ -1974,8 +1970,21 @@ export class TerminalHostSessions {
 
   private beginDestroy(
     session: HostedTerminalSession
-  ): Effect.Effect<Deferred.Deferred<void, unknown>> {
+  ): Effect.Effect<Deferred.Deferred<void, unknown>, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
+      if ((yield* this.session(session.id)) !== session) {
+        const done = yield* Deferred.make<void, unknown>()
+        yield* Deferred.succeed(done, undefined)
+        return done
+      }
+
+      if (session.pty instanceof PersistentSession) {
+        // Keep ownership visible if termination fails. A later worktree close
+        // must retry/fail, not report success from an already emptied map.
+        const owner = session.pty
+        yield* nodePromise(() => owner.terminate())
+      }
+
       const removed = yield* SynchronizedRef.modify(
         this.sessions,
         (current) => {
@@ -1992,11 +2001,6 @@ export class TerminalHostSessions {
         const done = yield* Deferred.make<void, unknown>()
         yield* Deferred.succeed(done, undefined)
         return done
-      }
-
-      if (session.pty instanceof PersistentSession) {
-        const owner = session.pty
-        yield* nodePromise(() => owner.terminate()).pipe(Effect.orDie)
       }
 
       yield* Scope.close(session.scope, Exit.void)

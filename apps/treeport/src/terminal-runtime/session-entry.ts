@@ -28,6 +28,63 @@ interface Engine {
     reject: (error: Error) => void
   }>
 }
+interface ProcessIdentity {
+  pid: number
+  parentPid: number
+  groupPid: number
+  startedAt: string
+  zombie: boolean
+}
+
+async function processSnapshot(): Promise<Map<number, ProcessIdentity>> {
+  // Enumeration is required for descendants in separate groups. execFile
+  // failures propagate; an unavailable process table is not an empty tree.
+  const { stdout } = await promisify(execFile)('ps', [
+    '-axo',
+    'pid=,ppid=,pgid=,stat=,lstart='
+  ])
+  const snapshot = new Map<number, ProcessIdentity>()
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) {
+      continue
+    }
+
+    const [rawPid, rawParent, rawGroup, state, ...started] = line
+      .trim()
+      .split(/\s+/u)
+    const pid = Number(rawPid),
+      parentPid = Number(rawParent),
+      groupPid = Number(rawGroup)
+    if (
+      !Number.isSafeInteger(pid) ||
+      pid <= 0 ||
+      !Number.isSafeInteger(parentPid) ||
+      parentPid < 0 ||
+      !Number.isSafeInteger(groupPid) ||
+      groupPid < 0 ||
+      !state ||
+      started.length !== 5
+    ) {
+      throw new Error(
+        'Invalid process identity returned during session cleanup'
+      )
+    }
+
+    snapshot.set(pid, {
+      pid,
+      parentPid,
+      groupPid,
+      startedAt: started.join(' '),
+      zombie: state.startsWith('Z')
+    })
+  }
+  if (!snapshot.has(process.pid)) {
+    throw new Error('Process enumeration did not identify the session keeper')
+  }
+
+  return snapshot
+}
+
 const EMERGENCY_BUFFER_BYTES = 1024 * 1024
 
 async function main(): Promise<void> {
@@ -83,6 +140,9 @@ async function main(): Promise<void> {
   }
   let engine: Engine | null = null
   let terminating = false
+  // A failed close may already have reparented descendants by stopping their
+  // leader. Preserve their identities so a retry cannot mistake them for gone.
+  const terminationTargets = new Map<number, ProcessIdentity>()
   let sourcePaused = false
   let pendingBytes = 0
   const pending: SessionRecordInput[] = []
@@ -534,40 +594,105 @@ async function main(): Promise<void> {
                 fs.renameSync(`${manifestPath}.tmp`, manifestPath)
                 break
               case 'terminate': {
+                const original = await processSnapshot()
+                const leader = original.get(child.pid)
+                if (
+                  leader &&
+                  (status.exitCode !== null || leader.parentPid !== process.pid)
+                ) {
+                  throw new Error(
+                    'PTY leader PID no longer identifies this session; refusing cleanup'
+                  )
+                }
+
+                const targets = terminationTargets
+                const exitBeforeTermination = status.exitCode
                 terminating = true
-                const rows = await promisify(execFile)('ps', [
-                  '-axo',
-                  'pid=,ppid='
-                ]).then(
-                  (result) => result.stdout,
-                  () => ''
-                )
-                const children = new Map<number, number[]>()
-                for (const line of rows.split('\n')) {
-                  const [pid, parent] = line.trim().split(/\s+/u).map(Number)
-                  if (pid && parent) {
-                    children.set(parent, [...(children.get(parent) ?? []), pid])
-                  }
-                }
-                const descendants: number[] = []
-                const remaining = [...(children.get(child.pid) ?? [])]
-                while (remaining.length) {
-                  const pid = remaining.pop()!
-                  descendants.push(pid)
-                  remaining.push(...(children.get(pid) ?? []))
-                }
-                if (status.exitCode === null) {
+                try {
                   for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+                    const snapshot =
+                      signal === 'SIGTERM' ? original : await processSnapshot()
+                    const currentLeader = snapshot.get(child.pid)
+                    if (
+                      currentLeader &&
+                      (!leader ||
+                        currentLeader.startedAt !== leader.startedAt ||
+                        currentLeader.parentPid !== process.pid)
+                    ) {
+                      throw new Error(
+                        'PTY leader PID changed during session cleanup'
+                      )
+                    }
+
+                    const group = [...snapshot.values()].filter(
+                      (row) => row.groupPid === child.pid && !row.zombie
+                    )
+                    if (
+                      targets.size > 0 &&
+                      group.length > 0 &&
+                      !group.some(
+                        (row) =>
+                          targets.get(row.pid)?.startedAt === row.startedAt
+                      )
+                    ) {
+                      throw new Error(
+                        'Session process group no longer has an identified member; refusing cleanup'
+                      )
+                    }
+
+                    const children = new Map<number, number[]>()
+                    for (const row of snapshot.values()) {
+                      children.set(row.parentPid, [
+                        ...(children.get(row.parentPid) ?? []),
+                        row.pid
+                      ])
+                    }
+                    const remaining = [
+                      ...(currentLeader ? [child.pid] : []),
+                      ...group.map((row) => row.pid),
+                      ...[...targets.values()]
+                        .filter(
+                          (row) =>
+                            snapshot.get(row.pid)?.startedAt === row.startedAt
+                        )
+                        .map((row) => row.pid)
+                    ]
+                    const seen = new Set<number>()
+                    while (remaining.length) {
+                      const pid = remaining.pop()!
+                      if (seen.has(pid)) {
+                        continue
+                      }
+
+                      seen.add(pid)
+                      const row = snapshot.get(pid)
+                      if (!row || row.zombie) {
+                        continue
+                      }
+
+                      targets.set(pid, row)
+                      remaining.push(...(children.get(pid) ?? []))
+                    }
+                    // A leader's exit does not empty its process group.
                     for (const pid of [
-                      -child.pid,
-                      ...[...descendants].reverse()
+                      ...(group.length ? [-child.pid] : []),
+                      ...[...seen]
+                        .reverse()
+                        .filter(
+                          (pid) => snapshot.get(pid)?.groupPid !== child.pid
+                        )
                     ]) {
                       try {
                         process.kill(pid, signal)
-                      } catch (error) {
-                        // SAFETY: Node process signaling errors have an errno code.
-                        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-                          throw error
+                      } catch (cause) {
+                        // Processes can exit between enumeration and signaling.
+                        // ESRCH alone is safe; permission/OS failures propagate.
+                        // SAFETY: Node signaling failures expose errno codes.
+                        if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') {
+                          throw new Error(
+                            `Cannot signal session process ${pid}`,
+                            { cause }
+                          )
                         }
                       }
                     }
@@ -575,27 +700,66 @@ async function main(): Promise<void> {
                       await new Promise((resolve) => setTimeout(resolve, 500))
                     }
                   }
-                }
 
-                await new Promise<void>((resolve) =>
-                  socket.end(
-                    JSON.stringify({
-                      type: 'response',
-                      id: request.id,
-                      status: { ...status },
-                      error: null
-                    }) + '\n',
-                    resolve
+                  // Retain discovery/journal evidence unless the identified
+                  // tree and its group have actually stopped.
+                  const deadline = Date.now() + 1000
+                  while (true) {
+                    const snapshot = await processSnapshot()
+                    if (
+                      ![...snapshot.values()].some(
+                        (row) =>
+                          !row.zombie &&
+                          (row.groupPid === child.pid ||
+                            targets.get(row.pid)?.startedAt === row.startedAt)
+                      )
+                    ) {
+                      break
+                    }
+
+                    if (Date.now() >= deadline) {
+                      throw new Error(
+                        'Session cleanup left identified processes running'
+                      )
+                    }
+
+                    await new Promise((resolve) => setTimeout(resolve, 25))
+                  }
+
+                  journal.close()
+                  await fs.promises.rm(directory, {
+                    recursive: true,
+                    force: true
+                  })
+                  await fs.promises.rm(manifest.socketPath, { force: true })
+                  // Acknowledge only after both termination and storage cleanup
+                  // succeed, so callers cannot advance removal prematurely.
+                  await new Promise<void>((resolve) =>
+                    socket.end(
+                      JSON.stringify({
+                        type: 'response',
+                        id: request.id,
+                        status: { ...status },
+                        error: null
+                      }) + '\n',
+                      resolve
+                    )
                   )
-                )
-                server.close()
-                journal.close()
-                await fs.promises.rm(manifest.socketPath, { force: true })
-                await fs.promises.rm(directory, {
-                  recursive: true,
-                  force: true
-                })
-                process.exit(0)
+                  server.close()
+                  process.exit(0)
+                } finally {
+                  // A failed explicit close is retryable; do not strand a live
+                  // keeper in a state that rejects control or drops capture.
+                  terminating = false
+                  if (
+                    exitBeforeTermination === null &&
+                    status.exitCode !== null
+                  ) {
+                    append({ type: 'exit', exitCode: status.exitCode })
+                  }
+
+                  publishStatus()
+                }
               }
             }
             send(socket, {
