@@ -51,6 +51,7 @@ class FakeSocket implements BrowserPanelSocket {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('window', { location: { reload: vi.fn() } })
   vi.stubGlobal(
     'fetch',
     vi.fn(
@@ -68,7 +69,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('connects the Browser workspace directly and preserves command and frame contracts', async () => {
+it('preserves command and frame contracts and reloads after reconnecting', async () => {
   const socket = new FakeSocket()
   const reconnectedSocket = new FakeSocket()
   let socketCount = 0
@@ -121,6 +122,7 @@ it('connects the Browser workspace directly and preserves command and frame cont
     data: Uint8Array.from([1, 2, 3])
   })
 
+  expect(window.location.reload).not.toHaveBeenCalled()
   expect(messages).toEqual([ready])
   expect(frames).toEqual([
     expect.objectContaining({
@@ -154,15 +156,9 @@ it('connects the Browser workspace directly and preserves command and frame cont
   )
   expect(fetch).toHaveBeenCalledTimes(2)
   reconnectedSocket.emitServer('message', ready)
-  expect(reconnectedSocket.emit.mock.calls).toEqual([
-    ['command', { type: 'setVisible', visible: true }],
-    ['command', { type: 'resize', width: 280, height: 180 }]
-  ])
+  expect(window.location.reload).toHaveBeenCalledOnce()
+  expect(reconnectedSocket.emit).not.toHaveBeenCalled()
 
   connection.dispose()
-  expect(reconnectedSocket.emit).toHaveBeenLastCalledWith('command', {
-    type: 'setVisible',
-    visible: false
-  })
   expect(reconnectedSocket.disconnect).toHaveBeenCalledOnce()
 })

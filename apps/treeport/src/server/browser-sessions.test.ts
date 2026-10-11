@@ -4,7 +4,6 @@ import * as Effect from 'effect/Effect'
 import * as Deferred from 'effect/Deferred'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z } from 'zod'
-import { BROWSER_PROTOCOL_VERSION } from '@treeport/shared'
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
@@ -675,8 +674,7 @@ describe('Browser sessions', () => {
         {
           ticket: ownerTicket.ticket,
           challenge: ownerTicket.challenge,
-          endpoint: `http://127.0.0.1:${address.port}/private/`,
-          protocolVersion: BROWSER_PROTOCOL_VERSION
+          endpoint: `http://127.0.0.1:${address.port}/private/`
         },
         ownerTransport
       )
@@ -1031,8 +1029,7 @@ describe('Browser sessions', () => {
         {
           ticket: resumedTicket.ticket,
           challenge: resumedTicket.challenge,
-          endpoint: `http://127.0.0.1:${address.port}/private/`,
-          protocolVersion: BROWSER_PROTOCOL_VERSION
+          endpoint: `http://127.0.0.1:${address.port}/private/`
         },
         resumedTransport
       )
@@ -1139,8 +1136,7 @@ describe('Browser sessions', () => {
         value.manager.acceptOwner(
           {
             ...ticket,
-            endpoint: `http://127.0.0.1:${address.port}/private/`,
-            protocolVersion: BROWSER_PROTOCOL_VERSION
+            endpoint: `http://127.0.0.1:${address.port}/private/`
           },
           {
             id: 'local-owner',

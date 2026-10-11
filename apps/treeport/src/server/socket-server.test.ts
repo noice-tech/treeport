@@ -29,7 +29,6 @@ import type {
   ProtocolSocketOptions
 } from '@treeport/shared'
 import {
-  BROWSER_PROTOCOL_VERSION,
   createProtocolSocket,
   TERMINAL_PROTOCOL_VERSION
 } from '@treeport/shared'
@@ -461,8 +460,7 @@ describe('Effect WebSocket real network', () => {
     >(`${value.url}/browsers`, {
       reconnection: false,
       auth: {
-        ticket: 'b'.repeat(43),
-        protocolVersion: BROWSER_PROTOCOL_VERSION
+        ticket: 'b'.repeat(43)
       }
     })
     const frame = new Promise<
@@ -512,8 +510,7 @@ describe('Effect WebSocket real network', () => {
       auth: {
         ticket: 'o'.repeat(43),
         challenge: 'c'.repeat(43),
-        endpoint: 'http://127.0.0.1:43210/private-owner/',
-        protocolVersion: BROWSER_PROTOCOL_VERSION
+        endpoint: 'http://127.0.0.1:43210/private-owner/'
       }
     })
     const claimed = await new Promise<BrowserOwnerServerMessage>((resolve) =>
@@ -587,8 +584,7 @@ describe('Effect WebSocket real network', () => {
     >(`${value.url}/browsers`, {
       reconnection: false,
       auth: {
-        ticket: 'b'.repeat(43),
-        protocolVersion: BROWSER_PROTOCOL_VERSION
+        ticket: 'b'.repeat(43)
       }
     })
 
@@ -623,8 +619,7 @@ describe('Effect WebSocket real network', () => {
       >(`${value.url}/browsers`, {
         reconnection: false,
         auth: {
-          ticket: 'b'.repeat(43),
-          protocolVersion: BROWSER_PROTOCOL_VERSION
+          ticket: 'b'.repeat(43)
         }
       })
     const browser = connect()
