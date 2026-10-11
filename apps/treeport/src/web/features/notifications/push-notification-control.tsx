@@ -13,7 +13,8 @@ export function PushNotificationControl() {
   const [subscription, setSubscription] = useState<PushSubscription | null>(
     null
   )
-  const [pending, setPending] = useState(supported)
+  const [checking, setChecking] = useState(supported)
+  const [pending, setPending] = useState(false)
   const [denied, setDenied] = useState(
     supported && Notification.permission === 'denied'
   )
@@ -30,7 +31,11 @@ export function PushNotificationControl() {
         const current =
           (await registration?.pushManager.getSubscription()) ?? null
         if (!cancelled) {
-          setSubscription(current)
+          setSubscription(
+            registration?.active && Notification.permission === 'granted'
+              ? current
+              : null
+          )
         }
       })
       .catch((error) => {
@@ -40,7 +45,7 @@ export function PushNotificationControl() {
       })
       .finally(() => {
         if (!cancelled) {
-          setPending(false)
+          setChecking(false)
         }
       })
     return () => {
@@ -48,26 +53,14 @@ export function PushNotificationControl() {
     }
   }, [supported])
 
-  const toggle = async () => {
+  const enable = async () => {
     // The permission request must be the first async browser call in this user
     // gesture. In particular, iOS disallows asking after registering a worker.
     setPending(true)
     try {
-      const permission = subscription
-        ? Notification.permission
-        : await Notification.requestPermission()
+      const permission = await Notification.requestPermission()
       setDenied(permission === 'denied')
-      if (!subscription && permission !== 'granted') {
-        return
-      }
-
-      if (subscription) {
-        // Remove server delivery first so a failed API request remains retryable.
-        await parseResponse(
-          rpc.api.push.unsubscribe.$post(subscription.endpoint)
-        )
-        await subscription.unsubscribe()
-        setSubscription(null)
+      if (permission !== 'granted') {
         return
       }
 
@@ -119,44 +112,44 @@ export function PushNotificationControl() {
       setSubscription(current)
     } catch (error) {
       notifyError(error, {
-        operation: subscription
-          ? 'disable push notifications'
-          : 'enable push notifications'
+        operation: 'enable push notifications'
       })
     } finally {
       setPending(false)
     }
   }
 
-  if (window.treeportDesktop) {
+  if (window.treeportDesktop || checking || subscription) {
     return null
   }
 
   return (
-    <div className="flex shrink-0 flex-col gap-1 border-t border-border p-3">
+    <div className="flex shrink-0 flex-col gap-2 px-3 py-3 sm:py-2">
       {supported ? (
         <Button
-          variant="outline"
+          type="button"
+          variant="ghost"
           size="sm"
-          disabled={pending || (denied && !subscription)}
+          disabled={pending || denied}
+          aria-busy={pending}
           onClick={() => {
-            void toggle()
+            void enable()
           }}
         >
-          {pending
-            ? 'Checking notifications…'
-            : subscription
-              ? 'Disable push notifications'
-              : 'Enable push notifications'}
+          {pending ? 'Enabling notifications…' : 'Enable push notifications'}
+          <span
+            className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+            aria-hidden="true"
+          />
         </Button>
       ) : null}
-      <p className="text-xs text-muted-foreground">
-        {denied
-          ? 'Notifications are blocked. Allow them in your browser settings.'
-          : supported
-            ? 'Receive terminal bells even when Treeport is closed.'
+      {denied || !supported ? (
+        <p className="text-base text-pretty text-muted-foreground sm:text-sm">
+          {denied
+            ? 'Notifications are blocked. Allow them in your browser settings.'
             : 'Push notifications require HTTPS and a supported browser. On iOS, add Treeport to your Home Screen.'}
-      </p>
+        </p>
+      ) : null}
     </div>
   )
 }
