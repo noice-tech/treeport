@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import type { IDisposable, IPty } from 'node-pty'
+import { SessionJournal } from './session-journal'
 import {
   SESSION_DEFAULT_JOURNAL_LIMIT,
   SESSION_MAX_FRAME_BYTES,
@@ -12,6 +13,7 @@ import {
   sessionManifestSchema,
   sessionStatusSchema,
   type SessionManifest,
+  type SessionRecord,
   type SessionRequest,
   type SessionStatus
 } from './session-protocol'
@@ -68,6 +70,9 @@ export class PersistentSession implements EnginePty {
   private socket: net.Socket | null = null
   private status: SessionStatus | null = null
   private closed = false
+  private archivePaused = false
+  private archiveResume: (() => void) | null = null
+  archived = false
   private readyResolve: (() => void) | null = null
   private readyReject: ((error: Error) => void) | null = null
   sequence = 0
@@ -151,7 +156,12 @@ export class PersistentSession implements EnginePty {
     )
     const child = spawn(
       options.executable ?? process.execPath,
-      [...(options.arguments ?? []), options.entryPath, options.directory],
+      [
+        ...(options.arguments ?? []),
+        options.entryPath,
+        '--detach',
+        options.directory
+      ],
       {
         detached: true,
         stdio: ['ignore', log.fd, log.fd],
@@ -160,16 +170,38 @@ export class PersistentSession implements EnginePty {
     )
     child.unref()
     let launchError: Error | null = null
-    child.once('error', (error) => {
-      launchError = error
-    })
-    child.once('exit', (code, signal) => {
-      launchError = new Error(
-        `Session owner exited during startup (${code ?? signal})`
-      )
+    const bootstrapped = new Promise<void>((resolve) => {
+      child.once('error', (error) => {
+        launchError = error
+        resolve()
+      })
+      child.once('exit', (code, signal) => {
+        if (code !== 0 || signal !== null) {
+          launchError = new Error(
+            `Session bootstrap exited during startup (${code ?? signal})`
+          )
+        }
+
+        resolve()
+      })
     })
     await log.close()
+    // The keeper must already be outside the daemon's descendant tree before
+    // create returns, not merely scheduled to become orphaned later.
     const deadline = Date.now() + 10000
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error(`Session bootstrap timed out: ${options.directory}`)
+          ),
+        10000
+      )
+      void bootstrapped.then(() => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
     while (Date.now() < deadline) {
       if (launchError) {
         throw launchError
@@ -220,6 +252,7 @@ export class PersistentSession implements EnginePty {
     const socket = net.createConnection(this.manifest.socketPath)
     this.socket = socket
     socket.setEncoding('utf8')
+    let connected = false
     let buffer = ''
     socket.on('data', (chunk) => {
       buffer += chunk
@@ -268,42 +301,20 @@ export class PersistentSession implements EnginePty {
             this.fault = new Error(frame.message)
             console.error(`Persistent terminal session: ${frame.message}`)
           } else {
-            if (frame.sequence !== this.sequence + 1) {
-              throw new Error('Session output has a sequence gap')
-            }
-
-            this.sequence = frame.sequence
-            this.recordTime = frame.at
-            if (frame.type === 'output') {
-              for (const listener of this.dataListeners) {
-                listener(frame.data)
-              }
-            } else if (frame.type === 'resize') {
-              for (const listener of this.resizeListeners) {
-                listener(frame.cols, frame.rows)
-              }
-            } else if (frame.type === 'marker') {
-              for (const listener of this.markerListeners) {
-                listener(frame.data)
-              }
-            } else {
-              if (this.status) {
-                this.status.exitCode = frame.exitCode
-              }
-
-              for (const listener of this.exitListeners) {
-                listener({ exitCode: frame.exitCode })
-              }
-            }
+            this.acceptRecord(frame)
           }
         }
       } catch (error) {
         this.fail(error instanceof Error ? error : new Error(String(error)))
       }
     })
-    socket.on('error', (error) => this.fail(error))
+    socket.on('error', (error) => {
+      if (connected) {
+        this.fail(error)
+      }
+    })
     socket.on('close', () => {
-      if (!this.closed) {
+      if (connected && !this.closed) {
         this.fail(
           new Error(
             'Persistent session disconnected; command has not been terminated'
@@ -311,15 +322,95 @@ export class PersistentSession implements EnginePty {
         )
       }
     })
-    await new Promise<void>((resolve, reject) => {
-      socket.once('connect', resolve)
+    connected = await new Promise<boolean>((resolve, reject) => {
+      socket.once('connect', () => resolve(true))
       socket.once('error', reject)
+    }).catch(async (error) => {
+      // Refused sockets can be stale. An inaccessible LIVE keeper is not an
+      // exited session: never replace it, signal it, or reinterpret its files.
+      // SAFETY: Node connection errors expose errno codes.
+      if (
+        !['ENOENT', 'ECONNREFUSED'].includes(
+          (error as NodeJS.ErrnoException).code ?? ''
+        )
+      ) {
+        throw error
+      }
+
+      const status = sessionStatusSchema.parse(
+        JSON.parse(
+          await fs.readFile(path.join(this.directory, 'status.json'), 'utf8')
+        )
+      )
+      try {
+        process.kill(status.ownerPid, 0)
+        throw error
+      } catch (cause) {
+        // SAFETY: Node signaling errors expose errno codes.
+        if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') {
+          throw cause
+        }
+      }
+      this.status = status
+      this.archived = true
+      this.socket = null
+      // All archived queries are historical; there is no writable PTY.
+      this.processedSequence = Number.MAX_SAFE_INTEGER
+      for await (const record of SessionJournal.readRetained(this.directory)) {
+        while (this.archivePaused && !this.closed) {
+          await new Promise<void>((resolve) => {
+            this.archiveResume = resolve
+          })
+        }
+        if (this.closed) {
+          throw new Error('Archived session replay detached')
+        }
+
+        this.acceptRecord(record)
+      }
+      this.replaying = false
+      this.readyResolve?.()
+      return false
     })
+    if (!connected) {
+      return
+    }
+
     await this.request({
       method: 'attach',
       token: this.manifest.token,
       journalLimitBytes: this.journalLimitBytes
     })
+  }
+
+  private acceptRecord(record: SessionRecord): void {
+    if (record.sequence !== this.sequence + 1) {
+      throw new Error('Session output has a sequence gap')
+    }
+
+    this.sequence = record.sequence
+    this.recordTime = record.at
+    if (record.type === 'output') {
+      for (const listener of this.dataListeners) {
+        listener(record.data)
+      }
+    } else if (record.type === 'resize') {
+      for (const listener of this.resizeListeners) {
+        listener(record.cols, record.rows)
+      }
+    } else if (record.type === 'marker') {
+      for (const listener of this.markerListeners) {
+        listener(record.data)
+      }
+    } else {
+      if (this.status) {
+        this.status.exitCode = record.exitCode
+      }
+
+      for (const listener of this.exitListeners) {
+        listener({ exitCode: record.exitCode })
+      }
+    }
   }
 
   onData(listener: (data: string) => void): IDisposable {
@@ -350,6 +441,40 @@ export class PersistentSession implements EnginePty {
   }
 
   private request(input: RequestInput): Promise<SessionStatus | null> {
+    if (this.archived) {
+      if (input.method === 'metadata') {
+        const manifest = { ...this.manifest, metadata: input.metadata }
+        const temporary = path.join(
+          this.directory,
+          'manifest-' + crypto.randomUUID() + '.tmp'
+        )
+        return fs
+          .writeFile(temporary, JSON.stringify(manifest), {
+            mode: 0o600,
+            flag: 'wx'
+          })
+          .then(() =>
+            fs.rename(temporary, path.join(this.directory, 'manifest.json'))
+          )
+          .then(() => {
+            this.manifest.metadata = input.metadata
+            return this.status
+          })
+      }
+
+      if (input.method === 'resize') {
+        for (const listener of this.resizeListeners) {
+          listener(input.cols, input.rows)
+        }
+      } else if (!['processed', 'status', 'pause'].includes(input.method)) {
+        return Promise.reject(
+          new Error('Session keeper exited; this terminal has no writable PTY')
+        )
+      }
+
+      return Promise.resolve(this.status)
+    }
+
     const socket = this.socket
     if (!socket || socket.destroyed) {
       return Promise.reject(this.fault ?? new Error('Session is not connected'))
@@ -390,9 +515,13 @@ export class PersistentSession implements EnginePty {
     await this.request({ method: 'resize', cols, rows })
   }
   pause(): void {
+    this.archivePaused = true
     this.socket?.pause()
   }
   resume(): void {
+    this.archivePaused = false
+    this.archiveResume?.()
+    this.archiveResume = null
     this.socket?.resume()
   }
   kill(signal: string = 'SIGHUP'): void {
@@ -575,6 +704,7 @@ export class PersistentSession implements EnginePty {
   }
   dispose(): void {
     this.closed = true
+    this.resume()
     this.socket?.destroy()
     this.rejectPending(new Error('Session engine detached'))
     this.readyReject?.(new Error('Session engine detached during replay'))

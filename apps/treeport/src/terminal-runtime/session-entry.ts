@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as pty from 'node-pty'
 import { SessionJournal } from './session-journal'
@@ -32,9 +32,28 @@ const EMERGENCY_BUFFER_BYTES = 1024 * 1024
 
 async function main(): Promise<void> {
   process.title = 'treeport-session'
-  const directory = process.argv[2]
+  const bootstrap = process.argv[2] === '--detach'
+  const directory = process.argv[bootstrap ? 3 : 2]
   if (!directory) {
     throw new Error('Missing session directory')
+  }
+
+  if (bootstrap) {
+    // setsid alone leaves the keeper in the daemon's descendant tree. A
+    // short-lived bootstrap orphans it before any PTY is handed to the engine.
+    await new Promise<void>((resolve, reject) => {
+      const owner = spawn(process.execPath, [process.argv[1]!, directory], {
+        detached: true,
+        stdio: 'inherit',
+        env: process.env
+      })
+      owner.once('error', reject)
+      owner.once('spawn', () => {
+        owner.unref()
+        resolve()
+      })
+    })
+    process.exit(0)
   }
 
   const manifestPath = path.join(directory, 'manifest.json')

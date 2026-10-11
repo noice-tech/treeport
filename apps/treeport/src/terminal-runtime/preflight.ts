@@ -429,6 +429,16 @@ export async function probeTerminalHostCompatibility(
         throw new Error('Session socket does not identify this installation')
       }
 
+      if (!processExists(status.ownerPid)) {
+        if (await socketAcceptsConnections(manifest.socketPath)) {
+          throw new Error('A live session socket has an unidentified owner')
+        }
+
+        // Retained output from a dead keeper is recovered read-only. There is
+        // no live ownership to hand over, and no stale artifact is deleted.
+        continue
+      }
+
       const id = crypto.randomUUID()
       await new Promise<void>((resolve, reject) => {
         const socket = net.createConnection(manifest.socketPath)

@@ -345,43 +345,51 @@ export class TerminalHostSessions {
             continue
           }
 
-          const owner = yield* nodePromise(() =>
-            PersistentSession.open(
-              path.join(directory, name),
-              options.journalLimitBytes
-            )
-          )
-          const { input } = yield* decodeTerminalEngineMetadata(
-            owner.manifest.metadata
-          ).pipe(Effect.mapError(effectError))
-          if (
-            name !==
-            crypto
-              .createHash('sha256')
-              .update(input.terminalId)
-              .digest('hex')
-              .slice(0, 40)
-          ) {
-            return yield* Effect.fail(
-              effectError(
-                new Error('Session metadata does not identify its directory')
+          yield* Effect.gen(function* () {
+            const owner = yield* nodePromise(() =>
+              PersistentSession.open(
+                path.join(directory, name),
+                options.journalLimitBytes
               )
             )
-          }
+            const { input } = yield* decodeTerminalEngineMetadata(
+              owner.manifest.metadata
+            ).pipe(Effect.mapError(effectError))
+            if (
+              name !==
+              crypto
+                .createHash('sha256')
+                .update(input.terminalId)
+                .digest('hex')
+                .slice(0, 40)
+            ) {
+              return yield* Effect.fail(
+                effectError(
+                  new Error('Session metadata does not identify its directory')
+                )
+              )
+            }
 
-          yield* manager.createTerminal(
-            {
-              ...input,
-              argv: [...input.argv],
-              fallbackArgv: input.fallbackArgv
-                ? [...input.fallbackArgv]
-                : undefined,
-              setupTasks: input.setupTasks?.map((task) => ({
-                ...task,
-                argv: [...task.argv]
-              }))
-            },
-            owner
+            yield* manager.createTerminal(
+              {
+                ...input,
+                argv: [...input.argv],
+                fallbackArgv: input.fallbackArgv
+                  ? [...input.fallbackArgv]
+                  : undefined,
+                setupTasks: input.setupTasks?.map((task) => ({
+                  ...task,
+                  argv: [...task.argv]
+                }))
+              },
+              owner
+            )
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `Could not restore retained terminal session ${name}: ${error.message}. Its files and any surviving command were left untouched.`
+              )
+            )
           )
         }
       }
@@ -570,8 +578,25 @@ export class TerminalHostSessions {
                 : Effect.fail(error)
             )
           )
+          if (owner.archived) {
+            // A vanished keeper cannot be revived by spawning its command.
+            // Keep the reconstructed screen accessible and report unknown exit
+            // status if no exit record survived. Do not manufacture success.
+            ownedSession.status = 'exited'
+            ownedSession.exitCode = owner.exitCode
+            Queue.unsafeOffer(ownedSession.runtimeCommands, {
+              _tag: 'Progress',
+              value: null,
+              at: Date.now()
+            })
+            yield* Effect.logWarning(
+              `Session keeper for ${input.terminalId} is gone; recovered retained output as an exited terminal. Its final output or exit status may be incomplete.`
+            )
+          }
+
           ownedSession.replaying = false
-          ownedSession.terminal.options.disableStdin = false
+          ownedSession.terminal.options.disableStdin =
+            owner.archived || ownedSession.status !== 'running'
           owner.resume()
           yield* nodePromise(() => owner.activate())
         }

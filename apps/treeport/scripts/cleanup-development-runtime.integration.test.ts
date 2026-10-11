@@ -209,7 +209,8 @@ async function startTerminalHost(
 async function startPersistentSession(
   dataDir: string,
   runtimeDir: string,
-  cwd: string
+  cwd: string,
+  name = crypto.randomBytes(20).toString('hex')
 ) {
   const hostKey = crypto
     .createHash('sha256')
@@ -221,7 +222,7 @@ async function startPersistentSession(
     'terminal-engine',
     'terminal-host-' + hostKey,
     'sessions',
-    crypto.randomBytes(20).toString('hex')
+    name
   )
   const session = await PersistentSession.create({
     directory,
@@ -313,6 +314,34 @@ describe('development runtime cleanup', () => {
       path.join(root, 'unrelated-host')
     )
 
+    // A stale archive sorts before live keepers. It must not abort cleanup or
+    // leave the later live sessions running after worktree removal.
+    const staleSession = await startPersistentSession(
+      targetData,
+      targetRuntime,
+      root,
+      '0'.repeat(40)
+    )
+    process.kill(staleSession.ownerPid, 'SIGKILL')
+    process.kill(staleSession.pid, 'SIGKILL')
+    await waitFor(() =>
+      !processExists(staleSession.ownerPid) && !processExists(staleSession.pid)
+        ? true
+        : null
+    )
+    const staleDirectory = path.join(
+      targetRuntime,
+      'terminal-engine',
+      'terminal-host-' +
+        crypto
+          .createHash('sha256')
+          .update(path.resolve(targetData))
+          .digest('hex')
+          .slice(0, 20),
+      'sessions',
+      '0'.repeat(40)
+    )
+
     const targetSession = await startPersistentSession(
       targetData,
       targetRuntime,
@@ -340,6 +369,9 @@ describe('development runtime cleanup', () => {
         ? true
         : null
     )
+    await expect(fs.access(staleDirectory)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
     expect(processExists(unrelatedHost.hostPid)).toBe(true)
     expect(processExists(unrelatedHost.terminalPid)).toBe(true)
     expect(processExists(unrelatedSession.ownerPid)).toBe(true)

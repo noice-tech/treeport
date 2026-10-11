@@ -521,7 +521,30 @@ async function stopPersistentSessions(dataDir, runtimeDir, timeoutMs) {
       manifest.socketPath,
       { method: 'inspect', id: crypto.randomUUID(), token: manifest.token },
       timeoutMs
-    )
+    ).catch((error) => {
+      if (
+        !['ENOENT', 'ECONNREFUSED'].includes(error.code) ||
+        processExists(status.ownerPid)
+      ) {
+        throw error
+      }
+
+      return null
+    })
+    if (inspected === null) {
+      // Cleanup is explicitly authorized, but an old PID alone does not prove
+      // ownership of a surviving/reused process. Never signal that cached PID.
+      if (processExists(status.pid)) {
+        throw new Error(
+          'The development keeper is gone but its recorded command PID still exists; identify it before cleanup'
+        )
+      }
+
+      await fs.rm(sessionDirectory, { recursive: true, force: true })
+      await fs.rm(manifest.socketPath, { force: true })
+      continue
+    }
+
     if (
       inspected.ownerPid !== status.ownerPid ||
       inspected.pid !== status.pid

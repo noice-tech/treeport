@@ -4,6 +4,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { execFileSync, spawn } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
@@ -578,6 +579,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
     ).ownerPid as number
     hostPids.add(ownerPid)
     expect(
+      Number(
+        execFileSync('ps', ['-p', String(ownerPid), '-o', 'ppid='], {
+          encoding: 'utf8'
+        }).trim()
+      )
+    ).not.toBe(process.pid)
+    expect(
       (await fs.readdir(sessionDirectory)).some((name) => name.endsWith('.gz'))
     ).toBe(true)
     expect(
@@ -804,7 +812,179 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'Explicit close did not stop the quota session owner'
     )
     hostPids.delete(quotaStatus.ownerPid)
-    await recoveredDaemon.killTerminal('terminal-host')
+    // Losing one keeper must not prevent startup or cause its command to be
+    // rerun. Recover all complete records, including output after status.json's
+    // last published fence, but preserve an uncommitted partial write as-is.
+    await recoveredDaemon.createTerminal({
+      terminalId: 'archived-terminal',
+      worktreeId: 'worktree-host',
+      name: 'Lost keeper',
+      createdAt: new Date().toISOString(),
+      cwd: root,
+      argv: [
+        process.execPath,
+        '-e',
+        "process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); console.log('ARCHIVE_UNICODE λ🙂'); setInterval(() => {}, 1000)"
+      ],
+      shellCommand: null,
+      interactiveShell: false,
+      env: {}
+    })
+    await waitFor(
+      async () =>
+        (
+          await recoveredDaemon.captureTerminal('archived-terminal', 10)
+        )?.includes('ARCHIVE_UNICODE') ?? false,
+      'The archive fixture did not produce output'
+    )
+    const archiveDirectory = path.join(
+      sessionRoot,
+      (await fs.readdir(sessionRoot)).find(
+        (name) => name !== path.basename(sessionDirectory)
+      )!
+    )
+    const archiveStatus = sessionStatusSchema.parse(
+      JSON.parse(
+        await fs.readFile(path.join(archiveDirectory, 'status.json'), 'utf8')
+      )
+    )
+    hostPids.add(archiveStatus.ownerPid)
+    process.kill(archiveStatus.ownerPid, 'SIGKILL')
+    await waitFor(
+      () => !processExists(archiveStatus.ownerPid),
+      'The private archive keeper did not exit'
+    )
+    hostPids.delete(archiveStatus.ownerPid)
+    const activeJournal = await fs.readFile(
+      path.join(archiveDirectory, 'journal.jsonl'),
+      'utf8'
+    )
+    const lastSequence = JSON.parse(activeJournal.trim().split('\n').at(-1)!)
+      .sequence as number
+    const retainedJournal =
+      activeJournal +
+      JSON.stringify({
+        type: 'output',
+        sequence: lastSequence + 1,
+        at: Date.now(),
+        data: 'ARCHIVE_UNPUBLISHED_TAIL\r\n'
+      }) +
+      '\n' +
+      '{"type":"output"'
+    await fs.writeFile(
+      path.join(archiveDirectory, 'journal.jsonl'),
+      retainedJournal
+    )
+    await recoveredDaemon.createTerminal({
+      terminalId: 'unavailable-terminal',
+      worktreeId: 'worktree-host',
+      name: 'Live unreachable keeper',
+      createdAt: new Date().toISOString(),
+      cwd: root,
+      argv: [
+        process.execPath,
+        '-e',
+        "console.log('UNAVAILABLE_BOOT'); setInterval(() => {}, 1000)"
+      ],
+      shellCommand: null,
+      interactiveShell: false,
+      env: {}
+    })
+    const unavailableDirectory = path.join(
+      sessionRoot,
+      (await fs.readdir(sessionRoot)).find(
+        (name) =>
+          ![
+            path.basename(sessionDirectory),
+            path.basename(archiveDirectory)
+          ].includes(name)
+      )!
+    )
+    const unavailableStatus = sessionStatusSchema.parse(
+      JSON.parse(
+        await fs.readFile(
+          path.join(unavailableDirectory, 'status.json'),
+          'utf8'
+        )
+      )
+    )
+    const unavailableManifest = JSON.parse(
+      await fs.readFile(
+        path.join(unavailableDirectory, 'manifest.json'),
+        'utf8'
+      )
+    ) as { socketPath: string }
+    hostPids.add(unavailableStatus.ownerPid)
+    await recoveredDaemon.dispose()
+    clients.delete(recoveredDaemon)
+    await fs.rename(
+      unavailableManifest.socketPath,
+      unavailableManifest.socketPath + '.unavailable'
+    )
+    const archivedDaemon = await connectOrStartTerminalHost({
+      ...options,
+      journalLimitBytes: 2 * 1024 * 1024
+    })
+    clients.add(archivedDaemon)
+    expect(await archivedDaemon.terminalState('archived-terminal')).toEqual({
+      status: 'exited',
+      exitCode: null
+    })
+    expect(
+      await archivedDaemon.captureTerminal('archived-terminal', 10)
+    ).toContain('ARCHIVE_UNICODE λ🙂')
+    expect(
+      await archivedDaemon.captureTerminal('archived-terminal', 10)
+    ).toContain('ARCHIVE_UNPUBLISHED_TAIL')
+    expect(
+      await fs.readFile(path.join(archiveDirectory, 'journal.jsonl'), 'utf8')
+    ).toBe(retainedJournal)
+    expect(
+      (await archivedDaemon.listProcesses('worktree-host')).find(
+        (item) => item.terminalId === 'terminal-host'
+      )?.pid
+    ).toBe(commandPid)
+    expect(await archivedDaemon.terminalState('unavailable-terminal')).toEqual({
+      status: 'missing',
+      exitCode: null
+    })
+    expect(processExists(unavailableStatus.ownerPid)).toBe(true)
+    expect(processExists(unavailableStatus.pid)).toBe(true)
+    await fs.rename(
+      unavailableManifest.socketPath + '.unavailable',
+      unavailableManifest.socketPath
+    )
+    expect(
+      (await probeTerminalHostCompatibility(dataDir, runtimeDir)).compatible
+    ).toBe(true)
+    await archivedDaemon.dispose()
+    clients.delete(archivedDaemon)
+    const finalDaemon = await connectOrStartTerminalHost({
+      ...options,
+      journalLimitBytes: 2 * 1024 * 1024
+    })
+    clients.add(finalDaemon)
+    expect(
+      (await finalDaemon.listProcesses('worktree-host')).find(
+        (item) => item.terminalId === 'unavailable-terminal'
+      )?.pid
+    ).toBe(unavailableStatus.pid)
+    await finalDaemon.renameTerminal(
+      'archived-terminal',
+      'Recovered history',
+      new Date().toISOString()
+    )
+    await finalDaemon.resize('archived-terminal', 110, 32)
+    expect(
+      await finalDaemon.captureTerminal('archived-terminal', 10)
+    ).toContain('ARCHIVE_UNPUBLISHED_TAIL')
+    await finalDaemon.killTerminal('archived-terminal')
+    await expect(fs.access(archiveDirectory)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await finalDaemon.killTerminal('unavailable-terminal')
+    hostPids.delete(unavailableStatus.ownerPid)
+    await finalDaemon.killTerminal('terminal-host')
     expect(
       await fs.readdir(
         path.join(
@@ -815,9 +995,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
         )
       )
     ).toEqual([])
-    await recoveredDaemon.shutdownIfEmpty()
-    await recoveredDaemon.dispose()
-    clients.delete(recoveredDaemon)
+    await finalDaemon.shutdownIfEmpty()
+    await finalDaemon.dispose()
+    clients.delete(finalDaemon)
     await waitFor(
       () => !processExists(ownerPid),
       'Explicit terminal close did not stop its session owner'
@@ -834,6 +1014,65 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'Explicit legacy close did not stop its empty host'
     )
     hostPids.delete(legacy.record.pid)
+
+    // Exercise pnpm dev's actual descendant-group cleanup with a private
+    // supervisor. Existing (not yet orphaned) detached keepers are boundaries.
+    const supervisor = spawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const {spawn} = require('node:child_process');
+      const worker = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
+      const keeper = spawn(process.execPath, ['-e', "process.title='treeport-session-fixture'; setInterval(()=>{},1000)"], {detached:true, stdio:'ignore'});
+      console.log(JSON.stringify({worker:worker.pid,keeper:keeper.pid}));
+      setInterval(()=>{},1000);
+    `
+      ],
+      { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    hostPids.add(supervisor.pid!)
+    const fixture = await new Promise<{ worker: number; keeper: number }>(
+      (resolve) =>
+        supervisor.stdout!.once('data', (data) =>
+          resolve(JSON.parse(String(data)))
+        )
+    )
+    hostPids.add(fixture.keeper)
+    await waitFor(
+      () =>
+        execFileSync('ps', ['-p', String(fixture.keeper), '-o', 'args='], {
+          encoding: 'utf8'
+        })
+          .trim()
+          .startsWith('treeport-session'),
+      'The private keeper title was not ready'
+    )
+    const { sendSignalToChild } = (await import(
+      new URL('../../../../scripts/development.mjs', import.meta.url).href
+    )) as {
+      sendSignalToChild: (
+        child: ReturnType<typeof spawn>,
+        signal: NodeJS.Signals,
+        groups: Set<number>
+      ) => void
+    }
+    const groups = new Set<number>()
+    sendSignalToChild(supervisor, 'SIGTERM', groups)
+    await waitFor(
+      () => !processExists(supervisor.pid!) && !processExists(fixture.worker),
+      'Development cleanup left ordinary workers running'
+    )
+    sendSignalToChild(supervisor, 'SIGKILL', groups)
+    expect(groups.has(fixture.keeper)).toBe(false)
+    expect(processExists(fixture.keeper)).toBe(true)
+    process.kill(fixture.keeper, 'SIGTERM')
+    await waitFor(
+      () => !processExists(fixture.keeper),
+      'The private keeper fixture did not close'
+    )
+    hostPids.delete(fixture.keeper)
+    hostPids.delete(supervisor.pid!)
   }, 40_000)
 
   it('removes only a transaction-owned provisional host when startup fails', async () => {

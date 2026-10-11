@@ -20,6 +20,67 @@ interface JournalSnapshot {
   readonly close: () => void
 }
 
+interface JournalSource {
+  path: string
+  compressed: boolean
+  fd: number | null
+  start: number
+  end: number | null
+  onOpen: (() => void) | null
+}
+
+async function* readRecords(
+  sources: readonly JournalSource[],
+  after: number,
+  fence: number | null
+): AsyncGenerator<SessionRecord> {
+  let sequence = after
+  for (const source of sources) {
+    const file = fs.createReadStream(source.path, {
+      fd: source.fd ?? undefined,
+      autoClose: true,
+      start: source.start,
+      end: source.end ?? undefined
+    })
+    source.onOpen?.()
+    const input = source.compressed ? file.pipe(createGunzip()) : file
+    file.on('error', (error: Error) => input.destroy(error))
+    const lines = createInterface({ input, crlfDelay: Infinity })
+    let inputFailure: Error | null = null
+    // readline's async iterator does not forward input-stream failures.
+    input.on('error', (error: Error) => {
+      inputFailure = error
+      lines.close()
+    })
+    try {
+      for await (const line of lines) {
+        const record = sessionRecordSchema.parse(JSON.parse(line))
+        // Failed rotation can leave an already checkpointed active prefix.
+        if (record.sequence <= sequence) {
+          continue
+        }
+
+        if (record.sequence !== sequence + 1) {
+          throw new Error('Terminal journal has a sequence gap')
+        }
+
+        sequence = record.sequence
+        yield record
+      }
+      if (inputFailure) {
+        throw inputFailure
+      }
+    } finally {
+      lines.close()
+      input.destroy()
+      file.destroy()
+    }
+  }
+  if (fence !== null && sequence !== fence) {
+    throw new Error('Terminal journal does not reach its captured fence')
+  }
+}
+
 /** Lossless, compressed checkpoints retain the original records, including
  * partial escapes, decoder boundaries, resize events, and opaque engine markers.
  * No incomplete emulator serialization is used as a recovery checkpoint.
@@ -181,20 +242,14 @@ export class SessionJournal {
     }
     const activePath = this.activePath
     const records = (async function* (): AsyncGenerator<SessionRecord> {
-      let sequence = after
       try {
-        const sources: Array<{
-          path: string
-          compressed: boolean
-          fd: number | null
-          start: number
-          end: number | null
-        }> = checkpoints.map((checkpoint) => ({
+        const sources: JournalSource[] = checkpoints.map((checkpoint) => ({
           path: checkpoint.path,
           compressed: true,
           fd: null,
           start: 0,
-          end: null
+          end: null,
+          onOpen: null
         }))
         if (activeFd !== null) {
           sources.push({
@@ -202,69 +257,60 @@ export class SessionJournal {
             compressed: false,
             fd: activeFd,
             start,
-            end: bytes - 1
+            end: bytes - 1,
+            onOpen: () => {
+              ownedFd = null
+            } // ReadStream owns the captured descriptor.
           })
         }
 
-        for (const source of sources) {
-          const file =
-            source.fd === null
-              ? fs.createReadStream(source.path)
-              : fs.createReadStream(source.path, {
-                  fd: source.fd,
-                  autoClose: true,
-                  start: source.start,
-                  end: source.end!
-                })
-          if (source.fd !== null) {
-            ownedFd = null
-          } // ReadStream now owns the captured descriptor.
-
-          const input = source.compressed ? file.pipe(createGunzip()) : file
-          const onError = (error: Error) => input.destroy(error)
-          file.on('error', onError)
-          const lines = createInterface({ input, crlfDelay: Infinity })
-          let inputFailure: Error | null = null
-          // readline's async iterator does not forward input-stream failures.
-          // A corrupt checkpoint must disconnect the engine, never crash the
-          // persistent owner through an unhandled zlib/ReadStream error event.
-          input.on('error', (error: Error) => {
-            inputFailure = error
-            lines.close()
-          })
-          try {
-            for await (const line of lines) {
-              const record = sessionRecordSchema.parse(JSON.parse(line))
-              // The first segment may overlap the requested cursor. A failed
-              // rotation can also retain an already checkpointed active prefix.
-              if (record.sequence <= sequence) {
-                continue
-              }
-
-              if (record.sequence !== sequence + 1) {
-                throw new Error('Terminal journal has a sequence gap')
-              }
-
-              sequence = record.sequence
-              yield record
-            }
-            if (inputFailure) {
-              throw inputFailure
-            }
-          } finally {
-            lines.close()
-            input.destroy()
-            file.destroy()
-          }
-        }
-        if (sequence !== fence) {
-          throw new Error('Terminal journal does not reach its captured fence')
-        }
+        yield* readRecords(sources, after, fence)
       } finally {
         close()
       }
     })()
     return { fence, records, close }
+  }
+
+  /** Read-only recovery after the owning process is proven dead. Read all
+   * complete records, not only the last published status fence: output may
+   * have been committed after the engine's last acknowledgement. */
+  static async *readRetained(directory: string): AsyncGenerator<SessionRecord> {
+    const names = (await fs.promises.readdir(directory))
+      .filter((name) => /^checkpoint-\d{10}\.gz$/u.test(name))
+      .sort()
+    const sources: JournalSource[] = names.map((name) => ({
+      path: path.join(directory, name),
+      compressed: true,
+      fd: null,
+      start: 0,
+      end: null,
+      onOpen: null
+    }))
+    const activePath = path.join(directory, 'journal.jsonl')
+    const active = await fs.promises.readFile(activePath).catch((error) => {
+      // SAFETY: Node filesystem errors expose errno codes.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
+      }
+
+      return Buffer.alloc(0)
+    })
+    // A crashed write can leave an uncommitted partial final record. Preserve
+    // the file, but do not pretend that fragment is replayable terminal output.
+    const end = active.lastIndexOf(10)
+    if (end !== -1) {
+      sources.push({
+        path: activePath,
+        compressed: false,
+        fd: null,
+        start: 0,
+        end,
+        onOpen: null
+      })
+    }
+
+    yield* readRecords(sources, 0, null)
   }
 
   close(): void {
