@@ -1,4 +1,5 @@
 import {
+  pushConfigResponseSchema,
   presenceResponseSchema,
   apiErrorBodySchema,
   applicationUpdateStatusSchema,
@@ -36,6 +37,7 @@ import {
 } from '@treeport/shared'
 import type * as Schema from 'effect/Schema'
 import type {
+  WebPushSubscription,
   PresenceUpdate,
   ViewerIdentity,
   DirectoryBrowseResponse,
@@ -184,6 +186,34 @@ const id = (value: string) => encodeURIComponent(value)
 
 export const rpc = {
   api: {
+    push: {
+      config: {
+        $get: () =>
+          endpoint<{ publicKey: string }>(
+            'GET',
+            '/api/push/config',
+            pushConfigResponseSchema
+          )
+      },
+      subscribe: {
+        $post: (json: WebPushSubscription) =>
+          endpoint<{ ok: true }>(
+            'POST',
+            '/api/push/subscribe',
+            okResponseSchema,
+            { json }
+          )
+      },
+      unsubscribe: {
+        $post: (endpointUrl: string) =>
+          endpoint<{ ok: true }>(
+            'POST',
+            '/api/push/unsubscribe',
+            okResponseSchema,
+            { json: { endpoint: endpointUrl } }
+          )
+      }
+    },
     presence: {
       $post: (json: PresenceUpdate, init?: RequestInit) =>
         endpoint<{ identity: ViewerIdentity }>(

@@ -75,6 +75,9 @@ export function acquireTerminalMetadataManager(
 export class TerminalMetadataManager {
   private readonly entries = new Map<string, TerminalMetadataEntry>()
   private readonly listeners = new Map<string, Set<MetadataListener>>()
+  private readonly bellListeners = new Set<
+    (metadata: TerminalRuntimeMetadata) => void
+  >()
   private readonly bellDeletionVersions = new Map<string, number>()
   private readonly persistedBells = new Map<string, TerminalBellState>()
   private readonly bellStateStore: TerminalBellStateStore
@@ -154,6 +157,15 @@ export class TerminalMetadataManager {
       if (!listeners.size) {
         this.listeners.delete(terminalId)
       }
+    }
+  }
+
+  subscribeLiveBells(
+    listener: (metadata: TerminalRuntimeMetadata) => void
+  ): () => void {
+    this.bellListeners.add(listener)
+    return () => {
+      this.bellListeners.delete(listener)
     }
   }
 
@@ -367,6 +379,7 @@ export class TerminalMetadataManager {
     }
     this.entries.clear()
     this.listeners.clear()
+    this.bellListeners.clear()
   }
 
   drain(): Effect.Effect<void, never, ApplicationServices> {
@@ -450,7 +463,7 @@ export class TerminalMetadataManager {
               }
 
               if (event.bell) {
-                yield* this.recordBell(entry, event.bell)
+                yield* this.recordBell(entry, event.bell, true)
               }
 
               if ('exitCode' in event) {
@@ -517,7 +530,8 @@ export class TerminalMetadataManager {
 
   private recordBell(
     entry: TerminalMetadataEntry,
-    observed: { sequence: number; at: string }
+    observed: { sequence: number; at: string },
+    live = false
   ): Effect.Effect<void, unknown, ApplicationServices> {
     return this.service.terminalMetadataMutation(
       entry.terminalId,
@@ -553,6 +567,10 @@ export class TerminalMetadataManager {
           if (this.entries.get(entry.terminalId) === entry) {
             entry.bell = bell
             this.publish(entry)
+            if (live) {
+              const metadata = this.metadata(entry)
+              this.bellListeners.forEach((listener) => listener(metadata))
+            }
           }
         })
       })
