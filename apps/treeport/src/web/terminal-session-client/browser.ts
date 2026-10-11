@@ -135,13 +135,9 @@ export function makeBrowser(
           scheduleTerminalCursorRestore()
         }
       })
-      state.selectionDragCancel = trackTerminalSelection(
-        state.wrapper,
-        terminal,
-        {
-          requestControl: () => dependencies.requestControl()
-        }
-      )
+      state.selectionDragCancel = trackTerminalSelection(state.wrapper, {
+        requestControl: () => dependencies.requestControl()
+      })
       state.wrapper.addEventListener(
         'click',
         () => dependencies.requestControl(),
