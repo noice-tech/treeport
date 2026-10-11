@@ -115,7 +115,8 @@ describe('worktree review diff', () => {
       await run('config', 'user.name', 'Treeport Test')
       await run('config', 'user.email', 'treeport@example.test')
       await fs.writeFile(path.join(cwd, 'old.txt'), 'rename me\n')
-      await run('add', 'old.txt')
+      await fs.writeFile(path.join(cwd, 'reverted.txt'), 'base version\n')
+      await run('add', 'old.txt', 'reverted.txt')
       await run('commit', '-m', 'base')
       await run('switch', '-c', 'feature')
       await run('mv', 'old.txt', 'renamed.txt')
@@ -154,6 +155,68 @@ describe('worktree review diff', () => {
       await expect(
         Effect.runPromise(git.worktreeFileDiff(cwd, 'main', 'renamed.txt'))
       ).resolves.toMatchObject({ status: 'ready' })
+
+      await fs.writeFile(path.join(cwd, 'reverted.txt'), 'committed version\n')
+      await run('add', 'reverted.txt')
+      await run('commit', '-m', 'branch changes')
+      await fs.writeFile(
+        path.join(cwd, 'renamed.txt'),
+        'rename me\nstaged only\n'
+      )
+      await run('add', 'renamed.txt')
+      await fs.appendFile(path.join(cwd, 'renamed.txt'), 'unstaged only\n')
+      await fs.writeFile(path.join(cwd, 'reverted.txt'), 'base version\n')
+
+      const committed = await Effect.runPromise(
+        git.worktreeDiff(cwd, 'main', 'committed')
+      )
+      const uncommitted = await Effect.runPromise(
+        git.worktreeDiff(cwd, 'main', 'uncommitted')
+      )
+      const combined = await Effect.runPromise(git.worktreeDiff(cwd, 'main'))
+      expect(committed.files.map((file) => file.path)).toEqual([
+        'huge.txt',
+        'renamed.txt',
+        'reverted.txt'
+      ])
+      expect(uncommitted.files.map((file) => file.path)).toEqual([
+        'renamed.txt',
+        'reverted.txt',
+        'untracked.txt'
+      ])
+      expect(combined.files.map((file) => file.path)).not.toContain(
+        'reverted.txt'
+      )
+      expect(uncommitted.baseCommit).toBe(committed.headCommit)
+      expect(
+        committed.files.find((file) => file.path === 'renamed.txt')
+      ).toMatchObject({ previousPath: 'old.txt', status: 'renamed' })
+      expect(
+        uncommitted.files.find((file) => file.path === 'renamed.txt')
+      ).toMatchObject({ previousPath: null, status: 'modified' })
+      const committedPatch = await Effect.runPromise(
+        git.worktreeFileDiff(cwd, 'main', 'renamed.txt', 'committed')
+      )
+      const localPatch = await Effect.runPromise(
+        git.worktreeFileDiff(cwd, 'main', 'renamed.txt', 'uncommitted')
+      )
+      expect(committedPatch.unified).toContain('rename from old.txt')
+      expect(committedPatch.unified).not.toContain('staged only')
+      expect(localPatch.unified).toContain('+staged only')
+      expect(localPatch.unified).toContain('+unstaged only')
+      const revertedPatch = await Effect.runPromise(
+        git.worktreeFileDiff(cwd, 'main', 'reverted.txt', 'committed')
+      )
+      expect(revertedPatch.unified).toContain('+committed version')
+      const localRevertedPatch = await Effect.runPromise(
+        git.worktreeFileDiff(cwd, 'main', 'reverted.txt', 'uncommitted')
+      )
+      expect(localRevertedPatch.unified).toContain('-committed version')
+      expect(localRevertedPatch.unified).toContain('+base version')
+      const untrackedPatch = await Effect.runPromise(
+        git.worktreeFileDiff(cwd, 'main', 'untracked.txt', 'uncommitted')
+      )
+      expect(untrackedPatch.unified).toContain('+untracked')
     } finally {
       await fs.rm(cwd, { recursive: true, force: true })
     }

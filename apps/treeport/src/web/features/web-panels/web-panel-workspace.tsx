@@ -5,7 +5,8 @@ import {
   panelRequestMessageSchema,
   panelTitleMessageSchema,
   workspaceSelectionMessageSchema,
-  type WebPanel
+  type WebPanel,
+  type GitFileDiffRequest
 } from '@treeport/shared'
 import { parseResponse, rpc, treeFilesRpc } from '../../api'
 import { errorDescription, errorDetails } from '../../error-message'
@@ -170,14 +171,20 @@ export function WebPanelWorkspace({
       } else if (method === 'diff') {
         request = parseResponse(
           rpc.api.panels[':panelId'].diff.$get({
-            param: { panelId: panel.id }
+            param: { panelId: panel.id },
+            query: message.scope ? { scope: message.scope } : {}
           })
         ).then((result) => result.diff)
       } else if (method === 'diff.file') {
+        const input: GitFileDiffRequest = { path: message.path }
+        if (message.scope) {
+          input.scope = message.scope
+        }
+
         request = parseResponse(
           rpc.api.panels[':panelId'].diff.file.$post({
             param: { panelId: panel.id },
-            json: { path: message.path }
+            json: input
           })
         )
       } else if (method === 'diff.image') {

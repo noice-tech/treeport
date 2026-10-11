@@ -17,7 +17,6 @@ import { FileTree, useFileTree } from '@pierre/trees/react'
 import {
   treeport,
   type GitDiff,
-  type GitDiffChangeSets,
   type GitDiffFile,
   type GitDiffImage
 } from '@treeport/panel-sdk'
@@ -38,6 +37,7 @@ type CommentSide = 'additions' | 'deletions'
 interface ReviewComment {
   id: string
   file: string
+  fileId: string
   side: CommentSide
   lineNumber: number
   body: string
@@ -59,6 +59,10 @@ interface FindMatch extends SearchableLine {
 }
 
 interface ReviewFile extends GitDiffFile {
+  id: string
+  scope: 'uncommitted' | 'committed'
+  beforeCommit: string
+  afterCommit: string | null
   diff: FileDiffMetadata | null
   loadState: 'idle' | 'loading' | 'ready' | 'oversized' | 'error'
   revision: string | null
@@ -66,11 +70,9 @@ interface ReviewFile extends GitDiffFile {
 }
 
 interface LoadedReview {
-  baseCommit: string
   summary: string
   generatedAt: string
   files: ReviewFile[]
-  changeSets: GitDiffChangeSets
   searchableLines: SearchableLine[]
 }
 
@@ -105,11 +107,11 @@ const NATIVE_CONTROL_CSS = `
 `
 const DIFF_CSS = `
   ${NATIVE_CONTROL_CSS}
-  [data-diffs-header] { position: sticky; top: -1rem; z-index: 2; }
+  [data-diffs-header] { position: sticky; top: calc(var(--review-group-header-height) - var(--review-scroll-padding)); z-index: 2; }
   [data-change-icon] { width: 0.875rem; height: 0.875rem; }
   @media (max-width: 700px) {
     :host { --diffs-gap-inline: 4px; --diffs-gap-block: 4px; }
-    [data-diffs-header] { top: -0.5rem; padding-inline: 0.5rem; }
+    [data-diffs-header] { padding-inline: 0.5rem; }
     [data-header-content] { flex: 1; }
     [data-metadata] { flex-shrink: 0; }
   }
@@ -148,6 +150,7 @@ const TREE_CSS = `
 const reviewCommentSchema = z.object({
   id: z.string(),
   file: z.string(),
+  fileId: z.string().optional(),
   side: z.enum(['additions', 'deletions']),
   lineNumber: z.number().int().nonnegative(),
   body: z.string(),
@@ -159,10 +162,13 @@ const parseReviewComment = z
   .transform((value): ReviewComment | null => {
     const parsed = reviewCommentSchema.safeParse(value)
     return parsed.success
-      ? { ...parsed.data, resolved: parsed.data.resolved ?? false }
+      ? {
+          ...parsed.data,
+          fileId: parsed.data.fileId ?? parsed.data.file,
+          resolved: parsed.data.resolved ?? false
+        }
       : null
-  })
-  .parse
+  }).parse
 
 function savedComments(comments: ReviewComment[]) {
   return comments.flatMap((comment) => {
@@ -175,9 +181,14 @@ function savedComments(comments: ReviewComment[]) {
   })
 }
 
-function searchableLinesFor(files: FileDiffMetadata[]) {
+function searchableLinesFor(files: ReviewFile[]) {
   const lines: SearchableLine[] = []
-  for (const fileDiff of files) {
+  for (const file of files) {
+    const fileDiff = file.diff
+    if (!fileDiff) {
+      continue
+    }
+
     for (const hunk of fileDiff.hunks) {
       let additionLineNumber = hunk.additionStart
       let deletionLineNumber = hunk.deletionStart
@@ -185,7 +196,7 @@ function searchableLinesFor(files: FileDiffMetadata[]) {
         if (content.type === 'context') {
           for (let index = 0; index < content.lines; index += 1) {
             lines.push({
-              file: fileDiff.name,
+              file: file.id,
               side: 'additions',
               lineNumber: additionLineNumber + index,
               text:
@@ -199,7 +210,7 @@ function searchableLinesFor(files: FileDiffMetadata[]) {
 
         for (let index = 0; index < content.deletions; index += 1) {
           lines.push({
-            file: fileDiff.name,
+            file: file.id,
             side: 'deletions',
             lineNumber: deletionLineNumber + index,
             text:
@@ -208,7 +219,7 @@ function searchableLinesFor(files: FileDiffMetadata[]) {
         }
         for (let index = 0; index < content.additions; index += 1) {
           lines.push({
-            file: fileDiff.name,
+            file: file.id,
             side: 'additions',
             lineNumber: additionLineNumber + index,
             text:
@@ -230,80 +241,36 @@ function Chevron({ direction }: { direction: 'up' | 'down' }) {
 
 function ChangedFileTree({
   files,
-  changeSets,
   onSelect
 }: {
   files: ReviewFile[]
-  changeSets: GitDiffChangeSets
   onSelect(file: string): void
 }) {
   const tree = useMemo(() => {
-    const filesByName = new Map(files.map((file) => [file.path, file]))
-    const visible = (paths: string[]) =>
-      [...new Set(paths)].filter((path) => filesByName.has(path)).sort()
-    const branch = visible(changeSets.branch)
-    const staged = visible(changeSets.staged)
-    const unstaged = visible(changeSets.unstaged)
-    const untracked = visible(changeSets.untracked)
-    const uncommittedCount = new Set([...staged, ...unstaged, ...untracked])
-      .size
-    const uncommittedRoot = 'Uncommitted Changes'
-    const branchRoot = 'Branch Changes'
+    const uncommittedRoot = 'Uncommitted changes'
+    const committedRoot = 'Committed changes'
+    const uncommitted = files.filter((file) => file.scope === 'uncommitted')
+    const committed = files.filter((file) => file.scope === 'committed')
+    const uncommittedCount = uncommitted.length
     const counts = new Map([
       [uncommittedRoot, uncommittedCount],
-      [branchRoot, branch.length],
-      [`${uncommittedRoot}/Staged`, staged.length],
-      [`${uncommittedRoot}/Unstaged`, unstaged.length],
-      [`${uncommittedRoot}/Untracked`, untracked.length]
+      [committedRoot, committed.length]
     ])
-    const entries: Array<{
-      group: string
-      paths: string[]
-      untracked: boolean
-    }> = [
-      {
-        group: `${uncommittedRoot}/Staged`,
-        paths: staged,
-        untracked: false
-      },
-      {
-        group: `${uncommittedRoot}/Unstaged`,
-        paths: unstaged,
-        untracked: false
-      },
-      {
-        group: `${uncommittedRoot}/Untracked`,
-        paths: untracked,
-        untracked: true
-      },
-      { group: branchRoot, paths: branch, untracked: false }
+    const entries = [
+      { group: uncommittedRoot, files: uncommitted },
+      { group: committedRoot, files: committed }
     ]
     const actualPaths = new Map<string, string>()
     const gitStatus: Array<{
       path: string
-      status:
-        | 'modified'
-        | 'added'
-        | 'deleted'
-        | 'renamed'
-        | 'untracked'
+      status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
     }> = []
     for (const entry of entries) {
-      for (const path of entry.paths) {
+      for (const file of entry.files) {
+        const path = file.path
         const syntheticPath = `${entry.group}/${path}`
-        actualPaths.set(syntheticPath, path)
-        const file = filesByName.get(path)!
-        let status:
-          | 'modified'
-          | 'added'
-          | 'deleted'
-          | 'renamed'
-          | 'untracked' = entry.untracked ? 'untracked' : 'modified'
-        if (!entry.untracked) {
-          status = file.status
-        }
-
-        gitStatus.push({ path: syntheticPath, status })
+        actualPaths.set(syntheticPath, file.id)
+        gitStatus.push({ path: syntheticPath, status: file.status })
       }
     }
 
@@ -329,7 +296,7 @@ function ChangedFileTree({
       directories,
       initialExpandedPaths: [...initialExpandedPaths]
     }
-  }, [changeSets, files])
+  }, [files])
   // useFileTree captures options once; callbacks must read the current data.
   const current = useRef({ tree, onSelect })
   current.current = { tree, onSelect }
@@ -345,33 +312,16 @@ function ChangedFileTree({
     search: true,
     fileTreeSearchMode: 'hide-non-matches',
     sort: (left, right) => {
-      const leftRootOrder = left.segments[0]?.startsWith(
-        'Uncommitted Changes'
-      )
+      const leftRootOrder = left.segments[0]?.startsWith('Uncommitted changes')
         ? 0
         : 1
       const rightRootOrder = right.segments[0]?.startsWith(
-        'Uncommitted Changes'
+        'Uncommitted changes'
       )
         ? 0
         : 1
       if (leftRootOrder !== rightRootOrder) {
         return leftRootOrder - rightRootOrder
-      }
-
-      if (leftRootOrder === 0) {
-        const order = ['Staged', 'Unstaged', 'Untracked']
-        const leftGroup = left.segments[1] ?? left.basename
-        const rightGroup = right.segments[1] ?? right.basename
-        const leftOrder = order.findIndex((name) =>
-          leftGroup.startsWith(name)
-        )
-        const rightOrder = order.findIndex((name) =>
-          rightGroup.startsWith(name)
-        )
-        if (leftOrder !== rightOrder) {
-          return leftOrder - rightOrder
-        }
       }
 
       if (left.isDirectory !== right.isDirectory) {
@@ -638,7 +588,10 @@ function ReviewApp() {
   const [loaded, setLoaded] = useState<LoadedReview | null>(null)
   const loadedRef = useRef(loaded)
   loadedRef.current = loaded
-  const loadedDiff = useRef<GitDiff | null>(null)
+  const loadedDiff = useRef<{
+    uncommitted: GitDiff
+    committed: GitDiff
+  } | null>(null)
   const loadPending = useRef(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -679,7 +632,23 @@ function ReviewApp() {
   const sectionRefs = useRef(new Map<string, HTMLElement>())
 
   const files = loaded?.files ?? []
-  const fileNames = useMemo(() => files.map((file) => file.path), [files])
+  const fileGroups = useMemo(
+    () =>
+      [
+        {
+          id: 'uncommitted',
+          label: 'Uncommitted changes',
+          files: files.filter((file) => file.scope === 'uncommitted')
+        },
+        {
+          id: 'committed',
+          label: 'Committed changes',
+          files: files.filter((file) => file.scope === 'committed')
+        }
+      ].filter((group) => group.files.length > 0),
+    [files]
+  )
+  const fileNames = useMemo(() => files.map((file) => file.id), [files])
   const lineCounts = useMemo(
     () =>
       files.reduce(
@@ -713,7 +682,7 @@ function ReviewApp() {
       new Set(
         files
           .filter(({ loadState }) => loadState === 'ready')
-          .map(({ path }) => path)
+          .map(({ id }) => id)
       ),
     [files]
   )
@@ -721,19 +690,21 @@ function ReviewApp() {
     () =>
       loaded
         ? unresolved.filter(
-            ({ file, side, lineNumber }) =>
-              loadedFileNames.has(file) &&
-              !commentLocations.has(JSON.stringify([file, side, lineNumber]))
+            ({ fileId, side, lineNumber }) =>
+              !fileNames.includes(fileId) ||
+              (loadedFileNames.has(fileId) &&
+                !commentLocations.has(
+                  JSON.stringify([fileId, side, lineNumber])
+                ))
           )
         : [],
-    [commentLocations, loaded, loadedFileNames, unresolved]
+    [commentLocations, fileNames, loaded, loadedFileNames, unresolved]
   )
   const navigableComments = useMemo(
     () =>
       outdatedComments.length
-        ? unresolved.filter(
-            ({ file, side, lineNumber }) =>
-              commentLocations.has(JSON.stringify([file, side, lineNumber]))
+        ? unresolved.filter(({ fileId, side, lineNumber }) =>
+            commentLocations.has(JSON.stringify([fileId, side, lineNumber]))
           )
         : unresolved,
     [commentLocations, outdatedComments.length, unresolved]
@@ -800,22 +771,36 @@ function ReviewApp() {
 
     setError(null)
     try {
-      const [context, diff, storedComments, storedViewedFiles] = initial
-        ? await Promise.all([
-            treeport.context(),
-            treeport.diff(),
-            treeport.storage.get(COMMENTS_KEY),
-            treeport.storage.get(VIEWED_KEY)
-          ])
-        : [null, await treeport.diff(), null, null]
+      const [
+        context,
+        uncommitted,
+        committed,
+        storedComments,
+        storedViewedFiles
+      ] = await Promise.all([
+        initial ? treeport.context() : null,
+        treeport.diff({ scope: 'uncommitted' }),
+        treeport.diff({ scope: 'committed' }),
+        initial ? treeport.storage.get(COMMENTS_KEY) : null,
+        initial ? treeport.storage.get(VIEWED_KEY) : null
+      ])
+      if (uncommitted.headCommit !== committed.headCommit) {
+        throw new Error('HEAD changed while reading the review. Retrying…')
+      }
+
       const previousDiff = loadedDiff.current
       if (
-        previousDiff?.baseRef === diff.baseRef &&
-        previousDiff.baseCommit === diff.baseCommit &&
-        previousDiff.headCommit === diff.headCommit &&
-        JSON.stringify(previousDiff.files) === JSON.stringify(diff.files) &&
-        JSON.stringify(previousDiff.changeSets) ===
-          JSON.stringify(diff.changeSets)
+        previousDiff &&
+        [uncommitted, committed].every((diff, index) => {
+          const previous =
+            index === 0 ? previousDiff.uncommitted : previousDiff.committed
+          return (
+            previous.baseRef === diff.baseRef &&
+            previous.baseCommit === diff.baseCommit &&
+            previous.headCommit === diff.headCommit &&
+            JSON.stringify(previous.files) === JSON.stringify(diff.files)
+          )
+        })
       ) {
         return
       }
@@ -831,35 +816,48 @@ function ReviewApp() {
         ? new Set(z.array(z.string()).catch([]).parse(storedViewedFiles))
         : viewedFilesRef.current
       const previousFiles = new Map(
-        (loadedRef.current?.files ?? []).map((file) => [file.path, file])
+        (loadedRef.current?.files ?? []).map((file) => [file.id, file])
       )
-      const reviewFiles: ReviewFile[] = diff.files.map((file) => {
-        const previous = previousFiles.get(file.path)
-        return previous &&
-          previous.previousPath === file.previousPath &&
-          previous.status === file.status
-          ? previous
-          : {
-              ...file,
-              diff: null,
-              loadState: 'idle',
-              revision: null,
-              message: null
-            }
-      })
+      const reviewFiles: ReviewFile[] = []
+      for (const scope of ['uncommitted', 'committed'] as const) {
+        const diff = scope === 'uncommitted' ? uncommitted : committed
+        for (const file of diff.files) {
+          const id = `${scope}:${file.path}`
+          const beforeCommit = diff.baseCommit
+          const afterCommit = scope === 'committed' ? diff.headCommit : null
+          const previous = previousFiles.get(id)
+          reviewFiles.push(
+            previous &&
+              previous.previousPath === file.previousPath &&
+              previous.status === file.status &&
+              previous.beforeCommit === beforeCommit &&
+              previous.afterCommit === afterCommit
+              ? previous
+              : {
+                  ...file,
+                  id,
+                  scope,
+                  beforeCommit,
+                  afterCommit,
+                  diff: null,
+                  loadState: 'idle',
+                  revision: null,
+                  message: null
+                }
+          )
+        }
+      }
 
       clearCopyFeedback()
       setSelectedFile((current) =>
-        reviewFiles.some(({ path }) => path === current) ? current : null
+        reviewFiles.some(({ id }) => id === current) ? current : null
       )
       setSelectedLines(null)
       setActiveFindMatch(-1)
       if (initial) {
         setComments(parsedComments)
         setActiveCommentId((current) =>
-          parsedComments.some(
-            ({ id, resolved }) => id === current && !resolved
-          )
+          parsedComments.some(({ id, resolved }) => id === current && !resolved)
             ? current
             : null
         )
@@ -867,46 +865,29 @@ function ReviewApp() {
         setCommentStatus('')
       }
 
-      const uncommittedFiles = new Set([
-        ...diff.changeSets.staged,
-        ...diff.changeSets.unstaged,
-        ...diff.changeSets.untracked
-      ])
-      const nextAutoCollapsedFiles = new Set<string>()
-      if (uncommittedFiles.size > 0) {
-        for (const file of diff.changeSets.branch) {
-          if (!uncommittedFiles.has(file)) {
-            nextAutoCollapsedFiles.add(file)
+      const collapsed = fileStateLoaded.current
+        ? new Set(collapsedFilesRef.current)
+        : new Set(parsedViewed)
+      if (!fileStateLoaded.current && uncommitted.files.length > 0) {
+        for (const file of reviewFiles) {
+          if (file.scope === 'committed') {
+            collapsed.add(file.id)
           }
         }
       }
 
-      const collapsed = fileStateLoaded.current
-        ? new Set(collapsedFilesRef.current)
-        : new Set(parsedViewed)
-      if (!fileStateLoaded.current) {
-        for (const file of nextAutoCollapsedFiles) {
-          collapsed.add(file)
-        }
-      }
-
       setCollapsedFiles(collapsed)
-
       fileStateLoaded.current = true
 
-      const nextLoaded = {
-        baseCommit: diff.baseCommit,
+      const nextLoaded: LoadedReview = {
         summary: context
-          ? `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`
+          ? `${context.project.name} / ${context.worktree.name} · ${committed.baseRef}`
           : loadedRef.current!.summary,
-        generatedAt: diff.generatedAt,
+        generatedAt: uncommitted.generatedAt,
         files: reviewFiles,
-        changeSets: diff.changeSets,
-        searchableLines: searchableLinesFor(
-          reviewFiles.flatMap((file) => (file.diff ? [file.diff] : []))
-        )
+        searchableLines: searchableLinesFor(reviewFiles)
       }
-      loadedDiff.current = diff
+      loadedDiff.current = { uncommitted, committed }
       loadedRef.current = nextLoaded
       setLoaded(nextLoaded)
     } catch (reason) {
@@ -918,46 +899,56 @@ function ReviewApp() {
   }, [clearCopyFeedback])
 
   const fileLoads = useRef(new Set<string>())
-  const loadFile = useCallback(async (filePath: string, reload = false) => {
+  const loadFile = useCallback(async (fileId: string, reload = false) => {
     const currentFile = loadedRef.current?.files.find(
-      (file) => file.path === filePath
+      (file) => file.id === fileId
     )
     if (
       !currentFile ||
-      fileLoads.current.has(filePath) ||
+      fileLoads.current.has(fileId) ||
       (!reload && currentFile.loadState !== 'idle')
     ) {
       return
     }
 
+    const filePath = currentFile.path
     const updateFile = (update: Partial<ReviewFile>) => {
       setLoaded((current) => {
-        if (!current) {
+        if (
+          !current ||
+          !current.files.some(
+            (file) =>
+              file.id === fileId &&
+              file.beforeCommit === currentFile.beforeCommit &&
+              file.afterCommit === currentFile.afterCommit
+          )
+        ) {
           return current
         }
 
         const next = {
           ...current,
           files: current.files.map((file) =>
-            file.path === filePath ? { ...file, ...update } : file
+            file.id === fileId ? { ...file, ...update } : file
           )
         }
-        next.searchableLines = searchableLinesFor(
-          next.files.flatMap((file) => (file.diff ? [file.diff] : []))
-        )
+        next.searchableLines = searchableLinesFor(next.files)
         loadedRef.current = next
         return next
       })
     }
 
-    fileLoads.current.add(filePath)
+    fileLoads.current.add(fileId)
 
     if (currentFile.loadState !== 'ready') {
       updateFile({ loadState: 'loading', message: null })
     }
 
     try {
-      const result = await treeport.diffFile({ path: filePath })
+      const result = await treeport.diffFile({
+        path: filePath,
+        scope: currentFile.scope
+      })
 
       if (result.status === 'oversized') {
         updateFile({
@@ -998,7 +989,7 @@ function ReviewApp() {
         message: reason instanceof Error ? reason.message : String(reason)
       })
     } finally {
-      fileLoads.current.delete(filePath)
+      fileLoads.current.delete(fileId)
     }
   }, [])
 
@@ -1031,7 +1022,7 @@ function ReviewApp() {
       void load()
       for (const file of loadedRef.current?.files ?? []) {
         if (file.loadState === 'ready') {
-          void loadFile(file.path, true)
+          void loadFile(file.id, true)
         }
       }
     }
@@ -1237,12 +1228,12 @@ function ReviewApp() {
   const navigateToComment = useCallback(
     (comment: ReviewComment) => {
       setFileTreeOpen(false)
-      setCollapsed(comment.file, false)
-      setImageSources((current) => new Set(current).add(comment.file))
+      setCollapsed(comment.fileId, false)
+      setImageSources((current) => new Set(current).add(comment.fileId))
       setActiveCommentId(comment.id)
-      setSelectedFile(comment.file)
+      setSelectedFile(comment.fileId)
       setSelectedLines({
-        file: comment.file,
+        file: comment.fileId,
         range: {
           start: comment.lineNumber,
           end: comment.lineNumber,
@@ -1258,7 +1249,7 @@ function ReviewApp() {
           element.scrollIntoView({ block: 'center' })
         } else {
           sectionRefs.current
-            .get(comment.file)
+            .get(comment.fileId)
             ?.scrollIntoView({ block: 'start' })
         }
       })
@@ -1356,7 +1347,12 @@ function ReviewApp() {
     const output = unresolved
       .map((comment) => {
         const side = comment.side === 'deletions' ? ' (deleted line)' : ''
-        return `${comment.file}:${comment.lineNumber}${side}\n${comment.body}`
+        const scope = comment.fileId.startsWith('committed:')
+          ? 'committed'
+          : comment.fileId.startsWith('uncommitted:')
+            ? 'uncommitted'
+            : 'previous combined diff'
+        return `${comment.file}:${comment.lineNumber}${side} (${scope})\n${comment.body}`
       })
       .join('\n\n')
     const textarea = document.createElement('textarea')
@@ -1605,249 +1601,271 @@ function ReviewApp() {
               No changes against the default branch merge base.
             </p>
           ) : (
-            files.map((file) => {
-              const fileDiff = file.diff
-              if (!fileDiff) {
-                const label =
-                  file.loadState === 'oversized'
-                    ? 'Patch too large to display'
-                    : file.loadState === 'error'
-                      ? 'Could not load patch'
-                      : file.loadState === 'loading'
-                        ? 'Loading patch…'
-                        : 'Patch loads when visible'
-                const isImage = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
-                  file.path
-                )
-                return (
-                  <section
-                    key={file.path}
-                    data-review-file={file.path}
-                    ref={(element) => {
-                      if (element) {
-                        sectionRefs.current.set(file.path, element)
-                      } else {
-                        sectionRefs.current.delete(file.path)
-                      }
-                    }}
-                    className={`file-diff file-diff-placeholder${selectedFile === file.path ? ' selected' : ''}`}
-                  >
-                    <div className="file-placeholder-header">
-                      <strong>{file.path}</strong>
-                      <span>{label}</span>
-                    </div>
-                    {file.message && <p>{file.message}</p>}
-                    {file.loadState === 'error' && (
-                      <button
-                        type="button"
-                        onClick={() => void loadFile(file.path, true)}
+            fileGroups.map((group) => (
+              <section
+                key={group.id}
+                className="review-change-group"
+                aria-labelledby={`review-group-${group.id}`}
+              >
+                <h2
+                  id={`review-group-${group.id}`}
+                  className="review-group-header"
+                >
+                  <span>{group.label}</span>
+                  <span className="review-group-count">
+                    {group.files.length}
+                  </span>
+                </h2>
+                {group.files.map((file) => {
+                  const fileDiff = file.diff
+                  if (!fileDiff) {
+                    const label =
+                      file.loadState === 'oversized'
+                        ? 'Patch too large to display'
+                        : file.loadState === 'error'
+                          ? 'Could not load patch'
+                          : file.loadState === 'loading'
+                            ? 'Loading patch…'
+                            : 'Patch loads when visible'
+                    const isImage =
+                      /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
+                        file.path
+                      )
+                    return (
+                      <section
+                        key={file.id}
+                        data-review-file={file.id}
+                        ref={(element) => {
+                          if (element) {
+                            sectionRefs.current.set(file.id, element)
+                          } else {
+                            sectionRefs.current.delete(file.id)
+                          }
+                        }}
+                        className={`file-diff file-diff-placeholder${selectedFile === file.id ? ' selected' : ''}`}
                       >
-                        Retry
-                      </button>
-                    )}
-                    {file.loadState === 'oversized' && isImage && (
-                      <div className="image-diff">
-                        {file.status !== 'added' &&
-                          file.status !== 'untracked' && (
+                        <div className="file-placeholder-header">
+                          <strong>{file.path}</strong>
+                          <span>{label}</span>
+                        </div>
+                        {file.message && <p>{file.message}</p>}
+                        {file.loadState === 'error' && (
+                          <button
+                            type="button"
+                            onClick={() => void loadFile(file.id, true)}
+                          >
+                            Retry
+                          </button>
+                        )}
+                        {file.loadState === 'oversized' && isImage && (
+                          <div className="image-diff">
+                            {file.status !== 'added' &&
+                              file.status !== 'untracked' && (
+                                <ImagePreview
+                                  path={file.previousPath ?? file.path}
+                                  commit={file.beforeCommit}
+                                  label="Before"
+                                />
+                              )}
+                            {file.status !== 'deleted' && (
+                              <ImagePreview
+                                path={file.path}
+                                commit={file.afterCommit}
+                                label="After"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </section>
+                    )
+                  }
+
+                  const fileComments = comments.filter(
+                    (comment) => comment.fileId === file.id
+                  )
+                  const annotations: DiffLineAnnotation<ReviewComment>[] =
+                    fileComments.map((comment) => ({
+                      side: comment.side,
+                      lineNumber: comment.lineNumber,
+                      metadata: comment
+                    }))
+                  const collapsed = collapsedFiles.has(file.id)
+                  const isImage =
+                    /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
+                      fileDiff.name
+                    )
+                  const showImage =
+                    isImage &&
+                    (fileDiff.hunks.length === 0 || !imageSources.has(file.id))
+                  return (
+                    <section
+                      key={file.id}
+                      data-review-file={file.id}
+                      ref={(element) => {
+                        if (element) {
+                          sectionRefs.current.set(file.id, element)
+                        } else {
+                          sectionRefs.current.delete(file.id)
+                        }
+                      }}
+                      className={`file-diff${selectedFile === file.id ? ' selected' : ''}`}
+                    >
+                      <FileDiff<ReviewComment>
+                        fileDiff={fileDiff}
+                        options={{
+                          theme: 'pierre-dark',
+                          diffStyle: 'unified',
+                          overflow: 'wrap',
+                          collapsed: collapsed || showImage,
+                          unsafeCSS: DIFF_CSS,
+                          enableGutterUtility: true,
+                          lineHoverHighlight: 'both',
+                          onGutterUtilityClick: (range) => {
+                            if (
+                              commentsRef.current.some(
+                                (comment) =>
+                                  comment.fileId === file.id && comment.draft
+                              )
+                            ) {
+                              return
+                            }
+
+                            const next = [
+                              ...commentsRef.current,
+                              {
+                                id: `${Date.now()}-${++commentSerial.current}`,
+                                file: file.path,
+                                fileId: file.id,
+                                side: range.side ?? 'additions',
+                                lineNumber: range.start,
+                                body: '',
+                                resolved: false,
+                                draft: true
+                              } satisfies ReviewComment
+                            ]
+                            clearCopyFeedback()
+                            setComments(next)
+                            setSelectedLines({ file: file.id, range })
+                          },
+                          onPostRender: () => {
+                            if (findOpen) {
+                              requestAnimationFrame(updateFindHighlights)
+                            }
+                          }
+                        }}
+                        lineAnnotations={annotations}
+                        selectedLines={
+                          selectedLines?.file === file.id
+                            ? selectedLines.range
+                            : null
+                        }
+                        renderHeaderPrefix={() => (
+                          <button
+                            type="button"
+                            className="file-collapse"
+                            aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${fileDiff.name}`}
+                            title={`${collapsed ? 'Expand' : 'Collapse'} file`}
+                            aria-expanded={!collapsed}
+                            onClick={() => setCollapsed(file.id, !collapsed)}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path
+                                d={collapsed ? 'm6 3 5 5-5 5' : 'm3 6 5 5 5-5'}
+                              />
+                            </svg>
+                          </button>
+                        )}
+                        renderHeaderMetadata={() => (
+                          <>
+                            {isImage && fileDiff.hunks.length > 0 && (
+                              <button
+                                type="button"
+                                aria-label={`${showImage ? 'Show source for' : 'Show image for'} ${fileDiff.name}`}
+                                onClick={() => {
+                                  setImageSources((current) => {
+                                    const next = new Set(current)
+                                    if (showImage) {
+                                      next.add(file.id)
+                                    } else {
+                                      next.delete(file.id)
+                                    }
+
+                                    return next
+                                  })
+                                  setCollapsed(file.id, false)
+                                }}
+                              >
+                                {showImage ? 'Source' : 'Image'}
+                              </button>
+                            )}
+                            <label className="file-viewed">
+                              <input
+                                type="checkbox"
+                                checked={viewedFiles.has(file.id)}
+                                aria-label={`Viewed ${fileDiff.name}`}
+                                onChange={(event) => {
+                                  const checked = event.target.checked
+                                  const next = new Set(viewedFiles)
+                                  if (checked) {
+                                    next.add(file.id)
+                                  } else {
+                                    next.delete(file.id)
+                                  }
+
+                                  setViewedFiles(next)
+                                  setCollapsed(file.id, checked)
+                                  void persistViewed(next)
+                                }}
+                              />
+                              Viewed
+                            </label>
+                          </>
+                        )}
+                        renderAnnotation={(annotation) => {
+                          const comment = annotation.metadata
+                          return (
+                            <CommentEditor
+                              comment={comment}
+                              active={comment.id === activeCommentId}
+                              onCancel={() => cancelComment(comment)}
+                              onDelete={() => deleteComment(comment)}
+                              onEdit={() => editComment(comment)}
+                              onResolve={() =>
+                                setCommentResolved(comment, true)
+                              }
+                              onSave={(body) => saveComment(comment, body)}
+                              onUnresolve={() =>
+                                setCommentResolved(comment, false)
+                              }
+                            />
+                          )
+                        }}
+                      />
+                      {showImage && !collapsed && (
+                        <div className="image-diff">
+                          {fileDiff.type !== 'new' && (
                             <ImagePreview
-                              path={file.previousPath ?? file.path}
-                              commit={loaded!.baseCommit}
+                              key={`before:${file.beforeCommit}:${fileDiff.prevName ?? fileDiff.name}`}
+                              path={fileDiff.prevName ?? fileDiff.name}
+                              commit={file.beforeCommit}
                               label="Before"
                             />
                           )}
-                        {file.status !== 'deleted' && (
-                          <ImagePreview
-                            path={file.path}
-                            commit={null}
-                            label="After"
-                          />
-                        )}
-                      </div>
-                    )}
-                  </section>
-                )
-              }
-
-              const fileComments = comments.filter(
-                ({ file }) => file === fileDiff.name
-              )
-              const annotations: DiffLineAnnotation<ReviewComment>[] =
-                fileComments.map((comment) => ({
-                  side: comment.side,
-                  lineNumber: comment.lineNumber,
-                  metadata: comment
-                }))
-              const collapsed = collapsedFiles.has(fileDiff.name)
-              const isImage = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
-                fileDiff.name
-              )
-              const showImage = isImage && (
-                fileDiff.hunks.length === 0 || !imageSources.has(fileDiff.name)
-              )
-              return (
-                <section
-                  key={file.path}
-                  data-review-file={file.path}
-                  ref={(element) => {
-                    if (element) {
-                      sectionRefs.current.set(fileDiff.name, element)
-                    } else {
-                      sectionRefs.current.delete(fileDiff.name)
-                    }
-                  }}
-                  className={`file-diff${selectedFile === fileDiff.name ? ' selected' : ''}`}
-                >
-                  <FileDiff<ReviewComment>
-                    fileDiff={fileDiff}
-                    options={{
-                      theme: 'pierre-dark',
-                      diffStyle: 'unified',
-                      overflow: 'wrap',
-                      collapsed: collapsed || showImage,
-                      unsafeCSS: DIFF_CSS,
-                      enableGutterUtility: true,
-                      lineHoverHighlight: 'both',
-                      onGutterUtilityClick: (range) => {
-                        if (
-                          commentsRef.current.some(
-                            (comment) =>
-                              comment.file === fileDiff.name && comment.draft
-                          )
-                        ) {
-                          return
-                        }
-
-                        const next = [
-                          ...commentsRef.current,
-                          {
-                            id: `${Date.now()}-${++commentSerial.current}`,
-                            file: fileDiff.name,
-                            side: range.side ?? 'additions',
-                            lineNumber: range.start,
-                            body: '',
-                            resolved: false,
-                            draft: true
-                          } satisfies ReviewComment
-                        ]
-                        clearCopyFeedback()
-                        setComments(next)
-                        setSelectedLines({ file: fileDiff.name, range })
-                      },
-                      onPostRender: () => {
-                        if (findOpen) {
-                          requestAnimationFrame(updateFindHighlights)
-                        }
-                      }
-                    }}
-                    lineAnnotations={annotations}
-                    selectedLines={
-                      selectedLines?.file === fileDiff.name
-                        ? selectedLines.range
-                        : null
-                    }
-                    renderHeaderPrefix={() => (
-                      <button
-                        type="button"
-                        className="file-collapse"
-                        aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${fileDiff.name}`}
-                        title={`${collapsed ? 'Expand' : 'Collapse'} file`}
-                        aria-expanded={!collapsed}
-                        onClick={() => setCollapsed(fileDiff.name, !collapsed)}
-                      >
-                        <svg viewBox="0 0 16 16" aria-hidden="true">
-                          <path
-                            d={collapsed ? 'm6 3 5 5-5 5' : 'm3 6 5 5 5-5'}
-                          />
-                        </svg>
-                      </button>
-                    )}
-                    renderHeaderMetadata={() => (
-                      <>
-                        {isImage && fileDiff.hunks.length > 0 && (
-                          <button
-                            type="button"
-                            aria-label={`${showImage ? 'Show source for' : 'Show image for'} ${fileDiff.name}`}
-                            onClick={() => {
-                              setImageSources((current) => {
-                                const next = new Set(current)
-                                if (showImage) {
-                                  next.add(fileDiff.name)
-                                } else {
-                                  next.delete(fileDiff.name)
-                                }
-
-                                return next
-                              })
-                              setCollapsed(fileDiff.name, false)
-                            }}
-                          >
-                            {showImage ? 'Source' : 'Image'}
-                          </button>
-                        )}
-                        <label className="file-viewed">
-                          <input
-                            type="checkbox"
-                            checked={viewedFiles.has(fileDiff.name)}
-                            aria-label={`Viewed ${fileDiff.name}`}
-                            onChange={(event) => {
-                              const checked = event.target.checked
-                              const next = new Set(viewedFiles)
-                              if (checked) {
-                                next.add(fileDiff.name)
-                              } else {
-                                next.delete(fileDiff.name)
-                              }
-
-                              setViewedFiles(next)
-                              setCollapsed(fileDiff.name, checked)
-                              void persistViewed(next)
-                            }}
-                          />
-                          Viewed
-                        </label>
-                      </>
-                    )}
-                    renderAnnotation={(annotation) => {
-                      const comment = annotation.metadata
-                      return (
-                        <CommentEditor
-                          comment={comment}
-                          active={comment.id === activeCommentId}
-                          onCancel={() => cancelComment(comment)}
-                          onDelete={() => deleteComment(comment)}
-                          onEdit={() => editComment(comment)}
-                          onResolve={() => setCommentResolved(comment, true)}
-                          onSave={(body) => saveComment(comment, body)}
-                          onUnresolve={() =>
-                            setCommentResolved(comment, false)
-                          }
-                        />
-                      )
-                    }}
-                  />
-                  {showImage && !collapsed && (
-                    <div className="image-diff">
-                      {fileDiff.type !== 'new' && (
-                        <ImagePreview
-                          key={`before:${loaded!.baseCommit}:${fileDiff.prevName ?? fileDiff.name}`}
-                          path={fileDiff.prevName ?? fileDiff.name}
-                          commit={loaded!.baseCommit}
-                          label="Before"
-                        />
+                          {fileDiff.type !== 'deleted' && (
+                            <ImagePreview
+                              key={`after:${file.id}:${file.afterCommit}:${fileDiff.newObjectId ?? loaded!.generatedAt}`}
+                              path={fileDiff.name}
+                              commit={file.afterCommit}
+                              label="After"
+                            />
+                          )}
+                        </div>
                       )}
-                      {fileDiff.type !== 'deleted' && (
-                        <ImagePreview
-                          key={`after:${fileDiff.name}:${fileDiff.newObjectId ?? loaded!.generatedAt}`}
-                          path={fileDiff.name}
-                          commit={null}
-                          label="After"
-                        />
-                      )}
-                    </div>
-                  )}
-                </section>
-              )
-            })
+                    </section>
+                  )
+                })}
+              </section>
+            ))
           )}
         </main>
       </div>
@@ -1864,11 +1882,7 @@ function ReviewApp() {
           </div>
           <div id="file-tree">
             {files.length > 0 && (
-              <ChangedFileTree
-                files={files}
-                changeSets={loaded!.changeSets}
-                onSelect={selectFile}
-              />
+              <ChangedFileTree files={files} onSelect={selectFile} />
             )}
           </div>
         </Sheet.Popup>

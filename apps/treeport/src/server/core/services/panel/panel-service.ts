@@ -9,6 +9,7 @@ import {
 import type {
   BrowserPanel,
   GitDiffImageRequest,
+  GitDiffRequest,
   JsonValue,
   OpenBrowserPanelResult,
   OpenWebPanelResult,
@@ -1006,7 +1007,7 @@ export class PanelService {
     })
   }
 
-  getWebPanelDiff(panelId: string) {
+  getWebPanelDiff(panelId: string, scope?: GitDiffRequest['scope']) {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
     const getWorktree = this.getWorktree.bind(this)
 
@@ -1028,7 +1029,7 @@ export class PanelService {
 
       const worktree = yield* getWorktree(context.panel.worktreeId)
       return yield* git
-        .worktreeDiff(worktree.path, context.project.defaultBranch!)
+        .worktreeDiff(worktree.path, context.project.defaultBranch!, scope)
         .pipe(
           Effect.mapError(
             (reason) =>
@@ -1042,7 +1043,11 @@ export class PanelService {
     })
   }
 
-  getWebPanelFileDiff(panelId: string, filePath: string) {
+  getWebPanelFileDiff(
+    panelId: string,
+    filePath: string,
+    scope?: GitDiffRequest['scope']
+  ) {
     const getWebPanelContext = this.getWebPanelContext.bind(this)
     const getWorktree = this.getWorktree.bind(this)
 
@@ -1067,7 +1072,8 @@ export class PanelService {
         .worktreeFileDiff(
           worktree.path,
           context.project.defaultBranch,
-          filePath
+          filePath,
+          scope
         )
         .pipe(
           Effect.mapError(
