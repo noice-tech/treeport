@@ -12,7 +12,6 @@ import type {
   BrowserServerToClientEvents
 } from '@treeport/shared'
 import {
-  BROWSER_PROTOCOL_VERSION,
   BROWSER_MAX_INSERT_TEXT_LENGTH,
   parseBrowserClientMessage,
   parseBrowserServerMessage
@@ -38,7 +37,6 @@ interface BrowserPanelSocketOptions {
   reconnection: false
   auth: {
     ticket: string
-    protocolVersion: typeof BROWSER_PROTOCOL_VERSION
   }
 }
 
@@ -71,7 +69,7 @@ export function connectBrowserPanel(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let currentVisible = initialVisible
   let ready = false
-  let protocolFailed = false
+  let reconnectAllowed = true
   let reconnectAttempts = 0
   let readyAt: number | null = null
   let connectedOnce = false
@@ -93,7 +91,7 @@ export function connectBrowserPanel(
   }
 
   const scheduleReconnect = () => {
-    if (disposed || protocolFailed || reconnectTimer) {
+    if (disposed || !reconnectAllowed || reconnectTimer) {
       return
     }
 
@@ -126,31 +124,30 @@ export function connectBrowserPanel(
       }
     )
     const body: unknown = await response.json().catch(() => null)
+    if (disposed) {
+      connecting = false
+      return
+    }
+
     const result = decodeUnknownOrNull(browserTicketResponseSchema, body)
     if (response.ok && !result) {
-      protocolFailed = true
-      throw new Error(
-        'Browser ticket response is invalid. Automatic retries stopped. Reload or update Treeport to reconnect.'
-      )
+      reconnectAllowed = false
+      window.location.reload()
+      return
     }
 
     if (!response.ok || !result) {
       if ([400, 401, 403, 404].includes(response.status)) {
-        protocolFailed = true
+        reconnectAllowed = false
       }
 
       const error = decodeUnknownOrNull(apiErrorBodySchema, body)
       throw new Error(error?.error.message ?? 'Could not attach hosted browser')
     }
 
-    if (disposed) {
-      connecting = false
-      return
-    }
-
     const connectedSocket = socketFactory('/browsers', {
       reconnection: false,
-      auth: { ticket: result.ticket, protocolVersion: BROWSER_PROTOCOL_VERSION }
+      auth: { ticket: result.ticket }
     })
     socket = connectedSocket
     connecting = false
@@ -161,16 +158,22 @@ export function connectBrowserPanel(
 
       const message = parseBrowserServerMessage(value)
       if (!message) {
-        protocolFailed = true
+        reconnectAllowed = false
         pendingCommands.length = 0
         ready = false
         socket = null
-        reportError(
-          new Error(
-            'Browser protocol response is invalid. Automatic retries stopped. Reload Treeport to reconnect; if this continues, update Treeport and report the problem.'
-          )
-        )
         connectedSocket.disconnect()
+        window.location.reload()
+        return
+      }
+
+      // Rebuild the UI from the running daemon after reconnecting, rather than
+      // keeping stale browser code alive across a daemon restart or update.
+      if (message.type === 'ready' && connectedOnce && !ready) {
+        reconnectAllowed = false
+        socket = null
+        connectedSocket.disconnect()
+        window.location.reload()
         return
       }
 
@@ -190,7 +193,7 @@ export function connectBrowserPanel(
         visible: currentVisible
       })
       // A new attachment starts with the server viewport, not this panel's.
-      // Replay layout even when no ResizeObserver notification follows reconnect.
+      // Send layout even when no ResizeObserver notification follows readiness.
       if (viewport) {
         connectedSocket.emit('command', viewport)
       }
@@ -291,7 +294,7 @@ export function connectBrowserPanel(
       // Never queue paste: a delayed paste can target a different page or owner.
       // Keep the initial command queue bounded without silently evicting input.
       if (
-        !protocolFailed &&
+        reconnectAllowed &&
         !connectedOnce &&
         command.type !== 'insertText' &&
         pendingCommands.length < 32

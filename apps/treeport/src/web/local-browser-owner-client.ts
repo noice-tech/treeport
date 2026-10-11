@@ -11,10 +11,7 @@ import type {
   BrowserOwnerServerToClientEvents,
   BrowserRuntimeState
 } from '@treeport/shared'
-import {
-  BROWSER_PROTOCOL_VERSION,
-  parseBrowserOwnerServerMessage
-} from '@treeport/shared'
+import { parseBrowserOwnerServerMessage } from '@treeport/shared'
 
 interface LocalBrowserOwnerSocket {
   connected: boolean
@@ -34,7 +31,6 @@ type LocalBrowserOwnerSocketFactory = (
     reconnection: false
     auth: {
       ticket: string
-      protocolVersion: typeof BROWSER_PROTOCOL_VERSION
       endpoint: string
       challenge: string
     }
@@ -82,7 +78,8 @@ export async function requestLocalBrowserOwnerTicket(
 
   const ticket = decodeUnknownOrNull(browserOwnerTicketResponseSchema, body)
   if (!ticket) {
-    throw new Error('The Browser owner ticket response is invalid.')
+    window.location.reload()
+    throw new Error('Reconnecting the Browser owner.')
   }
 
   return ticket
@@ -114,7 +111,6 @@ export function connectLocalBrowserOwner(
     reconnection: false,
     auth: {
       ticket: ownerTicket.ticket,
-      protocolVersion: BROWSER_PROTOCOL_VERSION,
       endpoint,
       challenge: ownerTicket.challenge
     }
@@ -150,16 +146,18 @@ export function connectLocalBrowserOwner(
     socket.on('ownerMessage', (value: BrowserOwnerServerMessage) => {
       const message = parseBrowserOwnerServerMessage(value)
       if (!message) {
-        const reason =
-          'The Browser owner protocol is invalid. Reload Treeport to reconnect; update Treeport if this continues.'
-        if (!settled) {
-          rejectBeforeReady(new Error(reason))
-        } else if (!disposed) {
-          disposed = true
-          socket.disconnect()
-          handlers.closed(reason)
+        if (disposed) {
+          return
         }
 
+        if (!settled) {
+          rejectBeforeReady(new Error('Reconnecting the Browser owner.'))
+        } else {
+          disposed = true
+          socket.disconnect()
+        }
+
+        window.location.reload()
         return
       }
 

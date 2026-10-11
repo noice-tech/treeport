@@ -2,7 +2,6 @@
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
-export const BROWSER_PROTOCOL_VERSION = 10
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 // Observed Chromium addresses can be megabytes long (including JSON escaping).
@@ -364,14 +363,12 @@ export type BrowserAgentCommand = Schema.Schema.Type<
 >
 
 export const browserAuthSchema = Schema.Struct({
-  ticket: opaqueTokenSchema,
-  protocolVersion: Schema.Literal(BROWSER_PROTOCOL_VERSION)
+  ticket: opaqueTokenSchema
 })
 export type BrowserAuth = Schema.Schema.Type<typeof browserAuthSchema>
 
 export const browserOwnerAuthSchema = Schema.Struct({
   ticket: opaqueTokenSchema,
-  protocolVersion: Schema.Literal(BROWSER_PROTOCOL_VERSION),
   endpoint: browserOwnerEndpointSchema,
   challenge: opaqueTokenSchema
 })

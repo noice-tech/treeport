@@ -6,7 +6,6 @@ import {
   browserOwnerAuthSchema as browserOwnerAuthEffectSchema,
   browserOwnerClientMessageSchema as browserOwnerClientMessageEffectSchema,
   browserOwnerServerMessageSchema as browserOwnerServerMessageEffectSchema,
-  BROWSER_PROTOCOL_VERSION,
   parseBrowserAuth,
   parseBrowserClientMessage,
   encodeBrowserFrame,
@@ -153,18 +152,11 @@ describe('hosted browser protocol', () => {
 
   it('requires a bounded opaque ticket', () => {
     const ticket = 'a'.repeat(43)
-    expect(
-      parseBrowserAuth({ ticket, protocolVersion: BROWSER_PROTOCOL_VERSION })
-    ).toEqual({
-      ticket,
-      protocolVersion: BROWSER_PROTOCOL_VERSION
-    })
-    expect(parseBrowserAuth({ ticket: 'short', protocolVersion: 1 })).toBeNull()
-    expect(parseBrowserAuth({ ticket, protocolVersion: 1 })).toBeNull()
+    expect(parseBrowserAuth({ ticket })).toEqual({ ticket })
+    expect(parseBrowserAuth({ ticket: 'short' })).toBeNull()
     expect(
       parseBrowserAuth({
         ticket,
-        protocolVersion: BROWSER_PROTOCOL_VERSION,
         panelId: 'another-panel'
       })
     ).toBeNull()
@@ -173,7 +165,6 @@ describe('hosted browser protocol', () => {
       browserOwnerAuthSchema.safeParse({
         ticket,
         challenge: 'c'.repeat(43),
-        protocolVersion: BROWSER_PROTOCOL_VERSION,
         endpoint: 'http://127.0.0.1:43210/private/'
       }).success
     ).toBe(true)
@@ -181,7 +172,6 @@ describe('hosted browser protocol', () => {
       browserOwnerAuthSchema.safeParse({
         ticket,
         challenge: 'c'.repeat(43),
-        protocolVersion: BROWSER_PROTOCOL_VERSION,
         endpoint: 'http://localhost:43210/private/'
       }).success
     ).toBe(false)
