@@ -10,6 +10,9 @@ import * as HttpRouter from '@effect/platform/HttpRouter'
 import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import {
+  pushConfigResponseSchema,
+  pushSubscriptionSchema,
+  pushUnsubscribeSchema,
   presenceUpdateSchema,
   presenceResponseSchema,
   apiErrorBodySchema,
@@ -132,6 +135,7 @@ import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
 import { authenticatedPrincipals, isLoopbackAddress } from './request-security'
 import type { WorkspacePresenceManager } from './workspace-presence'
+import type { WebPushManager } from './web-push'
 import { networkTelemetry } from './network-telemetry'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
@@ -211,6 +215,7 @@ interface AppDependencies {
   terminalMetadata: TerminalMetadataManager
   browserSessions?: BrowserSessionManager
   presence: WorkspacePresenceManager
+  push?: WebPushManager
   rpcHttpApp?: HttpApp.Default<never, Scope.Scope>
   webDist?: string
 }
@@ -380,6 +385,7 @@ export function createApp({
   terminalMetadata: metadata,
   browserSessions,
   presence,
+  push,
   rpcHttpApp,
   webDist
 }: AppDependencies): TreeportHttpApp {
@@ -443,7 +449,63 @@ export function createApp({
       }
     })
   })
+  const pushIdentity = Effect.gen(function* () {
+    const request = yield* serverRequest
+    const identity = authenticatedPrincipals.get(
+      NodeHttpServerRequest.toIncomingMessage(request)
+    )
+    if (!identity) {
+      return yield* Effect.fail(
+        new DomainError(
+          'AUTHENTICATION_REQUIRED',
+          'An authenticated request is required',
+          401
+        )
+      )
+    }
+
+    return identity
+  })
   const routes = [
+    ...(push
+      ? [
+          route(
+            'GET',
+            '/api/push/config',
+            Effect.gen(function* () {
+              yield* pushIdentity
+              return jsonContractResponse(
+                pushConfigResponseSchema,
+                { publicKey: push.publicKey },
+                200,
+                { 'cache-control': 'no-store' }
+              )
+            })
+          ),
+          route(
+            'POST',
+            '/api/push/subscribe',
+            Effect.gen(function* () {
+              const identity = yield* pushIdentity
+              const subscription = yield* requestBody(pushSubscriptionSchema)
+              yield* operation(() =>
+                push.update(identity, subscription, subscription.endpoint)
+              )
+              return jsonContractResponse(okResponseSchema, { ok: true })
+            })
+          ),
+          route(
+            'POST',
+            '/api/push/unsubscribe',
+            Effect.gen(function* () {
+              const identity = yield* pushIdentity
+              const body = yield* requestBody(pushUnsubscribeSchema)
+              yield* operation(() => push.update(identity, null, body.endpoint))
+              return jsonContractResponse(okResponseSchema, { ok: true })
+            })
+          )
+        ]
+      : []),
     route(
       'POST',
       '/api/presence',
@@ -1878,7 +1940,9 @@ export function createApp({
     route(
       'GET',
       '/sw.js',
-      Effect.succeed(HttpServerResponse.empty({ status: 404 }))
+      fileResponse(path.join(staticRoot, 'sw.js'), {
+        'cache-control': 'no-cache'
+      })
     ),
     route('GET', '*', fileResponse(path.join(staticRoot, 'index.html')))
   )

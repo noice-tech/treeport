@@ -31,6 +31,7 @@ import { createBrowserDevtoolsBridge } from './browser-devtools'
 import { makeRpcHttpApp } from './rpc-server'
 import { acquireTerminalMetadataManager } from './terminal-metadata'
 import { connectOrStartTerminalHost } from './terminal-host-client'
+import { WebPushManager } from './web-push'
 
 const updateStartupTransactionSchema = z.looseObject({
   schemaVersion: z.literal(1),
@@ -147,6 +148,73 @@ async function main(): Promise<void> {
         resourceScope
       )
     )
+    const push = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.tryPromise(() => WebPushManager.open(config.dataDir)).pipe(
+            Effect.orDie
+          ),
+          (manager) =>
+            Effect.tryPromise(() => manager.dispose()).pipe(Effect.orDie)
+        ),
+        resourceScope
+      )
+    )
+    const pendingBells = new Set<string>()
+    const unsubscribePush = terminalMetadata.subscribeLiveBells((metadata) => {
+      const terminalId = metadata.terminalId
+      if (
+        !push.hasSubscriptions ||
+        pendingBells.has(terminalId) ||
+        pendingBells.size >= 256
+      ) {
+        return
+      }
+
+      pendingBells.add(terminalId)
+      service.forkApplicationEffect(
+        Effect.gen(function* () {
+          // Let focused clients acknowledge the BEL before sending. Coalesce
+          // bursts, but never hide a received push in the worker (iOS revokes it).
+          yield* Effect.sleep('750 millis')
+          const current = terminalMetadata.get(terminalId)
+          if (!current.bell?.unread || !push.hasSubscriptions) {
+            return
+          }
+
+          const terminal = yield* service.terminals.getTerminal(terminalId)
+          const worktree = yield* service.projects.getWorktree(
+            terminal.worktreeId
+          )
+          yield* Effect.tryPromise(() =>
+            push.notify(
+              {
+                title: current.title ?? terminal.name,
+                body: `Terminal needs attention · ${worktree.name}`,
+                url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
+                tag: `treeport-bell:${terminalId}`
+              },
+              presence.snapshot()
+            )
+          )
+        }).pipe(
+          Effect.catchAll(() =>
+            Effect.logWarning('Terminal Web Push notification failed')
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              pendingBells.delete(terminalId)
+            })
+          )
+        )
+      )
+    })
+    await Effect.runPromise(
+      Scope.extend(
+        Effect.addFinalizer(() => Effect.sync(unsubscribePush)),
+        resourceScope
+      )
+    )
     const rpcHttpApp = await service.runEffect(
       Scope.extend(
         makeRpcHttpApp(service, terminalMetadata, presence),
@@ -161,6 +229,7 @@ async function main(): Promise<void> {
       terminalMetadata,
       browserSessions,
       presence,
+      push,
       rpcHttpApp
     })
     const effectListener = await service.runEffect(

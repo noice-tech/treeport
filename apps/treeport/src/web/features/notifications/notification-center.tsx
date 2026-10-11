@@ -16,6 +16,7 @@ import {
   type WorkspaceTarget
 } from '../../workspace-navigation'
 import { notifyError } from './error-notifications'
+import { PushNotificationControl } from './push-notification-control'
 
 function formatTime(value: string): string {
   const date = new Date(value)
@@ -181,6 +182,7 @@ export function NotificationCenter({
             </ul>
           </div>
         )}
+        <PushNotificationControl />
       </PopoverContent>
     </Popover>
   )

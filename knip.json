@@ -6,6 +6,7 @@
       "ignoreDependencies": ["@treeport/treeport"]
     },
     "apps/treeport": {
+      "entry": ["web/public/sw.js"],
       "ignoreDependencies": [
         "@effect/opentelemetry",
         "@opentelemetry/sdk-trace-base",
