@@ -532,6 +532,28 @@ export function decodeTerminalHostInput<
   >
 }
 
+/** The owner stores this opaque engine envelope without interpreting it.
+ * Candidates validate its version before updating, while PTY owners remain v1. */
+export function decodeTerminalEngineMetadata(source: string) {
+  return Effect.gen(function* () {
+    const parsed = yield* Effect.try({
+      try: () => JSON.parse(source),
+      catch: (cause) => new TerminalHostFrameDecodeError({ cause })
+    })
+    const metadata = yield* Schema.decodeUnknown(
+      Schema.Struct({
+        engineVersion: Schema.Literal(1),
+        launchSpecPath: Schema.NullOr(Schema.String),
+        updatedAt: Schema.String
+      })
+    )(parsed).pipe(
+      Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
+    )
+    const input = yield* decodeTerminalHostInput('create', parsed)
+    return { ...metadata, input }
+  })
+}
+
 export function decodeTerminalHostResult<
   Method extends TerminalHostRequestMethod
 >(

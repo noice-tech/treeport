@@ -51,6 +51,19 @@ function processExists(pid: number): boolean {
 
 async function main(): Promise<void> {
   const config = loadConfig()
+  const journalLimitBytes =
+    process.env.TREEPORT_TERMINAL_JOURNAL_LIMIT_BYTES === undefined
+      ? undefined
+      : Number(process.env.TREEPORT_TERMINAL_JOURNAL_LIMIT_BYTES)
+  if (
+    journalLimitBytes !== undefined &&
+    (!Number.isSafeInteger(journalLimitBytes) || journalLimitBytes <= 0)
+  ) {
+    throw new Error(
+      'TREEPORT_TERMINAL_JOURNAL_LIMIT_BYTES must be a positive safe integer'
+    )
+  }
+
   process.title = config.webDevelopment
     ? 'treeport-server-dev'
     : 'treeport-server'
@@ -76,6 +89,10 @@ async function main(): Promise<void> {
           hostEntryPath: fileURLToPath(
             new URL('./terminal-host-entry.js', import.meta.url)
           ),
+          sessionEntryPath: fileURLToPath(
+            new URL('./terminal-session-entry.js', import.meta.url)
+          ),
+          journalLimitBytes,
           environment: {
             ...process.env,
             TREEPORT_APP_VERSION: config.appVersion
@@ -455,7 +472,12 @@ async function main(): Promise<void> {
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)
     console.log(`git: ${prerequisites.gitVersion}`)
-    console.log(`terminal host: ${terminalHost.record.pid}`)
+    console.log(`terminal engine: ${terminalHost.record.pid}`)
+    if (terminalHost.legacyClient) {
+      console.log(
+        `legacy terminal host: ${terminalHost.legacyClient.record.pid}`
+      )
+    }
   } catch (error) {
     await Effect.runPromise(Scope.close(resourceScope, Exit.fail(error)))
     throw error

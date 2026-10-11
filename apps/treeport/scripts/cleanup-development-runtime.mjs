@@ -8,6 +8,12 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { z } from 'zod'
+import {
+  sessionManifestSchema,
+  sessionStatusSchema,
+  sessionFrameSchema,
+  SESSION_MAX_FRAME_BYTES
+} from '../src/terminal-runtime/session-protocol.ts'
 
 const execute = promisify(execFile)
 const DEFAULT_STOP_TIMEOUT_MS = 10_000
@@ -403,6 +409,139 @@ async function stopTerminalHost(dataDir, runtimeDir, timeoutMs, graceMs) {
   }
 }
 
+async function sessionRequest(socketPath, request, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath)
+    let buffer = ''
+    let settled = false
+    const finish = (error, status = null) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      socket.destroy()
+      if (error) {
+        reject(error)
+      } else {
+        resolve(status)
+      }
+    }
+    socket.setEncoding('utf8')
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => socket.write(JSON.stringify(request) + '\n'))
+    socket.once('error', (error) => finish(error))
+    socket.once('timeout', () =>
+      finish(new Error('Timed out while verifying the development session'))
+    )
+    socket.once('close', () =>
+      finish(new Error('Development session disconnected before answering'))
+    )
+    socket.on('data', (chunk) => {
+      buffer += chunk
+      if (Buffer.byteLength(buffer) > SESSION_MAX_FRAME_BYTES) {
+        finish(new Error('Invalid development session frame'))
+        return
+      }
+
+      const end = buffer.indexOf('\n')
+      if (end < 0) {
+        return
+      }
+
+      let frame
+      try {
+        frame = sessionFrameSchema.parse(JSON.parse(buffer.slice(0, end)))
+      } catch (error) {
+        finish(error)
+        return
+      }
+      if (
+        frame.type !== 'response' ||
+        frame.id !== request.id ||
+        frame.error ||
+        !frame.status
+      ) {
+        finish(
+          new Error('Development session refused its authenticated request')
+        )
+      } else {
+        finish(null, frame.status)
+      }
+    })
+  })
+}
+
+async function stopPersistentSessions(dataDir, runtimeDir, timeoutMs) {
+  const paths = hostPaths(dataDir, runtimeDir)
+  const directory = path.join(
+    runtimeDir,
+    'terminal-engine',
+    'terminal-host-' + paths.hostKey,
+    'sessions'
+  )
+  const names = await fs.readdir(directory).catch((error) => {
+    if (error.code === 'ENOENT') {
+      return []
+    }
+
+    throw error
+  })
+  for (const name of names.sort()) {
+    if (!/^[a-f0-9]{40}$/u.test(name)) {
+      continue
+    }
+
+    const sessionDirectory = path.join(directory, name)
+    const manifest = sessionManifestSchema.parse(
+      JSON.parse(
+        await fs.readFile(path.join(sessionDirectory, 'manifest.json'), 'utf8')
+      )
+    )
+    const status = sessionStatusSchema.parse(
+      JSON.parse(
+        await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
+      )
+    )
+    const key = crypto
+      .createHash('sha256')
+      .update(path.resolve(sessionDirectory))
+      .digest('hex')
+      .slice(0, 24)
+    const expectedSocket = path.join(
+      os.tmpdir(),
+      'treeport-' + (process.getuid?.() ?? 'user'),
+      'session-' + key + '.sock'
+    )
+    if (manifest.socketPath !== expectedSocket) {
+      throw new Error('Refusing cleanup of a mismatched session socket')
+    }
+
+    const inspected = await sessionRequest(
+      manifest.socketPath,
+      { method: 'inspect', id: crypto.randomUUID(), token: manifest.token },
+      timeoutMs
+    )
+    if (
+      inspected.ownerPid !== status.ownerPid ||
+      inspected.pid !== status.pid
+    ) {
+      throw new Error('Refusing cleanup of a mismatched session owner')
+    }
+
+    await sessionRequest(
+      manifest.socketPath,
+      { method: 'terminate', id: crypto.randomUUID(), token: manifest.token },
+      timeoutMs
+    )
+    if (!(await waitForExit([status.ownerPid, status.pid], timeoutMs))) {
+      throw new Error(
+        'The development session left its owner or command running'
+      )
+    }
+  }
+}
+
 export async function cleanupDevelopmentRuntime(worktreePath, options = {}) {
   const root = await fs.realpath(worktreePath)
   const developmentDirectory = path.join(
@@ -426,6 +565,9 @@ export async function cleanupDevelopmentRuntime(worktreePath, options = {}) {
   const graceMs = options.graceMs ?? DEFAULT_PROCESS_GRACE_MS
   await stopDaemon(dataDir, runtimeDir, timeoutMs)
   await stopTerminalHost(dataDir, runtimeDir, timeoutMs, graceMs)
+  // This explicit dev-instance teardown closes sessions. Ordinary daemon
+  // shutdowns and updates never call this path.
+  await stopPersistentSessions(dataDir, runtimeDir, timeoutMs)
 }
 
 async function main() {

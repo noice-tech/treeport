@@ -6,6 +6,7 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import xtermHeadless from '@xterm/headless'
 import type { IDisposable, IPty } from 'node-pty'
 import * as pty from 'node-pty'
+import { z } from 'zod'
 import * as Data from 'effect/Data'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
@@ -34,6 +35,8 @@ import {
   type TerminalTitleState
 } from './contract'
 import { TerminalImages } from './images'
+import { PersistentSession } from './session-client'
+import { decodeTerminalEngineMetadata } from './api'
 import {
   integrateShellLaunch,
   prepareShellIntegration
@@ -47,6 +50,11 @@ const HOST_PARSER_HIGH_WATERMARK = 1024 * 1024
 const HOST_PARSER_LOW_WATERMARK = 256 * 1024
 const PROCESS_TREE_KILL_GRACE_MS = 500
 
+const engineMarkerSchema = z.object({
+  type: z.literal('cell-size'),
+  width: z.number().min(1).max(100),
+  height: z.number().min(1).max(200)
+})
 type HeadlessTerminal = InstanceType<typeof Terminal>
 type TerminalHostAttachment = TerminalHostSnapshot & {
   output: Stream.Stream<TerminalHostOutput, unknown>
@@ -83,19 +91,30 @@ type ParserCommand =
       readonly data: string
       readonly sequence: number
       readonly bytes: number
+      readonly at: number
     }
   | {
       readonly _tag: 'Fence'
       readonly completed: Deferred.Deferred<void, TerminalHostSessionError>
+    }
+  | { readonly _tag: 'Resize'; readonly cols: number; readonly rows: number }
+  | {
+      readonly _tag: 'CellSize'
+      readonly width: number
+      readonly height: number
     }
   | { readonly _tag: 'Stop' }
 
 type RuntimeCommand =
   | { readonly _tag: 'Title'; readonly title: string }
   | { readonly _tag: 'TitleState'; readonly value: TerminalTitleState }
-  | { readonly _tag: 'Progress'; readonly value: TerminalProgress | null }
+  | {
+      readonly _tag: 'Progress'
+      readonly value: TerminalProgress | null
+      readonly at: number
+    }
   | { readonly _tag: 'Bell' }
-  | { readonly _tag: 'Exit'; readonly exitCode: number }
+  | { readonly _tag: 'Exit'; readonly exitCode: number; readonly at: number }
 
 interface PauseLease {
   readonly release: Effect.Effect<void>
@@ -110,7 +129,10 @@ interface HostedTerminalSession extends HostedTerminal {
   progressFiber: Fiber.RuntimeFiber<void, never> | null
   bellSequence: number
   lastBellAt: string | null
-  readonly pty: IPty
+  readonly pty: IPty | PersistentSession
+  replaying: boolean
+  processingSequence: number
+  processingTime: number
   readonly terminal: HeadlessTerminal
   readonly serializer: SerializeAddon
   readonly images: TerminalImages
@@ -141,6 +163,10 @@ export interface TerminalHostSessionsOptions {
   readonly terminateProcessTree?: ProcessTreeTerminator
   readonly progressStaleMs?: number
   readonly sshAgentDiscovery?: SshAgentDiscovery
+  readonly sessionEntryPath?: string | undefined
+  readonly sessionExecutable?: string | undefined
+  readonly sessionArguments?: string[] | undefined
+  readonly journalLimitBytes?: number | undefined
 }
 
 function effectError(cause: unknown): TerminalHostSessionError {
@@ -238,12 +264,9 @@ const terminatePtyProcessTree: ProcessTreeTerminator = (child) =>
     yield* signalTree('SIGKILL')
   })
 
-/**
- * Scoped detached owner of PTYs and their canonical headless emulators.
- * The separate process is intentional: node-pty process handles, parser
- * history, output fences, image uploads, and query authority are in-memory
- * state that the replacing daemon cannot reconstruct from an OS process ID.
- */
+/** Replaceable terminal engine. Production PTYs belong to independent session
+ * processes; closing this engine detaches them. Direct PTY injection is retained
+ * for isolated emulator checks and the pre-migration host entrypoint. */
 export class TerminalHostSessions {
   readonly shellIntegrationDir: string
 
@@ -263,7 +286,14 @@ export class TerminalHostSessions {
       ReadonlyMap<string, HostedTerminalSession | null>
     >,
     private readonly cleanups: FiberSet.FiberSet<void, never>,
-    private readonly pendingCleanups: Set<PendingCleanup>
+    private readonly pendingCleanups: Set<PendingCleanup>,
+    private readonly persistentOptions: Pick<
+      TerminalHostSessionsOptions,
+      | 'sessionEntryPath'
+      | 'sessionExecutable'
+      | 'sessionArguments'
+      | 'journalLimitBytes'
+    >
   ) {
     this.shellIntegrationDir = path.join(
       options.runtimeDir,
@@ -280,7 +310,7 @@ export class TerminalHostSessions {
   > {
     return Effect.gen(function* () {
       const resolved = {
-        runtimeDir: options.runtimeDir,
+        runtimeDir: path.resolve(options.runtimeDir),
         launcherPath: options.launcherPath,
         spawnPty: options.spawnPty ?? pty.spawn,
         terminateProcessTree:
@@ -299,10 +329,63 @@ export class TerminalHostSessions {
         resolved,
         sessions,
         cleanups,
-        new Set()
+        new Set(),
+        options
       )
-      yield* manager.initialize()
       yield* Effect.addFinalizer(() => manager.shutdown().pipe(Effect.orDie))
+      yield* manager.initialize()
+      if (options.sessionEntryPath) {
+        const directory = path.join(resolved.runtimeDir, 'sessions')
+        yield* nodePromise(() =>
+          fs.mkdir(directory, { recursive: true, mode: 0o700 })
+        )
+        const names = yield* nodePromise(() => fs.readdir(directory))
+        for (const name of names.sort()) {
+          if (!/^[a-f0-9]{40}$/u.test(name)) {
+            continue
+          }
+
+          const owner = yield* nodePromise(() =>
+            PersistentSession.open(
+              path.join(directory, name),
+              options.journalLimitBytes
+            )
+          )
+          const { input } = yield* decodeTerminalEngineMetadata(
+            owner.manifest.metadata
+          ).pipe(Effect.mapError(effectError))
+          if (
+            name !==
+            crypto
+              .createHash('sha256')
+              .update(input.terminalId)
+              .digest('hex')
+              .slice(0, 40)
+          ) {
+            return yield* Effect.fail(
+              effectError(
+                new Error('Session metadata does not identify its directory')
+              )
+            )
+          }
+
+          yield* manager.createTerminal(
+            {
+              ...input,
+              argv: [...input.argv],
+              fallbackArgv: input.fallbackArgv
+                ? [...input.fallbackArgv]
+                : undefined,
+              setupTasks: input.setupTasks?.map((task) => ({
+                ...task,
+                argv: [...task.argv]
+              }))
+            },
+            owner
+          )
+        }
+      }
+
       return manager
     })
   }
@@ -334,7 +417,8 @@ export class TerminalHostSessions {
   }
 
   createTerminal(
-    input: TerminalCreateInput
+    input: TerminalCreateInput,
+    retainedOwner: PersistentSession | null = null
   ): Effect.Effect<void, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const reserved = yield* SynchronizedRef.modify(
@@ -362,7 +446,7 @@ export class TerminalHostSessions {
       let retained = false
       return yield* Effect.gen(this, function* () {
         session = yield* Scope.extend(
-          this.acquireSession(input, childScope),
+          this.acquireSession(input, childScope, retainedOwner),
           childScope
         )
         const ownedSession = session
@@ -374,8 +458,15 @@ export class TerminalHostSessions {
               const offered = Queue.unsafeOffer(ownedSession.parserCommands, {
                 _tag: 'Output',
                 data,
-                sequence: ++ownedSession.outputSequence,
-                bytes
+                sequence: (ownedSession.outputSequence =
+                  ownedSession.pty instanceof PersistentSession
+                    ? ownedSession.pty.sequence
+                    : ownedSession.outputSequence + 1),
+                bytes,
+                at:
+                  ownedSession.pty instanceof PersistentSession
+                    ? ownedSession.pty.recordTime
+                    : Date.now()
               })
               if (!offered) {
                 ownedSession.parserQueuedBytes = Math.max(
@@ -404,10 +495,15 @@ export class TerminalHostSessions {
             ownedSession.pty.onExit(({ exitCode }) => {
               ownedSession.status = 'exited'
               ownedSession.exitCode = exitCode
-              ownedSession.updatedAt = new Date().toISOString()
+              const at =
+                ownedSession.pty instanceof PersistentSession
+                  ? ownedSession.pty.recordTime
+                  : Date.now()
+              ownedSession.updatedAt = new Date(at).toISOString()
               Queue.unsafeOffer(ownedSession.runtimeCommands, {
                 _tag: 'Exit',
-                exitCode
+                exitCode,
+                at
               })
             }),
           catch: effectError
@@ -437,6 +533,49 @@ export class TerminalHostSessions {
           )
         }
 
+        if (ownedSession.pty instanceof PersistentSession) {
+          const owner = ownedSession.pty
+          const resizeDisposable = owner.onResize((cols, rows) => {
+            ownedSession.outputSequence = owner.sequence
+            Queue.unsafeOffer(ownedSession.parserCommands, {
+              _tag: 'Resize',
+              cols,
+              rows
+            })
+          })
+          yield* Scope.addFinalizer(
+            childScope,
+            Effect.sync(() => resizeDisposable.dispose())
+          )
+          const markerDisposable = owner.onMarker((data) => {
+            const marker = engineMarkerSchema.parse(JSON.parse(data))
+            ownedSession.outputSequence = owner.sequence
+            Queue.unsafeOffer(ownedSession.parserCommands, {
+              _tag: 'CellSize',
+              width: marker.width,
+              height: marker.height
+            })
+          })
+          yield* Scope.addFinalizer(
+            childScope,
+            Effect.sync(() => markerDisposable.dispose())
+          )
+          yield* nodePromise(() => owner.connect())
+          yield* nodePromise(() => owner.ready)
+          owner.pause()
+          yield* this.drainParser(ownedSession).pipe(
+            Effect.catchAll((error) =>
+              owner.fault
+                ? Effect.logWarning(error.message)
+                : Effect.fail(error)
+            )
+          )
+          ownedSession.replaying = false
+          ownedSession.terminal.options.disableStdin = false
+          owner.resume()
+          yield* nodePromise(() => owner.activate())
+        }
+
         retained = true
       }).pipe(
         Effect.onExit((exit) =>
@@ -464,7 +603,8 @@ export class TerminalHostSessions {
 
   private acquireSession(
     input: TerminalCreateInput,
-    childScope: Scope.CloseableScope
+    childScope: Scope.CloseableScope,
+    retainedOwner: PersistentSession | null
   ): Effect.Effect<HostedTerminalSession, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const directShell =
@@ -474,8 +614,25 @@ export class TerminalHostSessions {
         !input.fallbackArgv &&
         !input.setupTasks?.length &&
         !input.setupError
-      let specPath: string | null = null
-      if (!directShell) {
+      const retainedMetadata = retainedOwner
+        ? yield* decodeTerminalEngineMetadata(
+            retainedOwner.manifest.metadata
+          ).pipe(Effect.mapError(effectError))
+        : null
+      let specPath: string | null = retainedMetadata?.launchSpecPath ?? null
+      if (
+        specPath &&
+        path.dirname(path.resolve(specPath)) !==
+          path.join(this.options.runtimeDir, 'terminal-specs')
+      ) {
+        return yield* Effect.fail(
+          new TerminalHostSessionError({
+            message: 'Session launch spec is outside its installation'
+          })
+        )
+      }
+
+      if (!directShell && !retainedOwner) {
         const spec: TerminalLaunchSpec = {
           argv: [...input.argv],
           cwd: input.cwd,
@@ -506,24 +663,31 @@ export class TerminalHostSessions {
         specPath = path.join(
           this.options.runtimeDir,
           'terminal-specs',
-          `${input.terminalId}-${crypto.randomUUID()}.json`
+          `${crypto.createHash('sha256').update(input.terminalId).digest('hex').slice(0, 40)}-${crypto.randomUUID()}.json`
         )
         yield* nodePromise(() =>
           fs.writeFile(specPath!, JSON.stringify(spec), { mode: 0o600 })
         )
-        yield* Scope.addFinalizer(
-          childScope,
-          nodePromise(() => fs.rm(specPath!, { force: true })).pipe(
-            Effect.catchAll((cause) =>
-              Effect.logError('Failed to remove terminal launch spec').pipe(
-                Effect.annotateLogs({ path: specPath!, cause: cause.message })
+        if (!this.persistentOptions.sessionEntryPath) {
+          yield* Scope.addFinalizer(
+            childScope,
+            nodePromise(() => fs.rm(specPath!, { force: true })).pipe(
+              Effect.catchAll((cause) =>
+                Effect.logError('Failed to remove terminal launch spec').pipe(
+                  Effect.annotateLogs({ path: specPath!, cause: cause.message })
+                )
               )
             )
           )
-        )
+        }
       }
 
-      const size = input.initialSize ?? { cols: 100, rows: 30 }
+      const size = retainedOwner
+        ? {
+            cols: retainedOwner.manifest.cols,
+            rows: retainedOwner.manifest.rows
+          }
+        : (input.initialSize ?? { cols: 100, rows: 30 })
       const inheritedEnvironment = Object.fromEntries(
         Object.entries(process.env).filter(
           (entry): entry is [string, string] => entry[1] !== undefined
@@ -611,33 +775,73 @@ export class TerminalHostSessions {
       // SAFETY: TerminalImages implements the xterm addon lifecycle expected by loadAddon.
       terminal.loadAddon(images as never)
 
-      const child = yield* Effect.try({
-        try: () =>
-          directShell
-            ? this.options.spawnPty(
-                directLaunch.argv[0]!,
-                directLaunch.argv.slice(1),
-                {
-                  name: 'xterm-256color',
-                  cols: size.cols,
-                  rows: size.rows,
-                  cwd: input.cwd,
-                  env: directEnvironment
-                }
-              )
-            : this.options.spawnPty(
-                process.execPath,
-                [this.options.launcherPath, specPath!],
-                {
-                  name: 'xterm-256color',
-                  cols: size.cols,
-                  rows: size.rows,
-                  cwd: input.cwd,
-                  env: inheritedEnvironment
-                }
-              ),
-        catch: effectError
-      })
+      const child: IPty | PersistentSession =
+        retainedOwner ??
+        (this.persistentOptions.sessionEntryPath
+          ? yield* nodePromise(() =>
+              PersistentSession.create({
+                directory: path.join(
+                  this.options.runtimeDir,
+                  'sessions',
+                  crypto
+                    .createHash('sha256')
+                    .update(input.terminalId)
+                    .digest('hex')
+                    .slice(0, 40)
+                ),
+                entryPath: this.persistentOptions.sessionEntryPath!,
+                executable: this.persistentOptions.sessionExecutable,
+                arguments: this.persistentOptions.sessionArguments,
+                journalLimitBytes: this.persistentOptions.journalLimitBytes,
+                argv: directShell
+                  ? directLaunch.argv
+                  : [process.execPath, this.options.launcherPath, specPath!],
+                cwd: input.cwd,
+                env: directShell ? directEnvironment : inheritedEnvironment,
+                cols: size.cols,
+                rows: size.rows,
+                metadata: JSON.stringify({
+                  ...input,
+                  engineVersion: 1,
+                  launchSpecPath: specPath,
+                  updatedAt: input.createdAt
+                })
+              })
+            )
+          : yield* Effect.try({
+              try: () =>
+                directShell
+                  ? this.options.spawnPty(
+                      directLaunch.argv[0]!,
+                      directLaunch.argv.slice(1),
+                      {
+                        name: 'xterm-256color',
+                        cols: size.cols,
+                        rows: size.rows,
+                        cwd: input.cwd,
+                        env: directEnvironment
+                      }
+                    )
+                  : this.options.spawnPty(
+                      process.execPath,
+                      [this.options.launcherPath, specPath!],
+                      {
+                        name: 'xterm-256color',
+                        cols: size.cols,
+                        rows: size.rows,
+                        cwd: input.cwd,
+                        env: inheritedEnvironment
+                      }
+                    ),
+              catch: effectError
+            }))
+      if (child instanceof PersistentSession) {
+        yield* Scope.addFinalizer(
+          childScope,
+          Effect.sync(() => child.dispose())
+        )
+      }
+
       const parserCommands = yield* Queue.unbounded<ParserCommand>()
       const runtimeCommands = yield* Queue.unbounded<RuntimeCommand>()
       const output = yield* PubSub.unbounded<TerminalHostOutput>()
@@ -666,7 +870,7 @@ export class TerminalHostSessions {
         status: 'running',
         exitCode: null,
         createdAt: input.createdAt,
-        updatedAt: input.createdAt,
+        updatedAt: retainedMetadata?.updatedAt ?? input.createdAt,
         cwd: input.cwd,
         specPath,
         title: input.initialTitle ?? null,
@@ -676,6 +880,9 @@ export class TerminalHostSessions {
         bellSequence: 0,
         lastBellAt: null,
         pty: child,
+        replaying: child instanceof PersistentSession,
+        processingSequence: 0,
+        processingTime: Date.now(),
         terminal,
         serializer,
         images,
@@ -698,6 +905,9 @@ export class TerminalHostSessions {
         terminal.onData((data) => {
           if (
             session.status === 'running' &&
+            (!session.replaying ||
+              (session.pty instanceof PersistentSession &&
+                session.processingSequence > session.pty.processedSequence)) &&
             session.queryAuthorityAttachmentId === null
           ) {
             session.pty.write(data)
@@ -707,6 +917,12 @@ export class TerminalHostSessions {
           Queue.unsafeOffer(runtimeCommands, { _tag: 'Title', title })
         }),
         terminal.onBell(() => {
+          if (session.replaying) {
+            session.bellSequence += 1
+            session.lastBellAt = new Date(session.processingTime).toISOString()
+            return
+          }
+
           Queue.unsafeOffer(runtimeCommands, { _tag: 'Bell' })
         }),
         terminal.parser.registerOscHandler(777, (payload) => {
@@ -738,7 +954,8 @@ export class TerminalHostSessions {
 
           Queue.unsafeOffer(runtimeCommands, {
             _tag: 'Progress',
-            value: progress
+            value: progress,
+            at: session.processingTime
           })
           return true
         })
@@ -796,6 +1013,21 @@ export class TerminalHostSessions {
             return yield* Effect.interrupt
           }
 
+          if (command._tag === 'CellSize') {
+            session.images.setCellSize({
+              width: command.width,
+              height: command.height
+            })
+            index++
+            continue
+          }
+
+          if (command._tag === 'Resize') {
+            session.terminal.resize(command.cols, command.rows)
+            index++
+            continue
+          }
+
           if (command._tag === 'Fence') {
             session.pendingFences.delete(command.completed)
             yield* Deferred.succeed(command.completed, undefined)
@@ -807,7 +1039,15 @@ export class TerminalHostSessions {
           let bytes = 0
           while (index < commands.length) {
             const next = commands[index]!
-            if (next._tag !== 'Output') {
+            if (
+              next._tag !== 'Output' ||
+              (session.replaying &&
+                session.pty instanceof PersistentSession &&
+                batch.length > 0 &&
+                ((batch[0]!.sequence <= session.pty.processedSequence &&
+                  next.sequence > session.pty.processedSequence) ||
+                  next.at - batch[0]!.at > 100))
+            ) {
               break
             }
 
@@ -815,12 +1055,21 @@ export class TerminalHostSessions {
             bytes += next.bytes
             index++
           }
+          session.processingSequence = batch.at(-1)!.sequence
+          session.processingTime = batch.at(-1)!.at
           yield* Effect.async<void>((resume) => {
             session.terminal.write(
               batch.map((output) => output.data).join(''),
               () => resume(Effect.void)
             )
           })
+
+          if (
+            session.pty instanceof PersistentSession &&
+            session.processingSequence > session.pty.processedSequence
+          ) {
+            session.pty.markProcessed(session.processingSequence)
+          }
 
           session.parserQueuedBytes = Math.max(
             0,
@@ -841,7 +1090,8 @@ export class TerminalHostSessions {
             session.parserPaused = false
             if (
               session.boundaryPauseCount === 0 &&
-              session.status === 'running'
+              (session.status === 'running' ||
+                session.pty instanceof PersistentSession)
             ) {
               session.pty.resume()
             }
@@ -879,17 +1129,24 @@ export class TerminalHostSessions {
               bell: { sequence: session.bellSequence, at: session.lastBellAt }
             })
             return
-          case 'Progress':
+          case 'Progress': {
             if (session.progressFiber) {
               yield* Fiber.interrupt(session.progressFiber)
               session.progressFiber = null
             }
 
-            session.progress = command.value
-            yield* PubSub.publish(session.runtime, { progress: command.value })
-            if (command.value !== null) {
+            const remainingMs = Math.max(
+              0,
+              this.options.progressStaleMs -
+                Math.max(0, Date.now() - command.at)
+            )
+            session.progress = remainingMs > 0 ? command.value : null
+            yield* PubSub.publish(session.runtime, {
+              progress: session.progress
+            })
+            if (session.progress !== null) {
               session.progressFiber = yield* Effect.forkIn(
-                Effect.sleep(this.options.progressStaleMs).pipe(
+                Effect.sleep(remainingMs).pipe(
                   Effect.zipRight(
                     Effect.sync(() => {
                       session.progress = null
@@ -905,6 +1162,7 @@ export class TerminalHostSessions {
             }
 
             return
+          }
           case 'Exit':
             if (session.progressFiber) {
               yield* Fiber.interrupt(session.progressFiber)
@@ -914,7 +1172,7 @@ export class TerminalHostSessions {
             session.progress = null
             session.status = 'exited'
             session.exitCode = command.exitCode
-            session.updatedAt = new Date().toISOString()
+            session.updatedAt = new Date(command.at).toISOString()
             if (session.specPath) {
               yield* nodePromise(() =>
                 fs.rm(session.specPath!, { force: true })
@@ -974,7 +1232,8 @@ export class TerminalHostSessions {
         active = false
         session.boundaryPauseCount = Math.max(0, session.boundaryPauseCount - 1)
         if (
-          session.status === 'running' &&
+          (session.status === 'running' ||
+            session.pty instanceof PersistentSession) &&
           session.boundaryPauseCount === 0 &&
           !session.parserPaused
         ) {
@@ -988,6 +1247,10 @@ export class TerminalHostSessions {
     session: HostedTerminalSession
   ): Effect.Effect<void, TerminalHostSessionError> {
     return Effect.gen(function* () {
+      if (session.pty instanceof PersistentSession && session.pty.fault) {
+        return yield* Effect.fail(effectError(session.pty.fault))
+      }
+
       const completed = yield* Deferred.make<void, TerminalHostSessionError>()
       session.pendingFences.add(completed)
       const offered = yield* Queue.offer(session.parserCommands, {
@@ -1256,6 +1519,12 @@ export class TerminalHostSessions {
         )
       }
 
+      const owner =
+        session.pty instanceof PersistentSession ? session.pty : null
+      if (owner) {
+        yield* Effect.uninterruptible(nodePromise(() => owner.pauseOwner(true)))
+      }
+
       const lease = this.makePauseLease(session)
       let retained = false
       return yield* Effect.gen(this, function* () {
@@ -1274,7 +1543,21 @@ export class TerminalHostSessions {
         session.queryTransition = { id, lease }
         retained = true
         return { transitionId: id, fence: session.outputSequence }
-      }).pipe(Effect.onExit(() => (retained ? Effect.void : lease.release)))
+      }).pipe(
+        Effect.onExit(() =>
+          retained
+            ? Effect.void
+            : lease.release.pipe(
+                Effect.andThen(
+                  owner
+                    ? nodePromise(() => owner.pauseOwner(false)).pipe(
+                        Effect.catchAll(() => Effect.void)
+                      )
+                    : Effect.void
+                )
+              )
+        )
+      )
     })
   }
 
@@ -1301,7 +1584,20 @@ export class TerminalHostSessions {
       }
 
       if (cellSize) {
-        session.images.setCellSize(cellSize)
+        if (session.pty instanceof PersistentSession) {
+          const owner = session.pty
+          // The owner is paused during authority transfer. Read its marker
+          // acknowledgement without allowing new PTY output to overtake it.
+          owner.resume()
+          yield* nodePromise(() =>
+            owner.recordMarker(
+              JSON.stringify({ type: 'cell-size', ...cellSize })
+            )
+          )
+          yield* this.drainParser(session)
+        } else {
+          session.images.setCellSize(cellSize)
+        }
       }
 
       session.terminal.options.disableStdin = true
@@ -1309,6 +1605,10 @@ export class TerminalHostSessions {
       session.queryAuthorityGeneration = generation
       session.queryTransition = null
       yield* transition.lease.release
+      if (session.pty instanceof PersistentSession) {
+        const owner = session.pty
+        yield* nodePromise(() => owner.pauseOwner(false))
+      }
     })
   }
 
@@ -1328,6 +1628,11 @@ export class TerminalHostSessions {
         session.queryAuthorityAttachmentId = null
         session.queryAuthorityGeneration = null
         yield* transition.lease.release
+        if (session.pty instanceof PersistentSession) {
+          const owner = session.pty
+          yield* nodePromise(() => owner.pauseOwner(false))
+        }
+
         return
       }
 
@@ -1369,6 +1674,13 @@ export class TerminalHostSessions {
         return
       }
 
+      if (session.pty instanceof PersistentSession) {
+        const owner = session.pty
+        yield* nodePromise(() => owner.resizeAndWait(cols, rows))
+        yield* this.drainParser(session)
+        return
+      }
+
       yield* this.withBoundary(
         session,
         Effect.gen(this, function* () {
@@ -1381,7 +1693,6 @@ export class TerminalHostSessions {
             session.pty.resize(cols, rows)
           }
 
-          // Exited sessions still reflow their retained output for viewers.
           session.terminal.resize(cols, rows)
         })
       )
@@ -1461,11 +1772,31 @@ export class TerminalHostSessions {
   ): Effect.Effect<void> {
     return this.session(terminalId).pipe(
       Effect.tap((session) =>
-        Effect.sync(() => {
-          if (session) {
-            session.name = name
-            session.updatedAt = updatedAt
+        Effect.gen(function* () {
+          if (!session) {
+            return
           }
+
+          if (session.pty instanceof PersistentSession) {
+            const owner = session.pty
+            const { input } = yield* decodeTerminalEngineMetadata(
+              owner.manifest.metadata
+            ).pipe(Effect.orDie)
+            const metadata = JSON.stringify({
+              ...input,
+              engineVersion: 1,
+              name,
+              launchSpecPath: session.specPath,
+              updatedAt
+            })
+            yield* nodePromise(() => owner.setMetadata(metadata)).pipe(
+              Effect.orDie
+            )
+            owner.manifest.metadata = metadata
+          }
+
+          session.name = name
+          session.updatedAt = updatedAt
         })
       ),
       Effect.asVoid
@@ -1493,17 +1824,23 @@ export class TerminalHostSessions {
   terminalTitleState(
     terminalId: string
   ): Effect.Effect<TerminalTitleState | null> {
-    return this.session(terminalId).pipe(
-      Effect.map((session) =>
-        session
-          ? {
-              terminalTitle: session.title,
-              currentCommand: session.pty.process || null,
-              commandLine: session.commandLine
-            }
-          : null
-      )
-    )
+    return Effect.gen(this, function* () {
+      const session = yield* this.session(terminalId)
+      if (!session) {
+        return null
+      }
+
+      if (session.pty instanceof PersistentSession) {
+        const owner = session.pty
+        yield* nodePromise(() => owner.refreshStatus()).pipe(Effect.orDie)
+      }
+
+      return {
+        terminalTitle: session.title,
+        currentCommand: session.pty.process || null,
+        commandLine: session.commandLine
+      }
+    })
   }
 
   signalTerminal(
@@ -1561,6 +1898,33 @@ export class TerminalHostSessions {
       const sessions = [
         ...(yield* SynchronizedRef.get(this.sessions)).values()
       ].filter((session): session is HostedTerminalSession => session !== null)
+      if (this.persistentOptions.sessionEntryPath) {
+        yield* SynchronizedRef.set(this.sessions, new Map())
+        yield* Effect.forEach(
+          sessions,
+          (session) =>
+            Effect.gen(this, function* () {
+              if (session.pty instanceof PersistentSession) {
+                const owner = session.pty
+                owner.pause()
+                yield* this.drainParser(session).pipe(
+                  Effect.catchAll(() => Effect.void)
+                )
+                owner.resume()
+                const fence = session.processingSequence
+                yield* nodePromise(() => owner.flushRequests(fence)).pipe(
+                  Effect.catchAll(() => Effect.void)
+                )
+              }
+
+              yield* Scope.close(session.scope, Exit.void)
+            }),
+          { discard: true }
+        )
+        yield* FiberSet.awaitEmpty(this.cleanups)
+        return
+      }
+
       const started = yield* Effect.forEach(sessions, (session) =>
         this.beginDestroy(session)
       )
@@ -1605,6 +1969,11 @@ export class TerminalHostSessions {
         return done
       }
 
+      if (session.pty instanceof PersistentSession) {
+        const owner = session.pty
+        yield* nodePromise(() => owner.terminate()).pipe(Effect.orDie)
+      }
+
       yield* Scope.close(session.scope, Exit.void)
       const completed = yield* Deferred.make<void, unknown>()
       const cleanup: PendingCleanup = {
@@ -1619,7 +1988,9 @@ export class TerminalHostSessions {
             session.specPath
               ? nodePromise(() => fs.rm(session.specPath!, { force: true }))
               : Effect.void,
-            this.options.terminateProcessTree(session.pty)
+            session.pty instanceof PersistentSession
+              ? Effect.void
+              : this.options.terminateProcessTree(session.pty)
           ],
           { discard: true, concurrency: 'unbounded' }
         ).pipe(

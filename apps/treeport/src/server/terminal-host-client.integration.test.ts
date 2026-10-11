@@ -25,6 +25,8 @@ import {
   type TerminalHostServerOptions
 } from '../terminal-runtime/server'
 import type { TerminalHostSessions } from '../terminal-runtime/sessions'
+import { probeTerminalHostCompatibility } from '../terminal-runtime/preflight'
+import { sessionStatusSchema } from '../terminal-runtime/session-protocol'
 
 async function runLegacy<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   const exit = await Effect.runPromise(Effect.exit(effect))
@@ -62,7 +64,7 @@ type LegacyClient = Omit<
     terminalId: string,
     listener: (event: unknown) => void
   ): Promise<() => void>
-  dispose(): void
+  dispose(): Promise<void>
 }
 
 function legacyClient(
@@ -72,7 +74,7 @@ function legacyClient(
   return new Proxy(client as unknown as LegacyClient, {
     get(target, property, receiver) {
       if (property === 'dispose') {
-        return () => void Effect.runPromise(Scope.close(scope, Exit.void))
+        return () => Effect.runPromise(Scope.close(scope, Exit.void))
       }
 
       if (property === 'attach') {
@@ -317,7 +319,7 @@ describe('detached terminal host lifecycle', () => {
 
   afterEach(async () => {
     for (const client of clients) {
-      client.dispose()
+      await client.dispose()
     }
     for (const pid of hostPids) {
       if (processExists(pid)) {
@@ -430,7 +432,7 @@ describe('detached terminal host lifecycle', () => {
     })
   })
 
-  it('adopts the same PTY and canonical history after its daemon client restarts', async () => {
+  it('replaces its engine while preserving the PTY, lossless checkpoints, modes, and detached output', async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-test-')
     )
@@ -467,12 +469,37 @@ child.once('exit', (code) => process.exit(code ?? 1))
         'apps/treeport/dist/node/server/terminal-host-entry.js'
       ),
       hostExecutable: process.execPath,
-      hostArguments: []
+      hostArguments: [],
+      sessionEntryPath: path.join(
+        repositoryRoot,
+        'apps/treeport/dist/node/server/terminal-session-entry.js'
+      ),
+      journalLimitBytes: 64 * 1024
     }
 
+    const legacy = await connectOrStartTerminalHost({
+      ...options,
+      sessionEntryPath: undefined
+    })
+    clients.add(legacy)
+    hostPids.add(legacy.record.pid)
+    await legacy.createTerminal({
+      terminalId: 'legacy-terminal',
+      worktreeId: 'worktree-host',
+      name: 'Existing session',
+      createdAt: new Date().toISOString(),
+      cwd: root,
+      argv: [
+        process.execPath,
+        '-e',
+        "console.log('LEGACY_BOOT'); setInterval(() => {}, 1000)"
+      ],
+      shellCommand: null,
+      interactiveShell: false,
+      env: {}
+    })
     const firstDaemon = await connectOrStartTerminalHost(options)
     clients.add(firstDaemon)
-    hostPids.add(firstDaemon.record.pid)
     await expect(
       TerminalHostClient.connect(
         firstDaemon.record.socketPath,
@@ -492,7 +519,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       argv: [
         process.execPath,
         '-e',
-        `process.stdin.setEncoding('utf8'); console.log('HOST_BOOT'); process.stdin.on('data', data => process.stdout.write('ECHO:' + data)); setInterval(() => {}, 1000)`
+        `process.stdin.setRawMode(true); process.stdin.setEncoding('utf8'); process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); process.stdout.write('NORMAL_UNICODE λ🙂\\r\\n\\x1b[?1049h\\x1b[?1003h\\x1b[?1006h'); console.log('HOST_BOOT'); let replies = 0; process.stdin.on('data', data => { if (/\\x1b\\[\\d+;\\d+R/.test(data)) console.log('QUERY_REPLY_' + ++replies); else if (data.includes('SEND_IMAGE')) process.stdout.write('\\x1b[20;1H\\x1b_Ga=T,f=100,i=42,c=4,r=2,C=1,q=2;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=\\x1b\\\\\\x1b[30;1H'); else process.stdout.write('ECHO:' + data) }); setTimeout(() => process.stdout.write('\\x1b[6n'), 100); let offline = false; setInterval(() => { console.log('DETACHED_OUTPUT'); if (!offline && require('node:fs').existsSync('offline-query')) { offline = true; process.stdout.write('\\x1b[?100'); setTimeout(() => process.stdout.write('6h\\x1b[6n'), 10) } }, 250)`
       ],
       shellCommand: null,
       interactiveShell: false,
@@ -506,21 +533,112 @@ child.once('exit', (code) => process.exit(code ?? 1))
           'HOST_BOOT'
         ) ?? false,
       'The first daemon did not observe terminal output'
+    ).catch(async (error) => {
+      const directory = path.join(
+        runtimeDir,
+        'terminal-engine',
+        'terminal-host-' + firstDaemon.record.hostKey,
+        'sessions'
+      )
+      const names = await fs.readdir(directory)
+      const diagnostics = await Promise.all(
+        names.map(async (name) => {
+          const session = path.join(directory, name)
+          return (
+            (await fs.readFile(path.join(session, 'owner.log'), 'utf8')) +
+            '\n' +
+            (await fs.readFile(path.join(session, 'status.json'), 'utf8'))
+          )
+        })
+      )
+      throw new Error(error.message + '\n' + diagnostics.join('\n'))
+    })
+    await waitFor(
+      async () =>
+        (await firstDaemon.captureTerminal('terminal-host', 100))?.includes(
+          'QUERY_REPLY_1'
+        ) ?? false,
+      'The engine did not answer the live terminal query'
     )
-    const hostPid = firstDaemon.record.pid
-    firstDaemon.dispose()
+    await firstDaemon.resize('terminal-host', 93, 27)
+    const commandPid = (await firstDaemon.listProcesses('worktree-host'))[0]!
+      .pid
+    const sessionRoot = path.join(
+      runtimeDir,
+      'terminal-engine',
+      'terminal-host-' + firstDaemon.record.hostKey,
+      'sessions'
+    )
+    const sessionDirectory = path.join(
+      sessionRoot,
+      (await fs.readdir(sessionRoot))[0]!
+    )
+    const ownerPid = JSON.parse(
+      await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
+    ).ownerPid as number
+    hostPids.add(ownerPid)
+    expect(
+      (await fs.readdir(sessionDirectory)).some((name) => name.endsWith('.gz'))
+    ).toBe(true)
+    expect(
+      (await probeTerminalHostCompatibility(dataDir, runtimeDir)).compatible
+    ).toBe(true)
+    expect(await firstDaemon.captureTerminal('legacy-terminal', 20)).toContain(
+      'LEGACY_BOOT'
+    )
+    await firstDaemon.renameTerminal(
+      'terminal-host',
+      'Renamed persistent terminal',
+      new Date().toISOString()
+    )
+    const firstHostId = firstDaemon.record.hostId
+    await firstDaemon.dispose()
     clients.delete(firstDaemon)
-    expect(processExists(hostPid)).toBe(true)
+    expect(processExists(ownerPid)).toBe(true)
+    expect(processExists(commandPid)).toBe(true)
+    const detachedJournal = await fs.readFile(
+      path.join(sessionDirectory, 'journal.jsonl'),
+      'utf8'
+    )
+    const detachedSequence = JSON.parse(
+      detachedJournal.trim().split('\n').at(-1)!
+    ).sequence as number
+    await fs.writeFile(path.join(root, 'offline-query'), '')
+    await waitFor(async () => {
+      const journal = await fs.readFile(
+        path.join(sessionDirectory, 'journal.jsonl'),
+        'utf8'
+      )
+      return journal
+        .split('\n')
+        .filter(Boolean)
+        .some((line) => JSON.parse(line).sequence > detachedSequence)
+    }, 'The detached session stopped capturing output')
 
     const restartedDaemon = await connectOrStartTerminalHost(options)
     clients.add(restartedDaemon)
-    expect(restartedDaemon.record.pid).toBe(hostPid)
+    expect(restartedDaemon.record.hostId).not.toBe(firstHostId)
+    expect((await restartedDaemon.listProcesses('worktree-host'))[0]!.pid).toBe(
+      commandPid
+    )
     expect(await restartedDaemon.listTerminals('worktree-host')).toEqual([
       expect.objectContaining({
         id: 'terminal-host',
+        name: 'Renamed persistent terminal',
         status: 'running'
-      })
+      }),
+      expect.objectContaining({ id: 'legacy-terminal', status: 'running' })
     ])
+    expect(
+      await restartedDaemon.captureTerminal('legacy-terminal', 20)
+    ).toContain('LEGACY_BOOT')
+    await waitFor(
+      async () =>
+        (await restartedDaemon.captureTerminal('terminal-host', 100))?.includes(
+          'QUERY_REPLY_2'
+        ) ?? false,
+      'The engine did not answer a query issued while it was detached'
+    )
     expect(
       await restartedDaemon.captureTerminal('terminal-host', 20)
     ).toContain('HOST_BOOT')
@@ -533,6 +651,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
       }
     )
     expect(attachment?.data).toContain('HOST_BOOT')
+    expect(attachment?.data).toContain('DETACHED_OUTPUT')
+    expect(attachment?.data).toContain('QUERY_REPLY_2')
+    expect(attachment?.data).not.toContain('QUERY_REPLY_3')
+    expect(attachment?.data).toContain('\u001b[?1006h')
+    expect(attachment?.data).toContain('NORMAL_UNICODE λ🙂')
+    expect(attachment?.data).toContain('\u001b[?1049h')
+    expect(attachment).toMatchObject({ cols: 93, rows: 27 })
     await restartedDaemon.resize('terminal-host', 100, 30)
     const transition =
       await restartedDaemon.prepareQueryAuthority('terminal-host')
@@ -540,7 +665,8 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'terminal-host',
       transition.transitionId,
       'test-viewer',
-      1
+      1,
+      { width: 9, height: 18 }
     )
     restartedDaemon.write('terminal-host', 'AFTER_RESTART\n', {
       attachmentId: 'test-viewer',
@@ -550,18 +676,165 @@ child.once('exit', (code) => process.exit(code ?? 1))
       () => liveOutput.includes('ECHO:AFTER_RESTART'),
       'The adopted PTY did not accept input'
     )
+    restartedDaemon.write('terminal-host', 'SEND_IMAGE\n', {
+      attachmentId: 'test-viewer',
+      generation: 1
+    })
+    await waitFor(async () => {
+      const imageAttachment = await restartedDaemon.attach(
+        'terminal-host',
+        () => undefined
+      )
+      imageAttachment?.unsubscribe()
+      const images = imageAttachment?.images as {
+        images: unknown[]
+        placements: unknown[]
+      } | null
+      return (images?.placements.length ?? 0) > 0
+    }, 'The live engine did not retain the image upload')
     attachment?.unsubscribe()
 
-    await restartedDaemon.killTerminal('terminal-host')
-    await restartedDaemon.shutdownIfEmpty()
-    restartedDaemon.dispose()
-    clients.delete(restartedDaemon)
-    await waitFor(
-      () => !processExists(hostPid),
-      'The empty terminal host did not stop'
+    await restartedDaemon.createTerminal({
+      terminalId: 'quota-terminal',
+      worktreeId: 'worktree-host',
+      name: 'Quota recovery',
+      createdAt: new Date().toISOString(),
+      cwd: root,
+      argv: [
+        process.execPath,
+        '-e',
+        "console.log('QUOTA_BOOT'); setTimeout(() => process.stdout.write(require('node:crypto').randomBytes(256 * 1024).toString('base64'), () => { console.log('QUOTA_FINISHED'); process.exit(7) }), 250)"
+      ],
+      shellCommand: null,
+      interactiveShell: false,
+      env: {}
+    })
+    const quotaNames = await fs.readdir(sessionRoot)
+    let quotaDirectory = ''
+    for (const name of quotaNames) {
+      const metadata = JSON.parse(
+        (
+          JSON.parse(
+            await fs.readFile(
+              path.join(sessionRoot, name, 'manifest.json'),
+              'utf8'
+            )
+          ) as { metadata: string }
+        ).metadata
+      ) as { terminalId: string }
+      if (metadata.terminalId === 'quota-terminal') {
+        quotaDirectory = path.join(sessionRoot, name)
+      }
+    }
+    expect(quotaDirectory).not.toBe('')
+    const quotaStatus = sessionStatusSchema.parse(
+      JSON.parse(
+        await fs.readFile(path.join(quotaDirectory, 'status.json'), 'utf8')
+      )
     )
-    hostPids.delete(hostPid)
-  }, 20_000)
+    hostPids.add(quotaStatus.ownerPid)
+    await waitFor(
+      async () =>
+        sessionStatusSchema.parse(
+          JSON.parse(
+            await fs.readFile(path.join(quotaDirectory, 'status.json'), 'utf8')
+          )
+        ).error !== null,
+      'Journal quota did not report an explicit fault'
+    )
+    expect(processExists(quotaStatus.ownerPid)).toBe(true)
+    await expect(
+      restartedDaemon.attach('quota-terminal', () => undefined)
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('journal quota')
+    })
+
+    await restartedDaemon.dispose()
+    clients.delete(restartedDaemon)
+    const recoveredDaemon = await connectOrStartTerminalHost({
+      ...options,
+      journalLimitBytes: 2 * 1024 * 1024
+    })
+    clients.add(recoveredDaemon)
+    await waitFor(
+      async () =>
+        (await recoveredDaemon.terminalState('quota-terminal')).exitCode === 7,
+      'The retained quota tail and natural exit were not recovered'
+    )
+    expect(
+      await recoveredDaemon.captureTerminal('quota-terminal', 10)
+    ).toContain('QUOTA_FINISHED')
+    expect(
+      sessionStatusSchema.parse(
+        JSON.parse(
+          await fs.readFile(path.join(quotaDirectory, 'status.json'), 'utf8')
+        )
+      )
+    ).toMatchObject({
+      ownerPid: quotaStatus.ownerPid,
+      pid: quotaStatus.pid,
+      error: null,
+      incomplete: false
+    })
+    expect(
+      (await recoveredDaemon.listProcesses('worktree-host')).find(
+        (item) => item.terminalId === 'terminal-host'
+      )?.pid
+    ).toBe(commandPid)
+    const recoveredAttachment = await recoveredDaemon.attach(
+      'terminal-host',
+      () => undefined
+    )
+    expect(recoveredAttachment?.data).toContain('\u001b[?1006h')
+    expect(recoveredAttachment?.data).toContain('NORMAL_UNICODE λ🙂')
+    expect(recoveredAttachment?.images).toMatchObject({
+      images: [expect.objectContaining({ id: 42 })],
+      placements: [
+        expect.objectContaining({
+          imageId: 42,
+          buffer: 'alternate',
+          cellSize: { width: 9, height: 18 }
+        })
+      ]
+    })
+    recoveredAttachment?.unsubscribe()
+    await recoveredDaemon.killTerminal('quota-terminal')
+    await waitFor(
+      () => !processExists(quotaStatus.ownerPid),
+      'Explicit close did not stop the quota session owner'
+    )
+    hostPids.delete(quotaStatus.ownerPid)
+    await recoveredDaemon.killTerminal('terminal-host')
+    expect(
+      await fs.readdir(
+        path.join(
+          runtimeDir,
+          'terminal-engine',
+          'terminal-host-' + recoveredDaemon.record.hostKey,
+          'terminal-specs'
+        )
+      )
+    ).toEqual([])
+    await recoveredDaemon.shutdownIfEmpty()
+    await recoveredDaemon.dispose()
+    clients.delete(recoveredDaemon)
+    await waitFor(
+      () => !processExists(ownerPid),
+      'Explicit terminal close did not stop its session owner'
+    )
+    expect(processExists(commandPid)).toBe(false)
+    hostPids.delete(ownerPid)
+    expect(processExists(legacy.record.pid)).toBe(true)
+    await legacy.killTerminal('legacy-terminal')
+    await legacy.shutdownIfEmpty()
+    await legacy.dispose()
+    clients.delete(legacy)
+    await waitFor(
+      () => !processExists(legacy.record.pid),
+      'Explicit legacy close did not stop its empty host'
+    )
+    hostPids.delete(legacy.record.pid)
+  }, 40_000)
 
   it('removes only a transaction-owned provisional host when startup fails', async () => {
     const root = await fs.mkdtemp(
