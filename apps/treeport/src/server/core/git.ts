@@ -6,6 +6,7 @@ import path from 'node:path'
 import type {
   DirtyState,
   GitDiff,
+  GitDiffRequest,
   GitDiffFile,
   GitDiffImage,
   GitDiffImageRequest,
@@ -862,7 +863,11 @@ class PromiseGitAdapter {
     }
   }
 
-  private async worktreeDiffContext(cwd: string, defaultBranch: string) {
+  private async worktreeDiffContext(
+    cwd: string,
+    defaultBranch: string,
+    scope?: GitDiffRequest['scope']
+  ) {
     const candidates = [`origin/${defaultBranch}`, defaultBranch]
     let baseRef = ''
     for (const candidate of candidates) {
@@ -891,7 +896,8 @@ class PromiseGitAdapter {
         '--name-status',
         '-z',
         '--find-renames',
-        baseCommit
+        ...(scope === 'uncommitted' ? [headCommit] : [baseCommit]),
+        ...(scope === 'committed' ? [headCommit] : [])
       ]),
       this.checked(cwd, [
         'diff',
@@ -925,7 +931,7 @@ class PromiseGitAdapter {
     const untrackedPaths = paths(untracked.stdout)
     const files = parseGitDiffFiles(changed.stdout)
     const trackedPaths = new Set(files.map((file) => file.path))
-    for (const filePath of untrackedPaths) {
+    for (const filePath of scope === 'committed' ? [] : untrackedPaths) {
       if (!trackedPaths.has(filePath)) {
         files.push({
           path: filePath,
@@ -938,7 +944,7 @@ class PromiseGitAdapter {
 
     return {
       baseRef,
-      baseCommit,
+      baseCommit: scope === 'uncommitted' ? headCommit : baseCommit,
       headCommit,
       files,
       changeSets: {
@@ -950,17 +956,22 @@ class PromiseGitAdapter {
     }
   }
 
-  async worktreeDiff(cwd: string, defaultBranch: string): Promise<GitDiff> {
-    const context = await this.worktreeDiffContext(cwd, defaultBranch)
+  async worktreeDiff(
+    cwd: string,
+    defaultBranch: string,
+    scope?: GitDiffRequest['scope']
+  ): Promise<GitDiff> {
+    const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
     return { ...context, generatedAt: new Date().toISOString() }
   }
 
   async worktreeFileDiff(
     cwd: string,
     defaultBranch: string,
-    filePath: string
+    filePath: string,
+    scope?: GitDiffRequest['scope']
   ): Promise<GitFileDiff> {
-    const context = await this.worktreeDiffContext(cwd, defaultBranch)
+    const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
     const file = context.files.find((candidate) => candidate.path === filePath)
     if (!file) {
       throw new Error('The requested path is not in the current tree diff')
@@ -975,6 +986,7 @@ class PromiseGitAdapter {
             '--binary',
             '--find-renames',
             context.baseCommit,
+            ...(scope === 'committed' ? [context.headCommit] : []),
             '--',
             ...(file.previousPath ? [file.previousPath] : []),
             file.path
@@ -1324,19 +1336,24 @@ export class GitAdapter {
     )
   }
 
-  worktreeDiff(cwd: string, defaultBranch: string): GitEffect<GitDiff> {
+  worktreeDiff(
+    cwd: string,
+    defaultBranch: string,
+    scope?: GitDiffRequest['scope']
+  ): GitEffect<GitDiff> {
     return this.operation('worktreeDiff', () =>
-      this.implementation.worktreeDiff(cwd, defaultBranch)
+      this.implementation.worktreeDiff(cwd, defaultBranch, scope)
     )
   }
 
   worktreeFileDiff(
     cwd: string,
     defaultBranch: string,
-    filePath: string
+    filePath: string,
+    scope?: GitDiffRequest['scope']
   ): GitEffect<GitFileDiff> {
     return this.operation('worktreeFileDiff', () =>
-      this.implementation.worktreeFileDiff(cwd, defaultBranch, filePath)
+      this.implementation.worktreeFileDiff(cwd, defaultBranch, filePath, scope)
     )
   }
 

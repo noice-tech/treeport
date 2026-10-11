@@ -76,11 +76,12 @@ export interface GitDiffFile {
 }
 
 /**
- * A read-only diff index from the default-branch merge base through the tree's
- * committed, tracked local, and untracked changes.
+ * A read-only diff index for the requested comparison. By default it includes
+ * committed, tracked local, and untracked changes from the merge base.
  */
 export interface GitDiff {
   baseRef: string
+  /** HEAD for uncommitted changes; the default-branch merge base otherwise. */
   baseCommit: string
   headCommit: string
   /** ISO 8601 timestamp. */
@@ -90,7 +91,13 @@ export interface GitDiff {
   changeSets: GitDiffChangeSets
 }
 
-export interface GitFileDiffRequest {
+export interface GitDiffRequest {
+  /** Committed: merge base to HEAD. Uncommitted: HEAD to working tree, including
+   * staged and untracked files. Omit for the combined diff. */
+  scope?: 'committed' | 'uncommitted'
+}
+
+export interface GitFileDiffRequest extends GitDiffRequest {
   path: string
 }
 
@@ -221,7 +228,7 @@ export interface TreeportPanelSdk {
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
   /** Return the changed-file index and its Git-layer file groups. */
-  diff(): Promise<GitDiff>
+  diff(input?: GitDiffRequest): Promise<GitDiff>
   /** Return one bounded file patch, or an explicit oversized state. */
   diffFile(input: GitFileDiffRequest): Promise<GitFileDiff>
   /** Read a repository image (maximum 5 MiB) for a diff preview. */
@@ -351,6 +358,7 @@ function call<Result>(
     | 'storage.set'
     | 'storage.delete',
   params?: {
+    scope?: GitDiffRequest['scope']
     key?: string
     value?: JsonValue
     path?: string
@@ -409,7 +417,7 @@ export const treeport: TreeportPanelSdk = Object.freeze({
     }
   }),
   context: () => call<WebPanelContext>('context'),
-  diff: () => call<GitDiff>('diff'),
+  diff: (input?: GitDiffRequest) => call<GitDiff>('diff', { ...input }),
   diffFile: (input: GitFileDiffRequest) =>
     call<GitFileDiff>('diff.file', { ...input }),
   diffImage: (input: GitDiffImageRequest) =>

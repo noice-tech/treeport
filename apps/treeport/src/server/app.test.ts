@@ -1027,7 +1027,21 @@ describe('HTTP API validation', () => {
     expect((await app.request('/api/panels/panel_review/diff')).status).toBe(
       200
     )
-    expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
+    expect(service.getWebPanelDiff).toHaveBeenCalledWith(
+      'panel_review',
+      undefined
+    )
+    expect(
+      (await app.request('/api/panels/panel_review/diff?scope=committed'))
+        .status
+    ).toBe(200)
+    expect(service.getWebPanelDiff).toHaveBeenCalledWith(
+      'panel_review',
+      'committed'
+    )
+    expect(
+      (await app.request('/api/panels/panel_review/diff?scope=invalid')).status
+    ).toBe(400)
     const fileDiff = await app.request('/api/panels/panel_review/diff/file', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1043,7 +1057,22 @@ describe('HTTP API validation', () => {
     })
     expect(service.getWebPanelFileDiff).toHaveBeenCalledWith(
       'panel_review',
-      'a'
+      'a',
+      undefined
+    )
+    expect(
+      (
+        await app.request('/api/panels/panel_review/diff/file', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'a', scope: 'uncommitted' })
+        })
+      ).status
+    ).toBe(200)
+    expect(service.getWebPanelFileDiff).toHaveBeenCalledWith(
+      'panel_review',
+      'a',
+      'uncommitted'
     )
     const image = await app.request('/api/panels/panel_review/diff/image', {
       method: 'POST',

@@ -100,6 +100,7 @@ import {
   worktreesResponseSchema,
   gitDiffResponseSchema,
   gitFileDiffRequestSchema,
+  gitDiffRequestSchema,
   gitFileDiffResponseSchema,
   gitDiffImageRequestSchema,
   gitDiffImageSchema,
@@ -1439,9 +1440,10 @@ export function createApp({
       '/api/panels/:panelId/diff',
       Effect.gen(function* () {
         const params = yield* routeParams
+        const query = yield* requestQuery(gitDiffRequestSchema)
         return jsonContractResponse(gitDiffResponseSchema, {
           diff: yield* operation(() =>
-            service.panels.getWebPanelDiff(params.panelId!)
+            service.panels.getWebPanelDiff(params.panelId!, query.scope)
           )
         })
       })
@@ -1455,7 +1457,11 @@ export function createApp({
         return jsonContractResponse(
           gitFileDiffResponseSchema,
           yield* operation(() =>
-            service.panels.getWebPanelFileDiff(params.panelId!, body.path)
+            service.panels.getWebPanelFileDiff(
+              params.panelId!,
+              body.path,
+              body.scope
+            )
           )
         )
       })

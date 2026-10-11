@@ -42,6 +42,7 @@ import type {
   ViewerIdentity,
   DirectoryBrowseResponse,
   GitDiff,
+  GitDiffRequest,
   GitFileDiff,
   GitFileDiffRequest,
   GitDiffImage,
@@ -532,11 +533,15 @@ export const rpc = {
                 { json }
               )
           },
-          $get: ({ param }: RequestInput<{ panelId: string }>) =>
+          $get: ({
+            param,
+            query
+          }: RequestInput<{ panelId: string }> & { query?: GitDiffRequest }) =>
             endpoint<{ diff: GitDiff }>(
               'GET',
               `/api/panels/${id(param.panelId)}/diff`,
-              gitDiffResponseSchema
+              gitDiffResponseSchema,
+              query ? { query } : undefined
             )
         },
         network: {
