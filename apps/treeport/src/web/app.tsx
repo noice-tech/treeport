@@ -88,6 +88,7 @@ import {
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
 import { terminalSessions } from './terminal-session'
+import { WorkspaceWindowTitle } from './workspace-window-title'
 import { errorDetails } from './error-message'
 import { cn } from './lib/utils'
 import { browserTrace, newBrowserCorrelationId } from './agent-tracing'
@@ -1635,6 +1636,12 @@ function WorkspaceApp() {
 
   return (
     <>
+      <WorkspaceWindowTitle
+        projects={projects}
+        selectedProject={selectedProject}
+        selectedWorktree={selectedWorktree}
+        disconnected={eventsDisconnected || projectsQuery.isRefetchError}
+      />
       <TerminalBellAttention
         projects={projects}
         selectedTerminalId={selectedTerminalId}
