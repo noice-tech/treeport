@@ -21,6 +21,7 @@ export function ComputerSelector({
 }) {
   const selected = selectedComputer(state)
   const label = selected?.name ?? 'Connect to a computer'
+  const localLabel = state.platform === 'darwin' ? 'This Mac' : 'This computer'
   const computers = [
     ...state.computers.filter((computer) => computer.loopback),
     ...state.computers.filter((computer) => !computer.loopback)
@@ -32,7 +33,7 @@ export function ComputerSelector({
       title={label}
       aria-label={
         selected
-          ? `${selected.loopback ? 'This computer' : 'Remote computer'}: ${
+          ? `${selected.loopback ? localLabel : 'Remote computer'}: ${
               selected.name
             }`
           : label

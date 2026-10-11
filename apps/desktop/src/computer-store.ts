@@ -90,9 +90,11 @@ export function computerName(computer: SavedComputer): string {
   }
 
   const url = new URL(computer.origin)
-  return isLoopbackUrl(url)
-    ? 'This computer'
-    : computer.advertisedHostname || url.hostname
+  if (isLoopbackUrl(url)) {
+    return process.platform === 'darwin' ? 'This Mac' : 'This computer'
+  }
+
+  return computer.advertisedHostname || url.hostname
 }
 
 export class ComputerStore {

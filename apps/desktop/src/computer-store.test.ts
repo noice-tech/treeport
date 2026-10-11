@@ -29,7 +29,9 @@ describe('desktop computer store', () => {
       ComputerStore.load(filePath, 'http://127.0.0.1:8733')
     )
     const local = store.selectedComputer!
-    expect(computerName(local)).toBe('This computer')
+    expect(computerName(local)).toBe(
+      process.platform === 'darwin' ? 'This Mac' : 'This computer'
+    )
     const remote = await Effect.runPromise(
       store.add('https://vps.example.test/worktree?view=1')
     )
