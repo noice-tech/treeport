@@ -68,6 +68,7 @@ export function CreateWorktreeDialog({
           className="max-w-md"
           mobilePresentation="dialog"
           restoreFocusTo={restoreFocusTo}
+          onPointerDownOutside={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => {
             if (submittedRef.current) {
               submittedRef.current = false
