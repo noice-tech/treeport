@@ -187,12 +187,15 @@ async function main(): Promise<void> {
             terminal.worktreeId
           )
           yield* Effect.tryPromise(() =>
-            push.notify({
-              title: current.title ?? terminal.name,
-              body: `Terminal needs attention · ${worktree.name}`,
-              url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
-              tag: `treeport-bell:${terminalId}`
-            })
+            push.notify(
+              {
+                title: current.title ?? terminal.name,
+                body: `Terminal needs attention · ${worktree.name}`,
+                url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
+                tag: `treeport-bell:${terminalId}`
+              },
+              presence.snapshot()
+            )
           )
         }).pipe(
           Effect.catchAll(() =>

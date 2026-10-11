@@ -7,7 +7,8 @@ import * as Schema from 'effect/Schema'
 import {
   pushSubscriptionSchema,
   type WebPushSubscription,
-  type ViewerIdentity
+  type ViewerIdentity,
+  type WorkspacePresence
 } from '@treeport/shared'
 import { DomainError } from './core/index'
 
@@ -142,17 +143,31 @@ export class WebPushManager {
     })
   }
 
-  async notify(payload: {
-    title: string
-    body: string
-    url: string
-    tag: string
-  }): Promise<void> {
+  async notify(
+    payload: {
+      title: string
+      body: string
+      url: string
+      tag: string
+    },
+    viewers: readonly WorkspacePresence[]
+  ): Promise<void> {
     if (!this.hasSubscriptions) {
       return
     }
 
-    const subscriptions = [...this.state.subscriptions]
+    // Keep the in-app BEL unread; only skip external delivery for users who
+    // can already see it in a foreground Treeport window (web or desktop).
+    const activeOwners = new Set(
+      viewers
+        .filter((viewer) => viewer.visible && viewer.focused)
+        .map((viewer) =>
+          JSON.stringify([viewer.identity.source, viewer.identity.login])
+        )
+    )
+    const subscriptions = this.state.subscriptions.filter(
+      (record) => !activeOwners.has(record.owner)
+    )
     // Bound fan-out and network waits; expired endpoints are pruned without
     // deleting a subscription that was replaced while a delivery was in flight.
     for (
