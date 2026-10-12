@@ -524,17 +524,30 @@ export async function main() {
 
   const result = await childExit
   if (requestedSignal) {
-    // Turbo can exit before the processes in its detached group have finished
-    // shutting down. Keep the escalation timer alive until their listeners are
-    // gone instead of returning a prompt while the old stack still owns them.
+    // Turbo can exit before its workers, including a backend still restoring
+    // sessions that has not opened a listener. Keep escalation alive until the
+    // owned worker groups are gone, not merely until their ports are free.
     for (let attempt = 0; attempt < 140; attempt += 1) {
+      let workersAreRunning = false
+      for (const processGroupId of ownedProcessGroups) {
+        try {
+          process.kill(-processGroupId, 0)
+          workersAreRunning = true
+        } catch (error) {
+          if (error?.code === 'EPERM') {
+            workersAreRunning = true
+          } else if (error?.code !== 'ESRCH') {
+            throw error
+          }
+        }
+      }
       const portsAreAvailable = await Promise.all(
         [
           { port: appPort, host: mode.appHost },
           { port: desktopDebugPort, host: loopbackHost }
         ].map(({ port, host }) => portIsAvailable(port, host))
       )
-      if (portsAreAvailable.every(Boolean)) {
+      if (!workersAreRunning && portsAreAvailable.every(Boolean)) {
         break
       }
 

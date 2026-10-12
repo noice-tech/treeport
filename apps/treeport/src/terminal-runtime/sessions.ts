@@ -1065,9 +1065,8 @@ export class TerminalHostSessions {
               (session.replaying &&
                 session.pty instanceof PersistentSession &&
                 batch.length > 0 &&
-                ((batch[0]!.sequence <= session.pty.processedSequence &&
-                  next.sequence > session.pty.processedSequence) ||
-                  next.at - batch[0]!.at > 100))
+                batch[0]!.sequence <= session.pty.processedSequence &&
+                next.sequence > session.pty.processedSequence)
             ) {
               break
             }
@@ -1076,13 +1075,32 @@ export class TerminalHostSessions {
             bytes += next.bytes
             index++
           }
-          session.processingSequence = batch.at(-1)!.sequence
-          session.processingTime = batch.at(-1)!.at
           yield* Effect.async<void>((resume) => {
-            session.terminal.write(
-              batch.map((output) => output.data).join(''),
-              () => resume(Effect.void)
-            )
+            if (session.replaying && session.pty instanceof PersistentSession) {
+              // Queue the whole batch in one parser turn, but advance metadata
+              // between records so replayed bells, progress, and query replies
+              // retain their original timestamps and processed-sequence fence.
+              session.processingSequence = batch[0]!.sequence
+              session.processingTime = batch[0]!.at
+              for (let index = 0; index < batch.length; index++) {
+                session.terminal.write(batch[index]!.data, () => {
+                  const next = batch[index + 1]
+                  if (next) {
+                    session.processingSequence = next.sequence
+                    session.processingTime = next.at
+                  } else {
+                    resume(Effect.void)
+                  }
+                })
+              }
+            } else {
+              session.processingSequence = batch.at(-1)!.sequence
+              session.processingTime = batch.at(-1)!.at
+              session.terminal.write(
+                batch.map((output) => output.data).join(''),
+                () => resume(Effect.void)
+              )
+            }
           })
 
           if (
