@@ -1547,6 +1547,14 @@ export class TerminalHostSessions {
       }
 
       const lease = this.makePauseLease(session)
+      if (owner) {
+        // The keeper has already paused PTY output. Keep its IPC stream readable:
+        // a viewer can resize before completing this authority handshake, and
+        // resize/status replies share the stream with output. Pausing it would
+        // deadlock resize behind the lease that activation needs to release.
+        owner.resume()
+      }
+
       let retained = false
       return yield* Effect.gen(this, function* () {
         yield* this.drainParser(session)
