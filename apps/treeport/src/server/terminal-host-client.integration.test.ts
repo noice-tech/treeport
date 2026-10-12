@@ -668,9 +668,14 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(attachment?.data).toContain('NORMAL_UNICODE λ🙂')
     expect(attachment?.data).toContain('\u001b[?1049h')
     expect(attachment).toMatchObject({ cols: 93, rows: 27 })
-    await restartedDaemon.resize('terminal-host', 100, 30)
     const transition =
       await restartedDaemon.prepareQueryAuthority('terminal-host')
+    // Mobile fitting can resize during the authority handshake. Keeper control
+    // replies must remain readable until the viewer activates its authority.
+    await restartedDaemon.resize('terminal-host', 100, 30)
+    expect(
+      (await restartedDaemon.listProcesses('worktree-host')).length
+    ).toBeGreaterThan(0)
     await restartedDaemon.activateQueryAuthority(
       'terminal-host',
       transition.transitionId,
