@@ -15,6 +15,7 @@ const githubRepository = 'noice-tech/treeport'
 const packageDirectories = [
   'packages/panel-sdk',
   'packages/pi',
+  'packages/session-keeper',
   'apps/treeport'
 ]
 const packageManifests = packageDirectories.map((directory) =>
@@ -199,6 +200,19 @@ try {
   run('pnpm', ['test:release-qualification'], { stdio: 'inherit' })
 } catch {
   fail('Packaged cross-release qualification failed; nothing was published.')
+}
+
+// Qualifying the host CLI does not qualify a host-only native tarball. Check
+// the exact complete payload before ANY dependent package is published, and
+// let the native package's own prepack enforce the same contract again.
+try {
+  run(
+    'pnpm',
+    ['--filter', '@treeport/session-keeper', 'test:package', '--all-targets'],
+    { stdio: 'inherit' }
+  )
+} catch {
+  fail('Native all-target package verification failed; nothing was published.')
 }
 
 let npmUser

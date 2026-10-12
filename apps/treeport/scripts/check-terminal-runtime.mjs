@@ -25,7 +25,6 @@ for (const name of files) {
       specifier === 'zod' ||
       (specifier.startsWith('./') && !specifier.startsWith('../'))
     const persistentPrimitive = [
-      'session-entry.ts',
       'session-journal.ts',
       'session-protocol.ts'
     ].includes(name)
@@ -53,7 +52,6 @@ for (const required of [
   'server.ts',
   'entry.ts',
   'launcher.ts',
-  'session-entry.ts',
   'session-journal.ts',
   'session-protocol.ts',
   'session-client.ts'

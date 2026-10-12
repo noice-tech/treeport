@@ -46,6 +46,7 @@ import {
 } from '../terminal-runtime/api'
 import { decodeTerminalHostDiscoveryRecord } from '../terminal-runtime/legacy-record'
 import { makeTerminalHostSessions } from '../terminal-runtime/sessions'
+import { prepareSessionKeeper } from '@treeport/session-keeper'
 import { makeTerminalHostServer } from '../terminal-runtime/server'
 
 const TERMINAL_HOST_REQUEST_TIMEOUT_MS = 30_000
@@ -83,7 +84,7 @@ export interface TerminalHostClientOptions {
   readonly hostArguments?: string[]
   readonly environment?: NodeJS.ProcessEnv
   readonly spawnHost?: typeof spawn
-  readonly sessionEntryPath?: string | undefined
+  readonly sessionExecutable?: string | undefined
   readonly journalLimitBytes?: number | undefined
   readonly embeddedEngine?: boolean
 }
@@ -934,7 +935,7 @@ export function connectOrStartTerminalHost(
       options.runtimeDir,
       options.embeddedEngine
     )
-    if (options.sessionEntryPath && !options.embeddedEngine) {
+    if (options.sessionExecutable !== undefined && !options.embeddedEngine) {
       // Never replace the old host or migrate its live PTYs. It remains only
       // for pre-existing sessions; all creates go to the current engine.
       const discovery = yield* readRecord(paths.recordPath)
@@ -950,7 +951,7 @@ export function connectOrStartTerminalHost(
       if (discovery.record && (yield* processExists(discovery.record.pid))) {
         legacy = yield* connectOrStartTerminalHost({
           ...options,
-          sessionEntryPath: undefined
+          sessionExecutable: undefined
         })
       }
 
@@ -1092,15 +1093,19 @@ export function connectOrStartTerminalHost(
     }
 
     const hostId = crypto.randomUUID()
-    if (options.sessionEntryPath) {
+    if (options.sessionExecutable !== undefined) {
+      const sessionExecutable = yield* nodePromise(() =>
+        prepareSessionKeeper(
+          options.sessionExecutable!,
+          path.join(paths.hostRuntimeDir, 'keepers')
+        )
+      )
       // There is no independently replaceable engine process: this listener and
       // the emulator are scoped to the daemon. Only raw PTY sessions detach.
       const sessions = yield* makeTerminalHostSessions({
         runtimeDir: paths.hostRuntimeDir,
         launcherPath: options.launcherPath,
-        sessionEntryPath: options.sessionEntryPath,
-        sessionExecutable: options.hostExecutable,
-        sessionArguments: options.hostArguments,
+        sessionExecutable,
         journalLimitBytes: options.journalLimitBytes
       }).pipe(Effect.mapError(connectionError))
       yield* makeTerminalHostServer({

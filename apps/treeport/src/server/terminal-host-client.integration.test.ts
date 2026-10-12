@@ -28,6 +28,7 @@ import {
 import type { TerminalHostSessions } from '../terminal-runtime/sessions'
 import { probeTerminalHostCompatibility } from '../terminal-runtime/preflight'
 import { sessionStatusSchema } from '../terminal-runtime/session-protocol'
+import { PersistentSession } from '../terminal-runtime/session-client'
 
 async function runLegacy<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   const exit = await Effect.runPromise(Effect.exit(effect))
@@ -321,6 +322,30 @@ describe('detached terminal host lifecycle', () => {
   const clients = new Set<LegacyClient>()
 
   afterEach(async () => {
+    // A failed assertion can happen before a keeper PID is added to hostPids.
+    // Closing an engine does NOT close its sessions: authenticate every owned
+    // fixture before removing its discovery/journal directory. Cleanup failure
+    // intentionally retains evidence rather than leaving an undiscoverable PTY.
+    for (const root of roots) {
+      for (const name of await fs.readdir(root, { recursive: true })) {
+        if (!name.includes('/sessions/') || !name.endsWith('/manifest.json')) {
+          continue
+        }
+
+        const directory = path.dirname(path.join(root, name))
+        const status = sessionStatusSchema.parse(
+          JSON.parse(
+            await fs.readFile(path.join(directory, 'status.json'), 'utf8')
+          )
+        )
+        const session = await PersistentSession.open(directory)
+        await session.terminate()
+        await waitFor(
+          () => !processExists(status.ownerPid),
+          `Fixture keeper did not exit; evidence retained at ${root}`
+        )
+      }
+    }
     for (const client of clients) {
       await client.dispose()
     }
@@ -435,7 +460,7 @@ describe('detached terminal host lifecycle', () => {
     })
   })
 
-  it('replaces its engine while preserving the PTY, lossless checkpoints, modes, and detached output', async () => {
+  const qualifyKeeper = async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-test-')
     )
@@ -473,16 +498,16 @@ child.once('exit', (code) => process.exit(code ?? 1))
       ),
       hostExecutable: process.execPath,
       hostArguments: [],
-      sessionEntryPath: path.join(
+      sessionExecutable: path.join(
         repositoryRoot,
-        'apps/treeport/dist/node/server/terminal-session-entry.js'
+        `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
       ),
       journalLimitBytes: 64 * 1024
     }
 
     const legacy = await connectOrStartTerminalHost({
       ...options,
-      sessionEntryPath: undefined
+      sessionExecutable: undefined
     })
     clients.add(legacy)
     hostPids.add(legacy.record.pid)
@@ -535,7 +560,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
         (await firstDaemon.captureTerminal('terminal-host', 20))?.includes(
           'HOST_BOOT'
         ) ?? false,
-      'The first daemon did not observe terminal output'
+      // This fixture durably captures and emulates 1.26 MiB of ANSI sequences
+      // BEFORE its boot marker. Bound the wait, allowing the full gate's
+      // concurrent fsync-heavy keeper fixtures without weakening tail checks.
+      'The first daemon did not observe terminal output',
+      10_000
     ).catch(async (error) => {
       const directory = path.join(
         runtimeDir,
@@ -625,7 +654,15 @@ child.once('exit', (code) => process.exit(code ?? 1))
         .some((line) => JSON.parse(line).sequence > detachedSequence)
     }, 'The detached session stopped capturing output')
 
-    const restartedDaemon = await connectOrStartTerminalHost(options)
+    // The new engine reconnects without replacing the owner PID or replaying
+    // its command launch.
+    const restartedDaemon = await connectOrStartTerminalHost({
+      ...options,
+      sessionExecutable: path.join(
+        repositoryRoot,
+        `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
+      )
+    })
     clients.add(restartedDaemon)
     expect(restartedDaemon.record.hostId).not.toBe(firstHostId)
     expect((await restartedDaemon.listProcesses('worktree-host'))[0]!.pid).toBe(
@@ -837,7 +874,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
         (
           await recoveredDaemon.captureTerminal('archived-terminal', 10)
         )?.includes('ARCHIVE_UNICODE') ?? false,
-      'The archive fixture did not produce output'
+      // Same 1.26 MiB ANSI/checkpoint stress as the initial boot above.
+      'The archive fixture did not produce output',
+      10_000
     )
     const archiveDirectory = path.join(
       sessionRoot,
@@ -1101,7 +1140,12 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     hostPids.delete(fixture.keeper)
     hostPids.delete(supervisor.pid!)
-  }, 40_000)
+  }
+  it(
+    'replaces its Rust session engine while preserving the PTY, lossless checkpoints, modes, and detached output',
+    qualifyKeeper,
+    40_000
+  )
 
   it('removes only a transaction-owned provisional host when startup fails', async () => {
     const root = await fs.mkdtemp(

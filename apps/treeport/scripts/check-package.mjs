@@ -6,19 +6,30 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { checkSessionKeeperPackage } from '../../../packages/session-keeper/scripts/check-package.mjs'
 
 const execute = promisify(execFile)
 const directory = fileURLToPath(new URL('..', import.meta.url))
 const sdkDirectory = path.resolve(directory, '../../packages/panel-sdk')
+const keeperDirectory = path.resolve(directory, '../../packages/session-keeper')
 const packed = process.argv.includes('--packed')
 
 // The build uses only the local output check. The gate also checks real pnpm
 // tarballs, with lifecycle scripts disabled to avoid prepack -> build recursion.
 // Neither mode installs dependencies or proves end-to-end npm update wiring.
-async function checkPackage(packageDirectory, published, sdkVersion) {
+async function checkPackage(
+  packageDirectory,
+  published,
+  sdkVersion,
+  keeperVersion
+) {
   const manifest = JSON.parse(
     await fs.readFile(path.join(packageDirectory, 'package.json'), 'utf8')
   )
+  if (manifest.name === '@treeport/session-keeper') {
+    return checkSessionKeeperPackage(packageDirectory)
+  }
+
   const cli = manifest.name === '@treeport/treeport'
   assert(cli || manifest.name === '@treeport/panel-sdk', 'Unexpected package')
   for (const kind of [
@@ -45,7 +56,9 @@ async function checkPackage(packageDirectory, published, sdkVersion) {
         String(version).startsWith('workspace:')
       ) {
         assert(
-          name === '@treeport/panel-sdk' && version === 'workspace:*',
+          (name === '@treeport/panel-sdk' ||
+            name === '@treeport/session-keeper') &&
+            version === 'workspace:*',
           `Published dependency ${name} uses ${version}`
         )
       }
@@ -58,9 +71,10 @@ async function checkPackage(packageDirectory, published, sdkVersion) {
         'dist/node/cli/index.js',
         'dist/node/server/index.js',
         'dist/node/server/terminal-host-entry.js',
-        'dist/node/server/terminal-session-entry.js',
         'dist/node/server/terminal-host-preflight.js',
         'dist/node/server/core/launcher.js',
+        'dist/session-journal.js',
+        'dist/session-protocol.js',
         'dist/web/index.html',
         'drizzle/0000_public_baseline.sql',
         'drizzle/meta/_journal.json',
@@ -81,6 +95,10 @@ async function checkPackage(packageDirectory, published, sdkVersion) {
     assert.equal(
       manifest.dependencies['@treeport/panel-sdk'],
       published ? sdkVersion : 'workspace:*'
+    )
+    assert.equal(
+      manifest.dependencies['@treeport/session-keeper'],
+      published ? keeperVersion : 'workspace:*'
     )
     for (const entrypoint of [
       manifest.bin.treeport,
@@ -178,12 +196,15 @@ async function checkPackage(packageDirectory, published, sdkVersion) {
       /(?:^|\/)(?:tests?|__tests__|fixtures|apps\/desktop|\.vite|electron(?:-forge)?)(?:\/|$)/.test(
         file
       ) ||
-      /(?:^|[/.])(?:test|spec)\.[cm]?[jt]sx?$|\.(?:map|tsbuildinfo)$/.test(file)
+      /(?:^|[/.])(?:test|spec)\.[cm]?[jt]sx?$|\.(?:map|tsbuildinfo)$/.test(
+        file
+      ) ||
+      (cli && /^(?:dist\/)?native(?:\/|$)/.test(file))
   )
   assert.deepEqual(
     forbidden,
     [],
-    'Publish output contains tests, build metadata or desktop content'
+    'Publish output contains tests, build metadata, desktop content or CLI-owned native payloads'
   )
   if (cli) {
     const privateWorkspaceImports = []
@@ -220,7 +241,7 @@ if (!packed) {
   )
   try {
     const manifests = []
-    for (const source of [sdkDirectory, directory]) {
+    for (const source of [sdkDirectory, keeperDirectory, directory]) {
       const sourceManifest = JSON.parse(
         await fs.readFile(path.join(source, 'package.json'), 'utf8')
       )
@@ -247,7 +268,8 @@ if (!packed) {
       const manifest = await checkPackage(
         path.join(extracted, 'package'),
         true,
-        manifests[0]?.version
+        manifests[0]?.version,
+        manifests[1]?.version
       )
       assert.equal(manifest.name, sourceManifest.name)
       assert.equal(manifest.version, sourceManifest.version)
