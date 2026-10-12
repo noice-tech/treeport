@@ -1554,6 +1554,7 @@ export class TerminalHostSessions {
         // deadlock resize behind the lease that activation needs to release.
         owner.resume()
       }
+
       let retained = false
       return yield* Effect.gen(this, function* () {
         yield* this.drainParser(session)
