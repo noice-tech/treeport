@@ -12,7 +12,7 @@ import {
 
 const execute = promisify(execFile)
 const temporary: string[] = []
-const children: IPty[] = []
+const children: Array<{ pty: IPty; exited: Promise<void> }> = []
 
 async function available(executable: string): Promise<string | null> {
   return execute('sh', ['-c', `command -v "$1"`, 'sh', executable])
@@ -50,6 +50,7 @@ async function verifyCommandLifecycle(
     {
       ...process.env,
       HOME: home,
+      ZDOTDIR: home,
       TERM: 'xterm-256color'
     },
     integration,
@@ -66,7 +67,10 @@ async function verifyCommandLifecycle(
     rows: 30,
     env: environment
   })
-  children.push(child)
+  const exited = new Promise<void>((resolve) => {
+    child.onExit(() => resolve())
+  })
+  children.push({ pty: child, exited })
   let output = ''
   child.onData((data) => {
     output += data
@@ -105,9 +109,12 @@ async function verifyCommandLifecycle(
 }
 
 afterEach(async () => {
-  for (const child of children.splice(0)) {
-    child.kill()
-  }
+  await Promise.all(
+    children.splice(0).map(async ({ pty, exited }) => {
+      pty.kill()
+      await exited
+    })
+  )
   await Promise.all(
     temporary
       .splice(0)
