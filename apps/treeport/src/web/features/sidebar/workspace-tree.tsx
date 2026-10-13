@@ -571,6 +571,7 @@ export function WorkspaceTree({
                                 <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
                                   <SidebarAction
                                     label={`Close ${title}`}
+                                    tooltipSide="right"
                                     tooltip={
                                       worktree.terminals.length === 1
                                         ? 'Every tree keeps at least one terminal'
