@@ -50,5 +50,5 @@
     "vitest": "^4.0.18",
     "zod": "catalog:"
   },
-  "packageManager": "pnpm@11.15.0"
+  "packageManager": "pnpm@12.11.2"
 }
