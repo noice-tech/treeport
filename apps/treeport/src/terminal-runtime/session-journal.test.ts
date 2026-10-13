@@ -99,10 +99,8 @@ it.each(['valid', 'crc', 'truncated', 'empty', 'partial-record'] as const)(
       // Consumers may stop after one record; integrity cannot depend on a later next().
       await records.return(undefined)
     }
-    expect(await fs.readFile(checkpoint)).toEqual(bytes)
-  },
-  // Multi-chunk gzip validation performs real I/O alongside ci:local builds/tests.
-  15_000
+    expect((await fs.readFile(checkpoint)).equals(bytes)).toBe(true)
+  }
 )
 
 it('keeps recovery bounded to the history captured before path replacement or growth', async () => {

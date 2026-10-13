@@ -560,11 +560,8 @@ child.once('exit', (code) => process.exit(code ?? 1))
         (await firstDaemon.captureTerminal('terminal-host', 20))?.includes(
           'HOST_BOOT'
         ) ?? false,
-      // This fixture durably captures and emulates 1.26 MiB of ANSI sequences
-      // BEFORE its boot marker. Bound the wait, allowing the full gate's
-      // concurrent fsync-heavy keeper fixtures without weakening tail checks.
       'The first daemon did not observe terminal output',
-      20_000
+      10_000
     ).catch(async (error) => {
       const directory = path.join(
         runtimeDir,
@@ -781,13 +778,23 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     hostPids.add(quotaStatus.ownerPid)
     await waitFor(
-      async () =>
-        sessionStatusSchema.parse(
-          JSON.parse(
-            await fs.readFile(path.join(quotaDirectory, 'status.json'), 'utf8')
-          )
-        ).error !== null,
-      'Journal quota did not report an explicit fault'
+      () =>
+        restartedDaemon
+          .attach('quota-terminal', () => undefined)
+          .then(
+            (attachment) => {
+              attachment?.unsubscribe()
+              return false
+            },
+            (error) => {
+              if (!error.message.includes('journal quota')) {
+                throw error
+              }
+
+              return true
+            }
+          ),
+      'Journal quota did not report an explicit fault to the client'
     )
     expect(processExists(quotaStatus.ownerPid)).toBe(true)
     await expect(
@@ -874,9 +881,8 @@ child.once('exit', (code) => process.exit(code ?? 1))
         (
           await recoveredDaemon.captureTerminal('archived-terminal', 10)
         )?.includes('ARCHIVE_UNICODE') ?? false,
-      // Same 1.26 MiB ANSI/checkpoint stress as the initial boot above.
       'The archive fixture did not produce output',
-      20_000
+      10_000
     )
     const archiveDirectory = path.join(
       sessionRoot,
@@ -1144,7 +1150,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
   it(
     'replaces its Rust session engine while preserving the PTY, lossless checkpoints, modes, and detached output',
     qualifyKeeper,
-    60_000
+    40_000
   )
 
   it('removes only a transaction-owned provisional host when startup fails', async () => {

@@ -317,18 +317,31 @@ impl Owner {
                             // <1 KiB). Coalesce the bounded, already-captured
                             // queue into one durable write instead of fsyncing
                             // every fragment; never wait on an idle timer.
-                            // Leave room for one <=4 KiB UTF-8 fragment, the
-                            // record envelope, and worst-case 6x JSON escaping.
-                            // Large quotas can amortize fsync over larger reads;
-                            // small quotas retain the original 4 KiB target so
-                            // batching cannot introduce a new quota deadlock.
-                            let target = (self.manifest.journal_limit_bytes.saturating_sub(128) / 6)
-                                .saturating_sub(4096)
-                                .clamp(4096, 32 * 1024) as usize;
+                            // Budget actual JSON escaping rather than assuming
+                            // every byte expands 6x. Reserve the envelope and
+                            // one worst-case <=4 KiB fragment before dequeueing;
+                            // retain the old minimum for very small quotas.
+                            let target = self.manifest.journal_limit_bytes
+                                .saturating_sub(128 + 6 * 4096)
+                                .max(6 * 4096);
+                            let raw_target = if self.manifest.journal_limit_bytes < 128 + 6 * 8192 {
+                                4096
+                            } else {
+                                32 * 1024
+                            };
+                            let encoded_len = |text: &str| text.bytes().map(|byte| match byte {
+                                b'"' | b'\\' | b'\n' | b'\r' | b'\t' | 8 | 12 => 2,
+                                0..=31 => 6,
+                                _ => 1,
+                            }).sum::<u64>();
+                            let mut bytes = encoded_len(&data);
                             for _ in 0..31 {
-                                if data.len() >= target { break; }
+                                if bytes >= target || data.len() >= raw_target { break; }
                                 match self.pty.capture.try_recv() {
-                                    Ok(Capture::Output(next)) => data.push_str(&next),
+                                    Ok(Capture::Output(next)) => {
+                                        bytes += encoded_len(&next);
+                                        data.push_str(&next);
+                                    },
                                     Ok(Capture::Eof) => { self.eof = true; break; }
                                     Ok(Capture::Error(error)) => {
                                         self.eof = true;
@@ -458,7 +471,11 @@ impl Owner {
             Command::Status | Command::Inspect { .. } => {}
             Command::Processed { sequence } => {
                 self.status.processed_sequence = self.status.processed_sequence.max(sequence);
-                self.publish(true);
+                // Live reconnects receive this watermark from the owner. After
+                // owner death, retained queries are all historical and cannot
+                // write to a PTY. Do not fsync diagnostic metadata for every
+                // parser acknowledgement; output durability belongs to Journal.
+                self.publish(false);
             }
             Command::Write { .. } => bail!("Input belongs to the bounded PTY writer"),
             Command::Resize { cols, rows } => {
