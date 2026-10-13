@@ -9,6 +9,7 @@ import {
 export function SidebarAction({
   label,
   tooltip = label,
+  tooltipSide = 'top',
   className,
   disabled,
   keyShortcuts,
@@ -17,6 +18,7 @@ export function SidebarAction({
 }: {
   label: string
   tooltip?: string
+  tooltipSide?: 'top' | 'right' | 'bottom' | 'left'
   className?: string
   disabled?: boolean
   keyShortcuts?: string
@@ -40,7 +42,7 @@ export function SidebarAction({
           <span className="touch-target" aria-hidden="true" />
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="top">{tooltip}</TooltipContent>
+      <TooltipContent side={tooltipSide}>{tooltip}</TooltipContent>
     </Tooltip>
   )
 }
