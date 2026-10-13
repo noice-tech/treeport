@@ -135,6 +135,7 @@ export class PersistentSession implements EnginePty {
     rows: number
     metadata: string
     executable: string
+    terminalId?: string | undefined
     journalLimitBytes?: number | undefined
   }): Promise<PersistentSession> {
     const socketPath = sessionSocketPath(options.directory)
@@ -180,7 +181,20 @@ export class PersistentSession implements EnginePty {
       'a',
       0o600
     )
+    // Display only a stable opaque identity, never labels, commands, or env.
+    // Canonical IDs remain recognizable; other IDs are bounded and sanitized
+    // by hashing. Renames and engine reconnections leave this title unchanged.
+    const terminalId =
+      options.terminalId === undefined
+        ? null
+        : /^term_[0-9a-f]{32}$/u.test(options.terminalId)
+          ? options.terminalId
+          : `term_${crypto.createHash('sha256').update(options.terminalId).digest('hex').slice(0, 32)}`
     const child = spawn(options.executable, ['--detach', options.directory], {
+      argv0:
+        terminalId === null
+          ? 'treeport-session'
+          : `treeport-session ${terminalId}`,
       detached: true,
       stdio: ['ignore', log.fd, log.fd],
       env: process.env
