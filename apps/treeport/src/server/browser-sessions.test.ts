@@ -1568,11 +1568,13 @@ describe('Browser sessions', () => {
       data: { projectId: 'project', worktreeId: 'worktree' }
     })
 
-    await vi.waitFor(() => expect(browsers[0]!.closes).toBe(1))
-    expect(client.messages.at(-1)).toEqual({
-      type: 'closed',
-      reason: 'Worktree removed'
-    })
+    await vi.waitFor(() =>
+      expect(client.messages.at(-1)).toEqual({
+        type: 'closed',
+        reason: 'Worktree removed'
+      })
+    )
+    expect(browsers[0]!.closes).toBe(1)
     await value.manager.dispose()
   })
 
@@ -1589,11 +1591,13 @@ describe('Browser sessions', () => {
       type: 'panel.removed',
       data: { panelId: 'panel_browser', worktreeId: 'worktree' }
     })
-    await vi.waitFor(() => expect(browsers[0]!.closes).toBe(1))
-    expect(client.messages.at(-1)).toEqual({
-      type: 'closed',
-      reason: 'Panel closed'
-    })
+    await vi.waitFor(() =>
+      expect(client.messages.at(-1)).toEqual({
+        type: 'closed',
+        reason: 'Panel closed'
+      })
+    )
+    expect(browsers[0]!.closes).toBe(1)
     expect(client.disconnects).toBe(1)
     await value.manager.dispose()
   })
