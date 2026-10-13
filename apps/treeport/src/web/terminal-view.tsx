@@ -507,7 +507,7 @@ export function TerminalView({
               {snapshot.fileTransfer && (
                 <span
                   className={cn(
-                    'rounded-full bg-zinc-900/90 px-3 py-1 text-xs shadow ring-1 backdrop-blur',
+                    'pointer-events-auto flex max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-center gap-2 rounded-xl bg-zinc-900/90 px-3 py-1 text-xs shadow ring-1 backdrop-blur',
                     snapshot.fileTransfer.state === 'error'
                       ? 'text-rose-100 ring-rose-400/30'
                       : 'text-cyan-100 ring-cyan-400/20'
@@ -517,6 +517,21 @@ export function TerminalView({
                   }
                 >
                   {snapshot.fileTransfer.message}
+                  {snapshot.fileTransfer.state === 'uploading' && (
+                    <>
+                      {snapshot.fileTransfer.queuedFiles > 0 && (
+                        <span>{snapshot.fileTransfer.queuedFiles} queued</span>
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => activeSession?.cancelFileTransfers()}
+                      >
+                        Cancel uploads
+                      </Button>
+                    </>
+                  )}
                 </span>
               )}
             </div>

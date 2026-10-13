@@ -7,11 +7,11 @@ for (const name of Object.keys(process.env)) {
   }
 }
 
-// Bound subprocess load while allowing independent fixtures
-// to overlap. Tests own separate runtime directories and ephemeral listeners.
+// PTY and storage fixtures are resource-heavy. Run files serially alongside
+// the unit and static gate checks; tests still exercise internal concurrency.
 export default defineConfig({
   test: {
-    maxWorkers: 3,
+    maxWorkers: 1,
     include: [
       'apps/**/*.integration.test.ts',
       'scripts/**/*.integration.test.mjs'

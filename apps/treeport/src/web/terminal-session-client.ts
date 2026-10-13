@@ -326,6 +326,10 @@ export class TerminalSession {
     this.focus()
   }
 
+  cancelFileTransfers(): void {
+    this.services.transfers.cancelFileTransfers()
+  }
+
   pasteFiles(files: File[]): void {
     if (!files.length) {
       return

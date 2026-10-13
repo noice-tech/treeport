@@ -186,6 +186,10 @@ function createTerminalSession(terminalId: string): TerminalSessionInstance {
   )
 }
 
+type FakeUploadTarget = {
+  onprogress: ((event: { loaded: number }) => void) | null
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubGlobal('window', globalThis)
@@ -194,6 +198,55 @@ beforeEach(() => {
     vi.fn(() => 1)
   )
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  // Model the browser upload transport while keeping the existing fetch
+  // fixtures responsible for response timing, errors and abort observation.
+  vi.stubGlobal(
+    'XMLHttpRequest',
+    class {
+      upload: FakeUploadTarget = {
+        onprogress: null
+      }
+      onprogress: (() => void) | null = null
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      onabort: (() => void) | null = null
+      status = 0
+      statusText = ''
+      responseText = ''
+      url = ''
+      method = ''
+      headers = new Headers()
+      controller = new AbortController()
+      open(method: string, url: string) {
+        this.method = method
+        this.url = url
+      }
+      setRequestHeader(name: string, value: string) {
+        this.headers.set(name, value)
+      }
+      abort() {
+        this.controller.abort()
+        this.onabort?.()
+      }
+      send(body: File) {
+        void fetch(this.url, {
+          method: this.method,
+          headers: this.headers,
+          body,
+          signal: this.controller.signal
+        }).then(
+          async (response) => {
+            this.status = response.status
+            this.statusText = response.statusText
+            this.responseText = await response.text()
+            this.upload.onprogress?.({ loaded: body.size })
+            this.onload?.()
+          },
+          () => this.onerror?.()
+        )
+      }
+    }
+  )
 })
 
 afterEach(() => {
@@ -1256,12 +1309,29 @@ describe('TerminalSession', () => {
     session.pasteFiles([new File(['one'], 'one.txt')])
     session.pasteFiles([new File(['two'], 'two.txt')])
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    session.cancelFileTransfers()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(signals[0]!.aborted).toBe(true)
+    expect(session.getSnapshot().fileTransfer).toBe(null)
+    expect(request).toHaveBeenCalledOnce()
+
+    session.pasteFiles([new File(['three'], 'three.txt')])
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(signals[1]!.aborted).toBe(true)
+    expect(session.getSnapshot().fileTransfer).toMatchObject({
+      state: 'error',
+      message: expect.stringContaining('Upload stalled')
+    })
+
+    session.pasteFiles([new File(['four'], 'four.txt')])
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3))
     session.dispose()
     const snapshot = session.getSnapshot()
     await vi.advanceTimersByTimeAsync(0)
-    expect(signals[0]!.aborted).toBe(true)
+    expect(signals[2]!.aborted).toBe(true)
     await vi.advanceTimersByTimeAsync(120_000)
-    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledTimes(3)
     expect(session.getSnapshot()).toBe(snapshot)
   })
 
@@ -1276,20 +1346,75 @@ describe('TerminalSession', () => {
       }
     )
     vi.stubGlobal('location', { hostname: 'remote.example' })
+    const pending: Array<() => void> = []
     const request = vi
       .fn()
       .mockRejectedValueOnce(new Error('upload failed'))
-      .mockResolvedValueOnce(Response.json({ file: { path: '/tmp/two.txt' } }))
+      .mockImplementation((_input: RequestInfo | URL, init: RequestInit) => {
+        const file = init.body
+        if (!(file instanceof File)) {
+          throw new Error('Expected file body')
+        }
+
+        return new Promise<Response>((resolve) => {
+          pending.push(() =>
+            resolve(Response.json({ file: { path: `/tmp/${file.name}` } }))
+          )
+        })
+      })
     vi.stubGlobal('fetch', request)
     const paste = vi.fn()
     Object.assign(terminalSessionTestAccess(session).state.terminal, { paste })
-    session.pasteFiles([new File(['one'], 'one.txt')])
-    session.pasteFiles([new File(['two'], 'two.txt')])
-    await vi.waitFor(() =>
-      expect(paste).toHaveBeenCalledExactlyOnceWith('/tmp/two.txt')
+    const files = Array.from(
+      { length: 12 },
+      (_, index) => new File(['two'], `${index}.txt`)
     )
-    expect(request).toHaveBeenCalledTimes(2)
+    Object.defineProperty(files[0], 'size', { value: 60 * 1024 * 1024 })
+    session.pasteFiles([new File(['one'], 'one.txt')])
+    session.pasteFiles(files)
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(4))
+    expect(session.getSnapshot().fileTransfer).toMatchObject({
+      state: 'uploading',
+      queuedFiles: 9,
+      message: expect.stringContaining('0/12 files · 0%')
+    })
+    // Finish each wave out of order: only three run at a time, and the
+    // eventual terminal input must still preserve the selection order.
+    for (let completed = 0; completed < 12; completed += 3) {
+      expect(paste).not.toHaveBeenCalled()
+      pending
+        .splice(0)
+        .reverse()
+        .forEach((finish) => finish())
+      if (completed < 9) {
+        await vi.waitFor(() =>
+          expect(request).toHaveBeenCalledTimes(completed + 7)
+        )
+      }
+    }
+    await vi.waitFor(() =>
+      expect(paste).toHaveBeenCalledExactlyOnceWith(
+        files.map((file) => `/tmp/${file.name}`).join(' ')
+      )
+    )
+    expect(request).toHaveBeenCalledTimes(13)
     expect(session.getSnapshot().fileTransfer).toBe(null)
+
+    vi.stubGlobal('location', { hostname: 'localhost' })
+    const localFiles = files.map((file) => {
+      const local = new File([], file.name)
+      Object.defineProperties(local, {
+        path: { value: `/local/${file.name}` },
+        size: { value: 60 * 1024 * 1024 * 1024 }
+      })
+      return local
+    })
+    session.pasteFiles(localFiles)
+    await vi.waitFor(() => expect(paste).toHaveBeenCalledTimes(2))
+    expect(paste).toHaveBeenLastCalledWith(
+      localFiles.map((file) => `/local/${file.name}`).join(' ')
+    )
+    expect(request).toHaveBeenCalledTimes(13)
     session.dispose()
   })
 

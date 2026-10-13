@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import crypto from 'node:crypto'
 import { once } from 'node:events'
 import { constants } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -60,7 +61,8 @@ async function fixture(
   argv?: string[],
   parent = os.tmpdir(),
   launch: { executable: string; arguments: string[] } | null = null,
-  metadata = '{}'
+  metadata = '{}',
+  terminalId = `term_${crypto.randomUUID().replaceAll('-', '')}`
 ) {
   const root = await fs.mkdtemp(path.join(parent, 'tp-rust-session-'))
   roots.push(root)
@@ -80,6 +82,7 @@ os.execv(${JSON.stringify(launch.executable)}, ${JSON.stringify([launch.executab
   const session = await PersistentSession.create({
     directory,
     executable,
+    terminalId,
     argv: argv ?? [process.execPath, '-e', source],
     cwd: root,
     env: Object.fromEntries(
@@ -110,7 +113,7 @@ os.execv(${JSON.stringify(launch.executable)}, ${JSON.stringify([launch.executab
   await session.connect()
   await session.ready
   await session.activate()
-  return { root, directory, session, status, output: () => output }
+  return { root, directory, session, status, terminalId, output: () => output }
 }
 
 async function bundledJournalUrl() {
@@ -512,6 +515,7 @@ os._exit(7)
   )
 
   it('round-trips opaque UTF-16 IDs and ignores valid extensions with the Rust owner', async () => {
+    const terminalId = 'quote"line\nnul\0🌲\ud800' + 'long'.repeat(1000)
     const value = await fixture(
       `
         process.stdin.setRawMode(true);
@@ -522,9 +526,28 @@ os._exit(7)
       undefined,
       undefined,
       os.tmpdir(),
-      null
+      null,
+      '{}',
+      terminalId
     )
     await until(() => value.output().includes('READY'))
+    const listing = await execute('ps', [
+      '-ww',
+      '-p',
+      String(value.status.ownerPid),
+      '-o',
+      'args='
+    ])
+    const identity = crypto
+      .createHash('sha256')
+      .update(terminalId)
+      .digest('hex')
+      .slice(0, 32)
+    expect(
+      listing.stdout.trim().startsWith(`treeport-session term_${identity} `)
+    ).toBe(true)
+    expect(listing.stdout).not.toContain('quote"line')
+    expect(listing.stdout).not.toContain(value.session.manifest.token)
     const ids = ['\ud800', '\udfff', '\ud800X\udc00', 'quote"line\nnul\0🌲']
     for (const id of ids) {
       const request = JSON.stringify({
@@ -830,6 +853,16 @@ os._exit(7)
     `)
     await until(() => value.output().includes('🌲'))
     expect(value.output()).not.toContain('\ufffd')
+    const listing = await execute('ps', [
+      '-ww',
+      '-p',
+      String(value.status.ownerPid),
+      '-o',
+      'args='
+    ])
+    expect(
+      listing.stdout.trim().startsWith(`treeport-session ${value.terminalId} `)
+    ).toBe(true)
     await value.session.pauseOwner(true)
     const markers: string[] = []
     value.session.onMarker((data) => markers.push(data))
@@ -861,6 +894,17 @@ os._exit(7)
     expect(replayMarkers).toEqual(['opaque-marker'])
     expect(replaySizes).toEqual([[101, 37]])
     expect(reconnect.manifest.metadata).toBe('{"native":true}')
+    expect(
+      (
+        await execute('ps', [
+          '-ww',
+          '-p',
+          String(value.status.ownerPid),
+          '-o',
+          'args='
+        ])
+      ).stdout
+    ).toBe(listing.stdout)
     expect(reconnect.processedSequence).toBe(acknowledged)
     await reconnect.activate()
     reconnect.write('FINISH\n')
