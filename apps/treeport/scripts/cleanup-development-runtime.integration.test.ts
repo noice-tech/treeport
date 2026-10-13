@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanupDevelopmentRuntime } from './cleanup-development-runtime.mjs'
+import { getSessionKeeperPayload } from '@treeport/session-keeper'
 import { PersistentSession } from '../src/terminal-runtime/session-client'
 import { sessionStatusSchema } from '../src/terminal-runtime/session-protocol'
 
@@ -226,10 +227,7 @@ async function startPersistentSession(
   )
   const session = await PersistentSession.create({
     directory,
-    entryPath: path.resolve(
-      import.meta.dirname,
-      '../dist/node/server/terminal-session-entry.js'
-    ),
+    executable: getSessionKeeperPayload(),
     argv: [
       process.execPath,
       '-e',

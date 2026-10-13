@@ -163,9 +163,7 @@ export interface TerminalHostSessionsOptions {
   readonly terminateProcessTree?: ProcessTreeTerminator
   readonly progressStaleMs?: number
   readonly sshAgentDiscovery?: SshAgentDiscovery
-  readonly sessionEntryPath?: string | undefined
   readonly sessionExecutable?: string | undefined
-  readonly sessionArguments?: string[] | undefined
   readonly journalLimitBytes?: number | undefined
 }
 
@@ -289,10 +287,7 @@ export class TerminalHostSessions {
     private readonly pendingCleanups: Set<PendingCleanup>,
     private readonly persistentOptions: Pick<
       TerminalHostSessionsOptions,
-      | 'sessionEntryPath'
-      | 'sessionExecutable'
-      | 'sessionArguments'
-      | 'journalLimitBytes'
+      'sessionExecutable' | 'journalLimitBytes'
     >
   ) {
     this.shellIntegrationDir = path.join(
@@ -334,7 +329,7 @@ export class TerminalHostSessions {
       )
       yield* Effect.addFinalizer(() => manager.shutdown().pipe(Effect.orDie))
       yield* manager.initialize()
-      if (options.sessionEntryPath) {
+      if (options.sessionExecutable !== undefined) {
         const directory = path.join(resolved.runtimeDir, 'sessions')
         yield* nodePromise(() =>
           fs.mkdir(directory, { recursive: true, mode: 0o700 })
@@ -689,7 +684,7 @@ export class TerminalHostSessions {
         yield* nodePromise(() =>
           fs.writeFile(specPath!, JSON.stringify(spec), { mode: 0o600 })
         )
-        if (!this.persistentOptions.sessionEntryPath) {
+        if (this.persistentOptions.sessionExecutable === undefined) {
           yield* Scope.addFinalizer(
             childScope,
             nodePromise(() => fs.rm(specPath!, { force: true })).pipe(
@@ -798,7 +793,7 @@ export class TerminalHostSessions {
 
       const child: IPty | PersistentSession =
         retainedOwner ??
-        (this.persistentOptions.sessionEntryPath
+        (this.persistentOptions.sessionExecutable !== undefined
           ? yield* nodePromise(() =>
               PersistentSession.create({
                 directory: path.join(
@@ -810,9 +805,7 @@ export class TerminalHostSessions {
                     .digest('hex')
                     .slice(0, 40)
                 ),
-                entryPath: this.persistentOptions.sessionEntryPath!,
-                executable: this.persistentOptions.sessionExecutable,
-                arguments: this.persistentOptions.sessionArguments,
+                executable: this.persistentOptions.sessionExecutable!,
                 journalLimitBytes: this.persistentOptions.journalLimitBytes,
                 argv: directShell
                   ? directLaunch.argv
@@ -1945,7 +1938,7 @@ export class TerminalHostSessions {
       const sessions = [
         ...(yield* SynchronizedRef.get(this.sessions)).values()
       ].filter((session): session is HostedTerminalSession => session !== null)
-      if (this.persistentOptions.sessionEntryPath) {
+      if (this.persistentOptions.sessionExecutable !== undefined) {
         yield* SynchronizedRef.set(this.sessions, new Map())
         yield* Effect.forEach(
           sessions,

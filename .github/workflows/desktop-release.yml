@@ -45,6 +45,9 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Set up the pinned Rust toolchain
+        run: rustup toolchain install 1.85.1 --profile minimal --component clippy --component rustfmt
+
       - name: Validate tag and synchronized versions
         run: |
           node <<'NODE'

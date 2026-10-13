@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { NodeHttpServer } from '@effect/platform-node'
+import { getSessionKeeperPayload } from '@treeport/session-keeper'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
@@ -90,9 +91,7 @@ async function main(): Promise<void> {
           hostEntryPath: fileURLToPath(
             new URL('./terminal-host-entry.js', import.meta.url)
           ),
-          sessionEntryPath: fileURLToPath(
-            new URL('./terminal-session-entry.js', import.meta.url)
-          ),
+          sessionExecutable: getSessionKeeperPayload(),
           journalLimitBytes,
           environment: {
             ...process.env,

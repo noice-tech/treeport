@@ -88,6 +88,8 @@ export class PersistentSession implements EnginePty {
   private socket: net.Socket | null = null
   private status: SessionStatus | null = null
   private termination: Promise<void> | null = null
+  private processingAcknowledgement: Promise<void> | null = null
+  private processingAcknowledgementSequence = 0
   private closed = false
   private archivePaused = false
   private archiveResume: (() => void) | null = null
@@ -126,15 +128,13 @@ export class PersistentSession implements EnginePty {
 
   static async create(options: {
     directory: string
-    entryPath: string
     argv: string[]
     cwd: string
     env: Record<string, string>
     cols: number
     rows: number
     metadata: string
-    executable?: string | undefined
-    arguments?: string[] | undefined
+    executable: string
     journalLimitBytes?: number | undefined
   }): Promise<PersistentSession> {
     const socketPath = sessionSocketPath(options.directory)
@@ -144,7 +144,14 @@ export class PersistentSession implements EnginePty {
       throw new Error('Session socket path is too long; use a shorter TMPDIR')
     }
 
-    await fs.mkdir(options.directory, { recursive: true, mode: 0o700 })
+    // Allocate the session directory exclusively, not just its manifest. A
+    // failed close/startup can leave archives or discovery fragments without a
+    // manifest; none of those states authorize launching another command.
+    await fs.mkdir(path.dirname(options.directory), {
+      recursive: true,
+      mode: 0o700
+    })
+    await fs.mkdir(options.directory, { mode: 0o700 })
     const ipcDirectory = path.join(
       os.tmpdir(),
       `treeport-${process.getuid?.() ?? 'user'}`
@@ -173,20 +180,11 @@ export class PersistentSession implements EnginePty {
       'a',
       0o600
     )
-    const child = spawn(
-      options.executable ?? process.execPath,
-      [
-        ...(options.arguments ?? []),
-        options.entryPath,
-        '--detach',
-        options.directory
-      ],
-      {
-        detached: true,
-        stdio: ['ignore', log.fd, log.fd],
-        env: process.env
-      }
-    )
+    const child = spawn(options.executable, ['--detach', options.directory], {
+      detached: true,
+      stdio: ['ignore', log.fd, log.fd],
+      env: process.env
+    })
     child.unref()
     let launchError: Error | null = null
     const bootstrapped = new Promise<void>((resolve) => {
@@ -337,10 +335,14 @@ export class PersistentSession implements EnginePty {
     })
     socket.on('close', () => {
       if (connected && !this.closed) {
+        // A keeper can send a specific storage/protocol fault before ending
+        // its lease. Preserve that actionable cause for pending requests and
+        // the UI instead of replacing it with the generic socket-close error.
         this.fail(
-          new Error(
-            'Persistent session disconnected; command has not been terminated'
-          )
+          this.fault ??
+            new Error(
+              'Persistent session disconnected; command has not been terminated'
+            )
         )
       }
     })
@@ -586,7 +588,29 @@ export class PersistentSession implements EnginePty {
     })
   }
   markProcessed(sequence: number): void {
-    this.submit({ method: 'processed', sequence })
+    this.processingAcknowledgementSequence = Math.max(
+      this.processingAcknowledgementSequence,
+      sequence
+    )
+    if (this.processingAcknowledgement !== null) {
+      return
+    }
+
+    // The keeper persists each acknowledged parser fence. Keep at most one
+    // acknowledgement in flight and send the newest completed fence next,
+    // instead of queuing a disk-status update for every small PTY fragment.
+    // This never advances past parsed output or coalesces input/control.
+    this.processingAcknowledgement = (async () => {
+      let acknowledged = -1
+      while (acknowledged < this.processingAcknowledgementSequence) {
+        acknowledged = this.processingAcknowledgementSequence
+        await this.request({ method: 'processed', sequence: acknowledged })
+      }
+      this.processingAcknowledgement = null
+    })().catch((error) => {
+      this.processingAcknowledgement = null
+      this.fail(error)
+    })
   }
   async flushRequests(sequence: number): Promise<void> {
     await this.request({ method: 'processed', sequence })

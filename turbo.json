@@ -7,6 +7,26 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "dist-types/**"]
     },
+    "@treeport/session-keeper#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "cache": false,
+      "passThroughEnv": [
+        "CARGO",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "RUSTUP_TOOLCHAIN"
+      ]
+    },
+    "@treeport/session-keeper#check:rust": {
+      "cache": false,
+      "passThroughEnv": [
+        "CARGO",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "RUSTUP_TOOLCHAIN"
+      ]
+    },
     "@treeport/desktop#build": {
       "dependsOn": ["^build"],
       "outputs": [".vite/**"]
@@ -36,6 +56,10 @@
       "dependsOn": ["build"],
       "cache": false
     },
+    "@treeport/session-keeper#test:package": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
     "@treeport/pi#test:package": {
       "cache": false
     },
@@ -46,12 +70,13 @@
       "cache": false
     },
     "//#test:unit": {
-      "dependsOn": ["@treeport/shared#build"],
+      "dependsOn": ["@treeport/shared#build", "@treeport/session-keeper#build"],
       "cache": false
     },
     "//#test:integration:run": {
       "dependsOn": ["@treeport/treeport#build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["SESSION_KEEPER_DISK_FAULTS", "SESSION_KEEPER_STRESS"]
     }
   }
 }

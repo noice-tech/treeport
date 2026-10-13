@@ -14,6 +14,7 @@ const execute = promisify(execFile)
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const appRoot = path.join(repositoryRoot, 'apps/treeport')
 const panelSdkRoot = path.join(repositoryRoot, 'packages/panel-sdk')
+const keeperRoot = path.join(repositoryRoot, 'packages/session-keeper')
 let root
 let npmCache
 let candidateCliA
@@ -21,6 +22,7 @@ let candidateCliB
 let candidateVersion
 let candidateTarball
 let candidatePanelSdkTarball
+let candidateKeeperTarball
 let candidateIntegrity
 let candidatePrefix
 const activeRoots = new Set()
@@ -202,7 +204,7 @@ if (args[0] === 'prefix' && args[1] === '--global') {
   fs.copyFileSync(${JSON.stringify(candidateTarball)}, path.join(destination, filename))
   process.stdout.write(JSON.stringify([{ filename, integrity: ${JSON.stringify(candidateIntegrity)} }]) + '\\n')
 } else {
-  const commandArgs = args[0] === 'install' ? [...args, ${JSON.stringify(panelSdkTarball)}] : args
+  const commandArgs = args[0] === 'install' ? [...args, ${JSON.stringify(panelSdkTarball)}, ${JSON.stringify(candidateKeeperTarball)}] : args
   const result = spawnSync(${JSON.stringify(realNpm)}, commandArgs, { stdio: 'inherit', env: process.env })
   process.exit(result.status ?? 1)
 }
@@ -374,11 +376,12 @@ beforeAll(async () => {
   assert(path.isAbsolute(npmCache), 'npm cache path must be absolute')
   const candidate = path.join(root, 'candidate')
   const candidatePanelSdk = path.join(root, 'candidate-panel-sdk')
+  const candidateKeeper = path.join(root, 'candidate-session-keeper')
   candidateVersion = JSON.parse(
     await fs.readFile(path.join(appRoot, 'package.json'), 'utf8')
   ).version
   await Promise.all(
-    [candidate, candidatePanelSdk].map((directory) =>
+    [candidate, candidatePanelSdk, candidateKeeper].map((directory) =>
       fs.mkdir(directory, { recursive: true })
     )
   )
@@ -397,6 +400,16 @@ beforeAll(async () => {
         candidatePanelSdk
       ],
       { cwd: panelSdkRoot, env: process.env }
+    ),
+    command(
+      'pnpm',
+      [
+        '--config.ignore-scripts=true',
+        'pack',
+        '--pack-destination',
+        candidateKeeper
+      ],
+      { cwd: keeperRoot, env: process.env }
     )
   ])
   candidateTarball = path.join(
@@ -407,17 +420,21 @@ beforeAll(async () => {
     candidatePanelSdk,
     (await fs.readdir(candidatePanelSdk)).find((name) => name.endsWith('.tgz'))
   )
+  candidateKeeperTarball = path.join(
+    candidateKeeper,
+    (await fs.readdir(candidateKeeper)).find((name) => name.endsWith('.tgz'))
+  )
   candidateIntegrity = `sha512-${crypto
     .createHash('sha512')
     .update(await fs.readFile(candidateTarball))
     .digest('base64')}`
   candidatePrefix = path.join(root, 'candidate-prefix-a')
   candidateCliA = await installTarballs(
-    [candidateTarball, candidatePanelSdkTarball],
+    [candidateTarball, candidatePanelSdkTarball, candidateKeeperTarball],
     candidatePrefix
   )
   candidateCliB = await installTarballs(
-    [candidateTarball, candidatePanelSdkTarball],
+    [candidateTarball, candidatePanelSdkTarball, candidateKeeperTarball],
     path.join(root, 'candidate-prefix-b')
   )
 }, 300_000)
@@ -435,8 +452,8 @@ afterAll(async () => {
 }, 300_000)
 
 describe('packaged stable terminal API lifecycle', () => {
-  it('preserves a live shell and history across packaged daemon replacement', async () => {
-    const value = await fixture('live-daemon-replacement')
+  it('preserves a live Rust-owned shell and history across packaged daemon replacement', async () => {
+    const value = await fixture('live-daemon-replacement-rust')
     try {
       await runCli(candidateCliA, value.env, ['start', '--json'])
       await runCli(candidateCliA, value.env, [
@@ -469,9 +486,17 @@ describe('packaged stable terminal API lifecycle', () => {
       assert(shellPid)
       const hostBefore = (await readHostRecord(value.runtimeDir)).value
       const ownerBefore = await readSessionStatus(value, terminalId)
+      const ownerCommand = await command('ps', [
+        '-p',
+        String(ownerBefore.ownerPid),
+        '-o',
+        'comm='
+      ])
+      assert.match(ownerCommand.stdout, /keeper-[a-f0-9]+/)
       assert.equal('protocolVersion' in hostBefore, false)
 
       await runCli(candidateCliA, value.env, ['stop', '--json'])
+      // Package replacement reconnects the exact owner, never respawns it.
       await runCli(candidateCliB, value.env, ['start', '--json'])
       const hostAfter = (await readHostRecord(value.runtimeDir)).value
       assert.notEqual(hostAfter.pid, hostBefore.pid)
@@ -510,12 +535,21 @@ describe('packaged stable terminal API lifecycle', () => {
         '-c',
         'echo NEW_TERMINAL_AFTER_REPLACEMENT'
       ])
+      const nextId = JSON.parse(next.stdout).id
       await waitForCapture(
         candidateCliB,
         value.env,
-        JSON.parse(next.stdout).id,
+        nextId,
         'NEW_TERMINAL_AFTER_REPLACEMENT'
       )
+      const nextOwner = await readSessionStatus(value, nextId)
+      const nextCommand = await command('ps', [
+        '-p',
+        String(nextOwner.ownerPid),
+        '-o',
+        'comm='
+      ])
+      assert.match(nextCommand.stdout, /keeper-[a-f0-9]+/)
     } finally {
       await terminateFixture(value)
     }

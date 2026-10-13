@@ -53,9 +53,11 @@ const packageManifestPath = 'apps/treeport/package.json'
 const desktopManifestPath = 'apps/desktop/package.json'
 const panelSdkManifestPath = 'packages/panel-sdk/package.json'
 const piManifestPath = 'packages/pi/package.json'
+const keeperManifestPath = 'packages/session-keeper/package.json'
 const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
 const panelSdkManifest = JSON.parse(readFileSync(panelSdkManifestPath, 'utf8'))
 const piManifest = JSON.parse(readFileSync(piManifestPath, 'utf8'))
+const keeperManifest = JSON.parse(readFileSync(keeperManifestPath, 'utf8'))
 const currentVersion = parseVersion(packageManifest.version)
 if (!currentVersion) {
   fail(
@@ -63,7 +65,7 @@ if (!currentVersion) {
   )
 }
 
-for (const manifest of [panelSdkManifest, piManifest]) {
+for (const manifest of [panelSdkManifest, piManifest, keeperManifest]) {
   if (manifest.version !== packageManifest.version) {
     fail(
       `${manifest.name} (${manifest.version}) and ${packageManifest.name} (${packageManifest.version}) must have the same version`
@@ -141,6 +143,15 @@ if (piManifest.version !== version) {
   expectedFiles.push(piManifestPath)
   piManifest.version = version
   writeFileSync(piManifestPath, `${JSON.stringify(piManifest, null, 2)}\n`)
+}
+
+if (keeperManifest.version !== version) {
+  expectedFiles.push(keeperManifestPath)
+  keeperManifest.version = version
+  writeFileSync(
+    keeperManifestPath,
+    `${JSON.stringify(keeperManifest, null, 2)}\n`
+  )
 }
 
 try {

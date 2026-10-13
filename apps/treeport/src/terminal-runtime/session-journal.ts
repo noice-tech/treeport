@@ -1,14 +1,17 @@
 import fs from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import path from 'node:path'
 import { createGunzip, gzipSync } from 'node:zlib'
-import { createInterface } from 'node:readline'
+import type { Readable } from 'node:stream'
 import {
+  SESSION_MAX_FRAME_BYTES,
   sessionRecordSchema,
   type SessionRecord,
   type SessionRecordInput
 } from './session-protocol'
 
 const SEGMENT_BYTES = 1024 * 1024
+const MAX_RETAINED_ENTRIES = 65536
 
 interface Checkpoint {
   readonly path: string
@@ -27,6 +30,45 @@ interface JournalSource {
   start: number
   end: number | null
   onOpen: (() => void) | null
+  retainedTail: boolean
+  fence: number | null
+}
+
+async function* readJsonlLines(
+  input: Readable,
+  retainedTail: boolean
+): AsyncGenerator<string> {
+  // JSON strings can contain literal U+2028/U+2029. readline treats them as
+  // delimiters, but a version-1 journal uses only LF to separate records.
+  input.setEncoding('utf8')
+  let line = ''
+  let bytes = 0
+  for await (const chunk of input) {
+    const text = String(chunk)
+    let start = 0
+    while (start < text.length) {
+      const boundary = text.indexOf('\n', start)
+      const end = boundary === -1 ? text.length : boundary
+      const fragment = text.slice(start, end)
+      bytes += Buffer.byteLength(fragment)
+      if (bytes + 1 > SESSION_MAX_FRAME_BYTES) {
+        throw new Error('Terminal journal record exceeds the frame limit')
+      }
+
+      line += fragment
+      if (boundary === -1) {
+        break
+      }
+
+      yield line
+      line = ''
+      bytes = 0
+      start = boundary + 1
+    }
+  }
+  if (line.length > 0 && !retainedTail) {
+    throw new Error('Incomplete terminal journal record')
+  }
 }
 
 async function* readRecords(
@@ -36,25 +78,89 @@ async function* readRecords(
 ): AsyncGenerator<SessionRecord> {
   let sequence = after
   for (const source of sources) {
-    const file = fs.createReadStream(source.path, {
-      fd: source.fd ?? undefined,
-      autoClose: true,
-      start: source.start,
-      end: source.end ?? undefined
-    })
-    source.onOpen?.()
-    const input = source.compressed ? file.pipe(createGunzip()) : file
-    file.on('error', (error: Error) => input.destroy(error))
-    const lines = createInterface({ input, crlfDelay: Infinity })
-    let inputFailure: Error | null = null
-    // readline's async iterator does not forward input-stream failures.
-    input.on('error', (error: Error) => {
-      inputFailure = error
-      lines.close()
-    })
+    let handle: FileHandle | null = null
+    let file: fs.ReadStream | null = null
+    let input: Readable | null = null
     try {
-      for await (const line of lines) {
+      if (source.fd === null) {
+        handle = await fs.promises
+          .open(
+            source.path,
+            fs.constants.O_RDONLY |
+              fs.constants.O_NOFOLLOW |
+              fs.constants.O_NONBLOCK
+          )
+          .catch((error) => {
+            // Only the active recovery tail is optional. Missing checkpoints
+            // are lost history, not an empty session.
+            // SAFETY: Node open errors expose errno codes; only ENOENT proves
+            // this optional tail is absent, rather than inaccessible.
+            if (
+              source.retainedTail &&
+              (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ) {
+              return null
+            }
+
+            throw error
+          })
+        if (handle === null) {
+          continue
+        }
+
+        const metadata = await handle.stat()
+        if (!metadata.isFile()) {
+          throw new Error('Terminal journal source is not a regular file')
+        }
+
+        if (!Number.isSafeInteger(metadata.size) || metadata.size < 0) {
+          throw new Error('Terminal journal source exceeds the offset limit')
+        }
+
+        if (metadata.size === 0 && source.retainedTail) {
+          continue
+        }
+
+        // Anchor the inode and EOF once. Later path replacements or file
+        // growth cannot substitute data or extend this recovery operation.
+        file = handle.createReadStream({
+          autoClose: false,
+          start: source.start,
+          end: source.end ?? (metadata.size > 0 ? metadata.size - 1 : undefined)
+        })
+      } else {
+        // Snapshot owns an already-captured descriptor until this handoff.
+        file = fs.createReadStream(source.path, {
+          fd: source.fd,
+          autoClose: true,
+          start: source.start,
+          end: source.end ?? undefined
+        })
+      }
+
+      source.onOpen?.()
+      const readable = source.compressed ? file.pipe(createGunzip()) : file
+      input = readable
+      file.on('error', (error: Error) => readable.destroy(error))
+      // Hold at most one decoded record. A consumer may stop at its fence,
+      // so validate this source's EOF (including gzip CRC) BEFORE handing off
+      // its final record, not in a later next() that may never happen.
+      let pending: SessionRecord | null = null
+      for await (const line of readJsonlLines(readable, source.retainedTail)) {
+        if (pending !== null && pending.sequence === source.fence) {
+          throw new Error(
+            'Terminal journal source contains data beyond its captured fence'
+          )
+        }
+
         const record = sessionRecordSchema.parse(JSON.parse(line))
+        if (
+          (source.fence !== null && record.sequence > source.fence) ||
+          (fence !== null && record.sequence > fence)
+        ) {
+          throw new Error('Terminal journal exceeds its captured fence')
+        }
+
         // Failed rotation can leave an already checkpointed active prefix.
         if (record.sequence <= sequence) {
           continue
@@ -65,15 +171,35 @@ async function* readRecords(
         }
 
         sequence = record.sequence
-        yield record
+        if (pending !== null) {
+          yield pending
+          pending = null
+        }
+
+        if (
+          (source.compressed && source.fence === null) ||
+          record.sequence === source.fence
+        ) {
+          pending = record
+        } else {
+          // LF commits a plain retained record. Keep streaming that prefix,
+          // even if its following uncommitted tail later exceeds the budget.
+          yield record
+        }
       }
-      if (inputFailure) {
-        throw inputFailure
+      if (source.fence !== null && sequence !== source.fence) {
+        throw new Error(
+          'Terminal journal source does not reach its captured fence'
+        )
+      }
+
+      if (pending !== null) {
+        yield pending
       }
     } finally {
-      lines.close()
-      input.destroy()
-      file.destroy()
+      input?.destroy()
+      file?.destroy()
+      await handle?.close()
     }
   }
   if (fence !== null && sequence !== fence) {
@@ -249,7 +375,9 @@ export class SessionJournal {
           fd: null,
           start: 0,
           end: null,
-          onOpen: null
+          onOpen: null,
+          retainedTail: false,
+          fence: checkpoint.fence
         }))
         if (activeFd !== null) {
           sources.push({
@@ -260,7 +388,9 @@ export class SessionJournal {
             end: bytes - 1,
             onOpen: () => {
               ownedFd = null
-            } // ReadStream owns the captured descriptor.
+            }, // ReadStream owns the captured descriptor.
+            retainedTail: false,
+            fence
           })
         }
 
@@ -276,39 +406,47 @@ export class SessionJournal {
    * complete records, not only the last published status fence: output may
    * have been committed after the engine's last acknowledgement. */
   static async *readRetained(directory: string): AsyncGenerator<SessionRecord> {
-    const names = (await fs.promises.readdir(directory))
-      .filter((name) => /^checkpoint-\d{10}\.gz$/u.test(name))
-      .sort()
+    // readdir materializes the entire directory before a caller can enforce
+    // a budget. Stream a bounded listing instead, counting unrelated entries
+    // too; a corrupt directory must not turn recovery into unbounded work.
+    const names: string[] = []
+    let entries = 0
+    const listing = await fs.promises.opendir(directory)
+    for await (const entry of listing) {
+      if (++entries > MAX_RETAINED_ENTRIES) {
+        throw new Error('Terminal journal directory exceeds the entry limit')
+      }
+
+      if (/^checkpoint-\d{10}\.gz$/u.test(entry.name)) {
+        names.push(entry.name)
+      }
+    }
+    // Dir's async iterator closes its descriptor on success and on rejection,
+    // before any archive is opened or a committed record is handed off.
+    names.sort()
     const sources: JournalSource[] = names.map((name) => ({
       path: path.join(directory, name),
       compressed: true,
       fd: null,
       start: 0,
       end: null,
-      onOpen: null
+      onOpen: null,
+      retainedTail: false,
+      fence: null
     }))
-    const activePath = path.join(directory, 'journal.jsonl')
-    const active = await fs.promises.readFile(activePath).catch((error) => {
-      // SAFETY: Node filesystem errors expose errno codes.
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error
-      }
-
-      return Buffer.alloc(0)
+    // Stream the active tail with the same record budget as socket replay.
+    // Ignore only an uncommitted final fragment; do not load the whole file to
+    // find its last LF or let a growing file extend the captured EOF.
+    sources.push({
+      path: path.join(directory, 'journal.jsonl'),
+      compressed: false,
+      fd: null,
+      start: 0,
+      end: null,
+      onOpen: null,
+      retainedTail: true,
+      fence: null
     })
-    // A crashed write can leave an uncommitted partial final record. Preserve
-    // the file, but do not pretend that fragment is replayable terminal output.
-    const end = active.lastIndexOf(10)
-    if (end !== -1) {
-      sources.push({
-        path: activePath,
-        compressed: false,
-        fd: null,
-        start: 0,
-        end,
-        onOpen: null
-      })
-    }
 
     yield* readRecords(sources, 0, null)
   }
