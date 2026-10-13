@@ -386,9 +386,24 @@ os._exit(7)
           expect(value.session.exitCode).toBeNull()
         }
       } finally {
-        for (const peer of peers) {
-          peer.destroy()
-        }
+        // A local destroy does not prove the keeper released its admission
+        // slots. Finish the half-close handshake before opening a control
+        // connection, so teardown cannot race the deliberately full peer pool.
+        await Promise.all(
+          peers.map(
+            (peer) =>
+              new Promise<void>((resolve) => {
+                if (peer.destroyed) {
+                  resolve()
+                  return
+                }
+
+                peer.once('close', () => resolve())
+                peer.resume()
+                peer.end()
+              })
+          )
+        )
       }
       // Resource pressure has gone. Without descendants, verify the natural
       // exit code and output fence via a fresh production-client replay first.
