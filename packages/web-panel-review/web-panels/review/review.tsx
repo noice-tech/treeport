@@ -4,6 +4,7 @@ import {
   ChevronUpIcon,
   ClipboardDocumentIcon,
   FolderIcon,
+  ViewColumnsIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import { parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs'
@@ -616,6 +617,7 @@ function ReviewApp() {
   const commentSerial = useRef(0)
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [diffStyle, setDiffStyle] = useState<'unified' | 'split'>('unified')
   const [fileTreeOpen, setFileTreeOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
@@ -1074,7 +1076,7 @@ function ReviewApp() {
     const line =
       fileContainer instanceof HTMLElement
         ? fileContainer.shadowRoot?.querySelector(
-            `[data-line="${match.lineNumber}"]${sideSelector}`
+            `[data-code]:is([data-unified], [data-${match.side}]) [data-line="${match.lineNumber}"]${sideSelector}`
           )
         : null
     if (!(line instanceof HTMLElement)) {
@@ -1140,7 +1142,7 @@ function ReviewApp() {
 
     const frame = requestAnimationFrame(updateFindHighlights)
     return () => cancelAnimationFrame(frame)
-  }, [collapsedFiles, findOpen, updateFindHighlights])
+  }, [collapsedFiles, diffStyle, findOpen, updateFindHighlights])
 
   const navigateToFindMatch = useCallback(
     (requestedIndex: number) => {
@@ -1467,6 +1469,26 @@ function ReviewApp() {
             </button>
           </div>
         )}
+        <button
+          id="split-diff-toggle"
+          className="toolbar-icon-button"
+          type="button"
+          aria-label="Split diff"
+          aria-pressed={diffStyle === 'split'}
+          title={
+            diffStyle === 'split'
+              ? 'Switch to unified diff'
+              : 'Switch to split diff'
+          }
+          onClick={() =>
+            setDiffStyle((current) =>
+              current === 'unified' ? 'split' : 'unified'
+            )
+          }
+        >
+          <ViewColumnsIcon aria-hidden="true" />
+          <span className="touch-target" aria-hidden="true" />
+        </button>
         <Sheet.Trigger
           id="file-tree-toggle"
           className="toolbar-icon-button"
@@ -1714,7 +1736,7 @@ function ReviewApp() {
                         fileDiff={fileDiff}
                         options={{
                           theme: 'pierre-dark',
-                          diffStyle: 'unified',
+                          diffStyle,
                           overflow: 'wrap',
                           collapsed: collapsed || showImage,
                           unsafeCSS: DIFF_CSS,
