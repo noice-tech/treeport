@@ -1574,7 +1574,7 @@ export class WorktreeRemovalService {
                 ? `${base}. Git kept the tree.`
                 : request.phase === 'terminals_stopped' ||
                     request.phase === 'cleanup_commands_completed'
-                  ? `Terminals were stopped, but Git removal failed: ${base}`
+                  ? `Terminals were stopped, but Git removal failed: ${base}. The checkout may have been partially deleted.`
                   : base
             ).slice(0, 4_096)
             yield* database
@@ -1586,9 +1586,7 @@ export class WorktreeRemovalService {
               `)
               )
               .pipe(Effect.orDie)
-            yield* Effect.logError(
-              'Tree removal failed; Git kept the tree'
-            ).pipe(
+            yield* Effect.logError('Tree removal failed').pipe(
               Effect.annotateLogs({ error: message, phase: request.phase })
             )
             yield* Effect.sync(() =>
