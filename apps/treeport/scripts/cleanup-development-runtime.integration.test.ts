@@ -351,6 +351,16 @@ describe('development runtime cleanup', () => {
       root
     )
 
+    // A launch can leave only its manifest, and a live keeper can lose its
+    // cached status. Cleanup must handle both without trusting cached PIDs.
+    const sessionDirectories = await fs.readdir(path.dirname(staleDirectory))
+    for (const name of sessionDirectories) {
+      await fs.rm(
+        path.join(path.dirname(staleDirectory), name, 'status.json'),
+        { force: true }
+      )
+    }
+
     await cleanupDevelopmentRuntime(target, {
       timeoutMs: 1000,
       graceMs: 50
