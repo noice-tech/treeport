@@ -100,7 +100,9 @@ it.each(['valid', 'crc', 'truncated', 'empty', 'partial-record'] as const)(
       await records.return(undefined)
     }
     expect(await fs.readFile(checkpoint)).toEqual(bytes)
-  }
+  },
+  // Multi-chunk gzip validation performs real I/O alongside ci:local builds/tests.
+  15_000
 )
 
 it('keeps recovery bounded to the history captured before path replacement or growth', async () => {
