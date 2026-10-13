@@ -142,6 +142,7 @@ describe('worktree review diff', () => {
           status: 'untracked'
         }
       ])
+      expect(diff.lineCounts).toEqual({ additions: 2, deletions: 0 })
       expect(diff.changeSets.staged).toEqual(['huge.txt', 'renamed.txt'])
       expect(diff.changeSets.untracked).toEqual(['untracked.txt'])
 
@@ -187,6 +188,9 @@ describe('worktree review diff', () => {
       expect(combined.files.map((file) => file.path)).not.toContain(
         'reverted.txt'
       )
+      expect(committed.lineCounts).toEqual({ additions: 2, deletions: 1 })
+      expect(uncommitted.lineCounts).toEqual({ additions: 4, deletions: 1 })
+      expect(combined.lineCounts).toEqual({ additions: 5, deletions: 1 })
       expect(uncommitted.baseCommit).toBe(committed.headCommit)
       expect(
         committed.files.find((file) => file.path === 'renamed.txt')

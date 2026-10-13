@@ -493,6 +493,10 @@ export const gitDiffSchema = Schema.Struct({
   headCommit: Schema.String,
   generatedAt: Schema.String,
   files: Schema.Array(gitDiffFileSchema),
+  lineCounts: Schema.Struct({
+    additions: Schema.NonNegativeInt,
+    deletions: Schema.NonNegativeInt
+  }),
   changeSets: Schema.Struct({
     branch: stringArraySchema,
     staged: stringArraySchema,

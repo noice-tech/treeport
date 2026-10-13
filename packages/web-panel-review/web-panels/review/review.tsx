@@ -70,6 +70,7 @@ interface ReviewFile extends GitDiffFile {
 }
 
 interface LoadedReview {
+  lineCounts: GitDiff['lineCounts']
   summary: string
   generatedAt: string
   files: ReviewFile[]
@@ -649,20 +650,7 @@ function ReviewApp() {
     [files]
   )
   const fileNames = useMemo(() => files.map((file) => file.id), [files])
-  const lineCounts = useMemo(
-    () =>
-      files.reduce(
-        (counts, file) => {
-          for (const hunk of file.diff?.hunks ?? []) {
-            counts.additions += hunk.additionLines
-            counts.deletions += hunk.deletionLines
-          }
-          return counts
-        },
-        { additions: 0, deletions: 0 }
-      ),
-    [files]
-  )
+  const lineCounts = loaded?.lineCounts ?? { additions: 0, deletions: 0 }
   const saved = useMemo(() => savedComments(comments), [comments])
   const unresolved = useMemo(
     () => saved.filter((comment) => !comment.resolved),
@@ -798,6 +786,8 @@ function ReviewApp() {
             previous.baseRef === diff.baseRef &&
             previous.baseCommit === diff.baseCommit &&
             previous.headCommit === diff.headCommit &&
+            previous.lineCounts.additions === diff.lineCounts.additions &&
+            previous.lineCounts.deletions === diff.lineCounts.deletions &&
             JSON.stringify(previous.files) === JSON.stringify(diff.files)
           )
         })
@@ -880,6 +870,12 @@ function ReviewApp() {
       fileStateLoaded.current = true
 
       const nextLoaded: LoadedReview = {
+        lineCounts: {
+          additions:
+            uncommitted.lineCounts.additions + committed.lineCounts.additions,
+          deletions:
+            uncommitted.lineCounts.deletions + committed.lineCounts.deletions
+        },
         summary: context
           ? `${context.project.name} / ${context.worktree.name} · ${committed.baseRef}`
           : loadedRef.current!.summary,

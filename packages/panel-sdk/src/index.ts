@@ -87,6 +87,8 @@ export interface GitDiff {
   /** ISO 8601 timestamp. */
   generatedAt: string
   files: GitDiffFile[]
+  /** Complete text line totals, independent of patch loading. */
+  lineCounts: { additions: number; deletions: number }
   /** Relative paths; a path can occur in more than one change set. */
   changeSets: GitDiffChangeSets
 }

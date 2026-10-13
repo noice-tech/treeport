@@ -460,6 +460,7 @@ function fixture(webDist = '/missing') {
       baseCommit: 'base',
       headCommit: 'head',
       generatedAt: '2026-01-01T00:00:00.000Z',
+      lineCounts: { additions: 1, deletions: 1 },
       files: [
         {
           path: 'a',
