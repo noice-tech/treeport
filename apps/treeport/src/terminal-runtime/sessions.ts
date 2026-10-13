@@ -806,6 +806,7 @@ export class TerminalHostSessions {
                     .slice(0, 40)
                 ),
                 executable: this.persistentOptions.sessionExecutable!,
+                terminalId: input.terminalId,
                 journalLimitBytes: this.persistentOptions.journalLimitBytes,
                 argv: directShell
                   ? directLaunch.argv

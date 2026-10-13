@@ -1931,17 +1931,25 @@ describe('HTTP API validation', () => {
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
     const uploadDirectory = path.join(config.runtimeDir, 'uploads')
     const stalePath = path.join(uploadDirectory, 'treeport-upload-stale.png')
+    const retainedPath = path.join(
+      uploadDirectory,
+      'treeport-upload-retained.bin'
+    )
     try {
       await fs.mkdir(uploadDirectory, { recursive: true })
       await fs.writeFile(stalePath, 'stale')
       const staleTime = new Date(Date.now() - 25 * 60 * 60_000)
       await fs.utimes(stalePath, staleTime, staleTime)
+      // Sparse file: verify the increased cleanup budget without writing 600 MiB.
+      await fs.writeFile(retainedPath, '')
+      await fs.truncate(retainedPath, 600 * 1024 * 1024)
 
       const response = await app.request('/api/terminals/term_1/files', {
         method: 'POST',
         headers: {
           'content-type': 'image/png',
-          'x-treeport-file-extension': 'png'
+          'x-treeport-file-extension': 'png',
+          'content-length': String(60 * 1024 * 1024)
         },
         body: bytes
       })
@@ -1958,6 +1966,17 @@ describe('HTTP API validation', () => {
       expect((await fs.stat(result.file.path)).mode & 0o777).toBe(0o600)
       await expect(fs.stat(stalePath)).rejects.toMatchObject({
         code: 'ENOENT'
+      })
+
+      expect((await fs.stat(retainedPath)).size).toBe(600 * 1024 * 1024)
+      const oversized = await app.request('/api/terminals/term_1/files', {
+        method: 'POST',
+        headers: { 'content-length': String(50 * 1024 * 1024 * 1024 + 1) },
+        body: bytes
+      })
+      expect(oversized.status).toBe(413)
+      expect(await oversized.json()).toMatchObject({
+        error: { code: 'FILE_TOO_LARGE' }
       })
 
       const legacyHeader = await app.request('/api/terminals/term_1/files', {

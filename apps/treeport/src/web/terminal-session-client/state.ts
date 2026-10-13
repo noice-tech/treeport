@@ -23,6 +23,7 @@ export type TerminalFontZoom = 'zoom-in' | 'zoom-out' | 'zoom-reset'
 export type TerminalFileTransfer = {
   state: 'uploading' | 'error'
   message: string
+  queuedFiles: number
 }
 
 export const TERMINAL_MIN_COLS = 2

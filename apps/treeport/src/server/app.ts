@@ -149,7 +149,7 @@ const UPLOAD_MIME_EXTENSIONS = new Map([
   ['text/plain', 'txt']
 ])
 const UPLOAD_RETENTION_MS = 24 * 60 * 60_000
-const UPLOAD_DIRECTORY_MAX_BYTES = 512 * 1024 * 1024
+const UPLOAD_DIRECTORY_MAX_BYTES = 10 * 1024 * 1024 * 1024
 
 interface UploadFileInfo {
   path: string
@@ -159,7 +159,7 @@ interface UploadFileInfo {
 
 async function pruneTerminalUploads(
   directory: string,
-  preservePath?: string
+  preservePaths: ReadonlySet<string>
 ): Promise<void> {
   const entries = await fs.readdir(directory, { withFileTypes: true })
   const files = (
@@ -183,12 +183,8 @@ async function pruneTerminalUploads(
   )
     .filter((file): file is UploadFileInfo => file !== null)
     .sort((left, right) => {
-      if (left.path === preservePath) {
-        return -1
-      }
-
-      if (right.path === preservePath) {
-        return 1
+      if (preservePaths.has(left.path) !== preservePaths.has(right.path)) {
+        return preservePaths.has(left.path) ? -1 : 1
       }
 
       return right.mtimeMs - left.mtimeMs
@@ -199,7 +195,7 @@ async function pruneTerminalUploads(
   for (const file of files) {
     const expired = file.mtimeMs < expiredBefore
     const overQuota = retainedBytes + file.size > UPLOAD_DIRECTORY_MAX_BYTES
-    if (file.path !== preservePath && (expired || overQuota)) {
+    if (!preservePaths.has(file.path) && (expired || overQuota)) {
       await fs.rm(file.path, { force: true })
       continue
     }
@@ -390,6 +386,7 @@ export function createApp({
   rpcHttpApp,
   webDist
 }: AppDependencies): TreeportHttpApp {
+  const activeUploadPaths = new Set<string>()
   const webPanelAsset = Effect.gen(function* () {
     const params = yield* routeParams
     const request = yield* serverRequest
@@ -1737,7 +1734,7 @@ export function createApp({
             return yield* Effect.fail(
               new DomainError(
                 'FILE_TOO_LARGE',
-                `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+                'Uploaded files are limited to 50 GiB each',
                 413
               )
             )
@@ -1765,60 +1762,87 @@ export function createApp({
           requestedExtension ||
           UPLOAD_MIME_EXTENSIONS.get(requestContentType) ||
           ''
-        const uploaded = yield* operation(() =>
-          service.terminalUploadMutation(
-            Effect.gen(function* () {
-              const uploadDirectory = path.join(config.runtimeDir, 'uploads')
-              yield* Effect.promise(() =>
-                fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
-              )
-              yield* Effect.promise(() => fs.chmod(uploadDirectory, 0o700))
-              yield* Effect.promise(() => pruneTerminalUploads(uploadDirectory))
-              const filePath = path.join(
-                uploadDirectory,
-                `treeport-upload-${crypto.randomUUID()}${
-                  extension ? `.${extension}` : ''
-                }`
-              )
-              yield* Effect.acquireUseRelease(
-                Effect.promise(() => fs.open(filePath, 'wx', 0o600)),
-                (file) =>
-                  Effect.gen(function* () {
-                    let receivedBytes = 0
-                    yield* Stream.runForEach(request.stream, (value) => {
-                      receivedBytes += value.byteLength
-                      if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-                        return Effect.fail(
-                          new DomainError(
-                            'FILE_TOO_LARGE',
-                            `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
-                            413
-                          )
+        const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+        const uploaded = yield* Effect.acquireUseRelease(
+          operation(() =>
+            service.terminalUploadMutation(
+              Effect.gen(function* () {
+                yield* Effect.promise(() =>
+                  fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
+                )
+                yield* Effect.promise(() => fs.chmod(uploadDirectory, 0o700))
+                yield* Effect.promise(() =>
+                  pruneTerminalUploads(uploadDirectory, activeUploadPaths)
+                )
+                const filePath = path.join(
+                  uploadDirectory,
+                  `treeport-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
+                )
+                const file = yield* Effect.promise(() =>
+                  fs.open(filePath, 'wx', 0o600)
+                )
+                activeUploadPaths.add(filePath)
+                return { filePath, file }
+              })
+            )
+          ),
+          ({ filePath, file }) =>
+            operation(() =>
+              Effect.gen(function* () {
+                let receivedBytes = 0
+                // Only directory mutations are serialized. File streams run in
+                // parallel, and pruning must never remove an active upload.
+                yield* Stream.runForEach(
+                  request.stream.pipe(
+                    Stream.timeoutFail(
+                      () =>
+                        new DomainError(
+                          'UPLOAD_STALLED',
+                          'Upload stalled for 2 minutes',
+                          408
+                        ),
+                      '2 minutes'
+                    )
+                  ),
+                  (value) => {
+                    receivedBytes += value.byteLength
+                    if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+                      return Effect.fail(
+                        new DomainError(
+                          'FILE_TOO_LARGE',
+                          'Uploaded files are limited to 50 GiB each',
+                          413
                         )
-                      }
+                      )
+                    }
 
-                      return Effect.promise(() => file.writeFile(value)).pipe(
-                        Effect.asVoid
-                      )
-                    })
-                  }),
-                (file, exit) =>
-                  Effect.promise(() =>
-                    file
-                      .close()
-                      .finally(() =>
-                        Exit.isFailure(exit)
-                          ? fs.rm(filePath, { force: true })
-                          : undefined
-                      )
-                  )
-              )
+                    return Effect.promise(() => file.writeFile(value)).pipe(
+                      Effect.asVoid
+                    )
+                  }
+                )
+                return { file: { path: filePath } }
+              })
+            ),
+          ({ filePath, file }, exit) =>
+            Effect.gen(function* () {
               yield* Effect.promise(() =>
-                pruneTerminalUploads(uploadDirectory, filePath)
+                file.close().finally(() => {
+                  activeUploadPaths.delete(filePath)
+                  return Exit.isFailure(exit)
+                    ? fs.rm(filePath, { force: true })
+                    : undefined
+                })
               )
-              return { file: { path: filePath } }
+              yield* service.terminalUploadMutation(
+                Effect.promise(() =>
+                  pruneTerminalUploads(
+                    uploadDirectory,
+                    new Set([...activeUploadPaths, filePath])
+                  )
+                )
+              )
             })
-          )
         )
         return jsonContractResponse(uploadedFileResponseSchema, uploaded, 201)
       })
