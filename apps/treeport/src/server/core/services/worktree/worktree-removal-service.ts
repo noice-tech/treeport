@@ -25,7 +25,6 @@ import {
   ApplicationFibers,
   type ApplicationServices,
   TerminalMutations,
-  TerminalRemovalMutations,
   WorktreeMutations
 } from '../infrastructure/application-runtime'
 import { MutationLocks } from '../infrastructure/mutation-locks'
@@ -580,7 +579,6 @@ export class WorktreeRemovalService {
       const locks = yield* MutationLocks
       const projectStore = yield* ProjectStore
       const terminalMutations = yield* TerminalMutations
-      const terminalRemovalMutations = yield* TerminalRemovalMutations
       const worktreeMutations = yield* WorktreeMutations
       const worktree = yield* projectStore.getWorktree(worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
@@ -622,22 +620,6 @@ export class WorktreeRemovalService {
       })
       if (yield* terminalMutations.isBusy(worktreeId)) {
         return yield* terminalMutations.enqueue(
-          worktreeId,
-          Effect.gen(function* () {
-            if (yield* terminalRemovalMutations.isBusy(worktreeId)) {
-              return yield* terminalRemovalMutations.enqueue(
-                worktreeId,
-                acceptAfterProjectMutation
-              )
-            }
-
-            return yield* acceptAfterProjectMutation
-          })
-        )
-      }
-
-      if (yield* terminalRemovalMutations.isBusy(worktreeId)) {
-        return yield* terminalRemovalMutations.enqueue(
           worktreeId,
           acceptAfterProjectMutation
         )
