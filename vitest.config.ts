@@ -9,9 +9,9 @@ for (const name of Object.keys(process.env)) {
 
 export default defineConfig({
   test: {
-    // Bound memory use alongside integration and static checks in ci:local.
+    // Leave CPU capacity for integration and static checks in ci:local.
     pool: 'threads',
-    maxWorkers: 2,
+    maxWorkers: 6,
     include: [
       'packages/**/*.test.ts',
       'apps/**/*.test.ts',
