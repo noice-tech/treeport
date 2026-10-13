@@ -498,10 +498,9 @@ async function stopPersistentSessions(dataDir, runtimeDir, timeoutMs) {
         await fs.readFile(path.join(sessionDirectory, 'manifest.json'), 'utf8')
       )
     )
-    const status = sessionStatusSchema.parse(
-      JSON.parse(
-        await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
-      )
+    const status = await readJson(
+      path.join(sessionDirectory, 'status.json'),
+      sessionStatusSchema
     )
     const key = crypto
       .createHash('sha256')
@@ -524,7 +523,7 @@ async function stopPersistentSessions(dataDir, runtimeDir, timeoutMs) {
     ).catch((error) => {
       if (
         !['ENOENT', 'ECONNREFUSED'].includes(error.code) ||
-        processExists(status.ownerPid)
+        (status !== null && processExists(status.ownerPid))
       ) {
         throw error
       }
@@ -534,7 +533,7 @@ async function stopPersistentSessions(dataDir, runtimeDir, timeoutMs) {
     if (inspected === null) {
       // Cleanup is explicitly authorized, but an old PID alone does not prove
       // ownership of a surviving/reused process. Never signal that cached PID.
-      if (processExists(status.pid)) {
+      if (status !== null && processExists(status.pid)) {
         throw new Error(
           'The development keeper is gone but its recorded command PID still exists; identify it before cleanup'
         )
@@ -545,9 +544,11 @@ async function stopPersistentSessions(dataDir, runtimeDir, timeoutMs) {
       continue
     }
 
+    // A failed launch can leave a manifest without ever publishing status.
+    // When status is absent, the authenticated keeper is the ownership proof.
     if (
-      inspected.ownerPid !== status.ownerPid ||
-      inspected.pid !== status.pid
+      status !== null &&
+      (inspected.ownerPid !== status.ownerPid || inspected.pid !== status.pid)
     ) {
       throw new Error('Refusing cleanup of a mismatched session owner')
     }
@@ -557,7 +558,7 @@ async function stopPersistentSessions(dataDir, runtimeDir, timeoutMs) {
       { method: 'terminate', id: crypto.randomUUID(), token: manifest.token },
       timeoutMs
     )
-    if (!(await waitForExit([status.ownerPid, status.pid], timeoutMs))) {
+    if (!(await waitForExit([inspected.ownerPid, inspected.pid], timeoutMs))) {
       throw new Error(
         'The development session left its owner or command running'
       )
