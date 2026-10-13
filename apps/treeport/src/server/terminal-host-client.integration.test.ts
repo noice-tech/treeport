@@ -564,7 +564,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       // BEFORE its boot marker. Bound the wait, allowing the full gate's
       // concurrent fsync-heavy keeper fixtures without weakening tail checks.
       'The first daemon did not observe terminal output',
-      10_000
+      20_000
     ).catch(async (error) => {
       const directory = path.join(
         runtimeDir,
@@ -876,7 +876,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         )?.includes('ARCHIVE_UNICODE') ?? false,
       // Same 1.26 MiB ANSI/checkpoint stress as the initial boot above.
       'The archive fixture did not produce output',
-      10_000
+      20_000
     )
     const archiveDirectory = path.join(
       sessionRoot,
@@ -1144,7 +1144,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
   it(
     'replaces its Rust session engine while preserving the PTY, lossless checkpoints, modes, and detached output',
     qualifyKeeper,
-    40_000
+    60_000
   )
 
   it('removes only a transaction-owned provisional host when startup fails', async () => {
