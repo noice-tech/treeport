@@ -34,6 +34,13 @@ fn main() -> Result<()> {
         let directory = args.next().context("Missing session directory")?;
         let mut command = std::process::Command::new(std::env::current_exe()?);
         command.arg(directory);
+        // Treeport supplies argv[0] as an opaque display title. Preserve it in
+        // the detached owner without interpreting product metadata or labels.
+        command.arg0(
+            std::env::args_os()
+                .next()
+                .context("Missing process title")?,
+        );
         // SAFETY: pre_exec calls only the async-signal-safe setsid syscall.
         unsafe {
             command.pre_exec(|| {

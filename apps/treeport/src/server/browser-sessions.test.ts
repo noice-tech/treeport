@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events'
 import http from 'node:http'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import * as Deferred from 'effect/Deferred'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -233,7 +236,9 @@ function fixture(
   const config = {
     cacheDir: '/cache',
     dataDir: '/data',
-    runtimeDir: '/tmp/treeport-browser-session-test'
+    runtimeDir: fs.mkdtempSync(
+      path.join(os.tmpdir(), 'treeport-browser-session-test-')
+    )
   } satisfies BrowserSessionConfig
   const manager = new BrowserSessionManager(
     service,
@@ -242,6 +247,10 @@ function fixture(
     agentCliRunner,
     options.connectLocalAutomation
   )
+  onTestFinished(async () => {
+    await manager.dispose()
+    await fs.promises.rm(config.runtimeDir, { recursive: true, force: true })
+  })
   const transports: Array<{
     transport: BrowserTransport
     messages: BrowserServerMessage[]
