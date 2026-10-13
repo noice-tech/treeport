@@ -87,7 +87,7 @@ body {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 1rem;
@@ -155,9 +155,18 @@ body {
   flex-shrink: 0;
   gap: 0.25rem;
 }
-#file-tree-toggle {
+#split-diff-toggle {
   grid-column: 3;
   grid-row: 1;
+}
+#file-tree-toggle {
+  grid-column: 4;
+  grid-row: 1;
+}
+.review-toolbar #split-diff-toggle[aria-pressed='true'] {
+  background: #3f3f46;
+  border-color: #52525b;
+  color: #fafafa;
 }
 .review-toolbar .toolbar-icon-button,
 .review-toolbar .toolbar-copy-button {
@@ -722,12 +731,15 @@ main {
     font-size: 0.8125rem;
   }
   .review-toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 0.5rem;
     padding-inline: 0.5rem;
   }
-  #file-tree-toggle {
+  #split-diff-toggle {
     grid-column: 2;
+  }
+  #file-tree-toggle {
+    grid-column: 3;
   }
   .review-progress {
     gap: 0.75rem;

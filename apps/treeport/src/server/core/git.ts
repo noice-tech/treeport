@@ -105,6 +105,30 @@ export function parseGitDiffFiles(output: string): GitDiffFile[] {
   return files
 }
 
+function parseGitDiffLineCounts(output: string) {
+  const counts = { additions: 0, deletions: 0 }
+  const fields = output.split('\0')
+  for (let index = 0; index < fields.length; index += 1) {
+    const record = fields[index]!
+    if (!record) {
+      continue
+    }
+
+    const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(record)
+    if (!match) {
+      throw new Error('Invalid Git numstat output')
+    }
+
+    counts.additions += match[1] === '-' ? 0 : Number(match[1])
+    counts.deletions += match[2] === '-' ? 0 : Number(match[2])
+    // With -z, renames have an empty path followed by two path fields.
+    if (match[3] === '') {
+      index += 2
+    }
+  }
+  return counts
+}
+
 export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
   const records = output
     .trim()
@@ -962,7 +986,52 @@ class PromiseGitAdapter {
     scope?: GitDiffRequest['scope']
   ): Promise<GitDiff> {
     const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
-    return { ...context, generatedAt: new Date().toISOString() }
+    // Fetch compact statistics independently of the bounded, lazy patches.
+    const stats = await this.checked(cwd, [
+      'diff',
+      '--no-ext-diff',
+      '--numstat',
+      '-z',
+      '--find-renames',
+      context.baseCommit,
+      ...(scope === 'committed' ? [context.headCommit] : [])
+    ])
+    const lineCounts = parseGitDiffLineCounts(stats.stdout)
+    for (const file of context.files) {
+      if (file.status !== 'untracked') {
+        continue
+      }
+
+      const request = {
+        executable: this.executable,
+        args: [
+          'diff',
+          '--no-ext-diff',
+          '--no-index',
+          '--numstat',
+          '-z',
+          '--',
+          '/dev/null',
+          file.path
+        ],
+        cwd,
+        timeoutMs: 30_000
+      }
+      const result = await this.runner.run(request)
+      // --no-index returns 1 when the files differ, including binary files.
+      if (result.exitCode !== 0 && result.exitCode !== 1) {
+        throw new ExternalCommandError(
+          result.stderr.trim() || `Could not count lines in ${file.path}`,
+          request,
+          result
+        )
+      }
+
+      const counts = parseGitDiffLineCounts(result.stdout)
+      lineCounts.additions += counts.additions
+      lineCounts.deletions += counts.deletions
+    }
+    return { ...context, lineCounts, generatedAt: new Date().toISOString() }
   }
 
   async worktreeFileDiff(

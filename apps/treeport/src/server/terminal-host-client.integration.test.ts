@@ -606,6 +606,19 @@ child.once('exit', (code) => process.exit(code ?? 1))
       await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
     ).ownerPid as number
     hostPids.add(ownerPid)
+    const keeperListing = execFileSync(
+      'ps',
+      ['-ww', '-p', String(ownerPid), '-o', 'args='],
+      {
+        encoding: 'utf8'
+      }
+    )
+    // This fixture's noncanonical terminal ID is represented by its digest.
+    expect(
+      keeperListing
+        .trim()
+        .startsWith('treeport-session term_01195899799d4de3463d3098c60ccf19 ')
+    ).toBe(true)
     expect(
       Number(
         execFileSync('ps', ['-p', String(ownerPid), '-o', 'ppid='], {
@@ -627,6 +640,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'Renamed persistent terminal',
       new Date().toISOString()
     )
+    expect(
+      execFileSync('ps', ['-ww', '-p', String(ownerPid), '-o', 'args='], {
+        encoding: 'utf8'
+      })
+    ).toBe(keeperListing)
     const firstHostId = firstDaemon.record.hostId
     await firstDaemon.dispose()
     clients.delete(firstDaemon)
@@ -662,6 +680,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
     })
     clients.add(restartedDaemon)
     expect(restartedDaemon.record.hostId).not.toBe(firstHostId)
+    expect(
+      execFileSync('ps', ['-ww', '-p', String(ownerPid), '-o', 'args='], {
+        encoding: 'utf8'
+      })
+    ).toBe(keeperListing)
     expect((await restartedDaemon.listProcesses('worktree-host'))[0]!.pid).toBe(
       commandPid
     )
@@ -782,6 +805,17 @@ child.once('exit', (code) => process.exit(code ?? 1))
       )
     )
     hostPids.add(quotaStatus.ownerPid)
+    const quotaListing = execFileSync(
+      'ps',
+      ['-ww', '-p', String(quotaStatus.ownerPid), '-o', 'args='],
+      {
+        encoding: 'utf8'
+      }
+    )
+    expect(quotaListing.trim()).toMatch(/^treeport-session term_[0-9a-f]{32} /u)
+    expect(quotaListing.trim().slice(0, 54)).not.toBe(
+      keeperListing.trim().slice(0, 54)
+    )
     await waitFor(
       () =>
         restartedDaemon
