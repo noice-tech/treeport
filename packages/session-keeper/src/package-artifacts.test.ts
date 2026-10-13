@@ -16,26 +16,39 @@ afterEach(async () => {
   )
 })
 
+async function linkOrCopy(source: string, target: string) {
+  await fs.link(source, target).catch((error) => {
+    // Temporary storage may be on another filesystem in CI.
+    if (error.code !== 'EXDEV') {
+      throw error
+    }
+
+    return fs.copyFile(source, target)
+  })
+}
+
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tp-native-contract-'))
   roots.push(root)
-  await fs.copyFile(
+  await linkOrCopy(
     path.join(source, 'package.json'),
     path.join(root, 'package.json')
   )
-  await fs.copyFile(path.join(source, 'LICENSE'), path.join(root, 'LICENSE'))
+  await linkOrCopy(path.join(source, 'LICENSE'), path.join(root, 'LICENSE'))
   await fs.mkdir(path.join(root, 'dist'))
   for (const file of ['index.js', 'index.d.ts']) {
-    await fs.copyFile(
+    await linkOrCopy(
       path.join(source, 'dist', file),
       path.join(root, 'dist', file)
     )
   }
-  await fs.cp(
-    path.join(source, 'dist/native', host),
-    path.join(root, 'dist/native', host),
-    { recursive: true }
-  )
+  await fs.mkdir(path.join(root, 'dist/native', host), { recursive: true })
+  for (const file of ['treeport-session-keeper', 'THIRD_PARTY_NOTICES']) {
+    await linkOrCopy(
+      path.join(source, 'dist/native', host, file),
+      path.join(root, 'dist/native', host, file)
+    )
+  }
   return root
 }
 
@@ -51,11 +64,15 @@ it('accepts a real host development payload but refuses a host-only release pack
 it('rejects a real host executable relabeled as another target instead of accepting dummy all-target coverage', async () => {
   const root = await fixture()
   for (const platform of platforms.filter((platform) => platform !== host)) {
-    await fs.cp(
-      path.join(root, 'dist/native', host),
-      path.join(root, 'dist/native', platform),
-      { recursive: true }
-    )
+    await fs.mkdir(path.join(root, 'dist/native', platform), {
+      recursive: true
+    })
+    for (const file of ['treeport-session-keeper', 'THIRD_PARTY_NOTICES']) {
+      await linkOrCopy(
+        path.join(root, 'dist/native', host, file),
+        path.join(root, 'dist/native', platform, file)
+      )
+    }
   }
   await expect(checkSessionKeeperPackage(root, true)).rejects.toThrow(
     /Target (?:format|architecture) mismatch/
@@ -70,7 +87,9 @@ it('refuses oversized release payloads before reading their bytes', async () => 
     host,
     'treeport-session-keeper'
   )
-  const file = await fs.open(payload, 'r+')
+  // Replace the fixture's link before mutation; never alter build output.
+  await fs.unlink(payload)
+  const file = await fs.open(payload, 'wx')
   try {
     await file.truncate(SESSION_KEEPER_MAX_PAYLOAD_BYTES + 1)
   } finally {
@@ -85,6 +104,8 @@ it('rejects stale source associations and corrupt payload hashes', async () => {
   const root = await fixture()
   const notices = path.join(root, 'dist/native', host, 'THIRD_PARTY_NOTICES')
   const original = await fs.readFile(notices, 'utf8')
+  // The immutable fixture shares an inode with build output until replacement.
+  await fs.unlink(notices)
   await fs.writeFile(
     notices,
     original.replace(
