@@ -7,11 +7,11 @@ for (const name of Object.keys(process.env)) {
   }
 }
 
-// Bound subprocess load while allowing independent fixtures
-// to overlap. Tests own separate runtime directories and ephemeral listeners.
+// Bound subprocess load alongside unit and static checks in ci:local.
+// Tests own separate runtime directories and ephemeral listeners.
 export default defineConfig({
   test: {
-    maxWorkers: 3,
+    maxWorkers: 1,
     include: [
       'apps/**/*.integration.test.ts',
       'scripts/**/*.integration.test.mjs'
