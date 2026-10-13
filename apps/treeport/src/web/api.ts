@@ -125,6 +125,77 @@ const rpcFetch: typeof fetch = async (input, init) => {
   }
 }
 
+// XHR exposes bytes sent; fetch does not provide upload progress events.
+function uploadRequest(
+  url: URL,
+  init: RequestInit & { readonly body: File },
+  onProgress: (bytes: number) => void
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    let stalled: ReturnType<typeof setTimeout> | null = null
+    const cleanup = () => {
+      if (stalled !== null) {
+        clearTimeout(stalled)
+      }
+
+      init.signal?.removeEventListener('abort', abort)
+      request.onload = null
+      request.onerror = null
+      request.onabort = null
+      request.onprogress = null
+      request.upload.onprogress = null
+    }
+    const fail = (error: Error) => {
+      cleanup()
+      request.abort()
+      reject(error)
+    }
+    const abort = () => fail(new DOMException('Upload cancelled', 'AbortError'))
+    const resetStallTimer = () => {
+      if (stalled !== null) {
+        clearTimeout(stalled)
+      }
+
+      stalled = setTimeout(
+        () => fail(new Error('Upload stalled for 2 minutes')),
+        120_000
+      )
+    }
+    request.open('POST', url.href)
+    new Headers(init.headers).forEach((value, name) =>
+      request.setRequestHeader(name, value)
+    )
+    request.upload.onprogress = (event) => {
+      onProgress(event.loaded)
+      resetStallTimer()
+    }
+    request.onprogress = resetStallTimer
+    request.onerror = () =>
+      fail(
+        new RpcNetworkError('POST', url.pathname, new Error('Upload failed'))
+      )
+    request.onabort = abort
+    request.onload = () => {
+      cleanup()
+      resolve(
+        new Response(request.responseText || null, {
+          status: request.status,
+          statusText: request.statusText
+        })
+      )
+    }
+    init.signal?.addEventListener('abort', abort, { once: true })
+    if (init.signal?.aborted) {
+      abort()
+      return
+    }
+
+    resetStallTimer()
+    request.send(init.body)
+  })
+}
+
 function endpoint<A>(
   method: string,
   pathname: string,
@@ -630,15 +701,21 @@ export const rpc = {
         files: {
           $post: (
             { param }: RequestInput<{ terminalId: string }>,
-            options: { readonly init: RequestInit }
-          ) =>
-            endpoint<{ file: { path: string } }>(
-              'POST',
-              `/api/terminals/${id(param.terminalId)}/files`,
-              uploadedFileResponseSchema,
-              undefined,
-              options.init
-            )
+            options: {
+              readonly init: RequestInit & { readonly body: File }
+              readonly onProgress: (bytes: number) => void
+            }
+          ): TypedResponse<{ file: { path: string } }> => ({
+            request: uploadRequest(
+              new URL(
+                `/api/terminals/${id(param.terminalId)}/files`,
+                globalThis.location?.href ?? 'http://localhost'
+              ),
+              options.init,
+              options.onProgress
+            ),
+            schema: uploadedFileResponseSchema
+          })
         }
       }
     },

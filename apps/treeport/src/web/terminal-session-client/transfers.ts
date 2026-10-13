@@ -2,6 +2,7 @@ import * as Data from 'effect/Data'
 import type { SessionTimer } from './timers'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
 import * as Queue from 'effect/Queue'
 import * as Schema from 'effect/Schema'
 import { parseResponse, rpc } from '../api'
@@ -16,7 +17,7 @@ import {
   type TerminalSessionSnapshot
 } from './state'
 
-const TERMINAL_MAX_FILES_PER_TRANSFER = 8
+const TERMINAL_UPLOAD_CONCURRENCY = 3
 const BROWSER_LOCAL_FILE_PATH_SCHEMA = Schema.String.pipe(
   Schema.maxLength(16_384),
   Schema.startsWith('/'),
@@ -62,11 +63,22 @@ export function makeTransfers(
   dependencies: Dependencies
 ) {
   return Effect.gen(function* () {
-    const fileTransferQueue = yield* Queue.bounded<FileTransferRequest>(8)
+    const fileTransferQueue = yield* Queue.unbounded<FileTransferRequest>()
+    let activeTransfer: Fiber.RuntimeFiber<void, TerminalTransferError> | null =
+      null
+    let queuedFiles = 0
     const transfers = Effect.forever(
       Effect.gen(function* () {
         const request = yield* Queue.take(fileTransferQueue)
-        yield* transferFiles(request).pipe(
+        queuedFiles -= request.files.length
+        const fiber = yield* Effect.fork(transferFiles(request))
+        activeTransfer = fiber
+        yield* Fiber.join(fiber).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              activeTransfer = null
+            })
+          ),
           Effect.catchAllCause((cause) =>
             Effect.sync(() => {
               if (!state.disposed && !Cause.isInterruptedOnly(cause)) {
@@ -85,32 +97,36 @@ export function makeTransfers(
         return
       }
 
-      // Validate before retaining Files in the bounded queue.
-      if (files.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
-        showFileTransferError(
-          `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
-        )
-        return
-      }
-
-      if (files.some((file) => file.size > TERMINAL_MAX_UPLOAD_BYTES)) {
-        showFileTransferError(
-          `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`
-        )
-        return
-      }
-
-      if (
-        !Queue.unsafeOffer(fileTransferQueue, {
-          files: [...files],
-          streamId: state.streamId,
-          generation: state.controllerGeneration
+      queuedFiles += files.length
+      Queue.unsafeOffer(fileTransferQueue, {
+        files: [...files],
+        streamId: state.streamId,
+        generation: state.controllerGeneration
+      })
+      if (state.snapshotValue.fileTransfer?.state === 'uploading') {
+        dependencies.update({
+          fileTransfer: {
+            ...state.snapshotValue.fileTransfer,
+            queuedFiles:
+              state.snapshotValue.fileTransfer.queuedFiles + files.length
+          }
         })
-      ) {
-        showFileTransferError(
-          'Too many pending file transfers; wait for an upload to finish'
-        )
       }
+    }
+
+    function cancelFileTransfers(): void {
+      if (state.disposed) {
+        return
+      }
+
+      Effect.runSync(Queue.takeAll(fileTransferQueue))
+      queuedFiles = 0
+      if (activeTransfer) {
+        Effect.runFork(Fiber.interruptFork(activeTransfer))
+      }
+
+      dependencies.cancelTimer('fileTransfer')
+      dependencies.update({ fileTransfer: null })
     }
 
     function transferFiles(
@@ -169,48 +185,90 @@ export function makeTransfers(
 
             return Effect.succeed(null)
           },
-          { concurrency: TERMINAL_MAX_FILES_PER_TRANSFER }
+          { concurrency: 8 }
         )
 
-        const uploadCount = sourcePaths.filter((filePath) => !filePath).length
-        if (uploadCount > 0) {
+        // Local paths only produce terminal input; upload limits apply only
+        // to files whose contents must be sent to the instance.
+        const uploadFiles = files.filter((_, index) => !sourcePaths[index])
+        const uploadCount = uploadFiles.length
+        if (uploadFiles.some((file) => file.size > TERMINAL_MAX_UPLOAD_BYTES)) {
+          return yield* new TerminalTransferError({
+            message: 'Uploaded files are limited to 50 GiB each'
+          })
+        }
+
+        const totalBytes = uploadFiles.reduce(
+          (total, file) => total + file.size,
+          0
+        )
+        const sentBytes = files.map(() => 0)
+        let completedFiles = 0
+        let activeUploads = 0
+        const updateProgress = () => {
+          const bytes = sentBytes.reduce((total, sent) => total + sent, 0)
+          const percent =
+            totalBytes > 0 ? Math.floor((bytes / totalBytes) * 100) : 0
           dependencies.update({
             fileTransfer: {
               state: 'uploading',
-              message: `Uploading ${uploadCount === 1 ? 'file' : `${uploadCount} files`}…`
+              message: `Uploading ${completedFiles}/${uploadCount} files · ${percent}% · ${(bytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MiB`,
+              queuedFiles:
+                queuedFiles + uploadCount - completedFiles - activeUploads
             }
           })
         }
-
-        const paths: string[] = []
-        for (const [index, file] of files.entries()) {
-          const sourcePath = sourcePaths[index]
-          if (sourcePath) {
-            paths.push(sourcePath)
-            continue
-          }
-
-          const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
-          const headers = new Headers({
-            'content-type': file.type || 'application/octet-stream'
-          })
-          if (extension) {
-            headers.set('x-treeport-file-extension', extension.toLowerCase())
-          }
-
-          const result = yield* Effect.tryPromise({
-            try: (signal) =>
-              parseResponse(
-                rpc.api.terminals[':terminalId'].files.$post(
-                  { param: { terminalId: state.terminalId } },
-                  { init: { body: file, headers, signal } }
-                )
-              ),
-            catch: (cause) =>
-              new TerminalTransferError({ message: errorMessage(cause) })
-          })
-          paths.push(result.file.path)
+        if (uploadCount > 0) {
+          updateProgress()
         }
+
+        const paths = yield* Effect.forEach(
+          files,
+          (file, index) =>
+            Effect.gen(function* () {
+              const sourcePath = sourcePaths[index]
+              if (sourcePath) {
+                return sourcePath
+              }
+
+              activeUploads += 1
+              updateProgress()
+              const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+              const headers = new Headers({
+                'content-type': file.type || 'application/octet-stream'
+              })
+              if (extension) {
+                headers.set(
+                  'x-treeport-file-extension',
+                  extension.toLowerCase()
+                )
+              }
+
+              const result = yield* Effect.tryPromise({
+                try: (signal) =>
+                  parseResponse(
+                    rpc.api.terminals[':terminalId'].files.$post(
+                      { param: { terminalId: state.terminalId } },
+                      {
+                        init: { body: file, headers, signal },
+                        onProgress: (bytes) => {
+                          sentBytes[index] = Math.min(bytes, file.size)
+                          updateProgress()
+                        }
+                      }
+                    )
+                  ),
+                catch: (cause) =>
+                  new TerminalTransferError({ message: errorMessage(cause) })
+              })
+              sentBytes[index] = file.size
+              completedFiles += 1
+              activeUploads -= 1
+              updateProgress()
+              return result.file.path
+            }),
+          { concurrency: TERMINAL_UPLOAD_CONCURRENCY }
+        )
 
         // Losing and reacquiring control during an upload is not permission to
         // paste into a different stream or controller generation.
@@ -227,13 +285,7 @@ export function makeTransfers(
           paths,
           'Terminal control was lost during the upload'
         )
-      }).pipe(
-        Effect.timeoutFail({
-          duration: '2 minutes',
-          onTimeout: () =>
-            new TerminalTransferError({ message: 'File transfer timed out' })
-        })
-      )
+      })
     }
 
     function pasteResolvedFilePaths(
@@ -241,13 +293,6 @@ export function makeTransfers(
       controlError?: string
     ): void {
       if (!paths.length || state.disposed) {
-        return
-      }
-
-      if (paths.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
-        showFileTransferError(
-          `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
-        )
         return
       }
 
@@ -293,7 +338,8 @@ export function makeTransfers(
       dependencies.update({
         fileTransfer: {
           state: 'error',
-          message: `Couldn’t paste file: ${message}`
+          message: `Couldn’t paste file: ${message}`,
+          queuedFiles: 0
         }
       })
       dependencies.scheduleTimer(
@@ -307,6 +353,7 @@ export function makeTransfers(
 
     return {
       queueFileTransfer,
+      cancelFileTransfers,
       pasteResolvedFilePaths
     }
   })
