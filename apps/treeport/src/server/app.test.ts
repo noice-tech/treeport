@@ -917,7 +917,7 @@ describe('HTTP API validation', () => {
     ).toBe(404)
 
     for (const url of [
-      'file:///tmp/private',
+      'file://server/share/private',
       'https://user:secret@example.com/'
     ]) {
       expect(
@@ -931,6 +931,36 @@ describe('HTTP API validation', () => {
       ).toBe(400)
     }
     expect(service.openBrowserPanel).toHaveBeenCalledOnce()
+
+    const fileUrl = 'file:///tmp/preview%20draft.html#section'
+    const fileBrowser = await app.request(
+      '/api/worktrees/wt_1/browser-panels',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: fileUrl })
+      }
+    )
+    expect(fileBrowser.status).toBe(201)
+    expect(service.openBrowserPanel).toHaveBeenLastCalledWith(
+      'wt_1',
+      fileUrl,
+      null,
+      null
+    )
+    const fileNavigation = await app.request(
+      '/api/panels/panel_browser/browser-agent',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: 'goto', args: [fileUrl] })
+      }
+    )
+    expect(fileNavigation.status).toBe(200)
+    expect(browserAgentCommand).toHaveBeenLastCalledWith('panel_browser', {
+      command: 'goto',
+      args: [fileUrl]
+    })
 
     const snapshot = await app.request(
       '/api/panels/panel_browser/browser-agent',

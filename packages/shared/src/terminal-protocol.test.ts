@@ -195,8 +195,8 @@ describe('WebSocket contracts', () => {
             id: 'browser',
             kind: 'browser',
             worktreeId: 'worktree',
-            title: 'Example',
-            url: 'https://example.com/',
+            title: 'Local preview',
+            url: 'file:///tmp/preview.html',
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
@@ -250,7 +250,7 @@ describe('WebSocket contracts', () => {
             kind: 'browser',
             worktreeId: 'worktree',
             title: 'Unsafe',
-            url: 'file:///etc/passwd',
+            url: 'javascript:alert(1)',
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }

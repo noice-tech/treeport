@@ -71,6 +71,9 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   currentUrl = 'https://example.com/recovered'
   page.emit('load')
   await vi.waitFor(() => expect(browser.state.url).toBe(currentUrl))
+  currentUrl = 'file:///tmp/preview%20draft.html#section'
+  page.emit('load')
+  await vi.waitFor(() => expect(browser.state.url).toBe(currentUrl))
   currentUrl = 'about:blank'
   page.emit('load')
   await vi.waitFor(() => expect(browser.state.url).toBe('about:blank'))
