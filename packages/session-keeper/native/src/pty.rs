@@ -187,6 +187,15 @@ pub async fn write(descriptor: &AsyncFd<OwnedFd>, bytes: &[u8]) -> io::Result<()
     let mut offset = 0;
     while offset < bytes.len() {
         let mut ready = descriptor.writable().await?;
+        // A hung-up Linux PTY can keep reporting writable/closed while write
+        // returns EAGAIN. Retrying that permanent readiness spins the single-
+        // thread runtime and prevents independent close from completing.
+        if ready.ready().is_write_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "PTY input closed",
+            ));
+        }
         match ready.try_io(|inner| {
             let count = unsafe {
                 libc::write(

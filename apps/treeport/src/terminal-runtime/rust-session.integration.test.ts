@@ -160,57 +160,76 @@ async function control(
 }
 
 afterEach(async () => {
+  // Detach this test's cleanup state before any fallible work. A retained
+  // failed fixture is evidence, not a cleanup dependency of subsequent tests.
+  const retained = {
+    keepers: [...keepers],
+    pids: [...pids],
+    roots: roots.splice(0),
+    volumes: volumes.splice(0)
+  }
+  keepers.clear()
+  pids.clear()
   for (const session of sessions.splice(0)) {
     session.dispose()
   }
   // Authentication, not a cached PID, authorizes fixture cleanup. If ownership
   // cannot be established, retain the fixture/evidence instead of signaling a
   // potentially reused PID or hiding a keeper lifecycle regression.
-  for (const [socket, keeper] of keepers) {
-    const retained = await fs.lstat(socket).catch((cause) => {
-      // SAFETY: Node filesystem errors expose errno codes; only ENOENT means
-      // authenticated close already removed this fixture's control endpoint.
-      if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw cause
+  const cleanup = await Promise.allSettled(
+    retained.keepers.map(async ([socket, keeper]) => {
+      const socketStat = await fs.lstat(socket).catch((cause) => {
+        // SAFETY: Node filesystem errors expose errno codes; only ENOENT means
+        // authenticated close already removed this fixture's control endpoint.
+        if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw cause
+        }
+
+        return null
+      })
+      if (socketStat !== null) {
+        const inspected = await control(socket, {
+          method: 'inspect',
+          id: 'fixture-cleanup-inspect',
+          token: keeper.token
+        })
+        expect(inspected).toMatchObject({
+          type: 'response',
+          status: { ownerPid: keeper.ownerPid, pid: keeper.pid },
+          error: null
+        })
+        const closed = await control(socket, {
+          method: 'terminate',
+          id: 'fixture-cleanup-close',
+          token: keeper.token
+        })
+        expect(closed).toMatchObject({ type: 'response', error: null })
       }
 
-      return null
+      await until(() => !alive(keeper.ownerPid) && !alive(keeper.pid))
     })
-    if (retained !== null) {
-      const inspected = await control(socket, {
-        method: 'inspect',
-        id: 'fixture-cleanup-inspect',
-        token: keeper.token
-      })
-      expect(inspected).toMatchObject({
-        type: 'response',
-        status: { ownerPid: keeper.ownerPid, pid: keeper.pid },
-        error: null
-      })
-      const closed = await control(socket, {
-        method: 'terminate',
-        id: 'fixture-cleanup-close',
-        token: keeper.token
-      })
-      expect(closed).toMatchObject({ type: 'response', error: null })
-    }
-
-    await until(() => !alive(keeper.ownerPid) && !alive(keeper.pid))
-  }
-  await until(() => [...pids].every((pid) => !alive(pid)))
-  pids.clear()
-  await Promise.all(
-    [...keepers.keys()].map((socket) => fs.rm(socket, { force: true }))
   )
-  keepers.clear()
+  const failures = cleanup.flatMap((result) =>
+    result.status === 'rejected' ? [result.reason] : []
+  )
+  if (failures.length) {
+    throw new AggregateError(
+      failures,
+      `Authenticated fixture cleanup failed; retained evidence: ${retained.roots.join(', ')}`
+    )
+  }
+
+  await until(() => retained.pids.every((pid) => !alive(pid)))
+  await Promise.all(
+    retained.keepers.map(([socket]) => fs.rm(socket, { force: true }))
+  )
   // Only our unique image mountpoints, and only after authenticated cleanup
   // proves every fixture process exited. Never force-unmount a live keeper.
-  for (const mount of volumes) {
+  for (const mount of retained.volumes) {
     await execute('hdiutil', ['detach', mount])
   }
-  volumes.length = 0
   await Promise.all(
-    roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))
+    retained.roots.map((root) => fs.rm(root, { recursive: true, force: true }))
   )
 })
 
@@ -1167,9 +1186,11 @@ os._exit(7)
   })
 
   it('retains live group members after leader exit and excludes independent daemon sessions', async () => {
+    // Descendants must not hold the PTY open: exitCode follows captured EOF,
+    // not just leader exit. Keep the process alive without retaining its stdio.
     const value = await fixture(`
       const {spawn}=require('node:child_process');
-      const child=spawn(process.execPath,['-e',"process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('background.pid',String(process.pid));process.send('ready');setInterval(()=>{},1000)"],{stdio:['ignore','inherit','inherit','ipc']});
+      const child=spawn(process.execPath,['-e',"process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('background.pid',String(process.pid));process.send('ready');setInterval(()=>{},1000)"],{stdio:['ignore','ignore','ignore','ipc']});
       child.once('message',()=>{child.disconnect();child.unref();process.exit(0)});
     `)
     await until(async () =>
@@ -1206,10 +1227,11 @@ os._exit(7)
   })
 
   it('cleans reparented separate groups in the original terminal session', async () => {
+    // The background group survives the leader without delaying captured EOF.
     const value = await fixture('', undefined, [
       '/bin/bash',
       '-c',
-      'set -m; "$1" -e "$2" & while [ ! -f separate-group.pid ]; do sleep 0.01; done; exit 0',
+      'set -m; "$1" -e "$2" </dev/null >/dev/null 2>&1 & while [ ! -f separate-group.pid ]; do sleep 0.01; done; exit 0',
       'fixture',
       process.execPath,
       "process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('separate-group.pid',String(process.pid));setTimeout(()=>process.exit(0),8000)"
