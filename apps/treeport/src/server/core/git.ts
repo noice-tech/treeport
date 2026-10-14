@@ -680,11 +680,13 @@ class PromiseGitAdapter {
     }
 
     args.push('--', worktreePath)
+    // Git recursively deletes ignored dependencies and build artifacts too.
+    // Removal is not atomic: a wall-clock timeout can kill a healthy deletion
+    // midway and leave a registered, partially destroyed checkout.
     await runChecked(this.runner, {
       executable: this.executable,
       args,
-      cwd,
-      timeoutMs: 10 * 60_000
+      cwd
     })
   }
 

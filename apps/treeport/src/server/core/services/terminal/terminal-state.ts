@@ -1,9 +1,13 @@
 import type { TerminalRecord } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
+import { DomainError } from '../../domain'
 
 interface State {
   readonly terminals: Map<string, TerminalRecord>
+  // Keep completed reservations until the tree is cleared: an inventory read
+  // started before a kill may still report that terminal afterward.
+  readonly removingTerminalIds: Map<string, string>
   readonly closeOnSuccessTerminalIds: Set<string>
   readonly terminalIdsByWorktree: Map<string, Set<string>>
 }
@@ -15,6 +19,7 @@ interface InventoryChange {
 
 const emptyState = (): State => ({
   terminals: new Map(),
+  removingTerminalIds: new Map(),
   closeOnSuccessTerminalIds: new Set(),
   terminalIdsByWorktree: new Map()
 })
@@ -32,6 +37,58 @@ export class TerminalState extends Effect.Service<TerminalState>()(
           Ref.get(state).pipe(
             Effect.map((current) => current.terminals.get(terminalId) ?? null)
           ),
+
+        reserveRemoval: (terminalId: string, worktreeId: string) =>
+          Ref.modify<State, DomainError<unknown> | null>(state, (current) => {
+            if (
+              !current.terminals.has(terminalId) ||
+              current.removingTerminalIds.has(terminalId)
+            ) {
+              return [
+                new DomainError(
+                  'TERMINAL_NOT_FOUND',
+                  'Terminal not found',
+                  404
+                ),
+                current
+              ] as const
+            }
+
+            // In-flight closes no longer count toward the last-terminal guard.
+            const hasRemainingTerminal = [
+              ...(current.terminalIdsByWorktree.get(worktreeId) ?? [])
+            ].some(
+              (id) =>
+                id !== terminalId &&
+                !current.removingTerminalIds.has(id) &&
+                !current.closeOnSuccessTerminalIds.has(id)
+            )
+            if (!hasRemainingTerminal) {
+              return [
+                new DomainError(
+                  'LAST_TERMINAL',
+                  'Every open tree must keep at least one terminal',
+                  409
+                ),
+                current
+              ] as const
+            }
+
+            const removingTerminalIds = new Map(current.removingTerminalIds)
+            removingTerminalIds.set(terminalId, worktreeId)
+            return [null, { ...current, removingTerminalIds }] as const
+          }).pipe(
+            Effect.flatMap((error) =>
+              error ? Effect.fail(error) : Effect.void
+            )
+          ),
+
+        releaseRemoval: (terminalId: string) =>
+          Ref.update(state, (current) => {
+            const removingTerminalIds = new Map(current.removingTerminalIds)
+            removingTerminalIds.delete(terminalId)
+            return { ...current, removingTerminalIds }
+          }),
 
         hasTerminal: (terminalId: string) =>
           Ref.get(state).pipe(
@@ -109,6 +166,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               { updatedTerminalIds, removedTerminalIds },
               {
                 terminals: cachedTerminals,
+                removingTerminalIds: current.removingTerminalIds,
                 closeOnSuccessTerminalIds,
                 terminalIdsByWorktree
               }
@@ -136,6 +194,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             terminalIdsByWorktree.set(terminal.worktreeId, terminalIds)
             return {
               terminals,
+              removingTerminalIds: current.removingTerminalIds,
               closeOnSuccessTerminalIds,
               terminalIdsByWorktree
             }
@@ -164,6 +223,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             terminalIdsByWorktree.set(worktreeId, terminalIds)
             return {
               terminals,
+              removingTerminalIds: current.removingTerminalIds,
               closeOnSuccessTerminalIds,
               terminalIdsByWorktree
             }
@@ -188,10 +248,17 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             }
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
             terminalIdsByWorktree.delete(worktreeId)
+            const removingTerminalIds = new Map(current.removingTerminalIds)
+            for (const [terminalId, treeId] of removingTerminalIds) {
+              if (treeId === worktreeId) {
+                removingTerminalIds.delete(terminalId)
+              }
+            }
             return [
               [...terminalIds],
               {
                 terminals,
+                removingTerminalIds,
                 closeOnSuccessTerminalIds,
                 terminalIdsByWorktree
               }

@@ -68,13 +68,6 @@ export class TerminalMutations extends Effect.Service<TerminalMutations>()(
   }
 ) {}
 
-export class TerminalRemovalMutations extends Effect.Service<TerminalRemovalMutations>()(
-  'treeport/TerminalRemovalMutations',
-  {
-    scoped: makeMutationCoordinator<string>('terminal_removal')
-  }
-) {}
-
 export class TreeFileMutations extends Effect.Service<TreeFileMutations>()(
   'treeport/TreeFileMutations',
   {
@@ -205,7 +198,6 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
       ProjectFolderIdentities.Default,
       WorktreeMutations.Default,
       TerminalMutations.Default,
-      TerminalRemovalMutations.Default,
       TreeFileMutations.Default,
       ProjectObservations.Default,
       PackageMutations.Default,
@@ -249,7 +241,6 @@ export type ApplicationServices =
   | ProjectFolderIdentities
   | WorktreeMutations
   | TerminalMutations
-  | TerminalRemovalMutations
   | TreeFileMutations
   | ProjectObservations
   | PackageMutations

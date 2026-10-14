@@ -213,11 +213,12 @@ describe('terminal operations', () => {
     }
   })
 
-  it('creates a terminal without waiting for a close inventory refresh', async () => {
+  it('creates and closes terminals without waiting for another close inventory refresh', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const worktree = project.worktrees[0]!
     const closingTerminal = await service.createTerminal(worktree.id, 'Closing')
+    const anotherTerminal = await service.createTerminal(worktree.id, 'Another')
     let releaseInventory!: () => void
     runner.terminalInventoryGate = new Promise<void>((resolve) => {
       releaseInventory = resolve
@@ -225,8 +226,9 @@ describe('terminal operations', () => {
 
     const inventoryAttempts = runner.terminalInventoryAttempts
     const closing = service.deleteTerminal(closingTerminal.id)
+    const anotherClosing = service.deleteTerminal(anotherTerminal.id)
     await vi.waitFor(() =>
-      expect(runner.terminalInventoryAttempts).toBe(inventoryAttempts + 1)
+      expect(runner.terminalInventoryAttempts).toBe(inventoryAttempts + 2)
     )
     try {
       await expect(
@@ -235,7 +237,20 @@ describe('terminal operations', () => {
     } finally {
       releaseInventory()
     }
-    await closing
+    await Promise.all([closing, anotherClosing])
+
+    const remaining = (await service.getWorktreeSnapshot(worktree.id)).terminals
+    const results = await Promise.allSettled(
+      remaining.map((terminal) => service.deleteTerminal(terminal.id))
+    )
+    expect(
+      results.filter((result) => result.status === 'fulfilled')
+    ).toHaveLength(1)
+    expect(
+      results.find((result) => result.status === 'rejected')
+    ).toMatchObject({
+      reason: { code: 'LAST_TERMINAL' }
+    })
   })
 
   it('closes a terminal while another tree cleanup is running', async () => {

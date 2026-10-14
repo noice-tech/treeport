@@ -23,7 +23,6 @@ import {
   type ApplicationServices,
   ProjectObservations,
   TerminalMutations,
-  TerminalRemovalMutations,
   TreeFileMutations,
   WorktreeMutations
 } from '../infrastructure/application-runtime'
@@ -869,7 +868,7 @@ export class TerminalService {
     const getTerminalFromBindings = this.getTerminalFromBindings.bind(this)
 
     return Effect.gen(function* () {
-      const terminalRemovalMutations = yield* TerminalRemovalMutations
+      const applicationFibers = yield* ApplicationFibers
       const terminalState = yield* TerminalState
       const cachedTerminal = yield* terminalState.terminal(terminalId)
       const terminal =
@@ -878,10 +877,14 @@ export class TerminalService {
         'treeport.terminal.id': terminalId,
         'treeport.worktree.id': terminal.worktreeId
       })
-      yield* terminalRemovalMutations.enqueue(
-        terminal.worktreeId,
-        executeDeleteTerminal(terminalId, terminal.worktreeId)
+      const result = yield* Deferred.make<void, DomainError<unknown>>()
+      yield* applicationFibers.fork(
+        executeDeleteTerminal(terminalId, terminal.worktreeId).pipe(
+          Effect.exit,
+          Effect.flatMap((exit) => Deferred.done(result, exit))
+        )
       )
+      yield* Deferred.await(result)
     }).pipe(
       Effect.withSpan('treeport.terminal.remove', {
         attributes: { 'treeport.terminal.id': terminalId }
@@ -921,63 +924,53 @@ export class TerminalService {
         )
       }
 
-      const closeOnSuccessTerminalIds =
-        yield* terminalState.closeOnSuccessTerminalIds
-      if (
-        terminals.length <= 1 ||
-        terminals.every(
-          (candidate) =>
-            candidate.id === terminalId ||
-            closeOnSuccessTerminalIds.has(candidate.id)
-        )
-      ) {
-        return yield* Effect.fail(
-          new DomainError(
-            'LAST_TERMINAL',
-            'Every open tree must keep at least one terminal',
-            409
-          )
-        )
-      }
-
-      const acquired = yield* locks.tryAcquire({
-        worktreeIds: [worktree.id],
-        checkProjectIds: [worktree.projectId]
+      const allowed = yield* locks.tryAcquire({
+        checkWorktreeIds: [worktree.id],
+        checkProjectIds: [worktree.projectId],
+        allowWorktreeCreation: true
       })
-      if (!acquired) {
+      if (!allowed) {
         return yield* Effect.fail(
           new DomainError(
             'WORKTREE_BUSY',
-            'Cannot delete a terminal during a destructive project operation',
+            'Cannot delete a terminal while its tree or project is being removed',
             409
           )
         )
       }
 
-      yield* Effect.gen(function* () {
-        yield* Effect.gen(function* () {
-          const trace = yield* currentTraceContext
-          yield* terminalHost
-            .killTerminal(terminal.id, trace ?? undefined)
-            .pipe(Effect.orDie)
-        }).pipe(
-          Effect.withSpan('treeport.terminal_host.ipc.remove', {
-            kind: 'client',
-            attributes: {
-              'treeport.terminal.id': terminal.id,
-              'treeport.worktree.id': worktree.id
-            }
-          })
-        )
-        yield* terminalState.removeTerminal(terminalId, worktree.id)
-        yield* invalidateProjectsSnapshot()
-        yield* Effect.sync(() => {
-          events.publish('terminal.removed', {
-            worktreeId: worktree.id,
-            terminalId
-          })
-        })
-      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktree.id] })))
+      yield* Effect.acquireUseRelease(
+        terminalState.reserveRemoval(terminalId, worktree.id),
+        () =>
+          Effect.gen(function* () {
+            yield* Effect.gen(function* () {
+              const trace = yield* currentTraceContext
+              yield* terminalHost
+                .killTerminal(terminal.id, trace ?? undefined)
+                .pipe(Effect.orDie)
+            }).pipe(
+              Effect.withSpan('treeport.terminal_host.ipc.remove', {
+                kind: 'client',
+                attributes: {
+                  'treeport.terminal.id': terminal.id,
+                  'treeport.worktree.id': worktree.id
+                }
+              })
+            )
+            yield* terminalState.removeTerminal(terminalId, worktree.id)
+            yield* invalidateProjectsSnapshot()
+            yield* Effect.sync(() => {
+              events.publish('terminal.removed', {
+                worktreeId: worktree.id,
+                terminalId
+              })
+            })
+          }),
+        (_, exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : terminalState.releaseRemoval(terminalId)
+      )
     })
   }
 
@@ -993,14 +986,12 @@ export class TerminalService {
       const projectObservations = yield* ProjectObservations
       const terminalHost = yield* TerminalHostPort
       const terminalMutations = yield* TerminalMutations
-      const terminalRemovalMutations = yield* TerminalRemovalMutations
       const treeFileMutations = yield* TreeFileMutations
       const worktreeMutations = yield* WorktreeMutations
       yield* Effect.all(
         [
           worktreeMutations.drain,
           terminalMutations.drain,
-          terminalRemovalMutations.drain,
           treeFileMutations.drain,
           projectObservations.drain
         ],
