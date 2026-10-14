@@ -1,2 +1,8 @@
 @import '@treeport/theme/styles.css';
 @source './';
+
+/* The native shell overlays the live workspace while a menu or dialog is open. */
+:root,
+html {
+  background: transparent;
+}
