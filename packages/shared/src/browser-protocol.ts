@@ -60,6 +60,29 @@ export function normalizeBrowserTitle(title: string): string {
   return title.slice(0, end >= 0xd800 && end <= 0xdbff ? 255 : 256)
 }
 
+export function normalizeBrowserFaviconUrl(
+  value: string | null
+): string | null {
+  if (!value || value.length > 512 * 1024 || !URL.canParse(value)) {
+    return null
+  }
+
+  const url = new URL(value)
+  if (url.protocol === 'data:') {
+    return /^data:image\/(?:png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon|svg\+xml);base64,/i.test(
+      value
+    )
+      ? value
+      : null
+  }
+
+  return (url.protocol === 'http:' || url.protocol === 'https:') &&
+    !url.username &&
+    !url.password
+    ? value
+    : null
+}
+
 export const browserClientMessageSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal('navigate'), url: browserUrlSchema }),
   Schema.Struct({ type: Schema.Literal('back') }),
@@ -121,6 +144,14 @@ export const browserRuntimeStateSchema = Schema.Struct({
     decode: normalizeBrowserTitle,
     encode: normalizeBrowserTitle
   }),
+  faviconUrl: Schema.transform(
+    Schema.NullOr(Schema.String),
+    Schema.NullOr(Schema.String),
+    {
+      decode: normalizeBrowserFaviconUrl,
+      encode: normalizeBrowserFaviconUrl
+    }
+  ),
   loading: Schema.Boolean,
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,

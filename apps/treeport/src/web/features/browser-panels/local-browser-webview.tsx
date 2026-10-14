@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   browserObservedUrlSchema,
   decodeUnknownOrNull,
-  normalizeBrowserTitle
+  normalizeBrowserTitle,
+  normalizeBrowserFaviconUrl,
+  readBrowserPageMetadata
 } from '@treeport/shared'
 import type {
   BrowserClientMessage,
@@ -23,7 +25,8 @@ import { useToolPicker } from '../panels/tool-picker-context'
 function browserState(
   webview: TreeportBrowserWebview,
   fallbackUrl: string,
-  loading = webview.isLoading()
+  loading = webview.isLoading(),
+  faviconUrl: string | null = null
 ): BrowserRuntimeState {
   const observedUrl = webview.getURL()
   const blankPage =
@@ -41,6 +44,7 @@ function browserState(
   return {
     url,
     title: blankPage ? '' : normalizeBrowserTitle(webview.getTitle()),
+    faviconUrl: blankPage ? null : faviconUrl,
     loading,
     canGoBack: webview.canGoBack(),
     canGoForward: webview.canGoForward(),
@@ -100,6 +104,8 @@ export function LocalBrowserWebview({
     let reporting = false
     let ready = false
     let loading = false
+    let faviconUrl: string | null = null
+    let faviconRevision = 0
     let fallbackUrl = initialPanelRef.current.url
     let previousExternalFocus: HTMLElement | null = null
     let owner: LocalBrowserOwnerConnection | null = null
@@ -175,7 +181,7 @@ export function LocalBrowserWebview({
 
       let state: BrowserRuntimeState
       try {
-        state = browserState(webview, fallbackUrl, loading)
+        state = browserState(webview, fallbackUrl, loading, faviconUrl)
       } catch (cause) {
         // A guest can disappear before React receives its crash or cleanup event.
         reporting = false
@@ -205,7 +211,34 @@ export function LocalBrowserWebview({
       loading = false
       emitState()
     }
+    const updateFavicon = (event: Event) => {
+      // SAFETY: Electron's page-favicon-updated event supplies a string array.
+      const { favicons } = event as Event & { favicons: string[] }
+      const revision = ++faviconRevision
+      // Native events can list the light PNG before the theme-aware SVG.
+      void webview
+        .executeJavaScript<ReturnType<typeof readBrowserPageMetadata>>(
+          `(${readBrowserPageMetadata.toString()})()`
+        )
+        .then(
+          (metadata) => metadata.faviconUrl,
+          () => favicons.map(normalizeBrowserFaviconUrl).find(Boolean) ?? null
+        )
+        .then((url) => {
+          if (disposed || revision !== faviconRevision) {
+            return
+          }
+
+          faviconUrl = normalizeBrowserFaviconUrl(url)
+          emitState()
+        })
+    }
     const refresh = (event: Event) => {
+      if (event.type === 'did-navigate') {
+        faviconRevision++
+        faviconUrl = null
+      }
+
       if (
         event.type === 'did-navigate' ||
         event.type === 'did-navigate-in-page'
@@ -596,6 +629,7 @@ export function LocalBrowserWebview({
       'did-navigate-in-page',
       'page-title-updated'
     ]
+    webview.addEventListener('page-favicon-updated', updateFavicon)
     webview.addEventListener('focus', focusBrowser)
     webview.addEventListener('did-start-loading', startLoading)
     webview.addEventListener('did-stop-loading', stopLoading)
@@ -643,6 +677,7 @@ export function LocalBrowserWebview({
       stopBrowserFocus()
       stopPopup()
       stopUnavailable()
+      webview.removeEventListener('page-favicon-updated', updateFavicon)
       webview.removeEventListener('focus', focusBrowser)
       webview.removeEventListener('did-start-loading', startLoading)
       webview.removeEventListener('did-stop-loading', stopLoading)

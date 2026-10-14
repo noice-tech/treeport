@@ -640,7 +640,7 @@ export type DesktopHealthResponse = Schema.Schema.Type<
 
 export const browserInstallStatusSchema = Schema.Struct({
   installed: Schema.Boolean,
-  executablePath: Schema.String,
+  executablePath: nullableStringSchema,
   playwrightVersion: Schema.String,
   browserRevision: Schema.String,
   channel: Schema.Literal('chromium', 'chrome'),

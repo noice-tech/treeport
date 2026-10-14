@@ -43,6 +43,7 @@ class FakeBrowser implements BrowserSessionBrowser {
   state: BrowserSessionBrowser['state'] = {
     url: 'about:blank',
     title: '',
+    faviconUrl: null,
     loading: false,
     canGoBack: false,
     canGoForward: false,
@@ -734,6 +735,7 @@ describe('Browser sessions', () => {
       state: {
         url: 'https://example.com/local',
         title: 'Visible local page',
+        faviconUrl: null,
         loading: false,
         canGoBack: true,
         canGoForward: false,
@@ -1055,6 +1057,7 @@ describe('Browser sessions', () => {
       state: {
         url: 'https://example.com/local',
         title: 'Visible local page',
+        faviconUrl: null,
         loading: false,
         canGoBack: true,
         canGoForward: false,

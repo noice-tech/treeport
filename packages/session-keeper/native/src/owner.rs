@@ -43,6 +43,7 @@ impl Handle {
             exit_code: None,
             error: None,
             incomplete: false,
+            startup_aborted: false,
         };
         let (published, receiver) = watch::channel(status.clone());
         let (commands, incoming) = mpsc::channel(16);
@@ -159,7 +160,18 @@ impl Owner {
                     process::signal(&target, signal)?;
                 }
                 if signal == libc::SIGTERM {
-                    std::thread::sleep(Duration::from_millis(500));
+                    // Preserve the grace period for uncooperative commands,
+                    // but complete as soon as verified session members exit.
+                    let deadline = Instant::now() + Duration::from_millis(500);
+                    loop {
+                        if ownership.discover(&process::snapshot()?)?.is_empty() {
+                            return Ok(());
+                        }
+                        if Instant::now() >= deadline {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
                 }
             }
             let deadline = Instant::now() + Duration::from_secs(1);

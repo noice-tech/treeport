@@ -1,34 +1,51 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+export function browserSetupGuidance(platform = process.platform): string {
+  return [
+    'Install Google Chrome or Chromium on the Treeport daemon host (which may be different from this device).',
+    ...(platform === 'linux'
+      ? [
+          'On Ubuntu with Snap available, run: sudo snap install chromium',
+          'Ubuntu installation instructions: https://snapcraft.io/install/chromium/ubuntu'
+        ]
+      : []),
+    'Google Chrome: https://www.google.com/chrome/',
+    'Then click Retry, or retry your browser command.',
+    'For an existing browser, set TREEPORT_BROWSER_EXECUTABLE to its absolute executable path in the daemon environment and restart the daemon.',
+    'Treeport does not install browsers automatically or disable their sandbox.'
+  ].join('\n')
+}
+
 // One executable resolution path for launches and diagnostics. Never silently
 // download a browser or disable its sandbox when the host is misconfigured.
 export async function browserRuntime(platform = process.platform): Promise<{
-  executablePath: string
+  executablePath: string | null
   channel: 'chrome' | 'chromium'
+  launchError: string | null
 }> {
   const configured = process.env.TREEPORT_BROWSER_EXECUTABLE?.trim()
-  if (configured) {
-    if (!path.isAbsolute(configured)) {
-      throw new Error('TREEPORT_BROWSER_EXECUTABLE must be an absolute path.')
-    }
-
-    return {
-      executablePath: configured,
-      channel: configured.includes('chromium') ? 'chromium' : 'chrome'
-    }
-  }
-
-  const candidates =
-    platform === 'darwin'
+  const candidates = configured
+    ? [configured]
+    : platform === 'darwin'
       ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
       : [
           '/opt/google/chrome/chrome',
           '/usr/bin/google-chrome-stable',
           '/usr/bin/google-chrome',
           '/usr/bin/chromium',
-          '/usr/bin/chromium-browser'
+          '/usr/bin/chromium-browser',
+          '/snap/bin/chromium'
         ]
+  const channel = configured?.includes('chromium') ? 'chromium' : 'chrome'
+  if (configured && !path.isAbsolute(configured)) {
+    return {
+      executablePath: configured,
+      channel,
+      launchError: `TREEPORT_BROWSER_EXECUTABLE must be an absolute path.\n${browserSetupGuidance(platform)}`
+    }
+  }
+
   for (const executablePath of candidates) {
     if (
       await fs.access(executablePath, fs.constants.X_OK).then(
@@ -38,9 +55,14 @@ export async function browserRuntime(platform = process.platform): Promise<{
     ) {
       return {
         executablePath,
-        channel: executablePath.includes('chromium') ? 'chromium' : 'chrome'
+        channel: executablePath.includes('chromium') ? 'chromium' : 'chrome',
+        launchError: null
       }
     }
   }
-  return { executablePath: candidates[0]!, channel: 'chrome' }
+  return {
+    executablePath: configured || null,
+    channel,
+    launchError: `${configured ? `TREEPORT_BROWSER_EXECUTABLE is missing or not executable: ${configured}.` : 'No supported Chrome or Chromium executable was found on the Treeport daemon host.'}\n${browserSetupGuidance(platform)}`
+  }
 }

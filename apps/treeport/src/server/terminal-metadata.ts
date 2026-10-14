@@ -469,6 +469,27 @@ export class TerminalMetadataManager {
               if ('exitCode' in event) {
                 entry.status = 'exited'
                 this.stopRuntime(entry)
+                // Refresh outside the runtime scope, which stopRuntime closes.
+                // Waiters need terminal.updated, not just cleared metadata.
+                this.service.forkApplicationEffect(
+                  this.service.terminals
+                    .refreshTerminalStatus(entry.terminalId, false)
+                    .pipe(
+                      Effect.catchAll((error) => {
+                        if (
+                          error instanceof DomainError &&
+                          error.code === 'TERMINAL_NOT_FOUND'
+                        ) {
+                          return Effect.void
+                        }
+
+                        return Effect.logError(
+                          `Failed to refresh exited terminal ${entry.terminalId}`
+                        ).pipe(Effect.annotateLogs({ cause: String(error) }))
+                      }),
+                      Effect.asVoid
+                    )
+                )
               }
             })
         ).pipe(

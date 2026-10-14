@@ -388,6 +388,7 @@ describe('Effect WebSocket real network', () => {
             state: {
               url: 'about:blank',
               title: '',
+              faviconUrl: null,
               loading: false,
               canGoBack: false,
               canGoForward: false,
@@ -436,6 +437,7 @@ describe('Effect WebSocket real network', () => {
             state: {
               url: 'about:blank',
               title: '',
+              faviconUrl: null,
               loading: false,
               canGoBack: false,
               canGoForward: false,

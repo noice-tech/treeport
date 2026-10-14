@@ -9,9 +9,9 @@ use std::{
     path::PathBuf,
 };
 use treeport_session_keeper::{
-    journal::{open_regular, Journal},
+    journal::{atomic_json, open_regular, Journal},
     owner::Handle,
-    protocol::{Manifest, MAX_MANIFEST_BYTES},
+    protocol::{Manifest, RecordData, Status, MAX_MANIFEST_BYTES},
     pty::Pty,
     server,
     storage::Storage,
@@ -106,8 +106,51 @@ fn main() -> Result<()> {
         let listener = tokio::net::UnixListener::from_std(listener)?;
         // Create the storage worker before releasing a verified command. A
         // thread-creation failure must not happen after user code starts.
-        let storage = Storage::start(directory, journal);
-        let pty = Pty::spawn(&manifest)?;
+        let storage = Storage::start(directory.clone(), journal);
+        let pty = match Pty::spawn(&manifest) {
+            Ok(pty) => pty,
+            Err(error) => {
+                // Pty::spawn has no fallible work after gate admission. This
+                // branch proves user code never ran, unlike a missing status,
+                // a timeout in the engine, or an unexpectedly dead keeper.
+                // Keep discovery and journal evidence; restore as a failed
+                // terminal, never silently skip it or relaunch its command.
+                let message = format!("Terminal startup aborted: {error:#}");
+                let at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis() as u64;
+                storage
+                    .append(
+                        RecordData::Output {
+                            data: format!("{message}\r\n"),
+                        },
+                        at,
+                    )
+                    .await?;
+                let exit = storage
+                    .append(RecordData::Exit { exit_code: 1 }, at)
+                    .await?;
+                atomic_json(
+                    &directory,
+                    "status.json",
+                    &Status {
+                        version: 1,
+                        owner_pid: std::process::id(),
+                        pid: 0,
+                        process: manifest.argv[0].clone(),
+                        cols: manifest.cols,
+                        rows: manifest.rows,
+                        sequence: exit.sequence,
+                        processed_sequence: 0,
+                        exit_code: Some(1),
+                        error: Some(message),
+                        incomplete: false,
+                        startup_aborted: true,
+                    },
+                )?;
+                return Err(error);
+            }
+        };
         let token = manifest.token.clone();
         let owner = Handle::start(manifest, pty, storage);
         server::serve(listener, token, owner).await
