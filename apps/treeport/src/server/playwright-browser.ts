@@ -43,7 +43,7 @@ export interface PlaywrightBrowserCallbacks {
 
 export interface BrowserInstallStatus {
   installed: boolean
-  executablePath: string
+  executablePath: string | null
   playwrightVersion: string
   browserRevision: string
   channel: 'chromium' | 'chrome'
@@ -109,6 +109,12 @@ export class PlaywrightBrowserHost {
         await fs.chmod(this.profilePath, 0o700)
         const { chromium } = await import('playwright')
         const runtime = await browserRuntime()
+        if (runtime.launchError || !runtime.executablePath) {
+          throw new Error(
+            runtime.launchError ?? 'Browser executable is unavailable.'
+          )
+        }
+
         await fs.rm(path.join(this.profilePath, 'DevToolsActivePort'), {
           force: true
         })
@@ -255,18 +261,12 @@ export class PlaywrightBrowser {
     const packageJson = await import('playwright/package.json', {
       with: { type: 'json' }
     })
-    const { executablePath, channel } = await browserRuntime()
-    let launchError: string | null = null
-    const installed = await fs.access(executablePath, fs.constants.X_OK).then(
-      () => true,
-      () => false
-    )
+    const runtime = await browserRuntime()
+    const { executablePath, channel } = runtime
+    let launchError = runtime.launchError
+    const installed = executablePath !== null && launchError === null
     let browserRevision = 'unknown'
     let launchReady = false
-    if (!installed) {
-      launchError =
-        'Install Google Chrome or Chromium on the daemon host, or set TREEPORT_BROWSER_EXECUTABLE to its absolute path.'
-    }
 
     if (installed) {
       await fs.mkdir(cachePath, { recursive: true })

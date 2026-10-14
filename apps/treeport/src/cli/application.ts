@@ -1839,7 +1839,7 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `${result.installed ? 'Browser is installed' : 'Browser is not installed'}\nLaunch ready: ${result.launchReady ? 'yes' : 'no'}\nPlaywright: ${result.playwrightVersion}\nBrowser: ${result.channel} ${result.browserRevision}\nExecutable: ${result.executablePath}${result.launchError ? `\nLaunch error: ${result.launchError}` : ''}`
+        `${result.installed ? 'Browser is installed' : 'Browser is not installed'}\nLaunch ready: ${result.launchReady ? 'yes' : 'no'}\nPlaywright: ${result.playwrightVersion}\nBrowser: ${result.channel} ${result.browserRevision}\nExecutable: ${result.executablePath ?? 'not found'}${result.launchError ? `\nLaunch error: ${result.launchError}` : ''}`
     )
   })
 
