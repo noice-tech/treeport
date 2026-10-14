@@ -29,6 +29,7 @@ import * as Fiber from 'effect/Fiber'
 import * as Stream from 'effect/Stream'
 import { DesktopRuntime } from './desktop-runtime'
 import {
+  checkActivity,
   checkHealth,
   phoneAccess,
   watchBackendHealth
@@ -1179,6 +1180,29 @@ function registerIpc(): void {
   })
   ipcMain.handle('shell:get-state', (event) =>
     isTrustedRendererEvent(event) ? shellState() : null
+  )
+  ipcMain.handle('shell:computer-activity', (event) =>
+    desktopRuntime.run(
+      Effect.gen(function* () {
+        if (!isTrustedRendererEvent(event) || !store) {
+          return []
+        }
+
+        // Only saved origins can be queried; the renderer cannot supply a URL.
+        return yield* Effect.all(
+          store.summaries().map((computer) =>
+            checkActivity(computer.origin).pipe(
+              Effect.map((activity) => ({
+                id: computer.id,
+                origin: computer.origin,
+                activity
+              }))
+            )
+          ),
+          { concurrency: 4 }
+        )
+      })
+    )
   )
   ipcMain.handle('shell:copy-phone-link', (event, value) => {
     if (

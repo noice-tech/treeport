@@ -1,3 +1,11 @@
+import type { WorkspaceActivityResponse } from '@treeport/shared'
+
+export interface ComputerActivity {
+  id: string
+  origin: string
+  activity: WorkspaceActivityResponse | null
+}
+
 export type DesktopCommand =
   | 'new-worktree'
   | 'new-terminal'
