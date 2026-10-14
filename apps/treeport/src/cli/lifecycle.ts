@@ -12,6 +12,7 @@ import {
 } from '@treeport/shared'
 import { z } from 'zod'
 import { assertLoopbackHost } from '../server/core/loopback.js'
+import { appendDaemonLog, tailDaemonLog } from '../server/daemon-log.js'
 import { humanOutput, type HumanOutput } from './output.js'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -788,15 +789,6 @@ export async function daemonUp(options: {
     recursive: true,
     mode: 0o700
   })
-  const logSize = await fs
-    .stat(paths.logPath)
-    .then((value) => value.size)
-    .catch(() => 0)
-  if (logSize > 5 * 1024 * 1024) {
-    await fs.rm(`${paths.logPath}.1`, { force: true })
-    await fs.rename(paths.logPath, `${paths.logPath}.1`)
-  }
-
   const instanceId = crypto.randomUUID()
   const childEnvironment: NodeJS.ProcessEnv = {
     ...process.env,
@@ -837,11 +829,35 @@ export async function daemonUp(options: {
     return { alreadyRunning: false, apiUrl, pid: child.pid ?? 0 }
   }
 
-  const log = fsSync.openSync(paths.logPath, 'a', 0o600)
+  // Keep loader/native stderr separately: the daemon owns normal persistence.
+  const launcherLogPath = path.join(
+    paths.dataDir,
+    'logs',
+    'daemon-launcher.log'
+  )
+  appendDaemonLog(
+    launcherLogPath,
+    `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'launcher_starting', instanceId, version: currentVersion, lifecycle: 'treeport' })}\n`
+  )
+  const log = fsSync.openSync(launcherLogPath, 'a', 0o600)
   const child = spawn(process.execPath, [serverEntry], {
-    env: childEnvironment,
+    env: { ...childEnvironment, TREEPORT_DAEMON_LOG_ONLY: '1' },
     detached: true,
-    stdio: ['ignore', log, log]
+    stdio: ['ignore', 'ignore', log]
+  })
+  let launchError: Error | null = null
+  child.once('error', (error) => {
+    launchError = error
+    appendDaemonLog(
+      launcherLogPath,
+      `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'launcher_error', instanceId, error: error.stack ?? error.message })}\n`
+    )
+  })
+  child.once('exit', (code, signal) => {
+    appendDaemonLog(
+      launcherLogPath,
+      `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'launcher_child_exit', instanceId, pid: child.pid ?? null, code, signal })}\n`
+    )
   })
   child.unref()
   fsSync.closeSync(log)
@@ -862,17 +878,14 @@ export async function daemonUp(options: {
       }
     }
 
-    if (child.pid && !processExists(child.pid)) {
+    if (launchError || (child.pid && !processExists(child.pid))) {
       break
     }
 
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
 
-  const recentLog = await fs
-    .readFile(paths.logPath, 'utf8')
-    .then((value) => value.split('\n').slice(-20).join('\n').trim())
-    .catch(() => '')
+  const recentLog = await readDaemonLogs(20).catch(() => '')
   throw new Error(
     `Treeport did not become ready at ${apiUrl}. See ${paths.logPath}.${recentLog ? `\n\n${recentLog}` : ''}`
   )
@@ -888,18 +901,76 @@ export async function daemonDown(): Promise<{ wasRunning: boolean }> {
   return { wasRunning: true }
 }
 
-export async function readDaemonLogs(lines = 100): Promise<string> {
-  const value = await fs
-    .readFile(localPaths().logPath, 'utf8')
-    .catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') {
-        return ''
-      }
+export async function resolveDaemonLogPaths(
+  targetApiUrl?: string
+): Promise<LocalPaths> {
+  const inheritedRecordPath = process.env.TREEPORT_DAEMON_RECORD?.trim()
+  const inherited = inheritedRecordPath
+    ? await readJson(
+        path.resolve(expandHome(inheritedRecordPath)),
+        daemonRecordSchema
+      )
+    : null
+  if (
+    inheritedRecordPath &&
+    !inherited &&
+    !process.env.TREEPORT_DATA_DIR?.trim() &&
+    path.resolve(expandHome(inheritedRecordPath)) !== localPaths().statePath
+  ) {
+    throw new Error(
+      `Daemon record ${inheritedRecordPath} is unavailable. Select its TREEPORT_DATA_DIR to read offline logs; refusing to show another instance's logs.`
+    )
+  }
 
-      throw error
-    })
-  return value
-    .split('\n')
-    .slice(-lines - 1)
-    .join('\n')
+  const paths = localPaths(
+    !process.env.TREEPORT_DATA_DIR?.trim() && inherited
+      ? {
+          ...process.env,
+          TREEPORT_DATA_DIR: inherited.dataDir,
+          TREEPORT_RUNTIME_DIR: path.dirname(inheritedRecordPath!)
+        }
+      : process.env
+  )
+  if (targetApiUrl) {
+    const record =
+      (await readJson(paths.lockPath, daemonRecordSchema)) ??
+      (await readJson(paths.statePath, daemonRecordSchema))
+    const localApiUrl =
+      record?.apiUrl ??
+      (await resolveLocalApiUrl({
+        ...process.env,
+        TREEPORT_API_URL: undefined,
+        TREEPORT_MANAGED_API_URL: undefined,
+        TREEPORT_DAEMON_RECORD: undefined,
+        TREEPORT_DATA_DIR: paths.dataDir
+      }))
+    if (targetApiUrl.replace(/\/$/, '') !== localApiUrl.replace(/\/$/, '')) {
+      throw new Error(
+        `Cannot read local logs for ${targetApiUrl}. Run treeport logs on that host. For offline local logs, clear TREEPORT_API_URL and select TREEPORT_DATA_DIR.`
+      )
+    }
+  }
+
+  return paths
+}
+
+export async function readDaemonLogs(
+  lines = 100,
+  targetApiUrl?: string
+): Promise<string> {
+  const paths = await resolveDaemonLogPaths(targetApiUrl)
+  const sources = [
+    paths.logPath,
+    path.join(paths.dataDir, 'logs', 'daemon-launcher.log')
+  ]
+  const sections: string[] = []
+  for (const logPath of sources) {
+    const value = await tailDaemonLog(logPath, lines)
+    if (value) {
+      sections.push(`=== ${logPath} (including retained history) ===\n${value}`)
+    }
+  }
+  return sections.length
+    ? `${sections.join('\n')}\nAn absent exit event does not prove a crash; termination may be unknown. For service-manager evidence, run treeport logs --service; also check OS logs.\n`
+    : `No daemon logs found at ${paths.logPath}. For service-manager diagnostics, run treeport logs --service.\n`
 }
