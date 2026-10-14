@@ -50,8 +50,6 @@ import { browserNavigation } from './browser-navigation'
 
 import { receiveBrowserVideo } from './browser-video'
 import { browserCursor } from './browser-cursor'
-import { BrowserContainer } from './browser-container'
-import { usesBrowserContainer } from './browser-runtime'
 
 export interface BrowserTransport {
   id: string
@@ -294,7 +292,6 @@ export class BrowserSessionManager {
     number
   >()
   private readonly unsubscribe: () => void
-  private installing: Promise<string> | null = null
   private disposing: Promise<void> | null = null
   private disposed = false
 
@@ -312,14 +309,7 @@ export class BrowserSessionManager {
   ) {
     this.cachePath = path.join(config.cacheDir, 'browser')
     this.browserHost = new PlaywrightBrowserHost(
-      // Keep the system browser profile separate from retired bundled Chromium.
-      path.join(
-        config.dataDir,
-        usesBrowserContainer()
-          ? 'browser-profile-container'
-          : 'browser-profile-chrome'
-      ),
-      this.cachePath
+      path.join(config.dataDir, 'browser-profile-chrome')
     )
     this.unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'panel.removed') {
@@ -1233,10 +1223,7 @@ export class BrowserSessionManager {
       transport.sendMessage({
         type: 'browserUnavailable',
         message: error instanceof Error ? error.message : String(error),
-        installCommand:
-          !session.localOwner && usesBrowserContainer()
-            ? 'treeport browser install'
-            : null
+        installCommand: null
       })
       // Failed launch cleanup belongs to the consumer; overload or shutdown
       // must not close a shared runtime from this attachment's Promise handler.
@@ -1599,9 +1586,7 @@ export class BrowserSessionManager {
             runtimeError instanceof Error
               ? runtimeError.message
               : String(runtimeError),
-          installCommand: usesBrowserContainer()
-            ? 'treeport browser install'
-            : null
+          installCommand: null
         })
       }
       await this.closePlaywrightRuntime(session).catch(() => undefined)
@@ -2873,28 +2858,9 @@ export class BrowserSessionManager {
   }
 
   async install(): Promise<string> {
-    if (!usesBrowserContainer()) {
-      throw new Error(
-        'Install Google Chrome on this computer. Treeport uses it directly without Docker.'
-      )
-    }
-
-    if (!this.installing) {
-      this.installing = new BrowserContainer(
-        this.browserHost.profilePath,
-        this.cachePath
-      )
-        .install()
-        .then(
-          () =>
-            'Browser image is ready. Open Browser to start it. Restart Treeport to apply updates to an already-running browser.'
-        )
-        .finally(() => {
-          this.installing = null
-        })
-    }
-
-    return this.installing
+    throw new Error(
+      'Install Google Chrome or Chromium on the daemon host, or set TREEPORT_BROWSER_EXECUTABLE to its absolute path. Treeport uses it directly without Docker.'
+    )
   }
 
   dispose(): Promise<void> {

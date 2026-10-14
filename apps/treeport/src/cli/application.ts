@@ -1815,7 +1815,7 @@ async function main(args: string[]): Promise<void> {
 
   const browserInstallCommand = browserCommand
     .command('install')
-    .description('Set up or update the Linux browser container image')
+    .description('Show native browser installation guidance')
     .option('--json', 'emit machine-readable JSON')
   browserInstallCommand.action(async () => {
     const result = await request(

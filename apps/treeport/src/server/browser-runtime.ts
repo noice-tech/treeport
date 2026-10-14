@@ -1,18 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { BROWSER_CONTAINER_IMAGE } from './browser-container'
-
-export function usesBrowserContainer(platform = process.platform): boolean {
-  return (
-    platform === 'linux' && !process.env.TREEPORT_BROWSER_EXECUTABLE?.trim()
-  )
-}
 
 // One executable resolution path for launches and diagnostics. Never silently
 // download a browser or disable its sandbox when the host is misconfigured.
 export async function browserRuntime(platform = process.platform): Promise<{
   executablePath: string
-  channel: 'chrome' | 'chromium' | 'docker'
+  channel: 'chrome' | 'chromium'
 }> {
   const configured = process.env.TREEPORT_BROWSER_EXECUTABLE?.trim()
   if (configured) {
@@ -20,11 +13,10 @@ export async function browserRuntime(platform = process.platform): Promise<{
       throw new Error('TREEPORT_BROWSER_EXECUTABLE must be an absolute path.')
     }
 
-    return { executablePath: configured, channel: 'chromium' }
-  }
-
-  if (usesBrowserContainer(platform)) {
-    return { executablePath: BROWSER_CONTAINER_IMAGE, channel: 'docker' }
+    return {
+      executablePath: configured,
+      channel: configured.includes('chromium') ? 'chromium' : 'chrome'
+    }
   }
 
   const candidates =
@@ -33,6 +25,7 @@ export async function browserRuntime(platform = process.platform): Promise<{
       : [
           '/opt/google/chrome/chrome',
           '/usr/bin/google-chrome-stable',
+          '/usr/bin/google-chrome',
           '/usr/bin/chromium',
           '/usr/bin/chromium-browser'
         ]
