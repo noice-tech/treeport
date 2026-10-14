@@ -184,10 +184,8 @@ export function BrowserPanelWorkspace({
   const [findOpen, setFindOpen] = useState(false)
   const [findValue, setFindValue] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [installingBrowser, setInstallingBrowser] = useState(false)
   const [failure, setFailure] = useState<{
     message: string
-    installCommand: string | null
   } | null>(null)
   const [listeners, setListeners] = useState<WorktreeListenerDiscovery | null>(
     null
@@ -431,13 +429,7 @@ export function BrowserPanelWorkspace({
           setState(null)
         }
 
-        setFailure({
-          message: message.message,
-          installCommand:
-            message.type === 'browserUnavailable'
-              ? message.installCommand
-              : null
-        })
+        setFailure({ message: message.message })
         return
       }
 
@@ -485,7 +477,7 @@ export function BrowserPanelWorkspace({
       send,
       (message, fatal) => {
         if (fatal) {
-          setFailure({ message, installCommand: null })
+          setFailure({ message })
         } else {
           setError(message)
         }
@@ -1527,7 +1519,7 @@ export function BrowserPanelWorkspace({
         >
           {localBrowser
             ? 'File paths refer to this desktop computer, not the connected server.'
-            : 'File paths refer to the hosted browser’s filesystem, not your device. The default Linux browser container does not mount project files.'}
+            : 'File paths refer to the daemon host’s filesystem, not your device.'}
         </p>
       ) : null}
       {error ? (
@@ -2032,48 +2024,10 @@ export function BrowserPanelWorkspace({
               >
                 <strong className="text-zinc-50">Browser unavailable</strong>
                 <span>{failure.message}</span>
-                {failure.installCommand ? (
-                  <span>
-                    Setup downloads and builds the browser container. This can
-                    take several minutes.
-                  </span>
-                ) : null}
                 <div className="flex items-center gap-2">
-                  {failure.installCommand ? (
-                    <Button
-                      type="button"
-                      disabled={installingBrowser}
-                      onClick={() => {
-                        setInstallingBrowser(true)
-                        void parseResponse(rpc.api.browser.install.$post())
-                          .then(() =>
-                            setConnectionRevision((value) => value + 1)
-                          )
-                          .catch((cause) =>
-                            setFailure((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    message:
-                                      cause instanceof Error
-                                        ? cause.message
-                                        : 'Could not set up the browser.'
-                                  }
-                                : null
-                            )
-                          )
-                          .finally(() => setInstallingBrowser(false))
-                      }}
-                    >
-                      {installingBrowser
-                        ? 'Setting up browser…'
-                        : 'Set up browser'}
-                    </Button>
-                  ) : null}
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={installingBrowser}
                     onClick={() => {
                       setFailure(null)
                       setConnectionRevision((value) => value + 1)

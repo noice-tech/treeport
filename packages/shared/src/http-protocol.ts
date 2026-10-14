@@ -635,7 +635,7 @@ export const browserInstallStatusSchema = Schema.Struct({
   executablePath: Schema.String,
   playwrightVersion: Schema.String,
   browserRevision: Schema.String,
-  channel: Schema.Literal('chromium', 'chrome', 'docker'),
+  channel: Schema.Literal('chromium', 'chrome'),
   launchReady: Schema.Boolean,
   launchError: nullableStringSchema
 })
