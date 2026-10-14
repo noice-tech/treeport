@@ -126,6 +126,7 @@ const seedComputerUrl =
 
 let mainWindow: BrowserWindow | null = null
 let workspaceView: WebContentsView | null = null
+let shellView: WebContentsView | null = null
 let shellOverlayOpen = false
 let windowState: WindowState | null = null
 let store: ComputerStore | null = null
@@ -209,7 +210,7 @@ function shellState(): DesktopShellState {
 }
 
 function layoutWorkspace(): void {
-  if (!mainWindow || !workspaceView) {
+  if (!mainWindow || !workspaceView || !shellView) {
     return
   }
 
@@ -221,7 +222,14 @@ function layoutWorkspace(): void {
     width,
     height: Math.max(0, height - top)
   })
-  workspaceView.setVisible(connection.status === 'ready' && !shellOverlayOpen)
+  shellView.setBounds({ x: 0, y: 0, width, height })
+  workspaceView.setVisible(connection.status === 'ready')
+  // Native child views stack above one another regardless of CSS z-index.
+  // Raise the transparent shell for menus/dialogs, not hide the live workspace.
+  const topView = shellOverlayOpen ? shellView : workspaceView
+  if (mainWindow.contentView.children.at(-1) !== topView) {
+    mainWindow.contentView.addChildView(topView)
+  }
 }
 
 function broadcastState(): void {
@@ -238,7 +246,7 @@ function broadcastState(): void {
     forwardItem.enabled = state.navigation.canGoForward
   }
 
-  const renderer = mainWindow?.webContents
+  const renderer = shellView?.webContents
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('shell:state', state)
   }
@@ -262,8 +270,8 @@ function isTrustedShellEvent(
   event: IpcMainEvent | IpcMainInvokeEvent
 ): boolean {
   return Boolean(
-    mainWindow &&
-    event.sender === mainWindow.webContents &&
+    shellView &&
+    event.sender === shellView.webContents &&
     event.senderFrame === event.sender.mainFrame &&
     event.senderFrame.url.startsWith(PRIVATE_RENDERER_URL)
   )
@@ -275,7 +283,7 @@ function selectedOrigin(): string | null {
 
 function setTerminalSelectionActive(active: boolean): void {
   terminalSelectionActive = active
-  const renderer = mainWindow?.webContents
+  const renderer = shellView?.webContents
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('terminal-selection:active', active)
   }
@@ -461,7 +469,7 @@ function installRendererSecurity(renderer: WebContents): void {
   ) => {
     const origin = selectedOrigin()
     if (
-      (renderer === mainWindow?.webContents &&
+      (renderer === shellView?.webContents &&
         targetUrl.startsWith(PRIVATE_RENDERER_URL)) ||
       (renderer === workspaceView?.webContents &&
         origin &&
@@ -1048,8 +1056,14 @@ function createWindow(url?: string): BrowserWindow {
   })
   workspaceView = workspace
   workspace.setBackgroundColor('#09090b')
+  const shell = new WebContentsView({
+    webPreferences: { ...rendererWindowPreferences(), webviewTag: false }
+  })
+  shellView = shell
+  shell.setBackgroundColor('#00000000')
+  window.contentView.addChildView(shell)
   window.contentView.addChildView(workspace)
-  installRendererSecurity(window.webContents)
+  installRendererSecurity(shell.webContents)
   installRendererSecurity(workspace.webContents)
   window.on('resize', layoutWorkspace)
   workspace.webContents.on('page-title-updated', (_event, title) =>
@@ -1093,6 +1107,11 @@ function createWindow(url?: string): BrowserWindow {
     if (mainWindow === window) {
       mainWindow = null
       workspaceView = null
+      shellView = null
+      if (!shell.webContents.isDestroyed()) {
+        shell.webContents.close()
+      }
+
       if (!workspace.webContents.isDestroyed()) {
         workspace.webContents.close()
       }
@@ -1104,12 +1123,12 @@ function createWindow(url?: string): BrowserWindow {
       desktopRuntime.fork(runtime.close)
     }
   })
-  window.webContents.on('did-finish-load', () => {
+  shell.webContents.on('did-finish-load', () => {
     shellOverlayOpen = false
     broadcastState()
   })
   runtime.fork(
-    loadRenderer(window.webContents, PRIVATE_RENDERER_URL).pipe(Effect.asVoid)
+    loadRenderer(shell.webContents, PRIVATE_RENDERER_URL).pipe(Effect.asVoid)
   )
   void connectSelected(url ? { url } : {})
   return window
