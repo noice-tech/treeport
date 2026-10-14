@@ -54,7 +54,7 @@ async function readRecord() {
 
 while (true) {
   const record = await readRecord().catch(error => {
-    if (reported !== error.message) console.error(error.message)
+    if (reported !== error.message) console.error(JSON.stringify({ timestamp: new Date().toISOString(), event: 'supervisor_record_error', pid: process.pid, error: error.stack ?? error.message }))
     reported = error.message
     return null
   })
@@ -75,8 +75,15 @@ while (true) {
       if (child === launched) child = null
       retryAt = Date.now() + 1000
     }
-    launched.once('error', error => { console.error(error.message); finished() })
-    launched.once('exit', finished)
+    console.error(JSON.stringify({ timestamp: new Date().toISOString(), event: 'supervisor_child_starting', pid: process.pid, childPid: launched.pid ?? null, entrypoint: record.cliEntrypoint }))
+    launched.once('error', error => {
+      console.error(JSON.stringify({ timestamp: new Date().toISOString(), event: 'supervisor_child_error', pid: process.pid, error: error.stack ?? error.message }))
+      finished()
+    })
+    launched.once('exit', (code, signal) => {
+      console.error(JSON.stringify({ timestamp: new Date().toISOString(), event: 'supervisor_child_exit', pid: process.pid, childPid: launched.pid ?? null, code, signal, stopRequested: stopping === launched, restart: !exiting && stopping !== launched }))
+      finished()
+    })
     await log.close()
   }
   if (record) {

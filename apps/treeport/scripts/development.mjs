@@ -12,6 +12,8 @@ const child = spawn(
     env: {
       ...process.env,
       TREEPORT_DAEMON_LIFECYCLE: 'external',
+      TREEPORT_INSTALLATION_METHOD: 'development',
+      TREEPORT_APP_VERSION: 'development',
       TREEPORT_WEB_DEVELOPMENT: serverOnly
         ? process.env.TREEPORT_WEB_DEVELOPMENT
         : '1',
