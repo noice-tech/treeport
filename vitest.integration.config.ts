@@ -7,11 +7,11 @@ for (const name of Object.keys(process.env)) {
   }
 }
 
-// PTY and storage fixtures are resource-heavy. Run files serially alongside
-// the unit and static gate checks; tests still exercise internal concurrency.
+// Bound PTY/storage pressure while letting independent files overlap their
+// process and timeout waits. Tests within each file remain sequential.
 export default defineConfig({
   test: {
-    maxWorkers: 1,
+    maxWorkers: 2,
     include: [
       'apps/**/*.integration.test.ts',
       'scripts/**/*.integration.test.mjs'
