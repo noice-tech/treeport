@@ -152,15 +152,21 @@ impl Journal {
         // after publication has an explicit retry state; no duplicate archive
         // charges and no truncation of a reader's captured active inode.
         let replacement = self.directory.join("journal-next.tmp");
-        open_regular(
+        // A failed pre-publication attempt can leave this temporary behind.
+        // Create a fresh empty inode, rather than relying on a durable truncate
+        // of that old inode. As in Journal::new, the directory sync publishes
+        // the empty file; its first append syncs data before advancing a fence.
+        // A separate empty-file sync adds a device-wide barrier on Darwin for
+        // every small-quota checkpoint, without protecting any output.
+        match fs::remove_file(&replacement) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        drop(open_regular(
             &replacement,
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(true),
-        )?
-        .sync_all()?;
+            OpenOptions::new().read(true).write(true).create_new(true),
+        )?);
         fs::rename(temporary, &checkpoint)?;
         self.checkpoints.push((checkpoint, self.sequence));
         self.archive_bytes += bytes;
@@ -444,6 +450,11 @@ mod tests {
             },
             1,
         )?;
+        // A stale pre-publication replacement must be unlinked, not truncated:
+        // keep its inode open to prove that rotation creates a new empty file.
+        let replacement = root.path().join("journal-next.tmp");
+        fs::write(&replacement, "uncommitted stale contents")?;
+        let mut stale = File::open(&replacement)?;
         fs::create_dir(root.path().join("retired-1.jsonl"))?;
         assert!(journal
             .append(
@@ -453,6 +464,10 @@ mod tests {
                 2
             )
             .is_err());
+        assert_eq!(fs::read(&replacement)?, b"");
+        let mut retained = String::new();
+        stale.read_to_string(&mut retained)?;
+        assert_eq!(retained, "uncommitted stale contents");
         let mut snapshot = journal.snapshot(0)?;
         assert_eq!(snapshot.fence, 1);
         assert_eq!(snapshot.next_record()?.unwrap().sequence, 1);
