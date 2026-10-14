@@ -1,5 +1,6 @@
 import type { PhoneAccessResponse } from '@treeport/shared'
 import type {
+  ComputerActivity,
   ComputerMutationResult,
   ComputerUpdate,
   DesktopNavigationDirection,
@@ -9,6 +10,7 @@ import type {
 declare global {
   interface Window {
     readonly treeportShell: Readonly<{
+      computerActivity: () => Promise<ComputerActivity[]>
       getState: () => Promise<DesktopShellState>
       onState: (listener: (state: DesktopShellState) => void) => () => void
       onTerminalSelectionActive: (

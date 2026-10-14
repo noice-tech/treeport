@@ -7,7 +7,7 @@ import {
   type ReactNode
 } from 'react'
 
-function cn(...values: Array<string | undefined | false>): string {
+export function cn(...values: Array<string | undefined | false>): string {
   return values.filter(Boolean).join(' ')
 }
 

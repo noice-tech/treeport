@@ -11,6 +11,7 @@ import {
   type PhoneAccessResponse
 } from '@treeport/shared'
 import type {
+  ComputerActivity,
   ComputerMutationResult,
   ComputerUpdate,
   DesktopBrowserBridgeDescriptor,
@@ -317,6 +318,9 @@ const desktopBridge = Object.freeze({
 })
 
 const shellBridge = Object.freeze({
+  computerActivity(): Promise<ComputerActivity[]> {
+    return ipcRenderer.invoke('shell:computer-activity')
+  },
   getState(): Promise<DesktopShellState> {
     return ipcRenderer.invoke('shell:get-state')
   },

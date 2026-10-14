@@ -582,6 +582,14 @@ const packageOperationResultSchema = Schema.Struct({
   reason: Schema.optional(Schema.String)
 })
 
+export const workspaceActivityResponseSchema = Schema.Struct({
+  working: Schema.Int.pipe(Schema.nonNegative()),
+  needsAttention: Schema.Int.pipe(Schema.nonNegative())
+})
+export type WorkspaceActivityResponse = Schema.Schema.Type<
+  typeof workspaceActivityResponseSchema
+>
+
 export const phoneAccessResponseSchema = Schema.Struct({
   url: nullableStringSchema,
   error: nullableStringSchema,

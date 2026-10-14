@@ -2,6 +2,7 @@ import {
   decodeUnknownOrNull,
   desktopHealthResponseSchema,
   phoneAccessResponseSchema,
+  workspaceActivityResponseSchema,
   type PhoneAccessResponse
 } from '@treeport/shared'
 import * as Clock from 'effect/Clock'
@@ -54,6 +55,24 @@ export const phoneAccess = (origin: string) =>
         setupCommand: null
       })
     )
+  )
+
+export const checkActivity = (origin: string) =>
+  Effect.tryPromise(async (signal) => {
+    const response = await fetch(new URL('/api/activity', origin), {
+      redirect: 'error',
+      signal
+    })
+    return response.ok
+      ? decodeUnknownOrNull(
+          workspaceActivityResponseSchema,
+          await response.json()
+        )
+      : null
+  }).pipe(
+    Effect.timeoutOption('1500 millis'),
+    Effect.map(Option.getOrNull),
+    Effect.catchAll(() => Effect.succeed(null))
   )
 
 export const checkHealth = (origin: string) =>
