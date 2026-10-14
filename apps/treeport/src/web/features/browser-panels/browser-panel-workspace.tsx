@@ -110,6 +110,7 @@ export function BrowserPanelWorkspace({
   inputBlocked,
   permissionPrompt,
   onLoadingChange,
+  onFaviconChange,
   onFocusSurface
 }: {
   panel: BrowserPanel
@@ -118,6 +119,7 @@ export function BrowserPanelWorkspace({
   inputBlocked: boolean
   permissionPrompt: TreeportBrowserPermissionPrompt | null
   onLoadingChange: (panelId: string, loading: boolean) => void
+  onFaviconChange: (panelId: string, faviconUrl: string | null) => void
   onFocusSurface: () => void
 }) {
   const sectionRef = useRef<HTMLElement>(null)
@@ -370,6 +372,7 @@ export function BrowserPanelWorkspace({
         }
 
         onLoadingChange(panel.id, message.state.loading)
+        onFaviconChange(panel.id, message.state.faviconUrl)
         if (!addressDirtyRef.current && message.state.url !== previousUrl) {
           setError(null)
         }
@@ -427,6 +430,7 @@ export function BrowserPanelWorkspace({
         if (message.type === 'browserUnavailable') {
           stateRef.current = null
           setState(null)
+          onFaviconChange(panel.id, null)
         }
 
         setFailure({ message: message.message })
@@ -436,7 +440,7 @@ export function BrowserPanelWorkspace({
       pendingNavigationRef.current = null
       setError(message.type === 'closed' ? message.reason : message.message)
     },
-    [onLoadingChange, panel.id]
+    [onLoadingChange, onFaviconChange, panel.id]
   )
 
   useEffect(() => {

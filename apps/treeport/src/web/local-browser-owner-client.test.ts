@@ -81,6 +81,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
     state: {
       url: 'https://example.com/',
       title: 'Example',
+      faviconUrl: null,
       loading: true,
       canGoBack: false,
       canGoForward: false,

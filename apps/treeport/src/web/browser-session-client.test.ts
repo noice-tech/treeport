@@ -101,6 +101,7 @@ it('preserves command and frame contracts and reloads after reconnecting', async
     state: {
       url: 'about:blank',
       title: '',
+      faviconUrl: null,
       loading: false,
       canGoBack: false,
       canGoForward: false,

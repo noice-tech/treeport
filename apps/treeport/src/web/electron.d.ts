@@ -29,6 +29,7 @@ interface TreeportBrowserWebview extends HTMLElement {
   getWebContentsId(): number
   getURL(): string
   getTitle(): string
+  executeJavaScript<T>(code: string): Promise<T>
   isLoading(): boolean
   canGoBack(): boolean
   canGoForward(): boolean
