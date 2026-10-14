@@ -31,11 +31,12 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     closePage: vi.fn(async () => undefined)
   })
   const states: BrowserRuntimeState[] = []
+  const navigationError = vi.fn()
   const browser = new PlaywrightBrowser(host, '/unused', {
     state: (state) => states.push(state),
     frame: () => undefined,
     popup: () => undefined,
-    navigationError: () => undefined,
+    navigationError,
     crashed: () => undefined
   })
   onTestFinished(() => browser.close())
@@ -48,10 +49,17 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     isNavigationRequest: () => true,
     frame: () => frame
   })
+  page.emit('requestfailed', {
+    isNavigationRequest: () => true,
+    frame: () => frame,
+    failure: () => ({ errorText: 'net::ERR_CONNECTION_REFUSED' })
+  })
+  expect(browser.state.loading).toBe(false)
+  expect(navigationError).not.toHaveBeenCalled()
   currentUrl = 'chrome-error://chromewebdata/'
   page.emit('load')
   await vi.waitFor(() => {
-    expect(states).toHaveLength(4)
+    expect(states).toHaveLength(5)
     expect(browser.state.loading).toBe(false)
     expect(browser.state.url).toBe(attemptedUrl)
   })

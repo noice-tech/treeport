@@ -1226,7 +1226,30 @@ export function installBrowserWebviewPolicy(options: {
             yield* Effect.tryPromise({
               try: () => entry.guest.loadURL(command.url),
               catch: (cause) => cause
-            })
+            }).pipe(
+              Effect.catchAll((cause) =>
+                Effect.gen(function* () {
+                  const error: NodeJS.ErrnoException =
+                    cause instanceof Error ? cause : new Error(String(cause))
+                  if (!error.code?.startsWith('ERR_')) {
+                    return yield* Effect.fail(cause)
+                  }
+
+                  // did-fail-load already presents these failures inside the guest.
+                  // Keep command errors when no error document is visible.
+                  const errorPage = yield* Effect.tryPromise(() =>
+                    entry.guest.executeJavaScript(
+                      "window.location.href === 'chrome-error://chromewebdata/'"
+                    )
+                  ).pipe(Effect.orElseSucceed(() => false))
+                  if (errorPage === true) {
+                    return
+                  }
+
+                  return yield* Effect.fail(cause)
+                })
+              )
+            )
           } else if (
             command.type === 'back' &&
             entry.guest.navigationHistory.canGoBack()

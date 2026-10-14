@@ -437,9 +437,8 @@ export class PlaywrightBrowser {
         request.frame() === page.mainFrame()
       ) {
         this.updateState({ loading: false })
-        this.callbacks.navigationError(
-          request.failure()?.errorText ?? 'Navigation failed.'
-        )
+        // Chromium presents failed document requests in the page itself.
+        // Command failures without a visible error page are reported separately.
       }
     })
     page.on('framenavigated', (frame) => {
@@ -615,8 +614,11 @@ export class PlaywrightBrowser {
 
     if (message.type === 'navigate') {
       this.updateState({ loading: true })
-      await browserNavigation(page, () =>
-        page.goto(message.url, { waitUntil: 'commit' })
+      await browserNavigation(
+        page,
+        () => page.goto(message.url, { waitUntil: 'commit' }),
+        null,
+        'page'
       ).catch((error) => {
         this.updateState({ loading: false })
         throw error
@@ -626,14 +628,22 @@ export class PlaywrightBrowser {
     }
 
     if (message.type === 'back') {
-      await browserNavigation(page, () => page.goBack({ waitUntil: 'commit' }))
+      await browserNavigation(
+        page,
+        () => page.goBack({ waitUntil: 'commit' }),
+        null,
+        'page'
+      )
       await this.refreshPageState()
       return
     }
 
     if (message.type === 'forward') {
-      await browserNavigation(page, () =>
-        page.goForward({ waitUntil: 'commit' })
+      await browserNavigation(
+        page,
+        () => page.goForward({ waitUntil: 'commit' }),
+        null,
+        'page'
       )
       await this.refreshPageState()
       return
@@ -641,8 +651,11 @@ export class PlaywrightBrowser {
 
     if (message.type === 'reload') {
       this.updateState({ loading: true })
-      await browserNavigation(page, () =>
-        page.reload({ waitUntil: 'commit' })
+      await browserNavigation(
+        page,
+        () => page.reload({ waitUntil: 'commit' }),
+        null,
+        'page'
       ).catch((error) => {
         this.updateState({ loading: false })
         throw error
