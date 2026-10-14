@@ -11,7 +11,9 @@ import type {
 import {
   browserObservedUrlSchema,
   decodeUnknownOrNull,
-  normalizeBrowserTitle
+  normalizeBrowserTitle,
+  normalizeBrowserFaviconUrl,
+  readBrowserPageMetadata
 } from '@treeport/shared'
 import type {
   BrowserAgentCommand,
@@ -283,12 +285,14 @@ export class PlaywrightBrowser {
   private readonly requests: string[] = []
   private historyRevision = 0
   private titleTimer: NodeJS.Timeout | null = null
+  private faviconSource: string | null = null
   private stateValue: Omit<
     BrowserSessionState,
     'controlled' | 'hasController' | 'controller' | 'agentActive'
   > = {
     url: 'about:blank',
     title: '',
+    faviconUrl: null,
     loading: false,
     canGoBack: false,
     canGoForward: false,
@@ -405,6 +409,10 @@ export class PlaywrightBrowser {
     await page.setViewportSize(this.stateValue.viewport)
     const cdp = await context.newCDPSession(page)
     this.cdp = cdp
+    // Match Treeport's dark chrome, including sites that switch favicon URLs in JS.
+    await cdp.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: 'dark' }]
+    })
     this.video = new PlaywrightBrowserVideo(
       context,
       page,
@@ -486,7 +494,12 @@ export class PlaywrightBrowser {
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
       ) {
-        this.updateState({ url: request.url(), loading: true })
+        this.faviconSource = null
+        this.updateState({
+          url: request.url(),
+          loading: true,
+          faviconUrl: null
+        })
       }
     })
     page.on('requestfailed', (request) => {
@@ -525,10 +538,47 @@ export class PlaywrightBrowser {
     await this.cdp.send('Page.enable')
     this.titleTimer = setInterval(() => {
       void page
-        .title()
-        .then((title) => {
+        .evaluate(readBrowserPageMetadata)
+        .then(async ({ title, faviconUrl }) => {
           if (normalizeBrowserTitle(title) !== this.stateValue.title) {
             this.updateState({ title })
+          }
+
+          const source = normalizeBrowserFaviconUrl(faviconUrl)
+          if (source === this.faviconSource) {
+            return
+          }
+
+          this.faviconSource = source
+          this.updateState({ faviconUrl: null })
+          if (!source) {
+            return
+          }
+
+          // Hosted icons travel as data, never fetching on the viewer's network.
+          let icon = source.startsWith('data:') ? source : null
+          if (!icon) {
+            const response = await this.context?.request
+              .get(source, { timeout: 3_000 })
+              .catch(() => null)
+            if (response) {
+              const type = response.headers()['content-type']?.split(';')[0]
+              const body =
+                response.ok() && type?.startsWith('image/')
+                  ? await response.body().catch(() => null)
+                  : null
+              if (body && body.length <= 256 * 1024) {
+                icon = normalizeBrowserFaviconUrl(
+                  `data:${type};base64,${body.toString('base64')}`
+                )
+              }
+
+              await response.dispose()
+            }
+          }
+
+          if (this.faviconSource === source && !page.isClosed()) {
+            this.updateState({ faviconUrl: icon })
           }
         })
         .catch(() => undefined)
