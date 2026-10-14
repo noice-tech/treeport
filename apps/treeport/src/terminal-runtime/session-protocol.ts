@@ -51,19 +51,31 @@ export const sessionManifestSchema = z.object({
 })
 export type SessionManifest = z.infer<typeof sessionManifestSchema>
 
-export const sessionStatusSchema = z.object({
-  version: z.literal(1),
-  ownerPid: z.int().positive(),
-  pid: z.int().positive(),
-  process: z.string(),
-  cols: z.int().positive(),
-  rows: z.int().positive(),
-  sequence: z.int().nonnegative(),
-  processedSequence: z.int().nonnegative(),
-  exitCode: z.int().nullable(),
-  error: z.string().nullable(),
-  incomplete: z.boolean()
-})
+export const sessionStatusSchema = z
+  .object({
+    version: z.literal(1),
+    ownerPid: z.int().positive(),
+    pid: z.int().nonnegative(),
+    process: z.string(),
+    cols: z.int().positive(),
+    rows: z.int().positive(),
+    sequence: z.int().nonnegative(),
+    processedSequence: z.int().nonnegative(),
+    exitCode: z.int().nullable(),
+    error: z.string().nullable(),
+    incomplete: z.boolean(),
+    startupAborted: z.boolean().default(false)
+  })
+  .refine(
+    (status) =>
+      status.startupAborted
+        ? status.pid === 0 &&
+          status.exitCode === 1 &&
+          !status.incomplete &&
+          status.error !== null
+        : status.pid > 0,
+    'Only a proven aborted startup may have no command PID'
+  )
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
 
 export const sessionRequestSchema = z.discriminatedUnion('method', [

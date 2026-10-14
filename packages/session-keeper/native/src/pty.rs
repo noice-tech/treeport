@@ -134,6 +134,8 @@ impl Pty {
         };
         // All fallible descriptor, worker and ownership setup is complete.
         // Drop denies the child on any error before this one-byte admission.
+        // The keeper persists Err as proof that startup was aborted: NEVER add
+        // fallible work after allow() or return Err once user code may run.
         held.gate.allow()?;
         Ok(result)
     }
