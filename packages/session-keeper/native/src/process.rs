@@ -146,7 +146,15 @@ pub fn identity(pid: u32) -> Result<Option<Identity>> {
     let path = format!("/proc/{pid}/stat");
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        // A process reaped after open but before read makes procfs return
+        // ESRCH rather than ENOENT. Both establish absence; permission and
+        // other I/O failures must still refuse ownership discovery.
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            return Ok(None);
+        }
         Err(error) => return Err(error).context("Cannot read process birth identity"),
     };
     parse_stat(&bytes).map(Some)

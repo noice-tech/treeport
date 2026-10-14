@@ -135,6 +135,10 @@ pub struct Status {
     pub exit_code: Option<i32>,
     pub error: Option<String>,
     pub incomplete: bool,
+    // Only a failed Pty::spawn, which never released command admission, may
+    // publish this proof. Missing status or keeper death is not equivalent.
+    #[serde(default)]
+    pub startup_aborted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

@@ -43,6 +43,7 @@ impl Handle {
             exit_code: None,
             error: None,
             incomplete: false,
+            startup_aborted: false,
         };
         let (published, receiver) = watch::channel(status.clone());
         let (commands, incoming) = mpsc::channel(16);

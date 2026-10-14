@@ -125,6 +125,9 @@ export class PersistentSession implements EnginePty {
   get exitCode(): number | null {
     return this.status?.exitCode ?? null
   }
+  get startupAborted(): boolean {
+    return this.status?.startupAborted ?? false
+  }
 
   static async create(options: {
     directory: string
@@ -249,8 +252,12 @@ export class PersistentSession implements EnginePty {
           return null
         })
       if (published !== null) {
-        sessionStatusSchema.parse(JSON.parse(published))
-        return PersistentSession.open(options.directory)
+        const status = sessionStatusSchema.parse(JSON.parse(published))
+        // An aborted owner publishes its proof before exiting. Wait until it
+        // is gone so connect cannot attach to its not-yet-closed listener.
+        if (!status.startupAborted || !processExists(status.ownerPid)) {
+          return PersistentSession.open(options.directory)
+        }
       }
 
       await new Promise((resolve) => setTimeout(resolve, 25))
@@ -377,7 +384,19 @@ export class PersistentSession implements EnginePty {
 
       const status = sessionStatusSchema.parse(
         JSON.parse(
-          await fs.readFile(path.join(this.directory, 'status.json'), 'utf8')
+          await fs
+            .readFile(path.join(this.directory, 'status.json'), 'utf8')
+            .catch((cause) => {
+              // SAFETY: Node filesystem failures expose errno codes.
+              if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
+                throw new Error(
+                  `Session status is missing; startup outcome is unknown. Retain ${this.directory} and verify keeper ownership before recovery.`,
+                  { cause }
+                )
+              }
+
+              throw cause
+            })
         )
       )
       if (processExists(status.ownerPid)) {
@@ -749,7 +768,7 @@ export class PersistentSession implements EnginePty {
 
       // An orphan can ignore SIGHUP. A cached PID is not authority to signal it
       // (it may also have been reused); retain the evidence and block cleanup.
-      if (processExists(this.status.pid)) {
+      if (!this.status.startupAborted && processExists(this.status.pid)) {
         throw new Error(
           'Session keeper is gone but its recorded command still exists; identify ownership before closing',
           { cause: error }
@@ -777,7 +796,8 @@ export class PersistentSession implements EnginePty {
           manifest.token !== this.manifest.token ||
           manifest.socketPath !== sessionSocketPath(this.directory) ||
           status.ownerPid !== this.status.ownerPid ||
-          status.pid !== this.status.pid
+          status.pid !== this.status.pid ||
+          status.startupAborted !== this.status.startupAborted
         ) {
           throw error
         }
