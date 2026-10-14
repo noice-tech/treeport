@@ -1475,12 +1475,32 @@ function WorkspaceApp() {
       const modifierPressed = usesMacKeyboard
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
-      if (
-        event.isComposing ||
-        !event.altKey ||
-        event.shiftKey ||
-        !modifierPressed
-      ) {
+      if (event.isComposing || event.shiftKey || !modifierPressed) {
+        return
+      }
+
+      if (!event.altKey) {
+        if (
+          event.key.toLowerCase() !== 't' ||
+          workspaceActionsBlocked ||
+          !toolPaneOpen ||
+          focusedSurfaceRef.current !== 'tool' ||
+          !selectedWorktree
+        ) {
+          return
+        }
+
+        event.preventDefault()
+        event.stopPropagation()
+        if (
+          !event.repeat &&
+          !toolLaunchDisabled &&
+          !createBrowserPanel.isPending
+        ) {
+          dismissToolPicker()
+          createBrowserPanel.mutate({ worktree: selectedWorktree })
+        }
+
         return
       }
 
@@ -1521,10 +1541,15 @@ function WorkspaceApp() {
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
   }, [
+    createBrowserPanel.isPending,
+    createBrowserPanel.mutate,
     createSplitTerminal,
     desktopBridge,
+    dismissToolPicker,
     selectedWorktree,
     toggleToolPane,
+    toolLaunchDisabled,
+    toolPaneOpen,
     workspaceActionsBlocked
   ])
 
@@ -1609,6 +1634,7 @@ function WorkspaceApp() {
       } else if (command === 'new-terminal') {
         if (toolSurfaceHasFocus) {
           if (!toolLaunchDisabled && !createBrowserPanel.isPending) {
+            dismissToolPicker()
             createBrowserPanel.mutate({ worktree: selectedWorktree })
           }
         } else {
@@ -1647,6 +1673,7 @@ function WorkspaceApp() {
     selectedWorktree,
     createBrowserPanel.isPending,
     createBrowserPanel.mutate,
+    dismissToolPicker,
     selectFocusedSurfaceByIndex,
     selectWorktree,
     toggleToolPane,
