@@ -5,6 +5,7 @@
     "moduleResolution": "Bundler",
     "composite": true,
     "emitDeclarationOnly": true,
+    "allowImportingTsExtensions": true,
     "outDir": "dist-types/node",
     "tsBuildInfoFile": "dist-types/node.tsbuildinfo"
   },

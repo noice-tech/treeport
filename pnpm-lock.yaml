@@ -239,6 +239,9 @@ importers:
       '@types/node':
         specifier: ^24.10.9
         version: 24.13.3
+      eslint-plugin-playwright:
+        specifier: ^2.12.1
+        version: 2.12.1(eslint@10.7.0(jiti@2.7.0)(supports-color@10.2.2))
       eslint-plugin-react-you-might-not-need-an-effect:
         specifier: ^1.0.1
         version: 1.0.1(eslint@10.7.0(jiti@2.7.0)(supports-color@10.2.2))
@@ -5834,6 +5837,12 @@ packages:
     resolution: {integrity: sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==}
     engines: {node: '>=12'}
 
+  eslint-plugin-playwright@2.12.1:
+    resolution: {integrity: sha512-JhavNuYBIq7SE/Zg9Esf9RGHkXoDbzrEKS383cowzMyvZ4JMbmdNCN6CoW+RU1Cjzwcoea1tou0je58uXmT/9A==}
+    engines: {node: '>=16.9.0'}
+    peerDependencies:
+      eslint: '>=8.40.0'
+
   eslint-plugin-react-you-might-not-need-an-effect@1.0.1:
     resolution: {integrity: sha512-oOhQTYhor88Xp8RVytq25tvBfiAjU0r9SCDC51Qop+3Wg5BR1xGMAkM+/dV4MZbcMhdaU1L9bkv6LC95JmiTig==}
     engines: {node: '>=14.0.0'}
@@ -6213,6 +6222,10 @@ packages:
 
   globals@16.5.0:
     resolution: {integrity: sha512-c/c15i26VrJ4IRt5Z89DnIzCGDn9EcebibhAOjw5ibqEHsE1wLUgkPn9RDmNcUKyU87GeaL633nyJ+pplFR2ZQ==}
+    engines: {node: '>=18'}
+
+  globals@17.13.0:
+    resolution: {integrity: sha512-RwMTC61u7hrG3ZJMkZQOK4JLJrKS8QtoTii63EmWvFXHqycY9FObBJQCbsLxSO8kjKhWE5kV1GC+Vb1g3RI0Zg==}
     engines: {node: '>=18'}
 
   globalthis@1.0.4:
@@ -13811,6 +13824,11 @@ snapshots:
 
   escape-string-regexp@5.0.0: {}
 
+  eslint-plugin-playwright@2.12.1(eslint@10.7.0(jiti@2.7.0)(supports-color@10.2.2)):
+    dependencies:
+      eslint: 10.7.0(jiti@2.7.0)(supports-color@10.2.2)
+      globals: 17.13.0
+
   eslint-plugin-react-you-might-not-need-an-effect@1.0.1(eslint@10.7.0(jiti@2.7.0)(supports-color@10.2.2)):
     dependencies:
       eslint: 10.7.0(jiti@2.7.0)(supports-color@10.2.2)
@@ -14262,6 +14280,8 @@ snapshots:
       ini: 2.0.0
 
   globals@16.5.0: {}
+
+  globals@17.13.0: {}
 
   globalthis@1.0.4:
     dependencies:

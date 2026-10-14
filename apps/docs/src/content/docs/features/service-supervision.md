@@ -24,3 +24,23 @@ For macOS startup before login, use `treeport service enable --headless`. This m
 - `treeport service disable` removes automatic startup.
 
 Disable service mode before uninstalling Treeport.
+
+## Check the logs
+
+If the backend stops or does not respond, run this command:
+
+```sh
+treeport logs
+```
+
+This command also works when the backend is stopped. The logs include start and stop events, error details, the software version, and backend output. Treeport keeps a limited log history after a restart.
+
+To read more lines, use `treeport logs --lines 500`.
+
+For service-manager logs, run this command:
+
+```sh
+treeport logs --service
+```
+
+A forced stop or a loss of power can prevent an exit event. Without this event, the cause of the stop can be unknown.

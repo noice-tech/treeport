@@ -1,4 +1,5 @@
 import { Activity, useEffect, useRef, useState } from 'react'
+import { ArrowPathIcon } from '@heroicons/react/16/solid'
 import {
   decodeUnknownOrNull,
   panelDirtyMessageSchema,
@@ -302,9 +303,31 @@ export function WebPanelWorkspace({
   return (
     <Activity mode={active ? 'visible' : 'hidden'}>
       <main
-        className="min-h-0 min-w-0 bg-zinc-950"
+        className="relative min-h-0 min-w-0 bg-zinc-950"
         aria-label={`${title} web panel`}
+        aria-busy={loadedPanelRevision !== panelRevision}
       >
+        {loadedPanelRevision !== panelRevision ? (
+          <div className="absolute inset-0 grid place-items-center overflow-auto p-6 sm:p-8">
+            <div
+              className="flex min-w-0 flex-col items-center gap-3 text-center"
+              role="status"
+            >
+              <ArrowPathIcon
+                className="size-4 shrink-0 fill-zinc-500 motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+              <div className="flex min-w-0 flex-col items-center gap-1.5 text-base sm:text-sm">
+                <p className="max-w-[32ch] font-medium text-pretty break-words text-zinc-300">
+                  Loading {title}…
+                </p>
+                <p className="max-w-[32ch] text-pretty text-zinc-500">
+                  First launch may take a moment to build.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <iframe
           key={panelRevision}
           ref={frameRef}
@@ -313,6 +336,7 @@ export function WebPanelWorkspace({
           sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads${panel.sandbox.allowSameOrigin ? ' allow-same-origin' : ''}`}
           allow="clipboard-read; clipboard-write; fullscreen"
           onFocus={onFocusSurface}
+          tabIndex={loadedPanelRevision === panelRevision ? 0 : -1}
           className={cn(
             'h-full w-full border-0 bg-zinc-950',
             loadedPanelRevision === panelRevision ? 'opacity-100' : 'opacity-0'

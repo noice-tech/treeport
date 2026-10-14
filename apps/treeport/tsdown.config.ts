@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import path from 'node:path'
 import { defineConfig } from 'tsdown'
+import { appendDaemonLog } from './src/server/daemon-log.ts'
 
 // tsdown reimports this module when its config changes. Keep the shutdown queue
 // across those imports so the replacement cannot race the previous listener.
@@ -17,6 +18,8 @@ export default defineConfig({
   entry: {
     'node/cli/index': 'src/cli/index.ts',
     'node/server/index': 'src/server/index.ts',
+    // Keep application import.meta URLs at the server entrypoint depth.
+    'node/server/main': 'src/server/main.ts',
     'node/server/terminal-host-entry': 'src/terminal-runtime/entry.ts',
     'node/server/terminal-host-preflight': 'src/terminal-runtime/preflight.ts',
     'node/server/core/launcher': 'src/terminal-runtime/launcher.ts',
@@ -54,12 +57,34 @@ export default defineConfig({
         ],
         { cwd: resolvedConfig.cwd, stdio: 'inherit' }
       )
-      const stop = () => server.kill('SIGTERM')
+      let stopRequested = false
+      const stop = () => {
+        stopRequested = true
+        server.kill('SIGTERM')
+      }
       signal.addEventListener('abort', stop, { once: true })
 
-      await once(server, 'exit').catch((error: Error) => {
-        console.error(`Could not start Treeport server: ${error.message}`)
-      })
+      const result = await once(server, 'exit').then(
+        ([code, exitSignal]) => ({ code, signal: exitSignal, error: null }),
+        (error: Error) => ({
+          code: null,
+          signal: null,
+          error: error.stack ?? error.message
+        })
+      )
+      const event = `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'development_child_exit', childPid: server.pid ?? null, stopRequested, ...result })}\n`
+      appendDaemonLog(
+        path.resolve(
+          process.env.TREEPORT_DATA_DIR || '.treeport-dev/data',
+          'logs',
+          'daemon-launcher.log'
+        ),
+        event
+      )
+      if (result.error) {
+        console.error(result.error)
+      }
+
       signal.removeEventListener('abort', stop)
     })
   },

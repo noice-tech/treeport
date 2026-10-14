@@ -1,0 +1,264 @@
+import { defineConfig } from 'oxlint'
+import playwright from 'eslint-plugin-playwright'
+
+export default defineConfig({
+  plugins: ['typescript'],
+  jsPlugins: [
+    './tools/oxlint/treeport-plugin.mjs',
+    {
+      name: 'anti-slop',
+      specifier: './tools/oxlint/anti-slop/index.ts'
+    },
+    '@stylistic/eslint-plugin',
+    'eslint-plugin-react-you-might-not-need-an-effect',
+    'eslint-plugin-playwright'
+  ],
+  categories: {
+    correctness: 'off'
+  },
+  env: {
+    builtin: true
+  },
+  ignorePatterns: [
+    '.agent/**',
+    '.agents/**',
+    '.claude/**',
+    '.codex/**',
+    '.continue/**',
+    '.cursor/**',
+    '.gemini/**',
+    '.opencode/**',
+    '.pi/**',
+    '.roo/**',
+    '.windsurf/**',
+    'tools/oxlint/anti-slop/**',
+    '**/dist/**',
+    '**/dist-types/**',
+    '**/coverage/**',
+    'packages/web-panel-review/web-panels/review/assets/**',
+    'node_modules/**',
+    'playwright-report/**',
+    'test-results/**'
+  ],
+  rules: {
+    'anti-slop/no-chained-type-assertions': 'error',
+    'anti-slop/no-conditional-empty-object-spread': 'error',
+    'anti-slop/no-known-value-widening': 'error',
+    'anti-slop/no-module-mocking': 'error',
+    'anti-slop/no-object-parameters': 'error',
+    'anti-slop/no-reflect-apply': 'error',
+    'anti-slop/no-reflect-get': 'error',
+    'anti-slop/no-runtime-typeof': 'error',
+    'anti-slop/no-shape-in-symbol-names': 'error',
+    'anti-slop/no-unknown-parameters': 'error',
+    'anti-slop/no-unknown-returns': 'error',
+    'anti-slop/no-unknown-type-aliases': 'error',
+    'anti-slop/no-unsafe-dictionary-type': 'error',
+    'anti-slop/no-widen-then-assert': 'error',
+    'anti-slop/require-safety-comment-for-type-assertion': 'error',
+    'treeport/no-record-string-unknown': 'error',
+    'treeport/module-boundaries': 'error',
+    'react-you-might-not-need-an-effect/no-derived-state': 'warn',
+    'react-you-might-not-need-an-effect/no-chain-state-updates': 'warn',
+    'react-you-might-not-need-an-effect/no-event-handler': 'warn',
+    'react-you-might-not-need-an-effect/no-adjust-state-on-prop-change': 'warn',
+    'react-you-might-not-need-an-effect/no-reset-all-state-on-prop-change':
+      'warn',
+    'react-you-might-not-need-an-effect/no-pass-live-state-to-parent': 'warn',
+    'react-you-might-not-need-an-effect/no-pass-data-to-parent': 'warn',
+    'react-you-might-not-need-an-effect/no-external-store-subscription': 'warn',
+    'react-you-might-not-need-an-effect/no-initialize-state': 'warn',
+    curly: 'error',
+    '@stylistic/padding-line-between-statements': [
+      'error',
+      {
+        blankLine: 'always',
+        prev: ['if', 'function'],
+        next: '*'
+      },
+      {
+        blankLine: 'always',
+        prev: {
+          selector:
+            "ExpressionStatement[expression.type='CallExpression'][expression.callee.type='MemberExpression'][expression.callee.object.name='app'][expression.callee.property.name=/^(get|post|put|patch|delete)$/]"
+        },
+        next: {
+          selector:
+            "ExpressionStatement[expression.type='CallExpression'][expression.callee.type='MemberExpression'][expression.callee.object.name='app'][expression.callee.property.name=/^(get|post|put|patch|delete)$/]"
+        }
+      }
+    ],
+    'constructor-super': 'error',
+    'for-direction': 'error',
+    'getter-return': 'error',
+    'no-async-promise-executor': 'error',
+    'no-case-declarations': 'error',
+    'no-class-assign': 'error',
+    'no-compare-neg-zero': 'error',
+    'no-cond-assign': 'error',
+    'no-const-assign': 'error',
+    'no-constant-binary-expression': 'error',
+    'no-constant-condition': 'error',
+    'no-control-regex': 'error',
+    'no-debugger': 'error',
+    'no-delete-var': 'error',
+    'no-dupe-class-members': 'error',
+    'no-dupe-else-if': 'error',
+    'no-dupe-keys': 'error',
+    'no-duplicate-case': 'error',
+    'no-empty': 'error',
+    'no-empty-character-class': 'error',
+    'no-empty-pattern': 'error',
+    'no-empty-static-block': 'error',
+    'no-ex-assign': 'error',
+    'no-extra-boolean-cast': 'error',
+    'no-fallthrough': 'error',
+    'no-func-assign': 'error',
+    'no-global-assign': 'error',
+    'no-import-assign': 'error',
+    'no-invalid-regexp': 'error',
+    'no-irregular-whitespace': 'error',
+    'no-loss-of-precision': 'error',
+    'no-misleading-character-class': 'error',
+    'no-new-native-nonconstructor': 'error',
+    'no-nonoctal-decimal-escape': 'error',
+    'no-obj-calls': 'error',
+    'no-prototype-builtins': 'error',
+    'no-redeclare': 'error',
+    'no-regex-spaces': 'error',
+    'no-self-assign': 'error',
+    'no-setter-return': 'error',
+    'no-shadow-restricted-names': 'error',
+    'no-sparse-arrays': 'error',
+    'no-this-before-super': 'error',
+    'no-unexpected-multiline': 'error',
+    'no-unreachable': 'error',
+    'no-unsafe-finally': 'error',
+    'no-unsafe-negation': 'error',
+    'no-unsafe-optional-chaining': 'error',
+    'no-unused-labels': 'error',
+    'no-unused-private-class-members': 'error',
+    'no-unused-vars': 'error',
+    'no-useless-backreference': 'error',
+    'no-useless-catch': 'error',
+    'no-useless-escape': 'error',
+    'no-with': 'error',
+    'require-yield': 'error',
+    'use-isnan': 'error',
+    'valid-typeof': 'error',
+    'no-array-constructor': 'error',
+    'no-unused-expressions': 'error',
+    'typescript/ban-ts-comment': 'error',
+    'typescript/no-duplicate-enum-values': 'error',
+    'typescript/no-empty-object-type': 'error',
+    'typescript/no-explicit-any': 'error',
+    'typescript/no-extra-non-null-assertion': 'error',
+    'typescript/no-misused-new': 'error',
+    'typescript/no-namespace': 'error',
+    'typescript/no-non-null-asserted-optional-chain': 'error',
+    'typescript/no-require-imports': 'error',
+    'typescript/no-this-alias': 'error',
+    'typescript/no-unnecessary-type-constraint': 'error',
+    'typescript/no-unsafe-declaration-merging': 'error',
+    'typescript/no-unsafe-function-type': 'error',
+    'typescript/no-wrapper-object-types': 'error',
+    'typescript/prefer-as-const': 'error',
+    'typescript/prefer-namespace-keyword': 'error',
+    'typescript/triple-slash-reference': 'error'
+  },
+  overrides: [
+    {
+      files: ['apps/desktop/**/*.ts', 'apps/desktop/**/*.tsx'],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: [
+                  '@treeport-web',
+                  '@treeport-web/*',
+                  '@effect/rpc',
+                  '@effect/rpc/*'
+                ],
+                message:
+                  'Desktop opens the daemon-owned workspace; it must not bundle workspace UI or speak its application RPC protocol.'
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      files: ['apps/treeport/e2e/**/*.spec.{js,jsx,ts,tsx}'],
+      rules: {
+        'treeport/no-browser-test-state': 'error'
+      }
+    },
+    {
+      files: ['apps/treeport/e2e/**/*.ts'],
+      rules: playwright.configs['flat/recommended'].rules
+    },
+    {
+      files: ['**/*.js', '**/*.mjs'],
+      env: {
+        node: true
+      }
+    },
+    {
+      files: ['**/*.ts', '**/*.tsx', '**/*.mts', '**/*.cts'],
+      rules: {
+        'constructor-super': 'off',
+        'getter-return': 'off',
+        'no-class-assign': 'off',
+        'no-const-assign': 'off',
+        'no-dupe-class-members': 'off',
+        'no-dupe-keys': 'off',
+        'no-func-assign': 'off',
+        'no-import-assign': 'off',
+        'no-new-native-nonconstructor': 'off',
+        'no-obj-calls': 'off',
+        'no-redeclare': 'off',
+        'no-setter-return': 'off',
+        'no-this-before-super': 'off',
+        'no-unreachable': 'off',
+        'no-unsafe-negation': 'off',
+        'no-var': 'error',
+        'no-with': 'off',
+        'prefer-const': 'error',
+        'prefer-rest-params': 'error',
+        'prefer-spread': 'error'
+      }
+    },
+    {
+      files: ['**/*.ts', '**/*.tsx'],
+      rules: {
+        'typescript/consistent-type-imports': 'error',
+        'typescript/no-explicit-any': 'off'
+      },
+      env: {
+        browser: true,
+        node: true
+      }
+    },
+    {
+      files: [
+        'apps/treeport/src/web/**/*.ts',
+        'apps/treeport/src/web/**/*.tsx'
+      ],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                regex: '^\\.{1,2}/.*\\.js$',
+                message: 'Web imports are bundled; omit the .js extension.'
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+})

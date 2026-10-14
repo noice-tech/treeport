@@ -1,36 +1,6 @@
-import type { JsonValue } from '@treeport/shared'
+import type { NetworkProductEvent } from '@treeport/shared'
 
 declare global {
-  interface TreeportTestSocketMessage {
-    type: string
-    data?: string
-  }
-
-  interface TreeportTestTerminalState {
-    terminalId: string
-    cols: number
-    rows: number
-    revision: number
-    generation: number
-    controllerClientId: string
-  }
-
-  interface TreeportTestWebSocket {
-    url: string
-    namespace: string
-    terminalId: string
-    streamId: string
-    generation: number
-    readyState: number
-    clientId: string
-    cols: number
-    rows: number
-    revision: number
-    receive(event: string, payload: JsonValue): void
-    close(): void
-    applyTerminalState(state: TreeportTestTerminalState): void
-  }
-
   type TreeportTestDesktopCommand =
     | 'new-worktree'
     | 'new-terminal'
@@ -46,23 +16,12 @@ declare global {
 
   interface Window {
     __attentionRequests: number
-    __delayTakeControl: boolean
     __dispatchDesktopCommand(command: TreeportTestDesktopCommand): void
     __dispatchDesktopFullscreen(fullscreen: boolean): void
     __dispatchTerminalSelectionRelease(): void
     __eventSource: {
-      emit(name: string, source: string): void
+      emit(name: NetworkProductEvent['type'], source: string): void
     }
-    __lastWs: TreeportTestWebSocket
     __openedDesktopFileUrls: string[]
-    __openedTerminalLink: Parameters<Window['open']> | null
-    __openedTerminalLinks: Array<Parameters<Window['open']>>
-    __pasteTerminalFile(): { files: number; prevented: boolean }
-    __releaseTakeControl: (() => void) | null
-    __restoreStorageGetItem(): void
-    __suppressInitialTitle: boolean
-    __terminalStateListener: boolean
-    __wsInstances: TreeportTestWebSocket[]
-    __wsSent: TreeportTestSocketMessage[]
   }
 }

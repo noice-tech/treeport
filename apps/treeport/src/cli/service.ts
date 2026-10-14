@@ -7,6 +7,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { serviceSupervisorSource } from './service-supervisor.js'
+import { tailDaemonLog } from '../server/daemon-log.js'
 import { assertLoopbackHost } from '../server/core/loopback.js'
 import {
   daemonDown,
@@ -15,6 +16,7 @@ import {
   daemonUp,
   localPaths,
   resolveLocalApiUrl,
+  resolveDaemonLogPaths,
   resolvePackagePath,
   runDoctor,
   treeportVersion,
@@ -1424,7 +1426,7 @@ async function prepareRecord(requestedMode: ServiceMode): Promise<{
     home: user.homedir,
     dataDir: paths.dataDir,
     runtimeDir: paths.runtimeDir,
-    logPath: paths.logPath,
+    logPath: path.join(paths.dataDir, 'logs', 'service.log'),
     apiUrl,
     cliEntrypoint,
     runtimeExecutable: administratorRuntime?.runtimeExecutable ?? null,
@@ -2305,27 +2307,34 @@ export async function serviceRun(): Promise<void> {
     TREEPORT_APP_VERSION: version,
     TREEPORT_INSTANCE_ID: crypto.randomUUID(),
     TREEPORT_WEB_DIST: webDist,
-    TREEPORT_DAEMON_LIFECYCLE: 'service'
+    TREEPORT_DAEMON_LIFECYCLE: 'service',
+    // Older installed launchd definitions may still redirect to daemon.log.
+    // Do not duplicate normal output into that same file.
+    TREEPORT_DAEMON_LOG_ONLY:
+      record.manager === 'launchd' &&
+      path.resolve(record.logPath) ===
+        path.join(record.dataDir, 'logs', 'daemon.log')
+        ? '1'
+        : '0'
   })
   await import(pathToFileURL(serverEntry).href)
 }
 
-export async function readServiceLogs(lines: number): Promise<string> {
-  const record = await currentRecord()
-  if (!record || record.manager === 'launchd') {
-    const value = await fs
-      .readFile(record?.logPath ?? localPaths().logPath, 'utf8')
-      .catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') {
-          return ''
-        }
+export async function readServiceLogs(
+  lines: number,
+  targetApiUrl?: string
+): Promise<string> {
+  const paths = await resolveDaemonLogPaths(targetApiUrl)
+  const record = await readServiceRecord(
+    servicePaths({ TREEPORT_DATA_DIR: paths.dataDir }).recordPath
+  )
+  if (!record) {
+    return `No service record found for ${paths.dataDir}. Run treeport logs for daemon diagnostics.\n`
+  }
 
-        throw error
-      })
-    return value
-      .split('\n')
-      .slice(-lines - 1)
-      .join('\n')
+  if (record.manager === 'launchd') {
+    const value = await tailDaemonLog(record.logPath, lines)
+    return `=== Service output: ${record.logPath} ===\n${value || 'No service output found.\n'}`
   }
 
   const result = await runCommand(await executablePath('journalctl'), [

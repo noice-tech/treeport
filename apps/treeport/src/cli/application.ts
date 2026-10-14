@@ -1524,17 +1524,27 @@ async function main(args: string[]): Promise<void> {
   const logsCommand = program
     .command('logs')
     .description('Show recent daemon logs')
-    .option('--lines <count>', 'number of lines', '100')
+    .option(
+      '--lines <count>',
+      'number of lines per source, including retained history',
+      '100'
+    )
+    .option('--service', 'show service-manager output instead of daemon logs')
   logsCommand.action(async () => {
     const lines = Number(logsCommand.opts<{ lines: string }>().lines)
     if (!Number.isInteger(lines) || lines < 1 || lines > 10_000) {
       throw new CliError('--lines must be an integer between 1 and 10000', 2)
     }
 
+    const targetApiUrl =
+      configuredApiUrl &&
+      configuredApiUrl !== process.env.TREEPORT_MANAGED_API_URL?.trim()
+        ? apiUrl
+        : undefined
     writeStdout(
-      (await serviceInstalled())
-        ? await readServiceLogs(lines)
-        : await readDaemonLogs(lines)
+      logsCommand.opts<{ service?: boolean }>().service
+        ? await readServiceLogs(lines, targetApiUrl)
+        : await readDaemonLogs(lines, targetApiUrl)
     )
   })
 

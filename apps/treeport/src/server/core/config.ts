@@ -29,10 +29,14 @@ function expandHome(value: string): string {
     : value
 }
 
-function defaultDataDir(
+export function resolveDataDir(
   env: NodeJS.ProcessEnv,
   platform = process.platform
 ): string {
+  if (env.TREEPORT_DATA_DIR?.trim()) {
+    return path.resolve(expandHome(env.TREEPORT_DATA_DIR.trim()))
+  }
+
   if (env.XDG_DATA_HOME) {
     return path.join(expandHome(env.XDG_DATA_HOME), 'treeport')
   }
@@ -80,9 +84,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const urlHost =
     host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
-  const dataDir = path.resolve(
-    expandHome(env.TREEPORT_DATA_DIR?.trim() || defaultDataDir(env))
-  )
+  const dataDir = path.resolve(resolveDataDir(env))
   const runtimeDir = path.resolve(
     expandHome(env.TREEPORT_RUNTIME_DIR?.trim() || defaultRuntimeDir(env))
   )
