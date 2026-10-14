@@ -18,13 +18,44 @@ if (fixedRendererPort) {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    {
+      name: 'desktop-shell-boundary',
+      enforce: 'pre',
+      load(id) {
+        // Inspect resolved paths, not import spelling: aliases, re-exports and
+        // transitive dependencies must not bundle the workspace or privileged
+        // desktop implementation into the shell.
+        const file = id.split('?')[0]!
+        if (!path.isAbsolute(file)) {
+          return
+        }
+
+        const repositoryPath = path
+          .relative(path.resolve('../..'), file)
+          .split(path.sep)
+          .join('/')
+        if (
+          !repositoryPath.startsWith('../') &&
+          !repositoryPath.startsWith('node_modules/') &&
+          !repositoryPath.startsWith('apps/desktop/src/shell/') &&
+          !(
+            repositoryPath.startsWith('packages/theme/') &&
+            repositoryPath.endsWith('.css')
+          )
+        ) {
+          this.error(
+            `Desktop shell cannot bundle ${repositoryPath}. Only shell code and shared theme assets belong here.`
+          )
+        }
+      }
+    },
+    react(),
+    tailwindcss()
+  ],
   resolve: {
     preserveSymlinks: false,
-    dedupe: ['react', 'react-dom'],
-    alias: {
-      '@treeport-web': path.resolve('../treeport/src/web')
-    }
+    dedupe: ['react', 'react-dom']
   },
   root: path.resolve('src/shell'),
   base: '/',

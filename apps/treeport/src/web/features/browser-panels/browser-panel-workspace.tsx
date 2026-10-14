@@ -1,3 +1,4 @@
+import type { DesktopBrowserPermissionPrompt } from '@treeport/desktop-bridge'
 import {
   useCallback,
   useEffect,
@@ -51,7 +52,7 @@ import {
   connectBrowserPanel,
   type BrowserPanelConnection
 } from '../../browser-session-client'
-import { useDesktopRuntime } from '../../desktop-runtime'
+import { getDesktopRuntime } from '../../desktop-runtime'
 import { BrowserVideoDecoder } from '../../browser-video-decoder'
 import { LocalBrowserWebview } from './local-browser-webview'
 
@@ -117,7 +118,7 @@ export function BrowserPanelWorkspace({
   active: boolean
   autoFocusBlocked: boolean
   inputBlocked: boolean
-  permissionPrompt: TreeportBrowserPermissionPrompt | null
+  permissionPrompt: DesktopBrowserPermissionPrompt | null
   onLoadingChange: (panelId: string, loading: boolean) => void
   onFaviconChange: (panelId: string, faviconUrl: string | null) => void
   onFocusSurface: () => void
@@ -193,7 +194,7 @@ export function BrowserPanelWorkspace({
     null
   )
   const [listenersLoading, setListenersLoading] = useState(false)
-  const { localBrowser, computerId } = useDesktopRuntime()
+  const { localBrowser, computerId } = getDesktopRuntime()
 
   useEffect(() => {
     if (!permissionsOpen || !localBrowser) {
@@ -202,7 +203,7 @@ export function BrowserPanelWorkspace({
 
     let current = true
     void window.treeportDesktop
-      ?.browserPermissions(panel.id)
+      ?.browserPermissions?.(panel.id)
       .then((settings) => {
         if (current) {
           setPermissionSettings(settings)
@@ -232,7 +233,7 @@ export function BrowserPanelWorkspace({
       const bridge = window.treeportDesktop
       if (
         !bridge ||
-        !(await bridge.resetBrowserPermissions(panel.id, origin, capability))
+        !(await bridge.resetBrowserPermissions?.(panel.id, origin, capability))
       ) {
         setPermissionSettingsError(
           'Could not reset website permissions. The page may have navigated.'
@@ -240,7 +241,7 @@ export function BrowserPanelWorkspace({
         return
       }
 
-      const settings = await bridge.browserPermissions(panel.id)
+      const settings = (await bridge.browserPermissions?.(panel.id)) ?? null
       setPermissionSettings(settings)
     } catch {
       setPermissionSettingsError('Could not reset website permissions.')
@@ -254,7 +255,10 @@ export function BrowserPanelWorkspace({
       return
     }
 
-    window.treeportDesktop?.respondBrowserPermission(permissionPrompt.id, allow)
+    window.treeportDesktop?.respondBrowserPermission?.(
+      permissionPrompt.id,
+      allow
+    )
   }
 
   useEffect(() => {
@@ -709,7 +713,7 @@ export function BrowserPanelWorkspace({
 
   useEffect(() => {
     const desktopBridge = window.treeportDesktop
-    if (!active || !desktopBridge) {
+    if (!active || !desktopBridge?.onCommand) {
       return
     }
 
@@ -1269,7 +1273,7 @@ export function BrowserPanelWorkspace({
         >
           <DevicePhoneMobileIcon />
         </Button>
-        {!localBrowser && window.treeportDesktop ? (
+        {!localBrowser && window.treeportDesktop?.openBrowserDevtools ? (
           <Button
             type="button"
             variant="ghost"
@@ -1278,7 +1282,7 @@ export function BrowserPanelWorkspace({
             title="Open DevTools"
             disabled={!state}
             onClick={() => {
-              void window.treeportDesktop?.openBrowserDevtools(panel.id)
+              void window.treeportDesktop?.openBrowserDevtools?.(panel.id)
             }}
           >
             <CodeBracketSquareIcon />
@@ -1384,7 +1388,9 @@ export function BrowserPanelWorkspace({
             </div>
           </PopoverContent>
         </Popover>
-        {localBrowser ? (
+        {localBrowser &&
+        window.treeportDesktop?.browserPermissions &&
+        window.treeportDesktop.resetBrowserPermissions ? (
           <Popover
             open={permissionsOpen}
             onOpenChange={(open) => {

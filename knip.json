@@ -20,9 +20,6 @@
         "src/preload.ts",
         "src/shell/shell.tsx"
       ],
-      "paths": {
-        "@treeport-web/*": ["../treeport/src/web/*"]
-      },
       "ignoreDependencies": [
         "@electron-forge/maker-dmg",
         "@electron-forge/maker-zip",

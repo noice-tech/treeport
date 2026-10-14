@@ -6,6 +6,10 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
+    "./browser-host": {
+      "types": "./dist/browser-host.d.ts",
+      "default": "./dist/browser-host.js"
+    },
     "./tracing": {
       "types": "./dist/tracing.d.ts",
       "default": "./dist/tracing.js"

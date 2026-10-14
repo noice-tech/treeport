@@ -34,7 +34,6 @@ export default defineConfig({
     'tools/oxlint/anti-slop/**',
     '**/dist/**',
     '**/dist-types/**',
-    '**/*.d.ts',
     '**/coverage/**',
     'packages/web-panel-review/web-panels/review/assets/**',
     'node_modules/**',
@@ -58,6 +57,7 @@ export default defineConfig({
     'anti-slop/no-widen-then-assert': 'error',
     'anti-slop/require-safety-comment-for-type-assertion': 'error',
     'treeport/no-record-string-unknown': 'error',
+    'treeport/module-boundaries': 'error',
     'react-you-might-not-need-an-effect/no-derived-state': 'warn',
     'react-you-might-not-need-an-effect/no-chain-state-updates': 'warn',
     'react-you-might-not-need-an-effect/no-event-handler': 'warn',
@@ -167,6 +167,28 @@ export default defineConfig({
     'typescript/triple-slash-reference': 'error'
   },
   overrides: [
+    {
+      files: ['apps/desktop/**/*.ts', 'apps/desktop/**/*.tsx'],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: [
+                  '@treeport-web',
+                  '@treeport-web/*',
+                  '@effect/rpc',
+                  '@effect/rpc/*'
+                ],
+                message:
+                  'Desktop opens the daemon-owned workspace; it must not bundle workspace UI or speak its application RPC protocol.'
+              }
+            ]
+          }
+        ]
+      }
+    },
     {
       files: ['apps/treeport/e2e/**/*.spec.{js,jsx,ts,tsx}'],
       rules: {

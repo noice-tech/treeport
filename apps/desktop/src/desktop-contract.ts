@@ -1,4 +1,14 @@
-import type { WorkspaceActivityResponse } from '@treeport/shared'
+// Shell metadata is decoded locally and is never a workspace prerequisite.
+export interface WorkspaceActivityResponse {
+  working: number
+  needsAttention: number
+}
+
+export interface PhoneAccessResponse {
+  url: string | null
+  error: string | null
+  setupCommand: string | null
+}
 
 export interface ComputerActivity {
   id: string
@@ -6,71 +16,11 @@ export interface ComputerActivity {
   activity: WorkspaceActivityResponse | null
 }
 
-export type DesktopCommand =
-  | 'new-worktree'
-  | 'new-terminal'
-  | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-  | 'new-panel'
-  | 'close-panel'
-  | 'toggle-side-panel'
-  | 'focus-location'
-  | 'find-in-page'
-  | 'reload'
-  | 'zoom-in'
-  | 'zoom-out'
-  | 'zoom-reset'
-  | 'select-previous-worktree'
-  | 'select-next-worktree'
-  | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
-
-export type DesktopFileActionResult = 'opened' | 'rejected'
-
 export type DesktopNavigationDirection = 'back' | 'forward'
 
 export interface DesktopNavigationState {
   canGoBack: boolean
   canGoForward: boolean
-}
-
-export interface DesktopBrowserPopup {
-  panelId: string
-  url: string
-}
-
-export interface DesktopBrowserPermissions {
-  origin: string | null
-  decisions: Array<{ capability: string; label: string; allowed: boolean }>
-}
-
-export interface DesktopBrowserPermissionPrompt {
-  id: string
-  panelId: string
-  origin: string
-  capability: string
-  destination: string | null
-}
-
-export interface DesktopBrowserUnavailable {
-  panelId: string
-  message: string
-}
-
-export interface DesktopBrowserBridgeDescriptor {
-  endpoint: string
-  panelId: string
-  challenge: string
-}
-
-export type DesktopBrowserToolbarCommand =
-  | { type: 'navigate'; url: string }
-  | { type: 'back' }
-  | { type: 'forward' }
-  | { type: 'reload' }
-  | { type: 'stop' }
-
-export interface DesktopBrowserCommandResult {
-  ok: boolean
-  error: string | null
 }
 
 export interface SavedComputer {
@@ -88,32 +38,19 @@ export interface ComputerSummary extends SavedComputer {
   loopback: boolean
 }
 
-export const MINIMUM_SUPPORTED_BACKEND_VERSION = '0.5.0'
-
-type IncompatibleConnectionReason =
-  | 'backend-outdated'
-  | 'desktop-outdated'
-  | 'unknown-version'
-
 export type ConnectionState =
   | { status: 'empty' }
   | { status: 'connecting'; computerId: string }
   | {
       status: 'ready'
       computerId: string
-      serverVersion: string
+      serverVersion: string | null
       url: string
     }
   | {
       status: 'unavailable'
       computerId: string
       message: string
-    }
-  | {
-      status: 'incompatible'
-      computerId: string
-      serverVersion: string | null
-      reason: IncompatibleConnectionReason
     }
 
 export interface DesktopShellState {

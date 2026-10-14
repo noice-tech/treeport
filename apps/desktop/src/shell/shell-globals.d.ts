@@ -1,4 +1,4 @@
-import type { PhoneAccessResponse } from '@treeport/shared'
+import type { PhoneAccessResponse } from '../desktop-contract'
 import type {
   ComputerActivity,
   ComputerMutationResult,
@@ -10,6 +10,7 @@ import type {
 declare global {
   interface Window {
     readonly treeportShell: Readonly<{
+      setOverlayOpen: (open: boolean) => void
       computerActivity: () => Promise<ComputerActivity[]>
       getState: () => Promise<DesktopShellState>
       onState: (listener: (state: DesktopShellState) => void) => () => void
@@ -29,7 +30,6 @@ declare global {
       installUpdate: () => void
       navigateHistory: (direction: DesktopNavigationDirection) => void
       copyStartCommand: () => Promise<void>
-      copyUpdateCommand: () => Promise<void>
       openInstallationDocs: () => Promise<void>
     }>
   }

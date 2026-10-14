@@ -1,12 +1,9 @@
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
 import {
-  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useState
 } from 'react'
-import { DesktopRuntimeProvider } from '@treeport-web/desktop-runtime'
-import { TreeportRoot } from '@treeport-web/treeport-root'
 import { ComputerSelector } from './computer-selector'
 import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
@@ -80,6 +77,10 @@ export function App() {
     state && !(state.platform === 'darwin' && state.fullscreen)
   const connectionReady = state?.connection.status === 'ready' && computer
 
+  useEffect(() => {
+    window.treeportShell.setOverlayOpen(dialog !== null || selectorOpen)
+  }, [dialog, selectorOpen])
+
   const captureTerminalSelectionPointer = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
@@ -111,23 +112,8 @@ export function App() {
             ? 'fixed inset-x-0 top-8 bottom-0 min-h-0'
             : 'fixed inset-0 min-h-0'
         }
-        style={
-          // SAFETY: The custom property is a valid React CSS value.
-          {
-            '--app-visual-viewport-height': showTitlebar
-              ? 'calc(100dvh - 2rem)'
-              : '100dvh'
-          } as CSSProperties
-        }
       >
-        {connectionReady ? (
-          <DesktopRuntimeProvider
-            computerId={computer.id}
-            localBrowser={computer.loopback}
-          >
-            <TreeportRoot />
-          </DesktopRuntimeProvider>
-        ) : (
+        {connectionReady ? null : (
           <ConnectionPage
             onConnect={() => openDialog('connect')}
             onManage={() => openDialog('manage')}

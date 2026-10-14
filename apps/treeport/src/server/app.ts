@@ -2017,7 +2017,15 @@ export function createApp({
         'cache-control': 'no-cache'
       })
     ),
-    route('GET', '*', fileResponse(path.join(staticRoot, 'index.html')))
+    // Only hashed assets are immutable. Navigation after a daemon update must
+    // always fetch the entry point belonging to the newly running release.
+    route(
+      'GET',
+      '*',
+      fileResponse(path.join(staticRoot, 'index.html'), {
+        'cache-control': 'no-store'
+      })
+    )
   )
 
   const router = HttpRouter.fromIterable(routes)

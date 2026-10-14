@@ -1,3 +1,5 @@
+import moduleBoundaries from './module-boundaries.mjs'
+
 const noRecordStringUnknown = {
   meta: {
     type: 'problem',
@@ -120,6 +122,7 @@ export default {
   },
   rules: {
     'no-record-string-unknown': noRecordStringUnknown,
+    'module-boundaries': moduleBoundaries,
     'no-browser-test-state': noBrowserTestState
   }
 }

@@ -1,4 +1,4 @@
-import type { PhoneAccessResponse } from '@treeport/shared'
+import type { PhoneAccessResponse } from '../desktop-contract'
 import { CopyIcon, RefreshCwIcon } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useEffect, useState } from 'react'

@@ -20,6 +20,7 @@
     "vite.config.ts"
   ],
   "references": [
+    { "path": "../../packages/desktop-bridge" },
     { "path": "../../packages/shared" },
     { "path": "./tsconfig.node.json" }
   ]

@@ -27,7 +27,7 @@ const userData = await fs.mkdtemp(
 const baseEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !name.startsWith('TREEPORT_'))
 )
-let loadedBackendApi = false
+let loadedWorkspace = false
 const requests = []
 const server = http.createServer((request, response) => {
   requests.push(request.url ?? '/')
@@ -36,16 +36,31 @@ const server = http.createServer((request, response) => {
     response.end(
       JSON.stringify({
         ok: true,
-        version: releaseVersion,
+        // Deliberately older than the retired desktop compatibility floor.
+        version: '0.0.1',
         hostname: 'release-smoke'
       })
     )
     return
   }
 
-  if (request.url === '/api/projects') {
-    loadedBackendApi = true
-    response.end(JSON.stringify({ projects: [] }))
+  if (request.url === '/') {
+    response.setHeader('content-type', 'text/html')
+    response.end(`<!doctype html><title>Daemon-owned workspace</title>
+      <main>Workspace from the selected daemon, not the desktop bundle</main>
+      <script src="/workspace.js"></script>`)
+    return
+  }
+
+  if (request.url === '/workspace.js') {
+    response.setHeader('content-type', 'text/javascript')
+    response.end('fetch("/workspace-loaded")')
+    return
+  }
+
+  if (request.url === '/workspace-loaded') {
+    loadedWorkspace = true
+    response.end('{}')
     return
   }
 
@@ -79,16 +94,12 @@ try {
   child.stderr.on('data', (chunk) => output.push(chunk.toString()))
 
   const deadline = Date.now() + 15_000
-  while (
-    !loadedBackendApi &&
-    child.exitCode === null &&
-    Date.now() < deadline
-  ) {
+  while (!loadedWorkspace && child.exitCode === null && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  if (!loadedBackendApi) {
+  if (!loadedWorkspace) {
     throw new Error(
-      `Packaged desktop ${releaseVersion} did not load its matching backend. Requests: ${requests.join(', ') || 'none'}${output.length ? `\n${output.join('')}` : ''}`
+      `Packaged desktop ${releaseVersion} did not run the selected daemon's own workspace. Requests: ${requests.join(', ') || 'none'}${output.length ? `\n${output.join('')}` : ''}`
     )
   }
 

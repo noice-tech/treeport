@@ -2145,6 +2145,7 @@ describe('HTTP API validation', () => {
         '/projects/project/worktrees/worktree/terminals/terminal'
       )
       expect(deepLink.status).toBe(200)
+      expect(deepLink.headers.get('cache-control')).toBe('no-store')
       expect(await deepLink.text()).toContain('Treeport route fallback')
 
       const head = await app.request(
