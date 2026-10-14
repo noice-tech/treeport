@@ -1,3 +1,4 @@
+import { supportsLocalBrowser } from '../../desktop-capabilities'
 import { useEffect, useRef, useState } from 'react'
 import {
   browserObservedUrlSchema,
@@ -93,7 +94,7 @@ export function LocalBrowserWebview({
   useEffect(() => {
     const webview = webviewRef.current
     const bridge = window.treeportDesktop
-    if (!webview || !bridge) {
+    if (!webview || !supportsLocalBrowser(bridge)) {
       return
     }
 
@@ -699,7 +700,7 @@ export function LocalBrowserWebview({
 
   useEffect(() => {
     const bridge = window.treeportDesktop
-    if (bridge) {
+    if (supportsLocalBrowser(bridge)) {
       void bridge
         .setBrowserPresentationActive(panel.id, active && !inputBlocked)
         .catch(() => false)

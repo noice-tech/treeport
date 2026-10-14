@@ -1,14 +1,11 @@
 import {
-  decodeUnknownOrNull,
-  desktopHealthResponseSchema,
   phoneAccessResponseSchema,
-  workspaceActivityResponseSchema,
-  type PhoneAccessResponse
-} from '@treeport/shared'
-import * as Clock from 'effect/Clock'
+  workspaceActivityResponseSchema
+} from './shell-metadata'
+import type { PhoneAccessResponse } from './desktop-contract'
+import { z } from 'zod'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import * as Stream from 'effect/Stream'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 
 export const phoneAccess = (origin: string) =>
@@ -23,7 +20,7 @@ export const phoneAccess = (origin: string) =>
       signal
     })
     const result = response.ok
-      ? decodeUnknownOrNull(phoneAccessResponseSchema, await response.json())
+      ? phoneAccessResponseSchema.safeParse(await response.json()).data
       : null
     if (!result) {
       throw new Error(
@@ -64,10 +61,8 @@ export const checkActivity = (origin: string) =>
       signal
     })
     return response.ok
-      ? decodeUnknownOrNull(
-          workspaceActivityResponseSchema,
-          await response.json()
-        )
+      ? (workspaceActivityResponseSchema.safeParse(await response.json())
+          .data ?? null)
       : null
   }).pipe(
     Effect.timeoutOption('1500 millis'),
@@ -82,44 +77,15 @@ export const checkHealth = (origin: string) =>
       signal
     })
     return response.ok
-      ? decodeUnknownOrNull(desktopHealthResponseSchema, await response.json())
+      ? z
+          .object({
+            version: z.string().nullable().catch(null),
+            hostname: z.string().nullable().catch(null)
+          })
+          .parse(await response.json())
       : null
   }).pipe(
     Effect.timeoutOption('1500 millis'),
     Effect.map(Option.getOrNull),
     Effect.catchAll(() => Effect.succeed(null))
-  )
-
-// Canceling the consumer interrupts both backoff and the current fetch/body.
-// Emit unavailable once after the grace period, then keep trying until ready.
-export const watchBackendHealth = (origin: string) =>
-  Stream.unwrap(
-    Effect.gen(function* () {
-      const startedAt = yield* Clock.currentTimeMillis
-      const retryDelays = [0, 250, 500, 1_000, 2_000]
-      let attempt = 0
-      let unavailable = false
-      return Stream.repeatEffect(
-        Effect.gen(function* () {
-          yield* Effect.sleep(
-            retryDelays[Math.min(attempt++, retryDelays.length - 1)]!
-          )
-          const health = yield* checkHealth(origin)
-          const elapsed = (yield* Clock.currentTimeMillis) - startedAt
-          if (health) {
-            return Option.some(health)
-          }
-
-          if (!unavailable && elapsed >= 3_000) {
-            unavailable = true
-            return Option.some(null)
-          }
-
-          return Option.none()
-        })
-      ).pipe(
-        Stream.filterMap((value) => value),
-        Stream.takeUntil((health) => health !== null)
-      )
-    })
   )

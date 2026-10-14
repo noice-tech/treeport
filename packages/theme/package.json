@@ -1,0 +1,12 @@
+{
+  "name": "@treeport/theme",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    "./styles.css": "./styles.css"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "catalog:",
+    "tailwindcss": "catalog:"
+  }
+}

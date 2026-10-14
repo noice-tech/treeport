@@ -235,7 +235,7 @@ function activateTerminalLink(
     return
   }
   if (parsedUrl.protocol === 'file:') {
-    void window.treeportDesktop?.openFileUrl(url).catch(() => undefined)
+    void window.treeportDesktop?.openFileUrl?.(url).catch(() => undefined)
     return
   }
 

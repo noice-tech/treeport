@@ -1,3 +1,5 @@
+import moduleBoundaries from './module-boundaries.mjs'
+
 const noRecordStringUnknown = {
   meta: {
     type: 'problem',
@@ -34,6 +36,7 @@ export default {
     name: 'treeport'
   },
   rules: {
-    'no-record-string-unknown': noRecordStringUnknown
+    'no-record-string-unknown': noRecordStringUnknown,
+    'module-boundaries': moduleBoundaries
   }
 }

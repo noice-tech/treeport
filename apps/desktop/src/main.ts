@@ -1,11 +1,15 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
+import {
+  browserUrlSchema,
+  decodeUnknownOrNull
+} from '@treeport/shared/browser-host'
 import {
   app,
   autoUpdater,
   BrowserWindow,
+  WebContentsView,
   clipboard,
   dialog,
   ipcMain,
@@ -26,22 +30,17 @@ import { z } from 'zod'
 import { WebSocket, WebSocketServer } from 'ws'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
-import * as Stream from 'effect/Stream'
 import { DesktopRuntime } from './desktop-runtime'
-import {
-  checkActivity,
-  checkHealth,
-  phoneAccess,
-  watchBackendHealth
-} from './backend-connection'
+import { checkActivity, checkHealth, phoneAccess } from './backend-connection'
 import { ComputerStore } from './computer-store'
-import { MINIMUM_SUPPORTED_BACKEND_VERSION } from './desktop-contract'
+import type {
+  DesktopBrowserToolbarCommand,
+  DesktopCommand
+} from '@treeport/desktop-bridge'
 import type {
   ComputerMutationResult,
   ComputerUpdate,
   ConnectionState,
-  DesktopBrowserToolbarCommand,
-  DesktopCommand,
   DesktopNavigationDirection,
   DesktopNavigationState,
   DesktopShellState
@@ -83,30 +82,6 @@ const windowStateSchema = z.object({
 
 type WindowState = z.infer<typeof windowStateSchema>
 
-type ReleaseVersion = readonly [number, number, number]
-
-function parseReleaseVersion(value: string): ReleaseVersion | null {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value)
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null
-}
-
-function compareReleaseVersions(
-  left: ReleaseVersion,
-  right: ReleaseVersion
-): number {
-  return left[0] - right[0] || left[1] - right[1] || left[2] - right[2]
-}
-
-const parsedMinimumSupportedBackendRelease = parseReleaseVersion(
-  MINIMUM_SUPPORTED_BACKEND_VERSION
-)
-if (!parsedMinimumSupportedBackendRelease) {
-  throw new Error('The minimum supported backend version is invalid')
-}
-
-const minimumSupportedBackendRelease: ReleaseVersion =
-  parsedMinimumSupportedBackendRelease
-
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'treeport-app',
@@ -119,7 +94,6 @@ protocol.registerSchemesAsPrivileged([
   }
 ])
 const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
-const desktopReleaseVersion = app.isPackaged ? app.getVersion() : null
 const desktopUpdateReady =
   desktopE2e && process.env.TREEPORT_DESKTOP_E2E_UPDATE_READY === '1'
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
@@ -151,6 +125,8 @@ const seedComputerUrl =
   process.env.TREEPORT_DESKTOP_URL?.trim() || defaultComputerUrl
 
 let mainWindow: BrowserWindow | null = null
+let workspaceView: WebContentsView | null = null
+let shellOverlayOpen = false
 let windowState: WindowState | null = null
 let store: ComputerStore | null = null
 let connection: ConnectionState = { status: 'empty' }
@@ -188,23 +164,20 @@ const installRendererRequestRouting = Effect.gen(function* () {
   const handler = yield* createRendererRequestHandler({
     rendererDirectory: path.join(dirname, '../renderer/main_window'),
     developmentServerUrl: rendererDevelopmentServerUrl(),
-    selectedBackendOrigin: selectedOrigin,
     forward: (request) => fetch(request)
   })
-  for (const scheme of ['http', 'https', 'treeport-app']) {
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        rendererSession.protocol.handle(scheme, (request) =>
-          desktopRuntime.run(handler(request), 'desktop.renderer.request')
-        )
-      ),
-      () => Effect.sync(() => rendererSession.protocol.unhandle(scheme))
-    )
-  }
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      rendererSession.protocol.handle('treeport-app', (request) =>
+        desktopRuntime.run(handler(request), 'desktop.renderer.request')
+      )
+    ),
+    () => Effect.sync(() => rendererSession.protocol.unhandle('treeport-app'))
+  )
 })
 
 function navigationState(): DesktopNavigationState {
-  const renderer = mainWindow?.webContents
+  const renderer = workspaceView?.webContents
   if (!renderer || renderer.isDestroyed() || connection.status !== 'ready') {
     return { canGoBack: false, canGoForward: false }
   }
@@ -219,7 +192,7 @@ function navigationState(): DesktopNavigationState {
 
 function shellState(): DesktopShellState {
   const state: DesktopShellState = {
-    appVersion: desktopReleaseVersion ?? app.getVersion(),
+    appVersion: app.getVersion(),
     platform: process.platform,
     fullscreen,
     updateReady,
@@ -235,7 +208,24 @@ function shellState(): DesktopShellState {
   return state
 }
 
+function layoutWorkspace(): void {
+  if (!mainWindow || !workspaceView) {
+    return
+  }
+
+  const { width, height } = mainWindow.getContentBounds()
+  const top = process.platform === 'darwin' && fullscreen ? 0 : TITLEBAR_HEIGHT
+  workspaceView.setBounds({
+    x: 0,
+    y: top,
+    width,
+    height: Math.max(0, height - top)
+  })
+  workspaceView.setVisible(connection.status === 'ready' && !shellOverlayOpen)
+}
+
 function broadcastState(): void {
+  layoutWorkspace()
   const state = shellState()
   const menu = Menu.getApplicationMenu()
   const backItem = menu?.getMenuItemById('navigate-back')
@@ -257,10 +247,25 @@ function broadcastState(): void {
 function isTrustedRendererEvent(
   event: IpcMainEvent | IpcMainInvokeEvent
 ): boolean {
+  const origin = selectedOrigin()
+  return Boolean(
+    workspaceView &&
+    event.sender === workspaceView.webContents &&
+    event.senderFrame === event.sender.mainFrame &&
+    origin &&
+    URL.canParse(event.senderFrame.url) &&
+    new URL(event.senderFrame.url).origin === origin
+  )
+}
+
+function isTrustedShellEvent(
+  event: IpcMainEvent | IpcMainInvokeEvent
+): boolean {
   return Boolean(
     mainWindow &&
     event.sender === mainWindow.webContents &&
-    event.senderFrame === event.sender.mainFrame
+    event.senderFrame === event.sender.mainFrame &&
+    event.senderFrame.url.startsWith(PRIVATE_RENDERER_URL)
   )
 }
 
@@ -278,7 +283,7 @@ function setTerminalSelectionActive(active: boolean): void {
 
 function releaseTerminalSelection(): void {
   setTerminalSelectionActive(false)
-  const renderer = mainWindow?.webContents
+  const renderer = workspaceView?.webContents
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('terminal-selection:release')
   }
@@ -325,7 +330,7 @@ const disposeBrowserWebviews = Effect.gen(function* () {
 })
 
 function navigateRendererHistory(direction: DesktopNavigationDirection): void {
-  const renderer = mainWindow?.webContents
+  const renderer = workspaceView?.webContents
   if (!renderer || renderer.isDestroyed() || connection.status !== 'ready') {
     return
   }
@@ -337,7 +342,7 @@ function navigateRendererHistory(direction: DesktopNavigationDirection): void {
 }
 
 function zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset'): void {
-  const renderer = mainWindow?.webContents
+  const renderer = workspaceView?.webContents
   if (!renderer || renderer.isDestroyed()) {
     return
   }
@@ -351,7 +356,7 @@ function zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset'): void {
 
 function sendDesktopCommand(command: DesktopCommand): void {
   const window = mainWindow
-  if (!window || !window.isFocused()) {
+  if (!window || !window.isFocused() || shellOverlayOpen) {
     return
   }
 
@@ -367,7 +372,7 @@ function sendDesktopCommand(command: DesktopCommand): void {
     return
   }
 
-  window.webContents.send('desktop-command', command)
+  workspaceView?.webContents.send('desktop-command', command)
 }
 
 function installRendererSecurity(renderer: WebContents): void {
@@ -447,14 +452,19 @@ function installRendererSecurity(renderer: WebContents): void {
     }
 
     event.preventDefault()
-    renderer.send('desktop-command', command)
+    sendDesktopCommand(command)
   })
 
-  renderer.on('will-navigate', (event, targetUrl) => {
+  const preventUntrustedNavigation = (
+    event: Electron.Event,
+    targetUrl: string
+  ) => {
     const origin = selectedOrigin()
     if (
-      targetUrl.startsWith('treeport-app://') ||
-      (origin &&
+      (renderer === mainWindow?.webContents &&
+        targetUrl.startsWith(PRIVATE_RENDERER_URL)) ||
+      (renderer === workspaceView?.webContents &&
+        origin &&
         URL.canParse(targetUrl) &&
         new URL(targetUrl).origin === origin)
     ) {
@@ -469,6 +479,12 @@ function installRendererSecurity(renderer: WebContents): void {
           Effect.tryPromise(() => shell.openExternal(targetUrl))
         )
       }
+    }
+  }
+  renderer.on('will-navigate', preventUntrustedNavigation)
+  renderer.on('will-redirect', (event) => {
+    if (event.isMainFrame) {
+      preventUntrustedNavigation(event, event.url)
     }
   })
   renderer.setWindowOpenHandler(({ url }) => {
@@ -490,7 +506,26 @@ function installRendererSecurity(renderer: WebContents): void {
   )
   renderer.session.setDevicePermissionHandler(() => false)
   const refreshNavigationState = () => broadcastState()
-  renderer.on('did-navigate', refreshNavigationState)
+  let documentAvailable = false
+  let historyOrigin: string | null = null
+  renderer.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) {
+      documentAvailable = false
+    }
+  })
+  renderer.on('did-navigate', (_event, url, status) => {
+    documentAvailable = status < 400
+    refreshNavigationState()
+    if (
+      renderer === workspaceView?.webContents &&
+      connection.status === 'ready' &&
+      status >= 400 &&
+      URL.canParse(url) &&
+      new URL(url).origin === selectedOrigin()
+    ) {
+      connectSelected({ unavailableImmediately: true, url })
+    }
+  })
   renderer.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
     if (isMainFrame) {
       refreshNavigationState()
@@ -498,29 +533,56 @@ function installRendererSecurity(renderer: WebContents): void {
   })
   renderer.on('did-finish-load', () => {
     renderer.send('fullscreen-change', fullscreen)
-    refreshNavigationState()
-    const origin = selectedOrigin()
-    if (!origin || connection.status !== 'ready') {
-      return
+    const computer = store?.selectedComputer
+    const url = renderer.getURL()
+    if (
+      renderer === workspaceView?.webContents &&
+      documentAvailable &&
+      computer &&
+      URL.canParse(url) &&
+      new URL(url).origin === computer.origin
+    ) {
+      // A same-origin page may navigate itself during startup, superseding
+      // loadURL. Its successful final document still makes the workspace ready.
+      if (historyOrigin !== computer.origin) {
+        renderer.navigationHistory.clear()
+        historyOrigin = computer.origin
+      }
+
+      connection = {
+        status: 'ready',
+        computerId: computer.id,
+        serverVersion:
+          connection.status === 'ready' ? connection.serverVersion : null,
+        url
+      }
     }
 
-    windowRuntime?.fork(
-      Effect.gen(function* () {
-        const health = yield* checkHealth(origin)
-        if (
-          !health &&
-          connection.status === 'ready' &&
-          selectedOrigin() === origin &&
-          mainWindow?.webContents === renderer
-        ) {
-          connectSelected({
-            unavailableImmediately: true,
-            unavailableMessage: `The connection to ${origin} was lost.`
-          })
-        }
-      })
-    )
+    refreshNavigationState()
   })
+  renderer.on(
+    'did-fail-load',
+    (_event, code, _description, url, isMainFrame) => {
+      if (isMainFrame && code !== -3) {
+        documentAvailable = false
+      }
+
+      if (
+        renderer === workspaceView?.webContents &&
+        isMainFrame &&
+        code !== -3 &&
+        connection.status === 'ready' &&
+        URL.canParse(url) &&
+        new URL(url).origin === selectedOrigin()
+      ) {
+        connectSelected({
+          unavailableImmediately: true,
+          unavailableMessage: `The connection to ${selectedOrigin()} was lost.`,
+          url
+        })
+      }
+    }
+  )
 }
 
 const computerUpdateSchema = z.object({
@@ -594,15 +656,19 @@ function connectSelected(
       if (!computer) {
         connection = { status: 'empty' }
         broadcastState()
-        const renderer = mainWindow?.webContents
-        if (renderer && !renderer.getURL().startsWith('treeport-app://')) {
-          yield* loadRenderer(renderer, PRIVATE_RENDERER_URL)
+        if (workspaceView) {
+          yield* loadRenderer(workspaceView.webContents, 'about:blank')
         }
 
         return
       }
 
-      const currentRendererUrl = mainWindow?.webContents.getURL() ?? ''
+      const renderer = workspaceView?.webContents
+      if (!renderer) {
+        return
+      }
+
+      const currentRendererUrl = renderer.getURL()
       const requestedUrl =
         options.url &&
         URL.canParse(options.url) &&
@@ -615,8 +681,7 @@ function connectSelected(
       const unavailableMessage =
         options.unavailableMessage ??
         `The desktop app could not reach ${computer.origin}.`
-      let unavailableVisible = options.unavailableImmediately ?? false
-      connection = unavailableVisible
+      connection = options.unavailableImmediately
         ? {
             status: 'unavailable',
             computerId: computer.id,
@@ -624,81 +689,53 @@ function connectSelected(
           }
         : { status: 'connecting', computerId: computer.id }
       broadcastState()
-      const renderer = mainWindow?.webContents
-      // Keep navigation recovery owned by this connection, so switching
-      // computers or closing the window also cancels pending retries.
-      // getURL() can already equal the target after a failed navigation.
-      const rendererLoad = yield* Effect.fork(
-        renderer ? loadRenderer(renderer, requestedUrl) : Effect.void
-      )
 
-      yield* Stream.runForEach(watchBackendHealth(computer.origin), (health) =>
-        Effect.gen(function* () {
-          if (generation !== connectionGeneration) {
-            return
-          }
-
-          if (!health) {
-            if (!unavailableVisible) {
-              unavailableVisible = true
-              connection = {
-                status: 'unavailable',
-                computerId: computer.id,
-                message: unavailableMessage
-              }
-              broadcastState()
-            }
-
-            return
-          }
-
-          if (health.hostname && store) {
-            yield* store.rememberHostname(computer.id, health.hostname)
-            if (generation !== connectionGeneration) {
-              return
-            }
-          }
-
-          const serverVersion = health.version
-          if (desktopReleaseVersion) {
-            const desktopRelease = parseReleaseVersion(desktopReleaseVersion)
-            const serverRelease = serverVersion
-              ? parseReleaseVersion(serverVersion)
-              : null
-            const reason =
-              !desktopRelease || !serverRelease
-                ? 'unknown-version'
-                : compareReleaseVersions(
-                      serverRelease,
-                      minimumSupportedBackendRelease
-                    ) < 0
-                  ? 'backend-outdated'
-                  : compareReleaseVersions(serverRelease, desktopRelease) > 0
-                    ? 'desktop-outdated'
-                    : null
-            if (reason) {
-              connection = {
-                status: 'incompatible',
-                computerId: computer.id,
-                serverVersion,
-                reason
-              }
-              broadcastState()
-              return
-            }
-          }
-
+      // The daemon serves its matching workspace. No daemon metadata is
+      // required to load it, and the private shell remains available on failure.
+      const loaded = yield* loadRenderer(renderer, requestedUrl, () => {
+        if (generation === connectionGeneration) {
           connection = {
-            status: 'ready',
+            status: 'unavailable',
             computerId: computer.id,
-            serverVersion: serverVersion ?? 'unknown',
-            url: requestedUrl
+            message: unavailableMessage
           }
           broadcastState()
-        })
-      )
-      // Health can become ready before the renderer dev server does.
-      yield* Fiber.join(rendererLoad)
+        }
+      })
+      if (!loaded || generation !== connectionGeneration) {
+        return
+      }
+
+      connection = {
+        status: 'ready',
+        computerId: computer.id,
+        serverVersion: null,
+        url: requestedUrl
+      }
+      broadcastState()
+      if (!shellOverlayOpen) {
+        renderer.focus()
+      }
+
+      // Metadata is best-effort decoration, never a connection prerequisite.
+      const health = yield* checkHealth(computer.origin)
+      if (!health || generation !== connectionGeneration) {
+        return
+      }
+
+      if (health.hostname && store) {
+        yield* store
+          .rememberHostname(computer.id, health.hostname)
+          .pipe(Effect.catchAll(() => Effect.void))
+      }
+
+      if (
+        generation === connectionGeneration &&
+        connection.status === 'ready'
+      ) {
+        connection = { ...connection, serverVersion: health.version }
+        broadcastState()
+      }
     })
   )
 }
@@ -831,13 +868,13 @@ function installMenu(): void {
         {
           label: 'Force Reload',
           accelerator: 'CommandOrControl+Shift+R',
-          click: () => mainWindow?.webContents.reloadIgnoringCache()
+          click: () => workspaceView?.webContents.reloadIgnoringCache()
         },
         {
           label: 'Toggle Developer Tools',
           accelerator:
             process.platform === 'darwin' ? 'Alt+Command+I' : 'Control+Shift+I',
-          click: () => mainWindow?.webContents.toggleDevTools()
+          click: () => workspaceView?.webContents.toggleDevTools()
         },
         { type: 'separator' },
         {
@@ -981,7 +1018,7 @@ function createWindow(url?: string): BrowserWindow {
       symbolColor: '#f4f4f5',
       height: TITLEBAR_HEIGHT
     },
-    webPreferences: rendererWindowPreferences()
+    webPreferences: { ...rendererWindowPreferences(), webviewTag: false }
   }
 
   if (!app.isPackaged) {
@@ -1005,11 +1042,29 @@ function createWindow(url?: string): BrowserWindow {
   const runtime = new DesktopRuntime(desktopRuntime)
   mainWindow = window
   windowRuntime = runtime
+  shellOverlayOpen = false
+  const workspace = new WebContentsView({
+    webPreferences: rendererWindowPreferences()
+  })
+  workspaceView = workspace
+  workspace.setBackgroundColor('#09090b')
+  window.contentView.addChildView(workspace)
   installRendererSecurity(window.webContents)
+  installRendererSecurity(workspace.webContents)
+  window.on('resize', layoutWorkspace)
+  workspace.webContents.on('page-title-updated', (_event, title) =>
+    window.setTitle(title)
+  )
+  workspace.webContents.on('render-process-gone', () => {
+    if (mainWindow === window) {
+      connectSelected({ unavailableImmediately: true })
+    }
+  })
+  layoutWorkspace()
   browserWebviews = installBrowserWebviewPolicy({
     runtime,
     window,
-    trustedRenderer: window.webContents,
+    trustedRenderer: workspace.webContents,
     selectedComputer: () => {
       const computer = store?.selectedComputer
       return computer
@@ -1021,12 +1076,12 @@ function createWindow(url?: string): BrowserWindow {
 
   window.on('enter-full-screen', () => {
     fullscreen = true
-    window.webContents.send('fullscreen-change', true)
+    workspace.webContents.send('fullscreen-change', true)
     broadcastState()
   })
   window.on('leave-full-screen', () => {
     fullscreen = false
-    window.webContents.send('fullscreen-change', false)
+    workspace.webContents.send('fullscreen-change', false)
     broadcastState()
   })
   window.on('focus', stopBellAttention)
@@ -1037,6 +1092,11 @@ function createWindow(url?: string): BrowserWindow {
     stopBellAttention()
     if (mainWindow === window) {
       mainWindow = null
+      workspaceView = null
+      if (!workspace.webContents.isDestroyed()) {
+        workspace.webContents.close()
+      }
+
       browserWebviews = null
       windowRuntime = null
       connectionFiber = null
@@ -1044,7 +1104,13 @@ function createWindow(url?: string): BrowserWindow {
       desktopRuntime.fork(runtime.close)
     }
   })
-  window.webContents.once('did-finish-load', () => broadcastState())
+  window.webContents.on('did-finish-load', () => {
+    shellOverlayOpen = false
+    broadcastState()
+  })
+  runtime.fork(
+    loadRenderer(window.webContents, PRIVATE_RENDERER_URL).pipe(Effect.asVoid)
+  )
   void connectSelected(url ? { url } : {})
   return window
 }
@@ -1058,6 +1124,26 @@ function mutationError(cause: unknown): ComputerMutationResult {
 }
 
 function registerIpc(): void {
+  ipcMain.on('desktop:runtime', (event) => {
+    const computer = store?.selectedComputer
+    event.returnValue =
+      isTrustedRendererEvent(event) && computer
+        ? {
+            computerId: computer.id,
+            localBrowser: isLoopbackUrl(new URL(computer.origin))
+          }
+        : null
+  })
+  ipcMain.on('shell:set-overlay-open', (event, value) => {
+    const parsed = z.boolean().safeParse(value)
+    if (isTrustedShellEvent(event) && parsed.success) {
+      shellOverlayOpen = parsed.data
+      layoutWorkspace()
+      if (!shellOverlayOpen && connection.status === 'ready') {
+        workspaceView?.webContents.focus()
+      }
+    }
+  })
   ipcMain.handle('hosted-browser:open-devtools', async (event, value) => {
     const panelId = z
       .string()
@@ -1179,12 +1265,12 @@ function registerIpc(): void {
     return true
   })
   ipcMain.handle('shell:get-state', (event) =>
-    isTrustedRendererEvent(event) ? shellState() : null
+    isTrustedShellEvent(event) ? shellState() : null
   )
   ipcMain.handle('shell:computer-activity', (event) =>
     desktopRuntime.run(
       Effect.gen(function* () {
-        if (!isTrustedRendererEvent(event) || !store) {
+        if (!isTrustedShellEvent(event) || !store) {
           return []
         }
 
@@ -1205,10 +1291,7 @@ function registerIpc(): void {
     )
   )
   ipcMain.handle('shell:copy-phone-link', (event, value) => {
-    if (
-      !isTrustedRendererEvent(event) ||
-      !z.string().safeParse(value).success
-    ) {
+    if (!isTrustedShellEvent(event) || !z.string().safeParse(value).success) {
       return false
     }
 
@@ -1237,7 +1320,7 @@ function registerIpc(): void {
     desktopRuntime.run(
       Effect.gen(function* () {
         const computer = store?.selectedComputer
-        if (!isTrustedRendererEvent(event) || !computer || computer.id !== id) {
+        if (!isTrustedShellEvent(event) || !computer || computer.id !== id) {
           return {
             url: null,
             error: 'Select a computer to open on your phone.',
@@ -1253,7 +1336,7 @@ function registerIpc(): void {
     desktopRuntime.run(
       Effect.gen(function* () {
         const parsedId = z.string().safeParse(id)
-        if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
+        if (!isTrustedShellEvent(event) || !parsedId.success || !store) {
           return false
         }
 
@@ -1270,7 +1353,7 @@ function registerIpc(): void {
     desktopRuntime.run(
       Effect.gen(function* () {
         const parsedInput = z.string().safeParse(input)
-        if (!isTrustedRendererEvent(event) || !parsedInput.success || !store) {
+        if (!isTrustedShellEvent(event) || !parsedInput.success || !store) {
           return { ok: false, error: 'Could not save the computer.' }
         }
 
@@ -1300,7 +1383,7 @@ function registerIpc(): void {
   ipcMain.handle('shell:update-computer', (event, value) =>
     desktopRuntime.run(
       Effect.gen(function* () {
-        if (!isTrustedRendererEvent(event) || !store) {
+        if (!isTrustedShellEvent(event) || !store) {
           return { ok: false, error: 'Could not save the computer.' }
         }
 
@@ -1338,7 +1421,7 @@ function registerIpc(): void {
     desktopRuntime.run(
       Effect.gen(function* () {
         const parsedId = z.string().safeParse(id)
-        if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
+        if (!isTrustedShellEvent(event) || !parsedId.success || !store) {
           return false
         }
 
@@ -1359,12 +1442,12 @@ function registerIpc(): void {
     )
   )
   ipcMain.on('shell:retry-connection', (event) => {
-    if (isTrustedRendererEvent(event)) {
+    if (isTrustedShellEvent(event)) {
       void connectSelected()
     }
   })
   ipcMain.on('shell:install-update', (event) => {
-    if (!isTrustedRendererEvent(event)) {
+    if (!isTrustedShellEvent(event)) {
       return
     }
 
@@ -1408,22 +1491,17 @@ function registerIpc(): void {
   })
   ipcMain.on('shell:navigate-history', (event, direction) => {
     const parsed = z.enum(['back', 'forward']).safeParse(direction)
-    if (isTrustedRendererEvent(event) && parsed.success) {
+    if (isTrustedShellEvent(event) && parsed.success) {
       navigateRendererHistory(parsed.data)
     }
   })
   ipcMain.handle('shell:copy-start-command', (event) => {
-    if (isTrustedRendererEvent(event)) {
+    if (isTrustedShellEvent(event)) {
       clipboard.writeText('treeport start')
     }
   })
-  ipcMain.handle('shell:copy-update-command', (event) => {
-    if (isTrustedRendererEvent(event)) {
-      clipboard.writeText('treeport update')
-    }
-  })
   ipcMain.handle('shell:open-installation-docs', (event) => {
-    if (isTrustedRendererEvent(event)) {
+    if (isTrustedShellEvent(event)) {
       return desktopRuntime.run(
         Effect.tryPromise(() =>
           shell.openExternal(
@@ -1611,7 +1689,7 @@ function registerIpc(): void {
     setTerminalSelectionActive(parsedActive.data)
   })
   ipcMain.on('shell:terminal-selection-release', (event) => {
-    if (isTrustedRendererEvent(event)) {
+    if (isTrustedShellEvent(event)) {
       releaseTerminalSelection()
     }
   })

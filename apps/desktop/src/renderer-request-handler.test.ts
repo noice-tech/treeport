@@ -28,12 +28,11 @@ afterEach(async () => {
 })
 
 describe('desktop renderer requests', () => {
-  it('routes development documents and modules through Vite while preserving API requests', async () => {
+  it('routes only private shell documents and modules through the desktop Vite server', async () => {
     const forwarded: string[] = []
     const handler = await createRendererRequestHandler({
       rendererDirectory: '.',
       developmentServerUrl: 'http://localhost:5174',
-      selectedBackendOrigin: () => 'http://127.0.0.1:8733',
       forward: async (request) => {
         forwarded.push(request.url)
         return new Response(request.url)
@@ -53,14 +52,22 @@ describe('desktop renderer requests', () => {
     )
     await handler(new Request('http://127.0.0.1:8733/api/projects'))
 
+    await handler(
+      new Request('treeport-app://application/', {
+        headers: { accept: 'text/html' }
+      })
+    )
+    await handler(new Request('treeport-app://application/app.tsx?version=1'))
     expect(forwarded).toEqual([
+      'http://127.0.0.1:8733/projects/project-1/worktrees/worktree-1',
+      'http://127.0.0.1:8733/app.tsx?version=1',
+      'http://127.0.0.1:8733/api/projects',
       'http://localhost:5174/',
-      'http://localhost:5174/app.tsx?version=1',
-      'http://127.0.0.1:8733/api/projects'
+      'http://localhost:5174/app.tsx?version=1'
     ])
   })
 
-  it('serves packaged routes and assets while forwarding backend requests unchanged', async () => {
+  it('serves only packaged shell routes and assets while forwarding workspace requests unchanged', async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'treeport-renderer-handler-')
     )
@@ -86,21 +93,30 @@ describe('desktop renderer requests', () => {
     const handler = await createRendererRequestHandler({
       rendererDirectory: directory,
       developmentServerUrl: null,
-      selectedBackendOrigin: () => 'http://127.0.0.1:8733',
       forward
     })
 
+    const workspace = await handler(
+      new Request('http://127.0.0.1:8733/', {
+        headers: { accept: 'text/html' }
+      })
+    )
+    expect(await workspace.json()).toEqual({ forwarded: true })
+    const workspaceAsset = await handler(
+      new Request('http://127.0.0.1:8733/assets/app.js')
+    )
+    expect(await workspaceAsset.json()).toEqual({ forwarded: true })
+
     const route = await handler(
-      new Request(
-        'http://127.0.0.1:8733/projects/project-1/worktrees/worktree-1',
-        { headers: { accept: 'text/html' } }
-      )
+      new Request('treeport-app://application/', {
+        headers: { accept: 'text/html' }
+      })
     )
     expect(await route.text()).toBe('<main>Treeport</main>')
     expect(route.headers.get('content-type')).toBe('text/html; charset=utf-8')
 
     const asset = await handler(
-      new Request('http://127.0.0.1:8733/assets/app.js')
+      new Request('treeport-app://application/assets/app.js')
     )
     expect(await asset.text()).toBe('app()')
     expect(asset.headers.get('content-type')).toBe(

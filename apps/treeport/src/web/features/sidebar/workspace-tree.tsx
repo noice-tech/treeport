@@ -197,12 +197,12 @@ export function WorkspaceTree({
     progress: terminalProgress
   } = useTerminalNavigationMetadata()
   const desktopBridge = window.treeportDesktop
-  const newWorktreeShortcut = desktopBridge
+  const newWorktreeShortcut = desktopBridge?.onCommand
     ? desktopBridge.platform === 'darwin'
       ? '⌘N'
       : 'Ctrl+N'
     : null
-  const newPanelShortcut = desktopBridge
+  const newPanelShortcut = desktopBridge?.onCommand
     ? desktopBridge.platform === 'darwin'
       ? '⌘⇧T'
       : 'Ctrl+Shift+T'

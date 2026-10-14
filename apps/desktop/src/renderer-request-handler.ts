@@ -22,7 +22,6 @@ const contentTypes = new Map([
 export interface RendererRequestHandlerOptions {
   rendererDirectory: string
   developmentServerUrl: string | null
-  selectedBackendOrigin(): string | null
   forward(request: Request): Promise<Response>
 }
 
@@ -112,24 +111,15 @@ export function createRendererRequestHandler(
     return (request: Request) =>
       Effect.gen(function* () {
         const url = new URL(request.url)
-        const backendOrigin = options.selectedBackendOrigin()
-        const privateApplicationRequest = url.protocol === 'treeport-app:'
-        const selectedBackendRequest =
-          backendOrigin !== null && url.origin === backendOrigin
-        if (!privateApplicationRequest && !selectedBackendRequest) {
+        // Only the private shell is bundled. Workspace documents and assets
+        // always belong to the selected daemon, never to the desktop release.
+        if (url.protocol !== 'treeport-app:') {
           return yield* forward(request)
         }
 
         const pathname = requestPath(url)
         if (!pathname) {
           return new Response('Not found', { status: 404 })
-        }
-
-        if (
-          selectedBackendRequest &&
-          (pathname === '/api' || pathname.startsWith('/api/'))
-        ) {
-          return yield* forward(request)
         }
 
         if (options.developmentServerUrl) {
@@ -164,9 +154,7 @@ export function createRendererRequestHandler(
           return yield* localFileResponse(indexPath, request.method === 'HEAD')
         }
 
-        return privateApplicationRequest
-          ? new Response('Not found', { status: 404 })
-          : yield* forward(request)
+        return new Response('Not found', { status: 404 })
       })
   })
 }

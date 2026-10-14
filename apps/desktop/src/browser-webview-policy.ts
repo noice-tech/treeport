@@ -2,7 +2,7 @@ import {
   browserPanelIdSchema,
   browserUrlSchema,
   decodeUnknownOrNull
-} from '@treeport/shared'
+} from '@treeport/shared/browser-host'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -30,7 +30,7 @@ import type {
   DesktopBrowserPermissions,
   DesktopBrowserToolbarCommand,
   DesktopCommand
-} from './desktop-contract'
+} from '@treeport/desktop-bridge'
 
 import { isBrowserLoopbackHostname } from './browser-loopback'
 import { browserPresentationOrigin } from './browser-presentation'

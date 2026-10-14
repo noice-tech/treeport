@@ -1,0 +1,154 @@
+@import '@fontsource-variable/inter';
+@import 'tailwindcss' source(none);
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans--font-feature-settings:
+    'cv02', 'cv03', 'cv04', 'cv11', 'ss01', 'ss03';
+  --animate-comet: comet 1.1s linear infinite;
+
+  @keyframes comet {
+    to {
+      stroke-dashoffset: -100;
+    }
+  }
+}
+
+@custom-variant dark (&:is(.dark *));
+
+/* Touch can synthesize sticky hover; only precise, hover-capable input gets it. */
+@custom-variant hover {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
+:root {
+  color-scheme: dark;
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  color: var(--color-zinc-200);
+  background: var(--color-zinc-950);
+  --sidebar: var(--color-zinc-900);
+  --sidebar-foreground: var(--color-zinc-200);
+  --sidebar-primary: var(--color-cyan-600);
+  --sidebar-primary-foreground: white;
+  --sidebar-accent: color-mix(in oklab, white 6%, transparent);
+  --sidebar-accent-foreground: var(--color-zinc-100);
+  --sidebar-border: color-mix(in oklab, white 8%, transparent);
+  --sidebar-ring: var(--color-cyan-400);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--color-zinc-950);
+  /* Controls provide press feedback instead of the browser's tap flash. */
+  -webkit-tap-highlight-color: transparent;
+  /* Keep text sizing stable when rotating a phone. */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* This is an app with inner scrollers, not a pull-to-refresh document. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* Leave content selectable and pinch zoom available; only controls opt out. */
+button,
+a,
+[role='button'],
+[role='tab'],
+[role='menuitem'] {
+  touch-action: manipulation;
+}
+
+/* Apply to control labels explicitly as well: selection inheritance differs
+   across browsers. Do not include editable fields or terminal output. */
+button,
+[role='button'],
+[role='tab'],
+[role='menuitem'],
+:is(button, [role='button'], [role='tab'], [role='menuitem'])
+  :is(span, kbd, svg) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Immediate feedback on finger-down, including controls without hover styles. */
+@media (pointer: coarse) {
+  :is(button, a, [role='button'], [role='tab'], [role='menuitem']) {
+    transition: opacity 100ms ease-out;
+  }
+
+  :is(button, a, [role='button'], [role='tab'], [role='menuitem']):active:not(
+    :disabled,
+    [aria-disabled='true']
+  ) {
+    opacity: 0.7;
+  }
+}
+
+body {
+  min-width: 320px;
+  min-height: 100dvh;
+  overflow: hidden;
+  @apply m-0 antialiased;
+}
+
+code {
+  color: var(--color-cyan-200);
+  font-family: 'SFMono-Regular', 'Cascadia Code', monospace;
+}
+
+@utility eyebrow {
+  @apply m-0 font-mono text-[0.6875rem]/4 font-medium tracking-wide text-zinc-500 uppercase;
+}
+
+@utility touch-target {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 3rem);
+  height: max(100%, 3rem);
+  transform: translate(-50%, -50%);
+
+  /* Dense mobile rows must not have hit areas that overlap adjacent actions. */
+  @media (max-width: 700px) {
+    width: max(100%, 2rem);
+    height: max(100%, 2rem);
+  }
+
+  @variant pointer-fine {
+    display: none;
+  }
+}
+
+@utility form-note {
+  @apply m-0 text-sm text-pretty text-zinc-400;
+}
+
+@utility form-error {
+  @apply m-0 text-sm text-pretty text-rose-300;
+}
+
+@utility check-row {
+  @apply flex items-center gap-2.5 py-1;
+}
+
+@theme inline {
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}

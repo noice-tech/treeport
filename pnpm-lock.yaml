@@ -245,6 +245,9 @@ importers:
       knip:
         specifier: ^6.29.0
         version: 6.29.0
+      oxc-resolver:
+        specifier: 11.24.2
+        version: 11.24.2
       oxfmt:
         specifier: ^0.59.0
         version: 0.59.0
@@ -315,9 +318,15 @@ importers:
       '@tailwindcss/vite':
         specifier: 'catalog:'
         version: 4.3.3(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
+      '@treeport/desktop-bridge':
+        specifier: workspace:*
+        version: link:../../packages/desktop-bridge
       '@treeport/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@treeport/theme':
+        specifier: workspace:*
+        version: link:../../packages/theme
       '@types/node':
         specifier: ^24.10.9
         version: 24.13.3
@@ -470,9 +479,6 @@ importers:
         specifier: 'catalog:'
         version: 4.4.3
     devDependencies:
-      '@fontsource-variable/inter':
-        specifier: 'catalog:'
-        version: 5.2.8
       '@heroicons/react':
         specifier: ^2.2.0
         version: 2.2.0(react@19.3.0)
@@ -506,9 +512,15 @@ importers:
       '@tanstack/react-router':
         specifier: ^1.170.18
         version: 1.170.18(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@treeport/desktop-bridge':
+        specifier: workspace:*
+        version: link:../../packages/desktop-bridge
       '@treeport/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@treeport/theme':
+        specifier: workspace:*
+        version: link:../../packages/theme
       '@types/compression':
         specifier: ^1.8.1
         version: 1.8.1
@@ -560,12 +572,11 @@ importers:
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
-      tailwindcss:
-        specifier: 'catalog:'
-        version: 4.3.3
       tsdown:
         specifier: 0.22.14
-        version: 0.22.14(@volar/typescript@2.4.28)(oxc-resolver@11.24.2)(tsx@4.23.1)(typescript@7.0.2)
+        version: 0.22.14(@volar/typescript@2.4.28(typescript@7.0.2))(oxc-resolver@11.24.2)(tsx@4.23.1)(typescript@7.0.2)
+
+  packages/desktop-bridge: {}
 
   packages/panel-sdk: {}
 
@@ -614,6 +625,15 @@ importers:
       '@types/node':
         specifier: ^24.10.9
         version: 24.13.3
+
+  packages/theme:
+    dependencies:
+      '@fontsource-variable/inter':
+        specifier: 'catalog:'
+        version: 5.2.8
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.3
 
   packages/web-panel-files:
     dependencies:
@@ -4741,6 +4761,11 @@ packages:
 
   '@volar/typescript@2.4.28':
     resolution: {integrity: sha512-Ja6yvWrbis2QtN4ClAKreeUZPVYMARDYZl9LMEv1iQ1QdepB6wn0jTRxA9MftYmYa4DQ4k/DaSZpFPUfxl8giw==}
+    peerDependencies:
+      typescript: '*'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   '@vscode/emmet-helper@2.11.0':
     resolution: {integrity: sha512-QLxjQR3imPZPQltfbWRnHU6JecWTF1QSWhx3GAKQpslx7y3Dp6sIIXhKjiUJ/BR9FX8PVthjr9PD6pNwOJfAzw==}
@@ -8907,7 +8932,7 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
       '@volar/kit': 2.4.28(typescript@6.0.3)
       '@volar/language-core': 2.4.28
-      '@volar/language-server': 2.4.28
+      '@volar/language-server': 2.4.28(typescript@6.0.3)
       '@volar/language-service': 2.4.28
       muggle-string: 0.4.1
       tinyglobby: 0.2.17
@@ -12712,7 +12737,7 @@ snapshots:
   '@volar/kit@2.4.28(typescript@6.0.3)':
     dependencies:
       '@volar/language-service': 2.4.28
-      '@volar/typescript': 2.4.28
+      '@volar/typescript': 2.4.28(typescript@6.0.3)
       typesafe-path: 0.2.2
       typescript: 6.0.3
       vscode-languageserver-textdocument: 1.0.12
@@ -12722,17 +12747,19 @@ snapshots:
     dependencies:
       '@volar/source-map': 2.4.28
 
-  '@volar/language-server@2.4.28':
+  '@volar/language-server@2.4.28(typescript@6.0.3)':
     dependencies:
       '@volar/language-core': 2.4.28
       '@volar/language-service': 2.4.28
-      '@volar/typescript': 2.4.28
+      '@volar/typescript': 2.4.28(typescript@6.0.3)
       path-browserify: 1.0.1
       request-light: 0.7.0
       vscode-languageserver: 9.0.1
       vscode-languageserver-protocol: 3.18.2
       vscode-languageserver-textdocument: 1.0.12
       vscode-uri: 3.1.0
+    transitivePeerDependencies:
+      - typescript
 
   '@volar/language-service@2.4.28':
     dependencies:
@@ -12743,11 +12770,22 @@ snapshots:
 
   '@volar/source-map@2.4.28': {}
 
-  '@volar/typescript@2.4.28':
+  '@volar/typescript@2.4.28(typescript@6.0.3)':
     dependencies:
       '@volar/language-core': 2.4.28
       path-browserify: 1.0.1
       vscode-uri: 3.1.0
+    optionalDependencies:
+      typescript: 6.0.3
+
+  '@volar/typescript@2.4.28(typescript@7.0.2)':
+    dependencies:
+      '@volar/language-core': 2.4.28
+      path-browserify: 1.0.1
+      vscode-uri: 3.1.0
+    optionalDependencies:
+      typescript: 7.0.2
+    optional: true
 
   '@vscode/emmet-helper@2.11.0':
     dependencies:
@@ -16257,7 +16295,7 @@ snapshots:
       sprintf-js: 1.1.3
     optional: true
 
-  rolldown-plugin-dts@0.27.14(@volar/typescript@2.4.28)(oxc-resolver@11.24.2)(rolldown@1.2.0)(typescript@7.0.2):
+  rolldown-plugin-dts@0.27.14(@volar/typescript@2.4.28(typescript@7.0.2))(oxc-resolver@11.24.2)(rolldown@1.2.0)(typescript@7.0.2):
     dependencies:
       dts-resolver: 3.0.0(oxc-resolver@11.24.2)
       get-tsconfig: 5.0.0-beta.5
@@ -16267,7 +16305,7 @@ snapshots:
       yuku-codegen: 0.8.0
       yuku-parser: 0.8.0
     optionalDependencies:
-      '@volar/typescript': 2.4.28
+      '@volar/typescript': 2.4.28(typescript@7.0.2)
       typescript: 7.0.2
     transitivePeerDependencies:
       - oxc-resolver
@@ -16665,7 +16703,7 @@ snapshots:
 
   ts-algebra@2.0.0: {}
 
-  tsdown@0.22.14(@volar/typescript@2.4.28)(oxc-resolver@11.24.2)(tsx@4.23.1)(typescript@7.0.2):
+  tsdown@0.22.14(@volar/typescript@2.4.28(typescript@7.0.2))(oxc-resolver@11.24.2)(tsx@4.23.1)(typescript@7.0.2):
     dependencies:
       ansis: 4.3.1
       cac: 7.0.0
@@ -16676,7 +16714,7 @@ snapshots:
       obug: 2.1.4
       picomatch: 4.0.5
       rolldown: 1.2.0
-      rolldown-plugin-dts: 0.27.14(@volar/typescript@2.4.28)(oxc-resolver@11.24.2)(rolldown@1.2.0)(typescript@7.0.2)
+      rolldown-plugin-dts: 0.27.14(@volar/typescript@2.4.28(typescript@7.0.2))(oxc-resolver@11.24.2)(rolldown@1.2.0)(typescript@7.0.2)
       tinyexec: 1.2.4
       tinyglobby: 0.2.17
       tree-kill: 1.2.2

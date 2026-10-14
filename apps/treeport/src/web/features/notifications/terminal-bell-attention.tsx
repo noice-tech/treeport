@@ -127,7 +127,7 @@ export function TerminalBellAttention({
         return
       }
 
-      void window.treeportDesktop?.requestAttention()
+      void window.treeportDesktop?.requestAttention?.()
     }
 
     return terminalSessions.subscribeBellEvents(handleBell)

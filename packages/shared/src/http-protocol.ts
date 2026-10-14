@@ -616,28 +616,6 @@ export const healthResponseSchema = Schema.Struct({
 })
 export type HealthResponse = Schema.Schema.Type<typeof healthResponseSchema>
 
-// Desktop performs version negotiation before it can assume the current
-// daemon health shape. Keep the fields introduced after version negotiation
-// optional while still rejecting unknown or mistyped network data.
-export const desktopHealthResponseSchema = Schema.Struct({
-  ok: Schema.Literal(true),
-  version: Schema.optionalWith(Schema.NullOr(Schema.String), {
-    default: () => null
-  }),
-  protocolVersion: Schema.optional(Schema.Int),
-  hostname: Schema.optional(Schema.String),
-  pid: Schema.optional(Schema.Int),
-  instanceId: Schema.optional(nullableStringSchema),
-  installationMethod: Schema.optional(Schema.String),
-  daemonLifecycle: Schema.optional(
-    Schema.Literal('treeport', 'service', 'external')
-  ),
-  url: Schema.optional(Schema.String)
-})
-export type DesktopHealthResponse = Schema.Schema.Type<
-  typeof desktopHealthResponseSchema
->
-
 export const browserInstallStatusSchema = Schema.Struct({
   installed: Schema.Boolean,
   executablePath: nullableStringSchema,

@@ -1,4 +1,7 @@
-import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
+import {
+  browserUrlSchema,
+  decodeUnknownOrNull
+} from '@treeport/shared/browser-host'
 
 export function browserPresentationOrigin(
   permission: string,

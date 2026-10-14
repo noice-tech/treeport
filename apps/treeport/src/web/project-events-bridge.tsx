@@ -40,6 +40,7 @@ export function useProjectEventsBridge(
 
   useEffect(() => {
     let disposed = false
+    let connectedOnce = false
     const refreshes = createInvalidationCoalescer(() =>
       queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
@@ -79,6 +80,7 @@ export function useProjectEventsBridge(
     }
     const refreshProjects = () => projectRefreshes.schedule()
     const snapshot = (payload: EventsSnapshot) => {
+      connectedOnce = true
       terminalSessions.replaceRuntimeMetadata(payload.terminalMetadata)
       onPresenceChangedRef.current?.(payload.presence)
       setEventsDisconnected(false)
@@ -181,6 +183,32 @@ export function useProjectEventsBridge(
     }
     const connect = Effect.scoped(
       Effect.gen(function* () {
+        if (connectedOnce) {
+          // After losing an established connection, obtain the running
+          // daemon's UI before decoding its potentially changed RPC protocol.
+          // Wait for its document to return, not for the old RPC to succeed.
+          const available = yield* Effect.tryPromise(async (signal) => {
+            const response = await fetch(window.location.href, {
+              method: 'HEAD',
+              cache: 'no-store',
+              signal
+            })
+            return (
+              response.ok &&
+              response.headers.get('content-type')?.includes('text/html')
+            )
+          }).pipe(
+            Effect.timeout('5 seconds'),
+            Effect.catchAll(() => Effect.succeed(false))
+          )
+          if (available && !disposed) {
+            window.location.reload()
+            yield* Effect.never
+          }
+
+          return
+        }
+
         const client = yield* RpcClient.make(TreeportRpcs)
         yield* client
           .WatchProjectEvents({

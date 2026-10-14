@@ -1,3 +1,4 @@
+import type { DesktopBrowserPermissionPrompt } from '@treeport/desktop-bridge'
 import {
   lazy,
   Suspense,
@@ -218,9 +219,10 @@ function WorkspaceApp() {
     useState(false)
   const [mobileNotificationsOpen, setMobileNotificationsOpen] = useState(false)
   const [browserPermissionPrompt, setBrowserPermissionPrompt] =
-    useState<TreeportBrowserPermissionPrompt | null>(null)
+    useState<DesktopBrowserPermissionPrompt | null>(null)
   useEffect(
-    () => desktopBridge?.onBrowserPermissionPrompt(setBrowserPermissionPrompt),
+    () =>
+      desktopBridge?.onBrowserPermissionPrompt?.(setBrowserPermissionPrompt),
     [desktopBridge]
   )
   const workspaceActionsBlocked =
@@ -1491,7 +1493,7 @@ function WorkspaceApp() {
   }, [focusSurface])
 
   useEffect(() => {
-    if (desktopBridge) {
+    if (desktopBridge?.onCommand) {
       return
     }
 
@@ -1579,7 +1581,7 @@ function WorkspaceApp() {
   ])
 
   useEffect(() => {
-    if (!desktopBridge) {
+    if (!desktopBridge?.onCommand) {
       return
     }
 
@@ -1590,7 +1592,7 @@ function WorkspaceApp() {
         command === 'zoom-reset'
       ) {
         if (workspaceActionsBlocked || !terminalSessions.zoomFocused(command)) {
-          desktopBridge.zoomPage(command)
+          desktopBridge.zoomPage?.(command)
         }
 
         return

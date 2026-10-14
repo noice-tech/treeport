@@ -5,15 +5,10 @@ import {
   type IpcRendererEvent
 } from 'electron'
 import { z } from 'zod'
-import {
-  decodeUnknownOrNull,
-  phoneAccessResponseSchema,
-  type PhoneAccessResponse
-} from '@treeport/shared'
+import { phoneAccessResponseSchema } from './shell-metadata'
+import type { PhoneAccessResponse } from './desktop-contract'
 import type {
-  ComputerActivity,
-  ComputerMutationResult,
-  ComputerUpdate,
+  DesktopBridge,
   DesktopBrowserBridgeDescriptor,
   DesktopBrowserCommandResult,
   DesktopBrowserPopup,
@@ -22,7 +17,12 @@ import type {
   DesktopBrowserToolbarCommand,
   DesktopBrowserUnavailable,
   DesktopCommand,
-  DesktopFileActionResult,
+  DesktopFileActionResult
+} from '@treeport/desktop-bridge'
+import type {
+  ComputerActivity,
+  ComputerMutationResult,
+  ComputerUpdate,
   DesktopNavigationDirection,
   DesktopShellState
 } from './desktop-contract'
@@ -105,6 +105,16 @@ window.addEventListener(
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
+  // Native context is synchronous, so a local browser never briefly starts
+  // the daemon-hosted implementation while waiting for desktop metadata.
+  runtime:
+    process.isMainFrame &&
+    ['http:', 'https:'].includes(window.location.protocol)
+      ? z
+          .object({ computerId: z.string(), localBrowser: z.boolean() })
+          .nullable()
+          .parse(ipcRenderer.sendSync('desktop:runtime'))
+      : null,
   openBrowserDevtools(panelId: string): Promise<boolean> {
     return ipcRenderer
       .invoke('hosted-browser:open-devtools', panelId)
@@ -315,9 +325,12 @@ const desktopBridge = Object.freeze({
   requestAttention() {
     ipcRenderer.send('bell-attention:request')
   }
-})
+} satisfies Required<DesktopBridge>)
 
 const shellBridge = Object.freeze({
+  setOverlayOpen(open: boolean) {
+    ipcRenderer.send('shell:set-overlay-open', open)
+  },
   computerActivity(): Promise<ComputerActivity[]> {
     return ipcRenderer.invoke('shell:computer-activity')
   },
@@ -348,7 +361,7 @@ const shellBridge = Object.freeze({
   phoneAccess(id: string): Promise<PhoneAccessResponse> {
     return ipcRenderer.invoke('shell:phone-access', id).then(
       (value) =>
-        decodeUnknownOrNull(phoneAccessResponseSchema, value) ?? {
+        phoneAccessResponseSchema.safeParse(value).data ?? {
           url: null,
           error: 'Could not check remote access.',
           setupCommand: null
@@ -379,13 +392,17 @@ const shellBridge = Object.freeze({
   copyStartCommand(): Promise<void> {
     return ipcRenderer.invoke('shell:copy-start-command')
   },
-  copyUpdateCommand(): Promise<void> {
-    return ipcRenderer.invoke('shell:copy-update-command')
-  },
   openInstallationDocs(): Promise<void> {
     return ipcRenderer.invoke('shell:open-installation-docs')
   }
 })
 
-contextBridge.exposeInMainWorld('treeportDesktop', desktopBridge)
-contextBridge.exposeInMainWorld('treeportShell', shellBridge)
+// The private shell owns installation controls. Workspace pages get only
+// optional native enhancements; neither subframes nor browser guests get them.
+if (process.isMainFrame) {
+  if (window.location.protocol === 'treeport-app:') {
+    contextBridge.exposeInMainWorld('treeportShell', shellBridge)
+  } else if (['http:', 'https:'].includes(window.location.protocol)) {
+    contextBridge.exposeInMainWorld('treeportDesktop', desktopBridge)
+  }
+}

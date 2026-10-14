@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as Effect from 'effect/Effect'
 import { loadRenderer } from './renderer-load'
@@ -8,31 +9,36 @@ afterEach(() => vi.useRealTimers())
 
 it('retries a failed initial document load until the renderer is available', async () => {
   vi.useFakeTimers()
-  const renderer = {
+  const renderer = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
     loadURL: vi
       .fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error('Renderer unavailable'))
-      .mockRejectedValueOnce(new Error('Renderer unavailable'))
+      .mockImplementationOnce(async () => {
+        renderer.emit('did-navigate', {}, url, 503)
+      })
       .mockResolvedValue(undefined)
-  }
-  const loaded = Effect.runPromise(loadRenderer(renderer, url))
+  })
+  const onFailure = vi.fn()
+  const loaded = Effect.runPromise(loadRenderer(renderer, url, onFailure))
   await vi.advanceTimersByTimeAsync(999)
   expect(renderer.loadURL).toHaveBeenCalledTimes(2)
   await vi.advanceTimersByTimeAsync(1)
-  await loaded
+  expect(await loaded).toBe(true)
+  expect(onFailure).toHaveBeenCalledTimes(2)
+  expect(renderer.listenerCount('did-navigate')).toBe(0)
   expect(renderer.loadURL).toHaveBeenCalledTimes(3)
   expect(renderer.loadURL).toHaveBeenLastCalledWith(url)
 })
 
 it('cancels retries when the owning connection is interrupted', async () => {
   vi.useFakeTimers()
-  const renderer = {
+  const renderer = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
     loadURL: vi.fn(async () => {
       throw new Error('Renderer unavailable')
     })
-  }
+  })
   const controller = new AbortController()
   const loaded = Effect.runPromiseExit(loadRenderer(renderer, url), {
     signal: controller.signal
@@ -45,17 +51,17 @@ it('cancels retries when the owning connection is interrupted', async () => {
 })
 
 it('does not retry a superseded navigation or a destroyed renderer', async () => {
-  const renderer = {
+  const renderer = Object.assign(new EventEmitter(), {
     isDestroyed: vi.fn(() => false),
     loadURL: vi.fn(async () => {
       throw Object.assign(new Error('Navigation superseded'), {
         code: 'ERR_ABORTED'
       })
     })
-  }
-  await Effect.runPromise(loadRenderer(renderer, url))
+  })
+  expect(await Effect.runPromise(loadRenderer(renderer, url))).toBe(false)
   expect(renderer.loadURL).toHaveBeenCalledTimes(1)
   renderer.isDestroyed.mockReturnValue(true)
-  await Effect.runPromise(loadRenderer(renderer, url))
+  expect(await Effect.runPromise(loadRenderer(renderer, url))).toBe(false)
   expect(renderer.loadURL).toHaveBeenCalledTimes(1)
 })

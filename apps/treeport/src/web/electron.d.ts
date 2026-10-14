@@ -1,109 +1,28 @@
-type TreeportDesktopCommand =
-  | 'new-worktree'
-  | 'new-terminal'
-  | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-  | 'new-panel'
-  | 'close-panel'
-  | 'toggle-side-panel'
-  | 'focus-location'
-  | 'find-in-page'
-  | 'reload'
-  | 'zoom-in'
-  | 'zoom-out'
-  | 'zoom-reset'
-  | 'select-previous-worktree'
-  | 'select-next-worktree'
-  | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
-type TreeportDesktopFileAction = 'opened' | 'rejected'
+import type { DesktopBridge } from '@treeport/desktop-bridge'
 
-type TreeportBrowserPermissionPrompt = {
-  id: string
-  panelId: string
-  origin: string
-  capability: string
-  destination: string | null
-}
+declare global {
+  interface TreeportBrowserWebview extends HTMLElement {
+    src: string
+    getWebContentsId(): number
+    getURL(): string
+    getTitle(): string
+    executeJavaScript<T>(code: string): Promise<T>
+    isLoading(): boolean
+    canGoBack(): boolean
+    canGoForward(): boolean
+    loadURL(url: string): Promise<void>
+    goBack(): void
+    goForward(): void
+    reload(): void
+    stop(): void
+    findInPage(
+      text: string,
+      options?: { forward?: boolean; findNext?: boolean }
+    ): number
+    stopFindInPage(action: 'clearSelection' | 'keepSelection'): void
+  }
 
-interface TreeportBrowserWebview extends HTMLElement {
-  src: string
-  getWebContentsId(): number
-  getURL(): string
-  getTitle(): string
-  executeJavaScript<T>(code: string): Promise<T>
-  isLoading(): boolean
-  canGoBack(): boolean
-  canGoForward(): boolean
-  loadURL(url: string): Promise<void>
-  goBack(): void
-  goForward(): void
-  reload(): void
-  stop(): void
-  findInPage(
-    text: string,
-    options?: { forward?: boolean; findNext?: boolean }
-  ): number
-  stopFindInPage(action: 'clearSelection' | 'keepSelection'): void
-}
-
-type TreeportDesktopBridge = Readonly<{
-  platform: NodeJS.Platform
-  openBrowserDevtools: (panelId: string) => Promise<boolean>
-  openFileUrl: (url: string) => Promise<TreeportDesktopFileAction>
-  getPathForFile?: (file: File) => Promise<string | null>
-  onLocalFilePaste?: (listener: (paths: string[]) => void) => () => void
-  onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
-  onCommand: (listener: (command: TreeportDesktopCommand) => void) => () => void
-  zoomPage: (action: 'zoom-in' | 'zoom-out' | 'zoom-reset') => void
-  setTerminalSelectionActive: (active: boolean) => void
-  onTerminalSelectionRelease: (listener: () => void) => () => void
-  registerBrowser: (
-    panelId: string,
-    webContentsId: number,
-    challenge: string
-  ) => Promise<{
-    endpoint: string
-    panelId: string
-    challenge: string
-  } | null>
-  browserCommand: (
-    panelId: string,
-    command:
-      | { type: 'navigate'; url: string }
-      | { type: 'back' }
-      | { type: 'forward' }
-      | { type: 'reload' }
-      | { type: 'stop' }
-  ) => Promise<{ ok: boolean; error: string | null }>
-  setBrowserInputControl: (panelId: string, locked: boolean) => Promise<boolean>
-  setBrowserPresentationActive: (
-    panelId: string,
-    active: boolean
-  ) => Promise<boolean>
-  requestBrowserClose: (panelId: string, force: boolean) => Promise<boolean>
-  disposeBrowser: (panelId: string) => void
-  onBrowserFocus: (listener: (panelId: string) => void) => () => void
-  onBrowserPopup: (
-    listener: (popup: { panelId: string; url: string }) => void
-  ) => () => void
-  browserPermissions: (panelId: string) => Promise<{
-    origin: string | null
-    decisions: Array<{ capability: string; label: string; allowed: boolean }>
-  } | null>
-  resetBrowserPermissions: (
-    panelId: string,
-    origin: string,
-    capability: string | null
-  ) => Promise<boolean>
-  onBrowserPermissionPrompt: (
-    listener: (prompt: TreeportBrowserPermissionPrompt | null) => void
-  ) => () => void
-  respondBrowserPermission: (id: string, allow: boolean) => void
-  onBrowserUnavailable: (
-    listener: (failure: { panelId: string; message: string }) => void
-  ) => () => void
-  requestAttention: () => void
-}>
-
-interface Window {
-  readonly treeportDesktop?: TreeportDesktopBridge
+  interface Window {
+    readonly treeportDesktop?: DesktopBridge
+  }
 }

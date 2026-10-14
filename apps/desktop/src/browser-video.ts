@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { BrowserWindow, session, type WebContents } from 'electron'
-import { BROWSER_VIDEO_CAPTURE_SOURCE } from '@treeport/shared'
+import { BROWSER_VIDEO_CAPTURE_SOURCE } from '@treeport/shared/browser-host'
 import * as Effect from 'effect/Effect'
 import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
