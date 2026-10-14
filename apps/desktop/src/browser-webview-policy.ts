@@ -859,9 +859,11 @@ export function installBrowserWebviewPolicy(options: {
         return
       }
 
-      const host = new URL(failedUrl).hostname
-      const detail =
-        errorDescription === 'ERR_CONNECTION_REFUSED'
+      const isFile = new URL(failedUrl).protocol === 'file:'
+      const host = new URL(failedUrl).hostname || 'Local file'
+      const detail = isFile
+        ? 'Treeport could not load this file on the desktop computer.'
+        : errorDescription === 'ERR_CONNECTION_REFUSED'
           ? `${host} refused the connection.`
           : 'Treeport could not load this page.'
       const script = `(() => {
@@ -882,11 +884,11 @@ export function installBrowserWebviewPolicy(options: {
         `)}
         const main = document.createElement('main')
         const heading = document.createElement('h1')
-        heading.textContent = 'This site cannot be reached'
+        heading.textContent = ${JSON.stringify(isFile ? 'This file cannot be opened' : 'This site cannot be reached')}
         const detail = document.createElement('p')
         detail.textContent = ${JSON.stringify(detail)}
         const suggestion = document.createElement('p')
-        suggestion.textContent = 'Make sure that the server is running and that the address is correct.'
+        suggestion.textContent = ${JSON.stringify(isFile ? 'Check that the file exists and is readable on this computer, not just on a connected server.' : 'Make sure that the server is running and that the address is correct.')}
         const reload = document.createElement('button')
         reload.type = 'button'
         reload.textContent = 'Reload'

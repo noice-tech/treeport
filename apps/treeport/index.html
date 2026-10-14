@@ -12,9 +12,46 @@
     <link rel="icon" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Treeport</title>
+    <!-- Startup must paint even before the application stylesheet arrives. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #09090b;
+        color: #e4e4e7;
+      }
+      #startup {
+        box-sizing: border-box;
+        display: grid;
+        min-height: 100dvh;
+        align-content: center;
+        justify-items: center;
+        gap: 1rem;
+        padding: 2rem;
+        font:
+          1rem/1.5 system-ui,
+          sans-serif;
+        text-align: center;
+      }
+      #startup p {
+        max-width: 28rem;
+        margin: 0;
+        color: #a1a1aa;
+      }
+      #startup a {
+        color: #67e8f9;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main id="startup" aria-label="Treeport startup">
+        <strong>Treeport</strong>
+        <p id="startup-status" role="status">Loading your workspace…</p>
+        <a href="">Reload Treeport</a>
+        <noscript>Enable JavaScript to use Treeport.</noscript>
+      </main>
+    </div>
     <script type="module" src="/src/web/main.tsx"></script>
   </body>
 </html>

@@ -161,7 +161,7 @@ async function checkPackage(
       path.join(packageDirectory, 'dist/web/index.html'),
       'utf8'
     )
-    assert(html.includes('<div id="root"></div>'), 'Missing web app root')
+    assert(html.includes('<div id="root">'), 'Missing web app root')
     const assets = [...html.matchAll(/(?:src|href)="(\/[^"#?]+)"/g)].map(
       (match) => match[1]
     )
@@ -169,11 +169,19 @@ async function checkPackage(
       assets.some((asset) => asset.endsWith('.js')),
       'Missing web JavaScript'
     )
+    // The bootstrap loads workspace styles and optional chunks dynamically,
+    // so they need not appear as stylesheet or script links in the HTML.
+    const bundledAssets = await fs.readdir(
+      path.join(packageDirectory, 'dist/web/assets')
+    )
     assert(
-      assets.some((asset) => asset.endsWith('.css')),
+      bundledAssets.some((asset) => asset.endsWith('.css')),
       'Missing web styles'
     )
-    for (const asset of assets) {
+    for (const asset of [
+      ...assets,
+      ...bundledAssets.map((asset) => `/assets/${asset}`)
+    ]) {
       assert(
         (await fs.stat(path.join(packageDirectory, 'dist/web', asset))).size >
           0,

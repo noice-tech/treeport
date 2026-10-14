@@ -764,7 +764,7 @@ export function BrowserPanelWorkspace({
     if (!parsed) {
       addressDirtyRef.current = true
       setError(
-        'Enter search terms or an HTTP or HTTPS address without credentials.'
+        'Enter search terms or an HTTP, HTTPS, or local file address without credentials.'
       )
       inputRef.current?.focus({ preventScroll: true })
       return
@@ -1520,6 +1520,16 @@ export function BrowserPanelWorkspace({
           </PopoverContent>
         </Popover>
       </form>
+      {(state?.url ?? panel.url).startsWith('file:') ? (
+        <p
+          className="bg-muted px-2.5 py-1.5 text-muted-foreground"
+          role="status"
+        >
+          {localBrowser
+            ? 'File paths refer to this desktop computer, not the connected server.'
+            : 'File paths refer to the hosted browser’s filesystem, not your device. The default Linux browser container does not mount project files.'}
+        </p>
+      ) : null}
       {error ? (
         <p className="bg-red-950 px-2.5 py-1.5 text-red-200" role="alert">
           {error}

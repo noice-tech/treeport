@@ -10,6 +10,7 @@ import type {
 } from 'playwright'
 import {
   browserObservedUrlSchema,
+  browserUrlSchema,
   decodeUnknownOrNull,
   normalizeBrowserTitle
 } from '@treeport/shared'
@@ -418,14 +419,8 @@ export class PlaywrightBrowser {
     page.on('popup', (candidate) => {
       void (async () => {
         const supportedUrl = (value: string): string | null => {
-          if (!URL.canParse(value)) {
-            return null
-          }
-
-          const url = new URL(value)
-          return url.protocol === 'http:' || url.protocol === 'https:'
-            ? url.href
-            : null
+          const parsed = decodeUnknownOrNull(browserUrlSchema, value)
+          return parsed === null ? null : new URL(parsed).href
         }
         let popupUrl = supportedUrl(candidate.url())
         if (!popupUrl) {
@@ -441,7 +436,7 @@ export class PlaywrightBrowser {
           this.callbacks.popup(popupUrl)
         } else {
           this.callbacks.navigationError(
-            'The popup did not supply a supported HTTP or HTTPS URL.'
+            'The popup did not supply a supported HTTP, HTTPS, or local file URL.'
           )
         }
 
