@@ -195,6 +195,7 @@ describe('hosted browser protocol', () => {
     const readyState = {
       url: 'file:///tmp/preview.html',
       title: 'Ready page',
+      faviconUrl: null,
       loading: false,
       canGoBack: false,
       canGoForward: false,

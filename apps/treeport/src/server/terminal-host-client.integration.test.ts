@@ -1557,9 +1557,16 @@ child.once('exit', (code) => process.exit(code ?? 1))
         emitOutput('x'.repeat(256 * 1024), sequence)
       }
 
-      await expect(slowClient.captureTerminal('terminal', 1)).rejects.toThrow(
-        'Terminal host connection closed'
-      )
+      // A reset can surface as a socket error before the normal EOF path.
+      // Assert disconnection, not platform-dependent transport wording; the
+      // subscription cleanup and fresh-client checks below prove isolation.
+      await expect(
+        slowClient.captureTerminal('terminal', 1)
+      ).rejects.toMatchObject({
+        _tag: expect.stringMatching(
+          /^TerminalHost(?:Disconnected|ConnectionError)$/
+        )
+      })
       await waitFor(
         () => unsubscribed,
         'The disconnected client retained its output subscription'

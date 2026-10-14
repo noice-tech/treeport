@@ -198,6 +198,23 @@ function ToolPickerActions({
   )
 }
 
+function BrowserPanelFavicon({ url }: { url: string | null }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+
+  return url && failedUrl !== url ? (
+    <img
+      src={url}
+      alt=""
+      data-icon="inline-start"
+      className="size-4 shrink-0 object-contain [color-scheme:dark]"
+      referrerPolicy="no-referrer"
+      onError={() => setFailedUrl(url)}
+    />
+  ) : (
+    <GlobeAltIcon data-icon="inline-start" />
+  )
+}
+
 function BrowserPanelLoadingIcon() {
   const [showSpinner, setShowSpinner] = useState(false)
 
@@ -400,6 +417,7 @@ export function WorktreeToolPane({
   activePanelId,
   webPanelRuntimeTitles,
   browserPanelLoading,
+  browserPanelFavicons,
   definitions,
   definitionsLoading,
   definitionsError,
@@ -419,6 +437,7 @@ export function WorktreeToolPane({
   activePanelId: string | null
   webPanelRuntimeTitles: Record<string, string>
   browserPanelLoading: Record<string, boolean>
+  browserPanelFavicons: Record<string, string | null>
   definitions: WebPanelDefinition[]
   definitionsLoading: boolean
   definitionsError: boolean
@@ -662,7 +681,9 @@ export function WorktreeToolPane({
                         loading ? (
                           <BrowserPanelLoadingIcon />
                         ) : (
-                          <GlobeAltIcon data-icon="inline-start" />
+                          <BrowserPanelFavicon
+                            url={browserPanelFavicons[panel.id] ?? null}
+                          />
                         )
                       ) : (
                         <WebPanelIcon

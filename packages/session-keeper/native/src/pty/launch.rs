@@ -175,6 +175,7 @@ pub(super) fn hold(
     }
     let (owned, ownership_receiver) = std::sync::mpsc::sync_channel::<Arc<Mutex<Ownership>>>(1);
     let (sender, exit) = oneshot::channel();
+    let (launched, launch_result) = std::sync::mpsc::sync_channel(1);
     let (reap, reaper) = std::sync::mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("pty-launch-and-wait".into())
@@ -182,6 +183,14 @@ pub(super) fn hold(
             let mut sender = Some(sender);
             let result = (|| -> Result<i32> {
                 let spawned = command.spawn();
+                // Report std's spawn/pre-exec errno before dropping the gate
+                // endpoint makes the admission reader observe EOF. Otherwise a
+                // failed chdir, fork or TIOCSCTTY is hidden by a short read.
+                let _ = launched.send(
+                    spawned.as_ref().map(|_| ()).map_err(|error| {
+                        io::Error::new(error.kind(), error.to_string())
+                    }),
+                );
                 // The parent's copies of the child gate and stdio must not
                 // hold EOF open while waiting on the command's lifetime.
                 drop(command);
@@ -255,9 +264,17 @@ pub(super) fn hold(
             }
         })?;
     let mut bytes = [0; 4];
-    (&*parent)
-        .read_exact(&mut bytes)
-        .context("PTY launch ended before ownership admission")?;
+    if let Err(error) = (&*parent).read_exact(&mut bytes) {
+        // Deny admission before waiting for spawn to finish. A timed-out child
+        // may still be waiting on its gate; never wait for it while holding the
+        // only cancellation authority. Bound this diagnostic wait too.
+        drop(gate);
+        drop(owned);
+        if let Ok(Err(spawn_error)) = launch_result.recv_timeout(Duration::from_secs(3)) {
+            return Err(spawn_error).context("Cannot spawn PTY command before ownership admission");
+        }
+        return Err(error).context("PTY launch ended before ownership admission");
+    }
     let pid = u32::from_ne_bytes(bytes);
     let leader = identify(pid)?.context("Cannot identify held PTY leader")?;
     ensure!(

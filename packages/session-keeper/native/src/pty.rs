@@ -134,6 +134,8 @@ impl Pty {
         };
         // All fallible descriptor, worker and ownership setup is complete.
         // Drop denies the child on any error before this one-byte admission.
+        // The keeper persists Err as proof that startup was aborted: NEVER add
+        // fallible work after allow() or return Err once user code may run.
         held.gate.allow()?;
         Ok(result)
     }
@@ -187,6 +189,15 @@ pub async fn write(descriptor: &AsyncFd<OwnedFd>, bytes: &[u8]) -> io::Result<()
     let mut offset = 0;
     while offset < bytes.len() {
         let mut ready = descriptor.writable().await?;
+        // A hung-up Linux PTY can keep reporting writable/closed while write
+        // returns EAGAIN. Retrying that permanent readiness spins the single-
+        // thread runtime and prevents independent close from completing.
+        if ready.ready().is_write_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "PTY input closed",
+            ));
+        }
         match ready.try_io(|inner| {
             let count = unsafe {
                 libc::write(

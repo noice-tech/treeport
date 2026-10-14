@@ -431,6 +431,19 @@ function WorkspaceApp() {
       return next
     })
   }, [])
+  const [browserPanelFavicons, setBrowserPanelFavicons] = useState<
+    Record<string, string | null>
+  >({})
+  const updateBrowserPanelFavicon = useCallback(
+    (panelId: string, faviconUrl: string | null) => {
+      setBrowserPanelFavicons((current) =>
+        (current[panelId] ?? null) === faviconUrl
+          ? current
+          : { ...current, [panelId]: faviconUrl }
+      )
+    },
+    []
+  )
   const [browserPanelLoading, setBrowserPanelLoading] = useState<
     Record<string, boolean>
   >({})
@@ -484,6 +497,18 @@ function WorkspaceApp() {
     setWebPanelRuntimeTitles((current) => {
       const removedIds = Object.keys(current).filter(
         (panelId) => !webPanelIds.has(panelId)
+      )
+      if (removedIds.length === 0) {
+        return current
+      }
+
+      const next = { ...current }
+      removedIds.forEach((panelId) => delete next[panelId])
+      return next
+    })
+    setBrowserPanelFavicons((current) => {
+      const removedIds = Object.keys(current).filter(
+        (panelId) => !panelIds.has(panelId)
       )
       if (removedIds.length === 0) {
         return current
@@ -1835,6 +1860,7 @@ function WorkspaceApp() {
                 activePanelId={activePanelId}
                 webPanelRuntimeTitles={webPanelRuntimeTitles}
                 browserPanelLoading={browserPanelLoading}
+                browserPanelFavicons={browserPanelFavicons}
                 definitions={webPanelDefinitionsQuery.data ?? []}
                 definitionsLoading={
                   toolPaneOpen && webPanelDefinitionsQuery.isPending
@@ -1879,6 +1905,7 @@ function WorkspaceApp() {
                           inputBlocked={workspaceActionsBlocked}
                           permissionPrompt={browserPermissionPrompt}
                           onLoadingChange={updateBrowserPanelLoading}
+                          onFaviconChange={updateBrowserPanelFavicon}
                           onFocusSurface={focusToolSurface}
                         />
                       ) : (

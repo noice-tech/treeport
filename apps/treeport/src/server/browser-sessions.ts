@@ -275,6 +275,7 @@ const DEFAULT_STATE: Omit<
 > = {
   url: 'about:blank',
   title: '',
+  faviconUrl: null,
   loading: false,
   canGoBack: false,
   canGoForward: false,

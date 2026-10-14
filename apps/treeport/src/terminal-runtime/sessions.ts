@@ -581,7 +581,9 @@ export class TerminalHostSessions {
               at: Date.now()
             })
             yield* Effect.logWarning(
-              `Session keeper for ${input.terminalId} is gone; recovered retained output as an exited terminal. Its final output or exit status may be incomplete.`
+              owner.startupAborted
+                ? `Terminal startup for ${input.terminalId} was aborted before command admission; recovered its retained diagnostic.`
+                : `Session keeper for ${input.terminalId} is gone; recovered retained output as an exited terminal. Its final output or exit status may be incomplete.`
             )
           }
 

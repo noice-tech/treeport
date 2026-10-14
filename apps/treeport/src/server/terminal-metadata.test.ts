@@ -150,6 +150,9 @@ function fixture(states: TerminalBellState[] = []) {
   }
   const listProjects = vi.fn(() => Effect.succeed([]))
   const getTerminal = vi.fn(() => Effect.succeed(terminal))
+  const refreshTerminalStatus = vi.fn(() =>
+    Effect.succeed({ ...terminal, status: 'exited' as const, exitCode: 7 })
+  )
   const getWorktree = vi.fn(() =>
     Effect.succeed(
       testAccess<WorktreeRecord>({ id: 'worktree', path: '/repo' })
@@ -163,7 +166,7 @@ function fixture(states: TerminalBellState[] = []) {
     getTerminal,
     getWorktree,
     projects: { listProjects, getWorktree },
-    terminals: { getTerminal },
+    terminals: { getTerminal, refreshTerminalStatus },
     runEffect: vi.fn((effect) =>
       Effect.isEffect(effect)
         ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
@@ -177,12 +180,13 @@ function fixture(states: TerminalBellState[] = []) {
     drainTerminalMetadataMutations: vi.fn(() => Effect.void)
   })
   const manager = new TerminalMetadataManager(service, host, bells)
-  return { bells, events, host, manager, service }
+  return { bells, events, host, manager, refreshTerminalStatus, service }
 }
 
 describe('TerminalMetadataManager', () => {
   it('projects host title, command, progress, BEL, and exit events', async () => {
-    const { bells, events, host, manager, service } = fixture()
+    const { bells, events, host, manager, refreshTerminalStatus, service } =
+      fixture()
     const published: string[] = []
     events.subscribe((event) => {
       if (event.type === 'terminal.metadata') {
@@ -225,9 +229,13 @@ describe('TerminalMetadataManager', () => {
     expect(published).toContain('pi --mode rpc:pi:42')
 
     host.emit('terminal', { exitCode: 7 })
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect(manager.get('terminal').hasForegroundProcess).toBe(false)
-    )
+      expect(refreshTerminalStatus).toHaveBeenCalledExactlyOnceWith(
+        'terminal',
+        false
+      )
+    })
     expect(manager.get('terminal')).toMatchObject({
       hasForegroundProcess: false,
       progress: null
