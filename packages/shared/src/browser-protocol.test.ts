@@ -24,7 +24,7 @@ const browserOwnerServerMessageSchema = testSchema(
 )
 
 describe('hosted browser protocol', () => {
-  it('accepts bounded navigation and input commands and rejects privileged URLs', () => {
+  it('accepts bounded navigation and input commands and rejects unsupported URLs', () => {
     expect(
       parseBrowserClientMessage({
         type: 'navigate',
@@ -64,9 +64,26 @@ describe('hosted browser protocol', () => {
       findNext: false
     })
 
-    expect(
-      parseBrowserClientMessage({ type: 'navigate', url: 'file:///etc/passwd' })
-    ).toBeNull()
+    for (const url of [
+      'file:///tmp/preview%20draft.html?view=1#section',
+      'file://localhost/tmp/preview.html',
+      'file:///C:/Users/example/preview.html'
+    ]) {
+      expect(parseBrowserClientMessage({ type: 'navigate', url })).toEqual({
+        type: 'navigate',
+        url
+      })
+    }
+    for (const url of [
+      'file://server/share/preview.html',
+      'file://user:password@localhost/tmp/preview.html',
+      'javascript:alert(1)',
+      'data:text/html,preview',
+      'ftp://example.com/preview.html',
+      'chrome://settings'
+    ]) {
+      expect(parseBrowserClientMessage({ type: 'navigate', url })).toBeNull()
+    }
     expect(
       parseBrowserClientMessage({
         type: 'navigate',
@@ -82,7 +99,7 @@ describe('hosted browser protocol', () => {
     ).toBeNull()
   })
 
-  it('limits agent commands to fixed arguments and HTTP navigation', () => {
+  it('limits agent commands to fixed arguments and supported navigation', () => {
     expect(
       browserAgentCommandSchema.safeParse({
         command: 'goto',
@@ -92,9 +109,9 @@ describe('hosted browser protocol', () => {
     expect(
       browserAgentCommandSchema.safeParse({
         command: 'goto',
-        args: ['file:///etc/passwd']
+        args: ['file:///tmp/preview.html']
       }).success
-    ).toBe(false)
+    ).toBe(true)
     expect(
       browserAgentCommandSchema.safeParse({
         command: 'screenshot',
@@ -176,7 +193,7 @@ describe('hosted browser protocol', () => {
       }).success
     ).toBe(false)
     const readyState = {
-      url: 'https://example.com/ready',
+      url: 'file:///tmp/preview.html',
       title: 'Ready page',
       loading: false,
       canGoBack: false,

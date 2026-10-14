@@ -1782,7 +1782,10 @@ async function main(args: string[]): Promise<void> {
   const browserOpenCommand = browserCommand
     .command('open')
     .description('Open Browser and request client navigation')
-    .argument('[url]', 'absolute HTTP or HTTPS URL')
+    .argument(
+      '[url]',
+      'absolute HTTP, HTTPS, or file URL (files must exist on the browser runtime’s filesystem)'
+    )
     .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
     .option('--json', 'emit machine-readable JSON')
   browserOpenCommand.action(async (url?: string) => {
@@ -1939,7 +1942,10 @@ async function main(args: string[]): Promise<void> {
   const browserGotoCommand = browserCommand
     .command('goto')
     .description('Navigate the hosted page')
-    .argument('<url>', 'absolute HTTP or HTTPS URL')
+    .argument(
+      '<url>',
+      'absolute HTTP, HTTPS, or file URL (files must exist on the browser runtime’s filesystem)'
+    )
     .option('--panel <panel-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
   browserGotoCommand.action(async (url: string) =>

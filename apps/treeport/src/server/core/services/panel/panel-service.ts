@@ -273,7 +273,7 @@ export class PanelService {
         return yield* Effect.fail(
           new DomainError(
             'INVALID_BROWSER_URL',
-            'Enter an absolute HTTP or HTTPS URL without credentials',
+            'Enter an absolute HTTP, HTTPS, or local file URL without credentials',
             400
           )
         )
@@ -285,7 +285,8 @@ export class PanelService {
         id: id('panel'),
         kind: 'browser',
         worktreeId,
-        title: url === 'about:blank' ? 'Browser' : new URL(url).host,
+        title:
+          url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser',
         url,
         createdAt: timestamp,
         updatedAt: timestamp
@@ -375,7 +376,7 @@ export class PanelService {
           return yield* Effect.fail(
             new DomainError(
               'INVALID_BROWSER_URL',
-              'Enter an absolute HTTP or HTTPS URL without credentials',
+              'Enter an absolute HTTP, HTTPS, or local file URL without credentials',
               400
             )
           )
