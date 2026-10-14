@@ -49,7 +49,29 @@ describe('desktop computer store', () => {
     )
     await Effect.runPromise(store.rememberHostname(remote.id, 'renamed-by-os'))
     expect(computerName(store.getComputer(remote.id)!)).toBe('Work VPS')
-    expect(store.summaries()[0]?.id).toBe(local.id)
+    const secondRemote = await Effect.runPromise(
+      store.add('https://another.example.test')
+    )
+    const expectedOrder = [local.id, remote.id, secondRemote.id]
+    const timestamp = vi
+      .spyOn(Date.prototype, 'toISOString')
+      .mockReturnValue('2099-01-01T00:00:00.000Z')
+    await Effect.runPromise(store.select(secondRemote.id))
+    expect(store.summaries().map((computer) => computer.id)).toEqual(
+      expectedOrder
+    )
+    await Effect.runPromise(store.select(remote.id))
+    expect(store.summaries().map((computer) => computer.id)).toEqual(
+      expectedOrder
+    )
+    timestamp.mockRestore()
+    const orderedReopened = await Effect.runPromise(
+      ComputerStore.load(filePath, 'http://localhost:9999')
+    )
+    expect(orderedReopened.summaries().map((computer) => computer.id)).toEqual(
+      expectedOrder
+    )
+    await Effect.runPromise(store.remove(secondRemote.id))
     await Effect.runPromise(store.remove(remote.id))
     expect(store.selectedComputer?.id).toBe(local.id)
     const reopened = await Effect.runPromise(

@@ -242,10 +242,8 @@ export class ComputerStore {
           return localDifference
         }
 
-        const recentDifference = (right.lastSelectedAt ?? '').localeCompare(
-          left.lastSelectedAt ?? ''
-        )
-        return recentDifference || left.createdAt.localeCompare(right.createdAt)
+        // Switching computers must not move their entries in the UI.
+        return left.createdAt.localeCompare(right.createdAt)
       })
       .map((computer) => ({
         ...computer,
