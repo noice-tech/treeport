@@ -39,6 +39,7 @@ import {
   getWebPanelStorageSchema,
   healthResponseSchema,
   phoneAccessResponseSchema,
+  workspaceActivityResponseSchema,
   openBrowserPanelFromTerminalSchema,
   openBrowserPanelResponseSchema,
   openWebPanelResponseSchema,
@@ -797,6 +798,42 @@ export function createApp({
           url: config.apiUrl
         })
       )
+    ),
+    route(
+      'GET',
+      '/api/activity',
+      Effect.gen(function* () {
+        const projects = yield* operation(() => service.projects.listProjects())
+        let working = 0
+        let needsAttention = 0
+        for (const project of projects) {
+          for (const worktree of project.worktrees) {
+            for (const terminal of worktree.terminals) {
+              const runtime = metadata.get(terminal.id)
+              if (terminal.status !== 'running' || !runtime.program) {
+                continue
+              }
+
+              if (
+                runtime.bell?.unread ||
+                runtime.progress?.state === 'paused' ||
+                runtime.progress?.state === 'error'
+              ) {
+                needsAttention += 1
+              } else if (runtime.progress) {
+                working += 1
+              }
+            }
+          }
+        }
+
+        return jsonContractResponse(
+          workspaceActivityResponseSchema,
+          { working, needsAttention },
+          200,
+          { 'cache-control': 'no-store' }
+        )
+      })
     ),
     route(
       'GET',

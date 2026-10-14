@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -21,9 +29,7 @@ import {
 } from './web-panel-open-tracing'
 import { NotificationCenter } from './features/notifications/notification-center'
 import { TerminalBellAttention } from './features/notifications/terminal-bell-attention'
-import { BrowserPanelWorkspace } from './features/browser-panels/browser-panel-workspace'
 import { ClosePanelDialog } from './features/panels/close-panel-dialog'
-import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
 import { parseResponse, rpc } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
@@ -92,6 +98,21 @@ import { WorkspaceWindowTitle } from './workspace-window-title'
 import { errorDetails } from './error-message'
 import { cn } from './lib/utils'
 import { browserTrace, newBrowserCorrelationId } from './agent-tracing'
+
+import { LoadingFallback } from './loading-fallback'
+
+const BrowserPanelWorkspace = lazy(() =>
+  import('./features/browser-panels/browser-panel-workspace').then(
+    (module) => ({
+      default: module.BrowserPanelWorkspace
+    })
+  )
+)
+const WebPanelWorkspace = lazy(() =>
+  import('./features/web-panels/web-panel-workspace').then((module) => ({
+    default: module.WebPanelWorkspace
+  }))
+)
 
 const TOOL_PANE_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
 
@@ -1479,12 +1500,32 @@ function WorkspaceApp() {
       const modifierPressed = usesMacKeyboard
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
-      if (
-        event.isComposing ||
-        !event.altKey ||
-        event.shiftKey ||
-        !modifierPressed
-      ) {
+      if (event.isComposing || event.shiftKey || !modifierPressed) {
+        return
+      }
+
+      if (!event.altKey) {
+        if (
+          event.key.toLowerCase() !== 't' ||
+          workspaceActionsBlocked ||
+          !toolPaneOpen ||
+          focusedSurfaceRef.current !== 'tool' ||
+          !selectedWorktree
+        ) {
+          return
+        }
+
+        event.preventDefault()
+        event.stopPropagation()
+        if (
+          !event.repeat &&
+          !toolLaunchDisabled &&
+          !createBrowserPanel.isPending
+        ) {
+          dismissToolPicker()
+          createBrowserPanel.mutate({ worktree: selectedWorktree })
+        }
+
         return
       }
 
@@ -1525,10 +1566,15 @@ function WorkspaceApp() {
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
   }, [
+    createBrowserPanel.isPending,
+    createBrowserPanel.mutate,
     createSplitTerminal,
     desktopBridge,
+    dismissToolPicker,
     selectedWorktree,
     toggleToolPane,
+    toolLaunchDisabled,
+    toolPaneOpen,
     workspaceActionsBlocked
   ])
 
@@ -1613,6 +1659,7 @@ function WorkspaceApp() {
       } else if (command === 'new-terminal') {
         if (toolSurfaceHasFocus) {
           if (!toolLaunchDisabled && !createBrowserPanel.isPending) {
+            dismissToolPicker()
             createBrowserPanel.mutate({ worktree: selectedWorktree })
           }
         } else {
@@ -1651,6 +1698,7 @@ function WorkspaceApp() {
     selectedWorktree,
     createBrowserPanel.isPending,
     createBrowserPanel.mutate,
+    dismissToolPicker,
     selectFocusedSurfaceByIndex,
     selectWorktree,
     toggleToolPane,
@@ -1843,31 +1891,40 @@ function WorkspaceApp() {
                   const autoFocusBlocked =
                     workspaceActionsBlocked ||
                     preserveTerminalFocusPanelId === panel.id
-                  return panel.kind === 'browser' ? (
-                    <BrowserPanelWorkspace
+                  return (
+                    <Suspense
                       key={panel.id}
-                      panel={panel}
-                      active={active}
-                      autoFocusBlocked={autoFocusBlocked}
-                      inputBlocked={workspaceActionsBlocked}
-                      permissionPrompt={browserPermissionPrompt}
-                      onLoadingChange={updateBrowserPanelLoading}
-                      onFaviconChange={updateBrowserPanelFavicon}
-                      onFocusSurface={focusToolSurface}
-                    />
-                  ) : (
-                    <WebPanelWorkspace
-                      key={panel.id}
-                      panel={panel}
-                      active={active}
-                      title={webPanelRuntimeTitles[panel.id] ?? panel.title}
-                      reloadRevision={webPanelReloadRevisions[panel.id] ?? 0}
-                      autoFocusBlocked={autoFocusBlocked}
-                      onTitleChange={setWebPanelRuntimeTitle}
-                      onDirtyChange={setWebPanelDirty}
-                      onSelectWorkspace={selectWorkspaceByIndex}
-                      onFocusSurface={focusToolSurface}
-                    />
+                      fallback={active ? <LoadingFallback /> : null}
+                    >
+                      {panel.kind === 'browser' ? (
+                        <BrowserPanelWorkspace
+                          key={panel.id}
+                          panel={panel}
+                          active={active}
+                          autoFocusBlocked={autoFocusBlocked}
+                          inputBlocked={workspaceActionsBlocked}
+                          permissionPrompt={browserPermissionPrompt}
+                          onLoadingChange={updateBrowserPanelLoading}
+                          onFaviconChange={updateBrowserPanelFavicon}
+                          onFocusSurface={focusToolSurface}
+                        />
+                      ) : (
+                        <WebPanelWorkspace
+                          key={panel.id}
+                          panel={panel}
+                          active={active}
+                          title={webPanelRuntimeTitles[panel.id] ?? panel.title}
+                          reloadRevision={
+                            webPanelReloadRevisions[panel.id] ?? 0
+                          }
+                          autoFocusBlocked={autoFocusBlocked}
+                          onTitleChange={setWebPanelRuntimeTitle}
+                          onDirtyChange={setWebPanelDirty}
+                          onSelectWorkspace={selectWorkspaceByIndex}
+                          onFocusSurface={focusToolSurface}
+                        />
+                      )}
+                    </Suspense>
                   )
                 })}
               </WorktreeToolPane>

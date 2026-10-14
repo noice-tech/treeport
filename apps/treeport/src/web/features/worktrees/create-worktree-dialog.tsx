@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { lazy, Suspense, useRef } from 'react'
 import type {
   ProjectRecord,
   TerminalPresetDefinition,
@@ -14,7 +14,11 @@ import {
   DialogHeader,
   DialogTitle
 } from '../../components/ui/dialog'
-import { WorktreeForm } from './worktree-form'
+import { LoadingFallback } from '../../loading-fallback'
+
+const WorktreeForm = lazy(() =>
+  import('./worktree-form').then((module) => ({ default: module.WorktreeForm }))
+)
 
 export function CreateWorktreeDialog({
   project,
@@ -83,38 +87,40 @@ export function CreateWorktreeDialog({
               terminal.
             </DialogDescription>
           </DialogHeader>
-          <WorktreeForm
-            key={project.id}
-            project={project}
-            presets={presets}
-            presetDiagnostics={presetDiagnostics}
-            presetsLoading={presetsLoading}
-            presetsError={presetsError}
-            onRetryPresets={onRetryPresets}
-            contextFields={contextFields}
-            contextFieldDiagnostics={contextFieldDiagnostics}
-            contextFieldsLoading={contextFieldsLoading}
-            contextFieldsError={contextFieldsError}
-            onRetryContextFields={onRetryContextFields}
-            busy={false}
-            onSubmit={(
-              name,
-              base,
-              initialTerminal,
-              sourceWorktreeId,
-              treeContext
-            ) => {
-              submittedRef.current = true
-              onSubmit(
-                project,
+          <Suspense fallback={<LoadingFallback />}>
+            <WorktreeForm
+              key={project.id}
+              project={project}
+              presets={presets}
+              presetDiagnostics={presetDiagnostics}
+              presetsLoading={presetsLoading}
+              presetsError={presetsError}
+              onRetryPresets={onRetryPresets}
+              contextFields={contextFields}
+              contextFieldDiagnostics={contextFieldDiagnostics}
+              contextFieldsLoading={contextFieldsLoading}
+              contextFieldsError={contextFieldsError}
+              onRetryContextFields={onRetryContextFields}
+              busy={false}
+              onSubmit={(
                 name,
                 base,
                 initialTerminal,
                 sourceWorktreeId,
                 treeContext
-              )
-            }}
-          />
+              ) => {
+                submittedRef.current = true
+                onSubmit(
+                  project,
+                  name,
+                  base,
+                  initialTerminal,
+                  sourceWorktreeId,
+                  treeContext
+                )
+              }}
+            />
+          </Suspense>
         </DialogContent>
       ) : null}
     </Dialog>

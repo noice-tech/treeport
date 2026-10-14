@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import type { TerminalPreset } from '@treeport/shared'
 import {
   Dialog,
@@ -6,7 +7,13 @@ import {
   DialogHeader,
   DialogTitle
 } from '../../components/ui/dialog'
-import { TerminalPresetsManager } from './presets-manager'
+import { LoadingFallback } from '../../loading-fallback'
+
+const TerminalPresetsManager = lazy(() =>
+  import('./presets-manager').then((module) => ({
+    default: module.TerminalPresetsManager
+  }))
+)
 
 export function TerminalPresetsDialog({
   open,
@@ -35,12 +42,14 @@ export function TerminalPresetsDialog({
             exactly as entered.
           </DialogDescription>
         </DialogHeader>
-        <TerminalPresetsManager
-          presets={presets}
-          loading={loading}
-          loadError={loadError}
-          onRetry={onRetry}
-        />
+        <Suspense fallback={<LoadingFallback />}>
+          <TerminalPresetsManager
+            presets={presets}
+            loading={loading}
+            loadError={loadError}
+            onRetry={onRetry}
+          />
+        </Suspense>
       </DialogContent>
     </Dialog>
   )

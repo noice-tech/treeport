@@ -10,6 +10,7 @@ import type {
 } from 'playwright'
 import {
   browserObservedUrlSchema,
+  browserUrlSchema,
   decodeUnknownOrNull,
   normalizeBrowserTitle,
   normalizeBrowserFaviconUrl,
@@ -26,7 +27,6 @@ import { PlaywrightBrowserVideo } from './browser-video'
 import { browserRuntime } from './browser-runtime'
 import { browserNavigation } from './browser-navigation'
 import { browserCursor } from './browser-cursor'
-import { BrowserContainer } from './browser-container'
 
 export interface PlaywrightBrowserCallbacks {
   state(
@@ -46,7 +46,7 @@ export interface BrowserInstallStatus {
   executablePath: string
   playwrightVersion: string
   browserRevision: string
-  channel: 'chromium' | 'chrome' | 'docker'
+  channel: 'chromium' | 'chrome'
   launchReady: boolean
   launchError: string | null
 }
@@ -62,7 +62,6 @@ interface PlaywrightBrowserLease {
 export class PlaywrightBrowserHost {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
-  private container: BrowserContainer | null = null
   private readonly pages = new Set<Page>()
   private readonly lifecycle = Effect.unsafeMakeSemaphore(1)
   private pendingOpens = 0
@@ -71,13 +70,7 @@ export class PlaywrightBrowserHost {
   private closeOperation: Promise<void> | null = null
   private readonly closingPages = new Map<Page, Promise<void>>()
 
-  constructor(
-    readonly profilePath: string,
-    private readonly cachePath = path.join(
-      path.dirname(profilePath),
-      'browser-runtime'
-    )
-  ) {}
+  constructor(readonly profilePath: string) {}
 
   get started(): boolean {
     return this.context !== null
@@ -116,73 +109,39 @@ export class PlaywrightBrowserHost {
         await fs.chmod(this.profilePath, 0o700)
         const { chromium } = await import('playwright')
         const runtime = await browserRuntime()
-        if (runtime.channel === 'docker') {
-          const container = new BrowserContainer(
-            this.profilePath,
-            this.cachePath
-          )
-          this.container = container
-          browser = await container
-            .start()
-            .then((endpoint) => {
-              this.debuggingEndpoint = endpoint
-              return chromium.connectOverCDP(endpoint, { timeout: 15_000 })
-            })
-            .catch(async (error) => {
-              await container.stop()
-              this.container = null
-              throw error
-            })
-          context = browser.contexts()[0] ?? null
-          if (!context) {
-            await browser.close()
-            await container.stop()
-            this.container = null
-            throw new Error(
-              'The Browser container did not expose its shared profile.'
-            )
-          }
-
-          const cdp = await browser.newBrowserCDPSession()
-          await cdp.send('Browser.setDownloadBehavior', { behavior: 'deny' })
-          await cdp.detach()
-        } else {
-          await fs.rm(path.join(this.profilePath, 'DevToolsActivePort'), {
-            force: true
-          })
-          context = await chromium.launchPersistentContext(this.profilePath, {
-            executablePath: runtime.executablePath,
-            chromiumSandbox: true,
-            headless: true,
-            acceptDownloads: false,
-            args: [
-              '--remote-debugging-address=127.0.0.1',
-              '--remote-debugging-port=0'
-            ],
-            viewport: DEFAULT_VIEWPORT
-          })
-          browser = context.browser()
-          const activePort = await fs.readFile(
-            path.join(this.profilePath, 'DevToolsActivePort'),
-            'utf8'
-          )
-          const [port, endpoint] = activePort.trim().split('\n')
-          if (
-            !port ||
-            !/^\d+$/.test(port) ||
-            Number(port) < 1 ||
-            Number(port) > 65535 ||
-            !endpoint ||
-            !/^\/devtools\/browser\/[a-zA-Z0-9-]+$/.test(endpoint)
-          ) {
-            await context.close()
-            throw new Error(
-              'Chrome did not expose a private debugging endpoint.'
-            )
-          }
-
-          this.debuggingEndpoint = `ws://127.0.0.1:${port}${endpoint}`
+        await fs.rm(path.join(this.profilePath, 'DevToolsActivePort'), {
+          force: true
+        })
+        context = await chromium.launchPersistentContext(this.profilePath, {
+          executablePath: runtime.executablePath,
+          chromiumSandbox: true,
+          headless: true,
+          acceptDownloads: false,
+          args: [
+            '--remote-debugging-address=127.0.0.1',
+            '--remote-debugging-port=0'
+          ],
+          viewport: DEFAULT_VIEWPORT
+        })
+        browser = context.browser()
+        const activePort = await fs.readFile(
+          path.join(this.profilePath, 'DevToolsActivePort'),
+          'utf8'
+        )
+        const [port, endpoint] = activePort.trim().split('\n')
+        if (
+          !port ||
+          !/^\d+$/.test(port) ||
+          Number(port) < 1 ||
+          Number(port) > 65535 ||
+          !endpoint ||
+          !/^\/devtools\/browser\/[a-zA-Z0-9-]+$/.test(endpoint)
+        ) {
+          await context.close()
+          throw new Error('Chrome did not expose a private debugging endpoint.')
         }
+
+        this.debuggingEndpoint = `ws://127.0.0.1:${port}${endpoint}`
 
         if (!browser) {
           await context.close()
@@ -249,24 +208,11 @@ export class PlaywrightBrowserHost {
     this.closing = true
     this.closeOperation = this.schedule(async () => {
       const context = this.context
-      const browser = this.browser
-      const container = this.container
       this.context = null
       this.browser = null
-      this.container = null
       this.pages.clear()
       this.debuggingEndpoint = null
-      if (container) {
-        // Closing a CDP connection alone does not stop Chrome or flush its profile.
-        await browser
-          ?.newBrowserCDPSession()
-          .then((cdp) => cdp.send('Browser.close'))
-          .catch(() => undefined)
-        await browser?.close().catch(() => undefined)
-        await container.stop()
-      } else {
-        await context?.close().catch(() => undefined)
-      }
+      await context?.close().catch(() => undefined)
     })
     return this.closeOperation
   }
@@ -311,26 +257,15 @@ export class PlaywrightBrowser {
     })
     const { executablePath, channel } = await browserRuntime()
     let launchError: string | null = null
-    const installed =
-      channel === 'docker'
-        ? await new BrowserContainer(path.join(cachePath, 'status'), cachePath)
-            .installed()
-            .catch((error) => {
-              launchError =
-                error instanceof Error ? error.message : String(error)
-              return false
-            })
-        : await fs.access(executablePath, fs.constants.X_OK).then(
-            () => true,
-            () => false
-          )
+    const installed = await fs.access(executablePath, fs.constants.X_OK).then(
+      () => true,
+      () => false
+    )
     let browserRevision = 'unknown'
     let launchReady = false
-    if (!installed && !launchError) {
+    if (!installed) {
       launchError =
-        channel === 'docker'
-          ? 'Select Set up browser or run treeport browser install.'
-          : 'Install Google Chrome on the daemon host, or set TREEPORT_BROWSER_EXECUTABLE to its absolute path.'
+        'Install Google Chrome or Chromium on the daemon host, or set TREEPORT_BROWSER_EXECUTABLE to its absolute path.'
     }
 
     if (installed) {
@@ -338,7 +273,7 @@ export class PlaywrightBrowser {
       const statusProfile = await fs.mkdtemp(
         path.join(cachePath, '.launch-status-')
       )
-      const host = new PlaywrightBrowserHost(statusProfile, cachePath)
+      const host = new PlaywrightBrowserHost(statusProfile)
       await host
         .openPage()
         .then((lease) => {
@@ -426,14 +361,8 @@ export class PlaywrightBrowser {
     page.on('popup', (candidate) => {
       void (async () => {
         const supportedUrl = (value: string): string | null => {
-          if (!URL.canParse(value)) {
-            return null
-          }
-
-          const url = new URL(value)
-          return url.protocol === 'http:' || url.protocol === 'https:'
-            ? url.href
-            : null
+          const parsed = decodeUnknownOrNull(browserUrlSchema, value)
+          return parsed === null ? null : new URL(parsed).href
         }
         let popupUrl = supportedUrl(candidate.url())
         if (!popupUrl) {
@@ -449,7 +378,7 @@ export class PlaywrightBrowser {
           this.callbacks.popup(popupUrl)
         } else {
           this.callbacks.navigationError(
-            'The popup did not supply a supported HTTP or HTTPS URL.'
+            'The popup did not supply a supported HTTP, HTTPS, or local file URL.'
           )
         }
 

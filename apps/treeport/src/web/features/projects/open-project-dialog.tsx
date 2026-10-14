@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import type { ProjectRecord } from '@treeport/shared'
 import {
   Dialog,
@@ -6,7 +7,11 @@ import {
   DialogHeader,
   DialogTitle
 } from '../../components/ui/dialog'
-import { ProjectForm } from './project-form'
+import { LoadingFallback } from '../../loading-fallback'
+
+const ProjectForm = lazy(() =>
+  import('./project-form').then((module) => ({ default: module.ProjectForm }))
+)
 
 export function OpenProjectDialog({
   open,
@@ -33,7 +38,9 @@ export function OpenProjectDialog({
             Browse folders on the Treeport server.
           </DialogDescription>
         </DialogHeader>
-        <ProjectForm onOpened={onOpened} />
+        <Suspense fallback={<LoadingFallback />}>
+          <ProjectForm onOpened={onOpened} />
+        </Suspense>
       </DialogContent>
     </Dialog>
   )
