@@ -47,6 +47,7 @@ import {
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
 import { browserNavigation } from './browser-navigation'
+import { browserSetupGuidance } from './browser-runtime'
 
 import { receiveBrowserVideo } from './browser-video'
 import { browserCursor } from './browser-cursor'
@@ -2858,9 +2859,7 @@ export class BrowserSessionManager {
   }
 
   async install(): Promise<string> {
-    throw new Error(
-      'Install Google Chrome or Chromium on the daemon host, or set TREEPORT_BROWSER_EXECUTABLE to its absolute path. Treeport uses it directly without Docker.'
-    )
+    throw new Error(browserSetupGuidance())
   }
 
   dispose(): Promise<void> {

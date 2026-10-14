@@ -2044,7 +2044,9 @@ export function BrowserPanelWorkspace({
                 role="alert"
               >
                 <strong className="text-zinc-50">Browser unavailable</strong>
-                <span>{failure.message}</span>
+                <span className="max-w-2xl whitespace-pre-line break-words">
+                  {failure.message}
+                </span>
                 <div className="flex items-center gap-2">
                   <Button
                     type="button"
