@@ -32,35 +32,40 @@ export async function installDesktopBridge(
     let fullscreenListener: ((fullscreen: boolean) => void) | null = null
     scope.__attentionRequests = 0
     scope.__openedDesktopFileUrls = []
-    scope.treeportDesktop = Object.freeze({
-      platform: 'darwin',
-      openFileUrl(url: string) {
-        scope.__openedDesktopFileUrls.push(url)
-        return Promise.resolve(true)
-      },
-      getPathForFile(file: File) {
-        return Promise.resolve(filePaths[file.name] ?? null)
-      },
-      onFullscreenChange(next: (fullscreen: boolean) => void) {
-        fullscreenListener = next
-        return () => {
-          if (fullscreenListener === next) {
-            fullscreenListener = null
+    Object.defineProperty(scope, 'treeportDesktop', {
+      value: Object.freeze({
+        platform: 'darwin',
+        onBrowserPermissionPrompt() {
+          return () => {}
+        },
+        openFileUrl(url: string) {
+          scope.__openedDesktopFileUrls.push(url)
+          return Promise.resolve('opened')
+        },
+        getPathForFile(file: File) {
+          return Promise.resolve(filePaths[file.name] ?? null)
+        },
+        onFullscreenChange(next: (fullscreen: boolean) => void) {
+          fullscreenListener = next
+          return () => {
+            if (fullscreenListener === next) {
+              fullscreenListener = null
+            }
           }
+        },
+        onCommand(next: (command: DesktopCommand) => void) {
+          listeners.add(next)
+          return () => listeners.delete(next)
+        },
+        setTerminalSelectionActive() {},
+        onTerminalSelectionRelease(next: () => void) {
+          terminalSelectionReleaseListeners.add(next)
+          return () => terminalSelectionReleaseListeners.delete(next)
+        },
+        requestAttention() {
+          scope.__attentionRequests += 1
         }
-      },
-      onCommand(next: (command: DesktopCommand) => void) {
-        listeners.add(next)
-        return () => listeners.delete(next)
-      },
-      setTerminalSelectionActive() {},
-      onTerminalSelectionRelease(next: () => void) {
-        terminalSelectionReleaseListeners.add(next)
-        return () => terminalSelectionReleaseListeners.delete(next)
-      },
-      requestAttention() {
-        scope.__attentionRequests += 1
-      }
+      })
     })
     scope.__dispatchDesktopCommand = (command: DesktopCommand) =>
       listeners.forEach((listener) => listener(command))

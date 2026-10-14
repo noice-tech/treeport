@@ -11,28 +11,12 @@ export async function openWorktreeContextMenu(
 }
 
 export async function waitForTerminalControl(page: Page) {
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const terminalId = location.pathname.split('/').at(-1)
-        const socket = [...(window.__wsInstances ?? [])]
-          .reverse()
-          .find(
-            (candidate: any) =>
-              candidate.namespace === '/terminals' &&
-              candidate.terminalId === terminalId
-          )
-        const state = terminalId
-          ? JSON.parse(
-              localStorage.getItem(
-                `__treeport_terminal_state__:${terminalId}`
-              ) || '{}'
-            )
-          : null
-        return Boolean(socket && state?.controllerClientId === socket.clientId)
-      })
-    )
-    .toBe(true)
+  const terminal = page.getByRole('main', { name: /terminal workspace$/ })
+  await expect(terminal).toBeVisible()
+  await expect(terminal.getByText('Viewing', { exact: true })).toBeHidden()
+  await expect(
+    terminal.getByText('Taking control…', { exact: true })
+  ).toBeHidden()
 }
 
 export async function requestTerminalControl(page: Page) {

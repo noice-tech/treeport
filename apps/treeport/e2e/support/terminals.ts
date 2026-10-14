@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
 
 export async function createTerminalMock(page: Page, state: ProjectRecord) {
   let fileUploadRequests = 0
@@ -38,9 +38,8 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
       pathname === '/api/worktrees/wt_topic/terminals' &&
       route.request().method() === 'POST'
     ) {
-      const body: { name: string; argv?: string[] } = route
-        .request()
-        .postDataJSON()
+      const body: { name: string; argv?: string[]; shellCommand?: string } =
+        route.request().postDataJSON()
       terminalCreations += 1
       const creationNumber = terminalCreations
       if (terminalCreateGate) {
@@ -80,7 +79,7 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
         return
       }
 
-      const terminal = {
+      const terminal: TerminalRecord = {
         id: creationNumber === 1 ? 'term_dev' : `term_dev_${creationNumber}`,
         worktreeId: 'wt_topic',
         name: body.name,

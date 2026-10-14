@@ -1,10 +1,102 @@
-import type { Page } from '@playwright/test'
-import type { JsonValue, TerminalRuntimeMetadata } from '@treeport/shared'
+import { randomUUID } from 'node:crypto'
+import type { BrowserContext, Page, WebSocketRoute } from '@playwright/test'
+import type {
+  JsonValue,
+  TerminalAuth,
+  TerminalRuntimeMetadata,
+  TerminalServerEventPayloads,
+  ProjectEventsItem,
+  NetworkProductEvent
+} from '@treeport/shared'
+
+interface TerminalState {
+  terminalId: string
+  cols: number
+  rows: number
+  revision: number
+  generation: number
+  controllerClientId: string
+}
+
+interface ClientPayload {
+  cols: number
+  rows: number
+  data?: string
+  cellSize?: { width: number; height: number }
+}
+
+interface ClientMessage extends ClientPayload {
+  type: string
+}
+
+export interface TerminalMock {
+  messages: ClientMessage[]
+  connections: TerminalConnection[]
+  delayTakeControl: boolean
+  releaseTakeControl: (() => void) | null
+  readonly connection: TerminalConnection
+}
+
+const terminalServers = new WeakMap<
+  BrowserContext,
+  {
+    states: Map<string, TerminalState>
+    connections: Set<TerminalConnection>
+  }
+>()
+
+class TerminalConnection {
+  terminalId = ''
+  clientId = ''
+  streamId = randomUUID()
+  generation = 1
+  cols = 100
+  rows = 30
+  revision = 1
+  closed = false
+
+  constructor(readonly route: WebSocketRoute) {}
+
+  receive<Event extends keyof TerminalServerEventPayloads>(
+    event: Event,
+    payload: TerminalServerEventPayloads[Event]
+  ) {
+    if (!this.closed) {
+      this.route.send(JSON.stringify({ event, payload }))
+    }
+  }
+
+  applyTerminalState(state: TerminalState) {
+    const dimensionsChanged = state.revision !== this.revision
+    this.cols = state.cols
+    this.rows = state.rows
+    this.revision = state.revision
+    this.generation = state.generation
+    if (dimensionsChanged) {
+      this.receive('dimensions', {
+        cols: this.cols,
+        rows: this.rows,
+        revision: this.revision
+      })
+    }
+
+    this.receive('control', {
+      generation: this.generation,
+      controller: state.controllerClientId === this.clientId
+    })
+  }
+
+  close() {
+    this.closed = true
+    this.route.close({ code: 1000 })
+  }
+}
 
 export async function installMockSockets(
   page: Page,
   initialMetadata: TerminalRuntimeMetadata[]
 ) {
+  // Project event streaming is supplied at the HTTP boundary inside the page.
   await page.addInitScript((initialMetadata) => {
     const nativeFetch = window.fetch.bind(window)
     window.fetch = async (input, init) => {
@@ -22,7 +114,7 @@ export async function installMockSockets(
       let active = true
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
-          const send = (value: JsonValue) => {
+          const send = (value: ProjectEventsItem) => {
             if (!active) {
               return
             }
@@ -81,186 +173,140 @@ export async function installMockSockets(
         headers: { 'content-type': 'application/ndjson' }
       })
     }
+  }, initialMetadata)
 
-    const terminalStatePrefix = '__treeport_terminal_state__:'
-    const readState = (
-      terminalId: string
-    ): TreeportTestTerminalState | null => {
-      const stored = localStorage.getItem(`${terminalStatePrefix}${terminalId}`)
-      return stored ? JSON.parse(stored) : null
+  const server = terminalServers.get(page.context()) ?? {
+    states: new Map<string, TerminalState>(),
+    connections: new Set<TerminalConnection>()
+  }
+  terminalServers.set(page.context(), server)
+  const terminal: TerminalMock = {
+    messages: [],
+    connections: [],
+    delayTakeControl: false,
+    releaseTakeControl: null,
+    get connection() {
+      return this.connections.at(-1)!
     }
-    const notify = (state: TreeportTestTerminalState) => {
-      for (const socket of window.__wsInstances ?? []) {
-        if (socket.terminalId === state.terminalId) {
-          socket.applyTerminalState(state)
-        }
-      }
-    }
-    window.addEventListener('storage', (event) => {
-      if (event.key?.startsWith(terminalStatePrefix) && event.newValue) {
-        notify(JSON.parse(event.newValue))
-      }
+  }
+
+  // Keep the server in the test runner: the app uses a real browser WebSocket,
+  // and tests observe its protocol messages rather than browser globals/storage.
+  await page.routeWebSocket('**/api/socket/terminals', (route) => {
+    const connection = new TerminalConnection(route)
+    terminal.connections.push(connection)
+    server.connections.add(connection)
+    route.onClose(() => {
+      connection.closed = true
+      server.connections.delete(connection)
     })
-
-    class MockWebSocket extends EventTarget {
-      static OPEN = 1
-      readyState = 0
-      binaryType = 'arraybuffer'
-      clientId = ''
-      terminalId = ''
-      namespace = '/terminals'
-      streamId = crypto.randomUUID()
-      generation = 1
-      cols = 100
-      rows = 30
-      revision = 1
-
-      constructor(public url: string) {
-        super()
-        window.__wsInstances = [...(window.__wsInstances ?? []), this]
-        window.__lastWs = this
-        queueMicrotask(() => {
-          this.readyState = 1
-          this.dispatchEvent(new Event('open'))
+    route.onMessage((data) => {
+      const message: {
+        type: string
+        auth: TerminalAuth
+        event: string
+        payload: ClientPayload
+      } = JSON.parse(data.toString())
+      if (message.type === 'handshake') {
+        const auth = message.auth
+        connection.clientId = auth.clientId
+        connection.terminalId = auth.terminalId
+        const state = server.states.get(auth.terminalId) ?? {
+          terminalId: auth.terminalId,
+          cols: auth.cols,
+          rows: auth.rows,
+          revision: 1,
+          generation: 1,
+          controllerClientId: 'other'
+        }
+        server.states.set(auth.terminalId, state)
+        Object.assign(connection, {
+          cols: state.cols,
+          rows: state.rows,
+          revision: state.revision,
+          generation: state.generation
         })
+        // The protocol handshake acknowledgment precedes terminal events.
+        route.send(JSON.stringify({ event: 'connected', payload: null }))
+        connection.receive('ready', {
+          connectionId: randomUUID(),
+          streamId: connection.streamId,
+          generation: state.generation,
+          controller: state.controllerClientId === auth.clientId,
+          reset: 'full',
+          cols: state.cols,
+          rows: state.rows,
+          revision: state.revision,
+          snapshot: '',
+          synchronizedOutput: false,
+          snapshotImages: null,
+          snapshotLinks: []
+        })
+        connection.receive('output', {
+          streamId: connection.streamId,
+          sequence: 1,
+          data: 'same persistent terminal session\r\n'
+        })
+        connection.receive('title', {
+          title:
+            auth.terminalId === 'term_dev'
+              ? 'dev · /worktrees/topic'
+              : 'zsh · /worktrees/topic'
+        })
+        return
       }
 
-      send(data: string) {
-        const message = JSON.parse(data)
-        if (message.type === 'handshake') {
-          const auth = message.auth
-          this.clientId = auth.clientId
-          this.terminalId = auth.terminalId
-          const state = readState(this.terminalId) ?? {
-            terminalId: this.terminalId,
-            cols: auth.cols,
-            rows: auth.rows,
-            revision: 1,
-            generation: 1,
-            controllerClientId: 'other'
-          }
-          localStorage.setItem(
-            `${terminalStatePrefix}${this.terminalId}`,
-            JSON.stringify(state)
-          )
-          this.cols = state.cols
-          this.rows = state.rows
-          this.revision = state.revision
-          this.generation = state.generation
-          this.receive('connected', null)
-          this.receive('ready', {
-            connectionId: crypto.randomUUID(),
-            streamId: this.streamId,
-            generation: this.generation,
-            controller: state.controllerClientId === this.clientId,
-            reset: 'full',
-            cols: this.cols,
-            rows: this.rows,
-            revision: this.revision,
-            snapshot: ''
-          })
-          this.receive('output', {
-            streamId: this.streamId,
-            sequence: 1,
-            data: 'same persistent terminal session\r\n'
-          })
-          this.receive('title', {
-            title:
-              this.terminalId === 'term_dev'
-                ? 'dev · /worktrees/topic'
-                : 'zsh · /worktrees/topic'
-          })
-          return
+      const { event: type, payload } = message
+      terminal.messages.push({ type, ...payload })
+      if (type === 'query_authority') {
+        connection.receive('query_authority', {
+          generation: connection.generation,
+          transitionId: null,
+          active: true
+        })
+        return
+      }
+
+      if (type !== 'resize' && type !== 'take_control') {
+        return
+      }
+
+      const apply = () => {
+        const state = server.states.get(connection.terminalId)!
+        if (payload.cols !== state.cols || payload.rows !== state.rows) {
+          state.cols = payload.cols
+          state.rows = payload.rows
+          state.revision += 1
         }
 
-        const { event: type, payload } = message
-        window.__wsSent = [...(window.__wsSent ?? []), { type, ...payload }]
-        if (type === 'query_authority') {
-          this.receive('query_authority', {
-            generation: this.generation,
-            transitionId: null,
-            active: true
-          })
-          return
+        if (type === 'take_control') {
+          state.controllerClientId = connection.clientId
+          state.generation += 1
         }
 
-        if (type !== 'resize' && type !== 'take_control') {
-          return
+        for (const target of server.connections) {
+          if (target.terminalId === state.terminalId) {
+            target.applyTerminalState(state)
+          }
         }
-
-        const apply = () => {
-          const state = readState(this.terminalId)!
-          if (payload.cols !== this.cols || payload.rows !== this.rows) {
-            state.cols = payload.cols
-            state.rows = payload.rows
-            state.revision += 1
-          }
-
-          if (type === 'take_control') {
-            state.controllerClientId = this.clientId
-            state.generation += 1
-          }
-
-          localStorage.setItem(
-            `${terminalStatePrefix}${this.terminalId}`,
-            JSON.stringify(state)
-          )
-          notify(state)
-        }
-        if (type === 'take_control' && window.__delayTakeControl) {
-          window.__releaseTakeControl = () => {
-            window.__delayTakeControl = false
-            window.__releaseTakeControl = null
-            apply()
-          }
-        } else {
+      }
+      if (type === 'take_control' && terminal.delayTakeControl) {
+        terminal.releaseTakeControl = () => {
+          terminal.delayTakeControl = false
+          terminal.releaseTakeControl = null
           apply()
         }
+      } else {
+        apply()
       }
-
-      applyTerminalState(state: TreeportTestTerminalState) {
-        const dimensionsChanged = state.revision !== this.revision
-        this.cols = state.cols
-        this.rows = state.rows
-        this.revision = state.revision
-        this.generation = state.generation
-        if (this.readyState !== 1) {
-          return
-        }
-
-        if (dimensionsChanged) {
-          this.receive('dimensions', {
-            cols: this.cols,
-            rows: this.rows,
-            revision: this.revision
-          })
-        }
-
-        this.receive('control', {
-          generation: this.generation,
-          controller: state.controllerClientId === this.clientId
-        })
-      }
-
-      receive(event: string, payload: JsonValue) {
-        queueMicrotask(() =>
-          this.dispatchEvent(
-            new MessageEvent('message', {
-              data: JSON.stringify({ event, payload })
-            })
-          )
-        )
-      }
-
-      close() {
-        if (this.readyState === 3) {
-          return
-        }
-
-        this.readyState = 3
-        this.dispatchEvent(new CloseEvent('close', { code: 1000 }))
-      }
-    }
-    Object.assign(window, { WebSocket: MockWebSocket })
-  }, initialMetadata)
+    })
+  })
+  return {
+    terminal,
+    emitProjectEvent: (type: NetworkProductEvent['type'], data: JsonValue) =>
+      page.evaluate((source) => {
+        const { type, data } = JSON.parse(source)
+        window.__eventSource.emit(type, JSON.stringify(data))
+      }, JSON.stringify({ type, data }))
+  }
 }

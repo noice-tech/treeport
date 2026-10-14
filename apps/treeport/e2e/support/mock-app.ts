@@ -23,7 +23,7 @@ export async function mockApp(
     await installDesktopBridge(page, options.desktopFilePaths ?? {})
   }
 
-  await installMockSockets(page, initialTerminalMetadata)
+  const sockets = await installMockSockets(page, initialTerminalMetadata)
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
@@ -60,6 +60,7 @@ export async function mockApp(
 
   await page.goto(options.initialPath ?? '/')
   return {
+    ...sockets,
     ...projects,
     ...updates,
     ...worktrees,
