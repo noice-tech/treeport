@@ -190,9 +190,9 @@ export async function createPanelMock(
       const worktree = state.worktrees.find((candidate) =>
         candidate.panels.some((panel) => panel.id === panelId)
       )!
-      const panel = worktree.panels.find(
-        (candidate) => candidate.id === panelId && candidate.kind === 'web'
-      )!
+      const panel = worktree.panels
+        .filter((candidate) => candidate.kind === 'web')
+        .find((candidate) => candidate.id === panelId)!
       await route.fulfill({
         json: {
           context: {

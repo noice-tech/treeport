@@ -4,17 +4,28 @@ import { installDesktopBridge, installKeyboardPlatform } from './desktop'
 import { createPanelMock } from './panels'
 import { createPresetMock } from './presets'
 import { createProjectMock } from './projects'
-import { installMockSockets } from './sockets'
+import { installMockSockets, type TerminalMock } from './sockets'
 import { createTerminalMock } from './terminals'
 import type { MockAppOptions } from './types'
 import { createUpdateMock } from './updates'
 import { createWorktreeMock } from './worktrees'
 
+type MockApp = {
+  terminal: TerminalMock
+  emitProjectEvent: Awaited<
+    ReturnType<typeof installMockSockets>
+  >['emitProjectEvent']
+} & Omit<Awaited<ReturnType<typeof createProjectMock>>, 'state'> &
+  Awaited<ReturnType<typeof createUpdateMock>> &
+  Awaited<ReturnType<typeof createWorktreeMock>> &
+  Awaited<ReturnType<typeof createTerminalMock>> &
+  Awaited<ReturnType<typeof createPanelMock>>
+
 export async function mockApp(
   page: Page,
   initialTerminalMetadata: TerminalRuntimeMetadata[] = [],
   options: MockAppOptions = {}
-) {
+): Promise<MockApp> {
   if (options.keyboardPlatform) {
     await installKeyboardPlatform(page, options.keyboardPlatform)
   }
@@ -23,7 +34,7 @@ export async function mockApp(
     await installDesktopBridge(page, options.desktopFilePaths ?? {})
   }
 
-  await installMockSockets(page, initialTerminalMetadata)
+  const sockets = await installMockSockets(page, initialTerminalMetadata)
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
@@ -60,6 +71,7 @@ export async function mockApp(
 
   await page.goto(options.initialPath ?? '/')
   return {
+    ...sockets,
     ...projects,
     ...updates,
     ...worktrees,

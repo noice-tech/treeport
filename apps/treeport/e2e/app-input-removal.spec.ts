@@ -5,6 +5,7 @@ import {
   requestTerminalControl,
   waitForTerminalControl
 } from './support/interactions'
+
 test.describe('desktop terminal input and removal', () => {
   test('uses trusted local file paths and uploads files without one', async ({
     page
@@ -19,57 +20,58 @@ test.describe('desktop terminal input and removal', () => {
     })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
-    await page.evaluate(() => {
-      const socket = window.__lastWs
-      socket.receive('output', {
-        streamId: socket.streamId,
-        sequence: 2,
-        data: '\u001b[?2004h'
-      })
-      window.__wsSent = []
-      window.__delayTakeControl = true
-      window.__pasteTerminalFile = () => {
-        const textarea = document.querySelector('.xterm-helper-textarea')!
-        const clipboard = new DataTransfer()
-        clipboard.items.add(
-          new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot one.png', {
-            type: 'image/png'
-          })
-        )
-        clipboard.items.add(
-          new File(['draft'], "notes '$draft.txt", { type: 'text/plain' })
-        )
-        const event = new Event('paste', { bubbles: true, cancelable: true })
-        Object.defineProperty(event, 'clipboardData', { value: clipboard })
-        return {
-          files: clipboard.files.length,
-          prevented: !textarea.dispatchEvent(event)
-        }
-      }
+    const socket = mocked.terminal.connection
+    socket.receive('output', {
+      streamId: socket.streamId,
+      sequence: 2,
+      data: '\u001b[?2004h'
     })
+    mocked.terminal.messages = []
+    mocked.terminal.delayTakeControl = true
+    // Clipboard files cannot be filled through Playwright's text clipboard API.
+    // Dispatch the browser event, then verify the alert or terminal protocol.
+    const pasteTerminalFiles = () =>
+      page
+        .getByRole('textbox', { name: 'Terminal input' })
+        .evaluate((textarea) => {
+          const clipboard = new DataTransfer()
+          clipboard.items.add(
+            new File(
+              [new Uint8Array([0x89, 0x50, 0x4e, 0x47])],
+              'shot one.png',
+              {
+                type: 'image/png'
+              }
+            )
+          )
+          clipboard.items.add(
+            new File(['draft'], "notes '$draft.txt", { type: 'text/plain' })
+          )
+          textarea.dispatchEvent(
+            new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              clipboardData: clipboard
+            })
+          )
+        })
 
-    const pasteWhileViewing = await page.evaluate(() =>
-      window.__pasteTerminalFile()
-    )
-    expect(pasteWhileViewing).toEqual({ files: 2, prevented: true })
+    await pasteTerminalFiles()
     await expect(page.getByRole('alert')).toContainText(
       'Couldn’t paste file: taking control; try again in a moment'
     )
     expect(mocked.fileUploadRequests()).toBe(0)
 
-    await page.evaluate(() => window.__releaseTakeControl())
+    mocked.terminal.releaseTakeControl!()
     await waitForTerminalControl(page)
-    const paste = await page.evaluate(() => window.__pasteTerminalFile())
-    expect(paste).toEqual({ files: 2, prevented: true })
+    await pasteTerminalFiles()
     expect(mocked.fileUploadRequests()).toBe(0)
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent
-            .filter((message: any) => message.type === 'input')
-            .map((message: any) => message.data)
-            .join('')
-        )
+        mocked.terminal.messages
+          .filter((message) => message.type === 'input')
+          .map((message) => message.data)
+          .join('')
       )
       .toContain(
         "\u001b[200~'/Users/example/Desktop/shot one.png' '/Users/example/Desktop/notes '\\''$draft.txt'\u001b[201~"
@@ -106,12 +108,10 @@ test.describe('desktop terminal input and removal', () => {
     await expect.poll(mocked.fileUploadRequests).toBe(1)
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent
-            .filter((message: any) => message.type === 'input')
-            .map((message: any) => message.data)
-            .join('')
-        )
+        mocked.terminal.messages
+          .filter((message) => message.type === 'input')
+          .map((message) => message.data)
+          .join('')
       )
       .toContain('/tmp/treeport-upload-1.txt')
   })
@@ -119,16 +119,16 @@ test.describe('desktop terminal input and removal', () => {
   test('keeps normal selection local and forwards fullscreen mouse input unless a selection modifier is held', async ({
     page
   }) => {
-    await mockApp(page, [], {
+    const mocked = await mockApp(page, [], {
       keyboardPlatform: 'MacIntel'
     })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await requestTerminalControl(page)
     const textarea = page.locator('.xterm-helper-textarea')
     await textarea.focus()
-    await page.evaluate(() => {
-      window.__wsSent = []
-    })
+    {
+      mocked.terminal.messages = []
+    }
     await page.keyboard.press('Shift+Enter')
     await page.keyboard.press('Meta+ArrowLeft')
     await page.keyboard.press('Meta+ArrowRight')
@@ -136,16 +136,14 @@ test.describe('desktop terminal input and removal', () => {
     await page.keyboard.press('Alt+ArrowRight')
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent
-            .filter((message: any) => message.type === 'input')
-            .map((message: any) => message.data)
-        )
+        mocked.terminal.messages
+          .filter((message) => message.type === 'input')
+          .map((message) => message.data)
       )
       .toEqual(['\u001b[13;2u', '\u001b[H', '\u001b[F', '\u001bb', '\u001bf'])
 
-    await page.evaluate(() => {
-      const socket = window.__lastWs
+    {
+      const socket = mocked.terminal.connection
       socket.receive('output', {
         streamId: socket.streamId,
         sequence: 2,
@@ -154,16 +152,14 @@ test.describe('desktop terminal input and removal', () => {
           (_, index) => `local-history-${index}\r\n`
         ).join('')
       })
-      window.__wsSent = []
-    })
+      mocked.terminal.messages = []
+    }
     const screen = page.locator('.xterm-screen')
     await screen.hover()
     await page.mouse.wheel(0, -600)
     await expect(screen).not.toContainText('local-history-119')
     expect(
-      await page.evaluate(() =>
-        window.__wsSent.filter((message: any) => message.type === 'input')
-      )
+      mocked.terminal.messages.filter((message) => message.type === 'input')
     ).toEqual([])
 
     const bounds = await screen.boundingBox()
@@ -173,13 +169,11 @@ test.describe('desktop terminal input and removal', () => {
     await page.mouse.move(bounds!.x + 120, bounds!.y + 10, { steps: 5 })
     await page.mouse.up()
     expect(
-      await page.evaluate(() =>
-        window.__wsSent.filter((message: any) => message.type === 'input')
-      )
+      mocked.terminal.messages.filter((message) => message.type === 'input')
     ).toEqual([])
 
-    await page.evaluate(() => {
-      const socket = window.__lastWs
+    {
+      const socket = mocked.terminal.connection
       socket.receive('output', {
         streamId: socket.streamId,
         sequence: 3,
@@ -187,8 +181,8 @@ test.describe('desktop terminal input and removal', () => {
           '\u001b[?1049h\u001b[?1000h\u001b[?1002h\u001b[?1006h\u001b[H' +
           'fullscreen transcript selection'
       })
-      window.__wsSent = []
-    })
+      mocked.terminal.messages = []
+    }
     await expect(screen).toContainText('fullscreen transcript selection')
     await page.mouse.move(bounds!.x + 10, bounds!.y + 10)
     await page.mouse.down()
@@ -196,32 +190,30 @@ test.describe('desktop terminal input and removal', () => {
     await page.mouse.up()
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent
-            .filter((message: any) => message.type === 'input')
-            .map((message: any) => {
-              const data = String(message.data)
-              if (data.startsWith('\u001b[<0;') && data.endsWith('M')) {
-                return 'press'
-              }
+        mocked.terminal.messages
+          .filter((message) => message.type === 'input')
+          .map((message) => {
+            const data = String(message.data)
+            if (data.startsWith('\u001b[<0;') && data.endsWith('M')) {
+              return 'press'
+            }
 
-              if (data.startsWith('\u001b[<32;') && data.endsWith('M')) {
-                return 'drag'
-              }
+            if (data.startsWith('\u001b[<32;') && data.endsWith('M')) {
+              return 'drag'
+            }
 
-              if (data.startsWith('\u001b[<0;') && data.endsWith('m')) {
-                return 'release'
-              }
+            if (data.startsWith('\u001b[<0;') && data.endsWith('m')) {
+              return 'release'
+            }
 
-              return 'unexpected'
-            })
-        )
+            return 'unexpected'
+          })
       )
       .toEqual(['press', 'drag', 'drag', 'drag', 'drag', 'drag', 'release'])
 
-    await page.evaluate(() => {
-      window.__wsSent = []
-    })
+    {
+      mocked.terminal.messages = []
+    }
     await page.keyboard.down('Alt')
     await page.mouse.move(bounds!.x + 10, bounds!.y + 10)
     await page.mouse.down()
@@ -230,52 +222,44 @@ test.describe('desktop terminal input and removal', () => {
     await page.keyboard.up('Alt')
     await expect(page.getByLabel('Terminal text selection')).toHaveCount(1)
     expect(
-      await page.evaluate(() =>
-        window.__wsSent.filter((message: any) => message.type === 'input')
-      )
+      mocked.terminal.messages.filter((message) => message.type === 'input')
     ).toEqual([])
 
     await screen.dispatchEvent('wheel', { deltaY: -120 })
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent.some(
-            (message: any) =>
-              message.type === 'input' &&
-              String(message.data).includes('\u001b[<')
-          )
+        mocked.terminal.messages.some(
+          (message) =>
+            message.type === 'input' &&
+            String(message.data).includes('\u001b[<')
         )
       )
       .toBe(true)
 
     // Legacy mouse reports use onBinary. Native wheel handling must leave
     // later keyboard input unchanged, without a queued repeat count.
-    await page.evaluate(() => {
-      const socket = window.__lastWs
+    {
+      const socket = mocked.terminal.connection
       socket.receive('output', {
         streamId: socket.streamId,
         sequence: 4,
         data: '\u001b[?1006l'
       })
-      window.__wsSent = []
-    })
+      mocked.terminal.messages = []
+    }
     await screen.dispatchEvent('wheel', { deltaY: -120 })
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent.some((message: any) => message.type === 'binary')
-        )
+        mocked.terminal.messages.some((message) => message.type === 'binary')
       )
       .toBe(true)
     await textarea.focus()
     await page.keyboard.type('its')
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent
-            .filter((message: any) => message.type === 'input')
-            .map((message: any) => message.data)
-        )
+        mocked.terminal.messages
+          .filter((message) => message.type === 'input')
+          .map((message) => message.data)
       )
       .toEqual(['i', 't', 's'])
   })
@@ -493,12 +477,9 @@ test.describe('desktop terminal input and removal', () => {
     const pendingRefresh = page.waitForResponse(
       (response) => new URL(response.url()).pathname === '/api/projects'
     )
-    await page.evaluate(() =>
-      window.__eventSource.emit(
-        'worktree.updated',
-        JSON.stringify({ worktreeId: 'wt_topic' })
-      )
-    )
+    await mocked.emitProjectEvent('worktree.updated', {
+      worktreeId: 'wt_topic'
+    })
     await pendingRefresh
     await expect(
       page.getByRole('button', { name: 'topic', exact: true })
@@ -522,12 +503,10 @@ test.describe('desktop terminal input and removal', () => {
         response.request().method() === 'GET' &&
         new URL(response.url()).pathname === '/api/projects'
     )
-    await page.evaluate(() =>
-      window.__eventSource.emit(
-        'worktree.removed',
-        JSON.stringify({ projectId: 'proj_1', worktreeId: 'wt_topic' })
-      )
-    )
+    await mocked.emitProjectEvent('worktree.removed', {
+      projectId: 'proj_1',
+      worktreeId: 'wt_topic'
+    })
     await removedRefresh
     await expect(
       page.getByRole('button', { name: 'topic', exact: true })

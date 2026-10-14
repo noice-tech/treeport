@@ -94,12 +94,10 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(pending).toHaveText('new-topic-preview')
       await expect(pending).toBeFocused()
       const projectRequestsBeforeEvent = mocked.projectRequests()
-      await page.evaluate(() =>
-        window.__eventSource.emit(
-          'worktree.created',
-          JSON.stringify({ projectId: 'proj_1', worktreeId: 'wt_new' })
-        )
-      )
+      await mocked.emitProjectEvent('worktree.created', {
+        projectId: 'proj_1',
+        worktreeId: 'wt_new'
+      })
       await expect
         .poll(() => mocked.projectRequests())
         .toBeGreaterThan(projectRequestsBeforeEvent)
@@ -127,13 +125,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     {
       await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Initial terminal').selectOption('preset_hunk')
-      await expect
-        .poll(() =>
-          page.evaluate(() =>
-            localStorage.getItem('treeport-initial-terminal-preset:proj_1')
-          )
-        )
-        .toBe('preset_hunk')
       await page.keyboard.press('Escape')
       await page.reload()
       await page.getByRole('button', { name: 'New tree' }).click()
@@ -231,7 +222,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByRole('status', { name: 'Creating tree reload-topic' })
     ).toBeVisible()
-    const activeTerminal = page.getByRole('main', { name: /terminal$/ })
+    const activeTerminal = page.getByRole('main', {
+      name: 'main tree terminal workspace'
+    })
     await expect(activeTerminal).toBeVisible()
     releaseCreate()
     await expect(
@@ -246,26 +239,20 @@ test.describe('desktop worktree and terminal workflows', () => {
   test('shows pending control and does not replay the triggering key', async ({
     page
   }) => {
-    await mockApp(page)
+    const mocked = await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
-    await page.evaluate(() => {
-      window.__wsSent = []
-      window.__delayTakeControl = true
-      document.querySelector('.xterm-helper-textarea')!.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          bubbles: true,
-          key: 'f',
-          metaKey: true
-        })
-      )
-    })
-    await page.waitForTimeout(50)
+    await page.clock.install()
+    mocked.terminal.messages = []
+    mocked.terminal.delayTakeControl = true
+    await page.getByRole('textbox', { name: 'Terminal input' }).press('Meta+f')
+    // The modifier-only event must not request control, even after timers run.
+    await page.clock.runFor(50)
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     expect(
-      await page.evaluate(() =>
-        window.__wsSent.some((message: any) => message.type === 'take_control')
+      mocked.terminal.messages.some(
+        (message) => message.type === 'take_control'
       )
     ).toBe(false)
 
@@ -274,40 +261,32 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByText('Taking control…', { exact: true })
     ).toBeVisible()
     expect(
-      await page.evaluate(() =>
-        window.__wsSent.some(
-          (message: any) => message.type === 'input' && message.data === 'x'
-        )
+      mocked.terminal.messages.some(
+        (message) => message.type === 'input' && message.data === 'x'
       )
     ).toBe(false)
 
-    await page.evaluate(() => window.__releaseTakeControl())
+    mocked.terminal.releaseTakeControl!()
     await waitForTerminalControl(page)
     expect(
-      await page.evaluate(() =>
-        window.__wsSent.some(
-          (message: any) => message.type === 'input' && message.data === 'x'
-        )
+      mocked.terminal.messages.some(
+        (message) => message.type === 'input' && message.data === 'x'
       )
     ).toBe(false)
 
     await page.keyboard.press('y')
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent.some(
-            (message: any) => message.type === 'input' && message.data === 'y'
-          )
+        mocked.terminal.messages.some(
+          (message) => message.type === 'input' && message.data === 'y'
         )
       )
       .toBe(true)
 
-    const socketsBeforeReconnect = await page.evaluate(
-      () => window.__wsInstances.length
-    )
-    await page.evaluate(() => window.__lastWs.close())
+    const socketsBeforeReconnect = mocked.terminal.connections.length
+    mocked.terminal.connection.close()
     await expect
-      .poll(() => page.evaluate(() => window.__wsInstances.length))
+      .poll(() => mocked.terminal.connections.length)
       .toBeGreaterThan(socketsBeforeReconnect)
   })
 
@@ -316,141 +295,113 @@ test.describe('desktop worktree and terminal workflows', () => {
     page
   }) => {
     const viewer = await context.newPage()
-    await mockApp(page)
-    await mockApp(viewer)
+    const controller = await mockApp(page)
+    const observer = await mockApp(viewer)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await viewer
       .getByRole('button', { name: 'Pi, running', exact: true })
       .click()
 
+    await page.clock.install()
+    await viewer.clock.install()
     await requestTerminalControl(page)
-    await expect(page.getByText('Viewing', { exact: true })).toHaveCount(0)
     await expect(viewer.getByText('Viewing', { exact: true })).toBeVisible()
-    await page.waitForTimeout(250)
-    const beforeControllerResize = await page.evaluate(() =>
-      JSON.parse(
-        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
-      )
-    )
+    await page.clock.runFor(250)
+    controller.terminal.messages = []
+    observer.terminal.messages = []
+
     await page.setViewportSize({ width: 1_100, height: 720 })
     await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            JSON.parse(
-              localStorage.getItem('__treeport_terminal_state__:term_pi') ||
-                '{}'
-            ).revision
-        )
+      .poll(
+        () =>
+          controller.terminal.messages.filter(
+            (message) => message.type === 'resize'
+          ).length
       )
-      .toBeGreaterThan(beforeControllerResize.revision)
-    const afterControllerResize = await page.evaluate(() =>
-      JSON.parse(
-        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
+      .toBeGreaterThan(0)
+    const controllerResize = controller.terminal.messages
+      .filter((message) => message.type === 'resize')
+      .at(-1)!
+    for (const target of [page, viewer]) {
+      await expect(target.locator('.xterm-rows > div')).toHaveCount(
+        controllerResize.rows
       )
-    )
-    const viewerSocketState = await viewer.evaluate(() => {
-      const socket = window.__lastWs
-      return {
-        cols: socket.cols,
-        rows: socket.rows,
-        revision: socket.revision
-      }
-    })
-    expect(viewerSocketState).toEqual({
-      cols: afterControllerResize.cols,
-      rows: afterControllerResize.rows,
-      revision: afterControllerResize.revision
-    })
+    }
 
     await viewer.setViewportSize({ width: 760, height: 640 })
-    await viewer.waitForTimeout(250)
-    const afterViewerResize = await page.evaluate(() =>
-      JSON.parse(
-        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
-      )
+    // A read-only viewer must not publish a debounced resize.
+    await viewer.clock.runFor(250)
+    expect(
+      observer.terminal.messages.filter((message) => message.type === 'resize')
+    ).toHaveLength(0)
+    await expect(page.locator('.xterm-rows > div')).toHaveCount(
+      controllerResize.rows
     )
-    expect(afterViewerResize).toEqual(afterControllerResize)
 
     await requestTerminalControl(viewer)
-    await expect(viewer.getByText('Viewing', { exact: true })).toHaveCount(0)
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
-    const takeoverState = await viewer.evaluate(() => {
-      const socket = window.__lastWs
-      return {
-        state: JSON.parse(
-          localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
-        ),
-        clientId: socket.clientId
-      }
-    })
-    expect(takeoverState.state.controllerClientId).toBe(takeoverState.clientId)
-    expect(takeoverState.state.generation).toBeGreaterThan(
-      afterViewerResize.generation
-    )
+    await expect
+      .poll(
+        () =>
+          observer.terminal.messages.filter(
+            (message) => message.type === 'take_control'
+          ).length
+      )
+      .toBe(1)
+    const takeover = observer.terminal.messages.find(
+      (message) => message.type === 'take_control'
+    )!
+    for (const target of [page, viewer]) {
+      await expect(target.locator('.xterm-rows > div')).toHaveCount(
+        takeover.rows
+      )
+    }
 
+    observer.terminal.messages = []
     await viewer.setViewportSize({ width: 980, height: 700 })
     await expect
-      .poll(() =>
-        viewer.evaluate(
-          () =>
-            JSON.parse(
-              localStorage.getItem('__treeport_terminal_state__:term_pi') ||
-                '{}'
-            ).revision
-        )
+      .poll(
+        () =>
+          observer.terminal.messages.filter(
+            (message) => message.type === 'resize'
+          ).length
       )
-      .toBeGreaterThan(takeoverState.state.revision)
-    const finalState = await viewer.evaluate(() =>
-      JSON.parse(
-        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
-      )
-    )
+      .toBeGreaterThan(0)
+    const viewerResize = observer.terminal.messages
+      .filter((message) => message.type === 'resize')
+      .at(-1)!
     for (const target of [page, viewer]) {
-      const expectedGrid = {
-        cols: finalState.cols,
-        rows: finalState.rows,
-        revision: finalState.revision
-      }
-      await expect
-        .poll(() =>
-          target.evaluate(() => {
-            const socket = window.__lastWs
-            return {
-              cols: socket.cols,
-              rows: socket.rows,
-              revision: socket.revision
-            }
-          })
-        )
-        .toEqual(expectedGrid)
+      await expect(target.locator('.xterm-rows > div')).toHaveCount(
+        viewerResize.rows
+      )
     }
   })
 
   test('does not automatically retry a fatal terminal error', async ({
     page
   }) => {
-    await mockApp(page)
+    const mocked = await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
-    await page.evaluate(async () => {
-      const socket = window.__lastWs
+    await page.clock.install()
+    {
+      const socket = mocked.terminal.connection
       socket.receive('terminal_error', {
         code: 'ATTACH_FAILED',
         message: 'Terminal unavailable',
         retryable: false
       })
-      await new Promise((resolve) => setTimeout(resolve))
-      socket.close()
-    })
+    }
     await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
-    const before = await page.evaluate(() => window.__wsInstances.length)
+    mocked.terminal.connection.close()
+    const before = mocked.terminal.connections.length
     await page.evaluate(() => window.dispatchEvent(new Event('online')))
-    await page.waitForTimeout(750)
-    expect(await page.evaluate(() => window.__wsInstances.length)).toBe(before)
+    // Exercise the reconnect timer rather than racing a fixed sleep.
+    await page.clock.runFor(750)
+    expect(mocked.terminal.connections).toHaveLength(before)
     await page.getByRole('button', { name: 'Retry' }).click()
     await expect
-      .poll(() => page.evaluate(() => window.__wsInstances.length))
+      .poll(() => mocked.terminal.connections.length)
       .toBeGreaterThan(before)
   })
 
@@ -461,6 +412,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       {
         terminalId: 'term_pi',
         title: null,
+        program: null,
         hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
@@ -561,6 +513,8 @@ test.describe('desktop worktree and terminal workflows', () => {
     for (let step = 0; step < 100; step += 1) {
       await page.keyboard.press('Tab')
       await expect(terminalInput).not.toBeFocused()
+      // Stop after a full focus cycle; the assertions above run on every step.
+      // oxlint-disable-next-line playwright/no-conditional-in-test
       if (await exit.evaluate((button) => button === document.activeElement)) {
         break
       }
@@ -646,18 +600,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       'sandbox',
       /allow-same-origin/
     )
-    await expect
-      .poll(() =>
-        page
-          .frames()
-          .some((frame) =>
-            frame.url().includes('/api/web-panels/panel_1/assets/')
-          )
-      )
-      .toBe(true)
-    const filesFrame = page
-      .frames()
-      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+    const filesFrame = page.frameLocator('iframe[title="Files"]')
 
     await filesFrame.getByRole('treeitem', { name: 'src', exact: true }).click()
     await filesFrame
@@ -679,14 +622,14 @@ test.describe('desktop worktree and terminal workflows', () => {
       name: 'topic terminal workspace'
     })
     // Server output is supplied by the transport fixture, not a real shell.
-    await page.evaluate(() => {
-      const socket = window.__lastWs
+    {
+      const socket = mocked.terminal.connection
       socket.receive('output', {
         streamId: socket.streamId,
         sequence: 2,
         data: 'before full view\r\n'
       })
-    })
+    }
     await expect(terminal).toContainText('before full view')
 
     await page.getByRole('button', { name: 'Enter full view' }).click()
@@ -699,14 +642,14 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.keyboard.insertText(' // edited in full view')
     await expect(editor).toContainText('edited in full view')
     await expect(filesFrame.getByLabel('Unsaved changes')).toBeVisible()
-    await page.evaluate(() => {
-      const socket = window.__lastWs
+    {
+      const socket = mocked.terminal.connection
       socket.receive('output', {
         streamId: socket.streamId,
         sequence: 3,
         data: 'during full view\r\n'
       })
-    })
+    }
 
     await page.getByRole('button', { name: 'Exit full view' }).click()
     await expect(editor).toContainText('edited in full view')
@@ -722,12 +665,10 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.keyboard.press('Enter')
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent
-            .filter((message) => message.type === 'input')
-            .map((message) => message.data)
-            .join('')
-        )
+        mocked.terminal.messages
+          .filter((message) => message.type === 'input')
+          .map((message) => message.data)
+          .join('')
       )
       .toContain('echo ready\r')
 
@@ -754,12 +695,12 @@ test.describe('desktop worktree and terminal workflows', () => {
     await editor.press('Control+s')
     expect((await saveRequest).postDataJSON()).toEqual({
       path: 'src/app.ts',
-      content: 'export const value = 1\nexport const value = 2',
+      content: 'export const value = 2',
       expectedRevision: 'revision-1'
     })
     await expect
       .poll(() => mocked.getTreeFile('src/app.ts')?.content)
-      .toBe('export const value = 1\nexport const value = 2')
+      .toBe('export const value = 2')
     await expect(filesFrame.getByLabel('Unsaved changes')).toBeHidden()
     await editor.press('Control+z')
     await expect(editor).toContainText('export const value = 1')

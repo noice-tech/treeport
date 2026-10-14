@@ -1,6 +1,6 @@
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
-import { build as viteBuild } from 'vite'
+import { build as viteBuild, type Rolldown } from 'vite'
 
 export async function buildPanel(root: string, entry: string) {
   let script = ''
@@ -17,6 +17,7 @@ export async function buildPanel(root: string, entry: string) {
     resolve: { dedupe: ['react', 'react-dom'] },
     build: {
       write: false,
+      watch: null,
       cssCodeSplit: false,
       rollupOptions: {
         input: path.join(root, entry),
@@ -24,9 +25,11 @@ export async function buildPanel(root: string, entry: string) {
       }
     }
   })
-  const output = Array.isArray(build)
-    ? build.flatMap((result) => result.output)
-    : build.output
+  // SAFETY: watch is explicitly disabled above, so Vite cannot return a watcher.
+  const result = build as Rolldown.RolldownOutput | Rolldown.RolldownOutput[]
+  const output = Array.isArray(result)
+    ? result.flatMap((entry) => entry.output)
+    : result.output
   for (const item of output) {
     if (item.type === 'chunk') {
       if (item.isEntry) {
