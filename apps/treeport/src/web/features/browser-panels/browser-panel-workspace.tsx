@@ -842,6 +842,20 @@ export function BrowserPanelWorkspace({
     event: KeyboardEvent<HTMLCanvasElement>,
     phase: 'down' | 'up'
   ) => {
+    const isPasteShortcut =
+      event.key.toLowerCase() === 'v' &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey
+    const isShiftInsert =
+      event.key === 'Insert' &&
+      event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    if (isPasteShortcut || isShiftInsert) {
+      return
+    }
+
     event.preventDefault()
     if (phase === 'down') {
       send({ type: 'takeControl' })
@@ -1989,6 +2003,13 @@ export function BrowserPanelWorkspace({
                 onKeyUp={(event) => key(event, 'up')}
                 onPaste={(event) => {
                   event.preventDefault()
+                  if (!event.clipboardData.types.includes('text/plain')) {
+                    setError(
+                      'Paste was not sent. Only plain text is supported; copy text and try again.'
+                    )
+                    return
+                  }
+
                   const text = event.clipboardData.getData('text/plain')
                   if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
                     setError(
