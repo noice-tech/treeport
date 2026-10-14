@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { browserNavigation } from './browser-navigation'
 
 it.each(['native', 'hosted'])(
@@ -54,5 +54,43 @@ it('ignores ordinary dialogs and cleans up after success or failure', async () =
       throw new Error('Navigation failed')
     })
   ).rejects.toThrow('Navigation failed')
+  expect(page.listenerCount('dialog')).toBe(0)
+
+  const dispose = vi.fn(async () => undefined)
+  const waitForFunction = vi.fn(async () => ({ dispose }))
+  Object.assign(page, { waitForFunction })
+  const failedNavigation = async () => {
+    throw new Error(
+      'page.goto: net::ERR_CONNECTION_REFUSED at http://localhost'
+    )
+  }
+  // SAFETY: This fake implements the events and error-document probe used here.
+  await expect(
+    browserNavigation(page as never, failedNavigation, null, 'page')
+  ).resolves.toBeUndefined()
+  expect(dispose).toHaveBeenCalledOnce()
+  // Automation still receives the failure even when an error document is visible.
+  // SAFETY: The helper only uses EventEmitter methods for automation failures.
+  await expect(
+    browserNavigation(page as never, failedNavigation)
+  ).rejects.toThrow('net::ERR_CONNECTION_REFUSED')
+  waitForFunction.mockRejectedValueOnce(new Error('No error page'))
+  // SAFETY: The fake also models a failed document probe.
+  await expect(
+    browserNavigation(page as never, failedNavigation, null, 'page')
+  ).rejects.toThrow('net::ERR_CONNECTION_REFUSED')
+  // An old error page must not hide unrelated failures.
+  // SAFETY: The helper only uses EventEmitter methods for non-network failures.
+  await expect(
+    browserNavigation(
+      page as never,
+      async () => {
+        throw new Error('Browser disconnected')
+      },
+      null,
+      'page'
+    )
+  ).rejects.toThrow('Browser disconnected')
+  expect(waitForFunction).toHaveBeenCalledTimes(2)
   expect(page.listenerCount('dialog')).toBe(0)
 })

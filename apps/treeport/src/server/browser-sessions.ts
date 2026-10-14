@@ -2626,25 +2626,29 @@ export class BrowserSessionManager {
       await browserNavigation(
         page,
         () => page.goto(message.url, { waitUntil: 'commit' }),
-        automation.cdp
+        automation.cdp,
+        'page'
       )
     } else if (message.type === 'back') {
       await browserNavigation(
         page,
         () => page.goBack({ waitUntil: 'commit' }),
-        automation.cdp
+        automation.cdp,
+        'page'
       )
     } else if (message.type === 'forward') {
       await browserNavigation(
         page,
         () => page.goForward({ waitUntil: 'commit' }),
-        automation.cdp
+        automation.cdp,
+        'page'
       )
     } else if (message.type === 'reload') {
       await browserNavigation(
         page,
         () => page.reload({ waitUntil: 'commit' }),
-        automation.cdp
+        automation.cdp,
+        'page'
       )
     } else if (message.type === 'stop') {
       await automation.cdp.send('Page.stopLoading')
