@@ -1479,6 +1479,7 @@ function WorkspaceApp() {
           dismissToolPicker()
           createBrowserPanel.mutate({ worktree: selectedWorktree })
         }
+
         return
       }
 
