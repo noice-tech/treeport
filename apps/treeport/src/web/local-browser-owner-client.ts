@@ -78,8 +78,7 @@ export async function requestLocalBrowserOwnerTicket(
 
   const ticket = decodeUnknownOrNull(browserOwnerTicketResponseSchema, body)
   if (!ticket) {
-    window.location.reload()
-    throw new Error('Reconnecting the Browser owner.')
+    throw new Error('The host sent an invalid Browser owner ticket response.')
   }
 
   return ticket
@@ -151,13 +150,15 @@ export function connectLocalBrowserOwner(
         }
 
         if (!settled) {
-          rejectBeforeReady(new Error('Reconnecting the Browser owner.'))
+          rejectBeforeReady(
+            new Error('The host sent an invalid Browser owner message.')
+          )
         } else {
           disposed = true
           socket.disconnect()
+          handlers.disconnected()
         }
 
-        window.location.reload()
         return
       }
 

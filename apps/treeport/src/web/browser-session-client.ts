@@ -132,8 +132,7 @@ export function connectBrowserPanel(
     const result = decodeUnknownOrNull(browserTicketResponseSchema, body)
     if (response.ok && !result) {
       reconnectAllowed = false
-      window.location.reload()
-      return
+      throw new Error('The host sent an invalid Browser ticket response.')
     }
 
     if (!response.ok || !result) {
@@ -163,19 +162,12 @@ export function connectBrowserPanel(
         ready = false
         socket = null
         connectedSocket.disconnect()
-        window.location.reload()
+        reportError(new Error('The host sent an invalid Browser message.'))
         return
       }
 
-      // Rebuild the UI from the running daemon after reconnecting, rather than
-      // keeping stale browser code alive across a daemon restart or update.
-      if (message.type === 'ready' && connectedOnce && !ready) {
-        reconnectAllowed = false
-        socket = null
-        connectedSocket.disconnect()
-        window.location.reload()
-        return
-      }
+      // Reattach in place. The project event bridge owns workspace updates;
+      // reconnecting this panel must not reload every terminal and browser.
 
       handlers.message(message)
       if (message.type !== 'ready') {
