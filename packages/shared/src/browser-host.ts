@@ -25,6 +25,10 @@ export const browserObservedUrlSchema = Schema.String.pipe(
       return (
         (url.protocol === 'http:' ||
           url.protocol === 'https:' ||
+          (url.protocol === 'chrome:' &&
+            /^chrome:\/\//i.test(value) &&
+            url.hostname !== '' &&
+            url.port === '') ||
           // File paths belong to the browser runtime. Do not accept UNC hosts.
           (url.protocol === 'file:' && url.hostname === '')) &&
         url.username === '' &&
@@ -33,7 +37,7 @@ export const browserObservedUrlSchema = Schema.String.pipe(
     },
     {
       message: () =>
-        'Expected an absolute HTTP, HTTPS, or local file URL without credentials'
+        'Expected an absolute HTTP, HTTPS, chrome://, or local file URL without credentials'
     }
   )
 )

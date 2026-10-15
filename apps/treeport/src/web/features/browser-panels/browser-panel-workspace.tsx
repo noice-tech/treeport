@@ -1072,7 +1072,7 @@ export function BrowserPanelWorkspace({
     if (!parsed) {
       addressDirtyRef.current = true
       setError(
-        'Enter search terms or an HTTP, HTTPS, or local file address without credentials.'
+        'Enter search terms or an HTTP, HTTPS, chrome://, or local file address without credentials.'
       )
       inputRef.current?.focus({ preventScroll: true })
       return
@@ -1941,16 +1941,6 @@ export function BrowserPanelWorkspace({
           </PopoverContent>
         </Popover>
       </form>
-      {(state?.url ?? panel.url).startsWith('file:') ? (
-        <p
-          className="bg-muted px-2.5 py-1.5 text-muted-foreground"
-          role="status"
-        >
-          {localBrowser
-            ? 'File paths refer to this desktop computer, not the connected server.'
-            : 'File paths refer to the daemon host’s filesystem, not your device.'}
-        </p>
-      ) : null}
       {error ? (
         <div
           className="flex items-center gap-2 bg-destructive/10 px-2.5 py-1.5 text-destructive"
