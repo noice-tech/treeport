@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { BrowserFrame, BrowserServerMessage } from '@treeport/shared'
+import type { BrowserServerMessage } from '@treeport/shared'
 import {
   connectBrowserPanel,
   type BrowserPanelSocket
 } from './browser-session-client'
 
-type SocketEvent = 'message' | 'frame' | 'disconnect' | 'connect_error'
-type SocketEventValue = BrowserFrame | BrowserServerMessage | Error | undefined
+type SocketEvent = 'message' | 'disconnect' | 'connect_error'
+type SocketEventValue = BrowserServerMessage | Error | undefined
 
 class FakeSocket implements BrowserPanelSocket {
   connected = true
@@ -18,14 +18,12 @@ class FakeSocket implements BrowserPanelSocket {
   >()
 
   on(event: 'message', listener: (message: BrowserServerMessage) => void): void
-  on(event: 'frame', listener: (frame: BrowserFrame) => void): void
   on(event: 'disconnect', listener: () => void): void
   on(event: 'connect_error', listener: (error: Error) => void): void
   on(
     event: SocketEvent,
     listener:
       | ((message: BrowserServerMessage) => void)
-      | ((frame: BrowserFrame) => void)
       | (() => void)
       | ((error: Error) => void)
   ): void {
@@ -42,7 +40,6 @@ class FakeSocket implements BrowserPanelSocket {
   }
 
   emitServer(event: 'message', value: BrowserServerMessage): void
-  emitServer(event: 'frame', value: BrowserFrame): void
   emitServer(event: 'disconnect', value?: undefined): void
   emitServer(event: 'connect_error', value: Error): void
   emitServer(event: SocketEvent, value?: SocketEventValue): void {
@@ -69,25 +66,23 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('preserves command and frame contracts and reconnects without reloading', async () => {
+it('preserves control and video signaling and reconnects without replaying offers', async () => {
   const socket = new FakeSocket()
   const reconnectedSocket = new FakeSocket()
   let socketCount = 0
   const messages: BrowserServerMessage[] = []
-  const frames: BrowserFrame[] = []
   const connection = connectBrowserPanel(
     'panel-one',
     true,
     {
-      message: (message) => messages.push(message),
-      frame: (frame) => frames.push(frame)
+      message: (message) => messages.push(message)
     },
     () => (socketCount++ === 0 ? socket : reconnectedSocket)
   )
   connection.send({ type: 'resize', width: 900, height: 600 })
   connection.send({ type: 'resize', width: 280, height: 180 })
   connection.send({ type: 'navigate', url: 'https://example.com/' })
-  await vi.waitFor(() => expect(socket.hasHandler('frame')).toBe(true))
+  await vi.waitFor(() => expect(socket.hasHandler('message')).toBe(true))
   expect(fetch).toHaveBeenCalledWith(
     '/api/panels/panel-one/browser-ticket',
     expect.objectContaining({ method: 'POST' })
@@ -113,26 +108,9 @@ it('preserves command and frame contracts and reconnects without reloading', asy
     }
   }
   socket.emitServer('message', ready)
-  socket.emitServer('frame', {
-    sequence: 7,
-    mimeType: 'video/vp8',
-    keyframe: true,
-    timestamp: 123,
-    width: 1_280,
-    height: 800,
-    data: Uint8Array.from([1, 2, 3])
-  })
-
+  socket.emitServer('message', { type: 'videoReady' })
   expect(window.location.reload).not.toHaveBeenCalled()
-  expect(messages).toEqual([ready])
-  expect(frames).toEqual([
-    expect.objectContaining({
-      sequence: 7,
-      mimeType: 'video/vp8',
-      keyframe: true,
-      data: Uint8Array.from([1, 2, 3])
-    })
-  ])
+  expect(messages).toEqual([ready, { type: 'videoReady' }])
   expect(socket.emit).toHaveBeenNthCalledWith(1, 'command', {
     type: 'setVisible',
     visible: true
@@ -150,7 +128,7 @@ it('preserves command and frame contracts and reconnects without reloading', asy
   vi.useFakeTimers()
   socket.emitServer('disconnect')
   connection.send({ type: 'takeControl' })
-  connection.send({ type: 'frameAck', sequence: 7 })
+  connection.send({ type: 'videoOffer', requestId: 'stale', sdp: 'offer' })
   await vi.advanceTimersByTimeAsync(500)
   await vi.waitFor(() =>
     expect(reconnectedSocket.hasHandler('message')).toBe(true)

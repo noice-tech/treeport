@@ -1,8 +1,11 @@
 import { EventEmitter } from 'node:events'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { parseBrowserOwnerServerMessage } from '@treeport/shared'
-import type { BrowserFrame, BrowserRuntimeState } from '@treeport/shared'
-import { receiveBrowserVideo } from './browser-video'
+import type { BrowserRuntimeState } from '@treeport/shared'
+import { prepareBrowserVideoExtension } from './browser-video'
 import {
   PlaywrightBrowser,
   type PlaywrightBrowserHost
@@ -13,13 +16,23 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   let currentUrl = 'about:blank'
   const frame = {}
   const cdp = Object.assign(new EventEmitter(), {
-    send: vi.fn(async () => ({ currentIndex: 0, entries: [] }))
+    send: vi.fn(async () => ({
+      currentIndex: 0,
+      entries: [],
+      cssVisualViewport: { scale: 2 }
+    }))
   })
   const page = Object.assign(new EventEmitter(), {
     url: () => currentUrl,
     title: async () => 'localhost',
     isClosed: () => false,
     mainFrame: () => frame,
+    mouse: {
+      move: vi.fn(async (_x: number, _y: number) => undefined),
+      down: vi.fn(async () => undefined),
+      up: vi.fn(async () => undefined)
+    },
+    keyboard: { insertText: vi.fn(async () => undefined) },
     exposeBinding: vi.fn(async () => undefined),
     addInitScript: vi.fn(async () => undefined),
     setViewportSize: vi.fn(async () => undefined)
@@ -36,7 +49,6 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   const navigationError = vi.fn()
   const browser = new PlaywrightBrowser(host, '/unused', {
     state: (state) => states.push(state),
-    frame: () => undefined,
     popup: () => undefined,
     clipboard: () => false,
     navigationError,
@@ -88,6 +100,30 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   currentUrl = 'about:blank'
   page.emit('load')
   await vi.waitFor(() => expect(browser.state.url).toBe('about:blank'))
+
+  // Native button events reuse the correctly scaled position. Navigation,
+  // other input and failed positioning invalidate it; explicit moves still run.
+  const point = { type: 'pointer' as const, x: 20, y: 40 }
+  await browser.command({ ...point, phase: 'move' })
+  await browser.command({ ...point, phase: 'down' })
+  await browser.command({ ...point, phase: 'up' })
+  expect(page.mouse.move).toHaveBeenCalledExactlyOnceWith(10, 20)
+  expect(page.mouse.down).toHaveBeenCalledOnce()
+  expect(page.mouse.up).toHaveBeenCalledOnce()
+  await browser.command({ ...point, phase: 'move' })
+  expect(page.mouse.move).toHaveBeenCalledTimes(2)
+  page.emit('framenavigated', frame)
+  await browser.command({ ...point, phase: 'down' })
+  expect(page.mouse.move).toHaveBeenCalledTimes(3)
+  await browser.command({ type: 'insertText', text: 'x' })
+  await browser.command({ ...point, phase: 'down' })
+  expect(page.mouse.move).toHaveBeenCalledTimes(4)
+  page.mouse.move.mockRejectedValueOnce(new Error('Positioning failed'))
+  await expect(browser.command({ ...point, phase: 'move' })).rejects.toThrow(
+    'Positioning failed'
+  )
+  await browser.command({ ...point, phase: 'down' })
+  expect(page.mouse.move).toHaveBeenCalledTimes(6)
 })
 
 it('dismisses hosted beforeunload safely and settles canceled reload without losing the page', async () => {
@@ -123,7 +159,6 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
   })
   const browser = new PlaywrightBrowser(host, '/unused', {
     state: () => undefined,
-    frame: () => undefined,
     popup: () => undefined,
     clipboard: () => false,
     navigationError: () => undefined,
@@ -143,43 +178,16 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
   await new Promise<void>((resolve) => setImmediate(resolve))
 })
 
-it('relays encoded video without changing its dependencies and rejects invalid capture output', () => {
-  const frames: Array<Omit<BrowserFrame, 'sequence'>> = []
-  const failures: string[] = []
-  const receive = (payload: string) =>
-    receiveBrowserVideo(
-      payload,
-      (frame) => frames.push(frame),
-      (message) => failures.push(message)
-    )
-  const frame = {
-    mimeType: 'video/vp8',
-    keyframe: true,
-    timestamp: 1,
-    width: 800,
-    height: 600,
-    data: Buffer.from([1, 2, 3]).toString('base64')
-  }
-  receive(JSON.stringify({ frame, error: null }))
-  receive(
-    JSON.stringify({
-      frame: { ...frame, timestamp: 33_334, keyframe: false },
-      error: null
-    })
+it('prepares a private exact-tab capture extension without website entry points', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-video-'))
+  onTestFinished(() => fs.rm(directory, { recursive: true, force: true }))
+  const extension = await prepareBrowserVideoExtension(directory)
+  expect(extension.id).toMatch(/^[a-p]{32}$/)
+  const manifest = JSON.parse(
+    await fs.readFile(path.join(directory, 'manifest.json'), 'utf8')
   )
-  expect(frames).toEqual([
-    { ...frame, data: Buffer.from([1, 2, 3]) },
-    {
-      ...frame,
-      data: Buffer.from([1, 2, 3]),
-      timestamp: 33_334,
-      keyframe: false
-    }
-  ])
-  receive(JSON.stringify({ frame: { ...frame, width: 100_000 }, error: null }))
-  receive('{invalid')
-  receive(JSON.stringify({ frame: null, error: 'Capture stopped' }))
-  expect(frames).toHaveLength(2)
-  expect(failures).toHaveLength(3)
-  expect(failures.at(-1)).toBe('Capture stopped')
+  expect(manifest.permissions).toEqual(['tabCapture', 'debugger'])
+  expect(manifest.externally_connectable).toBeUndefined()
+  expect(manifest.web_accessible_resources).toBeUndefined()
+  expect(manifest.content_scripts).toBeUndefined()
 })

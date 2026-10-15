@@ -70,21 +70,42 @@ export async function browserKey(
   }
 }
 
+const wheelPreparations = new WeakMap<CDPSession, Promise<void>>()
+
 export async function browserWheel(
   cdp: CDPSession,
   message: Extract<BrowserClientMessage, { type: 'wheel' }>
 ): Promise<void> {
-  const { cssVisualViewport } = await cdp.send('Page.getLayoutMetrics')
-  // Trackpad pinch is a Ctrl+wheel event without a Control key press.
-  // page.mouse.wheel() would lose these per-event modifiers and focal point.
-  await cdp.send('Input.dispatchMouseEvent', {
-    type: 'mouseWheel',
-    x: message.x / cssVisualViewport.scale,
-    y: message.y / cssVisualViewport.scale,
-    deltaX: message.deltaX,
-    deltaY: message.deltaY,
-    modifiers: message.modifiers
-  })
+  // The session scheduler overlaps at most two compatible wheel ACKs. Keep
+  // coordinate preparation and dispatch ordered even if CDP metrics respond
+  // at different speeds; do not serialize on the compositor's input ACK.
+  let dispatched: Promise<unknown> | null = null
+  const preparation = (wheelPreparations.get(cdp) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(async () => {
+      const { cssVisualViewport } = await cdp.send('Page.getLayoutMetrics')
+      // Trackpad pinch needs the per-event modifiers and exact focal point.
+      dispatched = cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseWheel',
+        x: message.x / cssVisualViewport.scale,
+        y: message.y / cssVisualViewport.scale,
+        deltaX: message.deltaX,
+        deltaY: message.deltaY,
+        modifiers: message.modifiers
+      })
+      // Attach a rejection observer immediately; the caller still awaits the
+      // original promise and reports errors through the input scheduler.
+      void dispatched.catch(() => undefined)
+    })
+  wheelPreparations.set(cdp, preparation)
+  try {
+    await preparation
+    await dispatched
+  } finally {
+    if (wheelPreparations.get(cdp) === preparation) {
+      wheelPreparations.delete(cdp)
+    }
+  }
 }
 
 export async function browserTouch(

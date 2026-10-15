@@ -24,11 +24,13 @@ import type {
   BrowserClientMessage,
   BrowserContextResult,
   BrowserContextActionResult,
-  BrowserFrame,
   BrowserSessionState
 } from '@treeport/shared'
 
-import { PlaywrightBrowserVideo } from './browser-video'
+import {
+  PlaywrightBrowserVideo,
+  prepareBrowserVideoExtension
+} from './browser-video'
 import { browserRuntime } from './browser-runtime'
 import { browserNavigation } from './browser-navigation'
 import { browserKey, browserTouch, browserWheel } from './browser-input'
@@ -43,7 +45,6 @@ export interface PlaywrightBrowserCallbacks {
       'controlled' | 'hasController' | 'controller' | 'agentActive'
     >
   ): void
-  frame(frame: Omit<BrowserFrame, 'sequence'>): void
   clipboard(clipboard: BrowserClipboard): boolean
   popup(url: string): void
   navigationError(message: string, source?: 'video'): void
@@ -109,6 +110,7 @@ interface PlaywrightBrowserLease {
   browser: Browser
   context: BrowserContext
   page: Page
+  extensionId: string
 }
 
 export class PlaywrightBrowserHost {
@@ -119,6 +121,7 @@ export class PlaywrightBrowserHost {
   private pendingOpens = 0
   private closing = false
   private debuggingEndpoint: string | null = null
+  private captureExtensionId = ''
   private closeOperation: Promise<void> | null = null
   private readonly closingPages = new Map<Page, Promise<void>>()
 
@@ -167,8 +170,15 @@ export class PlaywrightBrowserHost {
           )
         }
 
+        const extension = await prepareBrowserVideoExtension(
+          path.join(this.profilePath, 'treeport-capture-extension')
+        )
         const env = { ...process.env }
         const args = [
+          // Only the private loopback CDP connection can load our extension.
+          // Modern branded Chrome does not support --load-extension.
+          '--enable-unsafe-extension-debugging',
+          `--allowlisted-extension-id=${extension.id}`,
           '--remote-debugging-address=127.0.0.1',
           '--remote-debugging-port=0',
           // Finish the compositor pipeline before capturing, rather than
@@ -209,11 +219,23 @@ export class PlaywrightBrowserHost {
           chromiumSandbox: true,
           headless: true,
           acceptDownloads: false,
+          ignoreDefaultArgs: ['--disable-extensions'],
           args,
           env,
           viewport: DEFAULT_VIEWPORT
         })
         browser = context.browser()
+        const extensionSession = await browser!.newBrowserCDPSession()
+        await extensionSession
+          .send('Extensions.loadUnpacked', { path: extension.directory })
+          .catch(async () => {
+            await context!.close()
+            throw new Error(
+              'Native Browser video requires Chrome/Chromium with CDP Extensions.loadUnpacked support. Update the host browser and retry.'
+            )
+          })
+        await extensionSession.detach()
+        this.captureExtensionId = extension.id
         const activePort = await fs.readFile(
           path.join(this.profilePath, 'DevToolsActivePort'),
           'utf8'
@@ -258,7 +280,7 @@ export class PlaywrightBrowserHost {
           ? initialPage
           : await context.newPage()
       this.pages.add(page)
-      return { browser, context, page }
+      return { browser, context, page, extensionId: this.captureExtensionId }
     }).finally(() => {
       this.pendingOpens -= 1
     })
@@ -331,6 +353,7 @@ export class PlaywrightBrowser {
     createdAt: number
   } | null = null
   private historyRevision = 0
+  private pointerPoint: { x: number; y: number } | null = null
   private titleTimer: NodeJS.Timeout | null = null
   private faviconSource: string | null = null
   private stateValue: Omit<
@@ -402,6 +425,8 @@ export class PlaywrightBrowser {
   }
 
   async devtoolsEndpoint(): Promise<string> {
+    // An agent using another CDP connection can reposition the pointer.
+    this.pointerPoint = null
     if (!this.page || this.page.isClosed() || !this.cdp) {
       throw new Error('The hosted browser page is not available.')
     }
@@ -426,7 +451,7 @@ export class PlaywrightBrowser {
       return
     }
 
-    const { browser, context, page } = await this.host.openPage()
+    const { browser, context, page, extensionId } = await this.host.openPage()
     this.context = context
     this.browser = browser
     browser.once('disconnected', () => {
@@ -436,6 +461,7 @@ export class PlaywrightBrowser {
     })
 
     this.page = page
+    this.pointerPoint = null
     await installBrowserClipboardBridge(page, (clipboard) =>
       this.callbacks.clipboard(clipboard)
     )
@@ -451,7 +477,7 @@ export class PlaywrightBrowser {
     this.video = new PlaywrightBrowserVideo(
       context,
       page,
-      (frame) => this.callbacks.frame(frame),
+      extensionId,
       (message) => {
         this.screencasting = false
         void this.video?.stop()
@@ -547,6 +573,7 @@ export class PlaywrightBrowser {
     })
     page.on('framenavigated', (frame) => {
       this.contextMenu = null
+      this.pointerPoint = null
       if (frame === page.mainFrame()) {
         void this.refreshPageState()
       }
@@ -686,8 +713,16 @@ export class PlaywrightBrowser {
     return this.page ? browserCursor(this.page, point) : ('default' as const)
   }
 
-  async requestVideoKeyframe(): Promise<void> {
-    await this.video?.requestKeyframe()
+  async negotiateVideo(peerId: string, sdp: string): Promise<string> {
+    if (!this.video) {
+      throw new Error('Browser video is unavailable.')
+    }
+
+    return this.video.negotiate(peerId, sdp)
+  }
+
+  async closeVideoPeer(peerId: string): Promise<void> {
+    await this.video?.closePeer(peerId)
   }
 
   async setScreencasting(enabled: boolean): Promise<void> {
@@ -726,6 +761,10 @@ export class PlaywrightBrowser {
     const page = this.page
     if (!page || page.isClosed()) {
       throw new Error('The hosted browser page is unavailable.')
+    }
+
+    if (message.type !== 'pointer' && message.type !== 'wheel') {
+      this.pointerPoint = null
     }
 
     if (message.type === 'dismissContext') {
@@ -931,10 +970,7 @@ export class PlaywrightBrowser {
     }
 
     // Other input invalidates a previously resolved location/link.
-    if (
-      message.type !== 'frameAck' &&
-      message.type !== 'requestVideoKeyframe'
-    ) {
+    if (message.type !== 'videoOffer') {
       this.contextMenu = null
     }
 
@@ -1004,11 +1040,6 @@ export class PlaywrightBrowser {
         return
       }
 
-      const wasScreencasting = this.screencasting
-      if (wasScreencasting) {
-        await this.setScreencasting(false)
-      }
-
       await page.setViewportSize({
         width: message.width,
         height: message.height
@@ -1016,8 +1047,8 @@ export class PlaywrightBrowser {
       this.updateState({
         viewport: { width: message.width, height: message.height }
       })
-      if (wasScreencasting) {
-        await this.setScreencasting(true)
+      if (this.screencasting) {
+        await this.video?.start(message.width, message.height)
       }
 
       return
@@ -1027,10 +1058,22 @@ export class PlaywrightBrowser {
       const { cssVisualViewport } = await this.cdp!.send(
         'Page.getLayoutMetrics'
       )
-      await page.mouse.move(
-        message.x / cssVisualViewport.scale,
-        message.y / cssVisualViewport.scale
-      )
+      const x = message.x / cssVisualViewport.scale
+      const y = message.y / cssVisualViewport.scale
+      // A button event at the already-positioned pointer does not need a
+      // second move/compositor ACK. Explicit moves still deliver hover/drag.
+      if (
+        message.phase === 'move' ||
+        this.pointerPoint?.x !== x ||
+        this.pointerPoint?.y !== y
+      ) {
+        this.pointerPoint = { x, y }
+        await page.mouse.move(x, y).catch((error) => {
+          this.pointerPoint = null
+          throw error
+        })
+      }
+
       if (message.phase === 'down') {
         await page.mouse.down({
           button: message.button ?? 'left',
@@ -1085,6 +1128,7 @@ export class PlaywrightBrowser {
   }
 
   async agentCommand(input: BrowserAgentCommand): Promise<string> {
+    this.pointerPoint = null
     const page = this.page
     if (!page || page.isClosed()) {
       throw new Error('The hosted browser page is unavailable.')

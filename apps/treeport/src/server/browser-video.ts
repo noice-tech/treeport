@@ -1,104 +1,132 @@
-import type { BrowserContext, CDPSession, Page } from 'playwright'
-import { parseBrowserCaptureMessage, type BrowserFrame } from '@treeport/shared'
+import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import type { BrowserContext, Page } from 'playwright'
+import { BROWSER_VIDEO_CAPTURE_SOURCE } from '@treeport/shared/browser-host'
 
-// Desktop-owned pages still supply VP8 through the native desktop capture path.
-export function receiveBrowserVideo(
-  payload: string,
-  publish: (frame: Omit<BrowserFrame, 'sequence'>) => void,
-  failed: (message: string) => void
-): void {
-  const message = parseBrowserCaptureMessage(payload)
-  if (!message || message.error || !message.frame) {
-    failed(message?.error ?? 'The Browser video capture message is invalid.')
-    return
-  }
-
-  const frame = message.frame
-  publish({ ...frame, data: Buffer.from(frame.data, 'base64') })
+export async function prepareBrowserVideoExtension(directory: string) {
+  // A fresh public identity scopes unattended capture to this host's extension.
+  // No signing key is retained, and websites cannot invoke this extension.
+  const { publicKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048
+  })
+  const key = publicKey.export({ format: 'der', type: 'spki' })
+  const id = crypto
+    .createHash('sha256')
+    .update(key)
+    .digest('hex')
+    .slice(0, 32)
+    .replace(/[0-9a-f]/g, (value) =>
+      String.fromCharCode(97 + Number.parseInt(value, 16))
+    )
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+  await Promise.all([
+    fs.writeFile(
+      path.join(directory, 'manifest.json'),
+      JSON.stringify({
+        manifest_version: 3,
+        name: 'Treeport Browser capture',
+        version: '1.0',
+        key: key.toString('base64'),
+        // getTargets maps the exact CDP target to its tab. No debugger attaches
+        // and no page is selected by URL, title, focus, or screen position.
+        permissions: ['tabCapture', 'debugger'],
+        background: { service_worker: 'worker.js' }
+      }),
+      { mode: 0o600 }
+    ),
+    fs.writeFile(
+      path.join(directory, 'worker.js'),
+      'chrome.runtime.onInstalled.addListener(() => {});',
+      { mode: 0o600 }
+    ),
+    fs.writeFile(
+      path.join(directory, 'capture.html'),
+      '<!doctype html><title>Treeport Browser capture</title>',
+      { mode: 0o600 }
+    )
+  ])
+  return { id, directory }
 }
 
 export class PlaywrightBrowserVideo {
-  private cdp: CDPSession | null = null
+  private helper: Page | null = null
 
   constructor(
     private readonly context: BrowserContext,
     private readonly page: Page,
-    private readonly publish: (frame: Omit<BrowserFrame, 'sequence'>) => void,
+    private readonly extensionId: string,
     private readonly failed: (message: string) => void
   ) {}
 
   async start(width: number, height: number): Promise<void> {
-    if (this.cdp) {
+    if (this.helper) {
+      await this.helper
+        .evaluate(`globalThis.__treeportVideo.resize(${width}, ${height})`)
+        .catch(async (error) => {
+          await this.stop()
+          this.failed(
+            'Browser video capture could not be resized. Reconnect to restart it.'
+          )
+          throw error
+        })
       return
     }
 
     const cdp = await this.context.newCDPSession(this.page)
-    this.cdp = cdp
-    cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
-      if (this.cdp === cdp) {
-        this.publish({
-          mimeType: 'image/jpeg',
-          keyframe: true,
-          timestamp: Math.round(performance.now() * 1000),
-          // Capture limits are not the source viewport, especially during resize.
-          width: Math.round(metadata.deviceWidth),
-          height: Math.round(metadata.deviceHeight),
-          data: Buffer.from(data, 'base64')
-        })
+    const { targetInfo } = await cdp.send('Target.getTargetInfo')
+    await cdp.detach()
+    const helper = await this.context.newPage()
+    this.helper = helper
+    const lost = () => {
+      if (this.helper === helper) {
+        this.helper = null
+        this.failed('Browser video capture stopped. Reconnect to restart it.')
       }
-
-      void cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {
-        if (this.cdp === cdp) {
-          void this.stop()
-          this.failed('Browser capture disconnected. Reconnect to restart it.')
+    }
+    helper.once('crash', lost)
+    helper.once('close', lost)
+    await (async () => {
+      await helper.goto(`chrome-extension://${this.extensionId}/capture.html`)
+      await helper.exposeFunction('__treeportVideoError', (message: string) => {
+        if (this.helper === helper) {
+          this.failed(message)
         }
       })
+      await helper.evaluate(`(async () => {
+        const target = (await chrome.debugger.getTargets()).find(
+          target => target.id === ${JSON.stringify(targetInfo.targetId)}
+        );
+        if (!target?.tabId) throw new Error('The Browser capture target is unavailable.');
+        const source = () => chrome.tabCapture.getMediaStreamId({ targetTabId: target.tabId });
+        globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(source, ${width}, ${height}, globalThis.__treeportVideoError);
+      })()`)
+    })().catch(async (error) => {
+      await this.stop()
+      throw error
     })
-    await cdp
-      .send('Page.startScreencast', {
-        format: 'jpeg',
-        quality: 80,
-        maxWidth: width,
-        maxHeight: height
-      })
-      .catch(async (error) => {
-        await this.stop()
-        throw error
-      })
   }
 
-  async requestKeyframe(): Promise<void> {
-    const cdp = this.cdp
-    if (!cdp) {
-      return
+  async negotiate(peerId: string, sdp: string): Promise<string> {
+    const helper = this.helper
+    if (!helper) {
+      throw new Error('Browser video capture is unavailable.')
     }
 
-    // A newly joined viewer needs an image even if the page has not changed.
-    const { data } = await cdp.send('Page.captureScreenshot', {
-      format: 'jpeg',
-      quality: 80
-    })
-    if (this.cdp !== cdp) {
-      return
-    }
+    return helper.evaluate(
+      `globalThis.__treeportVideo.negotiate(${JSON.stringify(peerId)}, ${JSON.stringify(sdp)})`
+    )
+  }
 
-    const viewport = this.page.viewportSize()!
-    this.publish({
-      mimeType: 'image/jpeg',
-      keyframe: true,
-      timestamp: Math.round(performance.now() * 1000),
-      width: viewport.width,
-      height: viewport.height,
-      data: Buffer.from(data, 'base64')
-    })
+  async closePeer(peerId: string): Promise<void> {
+    await this.helper?.evaluate(
+      `globalThis.__treeportVideo?.closePeer(${JSON.stringify(peerId)})`
+    )
   }
 
   async stop(): Promise<void> {
-    const cdp = this.cdp
-    this.cdp = null
-    if (cdp) {
-      await cdp.send('Page.stopScreencast').catch(() => undefined)
-      await cdp.detach().catch(() => undefined)
-    }
+    const helper = this.helper
+    this.helper = null
+    await helper?.close().catch(() => undefined)
   }
 }

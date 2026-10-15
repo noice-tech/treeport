@@ -1,20 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
-  BROWSER_MAX_FRAME_BYTES,
   browserAgentCommandSchema as browserAgentCommandEffectSchema,
-  browserFrameSchema as browserFrameEffectSchema,
   browserOwnerAuthSchema as browserOwnerAuthEffectSchema,
   browserOwnerClientMessageSchema as browserOwnerClientMessageEffectSchema,
   browserOwnerServerMessageSchema as browserOwnerServerMessageEffectSchema,
   parseBrowserAuth,
   parseBrowserClientMessage,
-  encodeBrowserFrame,
-  decodeBrowserFrame
+  parseBrowserServerMessage
 } from './browser-protocol.js'
 import { testSchema } from './schema.test-support.js'
 
 const browserAgentCommandSchema = testSchema(browserAgentCommandEffectSchema)
-const browserFrameSchema = testSchema(browserFrameEffectSchema)
 const browserOwnerAuthSchema = testSchema(browserOwnerAuthEffectSchema)
 const browserOwnerClientMessageSchema = testSchema(
   browserOwnerClientMessageEffectSchema
@@ -187,51 +183,22 @@ describe('hosted browser protocol', () => {
     ).toBe(false)
   })
 
-  it('round-trips video dependencies and rejects invalid or oversized frames', () => {
-    const frame = {
-      sequence: 1,
-      mimeType: 'video/vp8' as const,
-      keyframe: true,
-      timestamp: 1,
-      width: 1,
-      height: 1
-    }
-    const keyframe = { ...frame, data: Uint8Array.from([1, 2, 3]) }
-    const delta = {
-      ...keyframe,
-      sequence: 2,
-      keyframe: false,
-      timestamp: 33_334
-    }
-    expect(decodeBrowserFrame(encodeBrowserFrame(keyframe))).toMatchObject(
-      keyframe
-    )
-    expect(decodeBrowserFrame(encodeBrowserFrame(delta))).toMatchObject(delta)
+  it('accepts bounded video signaling and rejects the retired frame protocol', () => {
+    const offer = { type: 'videoOffer', requestId: 'request', sdp: 'v=0' }
+    expect(parseBrowserClientMessage(offer)).toEqual(offer)
+    expect(parseBrowserClientMessage({ ...offer, sdp: '' })).toBeNull()
     expect(
-      decodeBrowserFrame(encodeBrowserFrame(delta).subarray(0, -1))
+      parseBrowserClientMessage({ ...offer, sdp: 'x'.repeat(65_537) })
     ).toBeNull()
     expect(
-      decodeBrowserFrame(encodeBrowserFrame({ ...delta, width: 100_000 }))
+      parseBrowserClientMessage({ type: 'frameAck', sequence: 1 })
     ).toBeNull()
     expect(
-      decodeBrowserFrame(encodeBrowserFrame({ ...delta, timestamp: Infinity }))
+      parseBrowserClientMessage({ type: 'requestVideoKeyframe' })
     ).toBeNull()
-    expect(
-      browserFrameSchema.safeParse({ ...frame, data: new Uint8Array([1]) })
-        .success
-    ).toBe(true)
-    expect(
-      browserFrameSchema.parse({
-        ...frame,
-        data: Uint8Array.from([1, 2, 3]).buffer
-      }).data
-    ).toEqual(Uint8Array.from([1, 2, 3]))
-    expect(
-      browserFrameSchema.safeParse({
-        ...frame,
-        data: new Uint8Array(BROWSER_MAX_FRAME_BYTES + 1)
-      }).success
-    ).toBe(false)
+    const answer = { ...offer, type: 'videoAnswer' }
+    expect(parseBrowserServerMessage(answer)).toEqual(answer)
+    expect(parseBrowserServerMessage({ type: 'videoReady' })).not.toBeNull()
   })
 
   it('requires a bounded opaque ticket', () => {

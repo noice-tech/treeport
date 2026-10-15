@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Treeport input latency probe</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 12vh 24px 24px;
+        font: 18px system-ui;
+        background: #edf2f6;
+        color: #17212b;
+      }
+      canvas {
+        position: fixed;
+        inset: 0 0 auto;
+        width: 100%;
+        height: 8vh;
+        image-rendering: pixelated;
+      }
+      article {
+        padding: 24px 0;
+        border-bottom: 1px solid #adb8c2;
+      }
+      output {
+        font-size: 48px;
+        font-weight: bold;
+      }
+    </style>
+    <script src="/browser-latency-probe.js" defer></script>
+  </head>
+  <body>
+    <canvas width="32" height="1" aria-label="Encoded video marker"></canvas>
+    <h1>Input → video latency</h1>
+    <p>
+      Open Treeport’s <strong>Stream diagnostics</strong>, then enable
+      <strong>Measure test clicks</strong>.
+    </p>
+    <p>
+      Click anywhere on this page once per second. The counter and marker change
+      on mouse-down, through the normal remote input path.
+    </p>
+    <p>
+      Scroll between measurements to compare idle and scrolling latency. Do not
+      click again until the previous sample completes. Use one viewer for this
+      probe.
+    </p>
+    <output>0</output>
+    <main></main>
+  </body>
+</html>

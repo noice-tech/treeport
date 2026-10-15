@@ -10,7 +10,6 @@ import { z } from 'zod'
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
-  BrowserFrame,
   BrowserOwnerServerMessage,
   BrowserPanel,
   BrowserServerMessage,
@@ -51,7 +50,10 @@ class FakeBrowser implements BrowserSessionBrowser {
   }
   commands: BrowserClientMessage[] = []
   screencasting: boolean[] = []
-  keyframeRequests = 0
+  readonly negotiateVideo = vi.fn(
+    async (_peerId: string, _sdp: string) => 'answer'
+  )
+  readonly closeVideoPeer = vi.fn(async (_peerId: string) => undefined)
   closeRequests: boolean[] = []
   closeRequiresConfirmation = false
   closes = 0
@@ -87,9 +89,6 @@ class FakeBrowser implements BrowserSessionBrowser {
   async setScreencasting(value: boolean) {
     this.screencasting.push(value)
   }
-  async requestVideoKeyframe() {
-    this.keyframeRequests++
-  }
   async requestClose(force: boolean) {
     this.closeRequests.push(force)
     return force || !this.closeRequiresConfirmation
@@ -119,7 +118,9 @@ function fakeLocalBrowser() {
       commands.push({ method, params: params ?? null })
       return method === 'Page.getLayoutMetrics'
         ? { cssVisualViewport: { scale: 2 } }
-        : {}
+        : method === 'Treeport.negotiateVideo'
+          ? { sdp: 'local-answer' }
+          : {}
     },
     async detach() {}
   })
@@ -261,22 +262,16 @@ function fixture(
   const transports: Array<{
     transport: BrowserTransport
     messages: BrowserServerMessage[]
-    frames: BrowserFrame[]
     disconnects: number
   }> = []
   const transport = (id: string) => {
     const messages: BrowserServerMessage[] = []
-    const frames: BrowserFrame[] = []
     let disconnects = 0
     const browserTransport: BrowserTransport = {
       id,
       isConnected: () => true,
       sendMessage: (message) => {
         messages.push(message)
-        return true
-      },
-      sendFrame: (frame) => {
-        frames.push(frame)
         return true
       },
       disconnect: () => {
@@ -286,7 +281,6 @@ function fixture(
     const value = {
       transport: browserTransport,
       messages,
-      frames,
       get disconnects() {
         return disconnects
       }
@@ -300,7 +294,7 @@ function fixture(
 beforeEach(() => browsers.splice(0))
 
 describe('Browser sessions', () => {
-  it('pipelines paced JPEGs with bounded credit and sends only the latest pending image', async () => {
+  it('bounds video negotiation without blocking input and revokes hidden viewers', async () => {
     const value = fixture()
     const viewer = value.transport('viewer')
     await runEffect(
@@ -311,180 +305,65 @@ describe('Browser sessions', () => {
         viewer.transport
       )
     )
+    expect(viewer.messages).toContainEqual({ type: 'videoReady' })
     const browser = browsers[0]!
-    const publish = (timestamp: number) =>
-      browser.callbacks.frame({
-        mimeType: 'image/jpeg',
-        keyframe: true,
-        timestamp,
-        width: 800,
-        height: 600,
-        data: new Uint8Array([timestamp])
-      })
-    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] })
-    onTestFinished(() => {
-      vi.useRealTimers()
-    })
-    publish(1)
-    publish(2)
-    publish(3)
-    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1])
-    vi.advanceTimersByTime(17)
-    // A second image can arrive before any ACK, but bursts are paced and
-    // intermediate unsent images are replaced rather than queued.
-    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3])
-    publish(4)
-    vi.advanceTimersByTime(17)
-    publish(5)
-    expect(viewer.frames).toHaveLength(2)
-    const keyframeRequests = browser.keyframeRequests
+    let answer!: (sdp: string) => void
+    browser.negotiateVideo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve
+        })
+    )
     value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[0]!.sequence
+      type: 'videoOffer',
+      requestId: 'first',
+      sdp: 'offer'
     })
-    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3, 5])
-    expect(browser.keyframeRequests).toBe(keyframeRequests)
-    // Learn delivery spacing before expanding the initial two-frame window.
-    publish(6)
-    vi.advanceTimersByTime(17)
     value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[1]!.sequence
+      type: 'videoOffer',
+      requestId: 'duplicate',
+      sdp: 'offer'
     })
-    publish(7)
-    vi.advanceTimersByTime(17)
-    publish(8)
-    vi.advanceTimersByTime(17)
-    publish(9)
-    vi.advanceTimersByTime(17)
-    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([
-      1, 3, 5, 6, 7
-    ])
+    expect(browser.negotiateVideo).toHaveBeenCalledTimes(1)
     value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[0]!.sequence
+      type: 'wheel',
+      x: 10,
+      y: 20,
+      deltaX: 0,
+      deltaY: 10,
+      modifiers: 0
     })
-    expect(viewer.frames).toHaveLength(5)
-    // A burst of delayed ACKs is not sustained queue growth. Jitter must not
-    // make the stream permanently slower than the source page.
-    for (const frame of viewer.frames.slice(2)) {
-      value.manager.message('viewer', {
-        type: 'frameAck',
-        sequence: frame.sequence
-      })
-    }
-    expect(viewer.frames).toHaveLength(6)
-    vi.advanceTimersByTime(40)
-    expect(viewer.frames.at(-1)!.timestamp).toBe(9)
-
-    value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames.at(-1)!.sequence
-    })
-    // Consecutive growing delays do back off. Here frames sent 17 ms apart
-    // are delivered 34 ms apart, unlike a lone delayed ACK followed by a burst.
+    await vi.waitFor(() => expect(browser.commands).toHaveLength(1))
     value.manager.message('viewer', { type: 'setVisible', visible: false })
+    expect(browser.closeVideoPeer).toHaveBeenCalledWith('viewer')
+    answer('stale-answer')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(
+      viewer.messages.some((message) => message.type === 'videoAnswer')
+    ).toBe(false)
     value.manager.message('viewer', { type: 'setVisible', visible: true })
-    const congestedStart = viewer.frames.length
-    publish(20)
-    vi.advanceTimersByTime(17)
-    publish(21)
-    vi.advanceTimersByTime(17)
+    await vi.waitFor(() =>
+      expect(
+        viewer.messages.filter((message) => message.type === 'videoReady')
+      ).toHaveLength(2)
+    )
     value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[congestedStart]!.sequence
+      type: 'videoOffer',
+      requestId: 'resumed',
+      sdp: 'offer'
     })
-    publish(22)
-    vi.advanceTimersByTime(34)
-    value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[congestedStart + 1]!.sequence
-    })
-    publish(23)
-    vi.advanceTimersByTime(34)
-    value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[congestedStart + 2]!.sequence
-    })
-    publish(24)
-    vi.advanceTimersByTime(2)
-    expect(viewer.frames.at(-1)!.timestamp).toBe(24)
-    value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[congestedStart + 3]!.sequence
-    })
-    publish(25)
-    vi.advanceTimersByTime(17)
-    expect(viewer.frames.at(-1)!.timestamp).toBe(24)
-    vi.advanceTimersByTime(20)
-    expect(viewer.frames.at(-1)!.timestamp).toBe(25)
-    for (const frame of viewer.frames.slice(congestedStart + 3)) {
-      value.manager.message('viewer', {
-        type: 'frameAck',
-        sequence: frame.sequence
+    await vi.waitFor(() =>
+      expect(viewer.messages).toContainEqual({
+        type: 'videoAnswer',
+        requestId: 'resumed',
+        sdp: 'answer'
       })
-    }
-
-    // Recovery cannot depend on overlapping ACKs: after backing off, the
-    // viewer may finish every image before the next one is sent.
-    for (let index = 0; index < 100; index += 1) {
-      vi.advanceTimersByTime(100)
-      publish(100 + index)
-      vi.advanceTimersByTime(10)
-      value.manager.message('viewer', {
-        type: 'frameAck',
-        sequence: viewer.frames.at(-1)!.sequence
-      })
-    }
-    publish(200)
-    vi.advanceTimersByTime(17)
-    expect(viewer.frames.at(-1)!.timestamp).toBe(200)
-    const framesBeforeHiding = viewer.frames.length
-
-    publish(10)
-    value.manager.message('viewer', { type: 'setVisible', visible: false })
-    value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames[2]!.sequence
-    })
-    vi.advanceTimersByTime(100)
-    expect(viewer.frames).toHaveLength(framesBeforeHiding)
-
-    value.manager.message('viewer', { type: 'setVisible', visible: true })
-    const large = new Uint8Array(768 * 1024)
-    browser.callbacks.frame({
-      mimeType: 'image/jpeg',
-      keyframe: true,
-      timestamp: 11,
-      width: 800,
-      height: 600,
-      data: large
-    })
-    browser.callbacks.frame({
-      mimeType: 'image/jpeg',
-      keyframe: true,
-      timestamp: 12,
-      width: 800,
-      height: 600,
-      data: large
-    })
-    vi.advanceTimersByTime(17)
-    // Byte credit can stop delivery even when frame credit is available.
-    expect(viewer.frames.at(-1)!.timestamp).toBe(11)
-    value.manager.message('viewer', {
-      type: 'frameAck',
-      sequence: viewer.frames.at(-1)!.sequence
-    })
-    expect(viewer.frames.at(-1)!.timestamp).toBe(12)
-    publish(13)
+    )
     value.manager.close('viewer')
-    vi.advanceTimersByTime(100)
-    expect(viewer.frames.at(-1)!.timestamp).toBe(12)
-    vi.useRealTimers()
-    await value.manager.dispose()
+    expect(browser.closeVideoPeer).toHaveBeenCalledWith('viewer')
   })
 
-  it('authorizes one-use attachment tickets, shares control, and drops stale frames', async () => {
+  it('authorizes one-use attachment tickets, shares control, and isolates video peers', async () => {
     const value = fixture()
     const first = value.transport('first')
     const firstTicket = await runEffect(
@@ -516,18 +395,33 @@ describe('Browser sessions', () => {
     })
 
     const browser = browsers[0]!
-    const publish = (timestamp: number, keyframe = false) =>
-      browser.callbacks.frame({
-        mimeType: 'video/vp8',
-        keyframe,
-        timestamp,
-        width: 800,
-        height: 600,
-        data: new Uint8Array([timestamp])
+    value.manager.message('first', {
+      type: 'videoOffer',
+      requestId: 'first-offer',
+      sdp: 'offer-1'
+    })
+    value.manager.message('second', {
+      type: 'videoOffer',
+      requestId: 'second-offer',
+      sdp: 'offer-2'
+    })
+    await vi.waitFor(() =>
+      expect(first.messages).toContainEqual({
+        type: 'videoAnswer',
+        requestId: 'first-offer',
+        sdp: 'answer'
       })
-    publish(1, true)
-    publish(2)
-    publish(3)
+    )
+    expect(second.messages).toContainEqual({
+      type: 'videoAnswer',
+      requestId: 'second-offer',
+      sdp: 'answer'
+    })
+    expect(browser.negotiateVideo.mock.calls).toEqual([
+      ['first', 'offer-1'],
+      ['second', 'offer-2']
+    ])
+
     const lateObserver = value.transport('late-observer')
     await runEffect(
       value.manager.accept(
@@ -537,51 +431,7 @@ describe('Browser sessions', () => {
         lateObserver.transport
       )
     )
-    // A new viewer cannot decode the last delta frame. Existing viewers can
-    // receive several frames without a network round trip for each frame.
-    expect(lateObserver.frames).toHaveLength(0)
-    expect(first.frames.map((frame) => frame.sequence)).toEqual([1, 2, 3])
-    publish(4, true)
-    expect(lateObserver.frames.map((frame) => frame.sequence)).toEqual([4])
-    for (const frame of first.frames) {
-      value.manager.message('first', {
-        type: 'frameAck',
-        sequence: frame.sequence
-      })
-    }
-    for (let sequence = 5; sequence <= 12; sequence++) {
-      publish(sequence)
-      value.manager.message('first', { type: 'frameAck', sequence })
-    }
-    expect(first.frames).toHaveLength(12)
-    expect(second.frames).toHaveLength(8)
-    // Releasing credit does not make an undecodable delta safe to send.
-    value.manager.message('second', { type: 'frameAck', sequence: 8 })
-    publish(13)
-    expect(second.frames).toHaveLength(8)
-    publish(14, true)
-    expect(second.frames.at(-1)).toMatchObject({
-      sequence: 14,
-      keyframe: true
-    })
-    value.manager.message('late-observer', {
-      type: 'setVisible',
-      visible: false
-    })
-    const beforeHidden = lateObserver.frames.length
-    publish(15)
-    expect(lateObserver.frames).toHaveLength(beforeHidden)
-    value.manager.message('late-observer', {
-      type: 'setVisible',
-      visible: true
-    })
-    publish(16)
-    expect(lateObserver.frames).toHaveLength(beforeHidden)
-    publish(17, true)
-    expect(lateObserver.frames.at(-1)).toMatchObject({
-      sequence: 17,
-      keyframe: true
-    })
+    expect(lateObserver.messages).toContainEqual({ type: 'videoReady' })
 
     const observerMessageCount = second.messages.length
     value.manager.message('second', {
@@ -1064,22 +914,21 @@ describe('Browser sessions', () => {
         expect.objectContaining({ method: 'Treeport.startVideo' })
       )
     )
-    localBrowser.cdp.emit('Treeport.videoFrame', {
-      payload: JSON.stringify({
-        error: null,
-        frame: {
-          mimeType: 'video/vp8',
-          keyframe: true,
-          data: Buffer.from([7]).toString('base64'),
-          timestamp: 1,
-          width: 900,
-          height: 600
-        }
-      })
+    value.manager.message('remote', {
+      type: 'videoOffer',
+      requestId: 'local-offer',
+      sdp: 'offer'
     })
-    await vi.waitFor(() => expect(remote.frames).toHaveLength(1))
-    expect([...remote.frames[0]!.data]).toEqual([7])
-    expect(observer.frames).toHaveLength(1)
+    await vi.waitFor(() =>
+      expect(remote.messages).toContainEqual({
+        type: 'videoAnswer',
+        requestId: 'local-offer',
+        sdp: 'local-answer'
+      })
+    )
+    expect(
+      observer.messages.some((message) => message.type === 'videoAnswer')
+    ).toBe(false)
 
     value.manager.message('remote', {
       type: 'resize',
@@ -1186,14 +1035,6 @@ describe('Browser sessions', () => {
       type: 'controlChanged',
       state: { controlled: true, controller: 'you' }
     })
-    const resumedFrame = reconnectedRemote.frames.at(-1)
-    if (resumedFrame) {
-      value.manager.message('remote-reconnected', {
-        type: 'frameAck',
-        sequence: resumedFrame.sequence
-      })
-    }
-
     value.manager.ownerMessage('local-owner', {
       type: 'takeControl',
       generation
@@ -1237,21 +1078,18 @@ describe('Browser sessions', () => {
 
     ownerConnected = false
     value.manager.closeOwner('local-owner')
-    localBrowser.cdp.emit('Treeport.videoFrame', {
-      payload: JSON.stringify({
-        error: null,
-        frame: {
-          mimeType: 'video/vp8',
-          keyframe: true,
-          data: Buffer.from([8]).toString('base64'),
-          timestamp: 2,
-          width: 900,
-          height: 600
-        }
-      })
+    value.manager.message('remote-reconnected', {
+      type: 'videoOffer',
+      requestId: 'resumed-offer',
+      sdp: 'offer'
     })
-    await vi.waitFor(() => expect(reconnectedRemote.frames).toHaveLength(1))
-    expect([...reconnectedRemote.frames[0]!.data]).toEqual([8])
+    await vi.waitFor(() =>
+      expect(reconnectedRemote.messages).toContainEqual({
+        type: 'videoAnswer',
+        requestId: 'resumed-offer',
+        sdp: 'local-answer'
+      })
+    )
 
     const resumedTicket = await runEffect(
       value.manager.issueOwnerTicket('panel_browser', 'desktop-client')
@@ -1327,34 +1165,26 @@ describe('Browser sessions', () => {
     })
     await vi.waitFor(() => expect(browsers).toHaveLength(2))
     expect(localBrowser.browser.close).toHaveBeenCalledOnce()
-    const beforeReplacement = reconnectedRemote.frames.length
-    const lastSequence = reconnectedRemote.frames.at(-1)!.sequence
-    localBrowser.cdp.emit('Treeport.videoFrame', {
-      payload: JSON.stringify({
-        error: null,
-        frame: {
-          mimeType: 'video/vp8',
-          keyframe: true,
-          timestamp: 3,
-          width: 900,
-          height: 600,
-          data: Buffer.from([99]).toString('base64')
-        }
-      })
+    const beforeReplacement = reconnectedRemote.messages.length
+    localBrowser.cdp.emit('Treeport.videoError', {
+      message: 'stale capture failure'
     })
-    expect(reconnectedRemote.frames).toHaveLength(beforeReplacement)
-    browsers[1]!.callbacks.frame({
-      mimeType: 'video/vp8',
-      keyframe: true,
-      timestamp: 1,
-      width: 900,
-      height: 600,
-      data: Uint8Array.from([9])
-    })
-    expect(reconnectedRemote.frames.at(-1)!.sequence).toBeGreaterThan(
-      lastSequence
+    expect(reconnectedRemote.messages).toHaveLength(beforeReplacement)
+    await vi.waitFor(() =>
+      expect(reconnectedRemote.messages).toContainEqual({ type: 'videoReady' })
     )
-    expect([...reconnectedRemote.frames.at(-1)!.data]).toEqual([9])
+    value.manager.message('remote-reconnected', {
+      type: 'videoOffer',
+      requestId: 'replacement',
+      sdp: 'offer'
+    })
+    await vi.waitFor(() =>
+      expect(reconnectedRemote.messages).toContainEqual({
+        type: 'videoAnswer',
+        requestId: 'replacement',
+        sdp: 'answer'
+      })
+    )
 
     await value.manager.dispose()
     await new Promise<void>((resolve) => ownerServer.close(() => resolve()))
@@ -1643,6 +1473,55 @@ describe('Browser sessions', () => {
         { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 42 }
       ])
     )
+    // The native input ACK can take two display ticks. Permit two compatible
+    // dispatches, but neither a third nor the following key can pass the bound.
+    browser.commands.length = 0
+    const completions: Array<() => void> = []
+    const dispatch = vi
+      .spyOn(browser, 'command')
+      .mockImplementation(async (message) => {
+        browser.commands.push(message)
+        if (message.type === 'wheel') {
+          await new Promise<void>((resolve) => completions.push(resolve))
+        }
+      })
+    const wheel = {
+      type: 'wheel',
+      x: 10,
+      y: 20,
+      modifiers: 0,
+      deltaX: 0,
+      deltaY: 6
+    } as const
+    value.manager.message('first', wheel)
+    await vi.waitFor(() => expect(completions).toHaveLength(1))
+    value.manager.message('first', wheel)
+    await vi.waitFor(() => expect(completions).toHaveLength(2))
+    value.manager.message('first', wheel)
+    value.manager.message('first', {
+      type: 'key',
+      phase: 'down',
+      key: 'a',
+      modifiers: 0
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    completions[0]!()
+    await vi.waitFor(() => expect(completions).toHaveLength(3))
+    expect(browser.commands.every((message) => message.type === 'wheel')).toBe(
+      true
+    )
+    completions[1]!()
+    completions[2]!()
+    await vi.waitFor(() =>
+      expect(browser.commands.at(-1)).toEqual({
+        type: 'key',
+        phase: 'down',
+        key: 'a',
+        modifiers: 0
+      })
+    )
+    dispatch.mockRestore()
     await value.manager.dispose()
   })
 

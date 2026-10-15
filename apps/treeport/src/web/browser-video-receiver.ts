@@ -1,0 +1,197 @@
+import {
+  gatherBrowserIce,
+  type BrowserClientMessage,
+  type BrowserServerMessage
+} from '@treeport/shared'
+
+export class BrowserVideoReceiver {
+  private peer: RTCPeerConnection | null = null
+  private requestId: string | null = null
+  private visible = false
+  private available = false
+  private disposed = false
+  private attempts = 0
+  private timer: ReturnType<typeof setTimeout> | null = null
+
+  constructor(
+    private readonly video: HTMLVideoElement,
+    private readonly send: (message: BrowserClientMessage) => void,
+    private readonly failed: (message: string) => void
+  ) {}
+
+  receive(message: BrowserServerMessage): void {
+    if (this.disposed) {
+      return
+    }
+
+    if (message.type === 'videoReady') {
+      this.available = true
+      this.attempts = 0
+      if (this.visible) {
+        this.start()
+      }
+    } else if (
+      message.type === 'videoAnswer' &&
+      message.requestId === this.requestId &&
+      this.peer
+    ) {
+      const peer = this.peer
+      void peer
+        .setRemoteDescription({ type: 'answer', sdp: message.sdp })
+        .catch((cause) => {
+          if (this.peer === peer) {
+            this.retry(cause instanceof Error ? cause.message : String(cause))
+          }
+        })
+    } else if (
+      [
+        'browserUnavailable',
+        'browserCrashed',
+        'videoUnavailable',
+        'closed'
+      ].includes(message.type)
+    ) {
+      this.available = false
+      this.stop()
+    }
+  }
+
+  setVisible(visible: boolean): void {
+    this.visible = visible
+    if (!visible) {
+      this.stop()
+    } else if (this.available && !this.peer) {
+      this.attempts = 0
+      this.start()
+    }
+  }
+
+  async stats(): Promise<{
+    connectionId: string
+    report: RTCStatsReport
+  } | null> {
+    const peer = this.peer
+    const connectionId = this.requestId
+    if (!peer || !connectionId || peer.connectionState !== 'connected') {
+      return null
+    }
+
+    const report = await peer.getStats().catch(() => null)
+    return report && this.peer === peer ? { connectionId, report } : null
+  }
+
+  private retry(message: string): void {
+    this.stop()
+    if (!this.visible || !this.available || this.disposed) {
+      return
+    }
+
+    if (++this.attempts >= 3) {
+      this.failed(
+        `${message} Browser video needs a direct WebRTC connection between this device and the host. Check VPN/firewall connectivity, then retry.`
+      )
+      return
+    }
+
+    this.timer = setTimeout(() => this.start(), 500 * this.attempts)
+  }
+
+  private start(): void {
+    this.stop()
+    // eslint-disable-next-line anti-slop/no-runtime-typeof -- WebRTC availability is a browser capability, not an untrusted protocol shape.
+    if (typeof RTCPeerConnection === 'undefined') {
+      this.failed('This browser does not support WebRTC video.')
+      return
+    }
+
+    const peer = new RTCPeerConnection({ iceServers: [] })
+    const requestId = crypto.randomUUID()
+    this.peer = peer
+    this.requestId = requestId
+    const transceiver = peer.addTransceiver('video', { direction: 'recvonly' })
+    // Remote interaction favors freshness over a smooth but delayed playout.
+    // The receiver still retains the minimum buffer required for network jitter.
+    transceiver.receiver.jitterBufferTarget = 0
+    // Prefer H.264 for low-latency screen sharing and hardware decoding on
+    // laptops. Keep every advertised fallback and repair codec; the browser
+    // negotiates a mutually supported profile.
+    const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs ?? []
+    if (codecs.some((codec) => codec.mimeType === 'video/H264')) {
+      transceiver.setCodecPreferences([
+        ...codecs.filter((codec) => codec.mimeType === 'video/H264'),
+        ...codecs.filter((codec) => codec.mimeType !== 'video/H264')
+      ])
+    }
+
+    peer.ontrack = ({ track }) => {
+      if (this.peer !== peer) {
+        return
+      }
+
+      this.video.srcObject = new MediaStream([track])
+      void this.video.play().catch((cause) => {
+        if (this.peer === peer) {
+          this.retry(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+    }
+    peer.onconnectionstatechange = () => {
+      if (this.peer !== peer) {
+        return
+      }
+
+      if (peer.connectionState === 'connected') {
+        if (this.timer) {
+          clearTimeout(this.timer)
+          this.timer = null
+        }
+
+        this.attempts = 0
+      } else if (peer.connectionState === 'failed') {
+        this.retry('Browser video connection failed.')
+      } else if (peer.connectionState === 'disconnected' && !this.timer) {
+        this.timer = setTimeout(
+          () => this.retry('Browser video disconnected.'),
+          5_000
+        )
+      }
+    }
+    this.timer = setTimeout(
+      () => this.retry('Browser video connection timed out.'),
+      15_000
+    )
+    void (async () => {
+      await peer.setLocalDescription(await peer.createOffer())
+      await gatherBrowserIce(peer)
+      if (this.peer === peer && this.visible && !this.disposed) {
+        this.send({
+          type: 'videoOffer',
+          requestId,
+          sdp: peer.localDescription!.sdp
+        })
+      }
+    })().catch((cause) => {
+      if (this.peer === peer) {
+        this.retry(cause instanceof Error ? cause.message : String(cause))
+      }
+    })
+  }
+
+  private stop(): void {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+
+    const peer = this.peer
+    this.peer = null
+    this.requestId = null
+    peer?.close()
+    this.video.srcObject = null
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.stop()
+  }
+}

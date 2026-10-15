@@ -14,7 +14,6 @@ export {
 } from './browser-host.js'
 
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
-export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 // Observed Chromium addresses can be megabytes long (including JSON escaping).
 export const BROWSER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
@@ -188,10 +187,10 @@ export const browserClientMessageSchema = Schema.Union(
     type: Schema.Literal('setVisible'),
     visible: Schema.Boolean
   }),
-  Schema.Struct({ type: Schema.Literal('requestVideoKeyframe') }),
   Schema.Struct({
-    type: Schema.Literal('frameAck'),
-    sequence: Schema.Int.pipe(Schema.positive())
+    type: Schema.Literal('videoOffer'),
+    requestId: browserRequestIdSchema,
+    sdp: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(65_536))
   })
 )
 export type BrowserClientMessage = Schema.Schema.Type<
@@ -278,6 +277,12 @@ export const browserCursorSchema = Schema.Literal(
 )
 
 export const browserServerMessageSchema = Schema.Union(
+  Schema.Struct({ type: Schema.Literal('videoReady') }),
+  Schema.Struct({
+    type: Schema.Literal('videoAnswer'),
+    requestId: browserRequestIdSchema,
+    sdp: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(65_536))
+  }),
   browserContextResultSchema,
   browserContextActionResultSchema,
   Schema.Struct({
@@ -328,62 +333,6 @@ export const browserServerMessageSchema = Schema.Union(
 export type BrowserServerMessage = Schema.Schema.Type<
   typeof browserServerMessageSchema
 >
-
-const browserVideoFields = {
-  mimeType: Schema.Literal('video/vp8', 'image/jpeg'),
-  keyframe: Schema.Boolean,
-  // WebCodecs timestamps use microseconds within the capture session.
-  timestamp: Schema.NonNegativeInt,
-  width: Schema.Int.pipe(Schema.between(1, 3_840)),
-  height: Schema.Int.pipe(Schema.between(1, 2_160))
-}
-
-const browserCaptureMessageSchema = Schema.Struct({
-  frame: Schema.NullOr(
-    Schema.Struct({
-      ...browserVideoFields,
-      data: Schema.String.pipe(
-        Schema.maxLength(Math.ceil(BROWSER_MAX_FRAME_BYTES / 3) * 4)
-      )
-    })
-  ),
-  error: Schema.NullOr(Schema.String.pipe(Schema.maxLength(4_096)))
-})
-
-export const browserFrameMetadataSchema = Schema.Struct({
-  sequence: Schema.Int.pipe(Schema.positive()),
-  ...browserVideoFields,
-  byteLength: Schema.Int.pipe(Schema.between(0, BROWSER_MAX_FRAME_BYTES))
-})
-export type BrowserFrameMetadata = Schema.Schema.Type<
-  typeof browserFrameMetadataSchema
->
-
-const browserFrameDataSchema = Schema.Union(
-  Schema.Uint8ArrayFromSelf,
-  Schema.declare(
-    (value): value is ArrayBuffer => value instanceof ArrayBuffer,
-    { identifier: 'ArrayBufferFromSelf' }
-  )
-).pipe(
-  Schema.transform(Schema.Uint8ArrayFromSelf, {
-    strict: true,
-    decode: (value) =>
-      value instanceof Uint8Array ? value : new Uint8Array(value),
-    encode: (value) => value
-  }),
-  Schema.filter((value) => value.byteLength <= BROWSER_MAX_FRAME_BYTES, {
-    message: () =>
-      `Browser frames cannot exceed ${BROWSER_MAX_FRAME_BYTES} bytes`
-  })
-)
-
-export const browserFrameSchema = Schema.Struct({
-  sequence: Schema.Int.pipe(Schema.positive()),
-  ...browserVideoFields,
-  data: browserFrameDataSchema
-})
-export type BrowserFrame = Schema.Schema.Type<typeof browserFrameSchema>
 
 export const browserTicketRequestSchema = Schema.Struct({
   clientId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
@@ -575,7 +524,6 @@ export interface BrowserClientToServerEvents {
 }
 export interface BrowserServerToClientEvents {
   message: (message: BrowserServerMessage) => void
-  frame: (frame: BrowserFrame) => void
 }
 export interface BrowserOwnerClientToServerEvents {
   ownerMessage: (message: BrowserOwnerClientMessage) => void
@@ -592,18 +540,6 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
     onExcessProperty: 'error'
   })(value)
   return Either.isRight(result) ? result.right : null
-}
-
-export function parseBrowserCaptureMessage(payload: string) {
-  if (payload.length > BROWSER_MAX_FRAME_BYTES * 1.4 + 4_096) {
-    return null
-  }
-
-  try {
-    return decodeOrNull(browserCaptureMessageSchema, JSON.parse(payload))
-  } catch {
-    return null
-  }
 }
 
 export function parseBrowserAuth(value: unknown): BrowserAuth | null {
@@ -631,64 +567,4 @@ export function parseBrowserOwnerServerMessage(
   value: unknown
 ): BrowserOwnerServerMessage | null {
   return decodeOrNull(browserOwnerServerMessageSchema, value)
-}
-export function parseBrowserFrameMetadata(
-  value: unknown
-): BrowserFrameMetadata | null {
-  return decodeOrNull(browserFrameMetadataSchema, value)
-}
-
-export function encodeBrowserFrame(frame: BrowserFrame): Uint8Array {
-  const metadata = new TextEncoder().encode(
-    JSON.stringify({
-      sequence: frame.sequence,
-      mimeType: frame.mimeType,
-      keyframe: frame.keyframe,
-      timestamp: frame.timestamp,
-      width: frame.width,
-      height: frame.height,
-      byteLength: frame.data.byteLength
-    })
-  )
-  const encoded = new Uint8Array(
-    4 + metadata.byteLength + frame.data.byteLength
-  )
-  new DataView(encoded.buffer).setUint32(0, metadata.byteLength)
-  encoded.set(metadata, 4)
-  encoded.set(frame.data, 4 + metadata.byteLength)
-  return encoded
-}
-
-export function decodeBrowserFrame(value: Uint8Array): BrowserFrame | null {
-  if (value.byteLength < 4) {
-    return null
-  }
-
-  const metadataLength = new DataView(
-    value.buffer,
-    value.byteOffset,
-    value.byteLength
-  ).getUint32(0)
-  if (
-    metadataLength > value.byteLength - 4 ||
-    value.byteLength - 4 - metadataLength > BROWSER_MAX_FRAME_BYTES
-  ) {
-    return null
-  }
-
-  let decoded: unknown
-  try {
-    decoded = JSON.parse(
-      new TextDecoder().decode(value.subarray(4, 4 + metadataLength))
-    )
-  } catch {
-    return null
-  }
-  const metadata = parseBrowserFrameMetadata(decoded)
-  const data = value.subarray(4 + metadataLength)
-  if (!metadata || metadata.byteLength !== data.byteLength) {
-    return null
-  }
-
-  return { ...metadata, data }
 }

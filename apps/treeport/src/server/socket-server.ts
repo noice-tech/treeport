@@ -4,7 +4,6 @@ import type { Duplex } from 'node:stream'
 import * as EffectSocket from '@effect/platform/Socket'
 import {
   BROWSER_MAX_MESSAGE_BYTES,
-  encodeBrowserFrame,
   parseBrowserAuth,
   parseBrowserClientMessage,
   parseBrowserOwnerAuth,
@@ -239,18 +238,6 @@ export function createSocketServer({
 
           return offered
         }
-        const sendBinary = (message: Uint8Array): boolean => {
-          const offered = Queue.unsafeOffer(outgoing, {
-            message,
-            queuedAt: Date.now()
-          })
-          if (!offered) {
-            networkTelemetry.droppedNow(channel, 'dropped')
-          }
-
-          return offered
-        }
-
         yield* networkTelemetry.connectionOpened(channel)
         telemetryOpened = true
         const first = yield* Queue.take(incoming).pipe(
@@ -314,7 +301,6 @@ export function createSocketServer({
             id: crypto.randomUUID(),
             isConnected: () => accepted.readyState === WebSocket.OPEN,
             sendMessage: (message) => send('message', message),
-            sendFrame: (frame) => sendBinary(encodeBrowserFrame(frame)),
             disconnect: () => accepted.close(4001, 'Browser rejected')
           }
           protocolConnectionId = yield* Effect.raceFirst(
