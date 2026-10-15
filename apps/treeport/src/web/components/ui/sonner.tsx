@@ -7,6 +7,7 @@ function Toaster(props: ToasterProps) {
       position="top-right"
       visibleToasts={3}
       expand
+      closeButton
       containerAriaLabel="Notifications"
       toastOptions={{
         classNames: {
