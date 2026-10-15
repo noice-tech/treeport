@@ -40,7 +40,9 @@ export function useProjectEventsBridge(
 
   useEffect(() => {
     let disposed = false
-    let connectedOnce = false
+    let reconnecting = false
+    let connectedAt: number | null = null
+    let reconnectAttempts = 0
     const refreshes = createInvalidationCoalescer(() =>
       queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
@@ -80,7 +82,7 @@ export function useProjectEventsBridge(
     }
     const refreshProjects = () => projectRefreshes.schedule()
     const snapshot = (payload: EventsSnapshot) => {
-      connectedOnce = true
+      connectedAt ??= Date.now()
       terminalSessions.replaceRuntimeMetadata(payload.terminalMetadata)
       onPresenceChangedRef.current?.(payload.presence)
       setEventsDisconnected(false)
@@ -183,30 +185,49 @@ export function useProjectEventsBridge(
     }
     const connect = Effect.scoped(
       Effect.gen(function* () {
-        if (connectedOnce) {
-          // After losing an established connection, obtain the running
-          // daemon's UI before decoding its potentially changed RPC protocol.
-          // Wait for its document to return, not for the old RPC to succeed.
-          const available = yield* Effect.tryPromise(async (signal) => {
+        if (reconnecting) {
+          // A closed stream does not imply a new daemon UI. Compare the served
+          // module entry points with the document we actually loaded, before
+          // decoding a potentially changed RPC protocol. Vite fingerprints
+          // production assets; development updates are handled by HMR.
+          const modules = yield* Effect.tryPromise(async (signal) => {
             const response = await fetch(window.location.href, {
-              method: 'HEAD',
               cache: 'no-store',
               signal
             })
-            return (
-              response.ok &&
-              response.headers.get('content-type')?.includes('text/html')
+            if (
+              !response.ok ||
+              !response.headers.get('content-type')?.includes('text/html')
+            ) {
+              return null
+            }
+
+            const nextDocument = new DOMParser().parseFromString(
+              await response.text(),
+              'text/html'
+            )
+            return [document, nextDocument].map((page) =>
+              Array.from(
+                page.querySelectorAll('script[type="module"][src]'),
+                (script) =>
+                  new URL(
+                    script.getAttribute('src') ?? '',
+                    window.location.href
+                  ).href
+              ).sort()
             )
           }).pipe(
             Effect.timeout('5 seconds'),
-            Effect.catchAll(() => Effect.succeed(false))
+            Effect.catchAll(() => Effect.succeed(null))
           )
-          if (available && !disposed) {
+          if (disposed || !modules?.[0]?.length || !modules[1]?.length) {
+            return
+          }
+
+          if (JSON.stringify(modules[0]) !== JSON.stringify(modules[1])) {
             window.location.reload()
             yield* Effect.never
           }
-
-          return
         }
 
         const client = yield* RpcClient.make(TreeportRpcs)
@@ -228,21 +249,37 @@ export function useProjectEventsBridge(
       })
     ).pipe(Effect.provide(treeportRpcClientLayer('/api/rpc')))
     const program = Effect.forever(
-      connect.pipe(
-        Effect.catchAllCause((cause) =>
-          disposed
-            ? Effect.failCause(cause)
-            : Effect.sync(() => {
-                console.error(
-                  '[Treeport] Project event RPC disconnected',
-                  cause
-                )
-                setEventsDisconnected(true)
-                onPresenceChangedRef.current?.([])
-              })
-        ),
-        Effect.zipRight(Effect.sleep(500))
-      )
+      Effect.gen(function* () {
+        yield* connect.pipe(
+          Effect.catchAllCause((cause) =>
+            disposed
+              ? Effect.failCause(cause)
+              : Effect.sync(() => {
+                  console.error(
+                    '[Treeport] Project event RPC disconnected',
+                    cause
+                  )
+                })
+          )
+        )
+        if (disposed) {
+          return
+        }
+
+        // Treat a clean EOF like a failed stream, and only reset backoff after
+        // a stable connection so a host that repeatedly accepts/closes slows down.
+        reconnecting = true
+        setEventsDisconnected(true)
+        onPresenceChangedRef.current?.([])
+        if (connectedAt !== null && Date.now() - connectedAt >= 30_000) {
+          reconnectAttempts = 0
+        }
+
+        connectedAt = null
+        yield* Effect.sleep(
+          Math.min(30_000, 500 * 2 ** Math.min(reconnectAttempts++, 6))
+        )
+      })
     )
     const fiber = Effect.runFork(program)
     return () => {

@@ -69,7 +69,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('preserves command and frame contracts and reloads after reconnecting', async () => {
+it('preserves command and frame contracts and reconnects without reloading', async () => {
   const socket = new FakeSocket()
   const reconnectedSocket = new FakeSocket()
   let socketCount = 0
@@ -157,8 +157,17 @@ it('preserves command and frame contracts and reloads after reconnecting', async
   )
   expect(fetch).toHaveBeenCalledTimes(2)
   reconnectedSocket.emitServer('message', ready)
-  expect(window.location.reload).toHaveBeenCalledOnce()
-  expect(reconnectedSocket.emit).not.toHaveBeenCalled()
+  expect(window.location.reload).not.toHaveBeenCalled()
+  expect(messages.at(-1)).toEqual(ready)
+  expect(reconnectedSocket.emit.mock.calls).toEqual([
+    ['command', { type: 'setVisible', visible: true }],
+    ['command', { type: 'resize', width: 280, height: 180 }]
+  ])
+  connection.send({ type: 'navigate', url: 'https://example.com/reconnected' })
+  expect(reconnectedSocket.emit).toHaveBeenLastCalledWith('command', {
+    type: 'navigate',
+    url: 'https://example.com/reconnected'
+  })
 
   connection.dispose()
   expect(reconnectedSocket.disconnect).toHaveBeenCalledOnce()

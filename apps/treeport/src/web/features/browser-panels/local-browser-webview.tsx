@@ -554,13 +554,6 @@ export function LocalBrowserWebview({
           resumed: connectionOwner.resumed
         })
         owner = connectionOwner
-        if (hasOwnedRuntime) {
-          // Reconnection can follow a daemon update. Load its current UI instead
-          // of trying to keep an old browser implementation compatible.
-          window.location.reload()
-          return
-        }
-
         takeControlRef.current = () => owner?.takeControl()
         // A granted claim starts unlocked; the daemon reapplies external control after ready.
         if (
@@ -583,7 +576,9 @@ export function LocalBrowserWebview({
         window.clearTimeout(startupTimer)
         ready = true
         reporting = true
-        if (connectionOwner.resumed) {
+        // Keep the live webview even if a restarted daemon lost its owner
+        // record. Workspace code updates are handled by the project event bridge.
+        if (connectionOwner.resumed || hasOwnedRuntime) {
           hasOwnedRuntime = true
           loading = webview.isLoading()
           emitState('ready')
