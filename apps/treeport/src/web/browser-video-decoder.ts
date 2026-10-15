@@ -1,5 +1,12 @@
 import type { BrowserClientMessage, BrowserFrame } from '@treeport/shared'
 
+interface BrowserDecodedFrame {
+  image: ImageBitmap | VideoFrame
+  displayWidth: number
+  displayHeight: number
+  timestamp: number
+}
+
 export class BrowserVideoDecoder {
   private decoder: VideoDecoder | null = null
   private readonly pending = new Map<number, number>()
@@ -10,7 +17,7 @@ export class BrowserVideoDecoder {
   private pendingJpeg: BrowserFrame | null = null
 
   constructor(
-    private readonly draw: (frame: VideoFrame) => void,
+    private readonly draw: (frame: BrowserDecodedFrame) => void,
     private readonly send: (message: BrowserClientMessage) => void,
     private readonly failed: (message: string, fatal: boolean) => void
   ) {}
@@ -72,15 +79,15 @@ export class BrowserVideoDecoder {
         .then((bitmap) => {
           try {
             if (!this.disposed) {
-              const decoded = new VideoFrame(bitmap, {
+              // Canvas can draw the decoded bitmap directly. Converting it
+              // to a VideoFrame adds a second image resource on every JPEG.
+              this.draw({
+                image: bitmap,
+                displayWidth: bitmap.width,
+                displayHeight: bitmap.height,
                 timestamp: frame.timestamp
               })
-              try {
-                this.draw(decoded)
-                this.failures = 0
-              } finally {
-                decoded.close()
-              }
+              this.failures = 0
             }
           } finally {
             bitmap.close()
@@ -128,7 +135,12 @@ export class BrowserVideoDecoder {
                 sequence !== undefined
               ) {
                 this.failures = 0
-                this.draw(decoded)
+                this.draw({
+                  image: decoded,
+                  displayWidth: decoded.displayWidth,
+                  displayHeight: decoded.displayHeight,
+                  timestamp: decoded.timestamp
+                })
               }
             } finally {
               decoded.close()

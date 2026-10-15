@@ -8,29 +8,30 @@ export async function browserCursor(
   let frame: Frame | null = page.mainFrame()
   let position = point
   while (frame) {
-    const handle: JSHandle<Element | null> = await frame.evaluateHandle(
-      ({ x, y }) => {
-        let element = document.elementFromPoint(x, y)
-        while (element?.shadowRoot) {
-          const child = element.shadowRoot.elementFromPoint(x, y)
-          if (!child || child === element) {
-            break
-          }
-
-          element = child
+    // Most hits are in this frame. Resolve them in one renderer round trip,
+    // rather than creating, inspecting and releasing a remote element handle
+    // after every pointer/scroll event. Only iframe traversal needs a handle.
+    const style = await frame.evaluate(({ x, y }) => {
+      let element = document.elementFromPoint(x, y)
+      while (element?.shadowRoot) {
+        const child = element.shadowRoot.elementFromPoint(x, y)
+        if (!child || child === element) {
+          break
         }
-        return element
-      },
-      position
-    )
-    const target = handle.asElement()
-    if (!target) {
-      await handle.dispose()
-      return 'default' as const
-    }
 
-    const child: Frame | null = await target.contentFrame()
-    const style = await target.evaluate((element, { x, y }) => {
+        element = child
+      }
+      if (!element) {
+        return {
+          cursor: 'default',
+          isFrame: false,
+          borderX: 0,
+          borderY: 0,
+          width: 0,
+          height: 0
+        }
+      }
+
       const computed = getComputedStyle(element)
       // Keep the native fallback of custom image cursors, not their URLs.
       let cursor = computed.cursor.split(',').at(-1)!.trim()
@@ -79,13 +80,37 @@ export async function browserCursor(
 
       return {
         cursor,
+        isFrame:
+          element instanceof HTMLIFrameElement ||
+          element instanceof HTMLFrameElement,
         borderX: element.clientLeft,
         borderY: element.clientTop,
         width: element instanceof HTMLElement ? element.offsetWidth : 0,
         height: element instanceof HTMLElement ? element.offsetHeight : 0
       }
     }, position)
-    const bounds = child ? await target.boundingBox() : null
+    if (!style.isFrame) {
+      return decodeUnknownOrNull(browserCursorSchema, style.cursor) ?? 'default'
+    }
+
+    const handle: JSHandle<Element | null> = await frame.evaluateHandle(
+      ({ x, y }) => {
+        let element = document.elementFromPoint(x, y)
+        while (element?.shadowRoot) {
+          const child = element.shadowRoot.elementFromPoint(x, y)
+          if (!child || child === element) {
+            break
+          }
+
+          element = child
+        }
+        return element
+      },
+      position
+    )
+    const target = handle.asElement()
+    const child: Frame | null = target ? await target.contentFrame() : null
+    const bounds = child && target ? await target.boundingBox() : null
     await handle.dispose()
     if (!child || !bounds || !bounds.width || !bounds.height) {
       return decodeUnknownOrNull(browserCursorSchema, style.cursor) ?? 'default'

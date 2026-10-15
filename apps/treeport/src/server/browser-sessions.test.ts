@@ -294,7 +294,7 @@ function fixture(
 beforeEach(() => browsers.splice(0))
 
 describe('Browser sessions', () => {
-  it('keeps one JPEG in flight and sends the latest pending image on acknowledgement', async () => {
+  it('pipelines paced JPEGs with bounded credit and sends only the latest pending image', async () => {
     const value = fixture()
     const viewer = value.transport('viewer')
     await runEffect(
@@ -315,24 +315,166 @@ describe('Browser sessions', () => {
         height: 600,
         data: new Uint8Array([timestamp])
       })
+    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] })
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
     publish(1)
     publish(2)
     publish(3)
     expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1])
+    vi.advanceTimersByTime(17)
+    // A second image can arrive before any ACK, but bursts are paced and
+    // intermediate unsent images are replaced rather than queued.
+    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3])
+    publish(4)
+    vi.advanceTimersByTime(17)
+    publish(5)
+    expect(viewer.frames).toHaveLength(2)
     const keyframeRequests = browser.keyframeRequests
     value.manager.message('viewer', {
       type: 'frameAck',
       sequence: viewer.frames[0]!.sequence
     })
-    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3])
+    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3, 5])
     expect(browser.keyframeRequests).toBe(keyframeRequests)
-    publish(4)
-    value.manager.message('viewer', { type: 'setVisible', visible: false })
+    // Learn delivery spacing before expanding the initial two-frame window.
+    publish(6)
+    vi.advanceTimersByTime(17)
     value.manager.message('viewer', {
       type: 'frameAck',
       sequence: viewer.frames[1]!.sequence
     })
-    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([1, 3])
+    publish(7)
+    vi.advanceTimersByTime(17)
+    publish(8)
+    vi.advanceTimersByTime(17)
+    publish(9)
+    vi.advanceTimersByTime(17)
+    expect(viewer.frames.map((frame) => frame.timestamp)).toEqual([
+      1, 3, 5, 6, 7
+    ])
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[0]!.sequence
+    })
+    expect(viewer.frames).toHaveLength(5)
+    // A burst of delayed ACKs is not sustained queue growth. Jitter must not
+    // make the stream permanently slower than the source page.
+    for (const frame of viewer.frames.slice(2)) {
+      value.manager.message('viewer', {
+        type: 'frameAck',
+        sequence: frame.sequence
+      })
+    }
+    expect(viewer.frames).toHaveLength(6)
+    vi.advanceTimersByTime(40)
+    expect(viewer.frames.at(-1)!.timestamp).toBe(9)
+
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames.at(-1)!.sequence
+    })
+    // Consecutive growing delays do back off. Here frames sent 17 ms apart
+    // are delivered 34 ms apart, unlike a lone delayed ACK followed by a burst.
+    value.manager.message('viewer', { type: 'setVisible', visible: false })
+    value.manager.message('viewer', { type: 'setVisible', visible: true })
+    const congestedStart = viewer.frames.length
+    publish(20)
+    vi.advanceTimersByTime(17)
+    publish(21)
+    vi.advanceTimersByTime(17)
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[congestedStart]!.sequence
+    })
+    publish(22)
+    vi.advanceTimersByTime(34)
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[congestedStart + 1]!.sequence
+    })
+    publish(23)
+    vi.advanceTimersByTime(34)
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[congestedStart + 2]!.sequence
+    })
+    publish(24)
+    vi.advanceTimersByTime(2)
+    expect(viewer.frames.at(-1)!.timestamp).toBe(24)
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[congestedStart + 3]!.sequence
+    })
+    publish(25)
+    vi.advanceTimersByTime(17)
+    expect(viewer.frames.at(-1)!.timestamp).toBe(24)
+    vi.advanceTimersByTime(20)
+    expect(viewer.frames.at(-1)!.timestamp).toBe(25)
+    for (const frame of viewer.frames.slice(congestedStart + 3)) {
+      value.manager.message('viewer', {
+        type: 'frameAck',
+        sequence: frame.sequence
+      })
+    }
+
+    // Recovery cannot depend on overlapping ACKs: after backing off, the
+    // viewer may finish every image before the next one is sent.
+    for (let index = 0; index < 100; index += 1) {
+      vi.advanceTimersByTime(100)
+      publish(100 + index)
+      vi.advanceTimersByTime(10)
+      value.manager.message('viewer', {
+        type: 'frameAck',
+        sequence: viewer.frames.at(-1)!.sequence
+      })
+    }
+    publish(200)
+    vi.advanceTimersByTime(17)
+    expect(viewer.frames.at(-1)!.timestamp).toBe(200)
+    const framesBeforeHiding = viewer.frames.length
+
+    publish(10)
+    value.manager.message('viewer', { type: 'setVisible', visible: false })
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames[2]!.sequence
+    })
+    vi.advanceTimersByTime(100)
+    expect(viewer.frames).toHaveLength(framesBeforeHiding)
+
+    value.manager.message('viewer', { type: 'setVisible', visible: true })
+    const large = new Uint8Array(768 * 1024)
+    browser.callbacks.frame({
+      mimeType: 'image/jpeg',
+      keyframe: true,
+      timestamp: 11,
+      width: 800,
+      height: 600,
+      data: large
+    })
+    browser.callbacks.frame({
+      mimeType: 'image/jpeg',
+      keyframe: true,
+      timestamp: 12,
+      width: 800,
+      height: 600,
+      data: large
+    })
+    vi.advanceTimersByTime(17)
+    // Byte credit can stop delivery even when frame credit is available.
+    expect(viewer.frames.at(-1)!.timestamp).toBe(11)
+    value.manager.message('viewer', {
+      type: 'frameAck',
+      sequence: viewer.frames.at(-1)!.sequence
+    })
+    expect(viewer.frames.at(-1)!.timestamp).toBe(12)
+    publish(13)
+    value.manager.close('viewer')
+    vi.advanceTimersByTime(100)
+    expect(viewer.frames.at(-1)!.timestamp).toBe(12)
+    vi.useRealTimers()
     await value.manager.dispose()
   })
 

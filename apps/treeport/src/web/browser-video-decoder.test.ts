@@ -12,16 +12,8 @@ it('paints JPEGs under sustained load, decodes only the latest pending image, an
     () => new Promise<ImageBitmap>((resolve) => resolveBitmaps.push(resolve))
   )
   vi.stubGlobal('createImageBitmap', decode)
-  vi.stubGlobal(
-    'VideoFrame',
-    class {
-      timestamp: number
-      constructor(_bitmap: ImageBitmap, init: VideoFrameInit) {
-        this.timestamp = init.timestamp!
-      }
-      close() {}
-    }
-  )
+  // JPEG rendering does not require a VideoFrame conversion.
+  vi.stubGlobal('VideoFrame', undefined)
   const decoder = new BrowserVideoDecoder(
     (frame) => displayed.push(frame.timestamp),
     (message) => messages.push(message),
@@ -84,9 +76,11 @@ it('acknowledges displayed or discarded video, recovers at keyframes, and stops 
     }
     output(timestamp: number) {
       this.decodeQueueSize--
-      // SAFETY: The decoder consumes timestamp and close; draw is supplied by this fixture.
+      // SAFETY: The fixture provides the decoded frame metadata and lifetime.
       this.callbacks.output({
         timestamp,
+        displayWidth: 800,
+        displayHeight: 600,
         close() {
           closedFrames++
         }

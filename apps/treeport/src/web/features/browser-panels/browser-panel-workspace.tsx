@@ -470,7 +470,7 @@ export function BrowserPanelWorkspace({
           canvas.height = frame.displayHeight
         }
 
-        drawing.drawImage(frame, 0, 0)
+        drawing.drawImage(frame.image, 0, 0)
         if (firstFrame) {
           firstFrame = false
           traceBrowserOpen(panel.id, 'browser.hosted.first_frame_drawn')
