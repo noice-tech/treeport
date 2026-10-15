@@ -16,6 +16,8 @@ const buttonVariants = {
   default:
     'bg-cyan-600 text-white ring-1 ring-cyan-600 hover:bg-cyan-500 hover:ring-cyan-500',
   secondary: 'bg-zinc-800 text-zinc-100 ring-1 ring-white/8 hover:bg-zinc-700',
+  destructive:
+    'bg-rose-600 text-white ring-1 ring-rose-600 hover:bg-rose-500 hover:ring-rose-500',
   outline: 'bg-transparent text-zinc-200 ring-1 ring-white/12 hover:bg-white/6',
   ghost: 'bg-transparent text-zinc-400 hover:bg-white/6 hover:text-zinc-100',
   link: 'h-auto rounded-none p-0 text-zinc-400 hover:text-zinc-100'
@@ -116,6 +118,8 @@ export function Dialog({
   description,
   footer,
   onClose,
+  onCloseAutoFocus,
+  role = 'dialog',
   showCloseButton = true,
   size = 'default',
   title
@@ -124,6 +128,8 @@ export function Dialog({
   description?: string
   footer?: ReactNode
   onClose: () => void
+  onCloseAutoFocus?: (event: Event) => void
+  role?: 'dialog' | 'alertdialog'
   showCloseButton?: boolean
   size?: 'default' | 'large'
   title: string
@@ -138,7 +144,14 @@ export function Dialog({
             'fixed top-1/2 left-1/2 flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-zinc-900 text-zinc-200 ring-1 ring-white/10 outline-none',
             size === 'large' ? 'max-w-2xl' : 'max-w-md'
           )}
+          role={role}
           aria-describedby={description ? descriptionId : undefined}
+          onCloseAutoFocus={(event) => onCloseAutoFocus?.(event)}
+          onInteractOutside={(event) => {
+            if (role === 'alertdialog') {
+              event.preventDefault()
+            }
+          }}
         >
           <header
             className={cn(

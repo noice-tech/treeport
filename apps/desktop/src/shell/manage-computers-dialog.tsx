@@ -20,6 +20,15 @@ function ComputerEditor({
     name.trim() !== (computer.nameOverride ?? '') ||
     origin.trim() !== computer.origin
 
+  function closeRemoval() {
+    if (pending) {
+      return
+    }
+
+    setError(null)
+    setConfirmRemoval(false)
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (pending || !changed || confirmRemoval) {
@@ -49,7 +58,7 @@ function ComputerEditor({
       onSubmit={submit}
     >
       <fieldset
-        disabled={pending || confirmRemoval}
+        disabled={pending}
         className="grid min-w-0 gap-4 @sm:grid-cols-[2fr_3fr]"
       >
         <legend className="sr-only">Computer details</legend>
@@ -81,7 +90,7 @@ function ComputerEditor({
           />
         </Field>
       </fieldset>
-      {error ? (
+      {error && !confirmRemoval ? (
         <p
           id={`error-${computer.id}`}
           className="text-base text-pretty text-rose-300 sm:text-sm"
@@ -90,81 +99,89 @@ function ComputerEditor({
           {error}
         </p>
       ) : null}
+      <div className="flex flex-col gap-3 @sm:flex-row @sm:items-center @sm:justify-between">
+        <Button
+          id={`remove-${computer.id}`}
+          variant="ghost"
+          size="sm"
+          disabled={pending}
+          onClick={() => {
+            setError(null)
+            setConfirmRemoval(true)
+          }}
+        >
+          Remove computer…
+        </Button>
+        <div className="flex items-center justify-end gap-3">
+          <Button variant="ghost" size="sm" disabled={pending} onClick={onDone}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            disabled={pending || !changed}
+          >
+            {pending ? 'Saving…' : 'Save changes'}
+          </Button>
+        </div>
+      </div>
       {confirmRemoval ? (
-        <div
-          className="flex flex-col gap-3"
-          role="group"
-          aria-label="Confirm removal"
+        <Dialog
+          role="alertdialog"
+          title={`Remove ${computer.name}?`}
+          description="This removes the saved connection from Treeport."
+          showCloseButton={false}
+          onClose={closeRemoval}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            document.getElementById(`remove-${computer.id}`)?.focus()
+          }}
+          footer={
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" disabled={pending} onClick={closeRemoval}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={pending}
+                onClick={async () => {
+                  if (pending) {
+                    return
+                  }
+
+                  setError(null)
+                  setPending(true)
+                  const removed = await window.treeportShell
+                    .removeComputer(computer.id)
+                    .catch(() => false)
+                  setPending(false)
+                  if (!removed) {
+                    setError('Could not remove this computer. Try again.')
+                    return
+                  }
+
+                  onDone()
+                }}
+              >
+                {pending ? 'Removing…' : 'Remove computer'}
+              </Button>
+            </div>
+          }
         >
           <p className="text-base text-pretty text-zinc-300 sm:text-sm">
-            Remove this saved connection? Its projects and terminals will not be
-            deleted.
+            Projects and terminals on this computer will not be deleted.
           </p>
-          <div className="flex justify-end gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={pending}
-              onClick={() => setConfirmRemoval(false)}
+          {error ? (
+            <p
+              className="text-base text-pretty text-rose-300 sm:text-sm"
+              role="alert"
             >
-              Keep computer
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pending}
-              onClick={async () => {
-                setError(null)
-                setPending(true)
-                const removed = await window.treeportShell
-                  .removeComputer(computer.id)
-                  .catch(() => false)
-                setPending(false)
-                if (!removed) {
-                  setError('Could not remove this computer. Try again.')
-                  return
-                }
-
-                onDone()
-              }}
-            >
-              {pending ? 'Removing…' : 'Remove computer'}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3 @sm:flex-row @sm:items-center @sm:justify-between">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={pending}
-            onClick={() => {
-              setError(null)
-              setConfirmRemoval(true)
-            }}
-          >
-            Remove computer…
-          </Button>
-          <div className="flex items-center justify-end gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={pending}
-              onClick={onDone}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant="secondary"
-              size="sm"
-              disabled={pending || !changed}
-            >
-              {pending ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        </div>
-      )}
+              {error}
+            </p>
+          ) : null}
+        </Dialog>
+      ) : null}
     </form>
   )
 }
@@ -226,17 +243,19 @@ export function ManageComputersDialog({
               <div className="flex items-start gap-3">
                 {computer.loopback ? (
                   <MonitorIcon
-                    aria-hidden="true"
+                    role="img"
+                    aria-label="This computer"
                     className="size-4 h-lh shrink-0 stroke-zinc-400"
                   />
                 ) : (
                   <Globe2Icon
-                    aria-hidden="true"
+                    role="img"
+                    aria-label="Remote computer"
                     className="size-4 h-lh shrink-0 stroke-zinc-400"
                   />
                 )}
                 <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
                     <h2
                       className="min-w-0 truncate text-base font-medium text-balance text-zinc-100"
                       title={computer.name}
@@ -244,13 +263,10 @@ export function ManageComputersDialog({
                       {computer.name}
                     </h2>
                     {computer.selected ? (
-                      <div className="shrink-0 rounded-md bg-cyan-400/10 px-2 py-0.5 text-base font-medium text-cyan-300 sm:text-sm">
+                      <p className="shrink-0 text-base text-cyan-300 sm:text-sm">
                         Current
-                      </div>
+                      </p>
                     ) : null}
-                    <p className="text-base text-zinc-400 sm:text-sm">
-                      {computer.loopback ? 'This computer' : 'Remote'}
-                    </p>
                   </div>
                   <p
                     className="truncate font-mono text-base text-zinc-400 sm:text-sm"
