@@ -77,6 +77,11 @@ test('Pi image redraws and host snapshots survive a fresh browser attachment', a
     `\x1b[?1049h\x1b[3;5H\x1b_Ga=T,f=100,i=42,c=4,r=2,C=1,q=2;${png}\x1b\\`
   )
   await expect.poll(pixels).toBeGreaterThan(100)
+  const fullImagePixels = await pixels()
+  // Pi clears the reserved text rows after placing its Kitty image.
+  await write('\x1b[3;1H\x1b[2K\x1b[4;1H\x1b[2K\x1b[6;1HImage rows cleared')
+  await expect(page.locator('.xterm-rows')).toContainText('Image rows cleared')
+  await expect.poll(pixels).toBe(fullImagePixels)
   await page.clock.install()
   await write('\x1b[?2026h\x1b_Ga=d,d=a,q=2\x1b\\')
   await page.clock.runFor(1_100)

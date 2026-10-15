@@ -39,6 +39,8 @@ it('retains uploads across placement deletion and snapshots canonical tiles with
       ]
     }
   ])
+  await write('\x1b[3;1H\x1b[2K\x1b[4;1H\x1b[2K')
+  expect((await images.snapshot()).placements).toEqual(first.placements)
   await write('\x1b_Ga=d,d=a,q=2\x1b\\')
   expect((await images.snapshot()).images).toHaveLength(1)
   expect((await images.snapshot()).placements).toHaveLength(0)
@@ -55,6 +57,16 @@ it('retains uploads across placement deletion and snapshots canonical tiles with
   expect(serializer.serialize()).not.toContain('\x1b_G')
   await write('\x1b_Ga=d,d=I,i=42,q=2\x1b\\')
   expect((await images.snapshot()).images).toHaveLength(0)
+
+  // Normal-buffer EL also disposes xterm's end marker. Keep its image alive,
+  // but retain full-screen clearing and subsequent marker-based eviction.
+  await write('\x1b[?1049l\x1b[3;5H' + transmit)
+  const normal = await images.snapshot()
+  await write('\x1b[3;1H\x1b[K\x1b[4;80H\x1b[1K')
+  expect((await images.snapshot()).placements).toEqual(normal.placements)
+  await write('\x1b[2J')
+  expect((await images.snapshot()).placements).toHaveLength(0)
+  expect((await images.snapshot()).images).toHaveLength(1)
   terminal.dispose()
 })
 
