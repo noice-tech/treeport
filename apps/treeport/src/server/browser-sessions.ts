@@ -50,6 +50,7 @@ import { browserNavigation } from './browser-navigation'
 import { browserSetupGuidance } from './browser-runtime'
 
 import { receiveBrowserVideo } from './browser-video'
+import { BrowserJpegDelivery } from './browser-jpeg-delivery'
 import { browserCursor } from './browser-cursor'
 
 export interface BrowserTransport {
@@ -173,7 +174,7 @@ interface BrowserAttachment {
   visible: boolean
   closing: boolean
   inFlightFrames: Map<number, number>
-  pendingJpeg: BrowserFrame | null
+  jpegDelivery: BrowserJpegDelivery
   cursorPoint: { x: number; y: number } | null
   waitingForKeyframe: boolean
   viewport: { width: number; height: number }
@@ -689,7 +690,7 @@ export class BrowserSessionManager {
     session.videoError = null
     session.keyframeRequestedAt = 0
     for (const attachment of session.attachments.values()) {
-      attachment.pendingJpeg = null
+      attachment.jpegDelivery.reset()
       attachment.inFlightFrames.clear()
       attachment.waitingForKeyframe = true
     }
@@ -1142,7 +1143,24 @@ export class BrowserSessionManager {
       visible: ticket.visible,
       closing: false,
       inFlightFrames: new Map(),
-      pendingJpeg: null,
+      jpegDelivery: new BrowserJpegDelivery((frame) => {
+        if (
+          session.closing ||
+          attachment.closing ||
+          !attachment.visible ||
+          !transport.isConnected()
+        ) {
+          return false
+        }
+
+        const sent = transport.sendFrame(frame)
+        attachment.waitingForKeyframe = !sent
+        if (!sent) {
+          this.requestVideoKeyframe(session)
+        }
+
+        return sent
+      }),
       cursorPoint: null,
       waitingForKeyframe: true,
       viewport: { ...session.state.viewport }
@@ -1171,6 +1189,7 @@ export class BrowserSessionManager {
             }
 
             superseded.closing = true
+            superseded.jpegDelivery.reset()
             session.attachments.delete(superseded.id)
             superseded.transport.disconnect()
           }
@@ -1210,6 +1229,7 @@ export class BrowserSessionManager {
       this.prepareVideoViewer(session, attachment)
     } catch (error) {
       attachment.closing = true
+      attachment.jpegDelivery.reset()
       session.attachments.delete(attachment.id)
       if (
         session.controllerId === attachmentController(attachment.clientId) &&
@@ -1743,22 +1763,22 @@ export class BrowserSessionManager {
       sequence: ++session.sequence
     }
     for (const attachment of session.attachments.values()) {
-      if (!attachment.visible || !attachment.transport.isConnected()) {
-        continue
-      }
-
-      // JPEGs are independent: retain only the newest image while the viewer
-      // decodes its current one. VP8 still needs its ordered reference frames.
       if (
-        frame.mimeType === 'image/jpeg' &&
-        attachment.inFlightFrames.size > 0
+        session.closing ||
+        attachment.closing ||
+        !attachment.visible ||
+        !attachment.transport.isConnected()
       ) {
-        attachment.pendingJpeg = frame
-        networkTelemetry.droppedNow('browsers', 'coalesced')
         continue
       }
 
-      attachment.pendingJpeg = null
+      if (frame.mimeType === 'image/jpeg') {
+        attachment.jpegDelivery.offer(frame)
+        continue
+      }
+
+      // VP8 still needs its ordered reference frames.
+      attachment.jpegDelivery.reset()
       if (
         attachment.inFlightFrames.size >= 8 ||
         (attachment.waitingForKeyframe && !frame.keyframe)
@@ -1817,6 +1837,10 @@ export class BrowserSessionManager {
     }
 
     if (message.type === 'frameAck') {
+      if (attachment.jpegDelivery.acknowledge(message.sequence)) {
+        return
+      }
+
       const sentAt = attachment.inFlightFrames.get(message.sequence)
       if (sentAt === undefined) {
         return
@@ -1824,19 +1848,6 @@ export class BrowserSessionManager {
 
       attachment.inFlightFrames.delete(message.sequence)
       networkTelemetry.durationNow('browsers', 'ack_lag', Date.now() - sentAt)
-      const pending = attachment.pendingJpeg
-      if (pending && attachment.inFlightFrames.size === 0) {
-        attachment.pendingJpeg = null
-        if (attachment.visible && attachment.transport.isConnected()) {
-          if (attachment.transport.sendFrame(pending)) {
-            attachment.waitingForKeyframe = false
-            attachment.inFlightFrames.set(pending.sequence, Date.now())
-          } else {
-            attachment.waitingForKeyframe = true
-          }
-        }
-      }
-
       if (attachment.visible && attachment.waitingForKeyframe) {
         this.requestVideoKeyframe(session)
       }
@@ -1847,7 +1858,7 @@ export class BrowserSessionManager {
     if (message.type === 'setVisible') {
       attachment.visible = message.visible
       attachment.inFlightFrames.clear()
-      attachment.pendingJpeg = null
+      attachment.jpegDelivery.reset()
       attachment.waitingForKeyframe = true
       if (message.visible) {
         this.prepareVideoViewer(session, attachment)
@@ -2221,6 +2232,7 @@ export class BrowserSessionManager {
       }
 
       attachment.closing = true
+      attachment.jpegDelivery.reset()
       void this.scheduleOperation(
         session,
         async () => {

@@ -115,6 +115,40 @@ export class PlaywrightBrowserHost {
           )
         }
 
+        const env = { ...process.env }
+        const args = [
+          '--remote-debugging-address=127.0.0.1',
+          '--remote-debugging-port=0',
+          // Finish the compositor pipeline before capturing, rather than
+          // streaming a smooth but several-frames-old view of user input.
+          // Keep Chrome's frame-rate limit; uncapped rendering wastes work.
+          '--run-all-compositor-stages-before-draw'
+        ]
+        // WSLg exposes Windows GPUs through Mesa's D3D12 OpenGL driver, not
+        // native Linux Vulkan. Daemons often lack DISPLAY, and headless Chrome
+        // otherwise forces SwiftShader. Scope these defaults to the child and
+        // respect explicitly selected displays or software rendering.
+        if (
+          process.platform === 'linux' &&
+          (!env.DISPLAY || env.DISPLAY === ':0' || env.DISPLAY === ':0.0') &&
+          (!env.GALLIUM_DRIVER || env.GALLIUM_DRIVER === 'd3d12') &&
+          !env.LIBGL_ALWAYS_SOFTWARE &&
+          (await fs.stat('/mnt/wslg/.X11-unix/X0').then(
+            (stat) => stat.isSocket(),
+            () => false
+          )) &&
+          (await fs
+            .access('/dev/dxg', fs.constants.R_OK | fs.constants.W_OK)
+            .then(
+              () => true,
+              () => false
+            ))
+        ) {
+          env.DISPLAY ||= ':0'
+          env.GALLIUM_DRIVER ||= 'd3d12'
+          args.push('--enable-gpu', '--use-angle=gl')
+        }
+
         await fs.rm(path.join(this.profilePath, 'DevToolsActivePort'), {
           force: true
         })
@@ -123,10 +157,8 @@ export class PlaywrightBrowserHost {
           chromiumSandbox: true,
           headless: true,
           acceptDownloads: false,
-          args: [
-            '--remote-debugging-address=127.0.0.1',
-            '--remote-debugging-port=0'
-          ],
+          args,
+          env,
           viewport: DEFAULT_VIEWPORT
         })
         browser = context.browser()
