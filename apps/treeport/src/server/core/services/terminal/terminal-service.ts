@@ -470,6 +470,8 @@ export class TerminalService {
         interactiveShell,
         env: {
           PI_IMAGE_PROTOCOL: 'kitty',
+          // The clipboard belongs to the attached client, not this daemon host.
+          PI_CLIPBOARD_OSC52: '1',
           ...(options?.env ?? {}),
           TREEPORT_API_URL: config.apiUrl,
           TREEPORT_MANAGED_API_URL: config.apiUrl,

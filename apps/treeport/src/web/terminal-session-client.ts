@@ -79,6 +79,7 @@ export class TerminalSession {
           // Finalizers run in reverse: detach the host and disconnect the
           // socket before disposing xterm, then interrupt the async workers.
           const browser = yield* makeBrowser(state, {
+            copyText: (text) => this.copyText(text),
             hasTimer: timers.hasTimer,
             canInput: (...args) => connection.canInput(...args),
             cancelTimer: timers.cancelTimer,
