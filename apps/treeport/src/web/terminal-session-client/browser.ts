@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { TerminalImages } from '../../terminal-runtime/images'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
+import { toast } from 'sonner'
 import { type TerminalClientToServerEvents } from '@treeport/shared'
 import {
   terminalKeyboardInput,
@@ -36,6 +37,7 @@ interface SynchronizedOutputInternals {
 }
 
 interface Dependencies {
+  copyText(text: string): Promise<void>
   hasTimer(key: SessionTimer): boolean
   canInput(): boolean
   cancelTimer(key: SessionTimer): void
@@ -114,6 +116,63 @@ export function makeBrowser(
           }, TERMINAL_SYNCHRONIZED_OUTPUT_MAX_DELAY_MS)
         }
       }
+      terminal.parser.registerOscHandler(52, (payload) => {
+        // OSC 52 is write-only. Never expose the clipboard to a remote process,
+        // or let viewers, background sessions or snapshot restoration change it.
+        if (
+          !dependencies.canInput() ||
+          state.snapshotValue.phase !== 'ready' ||
+          state.wrapper?.style.visibility === 'hidden' ||
+          !document.hasFocus() ||
+          !state.wrapper?.contains(document.activeElement)
+        ) {
+          return true
+        }
+
+        const separator = payload.indexOf(';')
+        if (separator < 0) {
+          return true
+        }
+
+        const selection = payload.slice(0, separator)
+        const encoded = payload.slice(separator + 1)
+        if (
+          (selection !== '' && !/^c+$/.test(selection)) ||
+          !encoded ||
+          encoded === '?' ||
+          encoded.length > 1_048_576
+        ) {
+          return true
+        }
+
+        let text: string
+        try {
+          text = new TextDecoder('utf-8', { fatal: true }).decode(
+            Uint8Array.from(atob(encoded), (character) =>
+              character.charCodeAt(0)
+            )
+          )
+        } catch {
+          // Malformed application output must not interrupt terminal parsing.
+          return true
+        }
+
+        // Do not block the output parser on browser clipboard permissions.
+        void dependencies.copyText(text).catch(() => {
+          toast.error('Couldn’t copy terminal text', {
+            action: {
+              label: 'Copy',
+              onClick: () => {
+                // Some browsers require a fresh user gesture for clipboard writes.
+                void dependencies
+                  .copyText(text)
+                  .catch(() => toast.error('Couldn’t copy text'))
+              }
+            }
+          })
+        })
+        return true
+      })
       terminal.onSelectionChange(() => dependencies.updateSelectionState())
       terminal.onRender(() => {
         if (!terminal.modes.synchronizedOutputMode) {
