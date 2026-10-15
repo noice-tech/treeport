@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { RemoveOperationRecord, RemovePreview } from '@treeport/shared'
 import {
   AlertDialog,
@@ -35,6 +36,8 @@ export function RemoveWorktreeDialog({
   onSkipCleanup: (worktree: RemovalWorktree, preview: RemovePreview) => void
   onRetry: (worktree: RemovalWorktree) => void
 }) {
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
+  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const destructive = Boolean(preview?.warnings.length) || skipCleanup
   const name = preview?.name ?? worktree?.name
   const branch = preview?.branch
@@ -55,6 +58,28 @@ export function RemoveWorktreeDialog({
         <AlertDialogContent
           className="flex min-w-0 max-w-3xl flex-col overflow-hidden"
           restoreFocusTo={restoreFocusTo}
+          onKeyDown={(event) => {
+            if (
+              event.key !== 'Enter' ||
+              event.nativeEvent.isComposing ||
+              event.repeat ||
+              event.altKey ||
+              event.shiftKey ||
+              !(usesMacKeyboard
+                ? event.metaKey && !event.ctrlKey
+                : event.ctrlKey && !event.metaKey)
+            ) {
+              return
+            }
+
+            event.preventDefault()
+            if (
+              confirmButtonRef.current &&
+              !confirmButtonRef.current.disabled
+            ) {
+              confirmButtonRef.current.click()
+            }
+          }}
         >
           <AlertDialogHeader className="shrink-0 [overflow-wrap:anywhere]">
             <p className="eyebrow">
@@ -239,6 +264,10 @@ export function RemoveWorktreeDialog({
                   <Button
                     type="button"
                     variant="destructive"
+                    ref={confirmButtonRef}
+                    aria-keyshortcuts={
+                      usesMacKeyboard ? 'Meta+Enter' : 'Control+Enter'
+                    }
                     disabled={busy || !preview.eligible}
                     onClick={(event) => {
                       event.preventDefault()
@@ -256,6 +285,13 @@ export function RemoveWorktreeDialog({
                         : destructive
                           ? 'Remove anyway'
                           : 'Remove tree'}
+                    <kbd
+                      aria-hidden="true"
+                      className="relative top-[0.5px] inline-flex items-baseline gap-0.5 font-sans text-xs font-medium leading-5"
+                    >
+                      <span>{usesMacKeyboard ? '⌘' : 'Ctrl+'}</span>
+                      <span>↵</span>
+                    </kbd>
                   </Button>
                 </AlertDialogAction>
               </>
