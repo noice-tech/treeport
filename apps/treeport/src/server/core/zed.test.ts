@@ -114,9 +114,9 @@ describe('Zed worktree compatibility', () => {
       'topic',
       'example'
     )
-    await fs.mkdir(worktree, { recursive: true })
+    await fs.mkdir(path.join(worktree, '.zed'), { recursive: true })
     await fs.writeFile(
-      path.join(main, '.zed', 'tasks.json'),
+      path.join(worktree, '.zed', 'tasks.json'),
       `[
         {"label":"setup","command":"bash","args":["$ZED_MAIN_GIT_WORKTREE/.zed/setup.sh"],"hooks":["create_worktree"]},
         {"label":"build","command":"bun install && bun run build","cwd":"$ZED_WORKTREE_ROOT","hooks":["create_worktree"]},
@@ -350,9 +350,9 @@ describe('Zed worktree compatibility', () => {
       'hostile',
       'example'
     )
-    await fs.mkdir(worktree, { recursive: true })
+    await fs.mkdir(path.join(worktree, '.zed'), { recursive: true })
     await fs.writeFile(
-      path.join(main, '.zed', 'tasks.json'),
+      path.join(worktree, '.zed', 'tasks.json'),
       JSON.stringify([
         {
           label: 'direct',

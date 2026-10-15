@@ -128,15 +128,26 @@ describe('terminal operations', () => {
 
   it('keeps the requested terminal and setup when a snapshot observes a new tree', async () => {
     const { main, runner, service } = await fixture()
-    await fs.mkdir(path.join(main, '.treeport'))
-    await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
-      JSON.stringify({
-        setup: {
-          commands: [{ name: 'Initialize', argv: ['initialize-tree'] }]
-        }
-      })
-    )
+    const run = runner.run.bind(runner)
+    vi.spyOn(runner, 'run').mockImplementation(async (request) => {
+      const result = await run(request)
+      if (request.args[0] === 'worktree' && request.args[1] === 'add') {
+        // Simulate committed settings appearing during checkout, not a main
+        // checkout's uncommitted configuration being copied into the new tree.
+        const worktreePath = request.args.at(-2)!
+        await fs.mkdir(path.join(worktreePath, '.treeport'))
+        await fs.writeFile(
+          path.join(worktreePath, '.treeport', 'settings.json'),
+          JSON.stringify({
+            setup: {
+              commands: [{ name: 'Initialize', argv: ['initialize-tree'] }]
+            }
+          })
+        )
+      }
+
+      return result
+    })
     const project = await service.registerProject(main)
     const mainTree = project.worktrees[0]!
     // Simulate a lost terminal host session while a project mutation is held.
@@ -255,9 +266,13 @@ describe('terminal operations', () => {
 
   it('closes a terminal while another tree cleanup is running', async () => {
     const { main, runner, service } = await fixture()
-    await fs.mkdir(path.join(main, '.treeport'))
+    const project = await service.registerProject(main)
+    const blockingWorktree = (
+      await service.createWorktree(project.id, 'blocking-cleanup', 'default')
+    ).worktree
+    await fs.mkdir(path.join(blockingWorktree.path, '.treeport'))
     await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
+      path.join(blockingWorktree.path, '.treeport', 'settings.json'),
       JSON.stringify({
         setup: {
           commands: [],
@@ -272,10 +287,6 @@ describe('terminal operations', () => {
       })
     )
 
-    const project = await service.registerProject(main)
-    const blockingWorktree = (
-      await service.createWorktree(project.id, 'blocking-cleanup', 'default')
-    ).worktree
     const targetWorktree = (
       await service.createWorktree(project.id, 'terminal-target', 'default')
     ).worktree

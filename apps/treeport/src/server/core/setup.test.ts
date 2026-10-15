@@ -28,8 +28,8 @@ async function repository() {
   temporary.push(root)
   const main = path.join(root, 'main checkout')
   const worktree = path.join(root, 'worktrees', 'topic', 'main checkout')
+  await fs.mkdir(path.join(worktree, '.treeport'), { recursive: true })
   await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
-  await fs.mkdir(worktree, { recursive: true })
   return {
     main: await fs.realpath(main),
     worktree: await fs.realpath(worktree)
@@ -50,7 +50,7 @@ describe('worktree setup', () => {
   it('resolves native JSON commands as direct setup tasks', async () => {
     const { main, worktree } = await repository()
     await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
+      path.join(worktree, '.treeport', 'settings.json'),
       `{
         "packages": [],
         "setup": {
@@ -118,7 +118,7 @@ describe('worktree setup', () => {
 
   it('resolves ordered cleanup commands and hashes their execution definition', async () => {
     const { main, worktree } = await repository()
-    const filePath = path.join(main, '.treeport', 'settings.json')
+    const filePath = path.join(worktree, '.treeport', 'settings.json')
     await fs.mkdir(path.join(worktree, 'apps', 'api'), { recursive: true })
     await fs.writeFile(
       filePath,
@@ -165,6 +165,12 @@ describe('worktree setup', () => {
       })
     ])
     expect(first.definitionHash).toMatch(/^[a-f0-9]{64}$/)
+    await fs.writeFile(
+      path.join(main, '.treeport', 'settings.json'),
+      JSON.stringify({
+        setup: { cleanup: [{ name: 'Unrelated', argv: ['main-cleanup'] }] }
+      })
+    )
     await expect(
       Effect.runPromise(
         resolveWorktreeCleanupTasks({
@@ -206,9 +212,9 @@ describe('worktree setup', () => {
 
   it('does not use Zed as a cleanup fallback', async () => {
     const { main, worktree } = await repository()
-    await fs.mkdir(path.join(main, '.zed'), { recursive: true })
+    await fs.mkdir(path.join(worktree, '.zed'), { recursive: true })
     await fs.writeFile(
-      path.join(main, '.zed', 'tasks.json'),
+      path.join(worktree, '.zed', 'tasks.json'),
       JSON.stringify([
         {
           label: 'Zed setup',
@@ -284,7 +290,7 @@ describe('worktree setup', () => {
 
     for (const value of invalidFiles) {
       await fs.writeFile(
-        path.join(main, '.treeport', 'settings.json'),
+        path.join(worktree, '.treeport', 'settings.json'),
         JSON.stringify({ setup: value })
       )
       await expect(
@@ -299,7 +305,7 @@ describe('worktree setup', () => {
     }
 
     await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
+      path.join(worktree, '.treeport', 'settings.json'),
       JSON.stringify({
         setup: {
           commands: [],
@@ -317,12 +323,16 @@ describe('worktree setup', () => {
     ).rejects.toThrow(/cleanup\[0\]\.cwd must stay inside the tree/)
   })
 
-  it('uses only main-worktree native setup and falls back to Zed only when it is absent', async () => {
+  it('uses only target-tree lifecycle configuration and falls back only to target-tree Zed setup', async () => {
     const { main, worktree } = await repository()
+    await fs.mkdir(path.join(worktree, '.zed'), { recursive: true })
     await fs.mkdir(path.join(main, '.zed'), { recursive: true })
-    await fs.mkdir(path.join(worktree, '.treeport'), { recursive: true })
     await fs.writeFile(
       path.join(main, '.zed', 'tasks.json'),
+      JSON.stringify([{ command: 'main-zed', hooks: ['create_worktree'] }])
+    )
+    await fs.writeFile(
+      path.join(worktree, '.zed', 'tasks.json'),
       JSON.stringify([
         {
           label: 'Zed fallback',
@@ -332,15 +342,16 @@ describe('worktree setup', () => {
       ])
     )
     await fs.writeFile(
-      path.join(worktree, '.treeport', 'settings.json'),
+      path.join(main, '.treeport', 'settings.json'),
       JSON.stringify({
         setup: {
-          commands: [{ name: 'Linked copy', argv: ['linked-command'] }]
+          commands: [{ name: 'Main copy', argv: ['main-command'] }],
+          cleanup: [{ name: 'Main cleanup', argv: ['main-cleanup'] }]
         }
       })
     )
     await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
+      path.join(worktree, '.treeport', 'settings.json'),
       JSON.stringify({
         setup: {
           commands: [{ name: 'Native', argv: ['native-command'] }]
@@ -363,20 +374,23 @@ describe('worktree setup', () => {
     ])
 
     await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
+      path.join(worktree, '.treeport', 'settings.json'),
       JSON.stringify({ setup: { commands: [] } })
     )
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))
     ).resolves.toEqual([])
 
-    await fs.writeFile(path.join(main, '.treeport', 'settings.json'), 'null')
+    await fs.writeFile(
+      path.join(worktree, '.treeport', 'settings.json'),
+      'null'
+    )
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))
     ).rejects.toThrow(/Invalid Treeport setup/)
 
     await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
+      path.join(worktree, '.treeport', 'settings.json'),
       JSON.stringify({
         packages: [],
         terminalPresets: {},
@@ -390,7 +404,7 @@ describe('worktree setup', () => {
     ])
 
     await fs.writeFile(
-      path.join(main, '.treeport', 'settings.json'),
+      path.join(worktree, '.treeport', 'settings.json'),
       JSON.stringify({
         setup: { cleanup: [{ name: 'Cleanup only', argv: ['cleanup'] }] }
       })
@@ -402,7 +416,7 @@ describe('worktree setup', () => {
       Effect.runPromise(resolveWorktreeCleanupTasks(input))
     ).resolves.toMatchObject({ tasks: [{ label: 'Cleanup only' }] })
 
-    await fs.rm(path.join(main, '.treeport', 'settings.json'))
+    await fs.rm(path.join(worktree, '.treeport', 'settings.json'))
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))
     ).resolves.toEqual([
@@ -411,6 +425,18 @@ describe('worktree setup', () => {
         argv: ['zed-command']
       })
     ])
+    await fs.rm(path.join(worktree, '.zed', 'tasks.json'))
+    await expect(
+      Effect.runPromise(resolveWorktreeCleanupTasks(input))
+    ).resolves.toEqual({ tasks: [], definitionHash: null })
+    // Even invalid main settings must not affect target-tree resolution.
+    await fs.writeFile(path.join(main, '.treeport', 'settings.json'), 'null')
+    await expect(
+      Effect.runPromise(resolveWorktreeSetupTasks(input))
+    ).resolves.toEqual([])
+    await expect(
+      Effect.runPromise(resolveWorktreeCleanupTasks(input))
+    ).resolves.toEqual({ tasks: [], definitionHash: null })
   })
 
   it.each([
@@ -418,7 +444,10 @@ describe('worktree setup', () => {
     '{ /* comment */ "setup": { "commands": [] } }'
   ])('rejects non-JSON settings: %s', async (content) => {
     const { main, worktree } = await repository()
-    await fs.writeFile(path.join(main, '.treeport', 'settings.json'), content)
+    await fs.writeFile(
+      path.join(worktree, '.treeport', 'settings.json'),
+      content
+    )
     await expect(
       Effect.runPromise(
         resolveWorktreeSetupTasks({
