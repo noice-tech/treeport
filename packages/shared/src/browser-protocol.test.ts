@@ -124,7 +124,11 @@ describe('hosted browser protocol', () => {
     for (const url of [
       'file:///tmp/preview%20draft.html?view=1#section',
       'file://localhost/tmp/preview.html',
-      'file:///C:/Users/example/preview.html'
+      'file:///C:/Users/example/preview.html',
+      'chrome://gpu',
+      'chrome://gpu/',
+      'chrome://settings/appearance',
+      'chrome://version'
     ]) {
       expect(parseBrowserClientMessage({ type: 'navigate', url })).toEqual({
         type: 'navigate',
@@ -137,7 +141,11 @@ describe('hosted browser protocol', () => {
       'javascript:alert(1)',
       'data:text/html,preview',
       'ftp://example.com/preview.html',
-      'chrome://settings'
+      'chrome:gpu',
+      'chrome:///gpu',
+      'chrome://gpu:1234',
+      'chrome://user:password@gpu',
+      'chrome-extension://example/page.html'
     ]) {
       expect(parseBrowserClientMessage({ type: 'navigate', url })).toBeNull()
     }
@@ -163,12 +171,14 @@ describe('hosted browser protocol', () => {
         args: ['http://localhost:5173/preview']
       }).success
     ).toBe(true)
-    expect(
-      browserAgentCommandSchema.safeParse({
-        command: 'goto',
-        args: ['file:///tmp/preview.html']
-      }).success
-    ).toBe(true)
+    for (const url of ['file:///tmp/preview.html', 'chrome://gpu']) {
+      expect(
+        browserAgentCommandSchema.safeParse({
+          command: 'goto',
+          args: [url]
+        }).success
+      ).toBe(true)
+    }
     expect(
       browserAgentCommandSchema.safeParse({
         command: 'screenshot',
