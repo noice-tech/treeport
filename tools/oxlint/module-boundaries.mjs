@@ -41,6 +41,7 @@ const desktopPackages = new Set([
 // application protocol back into desktop through a transitive dependency.
 const nativeUtilities = new Set([
   'packages/shared/src/browser-host.ts',
+  'packages/shared/src/browser-clipboard.ts',
   'packages/shared/src/browser-video.ts',
   'packages/shared/src/schema.ts',
   'packages/shared/src/tracing.ts'

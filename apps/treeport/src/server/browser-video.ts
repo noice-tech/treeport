@@ -34,14 +34,15 @@ export class PlaywrightBrowserVideo {
 
     const cdp = await this.context.newCDPSession(this.page)
     this.cdp = cdp
-    cdp.on('Page.screencastFrame', ({ data, sessionId }) => {
+    cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
       if (this.cdp === cdp) {
         this.publish({
           mimeType: 'image/jpeg',
           keyframe: true,
           timestamp: Math.round(performance.now() * 1000),
-          width,
-          height,
+          // Capture limits are not the source viewport, especially during resize.
+          width: Math.round(metadata.deviceWidth),
+          height: Math.round(metadata.deviceHeight),
           data: Buffer.from(data, 'base64')
         })
       }

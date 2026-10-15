@@ -291,12 +291,13 @@ export function connectBrowserPanel(
         return
       }
 
-      // Never queue paste: a delayed paste can target a different page or owner.
+      // Never queue clipboard actions: a delay can target a different page or owner.
       // Keep the initial command queue bounded without silently evicting input.
       if (
         reconnectAllowed &&
         !connectedOnce &&
         command.type !== 'insertText' &&
+        command.type !== 'copy' &&
         pendingCommands.length < 32
       ) {
         pendingCommands.push(command)

@@ -505,9 +505,33 @@ function installRendererSecurity(renderer: WebContents): void {
 
     return { action: 'deny' }
   })
-  renderer.session.setPermissionCheckHandler(() => false)
+  // The trusted workspace can copy sanitized text, HTML and images, but never
+  // read the native clipboard. Subframes and browser guests keep their own policy.
+  const canWriteClipboard = (
+    contents: WebContents | null,
+    permission: string,
+    url: string,
+    mainFrame: boolean
+  ) =>
+    permission === 'clipboard-sanitized-write' &&
+    mainFrame &&
+    contents === workspaceView?.webContents &&
+    URL.canParse(url) &&
+    new URL(url).origin === selectedOrigin()
+  renderer.session.setPermissionCheckHandler(
+    (contents, permission, origin, details) =>
+      canWriteClipboard(contents, permission, origin, details.isMainFrame)
+  )
   renderer.session.setPermissionRequestHandler(
-    (_contents, _permission, callback) => callback(false)
+    (contents, permission, callback, details) =>
+      callback(
+        canWriteClipboard(
+          contents,
+          permission,
+          details.requestingUrl,
+          details.isMainFrame
+        )
+      )
   )
   renderer.session.setDisplayMediaRequestHandler((_request, callback) =>
     callback({})
@@ -1164,18 +1188,25 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('hosted-browser:open-devtools', async (event, value) => {
-    const panelId = z
-      .string()
-      .regex(/^panel_[a-f0-9]{32}$/u)
+    const target = z
+      .object({
+        panelId: z.string().regex(/^panel_[a-f0-9]{32}$/u),
+        backendNodeId: z.number().int().positive().nullable(),
+        targetId: z
+          .string()
+          .regex(/^[a-fA-F0-9]{32}$/u)
+          .nullable()
+      })
+      .strict()
       .safeParse(value)
     const origin = selectedOrigin()
-    if (!isTrustedRendererEvent(event) || !panelId.success || !origin) {
+    if (!isTrustedRendererEvent(event) || !target.success || !origin) {
       return false
     }
 
     const endpoint = new URL(origin)
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
-    endpoint.pathname = `/api/browser-devtools/${panelId.data}`
+    endpoint.pathname = `/api/browser-devtools/${target.data.panelId}`
     endpoint.search = ''
     endpoint.hash = ''
 
@@ -1224,9 +1255,38 @@ function registerIpc(): void {
       })
       const pending: Array<{ data: Buffer; binary: boolean }> = []
       let pendingBytes = 0
+      let inspectNode = target.data.backendNodeId
+      let documentRequest: number | null = null
+      let inspectSession: string | null = null
       viewer.on('message', (data, binary) => {
         // SAFETY: ws delivers Node Buffer payloads in the Electron main process.
         const message = Buffer.from(data as Buffer)
+        if (inspectNode !== null && !binary) {
+          // CDP is an untrusted JSON boundary even for the bundled frontend.
+          try {
+            const command = z
+              .object({
+                id: z.number(),
+                method: z.string(),
+                sessionId: z.string().optional()
+              })
+              .safeParse(JSON.parse(message.toString()))
+            if (
+              command.success &&
+              (target.data.targetId === null
+                ? command.data.method === 'DOM.getDocument' &&
+                  !command.data.sessionId
+                : command.data.method === 'DOM.enable' &&
+                  inspectSession !== null &&
+                  command.data.sessionId === inspectSession)
+            ) {
+              documentRequest = command.data.id
+            }
+          } catch {
+            /* Invalid CDP is handled by Chrome. */
+          }
+        }
+
         if (upstream.readyState === WebSocket.OPEN) {
           if (upstream.bufferedAmount > 16 * 1024 * 1024) {
             viewer.close(1009, 'DevTools input overflow')
@@ -1254,6 +1314,53 @@ function registerIpc(): void {
             viewer.close(1009, 'DevTools output overflow')
           } else {
             viewer.send(data, { binary })
+            if (inspectNode !== null && !binary) {
+              try {
+                const payload: unknown = JSON.parse(data.toString())
+                const attached = z
+                  .object({
+                    method: z.literal('Target.attachedToTarget'),
+                    params: z.object({
+                      sessionId: z.string(),
+                      targetInfo: z.object({ targetId: z.string() })
+                    })
+                  })
+                  .safeParse(payload)
+                if (
+                  attached.success &&
+                  attached.data.params.targetInfo.targetId ===
+                    target.data.targetId
+                ) {
+                  inspectSession = attached.data.params.sessionId
+                }
+
+                const response = z
+                  .object({
+                    id: z.number(),
+                    result: z.object({}),
+                    sessionId: z.string().optional()
+                  })
+                  .safeParse(payload)
+                if (
+                  response.success &&
+                  response.data.id === documentRequest &&
+                  (response.data.sessionId ?? null) === inspectSession
+                ) {
+                  // Feed the native Elements panel the same backend-node event
+                  // Chrome emits for its inspect picker, after its DOM is ready.
+                  viewer.send(
+                    JSON.stringify({
+                      method: 'Overlay.inspectNodeRequested',
+                      params: { backendNodeId: inspectNode },
+                      sessionId: inspectSession ?? undefined
+                    })
+                  )
+                  inspectNode = null
+                }
+              } catch {
+                /* Non-JSON CDP cannot complete the selection. */
+              }
+            }
           }
         }
       })

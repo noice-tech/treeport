@@ -39,6 +39,7 @@ export type {
   WorktreeListenerDiscovery
 } from '@treeport/panel-sdk'
 export * from './browser-protocol.js'
+export * from './browser-clipboard.js'
 export * from './browser-page-metadata.js'
 export * from './browser-video.js'
 export * from './http-protocol.js'

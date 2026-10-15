@@ -4,6 +4,8 @@ interface BrowserDecodedFrame {
   image: ImageBitmap | VideoFrame
   displayWidth: number
   displayHeight: number
+  // JPEG capture carries CSS viewport dimensions; VP8 dimensions are pixels.
+  viewport: { width: number; height: number } | null
   timestamp: number
 }
 
@@ -85,6 +87,7 @@ export class BrowserVideoDecoder {
                 image: bitmap,
                 displayWidth: bitmap.width,
                 displayHeight: bitmap.height,
+                viewport: { width: frame.width, height: frame.height },
                 timestamp: frame.timestamp
               })
               this.failures = 0
@@ -139,6 +142,7 @@ export class BrowserVideoDecoder {
                   image: decoded,
                   displayWidth: decoded.displayWidth,
                   displayHeight: decoded.displayHeight,
+                  viewport: null,
                   timestamp: decoded.timestamp
                 })
               }

@@ -6,7 +6,15 @@ export async function browserCursor(
   point: { x: number; y: number }
 ) {
   let frame: Frame | null = page.mainFrame()
-  let position = point
+  // Hit testing uses layout coordinates, unlike the streamed visual viewport.
+  const rootPoint = await page.evaluate(({ x, y }) => {
+    const viewport = window.visualViewport!
+    return {
+      x: x / viewport.scale + viewport.offsetLeft,
+      y: y / viewport.scale + viewport.offsetTop
+    }
+  }, point)
+  let position = rootPoint
   while (frame) {
     // Most hits are in this frame. Resolve them in one renderer round trip,
     // rather than creating, inspecting and releasing a remote element handle
@@ -118,8 +126,11 @@ export async function browserCursor(
 
     // Playwright bounds are in top-level viewport coordinates, including scale.
     position = {
-      x: ((point.x - bounds.x) * style.width) / bounds.width - style.borderX,
-      y: ((point.y - bounds.y) * style.height) / bounds.height - style.borderY
+      x:
+        ((rootPoint.x - bounds.x) * style.width) / bounds.width - style.borderX,
+      y:
+        ((rootPoint.y - bounds.y) * style.height) / bounds.height -
+        style.borderY
     }
     frame = child
   }

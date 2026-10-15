@@ -1,6 +1,7 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
+import { browserClipboardSchema } from './browser-clipboard.js'
 import {
   browserPanelIdSchema,
   browserObservedUrlSchema,
@@ -58,7 +59,61 @@ export function normalizeBrowserFaviconUrl(
     : null
 }
 
+export const browserContextActionSchema = Schema.Literal(
+  'openLink',
+  'copyLink',
+  'back',
+  'forward',
+  'reload',
+  'inspect'
+)
+export type BrowserContextAction = Schema.Schema.Type<
+  typeof browserContextActionSchema
+>
+
+export const browserContextResultSchema = Schema.Struct({
+  type: Schema.Literal('contextResult'),
+  requestId: browserRequestIdSchema,
+  contextId: Schema.NullOr(browserRequestIdSchema),
+  linkUrl: Schema.NullOr(Schema.String.pipe(Schema.maxLength(16_384))),
+  canOpenLink: Schema.Boolean,
+  canInspect: Schema.Boolean
+})
+export type BrowserContextResult = Schema.Schema.Type<
+  typeof browserContextResultSchema
+>
+
+export const browserContextActionResultSchema = Schema.Struct({
+  type: Schema.Literal('contextActionResult'),
+  requestId: browserRequestIdSchema,
+  action: browserContextActionSchema,
+  linkUrl: Schema.NullOr(Schema.String.pipe(Schema.maxLength(16_384))),
+  backendNodeId: Schema.NullOr(Schema.Int.pipe(Schema.positive())),
+  targetId: Schema.NullOr(
+    Schema.String.pipe(Schema.pattern(/^[a-fA-F0-9]{32}$/))
+  )
+})
+export type BrowserContextActionResult = Schema.Schema.Type<
+  typeof browserContextActionResultSchema
+>
+
 export const browserClientMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('contextMenu'),
+    requestId: browserRequestIdSchema,
+    x: Schema.Finite.pipe(Schema.between(0, 3_840)),
+    y: Schema.Finite.pipe(Schema.between(0, 2_160))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('contextAction'),
+    requestId: browserRequestIdSchema,
+    contextId: browserRequestIdSchema,
+    action: browserContextActionSchema
+  }),
+  Schema.Struct({
+    type: Schema.Literal('dismissContext'),
+    contextId: browserRequestIdSchema
+  }),
   Schema.Struct({ type: Schema.Literal('navigate'), url: browserUrlSchema }),
   Schema.Struct({ type: Schema.Literal('back') }),
   Schema.Struct({ type: Schema.Literal('forward') }),
@@ -74,17 +129,48 @@ export const browserClientMessageSchema = Schema.Union(
     phase: Schema.Literal('move', 'down', 'up'),
     x: Schema.Finite.pipe(Schema.between(0, 3_840)),
     y: Schema.Finite.pipe(Schema.between(0, 2_160)),
-    button: Schema.optional(Schema.Literal('left', 'right', 'middle'))
+    button: Schema.optional(Schema.Literal('left', 'right', 'middle')),
+    clickCount: Schema.optional(Schema.Int.pipe(Schema.positive()))
   }),
   Schema.Struct({
+    type: Schema.Literal('touch'),
+    phase: Schema.Literal('start', 'move', 'end', 'cancel'),
+    // Start/move carry active contacts; end carries only released contacts.
+    // An empty end or cancel releases the entire gesture.
+    points: Schema.Array(
+      Schema.Struct({
+        id: Schema.Int.pipe(Schema.between(0, 2_147_483_647)),
+        x: Schema.Finite.pipe(Schema.between(0, 3_840)),
+        y: Schema.Finite.pipe(Schema.between(0, 2_160))
+      })
+    ).pipe(Schema.maxItems(10))
+  }).pipe(
+    Schema.filter(
+      ({ phase, points }) =>
+        new Set(points.map((point) => point.id)).size === points.length &&
+        (phase === 'cancel'
+          ? points.length === 0
+          : phase === 'end' || points.length > 0)
+    )
+  ),
+  Schema.Struct({
     type: Schema.Literal('wheel'),
+    x: Schema.Finite.pipe(Schema.between(0, 3_840)),
+    y: Schema.Finite.pipe(Schema.between(0, 2_160)),
+    // CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
+    modifiers: Schema.Int.pipe(Schema.between(0, 15)),
     deltaX: Schema.Finite.pipe(Schema.between(-10_000, 10_000)),
     deltaY: Schema.Finite.pipe(Schema.between(-10_000, 10_000))
   }),
   Schema.Struct({
     type: Schema.Literal('key'),
     phase: Schema.Literal('down', 'up'),
-    key: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+    key: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+    modifiers: Schema.Int.pipe(Schema.between(0, 15))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('copy'),
+    requestId: browserRequestIdSchema
   }),
   Schema.Struct({
     type: Schema.Literal('insertText'),
@@ -192,6 +278,18 @@ export const browserCursorSchema = Schema.Literal(
 )
 
 export const browserServerMessageSchema = Schema.Union(
+  browserContextResultSchema,
+  browserContextActionResultSchema,
+  Schema.Struct({
+    type: Schema.Literal('clipboardWrite'),
+    clipboard: browserClipboardSchema
+  }),
+  Schema.Struct({
+    type: Schema.Literal('copyResult'),
+    requestId: browserRequestIdSchema,
+    clipboard: Schema.NullOr(browserClipboardSchema),
+    error: Schema.NullOr(Schema.String)
+  }),
   Schema.Struct({
     type: Schema.Literal('cursor'),
     cursor: browserCursorSchema

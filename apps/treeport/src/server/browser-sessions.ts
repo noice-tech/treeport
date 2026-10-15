@@ -24,10 +24,12 @@ import type {
   BrowserOwnerServerMessage,
   BrowserServerMessage,
   BrowserSessionState,
-  BrowserVideoCdpSession
+  BrowserNativeCdpSession,
+  BrowserClipboard
 } from '@treeport/shared'
 import {
   BROWSER_MAX_FRAME_BYTES,
+  browserClipboardSchema,
   browserOwnerEndpointSchema,
   browserOwnerIdentitySchema,
   browserObservedUrlSchema,
@@ -47,6 +49,7 @@ import {
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
 import { browserNavigation } from './browser-navigation'
+import { browserKey, browserTouch, browserWheel } from './browser-input'
 import { browserSetupGuidance } from './browser-runtime'
 
 import { receiveBrowserVideo } from './browser-video'
@@ -90,7 +93,10 @@ export interface BrowserSessionBrowser {
     'controlled' | 'hasController' | 'controller' | 'agentActive'
   >
   launch(): Promise<void>
-  command(message: BrowserClientMessage): Promise<void>
+  command(
+    message: BrowserClientMessage
+  ): ReturnType<PlaywrightBrowser['command']>
+  copy(): Promise<BrowserClipboard | null>
   cursor(point: { x: number; y: number }): ReturnType<typeof browserCursor>
   agentCommand(input: BrowserAgentCommand): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
@@ -143,7 +149,7 @@ interface BrowserLocalAutomation {
   browser: PlaywrightConnection
   page: Page
   cdp: CDPSession
-  video: BrowserVideoCdpSession
+  video: BrowserNativeCdpSession
   generation: number
   console: string[]
   requests: string[]
@@ -232,6 +238,9 @@ interface BrowserSession {
   generation: number
   attachments: Map<string, BrowserAttachment>
   controllerId: string | null
+  clipboardInput: { attachment: BrowserAttachment; expiresAt: number } | null
+  touchAttachmentId: string | null
+  touchIds: Set<number>
   agentActive: boolean
   retainLocalAgentPaint: boolean
   state: Omit<
@@ -486,7 +495,7 @@ export class BrowserSessionManager {
         input.message?.type === 'wheel'
       ) {
         existing.message = {
-          type: 'wheel',
+          ...input.message,
           deltaX: existing.message.deltaX + input.message.deltaX,
           deltaY: existing.message.deltaY + input.message.deltaY
         }
@@ -834,6 +843,9 @@ export class BrowserSessionManager {
       generation: 0,
       attachments: new Map(),
       controllerId: null,
+      clipboardInput: null,
+      touchAttachmentId: null,
+      touchIds: new Set(),
       agentActive: false,
       retainLocalAgentPaint: false,
       state: {
@@ -924,6 +936,10 @@ export class BrowserSessionManager {
               return
             }
 
+            if (session.state.url !== state.url) {
+              session.clipboardInput = null
+            }
+
             session.state = state
             this.queuePanelState(session, state)
             this.broadcastState(session)
@@ -937,6 +953,33 @@ export class BrowserSessionManager {
             ) {
               this.publishFrame(session, frame)
             }
+          },
+          clipboard: (clipboard) => {
+            const input = session.clipboardInput
+            if (
+              !runtimeReady ||
+              session.browser !== browser ||
+              session.generation !== runtimeGeneration ||
+              session.localOwner ||
+              session.closing ||
+              session.agentActive ||
+              !input ||
+              Date.now() > input.expiresAt ||
+              input.attachment.closing ||
+              !input.attachment.visible ||
+              session.attachments.get(input.attachment.id) !==
+                input.attachment ||
+              session.controllerId !==
+                attachmentController(input.attachment.clientId)
+            ) {
+              return false
+            }
+
+            session.clipboardInput = null
+            return input.attachment.transport.sendMessage({
+              type: 'clipboardWrite',
+              clipboard
+            })
           },
           popup: (url) => {
             if (
@@ -1857,6 +1900,13 @@ export class BrowserSessionManager {
 
     if (message.type === 'setVisible') {
       attachment.visible = message.visible
+      if (
+        !message.visible &&
+        session.clipboardInput?.attachment === attachment
+      ) {
+        session.clipboardInput = null
+      }
+
       attachment.inFlightFrames.clear()
       attachment.jpegDelivery.reset()
       attachment.waitingForKeyframe = true
@@ -1916,6 +1966,7 @@ export class BrowserSessionManager {
           }
 
           try {
+            await this.cancelTouches(session)
             if (session.localOwner) {
               await this.updateScreencast(session)
             } else {
@@ -1973,9 +2024,11 @@ export class BrowserSessionManager {
               await this.updateScreencast(session, nextController)
             } else {
               const browser = await this.browserFor(session)
+              await this.cancelTouches(session)
               await browser.command({ type: 'resize', ...viewport })
             }
 
+            session.clipboardInput = null
             session.controllerId = nextController
             if (previousController !== nextController) {
               this.broadcastState(session, 'controlChanged')
@@ -1997,9 +2050,11 @@ export class BrowserSessionManager {
         ? `find:${attachment.id}`
         : message.type === 'pointer' && message.phase === 'move'
           ? `pointer-move:${attachment.id}`
-          : message.type === 'wheel'
-            ? `wheel:${attachment.id}`
-            : null
+          : message.type === 'touch' && message.phase === 'move'
+            ? `touch-move:${attachment.id}`
+            : message.type === 'wheel'
+              ? `wheel:${attachment.id}:${message.modifiers}:${message.x}:${message.y}`
+              : null
     this.queueClientOperation(session, attachment, {
       coalesceKey,
       message,
@@ -2015,15 +2070,103 @@ export class BrowserSessionManager {
         if (
           session.controllerId !== attachmentController(attachment.clientId)
         ) {
-          attachment.transport.sendMessage({
-            type: 'navigationError',
-            message: 'Take control before you interact with this browser.'
-          })
+          attachment.transport.sendMessage(
+            queuedMessage.type === 'copy'
+              ? {
+                  type: 'copyResult',
+                  requestId: queuedMessage.requestId,
+                  clipboard: null,
+                  error: 'Take control before copying from this browser.'
+                }
+              : {
+                  type: 'navigationError',
+                  message: 'Take control before you interact with this browser.'
+                }
+          )
           return
         }
 
         try {
+          if (queuedMessage.type === 'touch') {
+            if (queuedMessage.phase === 'start') {
+              if (session.touchAttachmentId !== attachment.id) {
+                await this.cancelTouches(session)
+              }
+
+              session.touchAttachmentId = attachment.id
+              session.touchIds = new Set(
+                queuedMessage.points.map((point) => point.id)
+              )
+            } else if (session.touchAttachmentId !== attachment.id) {
+              return
+            } else if (
+              queuedMessage.phase === 'cancel' ||
+              (queuedMessage.phase === 'end' &&
+                queuedMessage.points.length === 0)
+            ) {
+              session.touchIds.clear()
+            } else if (queuedMessage.phase === 'end') {
+              for (const point of queuedMessage.points) {
+                session.touchIds.delete(point.id)
+              }
+            }
+          }
+
+          if (
+            ['navigate', 'back', 'forward', 'reload'].includes(
+              queuedMessage.type
+            )
+          ) {
+            await this.cancelTouches(session)
+          }
+
+          // Only recent input from this exact viewer may write its clipboard.
+          // Agent actions and spectators never authorize syncing; the grant
+          // expires and is consumed on the first website clipboard write.
+          if (
+            (queuedMessage.type === 'pointer' &&
+              queuedMessage.phase !== 'move') ||
+            (queuedMessage.type === 'key' && queuedMessage.phase === 'down') ||
+            (queuedMessage.type === 'touch' &&
+              (queuedMessage.phase === 'start' ||
+                queuedMessage.phase === 'end'))
+          ) {
+            session.clipboardInput = {
+              attachment,
+              expiresAt: Date.now() + 5_000
+            }
+          } else if (
+            ['copy', 'navigate', 'back', 'forward', 'reload'].includes(
+              queuedMessage.type
+            )
+          ) {
+            session.clipboardInput = null
+          }
+
           const localOwner = session.localOwner
+          if (queuedMessage.type === 'copy') {
+            const result = localOwner
+              ? await (
+                  await this.ensureLocalAutomation(session, localOwner)
+                ).video.send('Treeport.copy')
+              : await (await this.browserFor(session)).copy()
+            const clipboard =
+              result === null
+                ? null
+                : decodeUnknownOrNull(browserClipboardSchema, result)
+            if (result !== null && clipboard === null) {
+              throw new Error('The copied content is too large or unsupported.')
+            }
+
+            attachment.transport.sendMessage({
+              type: 'copyResult',
+              requestId: queuedMessage.requestId,
+              clipboard,
+              error: null
+            })
+            return
+          }
+
           if (localOwner) {
             await this.executeLocalClientCommand(
               session,
@@ -2032,12 +2175,23 @@ export class BrowserSessionManager {
             )
           } else {
             const browser = await this.browserFor(session)
-            await browser.command(queuedMessage)
+            const result = await browser.command(queuedMessage)
+            if (result) {
+              attachment.transport.sendMessage(result)
+            }
+
             this.queuePanelState(session, browser.state)
             await this.waitForPanelState(session)
           }
 
-          if (queuedMessage.type === 'pointer') {
+          if (queuedMessage.type === 'touch' && session.touchIds.size === 0) {
+            session.touchAttachmentId = null
+          }
+
+          if (
+            queuedMessage.type === 'pointer' ||
+            queuedMessage.type === 'wheel'
+          ) {
             attachment.cursorPoint = { x: queuedMessage.x, y: queuedMessage.y }
           }
 
@@ -2059,23 +2213,62 @@ export class BrowserSessionManager {
             attachment.transport.sendMessage({ type: 'cursor', cursor })
           }
         } catch (cause) {
-          attachment.transport.sendMessage({
-            type: 'navigationError',
-            message: cause instanceof Error ? cause.message : String(cause)
-          })
+          const error = cause instanceof Error ? cause.message : String(cause)
+          attachment.transport.sendMessage(
+            queuedMessage.type === 'copy'
+              ? {
+                  type: 'copyResult',
+                  requestId: queuedMessage.requestId,
+                  clipboard: null,
+                  error
+                }
+              : { type: 'navigationError', message: error }
+          )
         }
       },
       // Reserve admission capacity for releases after accepting their presses.
       required:
-        (message.type === 'key' || message.type === 'pointer') &&
-        message.phase === 'up'
+        ((message.type === 'key' || message.type === 'pointer') &&
+          message.phase === 'up') ||
+        (message.type === 'touch' &&
+          (message.phase === 'end' || message.phase === 'cancel'))
     })
+  }
+
+  private async cancelTouches(session: BrowserSession): Promise<void> {
+    if (!session.touchAttachmentId) {
+      return
+    }
+
+    session.touchAttachmentId = null
+    session.touchIds.clear()
+    const message = { type: 'touch', phase: 'cancel', points: [] } as const
+    if (session.localAutomation) {
+      await browserTouch(session.localAutomation.cdp, message).catch(
+        () => undefined
+      )
+    } else if (session.browser) {
+      await session.browser.command(message).catch(() => undefined)
+    }
   }
 
   private async updateScreencast(
     session: BrowserSession,
     controllerId = session.controllerId
   ): Promise<void> {
+    const touchAttachment = session.touchAttachmentId
+      ? session.attachments.get(session.touchAttachmentId)
+      : null
+    if (
+      session.touchAttachmentId &&
+      (!touchAttachment ||
+        touchAttachment.closing ||
+        !touchAttachment.visible ||
+        attachmentController(touchAttachment.clientId) !== controllerId)
+    ) {
+      await this.cancelTouches(session)
+    }
+
     const visible = [...session.attachments.values()].some(
       (attachment) =>
         !attachment.closing &&
@@ -2483,7 +2676,7 @@ export class BrowserSessionManager {
       // SAFETY: The verified exact-guest Electron CDP bridge implements this
       // private domain. Arbitrary remote CDP endpoints are not accepted here.
       // eslint-disable-next-line anti-slop/no-chained-type-assertions -- This private Electron domain extends Playwright's fixed Chromium command table.
-      const video = cdp as unknown as BrowserVideoCdpSession
+      const video = cdp as unknown as BrowserNativeCdpSession
       video.on('Treeport.videoFrame', ({ payload }) => {
         if (
           session.localOwner !== owner ||
@@ -2665,20 +2858,30 @@ export class BrowserSessionManager {
     } else if (message.type === 'stop') {
       await automation.cdp.send('Page.stopLoading')
     } else if (message.type === 'pointer') {
-      await page.mouse.move(message.x, message.y)
+      const { cssVisualViewport } = await automation.cdp.send(
+        'Page.getLayoutMetrics'
+      )
+      await page.mouse.move(
+        message.x / cssVisualViewport.scale,
+        message.y / cssVisualViewport.scale
+      )
       if (message.phase === 'down') {
-        await page.mouse.down({ button: message.button ?? 'left' })
+        await page.mouse.down({
+          button: message.button ?? 'left',
+          clickCount: message.clickCount ?? 1
+        })
       } else if (message.phase === 'up') {
-        await page.mouse.up({ button: message.button ?? 'left' })
+        await page.mouse.up({
+          button: message.button ?? 'left',
+          clickCount: message.clickCount ?? 1
+        })
       }
+    } else if (message.type === 'touch') {
+      await browserTouch(automation.cdp, message)
     } else if (message.type === 'wheel') {
-      await page.mouse.wheel(message.deltaX, message.deltaY)
+      await browserWheel(automation.cdp, message)
     } else if (message.type === 'key') {
-      if (message.phase === 'down') {
-        await page.keyboard.down(message.key)
-      } else {
-        await page.keyboard.up(message.key)
-      }
+      await browserKey(page, message)
     } else if (message.type === 'insertText') {
       await page.keyboard.insertText(message.text)
     } else if (message.type === 'find') {
@@ -2801,6 +3004,7 @@ export class BrowserSessionManager {
             await this.closePlaywrightRuntime(session).catch(() => undefined)
             throw error
           })
+      session.clipboardInput = null
       session.agentActive = true
       this.broadcastState(session)
       try {

@@ -117,7 +117,24 @@ const desktopBridge = Object.freeze({
       : null,
   openBrowserDevtools(panelId: string): Promise<boolean> {
     return ipcRenderer
-      .invoke('hosted-browser:open-devtools', panelId)
+      .invoke('hosted-browser:open-devtools', {
+        panelId,
+        backendNodeId: null,
+        targetId: null
+      })
+      .then((value) => z.boolean().parse(value))
+  },
+  inspectBrowserElement(
+    panelId: string,
+    backendNodeId: number,
+    targetId: string | null
+  ): Promise<boolean> {
+    return ipcRenderer
+      .invoke('hosted-browser:open-devtools', {
+        panelId,
+        backendNodeId,
+        targetId
+      })
       .then((value) => z.boolean().parse(value))
   },
   openFileUrl(url: string): Promise<DesktopFileActionResult> {
