@@ -48,6 +48,12 @@ const terminalHostResponseSchema = z.object({
 })
 
 function processExists(pid) {
+  // Aborted startups record PID 0 (no command). Nonpositive PIDs address
+  // process groups in kill(), so they cannot establish command liveness.
+  if (!validPid(pid)) {
+    return false
+  }
+
   try {
     process.kill(pid, 0)
     return true
