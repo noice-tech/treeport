@@ -2,7 +2,12 @@
 import crypto from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { WebContents } from 'electron'
+import { clipboard, type WebContents } from 'electron'
+import {
+  browserClipboardSchema,
+  copyBrowserPage,
+  decodeUnknownOrNull
+} from '@treeport/shared/browser-host'
 import { WebSocket, WebSocketServer } from 'ws'
 import { ElectronBrowserVideo } from './browser-video'
 import * as Cause from 'effect/Cause'
@@ -28,6 +33,9 @@ export interface BrowserCdpBridge {
   descriptor: BrowserCdpBridgeDescriptor
   stop: Effect.Effect<void>
 }
+
+// The native clipboard is shared by all guests. Keep copy and read together.
+const clipboardOperations = Effect.unsafeMakeSemaphore(1)
 
 const ALLOWED_DOMAINS = new Set([
   'Accessibility',
@@ -420,8 +428,40 @@ export function createBrowserCdpBridge(
                 sendError(
                   socket,
                   request,
-                  'Browser video requires an attached page session.'
+                  'Browser commands require an attached page session.'
                 )
+                return
+              }
+
+              if (request.method === 'Treeport.copy') {
+                const result = yield* clipboardOperations.withPermits(1)(
+                  Effect.tryPromise(async () => {
+                    const copied = await copyBrowserPage({
+                      send: (method, params?) =>
+                        guest.debugger.sendCommand(method, params)
+                    })
+                    if (!copied) {
+                      return null
+                    }
+
+                    const image = clipboard.readImage()
+                    const result = decodeUnknownOrNull(browserClipboardSchema, {
+                      text: clipboard.readText() || null,
+                      html: clipboard.readHTML() || null,
+                      png: image.isEmpty()
+                        ? null
+                        : image.toPNG().toString('base64')
+                    })
+                    if (!result) {
+                      throw new Error(
+                        'The copied content is too large or unsupported.'
+                      )
+                    }
+
+                    return result
+                  })
+                )
+                sendResult(socket, request, result)
                 return
               }
 
@@ -828,7 +868,8 @@ export function createBrowserCdpBridge(
             )
             const result = yield* request.method === 'Input.dispatchKeyEvent'
               ? preserveDesktopFocus(guest, command, true)
-              : request.method === 'Input.dispatchMouseEvent'
+              : request.method === 'Input.dispatchMouseEvent' ||
+                  request.method === 'Input.dispatchTouchEvent'
                 ? preserveDesktopFocus(guest, command)
                 : command
             sendResult(socket, request, result)

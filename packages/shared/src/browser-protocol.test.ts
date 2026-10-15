@@ -50,6 +50,63 @@ describe('hosted browser protocol', () => {
       button: 'left'
     })
 
+    const wheel = {
+      type: 'wheel',
+      x: 100,
+      y: 200,
+      deltaX: 0,
+      deltaY: -40,
+      modifiers: 2
+    }
+    expect(parseBrowserClientMessage(wheel)).toEqual(wheel)
+    expect(
+      parseBrowserClientMessage({ ...wheel, modifiers: 15 })
+    ).not.toBeNull()
+    expect(parseBrowserClientMessage({ ...wheel, modifiers: 16 })).toBeNull()
+    expect(parseBrowserClientMessage({ ...wheel, x: Infinity })).toBeNull()
+
+    const key = { type: 'key', phase: 'down', key: 'k', modifiers: 4 }
+    expect(parseBrowserClientMessage(key)).toEqual(key)
+    expect(parseBrowserClientMessage({ ...key, modifiers: 15 })).not.toBeNull()
+    expect(parseBrowserClientMessage({ ...key, modifiers: -1 })).toBeNull()
+    expect(parseBrowserClientMessage({ ...key, modifiers: 16 })).toBeNull()
+
+    const touch = {
+      type: 'touch',
+      phase: 'start',
+      points: [
+        { id: 1, x: 100, y: 200 },
+        { id: 2, x: 300, y: 200 }
+      ]
+    }
+    expect(parseBrowserClientMessage(touch)).toEqual(touch)
+    expect(
+      parseBrowserClientMessage({ ...touch, phase: 'move' })
+    ).not.toBeNull()
+    expect(
+      parseBrowserClientMessage({
+        ...touch,
+        phase: 'end',
+        points: [touch.points[0]]
+      })
+    ).not.toBeNull()
+    expect(
+      parseBrowserClientMessage({ ...touch, phase: 'cancel', points: [] })
+    ).not.toBeNull()
+    for (const invalid of [
+      { ...touch, points: [] },
+      { ...touch, phase: 'cancel' },
+      { ...touch, points: [touch.points[0], touch.points[0]] },
+      { ...touch, points: [{ id: 1, x: Infinity, y: 0 }] },
+      { ...touch, points: [{ id: -1, x: 0, y: 0 }] },
+      {
+        ...touch,
+        points: Array.from({ length: 11 }, (_, id) => ({ id, x: 0, y: 0 }))
+      }
+    ]) {
+      expect(parseBrowserClientMessage(invalid)).toBeNull()
+    }
+
     expect(
       parseBrowserClientMessage({
         type: 'find',

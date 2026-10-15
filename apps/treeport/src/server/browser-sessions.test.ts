@@ -66,6 +66,10 @@ class FakeBrowser implements BrowserSessionBrowser {
     browsers.push(this)
   }
   async launch() {}
+  async copy() {
+    return null
+  }
+
   async cursor() {
     return 'default' as const
   }
@@ -113,7 +117,9 @@ function fakeLocalBrowser() {
     commands,
     async send(method: string, params?: CdpCommandParameters) {
       commands.push({ method, params: params ?? null })
-      return {}
+      return method === 'Page.getLayoutMetrics'
+        ? { cssVisualViewport: { scale: 2 } }
+        : {}
     },
     async detach() {}
   })
@@ -608,6 +614,50 @@ describe('Browser sessions', () => {
       state: { controlled: false }
     })
 
+    const clipboard = { text: 'website copy button', html: null, png: null }
+    expect(browser.callbacks.clipboard(clipboard)).toBe(false)
+    value.manager.message('second', {
+      type: 'key',
+      phase: 'down',
+      key: 'Enter',
+      modifiers: 0
+    })
+    await vi.waitFor(() =>
+      expect(browser.commands.at(-1)).toEqual({
+        type: 'key',
+        phase: 'down',
+        key: 'Enter',
+        modifiers: 0
+      })
+    )
+    expect(browser.callbacks.clipboard(clipboard)).toBe(true)
+    expect(second.messages.at(-1)).toEqual({
+      type: 'clipboardWrite',
+      clipboard
+    })
+    expect(
+      first.messages.some((message) => message.type === 'clipboardWrite')
+    ).toBe(false)
+    expect(
+      lateObserver.messages.some((message) => message.type === 'clipboardWrite')
+    ).toBe(false)
+    // One input does not grant ongoing background clipboard access.
+    expect(browser.callbacks.clipboard(clipboard)).toBe(false)
+    value.manager.message('second', {
+      type: 'key',
+      phase: 'down',
+      key: 'Space',
+      modifiers: 0
+    })
+    await vi.waitFor(() =>
+      expect(browser.commands.at(-1)).toEqual({
+        type: 'key',
+        phase: 'down',
+        key: 'Space',
+        modifiers: 0
+      })
+    )
+
     const forwardCommands = browser.commands.filter(
       (command) => command.type === 'forward'
     ).length
@@ -628,8 +678,11 @@ describe('Browser sessions', () => {
     expect(
       browser.commands.filter((command) => command.type === 'forward')
     ).toHaveLength(forwardCommands)
+    // A grant from the previous controller cannot write after a handoff.
+    expect(browser.callbacks.clipboard(clipboard)).toBe(false)
 
     await value.manager.dispose()
+    expect(browser.callbacks.clipboard(clipboard)).toBe(false)
     expect(browser.closes).toBe(1)
     expect(first.disconnects).toBe(1)
     expect(second.disconnects).toBe(1)
@@ -1065,10 +1118,61 @@ describe('Browser sessions', () => {
       button: 'left'
     })
     await vi.waitFor(() =>
-      expect(localBrowser.mouse.down).toHaveBeenCalledWith({ button: 'left' })
+      expect(localBrowser.mouse.down).toHaveBeenCalledWith({
+        button: 'left',
+        clickCount: 1
+      })
     )
 
+    expect(localBrowser.mouse.move).toHaveBeenCalledWith(20, 25)
+    value.manager.message('remote', {
+      type: 'wheel',
+      x: 40,
+      y: 50,
+      deltaX: 0,
+      deltaY: -40,
+      modifiers: 2
+    })
+    await vi.waitFor(() =>
+      expect(localBrowser.cdp.commands).toContainEqual({
+        method: 'Input.dispatchMouseEvent',
+        params: {
+          type: 'mouseWheel',
+          x: 20,
+          y: 25,
+          deltaX: 0,
+          deltaY: -40,
+          modifiers: 2
+        }
+      })
+    )
+    value.manager.message('remote', {
+      type: 'touch',
+      phase: 'start',
+      points: [
+        { id: 1, x: 100, y: 200 },
+        { id: 2, x: 300, y: 200 }
+      ]
+    })
+    await vi.waitFor(() =>
+      expect(localBrowser.cdp.commands).toContainEqual({
+        method: 'Input.dispatchTouchEvent',
+        params: {
+          type: 'touchStart',
+          touchPoints: [
+            { id: 1, x: 50, y: 100 },
+            { id: 2, x: 150, y: 100 }
+          ]
+        }
+      })
+    )
     value.manager.close('remote')
+    await vi.waitFor(() =>
+      expect(localBrowser.cdp.commands).toContainEqual({
+        method: 'Input.dispatchTouchEvent',
+        params: { type: 'touchCancel', touchPoints: [] }
+      })
+    )
     const reconnectedRemote = value.transport('remote-reconnected')
     await runEffect(
       value.manager.accept(
@@ -1415,6 +1519,9 @@ describe('Browser sessions', () => {
       value.manager.message('first', { type: 'takeControl' })
       value.manager.message('first', {
         type: 'wheel',
+        x: 10,
+        y: 20,
+        modifiers: 0,
         deltaX: 20,
         deltaY: -30
       })
@@ -1427,38 +1534,91 @@ describe('Browser sessions', () => {
     })
     const boundary: BrowserClientMessage[] = [
       { type: 'pointer', phase: 'move', x: 10, y: 20 },
-      { type: 'wheel', deltaX: 0, deltaY: 40 },
+      { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 40 },
       { type: 'pointer', phase: 'down', x: 10, y: 20, button: 'left' },
       { type: 'resize', width: 800, height: 600 },
       { type: 'pointer', phase: 'up', x: 10, y: 20, button: 'left' },
       { type: 'resize', width: 900, height: 700 },
-      { type: 'key', phase: 'down', key: 'Shift' },
-      { type: 'wheel', deltaX: 0, deltaY: 50 },
-      { type: 'key', phase: 'up', key: 'Shift' }
+      { type: 'key', phase: 'down', key: 'Shift', modifiers: 8 },
+      { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 50 },
+      { type: 'wheel', x: 10, y: 20, modifiers: 2, deltaX: 0, deltaY: -40 },
+      { type: 'wheel', x: 30, y: 20, modifiers: 2, deltaX: 0, deltaY: -40 },
+      { type: 'wheel', x: 30, y: 40, modifiers: 2, deltaX: 0, deltaY: -40 },
+      { type: 'key', phase: 'up', key: 'Shift', modifiers: 0 },
+      { type: 'touch', phase: 'start', points: [{ id: 1, x: 100, y: 100 }] },
+      {
+        type: 'touch',
+        phase: 'start',
+        points: [
+          { id: 1, x: 100, y: 100 },
+          { id: 2, x: 200, y: 100 }
+        ]
+      },
+      {
+        type: 'touch',
+        phase: 'move',
+        points: [
+          { id: 1, x: 90, y: 100 },
+          { id: 2, x: 210, y: 100 }
+        ]
+      },
+      { type: 'touch', phase: 'end', points: [{ id: 1, x: 90, y: 100 }] },
+      { type: 'touch', phase: 'move', points: [{ id: 2, x: 220, y: 100 }] }
     ]
     for (const message of boundary) {
-      value.manager.message('first', message)
+      if (message.type === 'touch' && message.phase === 'move') {
+        for (let index = 0; index < 1_000; index += 1) {
+          value.manager.message('first', message)
+        }
+      } else {
+        value.manager.message('first', message)
+      }
     }
     value.manager.message('second', { type: 'takeControl' })
-    value.manager.message('first', { type: 'wheel', deltaX: 0, deltaY: 999 })
+    value.manager.message('first', {
+      type: 'wheel',
+      x: 10,
+      y: 20,
+      modifiers: 0,
+      deltaX: 0,
+      deltaY: 999
+    })
     value.manager.message('first', { type: 'takeControl' })
-    value.manager.message('first', { type: 'wheel', deltaX: 0, deltaY: 60 })
+    value.manager.message('first', {
+      type: 'wheel',
+      x: 10,
+      y: 20,
+      modifiers: 0,
+      deltaX: 0,
+      deltaY: 60
+    })
     expect(browser.commands).toEqual([])
     Effect.runSync(Deferred.succeed(gate, 'snapshot'))
     await agent
     await vi.waitFor(() =>
       expect(browser.commands.at(-1)).toEqual({
         type: 'wheel',
+        x: 10,
+        y: 20,
+        modifiers: 0,
         deltaX: 0,
         deltaY: 60
       })
     )
     expect(browser.commands).toEqual([
-      { type: 'wheel', deltaX: 20_000, deltaY: -30_000 },
+      {
+        type: 'wheel',
+        x: 10,
+        y: 20,
+        modifiers: 0,
+        deltaX: 20_000,
+        deltaY: -30_000
+      },
       ...boundary,
+      { type: 'touch', phase: 'cancel', points: [] },
       { type: 'resize', width: 1_280, height: 800 },
       { type: 'resize', width: 900, height: 700 },
-      { type: 'wheel', deltaX: 0, deltaY: 60 }
+      { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 60 }
     ])
     expect(first.messages).toContainEqual({
       type: 'navigationError',
@@ -1470,10 +1630,17 @@ describe('Browser sessions', () => {
     })
     browser.commands.length = 0
     value.manager.message('first', { type: 'takeControl' })
-    value.manager.message('first', { type: 'wheel', deltaX: 0, deltaY: 42 })
+    value.manager.message('first', {
+      type: 'wheel',
+      x: 10,
+      y: 20,
+      modifiers: 0,
+      deltaX: 0,
+      deltaY: 42
+    })
     await vi.waitFor(() =>
       expect(browser.commands).toEqual([
-        { type: 'wheel', deltaX: 0, deltaY: 42 }
+        { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 42 }
       ])
     )
     await value.manager.dispose()
@@ -1509,13 +1676,24 @@ describe('Browser sessions', () => {
       ).catch((error: Error) => error.message)
     )
     await expect(pending.at(-1)).resolves.toContain('queue is full')
-    value.manager.message('client', { type: 'key', phase: 'up', key: 'Shift' })
+    value.manager.message('client', {
+      type: 'key',
+      phase: 'up',
+      key: 'Shift',
+      modifiers: 0
+    })
     value.manager.message('client', {
       type: 'pointer',
       phase: 'up',
       x: 10,
       y: 10,
       button: 'left'
+    })
+    value.manager.message('client', { type: 'touch', phase: 'end', points: [] })
+    value.manager.message('client', {
+      type: 'touch',
+      phase: 'cancel',
+      points: []
     })
     expect(client.messages).not.toContainEqual({
       type: 'navigationError',
@@ -1524,7 +1702,8 @@ describe('Browser sessions', () => {
     value.manager.message('client', {
       type: 'key',
       phase: 'down',
-      key: 'Shift'
+      key: 'Shift',
+      modifiers: 8
     })
     expect(client.messages).toContainEqual({
       type: 'navigationError',

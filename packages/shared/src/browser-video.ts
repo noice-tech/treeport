@@ -1,3 +1,5 @@
+import type { BrowserClipboard } from './browser-clipboard.js'
+
 // This function runs only in a Treeport-owned capture document. Keep it self-contained:
 // the daemon and Electron serialize it into their respective isolated renderers.
 async function captureBrowserVideo(
@@ -181,7 +183,8 @@ async function captureBrowserVideo(
 export const BROWSER_VIDEO_CAPTURE_SOURCE = `(${captureBrowserVideo.toString()})`
 
 // Only the private, exact-guest Electron bridge implements these commands.
-export interface BrowserVideoCdpSession {
+export interface BrowserNativeCdpSession {
+  send(method: 'Treeport.copy'): Promise<BrowserClipboard | null>
   send(
     method: 'Treeport.startVideo',
     params: { width: number; height: number }

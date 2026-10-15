@@ -65,6 +65,11 @@ export type DesktopBridge = Readonly<
     runtime: { computerId: string; localBrowser: boolean } | null
     platform: string
     openBrowserDevtools: (panelId: string) => Promise<boolean>
+    inspectBrowserElement: (
+      panelId: string,
+      backendNodeId: number,
+      targetId: string | null
+    ) => Promise<boolean>
     openFileUrl: (url: string) => Promise<DesktopFileActionResult>
     getPathForFile: (file: File) => Promise<string | null>
     onLocalFilePaste: (listener: (paths: string[]) => void) => () => void

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import type {
@@ -11,6 +12,7 @@ import type {
 import {
   browserObservedUrlSchema,
   browserUrlSchema,
+  browserContextResultSchema,
   decodeUnknownOrNull,
   normalizeBrowserTitle,
   normalizeBrowserFaviconUrl,
@@ -18,7 +20,10 @@ import {
 } from '@treeport/shared'
 import type {
   BrowserAgentCommand,
+  BrowserClipboard,
   BrowserClientMessage,
+  BrowserContextResult,
+  BrowserContextActionResult,
   BrowserFrame,
   BrowserSessionState
 } from '@treeport/shared'
@@ -26,6 +31,9 @@ import type {
 import { PlaywrightBrowserVideo } from './browser-video'
 import { browserRuntime } from './browser-runtime'
 import { browserNavigation } from './browser-navigation'
+import { browserKey, browserTouch, browserWheel } from './browser-input'
+import { browserClipboard } from './browser-clipboard'
+import { installBrowserClipboardBridge } from './browser-clipboard-bridge'
 import { browserCursor } from './browser-cursor'
 
 export interface PlaywrightBrowserCallbacks {
@@ -36,6 +44,7 @@ export interface PlaywrightBrowserCallbacks {
     >
   ): void
   frame(frame: Omit<BrowserFrame, 'sequence'>): void
+  clipboard(clipboard: BrowserClipboard): boolean
   popup(url: string): void
   navigationError(message: string, source?: 'video'): void
   crashed(message: string): void
@@ -49,6 +58,49 @@ export interface BrowserInstallStatus {
   channel: 'chromium' | 'chrome'
   launchReady: boolean
   launchError: string | null
+}
+
+// CDP can resolve nodes inside closed shadow roots that composedPath hides.
+// Use the owning target's session, and release the remote object on all paths.
+async function readContextLink(
+  cdp: CDPSession,
+  backendNodeId: number
+): Promise<string | null> {
+  const { object } = await cdp.send('DOM.resolveNode', { backendNodeId })
+  if (!object.objectId) {
+    return null
+  }
+
+  try {
+    const { result } = await cdp.send('Runtime.callFunctionOn', {
+      objectId: object.objectId,
+      arguments: [{ objectId: object.objectId }],
+      functionDeclaration: function (node: Node | null) {
+        while (node) {
+          if (
+            node instanceof HTMLAnchorElement ||
+            node instanceof HTMLAreaElement
+          ) {
+            return node.href || null
+          }
+
+          const root = node.getRootNode()
+          node =
+            node.parentNode ?? (root instanceof ShadowRoot ? root.host : null)
+        }
+        return null
+      }.toString(),
+      returnByValue: true
+    })
+    return decodeUnknownOrNull(
+      browserContextResultSchema.fields.linkUrl,
+      result.value
+    )
+  } finally {
+    await cdp
+      .send('Runtime.releaseObject', { objectId: object.objectId })
+      .catch(() => undefined)
+  }
 }
 
 const DEFAULT_VIEWPORT = { width: 1_280, height: 800 }
@@ -212,6 +264,10 @@ export class PlaywrightBrowserHost {
     })
   }
 
+  copy(page: Page): ReturnType<typeof browserClipboard> {
+    return this.schedule(() => browserClipboard(page))
+  }
+
   getDebuggingEndpoint(): string | null {
     return this.browser?.isConnected() ? this.debuggingEndpoint : null
   }
@@ -267,6 +323,13 @@ export class PlaywrightBrowser {
   private dialogHandler: ((dialog: Dialog) => void) | null = null
   private readonly consoleMessages: string[] = []
   private readonly requests: string[] = []
+  private contextMenu: {
+    id: string
+    linkUrl: string | null
+    backendNodeId: number | null
+    targetId: string | null
+    createdAt: number
+  } | null = null
   private historyRevision = 0
   private titleTimer: NodeJS.Timeout | null = null
   private faviconSource: string | null = null
@@ -373,9 +436,14 @@ export class PlaywrightBrowser {
     })
 
     this.page = page
+    await installBrowserClipboardBridge(page, (clipboard) =>
+      this.callbacks.clipboard(clipboard)
+    )
     await page.setViewportSize(this.stateValue.viewport)
     const cdp = await context.newCDPSession(page)
     this.cdp = cdp
+    // Streamed tabs retain DOM focus even when a different hosted tab is active.
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true })
     // Match Treeport's dark chrome, including sites that switch favicon URLs in JS.
     await cdp.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-color-scheme', value: 'dark' }]
@@ -455,6 +523,7 @@ export class PlaywrightBrowser {
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
       ) {
+        this.contextMenu = null
         this.faviconSource = null
         this.updateState({
           url: request.url(),
@@ -473,7 +542,11 @@ export class PlaywrightBrowser {
         // Command failures without a visible error page are reported separately.
       }
     })
+    page.on('framedetached', () => {
+      this.contextMenu = null
+    })
     page.on('framenavigated', (frame) => {
+      this.contextMenu = null
       if (frame === page.mainFrame()) {
         void this.refreshPageState()
       }
@@ -493,6 +566,7 @@ export class PlaywrightBrowser {
       this.callbacks.crashed('The hosted browser page crashed.')
     )
     this.cdp.on('Page.navigatedWithinDocument', () => {
+      this.contextMenu = null
       void this.refreshPageState()
     })
     await this.cdp.send('Page.enable')
@@ -638,10 +712,230 @@ export class PlaywrightBrowser {
       })
   }
 
-  async command(message: BrowserClientMessage): Promise<void> {
+  async copy(): ReturnType<typeof browserClipboard> {
+    if (!this.page || this.page.isClosed()) {
+      throw new Error('The hosted browser page is unavailable.')
+    }
+
+    return this.host.copy(this.page)
+  }
+
+  async command(
+    message: BrowserClientMessage
+  ): Promise<void | BrowserContextResult | BrowserContextActionResult> {
     const page = this.page
     if (!page || page.isClosed()) {
       throw new Error('The hosted browser page is unavailable.')
+    }
+
+    if (message.type === 'dismissContext') {
+      if (this.contextMenu?.id === message.contextId) {
+        this.contextMenu = null
+      }
+
+      return
+    }
+
+    if (message.type === 'contextMenu') {
+      const context: NonNullable<typeof this.contextMenu> = {
+        id: randomUUID(),
+        linkUrl: null,
+        backendNodeId: null,
+        targetId: null,
+        createdAt: Date.now()
+      }
+      this.contextMenu = context
+      // Observe the real Chromium event in every frame, including cross-origin
+      // frames. Do not synthesize another contextmenu or suppress the site's one.
+      const observers = await Promise.all(
+        page.frames().map((frame) =>
+          frame
+            .evaluateHandle(() => {
+              interface CapturedContextMenu {
+                event: MouseEvent | null
+                linkUrl: string | null
+                listener: (event: MouseEvent) => void
+              }
+              const captured: CapturedContextMenu = {
+                event: null,
+                linkUrl: null,
+                listener: (event: MouseEvent) => {
+                  if (!event.isTrusted) {
+                    return
+                  }
+
+                  captured.event = event
+                  for (const node of event.composedPath()) {
+                    if (
+                      node instanceof HTMLAnchorElement ||
+                      node instanceof HTMLAreaElement
+                    ) {
+                      captured.linkUrl = node.href || null
+                      break
+                    }
+                  }
+                }
+              }
+              window.addEventListener('contextmenu', captured.listener, {
+                capture: true
+              })
+              return captured
+            })
+            .then((observer) => ({ frame, observer }))
+            .catch(() => null)
+        )
+      )
+      let captured: { prevented: boolean; linkUrl: string | null } | null = null
+      try {
+        // CDP hit testing pierces shadow roots and reports a remote backend node,
+        // never a node in the viewer's streamed canvas.
+        const hit = await this.cdp
+          ?.send('DOM.getNodeForLocation', {
+            x: Math.round(message.x),
+            y: Math.round(message.y),
+            includeUserAgentShadowDOM: true
+          })
+          .catch(() => null)
+        context.backendNodeId = hit?.backendNodeId ?? null
+        if (this.cdp && context.backendNodeId !== null) {
+          context.linkUrl = await readContextLink(
+            this.cdp,
+            context.backendNodeId
+          ).catch(() => null)
+        }
+
+        await page.mouse.click(message.x, message.y, { button: 'right' })
+        for (const entry of observers) {
+          const value = await entry?.observer
+            .evaluate((observed) =>
+              observed.event
+                ? {
+                    prevented: observed.event.defaultPrevented,
+                    linkUrl: observed.linkUrl,
+                    x: observed.event.clientX,
+                    y: observed.event.clientY
+                  }
+                : null
+            )
+            .catch(() => null)
+          if (value && entry) {
+            captured = value
+            if (entry.frame !== page.mainFrame()) {
+              // Page-target hit testing stops at out-of-process iframes. Keep
+              // that frame's target identity to route inspection in DevTools.
+              const frameCdp = await this.context
+                ?.newCDPSession(entry.frame)
+                .catch(() => null)
+              if (frameCdp) {
+                try {
+                  const frameHit = await frameCdp
+                    .send('DOM.getNodeForLocation', {
+                      x: Math.round(value.x),
+                      y: Math.round(value.y),
+                      includeUserAgentShadowDOM: true
+                    })
+                    .catch(() => null)
+                  const info = await frameCdp.send('Target.getTargetInfo')
+                  context.backendNodeId = frameHit?.backendNodeId ?? null
+                  context.targetId = info.targetInfo.targetId
+                  if (context.backendNodeId !== null) {
+                    context.linkUrl = await readContextLink(
+                      frameCdp,
+                      context.backendNodeId
+                    ).catch(() => null)
+                  }
+                } finally {
+                  await frameCdp.detach().catch(() => undefined)
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        await Promise.all(
+          observers.map(async (entry) => {
+            await entry?.observer
+              .evaluate((observed) => {
+                window.removeEventListener('contextmenu', observed.listener, {
+                  capture: true
+                })
+              })
+              .catch(() => undefined)
+            await entry?.observer.dispose().catch(() => undefined)
+          })
+        )
+      }
+      if (!captured || captured.prevented || this.contextMenu !== context) {
+        this.contextMenu = null
+        return {
+          type: 'contextResult',
+          requestId: message.requestId,
+          contextId: null,
+          linkUrl: null,
+          canOpenLink: false,
+          canInspect: false
+        }
+      }
+
+      context.linkUrl = decodeUnknownOrNull(
+        browserContextResultSchema.fields.linkUrl,
+        captured.linkUrl ?? context.linkUrl
+      )
+      return {
+        type: 'contextResult',
+        requestId: message.requestId,
+        contextId: context.id,
+        linkUrl: context.linkUrl,
+        canOpenLink:
+          decodeUnknownOrNull(browserUrlSchema, context.linkUrl) !== null,
+        canInspect: context.backendNodeId !== null
+      }
+    }
+
+    if (message.type === 'contextAction') {
+      const context = this.contextMenu
+      this.contextMenu = null
+      if (
+        !context ||
+        context.id !== message.contextId ||
+        Date.now() - context.createdAt > 30_000
+      ) {
+        throw new Error(
+          'The browser context menu is stale. Right-click the page again.'
+        )
+      }
+
+      if (message.action === 'openLink') {
+        const url = decodeUnknownOrNull(browserUrlSchema, context.linkUrl)
+        if (!url) {
+          throw new Error('This link cannot be opened in Browser.')
+        }
+
+        this.callbacks.popup(url)
+      } else if (
+        message.action !== 'copyLink' &&
+        message.action !== 'inspect'
+      ) {
+        await this.command({ type: message.action })
+      }
+
+      return {
+        type: 'contextActionResult',
+        requestId: message.requestId,
+        action: message.action,
+        linkUrl: message.action === 'copyLink' ? context.linkUrl : null,
+        backendNodeId:
+          message.action === 'inspect' ? context.backendNodeId : null,
+        targetId: message.action === 'inspect' ? context.targetId : null
+      }
+    }
+
+    // Other input invalidates a previously resolved location/link.
+    if (
+      message.type !== 'frameAck' &&
+      message.type !== 'requestVideoKeyframe'
+    ) {
+      this.contextMenu = null
     }
 
     if (message.type === 'navigate') {
@@ -730,30 +1024,40 @@ export class PlaywrightBrowser {
     }
 
     if (message.type === 'pointer') {
-      if (message.phase === 'move') {
-        await page.mouse.move(message.x, message.y)
-      } else if (message.phase === 'down') {
-        await page.mouse.move(message.x, message.y)
-        await page.mouse.down({ button: message.button ?? 'left' })
-      } else {
-        await page.mouse.move(message.x, message.y)
-        await page.mouse.up({ button: message.button ?? 'left' })
+      const { cssVisualViewport } = await this.cdp!.send(
+        'Page.getLayoutMetrics'
+      )
+      await page.mouse.move(
+        message.x / cssVisualViewport.scale,
+        message.y / cssVisualViewport.scale
+      )
+      if (message.phase === 'down') {
+        await page.mouse.down({
+          button: message.button ?? 'left',
+          clickCount: message.clickCount ?? 1
+        })
+      } else if (message.phase === 'up') {
+        await page.mouse.up({
+          button: message.button ?? 'left',
+          clickCount: message.clickCount ?? 1
+        })
       }
 
+      return
+    }
+
+    if (message.type === 'touch') {
+      await browserTouch(this.cdp!, message)
       return
     }
 
     if (message.type === 'wheel') {
-      await page.mouse.wheel(message.deltaX, message.deltaY)
+      await browserWheel(this.cdp!, message)
       return
     }
 
     if (message.type === 'key') {
-      if (message.phase === 'down') {
-        await page.keyboard.down(message.key)
-      } else {
-        await page.keyboard.up(message.key)
-      }
+      await browserKey(page, message)
 
       return
     }

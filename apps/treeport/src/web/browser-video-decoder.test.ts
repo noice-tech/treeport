@@ -14,8 +14,11 @@ it('paints JPEGs under sustained load, decodes only the latest pending image, an
   vi.stubGlobal('createImageBitmap', decode)
   // JPEG rendering does not require a VideoFrame conversion.
   vi.stubGlobal('VideoFrame', undefined)
+  const draw = vi.fn<ConstructorParameters<typeof BrowserVideoDecoder>[0]>(
+    (frame) => displayed.push(frame.timestamp)
+  )
   const decoder = new BrowserVideoDecoder(
-    (frame) => displayed.push(frame.timestamp),
+    draw,
     (message) => messages.push(message),
     () => {}
   )
@@ -34,9 +37,17 @@ it('paints JPEGs under sustained load, decodes only the latest pending image, an
   expect(decode).toHaveBeenCalledTimes(1)
   expect(messages).toEqual([{ type: 'frameAck', sequence: 2 }])
   const close = vi.fn()
-  resolveBitmaps[0]!({ close, width: 800, height: 600 })
+  // A cropped bitmap must retain the full source viewport without delaying paint.
+  resolveBitmaps[0]!({ close, width: 800, height: 513 })
   await vi.waitFor(() => expect(decode).toHaveBeenCalledTimes(2))
   expect(displayed).toEqual([1])
+  expect(draw).toHaveBeenCalledWith(
+    expect.objectContaining({
+      displayWidth: 800,
+      displayHeight: 513,
+      viewport: { width: 800, height: 600 }
+    })
+  )
   decoder.receive(frame(4))
   decoder.dispose()
   resolveBitmaps[1]!({ close, width: 800, height: 600 })

@@ -20,6 +20,8 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     title: async () => 'localhost',
     isClosed: () => false,
     mainFrame: () => frame,
+    exposeBinding: vi.fn(async () => undefined),
+    addInitScript: vi.fn(async () => undefined),
     setViewportSize: vi.fn(async () => undefined)
   })
   const host = testAccess<PlaywrightBrowserHost>({
@@ -36,6 +38,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     state: (state) => states.push(state),
     frame: () => undefined,
     popup: () => undefined,
+    clipboard: () => false,
     navigationError,
     crashed: () => undefined
   })
@@ -99,6 +102,8 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
     url: () => 'https://example.com/unsaved',
     title: async () => 'Unsaved work',
     isClosed: () => false,
+    exposeBinding: vi.fn(async () => undefined),
+    addInitScript: vi.fn(async () => undefined),
     setViewportSize: async () => undefined,
     reload: () =>
       new Promise((_resolve, reject) => {
@@ -120,6 +125,7 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
     state: () => undefined,
     frame: () => undefined,
     popup: () => undefined,
+    clipboard: () => false,
     navigationError: () => undefined,
     crashed: () => undefined
   })

@@ -5,8 +5,7 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type KeyboardEvent,
-  type PointerEvent
+  type KeyboardEvent
 } from 'react'
 import { traceBrowserOpen } from '../../browser-open-tracing'
 import {
@@ -26,6 +25,9 @@ import {
 } from '@heroicons/react/16/solid'
 import type {
   BrowserPanel,
+  BrowserClipboard,
+  BrowserContextResult,
+  BrowserContextAction,
   BrowserServerMessage,
   BrowserSessionState,
   WorktreeListener,
@@ -40,6 +42,14 @@ import {
 import { parseResponse, rpc } from '../../api'
 import { cn } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator
+} from '../../components/ui/context-menu'
 import { Empty, EmptyDescription, EmptyTitle } from '../../components/ui/empty'
 import { Input } from '../../components/ui/input'
 import { NativeSelect } from '../../components/ui/native-select'
@@ -53,6 +63,7 @@ import {
   type BrowserPanelConnection
 } from '../../browser-session-client'
 import { getDesktopRuntime } from '../../desktop-runtime'
+import { writeBrowserClipboard } from '../../browser-clipboard'
 import { BrowserVideoDecoder } from '../../browser-video-decoder'
 import { LocalBrowserWebview } from './local-browser-webview'
 
@@ -129,8 +140,20 @@ export function BrowserPanelWorkspace({
   const inputRef = useRef<HTMLInputElement>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserPanelConnection | null>(null)
+  const pendingCopiesRef = useRef(
+    new Map<
+      string,
+      {
+        resolve(clipboard: BrowserClipboard): void
+        reject(reason: Error): void
+      }
+    >()
+  )
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
+  const displayedViewportRef = useRef<{ width: number; height: number } | null>(
+    null
+  )
   const viewportOverrideRef = useRef<{ width: number; height: number } | null>(
     null
   )
@@ -141,15 +164,22 @@ export function BrowserPanelWorkspace({
     height: number
     scale: number
   } | null>(null)
-  const pointerActiveRef = useRef(false)
-  const touchRef = useRef<{
-    pointerId: number
-    startX: number
-    startY: number
-    x: number
-    y: number
-    scrolling: boolean
+  const contextRequestRef = useRef<string | null>(null)
+  const contextTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const contextRef = useRef<BrowserContextResult | null>(null)
+  const contextActionRef = useRef<{
+    requestId: string
+    resolveCopy: ((value: Blob) => void) | null
+    rejectCopy: ((reason: Error) => void) | null
+    timeout: ReturnType<typeof setTimeout> | null
   } | null>(null)
+  const [contextMenu, setContextMenu] = useState<BrowserContextResult | null>(
+    null
+  )
+  const pointerActiveRef = useRef(false)
+  const touchesRef = useRef(
+    new Map<number, { id: number; x: number; y: number }>()
+  )
   const addressPointerSelectAllRef = useRef(false)
   const addressDirtyRef = useRef(false)
   const autoFocusAddressRef = useRef(panel.url === 'about:blank')
@@ -187,6 +217,8 @@ export function BrowserPanelWorkspace({
   const [findOpen, setFindOpen] = useState(false)
   const [findValue, setFindValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [clipboardToCopy, setClipboardToCopy] =
+    useState<BrowserClipboard | null>(null)
   const [failure, setFailure] = useState<{
     message: string
   } | null>(null)
@@ -275,6 +307,117 @@ export function BrowserPanelWorkspace({
     []
   )
 
+  const cancelTouches = useCallback(() => {
+    if (touchesRef.current.size === 0) {
+      return
+    }
+
+    touchesRef.current.clear()
+    send({ type: 'touch', phase: 'cancel', points: [] })
+  }, [send])
+
+  const dismissContext = useCallback(() => {
+    contextRequestRef.current = null
+    if (contextTimeoutRef.current) {
+      clearTimeout(contextTimeoutRef.current)
+      contextTimeoutRef.current = null
+    }
+
+    if (contextRef.current?.contextId) {
+      send({ type: 'dismissContext', contextId: contextRef.current.contextId })
+    }
+
+    contextRef.current = null
+    setContextMenu(null)
+  }, [send])
+
+  useEffect(() => {
+    if (!active || inputBlocked) {
+      dismissContext()
+    }
+
+    const cancelPending = () => {
+      if (contextRequestRef.current) {
+        dismissContext()
+      }
+    }
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        cancelPending()
+      }
+    }
+    document.addEventListener('pointerdown', cancelPending, true)
+    document.addEventListener('keydown', onKey, true)
+    window.addEventListener('blur', dismissContext)
+    return () => {
+      document.removeEventListener('pointerdown', cancelPending, true)
+      document.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('blur', dismissContext)
+      dismissContext()
+      contextActionRef.current?.rejectCopy?.(
+        new Error('Browser context closed.')
+      )
+      contextActionRef.current = null
+    }
+  }, [active, inputBlocked, connectionRevision, dismissContext])
+
+  const contextAction = (action: BrowserContextAction) => {
+    const context = contextRef.current
+    if (!context?.contextId || inputBlocked || !active) {
+      return
+    }
+
+    const requestId = crypto.randomUUID()
+    const pending: NonNullable<typeof contextActionRef.current> = {
+      requestId,
+      resolveCopy: null,
+      rejectCopy: null,
+      timeout: null
+    }
+    contextActionRef.current = pending
+    if (action === 'copyLink') {
+      if (!navigator.clipboard || !window.ClipboardItem) {
+        setError('Clipboard access is unavailable in this viewer.')
+        contextActionRef.current = null
+        dismissContext()
+        return
+      }
+
+      // Start the clipboard operation in the user's activation, but supply its
+      // text only after the controller-checked server action validates context.
+      const text = new Promise<Blob>((resolve, reject) => {
+        pending.resolveCopy = resolve
+        pending.rejectCopy = reject
+      })
+      void navigator.clipboard
+        .write([new ClipboardItem({ 'text/plain': text })])
+        .catch(() =>
+          setError(
+            'Could not copy the link address. Clipboard access is unavailable.'
+          )
+        )
+    }
+
+    send({
+      type: 'contextAction',
+      requestId,
+      contextId: context.contextId,
+      action
+    })
+    // The action consumes its context; closing the UI must not cancel its reply.
+    contextRef.current = null
+    dismissContext()
+    pending.timeout = setTimeout(() => {
+      if (contextActionRef.current !== pending) {
+        return
+      }
+
+      contextActionRef.current = null
+      pending.rejectCopy?.(new Error('Browser action timed out.'))
+      setError('The browser context action timed out. Right-click to retry.')
+    }, 10_000)
+  }
+
   const focusPage = useCallback(() => {
     const page =
       canvasRef.current ??
@@ -335,7 +478,107 @@ export function BrowserPanelWorkspace({
 
   const receiveMessage = useCallback(
     (message: BrowserServerMessage) => {
+      if (message.type === 'clipboardWrite') {
+        if (
+          !stateRef.current?.controlled ||
+          !canvasRef.current ||
+          sectionRef.current?.inert
+        ) {
+          return
+        }
+
+        const clipboard = message.clipboard
+        setError(null)
+        setClipboardToCopy(clipboard)
+        void writeBrowserClipboard(clipboard)
+          .then(() =>
+            setClipboardToCopy((current) =>
+              current === clipboard ? null : current
+            )
+          )
+          .catch((cause: unknown) =>
+            setError(
+              cause instanceof Error
+                ? `Couldn’t copy: ${cause.message}`
+                : 'Couldn’t copy. Click Copy to clipboard to retry.'
+            )
+          )
+        return
+      }
+
+      if (message.type === 'copyResult') {
+        const pending = pendingCopiesRef.current.get(message.requestId)
+        if (message.error !== null || message.clipboard === null) {
+          pending?.reject(
+            new Error(message.error ?? 'Nothing is selected to copy.')
+          )
+        } else {
+          pending?.resolve(message.clipboard)
+        }
+
+        return
+      }
+
       const canvas = canvasRef.current
+      if (message.type === 'contextResult') {
+        if (message.requestId !== contextRequestRef.current) {
+          if (message.contextId) {
+            send({ type: 'dismissContext', contextId: message.contextId })
+          }
+
+          return
+        }
+
+        contextRequestRef.current = null
+        if (contextTimeoutRef.current) {
+          clearTimeout(contextTimeoutRef.current)
+          contextTimeoutRef.current = null
+        }
+
+        contextRef.current = message.contextId ? message : null
+        setContextMenu(contextRef.current)
+        return
+      }
+
+      if (message.type === 'contextActionResult') {
+        const pending = contextActionRef.current
+        if (message.requestId !== pending?.requestId) {
+          return
+        }
+
+        contextActionRef.current = null
+        if (pending.timeout) {
+          clearTimeout(pending.timeout)
+        }
+
+        if (message.action === 'copyLink') {
+          if (message.linkUrl) {
+            pending.resolveCopy?.(
+              new Blob([message.linkUrl], { type: 'text/plain' })
+            )
+          } else {
+            pending.rejectCopy?.(new Error('The link is unavailable.'))
+          }
+        }
+
+        if (message.action === 'inspect' && message.backendNodeId !== null) {
+          void window.treeportDesktop
+            ?.inspectBrowserElement?.(
+              panel.id,
+              message.backendNodeId,
+              message.targetId
+            )
+            .then((opened) => {
+              if (!opened) {
+                setError('Remote element inspection is unavailable.')
+              }
+            })
+            .catch(() => setError('Could not open remote DevTools.'))
+        }
+
+        return
+      }
+
       if (message.type === 'cursor') {
         if (canvas && stateRef.current?.controlled) {
           canvas.style.cursor = message.cursor
@@ -351,12 +594,30 @@ export function BrowserPanelWorkspace({
       ) {
         const previousUrl = stateRef.current?.url ?? panel.url
         if (
+          message.type === 'ready' ||
+          !message.state.controlled ||
+          message.state.loading ||
+          message.state.url !== previousUrl
+        ) {
+          dismissContext()
+          contextActionRef.current?.rejectCopy?.(
+            new Error('The browser context changed.')
+          )
+          contextActionRef.current = null
+        }
+
+        if (
           canvas &&
           (message.type === 'ready' ||
             !message.state.controlled ||
             message.state.url !== previousUrl)
         ) {
           canvas.style.cursor = 'default'
+          if (message.state.controlled && message.state.url !== previousUrl) {
+            cancelTouches()
+          } else {
+            touchesRef.current.clear()
+          }
         }
 
         stateRef.current = message.state
@@ -426,6 +687,11 @@ export function BrowserPanelWorkspace({
         canvas.style.cursor = 'default'
       }
 
+      dismissContext()
+      contextActionRef.current?.rejectCopy?.(
+        new Error('The browser action failed.')
+      )
+      contextActionRef.current = null
       onLoadingChange(panel.id, false)
       if (
         message.type === 'browserUnavailable' ||
@@ -444,7 +710,14 @@ export function BrowserPanelWorkspace({
       pendingNavigationRef.current = null
       setError(message.type === 'closed' ? message.reason : message.message)
     },
-    [onLoadingChange, onFaviconChange, panel.id]
+    [
+      cancelTouches,
+      dismissContext,
+      send,
+      onLoadingChange,
+      onFaviconChange,
+      panel.id
+    ]
   )
 
   useEffect(() => {
@@ -462,15 +735,26 @@ export function BrowserPanelWorkspace({
           return
         }
 
-        if (
-          canvas.width !== frame.displayWidth ||
-          canvas.height !== frame.displayHeight
-        ) {
-          canvas.width = frame.displayWidth
-          canvas.height = frame.displayHeight
+        const width = frame.viewport?.width ?? frame.displayWidth
+        const height = frame.viewport?.height ?? frame.displayHeight
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width
+          canvas.height = height
         }
 
-        drawing.drawImage(frame.image, 0, 0)
+        // JPEGs span the viewport width, but Chrome can briefly crop their
+        // bottom or retain the previous height after resizing. Scale uniformly
+        // by width and keep the origin fixed; fitting/centering by height would
+        // move the page underneath the pointer. Uniform downscaling and HiDPI
+        // screenshots use the same mapping without waiting for another frame.
+        const scale = width / frame.displayWidth
+        const imageHeight = frame.displayHeight * scale
+        if (imageHeight < height) {
+          drawing.clearRect(0, 0, width, height)
+        }
+
+        drawing.drawImage(frame.image, 0, 0, width, imageHeight)
+        displayedViewportRef.current = frame.viewport ?? viewportRef.current
         if (firstFrame) {
           firstFrame = false
           traceBrowserOpen(panel.id, 'browser.hosted.first_frame_drawn')
@@ -497,6 +781,11 @@ export function BrowserPanelWorkspace({
     })
     connectionRef.current = connection
     return () => {
+      if (touchesRef.current.size > 0) {
+        touchesRef.current.clear()
+        connection.send({ type: 'touch', phase: 'cancel', points: [] })
+      }
+
       if (connectionRef.current === connection) {
         connectionRef.current = null
       }
@@ -505,6 +794,13 @@ export function BrowserPanelWorkspace({
         canvasRef.current.style.cursor = 'default'
       }
 
+      for (const pending of pendingCopiesRef.current.values()) {
+        pending.reject(
+          new Error('Browser disconnected before copying finished.')
+        )
+      }
+
+      pendingCopiesRef.current.clear()
       decoder.dispose()
       connection.dispose()
     }
@@ -568,12 +864,24 @@ export function BrowserPanelWorkspace({
   )
 
   useEffect(() => {
+    cancelTouches()
     if (!localBrowser) {
       connectionRef.current?.setVisible(active && !inputBlocked)
     }
 
-    touchRef.current = null
-  }, [active, connectionRevision, inputBlocked, localBrowser])
+    const visibility = () => {
+      if (document.hidden) {
+        cancelTouches()
+      }
+    }
+    window.addEventListener('blur', cancelTouches)
+    document.addEventListener('visibilitychange', visibility)
+    return () => {
+      window.removeEventListener('blur', cancelTouches)
+      document.removeEventListener('visibilitychange', visibility)
+      cancelTouches()
+    }
+  }, [active, cancelTouches, connectionRevision, inputBlocked, localBrowser])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -813,22 +1121,44 @@ export function BrowserPanelWorkspace({
     }
   }
 
-  const point = (event: PointerEvent<HTMLCanvasElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const viewport = viewportRef.current
-    const scale = Math.min(
-      bounds.width / viewport.width,
-      bounds.height / viewport.height
-    )
-    const width = viewport.width * scale
-    const height = viewport.height * scale
-    const left = bounds.left + (bounds.width - width) / 2
-    const top = bounds.top + (bounds.height - height) / 2
-    return {
-      x: Math.max(0, Math.min(viewport.width, (event.clientX - left) / scale)),
-      y: Math.max(0, Math.min(viewport.height, (event.clientY - top) / scale))
-    }
-  }
+  const point = useCallback(
+    (event: {
+      currentTarget: HTMLCanvasElement
+      clientX: number
+      clientY: number
+    }) => {
+      const canvas = event.currentTarget
+      const bounds = canvas.getBoundingClientRect()
+      // State can arrive before its image. Hit-test the geometry actually drawn.
+      const viewport = displayedViewportRef.current ?? viewportRef.current
+      const image = displayedViewportRef.current ? canvas : viewport
+      const scale = Math.min(
+        bounds.width / image.width,
+        bounds.height / image.height
+      )
+      const width = image.width * scale
+      const height = image.height * scale
+      const left = bounds.left + (bounds.width - width) / 2
+      const top = bounds.top + (bounds.height - height) / 2
+      return {
+        x: Math.max(
+          0,
+          Math.min(
+            viewport.width,
+            ((event.clientX - left) / width) * viewport.width
+          )
+        ),
+        y: Math.max(
+          0,
+          Math.min(
+            viewport.height,
+            ((event.clientY - top) / height) * viewport.height
+          )
+        )
+      }
+    },
+    []
+  )
 
   const button = (value: number): 'left' | 'right' | 'middle' =>
     value === 2 ? 'right' : value === 1 ? 'middle' : 'left'
@@ -842,6 +1172,62 @@ export function BrowserPanelWorkspace({
     event: KeyboardEvent<HTMLCanvasElement>,
     phase: 'down' | 'up'
   ) => {
+    const isCopyShortcut =
+      event.key.toLowerCase() === 'c' &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey
+    if (isCopyShortcut) {
+      event.preventDefault()
+      if (phase !== 'down' || event.repeat) {
+        return
+      }
+
+      if (!connectionRef.current || inputBlocked) {
+        setError('Copy is unavailable. Reconnect, then retry.')
+        return
+      }
+
+      setClipboardToCopy(null)
+      setError(null)
+      const requestId = crypto.randomUUID()
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const result = new Promise<BrowserClipboard>((resolve, reject) => {
+        pendingCopiesRef.current.set(requestId, { resolve, reject })
+        timer = setTimeout(
+          () =>
+            reject(new Error('Copy timed out. Select the text and try again.')),
+          10_000
+        )
+        send({ type: 'takeControl' })
+        send({ type: 'copy', requestId })
+      }).finally(() => {
+        if (timer !== null) {
+          clearTimeout(timer)
+        }
+
+        pendingCopiesRef.current.delete(requestId)
+      })
+
+      void result
+        .then((clipboard) => {
+          // A browser may require a fresh gesture once the remote response has
+          // arrived. Retain the exact payload for the explicit retry button.
+          setClipboardToCopy(clipboard)
+          return writeBrowserClipboard(clipboard).then(() =>
+            setClipboardToCopy(null)
+          )
+        })
+        .catch((cause: unknown) =>
+          setError(
+            cause instanceof Error
+              ? `Couldn’t copy: ${cause.message}`
+              : 'Couldn’t copy the selected content. Try again.'
+          )
+        )
+      return
+    }
+
     const isPasteShortcut =
       event.key.toLowerCase() === 'v' &&
       (event.ctrlKey || event.metaKey) &&
@@ -861,7 +1247,16 @@ export function BrowserPanelWorkspace({
       send({ type: 'takeControl' })
     }
 
-    send({ type: 'key', phase, key: event.key })
+    send({
+      type: 'key',
+      phase,
+      key: event.key,
+      modifiers:
+        (event.altKey ? 1 : 0) |
+        (event.ctrlKey ? 2 : 0) |
+        (event.metaKey ? 4 : 0) |
+        (event.shiftKey ? 8 : 0)
+    })
   }
 
   useEffect(() => {
@@ -884,6 +1279,16 @@ export function BrowserPanelWorkspace({
             : 1
       send({
         type: 'wheel',
+        ...point({
+          currentTarget: canvas,
+          clientX: event.clientX,
+          clientY: event.clientY
+        }),
+        modifiers:
+          (event.altKey ? 1 : 0) |
+          (event.ctrlKey ? 2 : 0) |
+          (event.metaKey ? 4 : 0) |
+          (event.shiftKey ? 8 : 0),
         deltaX: Math.max(-10_000, Math.min(10_000, event.deltaX * unit)),
         deltaY: Math.max(-10_000, Math.min(10_000, event.deltaY * unit))
       })
@@ -892,7 +1297,7 @@ export function BrowserPanelWorkspace({
     // containing workspace from scrolling along with the streamed page.
     canvas.addEventListener('wheel', wheel, { passive: false })
     return () => canvas.removeEventListener('wheel', wheel)
-  }, [active, inputBlocked, localBrowser, send])
+  }, [active, inputBlocked, localBrowser, point, send])
 
   const candidates = new Map<string, { url: URL; listener: WorktreeListener }>()
   for (const listener of listeners?.listeners ?? []) {
@@ -1112,7 +1517,7 @@ export function BrowserPanelWorkspace({
           spellCheck={false}
           name="url"
           aria-label="Application URL"
-          className="min-w-0 flex-1 rounded-full focus:ring-2 focus:ring-cyan-400 @max-[40rem]/browser-toolbar:h-8"
+          className="min-w-0 flex-1 rounded-full focus-visible:ring-border @max-[40rem]/browser-toolbar:h-8"
           placeholder="Search or enter URL"
           maxLength={4_096}
           value={inputValue}
@@ -1547,9 +1952,33 @@ export function BrowserPanelWorkspace({
         </p>
       ) : null}
       {error ? (
-        <p className="bg-red-950 px-2.5 py-1.5 text-red-200" role="alert">
-          {error}
-        </p>
+        <div
+          className="flex items-center gap-2 bg-destructive/10 px-2.5 py-1.5 text-destructive"
+          role="alert"
+        >
+          <span>{error}</span>
+          {clipboardToCopy ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void writeBrowserClipboard(clipboardToCopy)
+                  .then(() => {
+                    setClipboardToCopy(null)
+                    setError(null)
+                  })
+                  .catch(() =>
+                    setError(
+                      'Clipboard access was denied. Allow clipboard access for Treeport, then retry.'
+                    )
+                  )
+              }}
+            >
+              Copy to clipboard
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       {state?.hasController && !state.controlled ? (
         <p className="bg-amber-950 px-2.5 py-1.5 text-amber-200" role="status">
@@ -1845,202 +2274,304 @@ export function BrowserPanelWorkspace({
                 onFocusSurface={onFocusSurface}
               />
             ) : (
-              <canvas
-                ref={canvasRef}
-                tabIndex={0}
-                className={cn(
-                  'block size-full touch-pinch-zoom select-none bg-zinc-950 object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300',
-                  viewportOverride && 'ring-1 ring-border'
-                )}
-                aria-label="Browser viewport. Streamed page content is not available to assistive technology."
-                onFocus={onFocusSurface}
-                onPointerMove={(event) => {
-                  if (event.pointerType === 'touch') {
-                    const touch = touchRef.current
-                    if (!touch || touch.pointerId !== event.pointerId) {
-                      return
-                    }
+              <ContextMenu
+                open={contextMenu !== null}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    dismissContext()
+                  }
+                }}
+              >
+                <ContextMenuTrigger asChild disabled={inputBlocked || !active}>
+                  <canvas
+                    ref={canvasRef}
+                    tabIndex={0}
+                    className={cn(
+                      'block size-full touch-none select-none bg-zinc-950 object-contain outline-none',
+                      viewportOverride && 'ring-1 ring-border'
+                    )}
+                    aria-label="Browser viewport. Streamed page content is not available to assistive technology."
+                    onFocus={onFocusSurface}
+                    onPointerMove={(event) => {
+                      if (contextRequestRef.current || contextRef.current) {
+                        return
+                      }
 
-                    // Wait for a deliberate swipe before scrolling; a tap must not
-                    // press a link (or start a drag) until the finger is lifted.
-                    if (!touch.scrolling) {
+                      if (event.pointerType === 'touch') {
+                        if (!touchesRef.current.has(event.pointerId)) {
+                          return
+                        }
+
+                        touchesRef.current.set(event.pointerId, {
+                          id: event.pointerId,
+                          ...point(event)
+                        })
+                        send({
+                          type: 'touch',
+                          phase: 'move',
+                          points: [...touchesRef.current.values()]
+                        })
+                        return
+                      }
+
                       if (
-                        Math.hypot(
-                          event.clientX - touch.startX,
-                          event.clientY - touch.startY
-                        ) < 8
+                        !stateRef.current?.controlled &&
+                        !pointerActiveRef.current
                       ) {
                         return
                       }
 
-                      touch.scrolling = true
-                      // Wheel input targets the remote cursor, including nested
-                      // scrollers. Keep it at the gesture's starting point.
+                      send({ type: 'pointer', phase: 'move', ...point(event) })
+                    }}
+                    onPointerLeave={(event) => {
+                      event.currentTarget.style.cursor = 'default'
+                    }}
+                    onPointerDown={(event) => {
+                      if (
+                        inputBlocked ||
+                        !active ||
+                        (event.pointerType === 'touch' &&
+                          touchesRef.current.size >= 10)
+                      ) {
+                        return
+                      }
+
+                      // Mouse events carry the native multi-click count; cancelling
+                      // pointerdown would suppress those compatibility events.
+                      if (event.pointerType === 'touch') {
+                        event.preventDefault()
+                      }
+
+                      onFocusSurface()
+                      event.currentTarget.focus({ preventScroll: true })
+                      if (event.button === 2) {
+                        return
+                      }
+
+                      event.currentTarget.setPointerCapture(event.pointerId)
+                      if (event.pointerType === 'touch') {
+                        if (touchesRef.current.size === 0) {
+                          send({ type: 'takeControl' })
+                        }
+
+                        touchesRef.current.set(event.pointerId, {
+                          id: event.pointerId,
+                          ...point(event)
+                        })
+                        send({
+                          type: 'touch',
+                          phase: 'start',
+                          points: [...touchesRef.current.values()]
+                        })
+                        return
+                      }
+
+                      pointerActiveRef.current = true
+                      send({ type: 'takeControl' })
+                    }}
+                    onPointerUp={(event) => {
+                      event.preventDefault()
+                      if (event.button === 2) {
+                        return
+                      }
+
+                      if (event.pointerType === 'touch') {
+                        if (touchesRef.current.delete(event.pointerId)) {
+                          send({
+                            type: 'touch',
+                            phase: 'end',
+                            points: [{ id: event.pointerId, ...point(event) }]
+                          })
+                        }
+
+                        if (
+                          event.currentTarget.hasPointerCapture(event.pointerId)
+                        ) {
+                          event.currentTarget.releasePointerCapture(
+                            event.pointerId
+                          )
+                        }
+
+                        return
+                      }
+
+                      pointerActiveRef.current = false
+                      if (
+                        event.currentTarget.hasPointerCapture(event.pointerId)
+                      ) {
+                        event.currentTarget.releasePointerCapture(
+                          event.pointerId
+                        )
+                      }
+                    }}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      if (event.button === 2 || inputBlocked || !active) {
+                        return
+                      }
+
                       send({
                         type: 'pointer',
-                        phase: 'move',
-                        x: touch.x,
-                        y: touch.y
+                        phase: 'down',
+                        ...point(event),
+                        button: button(event.button),
+                        clickCount: Math.max(1, event.detail)
                       })
-                    }
-
-                    const position = point(event)
-                    send({
-                      type: 'wheel',
-                      deltaX: Math.max(
-                        -10_000,
-                        Math.min(10_000, touch.x - position.x)
-                      ),
-                      deltaY: Math.max(
-                        -10_000,
-                        Math.min(10_000, touch.y - position.y)
-                      )
-                    })
-                    touch.x = position.x
-                    touch.y = position.y
-                    return
-                  }
-
-                  if (
-                    !stateRef.current?.controlled &&
-                    !pointerActiveRef.current
-                  ) {
-                    return
-                  }
-
-                  send({ type: 'pointer', phase: 'move', ...point(event) })
-                }}
-                onPointerLeave={(event) => {
-                  event.currentTarget.style.cursor = 'default'
-                }}
-                onPointerDown={(event) => {
-                  if (event.pointerType === 'touch' && !event.isPrimary) {
-                    touchRef.current = null
-                    return
-                  }
-
-                  event.preventDefault()
-                  onFocusSurface()
-                  event.currentTarget.focus({ preventScroll: true })
-                  event.currentTarget.setPointerCapture(event.pointerId)
-                  if (event.pointerType === 'touch') {
-                    touchRef.current = {
-                      pointerId: event.pointerId,
-                      startX: event.clientX,
-                      startY: event.clientY,
-                      ...point(event),
-                      scrolling: false
-                    }
-                    send({ type: 'takeControl' })
-                    return
-                  }
-
-                  pointerActiveRef.current = true
-                  send({ type: 'takeControl' })
-                  send({
-                    type: 'pointer',
-                    phase: 'down',
-                    ...point(event),
-                    button: button(event.button)
-                  })
-                }}
-                onPointerUp={(event) => {
-                  event.preventDefault()
-                  if (event.pointerType === 'touch') {
-                    const touch = touchRef.current
-                    if (touch?.pointerId === event.pointerId) {
-                      touchRef.current = null
-                      if (!touch.scrolling) {
-                        send({
-                          type: 'pointer',
-                          phase: 'down',
-                          x: touch.x,
-                          y: touch.y,
-                          button: 'left'
-                        })
-                        send({
-                          type: 'pointer',
-                          phase: 'up',
-                          x: touch.x,
-                          y: touch.y,
-                          button: 'left'
-                        })
+                    }}
+                    onMouseUp={(event) => {
+                      event.preventDefault()
+                      if (event.button === 2) {
+                        return
                       }
-                    }
 
-                    if (
-                      event.currentTarget.hasPointerCapture(event.pointerId)
-                    ) {
-                      event.currentTarget.releasePointerCapture(event.pointerId)
-                    }
+                      send({
+                        type: 'pointer',
+                        phase: 'up',
+                        ...point(event),
+                        button: button(event.button),
+                        clickCount: Math.max(1, event.detail)
+                      })
+                    }}
+                    onLostPointerCapture={(event) => {
+                      if (touchesRef.current.has(event.pointerId)) {
+                        cancelTouches()
+                      }
+                    }}
+                    onPointerCancel={(event) => {
+                      if (event.pointerType === 'touch') {
+                        cancelTouches()
+                        return
+                      }
 
-                    return
-                  }
+                      send({
+                        type: 'pointer',
+                        phase: 'up',
+                        ...point(event),
+                        button: button(event.button)
+                      })
+                      pointerActiveRef.current = false
+                      if (
+                        event.currentTarget.hasPointerCapture(event.pointerId)
+                      ) {
+                        event.currentTarget.releasePointerCapture(
+                          event.pointerId
+                        )
+                      }
+                    }}
+                    onBlur={cancelTouches}
+                    onContextMenu={(event) => {
+                      if (
+                        !active ||
+                        inputBlocked ||
+                        !connectionRef.current ||
+                        stateRef.current?.agentActive
+                      ) {
+                        event.preventDefault()
+                        return
+                      }
 
-                  send({
-                    type: 'pointer',
-                    phase: 'up',
-                    ...point(event),
-                    button: button(event.button)
-                  })
-                  pointerActiveRef.current = false
-                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                    event.currentTarget.releasePointerCapture(event.pointerId)
-                  }
-                }}
-                onLostPointerCapture={(event) => {
-                  if (touchRef.current?.pointerId === event.pointerId) {
-                    touchRef.current = null
-                  }
-                }}
-                onPointerCancel={(event) => {
-                  if (event.pointerType === 'touch') {
-                    touchRef.current = null
-                    return
-                  }
+                      dismissContext()
+                      cancelTouches()
+                      const requestId = crypto.randomUUID()
+                      contextRequestRef.current = requestId
+                      contextTimeoutRef.current = setTimeout(() => {
+                        dismissContext()
+                        setError(
+                          'The browser context request timed out. Right-click to retry.'
+                        )
+                      }, 10_000)
+                      send({ type: 'takeControl' })
+                      send({ type: 'contextMenu', requestId, ...point(event) })
+                      // Radix records the pointer anchor, but the controlled menu
+                      // opens only after the remote page permits its native menu.
+                    }}
+                    onKeyDown={(event) => key(event, 'down')}
+                    onKeyUp={(event) => key(event, 'up')}
+                    onPaste={(event) => {
+                      event.preventDefault()
+                      if (!event.clipboardData.types.includes('text/plain')) {
+                        setError(
+                          'Paste was not sent. Only plain text is supported; copy text and try again.'
+                        )
+                        return
+                      }
 
-                  send({
-                    type: 'pointer',
-                    phase: 'up',
-                    ...point(event),
-                    button: button(event.button)
-                  })
-                  pointerActiveRef.current = false
-                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                    event.currentTarget.releasePointerCapture(event.pointerId)
-                  }
-                }}
-                onContextMenu={(event) => event.preventDefault()}
-                onKeyDown={(event) => key(event, 'down')}
-                onKeyUp={(event) => key(event, 'up')}
-                onPaste={(event) => {
-                  event.preventDefault()
-                  if (!event.clipboardData.types.includes('text/plain')) {
-                    setError(
-                      'Paste was not sent. Only plain text is supported; copy text and try again.'
-                    )
-                    return
-                  }
+                      const text = event.clipboardData.getData('text/plain')
+                      if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
+                        setError(
+                          'Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.'
+                        )
+                        return
+                      }
 
-                  const text = event.clipboardData.getData('text/plain')
-                  if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
-                    setError(
-                      'Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.'
-                    )
-                    return
-                  }
+                      if (!connectionRef.current || inputBlocked) {
+                        setError(
+                          'Paste was not sent. Wait for the browser to become available, then retry.'
+                        )
+                        return
+                      }
 
-                  if (!connectionRef.current || inputBlocked) {
-                    setError(
-                      'Paste was not sent. Wait for the browser to become available, then retry.'
-                    )
-                    return
-                  }
-
-                  send({ type: 'takeControl' })
-                  send({ type: 'insertText', text })
-                }}
-              />
+                      send({ type: 'takeControl' })
+                      send({ type: 'insertText', text })
+                    }}
+                  />
+                </ContextMenuTrigger>
+                <ContextMenuContent
+                  onCloseAutoFocus={(event) => {
+                    event.preventDefault()
+                    focusPage()
+                  }}
+                >
+                  {contextMenu?.linkUrl ? (
+                    <>
+                      <ContextMenuGroup>
+                        <ContextMenuItem
+                          disabled={!contextMenu.canOpenLink}
+                          onSelect={() => contextAction('openLink')}
+                        >
+                          Open Link in New Tab
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => contextAction('copyLink')}
+                        >
+                          Copy Link Address
+                        </ContextMenuItem>
+                      </ContextMenuGroup>
+                      <ContextMenuSeparator />
+                    </>
+                  ) : null}
+                  <ContextMenuGroup>
+                    <ContextMenuItem
+                      disabled={!state?.canGoBack}
+                      onSelect={() => contextAction('back')}
+                    >
+                      Back
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      disabled={!state?.canGoForward}
+                      onSelect={() => contextAction('forward')}
+                    >
+                      Forward
+                    </ContextMenuItem>
+                    <ContextMenuItem onSelect={() => contextAction('reload')}>
+                      Reload
+                    </ContextMenuItem>
+                  </ContextMenuGroup>
+                  {window.treeportDesktop?.inspectBrowserElement ? (
+                    <>
+                      <ContextMenuSeparator />
+                      <ContextMenuGroup>
+                        <ContextMenuItem
+                          disabled={!contextMenu?.canInspect}
+                          onSelect={() => contextAction('inspect')}
+                        >
+                          Inspect Element
+                        </ContextMenuItem>
+                      </ContextMenuGroup>
+                    </>
+                  ) : null}
+                </ContextMenuContent>
+              </ContextMenu>
             )}
             {state === null || state.url === 'about:blank' ? (
               <div
