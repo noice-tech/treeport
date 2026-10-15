@@ -571,10 +571,8 @@ function prepareZedWorktreeWrapper(
   )
 }
 
-export function loadCreateWorktreeTasks(mainWorktreePath: string) {
-  return readOptionalJsonc(
-    path.join(mainWorktreePath, ZED_TASKS_CONFIG_PATH)
-  ).pipe(
+export function loadCreateWorktreeTasks(worktreePath: string) {
+  return readOptionalJsonc(path.join(worktreePath, ZED_TASKS_CONFIG_PATH)).pipe(
     Effect.flatMap((tasksFile) =>
       zedEffect('loadCreateWorktreeTasks', () =>
         loadCreateWorktreeTasksPromise(tasksFile)
@@ -618,7 +616,7 @@ export function resolveZedCreateWorktreeSetupTasks(input: {
   mainWorktreePath: string
   worktreePath: string
 }) {
-  return loadCreateWorktreeTasks(input.mainWorktreePath).pipe(
+  return loadCreateWorktreeTasks(input.worktreePath).pipe(
     Effect.flatMap((tasks) =>
       zedEffect('resolveCreateWorktreeSetupTasks', () =>
         resolveZedCreateWorktreeSetupTasksPromise(input, tasks)

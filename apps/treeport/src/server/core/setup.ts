@@ -153,9 +153,9 @@ interface NativeSetup {
 }
 
 function readNativeSetup(
-  mainWorktreePath: string
+  worktreePath: string
 ): Effect.Effect<NativeSetup, Error> {
-  const filePath = path.join(mainWorktreePath, TREEPORT_SETTINGS_PATH)
+  const filePath = path.join(worktreePath, TREEPORT_SETTINGS_PATH)
   return Effect.gen(function* () {
     const content = yield* Effect.tryPromise(() =>
       fs.readFile(filePath, 'utf8').catch((error) => {
@@ -266,11 +266,11 @@ export function resolveWorktreeSetupTasks(input: {
     const mainWorktreePath = yield* Effect.tryPromise(() =>
       fs.realpath(input.mainWorktreePath)
     )
-    const native = yield* readNativeSetup(mainWorktreePath)
+    const worktreePath = yield* Effect.tryPromise(() =>
+      fs.realpath(input.worktreePath)
+    )
+    const native = yield* readNativeSetup(worktreePath)
     if (!native.setup) {
-      const worktreePath = yield* Effect.tryPromise(() =>
-        fs.realpath(input.worktreePath)
-      )
       return yield* resolveZedCreateWorktreeSetupTasks({
         ...input,
         mainWorktreePath,
@@ -282,7 +282,7 @@ export function resolveWorktreeSetupTasks(input: {
     return yield* Effect.tryPromise(() =>
       resolveNativeTasks({
         mainWorktreePath,
-        worktreePath: input.worktreePath,
+        worktreePath,
         commands,
         commandPath: 'commands',
         filePath: native.filePath
@@ -299,7 +299,9 @@ export function resolveWorktreeCleanupTasks(input: {
     const mainWorktreePath = yield* Effect.tryPromise(() =>
       fs.realpath(input.mainWorktreePath)
     )
-    const native = yield* readNativeSetup(mainWorktreePath)
+    // Read before resolving task cwd so a missing/prunable checkout with no
+    // readable cleanup definition can still be removed without running commands.
+    const native = yield* readNativeSetup(input.worktreePath)
     const commands = native.setup?.cleanup ?? []
     if (commands.length === 0) {
       return { tasks: [], definitionHash: null }

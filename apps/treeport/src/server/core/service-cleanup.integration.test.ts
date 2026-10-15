@@ -11,9 +11,15 @@ describe('tree cleanup completion', () => {
     'releases the project queue after a real cleanup command exits %i',
     async (exitCode) => {
       const { main, service } = await fixture()
-      await fs.mkdir(path.join(main, '.treeport'))
+      const project = await service.registerProject(main)
+      const { worktree } = await service.createWorktree(
+        project.id,
+        'cleanup-target',
+        'default'
+      )
+      await fs.mkdir(path.join(worktree.path, '.treeport'))
       await fs.writeFile(
-        path.join(main, '.treeport', 'settings.json'),
+        path.join(worktree.path, '.treeport', 'settings.json'),
         JSON.stringify({
           setup: {
             commands: [],
@@ -30,12 +36,6 @@ describe('tree cleanup completion', () => {
             ]
           }
         })
-      )
-      const project = await service.registerProject(main)
-      const { worktree } = await service.createWorktree(
-        project.id,
-        'cleanup-target',
-        'default'
       )
       const preview = await service.removePreview(worktree.id)
       // The normal fixture runner bridges through Promise APIs, which resets
