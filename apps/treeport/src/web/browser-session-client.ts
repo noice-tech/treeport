@@ -7,7 +7,6 @@ import {
 import type {
   BrowserClientMessage,
   BrowserClientToServerEvents,
-  BrowserFrame,
   BrowserServerMessage,
   BrowserServerToClientEvents
 } from '@treeport/shared'
@@ -27,7 +26,6 @@ export interface BrowserPanelSocket {
   connected: boolean
   emit(event: 'command', message: BrowserClientMessage): void
   on(event: 'message', listener: (message: BrowserServerMessage) => void): void
-  on(event: 'frame', listener: (frame: BrowserFrame) => void): void
   on(event: 'disconnect', listener: () => void): void
   on(event: 'connect_error', listener: (error: Error) => void): void
   disconnect(): void
@@ -60,7 +58,6 @@ export function connectBrowserPanel(
   initialVisible: boolean,
   handlers: {
     message(message: BrowserServerMessage): void
-    frame(frame: BrowserFrame): void
   },
   socketFactory: BrowserPanelSocketFactory = defaultSocketFactory
 ): BrowserPanelConnection {
@@ -194,13 +191,6 @@ export function connectBrowserPanel(
         connectedSocket.emit('command', pendingCommands.shift()!)
       }
     })
-    connectedSocket.on('frame', (value) => {
-      if (socket !== connectedSocket) {
-        return
-      }
-
-      handlers.frame(value)
-    })
     connectedSocket.on('disconnect', () => {
       if (socket !== connectedSocket) {
         return
@@ -290,13 +280,11 @@ export function connectBrowserPanel(
         !connectedOnce &&
         command.type !== 'insertText' &&
         command.type !== 'copy' &&
+        command.type !== 'videoOffer' &&
         pendingCommands.length < 32
       ) {
         pendingCommands.push(command)
-      } else if (
-        command.type !== 'frameAck' &&
-        command.type !== 'requestVideoKeyframe'
-      ) {
+      } else if (command.type !== 'videoOffer') {
         handlers.message({
           type: 'navigationError',
           message:

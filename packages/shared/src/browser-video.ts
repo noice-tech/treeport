@@ -1,188 +1,219 @@
 import type { BrowserClipboard } from './browser-clipboard.js'
 
-// This function runs only in a Treeport-owned capture document. Keep it self-contained:
-// the daemon and Electron serialize it into their respective isolated renderers.
+// Gathering before signaling keeps the authenticated protocol small: one offer
+// and one answer, with no candidate queue that can outlive its attachment.
+export function gatherBrowserIce(peer: RTCPeerConnection): Promise<void> {
+  if (peer.iceGatheringState === 'complete') {
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve, reject) => {
+    const finish = (error: Error | null) => {
+      clearTimeout(timer)
+      peer.removeEventListener('icegatheringstatechange', changed)
+      if (error) {
+        reject(error)
+      } else {
+        resolve()
+      }
+    }
+    const changed = () => {
+      if (peer.iceGatheringState === 'complete') {
+        finish(null)
+      }
+    }
+    const timer = setTimeout(
+      () => finish(new Error('Browser video ICE gathering timed out.')),
+      5_000
+    )
+    peer.addEventListener('icegatheringstatechange', changed)
+    changed()
+  })
+}
+
+// Runs only in a Treeport-owned, isolated capture document, never in a website.
+// Chromium owns encoding, congestion control, retransmission and keyframes. No
+// pixels or encoded media cross the debugger, daemon, or application WebSocket.
 async function captureBrowserVideo(
-  sourceId: string,
+  source: () => Promise<string>,
   width: number,
   height: number,
-  publish: (message: string) => void
+  failed: (message: string) => void
 ) {
-  // eslint-disable-next-line anti-slop/no-runtime-typeof -- This checks browser API availability, not untrusted protocol input.
-  if (typeof VideoEncoder === 'undefined') {
-    throw new Error('This browser does not support native video encoding.')
-  }
-
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: {
-      // Chromium's tab-source constraints are not part of the standard DOM types.
-      // SAFETY: Both capture hosts obtain this ID for their exact authorized tab.
-      ...({
-        mandatory: {
-          chromeMediaSource: 'tab',
-          chromeMediaSourceId: sourceId,
-          maxWidth: width,
-          maxHeight: height,
-          maxFrameRate: 30
-        }
-      } as MediaTrackConstraints)
-    }
-  })
-  const track = stream.getVideoTracks()[0]!
-  track.contentHint = 'detail'
-  // SAFETY: Chromium exposes the track processor in its window context. Its
-  // worker-only standard declaration is not included in TypeScript's DOM library.
-  const Processor = (
-    globalThis as typeof globalThis & {
-      MediaStreamTrackProcessor: new (options: { track: MediaStreamTrack }) => {
-        readable: ReadableStream<VideoFrame>
-      }
-    }
-  ).MediaStreamTrackProcessor
+  const peers = new Map<string, RTCPeerConnection>()
+  let track: MediaStreamTrack | null = null
+  let size = { width: 0, height: 0 }
   let stopped = false
-  let lastFrame: VideoFrame | null = null
-  let encodedWidth = 0
-  let encodedHeight = 0
-  let frames = 0
-  let keyframe = true
-  let outstanding = 0
-  let lastTimestamp = 0
-  const dimensions = new Map<number, { width: number; height: number }>()
-  const reader = new Processor({ track }).readable.getReader()
-  const fail = (error: Error) => {
-    if (!stopped) {
-      publish(
-        JSON.stringify({ frame: null, error: error.message.slice(0, 4_096) })
-      )
-      stop()
-    }
+  let pending = Promise.resolve()
+  // Only source replacement and sender attachment share this short queue.
+  // ICE gathering must not hold up resize or disposal.
+  const serialize = (operation: () => Promise<void>) => {
+    const result = pending.then(operation)
+    pending = result.catch(() => undefined)
+    return result
   }
-  const encoder = new VideoEncoder({
-    output(chunk) {
-      if (stopped) {
-        return
-      }
-
-      const size = dimensions.get(chunk.timestamp)
-      dimensions.delete(chunk.timestamp)
-      if (!size || chunk.byteLength > 8 * 1024 * 1024) {
-        fail(new Error('Browser video frame exceeds the capture limit.'))
-        return
-      }
-
-      const bytes = new Uint8Array(chunk.byteLength)
-      chunk.copyTo(bytes)
-      let binary = ''
-      for (let offset = 0; offset < bytes.length; offset += 16_384) {
-        binary += String.fromCharCode(
-          ...bytes.subarray(offset, offset + 16_384)
-        )
-      }
-      publish(
-        JSON.stringify({
-          error: null,
-          frame: {
-            mimeType: 'video/vp8',
-            keyframe: chunk.type === 'key',
-            timestamp: chunk.timestamp,
-            ...size,
-            data: btoa(binary)
-          }
-        })
-      )
-    },
-    error: fail
-  })
-  const encode = (frame: VideoFrame, force: boolean) => {
-    if (stopped || encoder.encodeQueueSize >= 2 || outstanding >= 4) {
-      keyframe = true
-      return
-    }
-
-    if (
-      encodedWidth !== frame.displayWidth ||
-      encodedHeight !== frame.displayHeight
-    ) {
-      encodedWidth = frame.displayWidth
-      encodedHeight = frame.displayHeight
-      encoder.configure({
-        codec: 'vp8',
-        width: encodedWidth,
-        height: encodedHeight,
-        framerate: 30,
-        bitrate: 3_000_000,
-        latencyMode: 'realtime'
-      })
-      keyframe = true
-    }
-
-    lastTimestamp = Math.max(
-      lastTimestamp + 1,
-      Math.round(performance.now() * 1_000)
-    )
-    const input = new VideoFrame(frame, { timestamp: lastTimestamp })
-    outstanding++
-    dimensions.set(lastTimestamp, {
-      width: encodedWidth,
-      height: encodedHeight
-    })
-    encoder.encode(input, {
-      keyFrame: force || keyframe || frames++ % 30 === 0
-    })
-    input.close()
-    keyframe = false
+  const closePeer = (id: string) => {
+    peers.get(id)?.close()
+    peers.delete(id)
   }
   const stop = () => {
-    if (stopped) {
-      return
-    }
-
     stopped = true
-    track.stop()
-    void reader.cancel().catch(() => undefined)
-    lastFrame?.close()
-    lastFrame = null
-    dimensions.clear()
-    if (encoder.state !== 'closed') {
-      encoder.close()
+    for (const peer of peers.values()) {
+      peer.close()
     }
+    peers.clear()
+    track?.stop()
+    track = null
   }
-  track.addEventListener('ended', () =>
-    fail(new Error('Browser video capture ended.'))
-  )
-  void (async () => {
-    while (!stopped) {
-      const { value: frame, done } = await reader.read()
-      if (done) {
-        break
+  const resize = (width: number, height: number): Promise<void> =>
+    serialize(async () => {
+      if (stopped) {
+        throw new Error('Browser video capture is stopped.')
       }
 
-      lastFrame?.close()
-      lastFrame = frame
-      encode(frame, false)
-    }
-  })().catch(fail)
+      if (track && size.width === width && size.height === height) {
+        return
+      }
+
+      // Release the old source before requesting another single-use tab token.
+      // Keeping a 4K source and resizing its track still incurs 4K copy-out.
+      // Reopen at the viewport size instead; replaceTrack preserves each peer.
+      const previous = track
+      track = null
+      previous?.stop()
+      const sourceId = await source()
+      if (stopped) {
+        throw new Error('Browser video capture is stopped.')
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          // SAFETY: Only the isolated helper can obtain this exact-tab source.
+          ...({
+            mandatory: {
+              chromeMediaSource: 'tab',
+              chromeMediaSourceId: sourceId,
+              maxWidth: width,
+              maxHeight: height,
+              maxFrameRate: 60
+            }
+          } as MediaTrackConstraints)
+        }
+      })
+      const next = stream.getVideoTracks()[0]!
+      await (async () => {
+        await next.applyConstraints({
+          width: { exact: width },
+          height: { exact: height },
+          frameRate: { max: 60 }
+        })
+        if (stopped) {
+          throw new Error('Browser video capture is stopped.')
+        }
+
+        next.contentHint = 'detail'
+        next.addEventListener('ended', () => {
+          if (!stopped && track === next) {
+            stop()
+            failed('Browser video capture ended. Reconnect to restart it.')
+          }
+        })
+        for (const [id, peer] of peers) {
+          for (const sender of peer.getSenders()) {
+            await sender.replaceTrack(next).catch((error) => {
+              // A viewer may leave while a source replacement is in flight.
+              if (peers.get(id) === peer && !stopped) {
+                throw error
+              }
+            })
+          }
+        }
+        if (stopped || next.readyState === 'ended') {
+          throw new Error('Browser video capture is stopped.')
+        }
+
+        track = next
+        size = { width, height }
+      })().catch((error) => {
+        stream.getTracks().forEach((track) => track.stop())
+        throw error
+      })
+    })
+
+  await resize(width, height)
   return {
     stop,
-    acknowledge() {
-      outstanding = Math.max(0, outstanding - 1)
-      if (keyframe && lastFrame && outstanding === 0) {
-        encode(lastFrame, true)
+    closePeer,
+    resize,
+    async negotiate(id: string, sdp: string): Promise<string> {
+      if (stopped) {
+        throw new Error('Browser video capture is stopped.')
       }
-    },
-    requestKeyframe() {
-      keyframe = true
-      if (lastFrame) {
-        encode(lastFrame, true)
+
+      closePeer(id)
+      if (peers.size >= 8) {
+        throw new Error('Browser video has too many viewers.')
+      }
+
+      // This is a send-only video service, not an audio/input/data-channel
+      // endpoint. Viewer input remains on Treeport's authorized control path.
+      const media = sdp.split(/\r?\n/).filter((line) => line.startsWith('m='))
+      if (media.length !== 1 || !media[0]!.startsWith('m=video ')) {
+        throw new Error('Browser video requires one video track.')
+      }
+
+      const peer = new RTCPeerConnection({ iceServers: [] })
+      peers.set(id, peer)
+      peer.onconnectionstatechange = () => {
+        if (peer.connectionState === 'failed' && peers.get(id) === peer) {
+          closePeer(id)
+        }
+      }
+      try {
+        await peer.setRemoteDescription({ type: 'offer', sdp })
+        const transceiver = peer.getTransceivers()[0]!
+        transceiver.direction = 'sendonly'
+        await serialize(async () => {
+          if (stopped || !track || peers.get(id) !== peer) {
+            throw new Error('Browser video negotiation was superseded.')
+          }
+
+          await transceiver.sender.replaceTrack(track)
+        })
+        await peer.setLocalDescription(await peer.createAnswer())
+        const parameters = transceiver.sender.getParameters()
+        parameters.degradationPreference = 'balanced'
+        for (const encoding of parameters.encodings) {
+          // A ceiling, not a fixed-rate encoder. Chromium adapts below this
+          // according to transport feedback. Media buffering is owned by
+          // WebRTC; there is no application-managed frame queue.
+          encoding.maxBitrate = 12_000_000
+          encoding.maxFramerate = 60
+        }
+        await transceiver.sender.setParameters(parameters)
+        await gatherBrowserIce(peer)
+        if (stopped || peers.get(id) !== peer) {
+          throw new Error('Browser video negotiation was superseded.')
+        }
+
+        return peer.localDescription!.sdp
+      } catch (error) {
+        if (peers.get(id) === peer) {
+          closePeer(id)
+        }
+
+        throw error
       }
     }
   }
 }
 
-export const BROWSER_VIDEO_CAPTURE_SOURCE = `(${captureBrowserVideo.toString()})`
+export const BROWSER_VIDEO_CAPTURE_SOURCE = `(() => {
+  const gatherBrowserIce = ${gatherBrowserIce.toString()};
+  return ${captureBrowserVideo.toString()};
+})()`
 
-// Only the private, exact-guest Electron bridge implements these commands.
 export interface BrowserNativeCdpSession {
   send(method: 'Treeport.copy'): Promise<BrowserClipboard | null>
   send(
@@ -190,10 +221,16 @@ export interface BrowserNativeCdpSession {
     params: { width: number; height: number }
   ): Promise<void>
   send(
-    method: 'Treeport.stopVideo' | 'Treeport.requestVideoKeyframe'
+    method: 'Treeport.negotiateVideo',
+    params: { peerId: string; sdp: string }
+  ): Promise<{ sdp: string }>
+  send(
+    method: 'Treeport.closeVideoPeer',
+    params: { peerId: string }
   ): Promise<void>
+  send(method: 'Treeport.stopVideo'): Promise<void>
   on(
-    event: 'Treeport.videoFrame',
-    listener: (message: { payload: string }) => void
+    event: 'Treeport.videoError',
+    listener: (message: { message: string }) => void
   ): void
 }

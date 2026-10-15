@@ -13,6 +13,7 @@ import {
   ArrowPathIcon,
   ArrowRightIcon,
   ArrowsRightLeftIcon,
+  ChartBarIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   CodeBracketSquareIcon,
@@ -64,8 +65,9 @@ import {
 } from '../../browser-session-client'
 import { getDesktopRuntime } from '../../desktop-runtime'
 import { writeBrowserClipboard } from '../../browser-clipboard'
-import { BrowserVideoDecoder } from '../../browser-video-decoder'
+import { BrowserVideoReceiver } from '../../browser-video-receiver'
 import { LocalBrowserWebview } from './local-browser-webview'
+import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
 
 function parseBrowserAddress(value: string): URL | null {
   const input = value.trim()
@@ -135,7 +137,8 @@ export function BrowserPanelWorkspace({
   onFocusSurface: () => void
 }) {
   const sectionRef = useRef<HTMLElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoReceiverRef = useRef<BrowserVideoReceiver | null>(null)
   const viewportAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
@@ -151,9 +154,6 @@ export function BrowserPanelWorkspace({
   )
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
-  const displayedViewportRef = useRef<{ width: number; height: number } | null>(
-    null
-  )
   const viewportOverrideRef = useRef<{ width: number; height: number } | null>(
     null
   )
@@ -206,6 +206,7 @@ export function BrowserPanelWorkspace({
     string | null
   >(null)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [viewportOverride, setViewportOverride] = useState<{
     width: number
     height: number
@@ -420,7 +421,7 @@ export function BrowserPanelWorkspace({
 
   const focusPage = useCallback(() => {
     const page =
-      canvasRef.current ??
+      videoRef.current ??
       sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
     page?.focus({ preventScroll: true })
   }, [])
@@ -478,10 +479,14 @@ export function BrowserPanelWorkspace({
 
   const receiveMessage = useCallback(
     (message: BrowserServerMessage) => {
+      if (message.type === 'videoReady' || message.type === 'videoAnswer') {
+        return
+      }
+
       if (message.type === 'clipboardWrite') {
         if (
           !stateRef.current?.controlled ||
-          !canvasRef.current ||
+          !videoRef.current ||
           sectionRef.current?.inert
         ) {
           return
@@ -519,7 +524,7 @@ export function BrowserPanelWorkspace({
         return
       }
 
-      const canvas = canvasRef.current
+      const canvas = videoRef.current
       if (message.type === 'contextResult') {
         if (message.requestId !== contextRequestRef.current) {
           if (message.contextId) {
@@ -726,58 +731,32 @@ export function BrowserPanelWorkspace({
     }
 
     traceBrowserOpen(panel.id, 'browser.hosted.attach_started')
+    const video = videoRef.current
+    if (!video) {
+      return
+    }
+
     let firstFrame = true
-    const decoder = new BrowserVideoDecoder(
-      (frame) => {
-        const canvas = canvasRef.current
-        const drawing = canvas?.getContext('2d', { alpha: false })
-        if (!canvas || !drawing) {
-          return
-        }
+    const playing = () => {
+      if (firstFrame) {
+        firstFrame = false
+        traceBrowserOpen(panel.id, 'browser.hosted.first_frame_drawn')
+      }
 
-        const width = frame.viewport?.width ?? frame.displayWidth
-        const height = frame.viewport?.height ?? frame.displayHeight
-        if (canvas.width !== width || canvas.height !== height) {
-          canvas.width = width
-          canvas.height = height
-        }
-
-        // JPEGs span the viewport width, but Chrome can briefly crop their
-        // bottom or retain the previous height after resizing. Scale uniformly
-        // by width and keep the origin fixed; fitting/centering by height would
-        // move the page underneath the pointer. Uniform downscaling and HiDPI
-        // screenshots use the same mapping without waiting for another frame.
-        const scale = width / frame.displayWidth
-        const imageHeight = frame.displayHeight * scale
-        if (imageHeight < height) {
-          drawing.clearRect(0, 0, width, height)
-        }
-
-        drawing.drawImage(frame.image, 0, 0, width, imageHeight)
-        displayedViewportRef.current = frame.viewport ?? viewportRef.current
-        if (firstFrame) {
-          firstFrame = false
-          traceBrowserOpen(panel.id, 'browser.hosted.first_frame_drawn')
-        }
-
-        setError((current) =>
-          current === 'Browser video was interrupted. Reconnecting…'
-            ? null
-            : current
-        )
-      },
-      send,
-      (message, fatal) => {
-        if (fatal) {
-          setFailure({ message })
-        } else {
-          setError(message)
+      setError(null)
+    }
+    video.addEventListener('playing', playing)
+    const receiver = new BrowserVideoReceiver(video, send, (message) => {
+      setFailure({ message })
+    })
+    videoReceiverRef.current = receiver
+    const connection = connectBrowserPanel(panel.id, false, {
+      message: (message) => {
+        receiver.receive(message)
+        if (message.type !== 'videoReady' && message.type !== 'videoAnswer') {
+          receiveMessage(message)
         }
       }
-    )
-    const connection = connectBrowserPanel(panel.id, false, {
-      message: receiveMessage,
-      frame: (frame) => decoder.receive(frame)
     })
     connectionRef.current = connection
     return () => {
@@ -790,8 +769,8 @@ export function BrowserPanelWorkspace({
         connectionRef.current = null
       }
 
-      if (canvasRef.current) {
-        canvasRef.current.style.cursor = 'default'
+      if (videoRef.current) {
+        videoRef.current.style.cursor = 'default'
       }
 
       for (const pending of pendingCopiesRef.current.values()) {
@@ -801,7 +780,12 @@ export function BrowserPanelWorkspace({
       }
 
       pendingCopiesRef.current.clear()
-      decoder.dispose()
+      video.removeEventListener('playing', playing)
+      receiver.dispose()
+      if (videoReceiverRef.current === receiver) {
+        videoReceiverRef.current = null
+      }
+
       connection.dispose()
     }
   }, [connectionRevision, localBrowser, panel.id, receiveMessage, send])
@@ -867,6 +851,7 @@ export function BrowserPanelWorkspace({
     cancelTouches()
     if (!localBrowser) {
       connectionRef.current?.setVisible(active && !inputBlocked)
+      videoReceiverRef.current?.setVisible(active && !inputBlocked)
     }
 
     const visibility = () => {
@@ -884,7 +869,7 @@ export function BrowserPanelWorkspace({
   }, [active, cancelTouches, connectionRevision, inputBlocked, localBrowser])
 
   useEffect(() => {
-    const canvas = canvasRef.current
+    const canvas = videoRef.current
     if (localBrowser || !canvas || !active) {
       return
     }
@@ -1110,7 +1095,7 @@ export function BrowserPanelWorkspace({
         send({ type: 'resize', ...size })
       }
     } else {
-      const bounds = canvasRef.current?.getBoundingClientRect()
+      const bounds = videoRef.current?.getBoundingClientRect()
       if (bounds && bounds.width > 0 && bounds.height > 0) {
         send({
           type: 'resize',
@@ -1123,15 +1108,19 @@ export function BrowserPanelWorkspace({
 
   const point = useCallback(
     (event: {
-      currentTarget: HTMLCanvasElement
+      currentTarget: HTMLVideoElement
       clientX: number
       clientY: number
     }) => {
       const canvas = event.currentTarget
       const bounds = canvas.getBoundingClientRect()
-      // State can arrive before its image. Hit-test the geometry actually drawn.
-      const viewport = displayedViewportRef.current ?? viewportRef.current
-      const image = displayedViewportRef.current ? canvas : viewport
+      // Match object-contain's letterboxing using the decoded video dimensions,
+      // then map into the host's CSS viewport (not the encoder's pixel size).
+      const viewport = stateRef.current?.viewport ?? viewportRef.current
+      const image =
+        canvas.videoWidth && canvas.videoHeight
+          ? { width: canvas.videoWidth, height: canvas.videoHeight }
+          : viewport
       const scale = Math.min(
         bounds.width / image.width,
         bounds.height / image.height
@@ -1169,7 +1158,7 @@ export function BrowserPanelWorkspace({
   }
 
   const key = (
-    event: KeyboardEvent<HTMLCanvasElement>,
+    event: KeyboardEvent<HTMLVideoElement>,
     phase: 'down' | 'up'
   ) => {
     const isCopyShortcut =
@@ -1260,7 +1249,7 @@ export function BrowserPanelWorkspace({
   }
 
   useEffect(() => {
-    const canvas = canvasRef.current
+    const canvas = videoRef.current
     if (localBrowser || !canvas || !active || inputBlocked) {
       return
     }
@@ -1892,6 +1881,19 @@ export function BrowserPanelWorkspace({
             </PopoverContent>
           </Popover>
         ) : null}
+        {!localBrowser ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Stream diagnostics"
+            title="Stream diagnostics"
+            aria-pressed={diagnosticsOpen}
+            onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}
+          >
+            <ChartBarIcon />
+          </Button>
+        ) : null}
         <Popover open={toolsOpen} onOpenChange={setToolsOpen}>
           <PopoverTrigger asChild>
             <Button
@@ -2283,8 +2285,12 @@ export function BrowserPanelWorkspace({
                 }}
               >
                 <ContextMenuTrigger asChild disabled={inputBlocked || !active}>
-                  <canvas
-                    ref={canvasRef}
+                  <video
+                    autoPlay
+                    muted
+                    playsInline
+                    disablePictureInPicture
+                    ref={videoRef}
                     tabIndex={0}
                     className={cn(
                       'block size-full touch-none select-none bg-zinc-950 object-contain outline-none',
@@ -2604,6 +2610,12 @@ export function BrowserPanelWorkspace({
             ) : null}
           </div>
         </div>
+        {diagnosticsOpen && active && !inputBlocked && !localBrowser ? (
+          <BrowserStreamDiagnostics
+            videoRef={videoRef}
+            receiverRef={videoReceiverRef}
+          />
+        ) : null}
       </div>
     </section>
   )

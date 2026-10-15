@@ -399,29 +399,17 @@ describe('Effect WebSocket real network', () => {
               viewport: { width: 800, height: 600 }
             }
           })
-          transport.sendFrame({
-            sequence: 1,
-            mimeType: 'video/vp8',
-            keyframe: true,
-            timestamp: 123,
-            width: 800,
-            height: 600,
-            data: Uint8Array.from([1, 2, 3])
-          })
+          transport.sendMessage({ type: 'videoReady' })
           return 'browser-connection'
         })
       ),
       message: vi.fn((connectionId: string, message: BrowserClientMessage) => {
         messages.push(message)
-        if (message.type === 'setVisible' && message.visible) {
-          transports.get(connectionId)?.sendFrame({
-            sequence: 2,
-            mimeType: 'video/vp8',
-            keyframe: false,
-            timestamp: 456,
-            width: 800,
-            height: 600,
-            data: Uint8Array.from([4, 5, 6])
+        if (message.type === 'videoOffer') {
+          transports.get(connectionId)?.sendMessage({
+            type: 'videoAnswer',
+            requestId: message.requestId,
+            sdp: 'answer'
           })
         }
       }),
@@ -465,20 +453,22 @@ describe('Effect WebSocket real network', () => {
         ticket: 'b'.repeat(43)
       }
     })
-    const frame = new Promise<
-      Parameters<BrowserServerToClientEvents['frame']>[0]
-    >((resolve) => browser.once('frame', resolve))
-    const streamedFrames: number[] = []
-    browser.on('frame', (received) => {
-      streamedFrames.push(received.sequence)
-      browser.emit('command', {
-        type: 'frameAck',
-        sequence: received.sequence
+    const answer = new Promise<BrowserServerMessage>((resolve) => {
+      browser.on('message', (message) => {
+        if (message.type === 'videoReady') {
+          browser.emit('command', {
+            type: 'videoOffer',
+            requestId: 'offer-id',
+            sdp: 'offer'
+          })
+        } else if (message.type === 'videoAnswer') {
+          resolve(message)
+        }
       })
     })
     const ready = await new Promise<BrowserServerMessage>((resolve) =>
       browser.once('message', (message) => {
-        // The workspace requests frames synchronously when it receives ready.
+        // Control and signaling remain authenticated on the same connection.
         browser.emit('command', { type: 'setVisible', visible: true })
         resolve(message)
       })
@@ -487,17 +477,16 @@ describe('Effect WebSocket real network', () => {
       type: 'ready',
       state: { controlled: true, viewport: { width: 800, height: 600 } }
     })
-    await expect(frame).resolves.toMatchObject({
-      sequence: 1,
-      data: Uint8Array.from([1, 2, 3])
+    await expect(answer).resolves.toEqual({
+      type: 'videoAnswer',
+      requestId: 'offer-id',
+      sdp: 'answer'
     })
-    await vi.waitFor(() => expect(streamedFrames).toEqual([1, 2]))
     browser.emit('command', { type: 'back' })
     await vi.waitFor(() =>
       expect(messages).toEqual([
         { type: 'setVisible', visible: true },
-        { type: 'frameAck', sequence: 1 },
-        { type: 'frameAck', sequence: 2 },
+        { type: 'videoOffer', requestId: 'offer-id', sdp: 'offer' },
         { type: 'back' }
       ])
     )
@@ -628,26 +617,18 @@ describe('Effect WebSocket real network', () => {
     await new Promise<void>((resolve) => browser.once('connect', resolve))
     const disconnected = vi.fn()
     browser.on('disconnect', disconnected)
-    const frame = {
-      sequence: 1,
-      mimeType: 'video/vp8' as const,
-      keyframe: true,
-      timestamp: 123,
-      width: 800,
-      height: 600,
-      data: Uint8Array.from([1, 2, 3])
-    }
+    const signal = { type: 'videoReady' as const }
     // Only the server uses ws here; clients use the native WebSocket.
     const send = vi
       .spyOn(WebSocket.prototype, 'send')
       .mockImplementation(() => {
-        throw new Error('Injected frame write failure')
+        throw new Error('Injected signaling write failure')
       })
     try {
-      expect(transports[0]!.sendFrame(frame)).toBe(true)
+      expect(transports[0]!.sendMessage(signal)).toBe(true)
       await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
       expect(closed).toEqual([transports[0]!.id])
-      expect(transports[0]!.sendFrame(frame)).toBe(false)
+      expect(transports[0]!.sendMessage(signal)).toBe(false)
     } finally {
       send.mockRestore()
       await closeClient(browser)
@@ -655,11 +636,11 @@ describe('Effect WebSocket real network', () => {
 
     const reconnected = connect()
     await new Promise<void>((resolve) => reconnected.once('connect', resolve))
-    const nextFrame = new Promise((resolve) =>
-      reconnected.once('frame', resolve)
+    const nextSignal = new Promise((resolve) =>
+      reconnected.once('message', resolve)
     )
-    expect(transports[1]!.sendFrame(frame)).toBe(true)
-    await expect(nextFrame).resolves.toMatchObject(frame)
+    expect(transports[1]!.sendMessage(signal)).toBe(true)
+    await expect(nextSignal).resolves.toMatchObject(signal)
     await closeClient(reconnected)
     await vi.waitFor(() =>
       expect(closed).toEqual(transports.map((transport) => transport.id))

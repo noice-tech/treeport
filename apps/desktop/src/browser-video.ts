@@ -26,7 +26,8 @@ export function permitsBrowserVideoCapture(
       ? new URL(details.securityOrigin).origin
       : null
   // Electron asks the SOURCE guest's permission handler for tab capture. Only
-  // the exact registered helper may capture, during its initial getUserMedia.
+  // the exact registered helper may capture, during initial acquisition or
+  // viewport-sized source replacement.
   return (
     !!grant &&
     grant.starting &&
@@ -47,9 +48,31 @@ export class ElectronBrowserVideo {
     private readonly runtime: DesktopRuntime
   ) {}
 
-  start(width: number, height: number, publish: (payload: string) => void) {
+  start(width: number, height: number, failed: (message: string) => void) {
     return Effect.gen(this, function* () {
-      if (this.helper) {
+      const existing = this.helper
+      if (existing) {
+        const grant = captureGrants.get(this.guest)
+        if (!grant || grant.helper !== existing.webContents) {
+          return yield* Effect.fail(
+            new Error('Browser capture authorization is unavailable.')
+          )
+        }
+
+        grant.starting = true
+        yield* Effect.tryPromise(() =>
+          existing.webContents.executeJavaScript(`(async () => {
+            globalThis.__treeportVideoSource = ${JSON.stringify(this.guest.getMediaSourceId(existing.webContents))};
+            await globalThis.__treeportVideo.resize(${width}, ${height});
+          })()`)
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              grant.starting = false
+            })
+          ),
+          Effect.onError(() => this.stop)
+        )
         return
       }
 
@@ -154,12 +177,7 @@ export class ElectronBrowserVideo {
             return
           }
 
-          publish(
-            JSON.stringify({
-              frame: null,
-              error: 'Browser video capture stopped. Reconnect to restart it.'
-            })
-          )
+          failed('Browser video capture stopped. Reconnect to restart it.')
           this.runtime.fork(this.stop)
         }
         helper.webContents.once('render-process-gone', lost)
@@ -171,31 +189,25 @@ export class ElectronBrowserVideo {
         )
         yield* Effect.tryPromise(() =>
           helper.webContents.debugger.sendCommand('Runtime.addBinding', {
-            name: '__treeportVideoFrame'
+            name: '__treeportVideoError'
           })
         )
         helper.webContents.debugger.on('message', (_event, method, params) => {
           if (
             this.helper !== helper ||
             method !== 'Runtime.bindingCalled' ||
-            params.name !== '__treeportVideoFrame'
+            params.name !== '__treeportVideoError'
           ) {
             return
           }
 
-          publish(params.payload)
-          capture.fork(
-            Effect.tryPromise(() =>
-              helper.webContents.debugger.sendCommand('Runtime.evaluate', {
-                expression: 'globalThis.__treeportVideo?.acknowledge()'
-              })
-            )
-          )
+          failed(params.payload)
         })
         const sourceId = this.guest.getMediaSourceId(helper.webContents)
         const error: string | null = yield* Effect.tryPromise(() =>
           helper.webContents.executeJavaScript(`(async () => {
-          globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(${JSON.stringify(sourceId)}, ${width}, ${height}, globalThis.__treeportVideoFrame);
+          globalThis.__treeportVideoSource = ${JSON.stringify(sourceId)};
+          globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(async () => globalThis.__treeportVideoSource, ${width}, ${height}, globalThis.__treeportVideoError);
           return null;
         })().catch(error => error.name + ': ' + error.message)`)
         )
@@ -211,16 +223,27 @@ export class ElectronBrowserVideo {
     })
   }
 
-  readonly requestKeyframe = Effect.suspend(() => {
-    const helper = this.helper
-    return helper
-      ? Effect.tryPromise(() =>
-          helper.webContents.debugger.sendCommand('Runtime.evaluate', {
-            expression: 'globalThis.__treeportVideo?.requestKeyframe()'
-          })
-        ).pipe(Effect.asVoid)
-      : Effect.void
-  })
+  negotiate(peerId: string, sdp: string) {
+    return Effect.tryPromise(async (): Promise<{ sdp: string }> => {
+      const helper = this.helper
+      if (!helper) {
+        throw new Error('Browser video capture is unavailable.')
+      }
+
+      const answer: string = await helper.webContents.executeJavaScript(
+        `globalThis.__treeportVideo.negotiate(${JSON.stringify(peerId)}, ${JSON.stringify(sdp)})`
+      )
+      return { sdp: answer }
+    })
+  }
+
+  closePeer(peerId: string) {
+    return Effect.tryPromise(async () => {
+      await this.helper?.webContents.executeJavaScript(
+        `globalThis.__treeportVideo?.closePeer(${JSON.stringify(peerId)})`
+      )
+    })
+  }
 
   readonly stop = Effect.suspend(() => {
     const capture = this.capture

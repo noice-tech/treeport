@@ -465,7 +465,7 @@ export function createBrowserCdpBridge(
                 return
               }
 
-              yield* videoOperations.withPermits(1)(
+              const videoResult = yield* videoOperations.withPermits(1)(
                 Effect.gen(function* () {
                   if (
                     stopping ||
@@ -495,21 +495,15 @@ export function createBrowserCdpBridge(
                     }
 
                     videoSession = request.sessionId!
-                    yield* video.start(width, height, (payload) => {
+                    yield* video.start(width, height, (message) => {
                       if (
                         videoSession === request.sessionId &&
                         pageSessions.has(request.sessionId!)
                       ) {
-                        if (socket.bufferedAmount > 8 * 1024 * 1024) {
-                          runtime.fork(video.stop)
-                          socket.close(1013, 'Browser video reader is too slow')
-                          return
-                        }
-
                         sendEvent(
                           socket,
-                          'Treeport.videoFrame',
-                          { payload },
+                          'Treeport.videoError',
+                          { message },
                           request.sessionId
                         )
                       }
@@ -524,10 +518,24 @@ export function createBrowserCdpBridge(
                     videoSession = null
                     yield* video.stop
                   } else if (
-                    request.method === 'Treeport.requestVideoKeyframe' &&
+                    (request.method === 'Treeport.negotiateVideo' ||
+                      request.method === 'Treeport.closeVideoPeer') &&
                     videoSession === request.sessionId
                   ) {
-                    yield* video.requestKeyframe
+                    const { peerId, sdp } = request.params
+                    if (typeof peerId !== 'string' || peerId.length > 128) {
+                      throw new Error('Invalid Browser video peer.')
+                    }
+
+                    if (request.method === 'Treeport.closeVideoPeer') {
+                      yield* video.closePeer(peerId)
+                    } else {
+                      if (typeof sdp !== 'string' || sdp.length > 65_536) {
+                        throw new Error('Invalid Browser video offer.')
+                      }
+
+                      return yield* video.negotiate(peerId, sdp)
+                    }
                   } else {
                     throw new Error(
                       'The Browser video command is not available.'
@@ -535,7 +543,7 @@ export function createBrowserCdpBridge(
                   }
                 })
               )
-              sendResult(socket, request, {})
+              sendResult(socket, request, videoResult ?? {})
               return
             }
 

@@ -18,7 +18,6 @@ import type {
   BrowserAgentCommand,
   BrowserClientMessage,
   BrowserPanel,
-  BrowserFrame,
   BrowserOwnerAuth,
   BrowserOwnerClientMessage,
   BrowserOwnerServerMessage,
@@ -28,7 +27,6 @@ import type {
   BrowserClipboard
 } from '@treeport/shared'
 import {
-  BROWSER_MAX_FRAME_BYTES,
   browserClipboardSchema,
   browserOwnerEndpointSchema,
   browserOwnerIdentitySchema,
@@ -52,15 +50,12 @@ import { browserNavigation } from './browser-navigation'
 import { browserKey, browserTouch, browserWheel } from './browser-input'
 import { browserSetupGuidance } from './browser-runtime'
 
-import { receiveBrowserVideo } from './browser-video'
-import { BrowserJpegDelivery } from './browser-jpeg-delivery'
 import { browserCursor } from './browser-cursor'
 
 export interface BrowserTransport {
   id: string
   isConnected(): boolean
   sendMessage(message: BrowserServerMessage): boolean
-  sendFrame(frame: BrowserFrame): boolean
   disconnect(): void
 }
 
@@ -100,7 +95,8 @@ export interface BrowserSessionBrowser {
   cursor(point: { x: number; y: number }): ReturnType<typeof browserCursor>
   agentCommand(input: BrowserAgentCommand): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
-  requestVideoKeyframe(): Promise<void>
+  negotiateVideo(peerId: string, sdp: string): Promise<string>
+  closeVideoPeer(peerId: string): Promise<void>
   devtoolsEndpoint?(): Promise<string>
   requestClose(force: boolean): Promise<boolean>
   close(): Promise<void>
@@ -179,10 +175,10 @@ interface BrowserAttachment {
   transport: BrowserTransport
   visible: boolean
   closing: boolean
-  inFlightFrames: Map<number, number>
-  jpegDelivery: BrowserJpegDelivery
+  videoReady: boolean
+  videoRequest: string | null
+  videoNegotiating: boolean
   cursorPoint: { x: number; y: number } | null
-  waitingForKeyframe: boolean
   viewport: { width: number; height: number }
 }
 
@@ -211,8 +207,8 @@ interface BrowserScheduler {
   queue: Queue.Queue<BrowserScheduledOperation>
   scope: Scope.CloseableScope
   pending: Set<BrowserScheduledOperation>
+  active: Set<BrowserScheduledOperation>
   tail: BrowserScheduledOperation | null
-  active: BrowserScheduledOperation | null
   controlKey: string | null
   accepting: boolean
 }
@@ -247,10 +243,7 @@ interface BrowserSession {
     BrowserSessionState,
     'controlled' | 'hasController' | 'controller' | 'agentActive'
   >
-  sequence: number
   videoError: string | null
-  keyframeRequestedAt: number
-  keyframeTimer: ReturnType<typeof setTimeout> | null
   scheduler: BrowserScheduler
   persistence: BrowserPanelStatePersistence
   agentAttached: boolean
@@ -591,17 +584,28 @@ export class BrowserSessionManager {
 
   private runScheduler(session: BrowserSession): Effect.Effect<never> {
     const scheduler = session.scheduler
+    const wheelFlights = new Set<Promise<void>>()
+    let wheelKey: string | null = null
     return Effect.forever(
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(this, function* () {
           const operation = yield* restore(Queue.take(scheduler.queue))
-          // Admission remains tracked until execution, including direct Queue
-          // handoff to a consumer that has not resumed yet when shutdown starts.
+          const wheel = operation.message?.type === 'wheel'
+          if (!wheel || operation.coalesceKey !== wheelKey) {
+            // Clicks, coordinates/modifiers, controllers, navigation and all
+            // lifecycle work are barriers. Only adjacent compatible wheels
+            // may overlap, and shutdown still owns their actual settlement.
+            yield* Effect.promise(() => Promise.all(wheelFlights))
+            wheelKey = wheel ? operation.coalesceKey : null
+          } else if (wheelFlights.size >= 2) {
+            yield* Effect.promise(() => Promise.race(wheelFlights))
+          }
+
           if (!scheduler.pending.delete(operation)) {
             return
           }
 
-          scheduler.active = operation
+          scheduler.active.add(operation)
           if (scheduler.tail === operation) {
             scheduler.tail = null
           }
@@ -622,34 +626,41 @@ export class BrowserSessionManager {
           }
 
           const started = Date.now()
-          // Playwright promises are not abortable. Keep the consumer occupied
-          // through actual settlement, including during scope closure. A timeout
-          // here would permit stale work to overlap recovery or resource release.
-          const result = yield* Effect.exit(
-            Effect.tryPromise({
-              try: () => operation.execute(operation.message),
-              catch: (cause) =>
-                new BrowserSchedulingError({
-                  reason: 'operation',
-                  message:
-                    cause instanceof Error ? cause.message : String(cause)
+          const running = Effect.runPromise(
+            Effect.gen(this, function* () {
+              const result = yield* Effect.exit(
+                Effect.tryPromise({
+                  try: () => operation.execute(operation.message),
+                  catch: (cause) =>
+                    new BrowserSchedulingError({
+                      reason: 'operation',
+                      message:
+                        cause instanceof Error ? cause.message : String(cause)
+                    })
                 })
+              )
+              yield* Deferred.done(operation.completion, result)
+              scheduler.active.delete(operation)
+              if (Exit.isFailure(result) && !operation.result) {
+                this.broadcastNavigationError(session, String(result.cause))
+              }
+
+              networkTelemetry.durationNow(
+                'browsers',
+                'operation',
+                Date.now() - started
+              )
             })
           )
-          yield* Deferred.done(operation.completion, result)
-          if (Exit.isFailure(result) && !operation.result) {
-            this.broadcastNavigationError(session, String(result.cause))
+          if (wheel) {
+            wheelFlights.add(running)
+            void running.then(() => wheelFlights.delete(running))
+          } else {
+            yield* Effect.promise(() => running)
           }
-
-          scheduler.active = null
-          networkTelemetry.durationNow(
-            'browsers',
-            'operation',
-            Date.now() - started
-          )
         })
       )
-    )
+    ).pipe(Effect.ensuring(Effect.promise(() => Promise.all(wheelFlights))))
   }
 
   private stopScheduler(session: BrowserSession, reason: string): void {
@@ -691,20 +702,24 @@ export class BrowserSessionManager {
   }
 
   private resetVideoDelivery(session: BrowserSession): void {
-    if (session.keyframeTimer) {
-      clearTimeout(session.keyframeTimer)
-      session.keyframeTimer = null
-    }
-
     session.videoError = null
-    session.keyframeRequestedAt = 0
     for (const attachment of session.attachments.values()) {
-      attachment.jpegDelivery.reset()
-      attachment.inFlightFrames.clear()
-      attachment.waitingForKeyframe = true
+      this.closeVideoPeer(session, attachment)
     }
-    // Sequence numbers remain monotonic across runtime generations. Otherwise
-    // late acknowledgements could release credit for a replacement runtime.
+  }
+
+  private closeVideoPeer(
+    session: BrowserSession,
+    attachment: BrowserAttachment
+  ): void {
+    attachment.videoRequest = null
+    attachment.videoReady = false
+    const operation = session.localOwner
+      ? session.localAutomation?.video.send('Treeport.closeVideoPeer', {
+          peerId: attachment.id
+        })
+      : session.browser?.closeVideoPeer(attachment.id)
+    void operation?.catch(() => undefined)
   }
 
   private openPopup(session: BrowserSession, url: string): void {
@@ -855,16 +870,13 @@ export class BrowserSessionManager {
           authorized.panel.title === 'Browser' ? '' : authorized.panel.title,
         viewport: { ...DEFAULT_STATE.viewport }
       },
-      sequence: 0,
       videoError: null,
-      keyframeRequestedAt: 0,
-      keyframeTimer: null,
       scheduler: {
         queue: Effect.runSync(Queue.dropping(MAX_BROWSER_SCHEDULED_OPERATIONS)),
         scope: Effect.runSync(Scope.make()),
         pending: new Set(),
+        active: new Set(),
         tail: null,
-        active: null,
         controlKey: null,
         accepting: true
       },
@@ -943,16 +955,6 @@ export class BrowserSessionManager {
             session.state = state
             this.queuePanelState(session, state)
             this.broadcastState(session)
-          },
-          frame: (frame) => {
-            if (
-              runtimeReady &&
-              session.browser === browser &&
-              session.generation === runtimeGeneration &&
-              !session.localOwner
-            ) {
-              this.publishFrame(session, frame)
-            }
           },
           clipboard: (clipboard) => {
             const input = session.clipboardInput
@@ -1185,27 +1187,10 @@ export class BrowserSessionManager {
       transport,
       visible: ticket.visible,
       closing: false,
-      inFlightFrames: new Map(),
-      jpegDelivery: new BrowserJpegDelivery((frame) => {
-        if (
-          session.closing ||
-          attachment.closing ||
-          !attachment.visible ||
-          !transport.isConnected()
-        ) {
-          return false
-        }
-
-        const sent = transport.sendFrame(frame)
-        attachment.waitingForKeyframe = !sent
-        if (!sent) {
-          this.requestVideoKeyframe(session)
-        }
-
-        return sent
-      }),
+      videoReady: false,
+      videoRequest: null,
+      videoNegotiating: false,
       cursorPoint: null,
-      waitingForKeyframe: true,
       viewport: { ...session.state.viewport }
     }
     session.attachments.set(attachment.id, attachment)
@@ -1232,7 +1217,7 @@ export class BrowserSessionManager {
             }
 
             superseded.closing = true
-            superseded.jpegDelivery.reset()
+            this.closeVideoPeer(session, superseded)
             session.attachments.delete(superseded.id)
             superseded.transport.disconnect()
           }
@@ -1272,7 +1257,7 @@ export class BrowserSessionManager {
       this.prepareVideoViewer(session, attachment)
     } catch (error) {
       attachment.closing = true
-      attachment.jpegDelivery.reset()
+      this.closeVideoPeer(session, attachment)
       session.attachments.delete(attachment.id)
       if (
         session.controllerId === attachmentController(attachment.clientId) &&
@@ -1749,96 +1734,19 @@ export class BrowserSessionManager {
     session: BrowserSession,
     attachment: BrowserAttachment
   ): void {
-    if (!attachment.visible || !attachment.transport.isConnected()) {
-      return
-    }
-
-    attachment.waitingForKeyframe = true
-    // A cached delta frame is not independently decodable. Request a new keyframe
-    // even for a static page; the capture document retains one raw frame for this.
-    this.requestVideoKeyframe(session)
-  }
-
-  private requestVideoKeyframe(session: BrowserSession): void {
     if (
-      ![...session.attachments.values()].some(
-        (attachment) => attachment.visible && attachment.transport.isConnected()
-      )
+      session.videoError ||
+      attachment.closing ||
+      !attachment.visible ||
+      !attachment.transport.isConnected() ||
+      attachment.videoReady
     ) {
       return
     }
 
-    const delay = 250 - (Date.now() - session.keyframeRequestedAt)
-    if (delay > 0) {
-      session.keyframeTimer ??= setTimeout(() => {
-        session.keyframeTimer = null
-        if (this.sessions.get(session.panelId) === session) {
-          this.requestVideoKeyframe(session)
-        }
-      }, delay)
-      session.keyframeTimer.unref()
-      return
-    }
-
-    session.keyframeRequestedAt = Date.now()
-    const operation = session.localOwner
-      ? session.localAutomation?.video.send('Treeport.requestVideoKeyframe')
-      : session.browser?.requestVideoKeyframe()
-    void operation?.catch((cause) =>
-      this.broadcastNavigationError(
-        session,
-        cause instanceof Error ? cause.message : String(cause)
-      )
-    )
-  }
-
-  private publishFrame(
-    session: BrowserSession,
-    value: Omit<BrowserFrame, 'sequence'>
-  ): void {
-    if (value.data.byteLength > BROWSER_MAX_FRAME_BYTES) {
-      return
-    }
-
-    session.videoError = null
-    const frame: BrowserFrame = {
-      ...value,
-      sequence: ++session.sequence
-    }
-    for (const attachment of session.attachments.values()) {
-      if (
-        session.closing ||
-        attachment.closing ||
-        !attachment.visible ||
-        !attachment.transport.isConnected()
-      ) {
-        continue
-      }
-
-      if (frame.mimeType === 'image/jpeg') {
-        attachment.jpegDelivery.offer(frame)
-        continue
-      }
-
-      // VP8 still needs its ordered reference frames.
-      attachment.jpegDelivery.reset()
-      if (
-        attachment.inFlightFrames.size >= 8 ||
-        (attachment.waitingForKeyframe && !frame.keyframe)
-      ) {
-        attachment.waitingForKeyframe = true
-        networkTelemetry.droppedNow('browsers', 'coalesced')
-        continue
-      }
-
-      if (attachment.transport.sendFrame(frame)) {
-        attachment.waitingForKeyframe = false
-        attachment.inFlightFrames.set(frame.sequence, Date.now())
-      } else {
-        attachment.waitingForKeyframe = true
-        this.requestVideoKeyframe(session)
-      }
-    }
+    attachment.videoReady = attachment.transport.sendMessage({
+      type: 'videoReady'
+    })
   }
 
   message(connectionId: string, value: BrowserClientMessage): void {
@@ -1870,31 +1778,72 @@ export class BrowserSessionManager {
       return
     }
 
-    if (message.type === 'requestVideoKeyframe') {
-      if (attachment.visible) {
-        attachment.waitingForKeyframe = true
-        this.requestVideoKeyframe(session)
-      }
-
-      return
-    }
-
-    if (message.type === 'frameAck') {
-      if (attachment.jpegDelivery.acknowledge(message.sequence)) {
+    if (message.type === 'videoOffer') {
+      if (
+        !attachment.visible ||
+        !attachment.videoReady ||
+        attachment.videoNegotiating
+      ) {
         return
       }
 
-      const sentAt = attachment.inFlightFrames.get(message.sequence)
-      if (sentAt === undefined) {
-        return
-      }
+      attachment.videoNegotiating = true
+      attachment.videoRequest = message.requestId
+      const generation = session.generation
+      const browser = session.browser
+      const video = session.localAutomation?.video ?? null
+      const local = session.localOwner !== null
+      // ICE gathering must not occupy the input scheduler. Each attachment has
+      // at most one negotiation; generation/request checks revoke stale answers.
+      const operation = local
+        ? video
+            ?.send('Treeport.negotiateVideo', {
+              peerId: attachment.id,
+              sdp: message.sdp
+            })
+            .then((result) => result.sdp)
+        : browser?.negotiateVideo(attachment.id, message.sdp)
+      void (
+        operation ?? Promise.reject(new Error('Browser video is unavailable.'))
+      )
+        .then(async (sdp) => {
+          if (
+            attachment.closing ||
+            !attachment.visible ||
+            attachment.videoRequest !== message.requestId ||
+            session.generation !== generation ||
+            session.attachments.get(attachment.id) !== attachment
+          ) {
+            await (local
+              ? video?.send('Treeport.closeVideoPeer', {
+                  peerId: attachment.id
+                })
+              : browser?.closeVideoPeer(attachment.id))
+            return
+          }
 
-      attachment.inFlightFrames.delete(message.sequence)
-      networkTelemetry.durationNow('browsers', 'ack_lag', Date.now() - sentAt)
-      if (attachment.visible && attachment.waitingForKeyframe) {
-        this.requestVideoKeyframe(session)
-      }
-
+          attachment.transport.sendMessage({
+            type: 'videoAnswer',
+            requestId: message.requestId,
+            sdp
+          })
+        })
+        .catch((cause) => {
+          if (
+            !attachment.closing &&
+            attachment.visible &&
+            attachment.videoRequest === message.requestId &&
+            session.generation === generation
+          ) {
+            attachment.transport.sendMessage({
+              type: 'videoUnavailable',
+              message: cause instanceof Error ? cause.message : String(cause)
+            })
+          }
+        })
+        .finally(() => {
+          attachment.videoNegotiating = false
+        })
       return
     }
 
@@ -1907,11 +1856,8 @@ export class BrowserSessionManager {
         session.clipboardInput = null
       }
 
-      attachment.inFlightFrames.clear()
-      attachment.jpegDelivery.reset()
-      attachment.waitingForKeyframe = true
-      if (message.visible) {
-        this.prepareVideoViewer(session, attachment)
+      if (!message.visible) {
+        this.closeVideoPeer(session, attachment)
       }
 
       this.queueClientOperation(session, attachment, {
@@ -1992,7 +1938,7 @@ export class BrowserSessionManager {
       if (
         scheduler.accepting &&
         (scheduler.controlKey === key ||
-          (!scheduler.active &&
+          (scheduler.active.size === 0 &&
             scheduler.pending.size === 0 &&
             session.controllerId === attachmentController(attachment.clientId)))
       ) {
@@ -2311,6 +2257,9 @@ export class BrowserSessionManager {
         )
       }
 
+      for (const attachment of session.attachments.values()) {
+        this.prepareVideoViewer(session, attachment)
+      }
       return
     }
 
@@ -2331,6 +2280,9 @@ export class BrowserSessionManager {
           cause instanceof Error ? cause.message : String(cause)
         )
       )
+    for (const attachment of session.attachments.values()) {
+      this.prepareVideoViewer(session, attachment)
+    }
   }
 
   private async detachAgent(session: BrowserSession): Promise<void> {
@@ -2425,7 +2377,7 @@ export class BrowserSessionManager {
       }
 
       attachment.closing = true
-      attachment.jpegDelivery.reset()
+      this.closeVideoPeer(session, attachment)
       void this.scheduleOperation(
         session,
         async () => {
@@ -2516,9 +2468,9 @@ export class BrowserSessionManager {
     }
 
     session.closeReason = reason
-    if (session.scheduler.active) {
+    for (const active of session.scheduler.active) {
       Deferred.unsafeDone(
-        session.scheduler.active.completion,
+        active.completion,
         Effect.fail(
           new BrowserSchedulingError({ reason: 'closing', message: reason })
         )
@@ -2677,24 +2629,15 @@ export class BrowserSessionManager {
       // private domain. Arbitrary remote CDP endpoints are not accepted here.
       // eslint-disable-next-line anti-slop/no-chained-type-assertions -- This private Electron domain extends Playwright's fixed Chromium command table.
       const video = cdp as unknown as BrowserNativeCdpSession
-      video.on('Treeport.videoFrame', ({ payload }) => {
+      video.on('Treeport.videoError', ({ message }) => {
         if (
-          session.localOwner !== owner ||
-          session.localAutomation?.generation !== owner.generation ||
-          !session.localAutomation.screencasting
+          session.localOwner === owner &&
+          session.localAutomation?.generation === owner.generation
         ) {
-          return
+          automation.screencasting = false
+          void video.send('Treeport.stopVideo').catch(() => undefined)
+          this.broadcastVideoUnavailable(session, message)
         }
-
-        receiveBrowserVideo(
-          payload,
-          (frame) => this.publishFrame(session, frame),
-          (message) => {
-            automation.screencasting = false
-            void video.send('Treeport.stopVideo').catch(() => undefined)
-            this.broadcastVideoUnavailable(session, message)
-          }
-        )
       })
       const automation: BrowserLocalAutomation = {
         browser,
@@ -2795,10 +2738,6 @@ export class BrowserSessionManager {
             automation.captureViewport.height === height)))
     ) {
       return
-    }
-
-    if (enabled && automation.screencasting) {
-      await automation.video.send('Treeport.stopVideo')
     }
 
     automation.screencasting = enabled

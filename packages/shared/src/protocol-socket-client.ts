@@ -4,7 +4,6 @@ import * as FiberId from 'effect/FiberId'
 import * as Layer from 'effect/Layer'
 import * as Queue from 'effect/Queue'
 import * as Socket from '@effect/platform/Socket'
-import { decodeBrowserFrame } from './browser-protocol.js'
 import { parseSocketMessage } from './socket-protocol.js'
 import { decodeUnknownOrNull } from './schema.js'
 import { SOCKET_PATH } from './terminal-protocol.js'
@@ -196,12 +195,9 @@ class EffectProtocolSocket<
         yield* socket.runRaw(
           (data) => {
             if (data instanceof Uint8Array) {
-              const frame = decodeBrowserFrame(data)
-              if (!frame) {
-                this.disconnect()
-              } else {
-                this.dispatch('frame', frame)
-              }
+              // This transport carries control/signaling only. Browser media
+              // is delivered by WebRTC, never by binary application messages.
+              this.disconnect()
 
               return
             }
