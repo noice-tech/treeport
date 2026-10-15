@@ -24,6 +24,7 @@ type Command = TerminalImagePlacement['command'] & {
   deleteSelector?: string
 }
 type CellSize = { width: number; height: number }
+type ParserParams = { params: Int32Array }
 type Line = {
   getExtended(column: number): { payload?: { imageId: number; tileId: number } }
 }
@@ -32,9 +33,10 @@ type Buffer = {
   y: number
   ybase: number
   lines: { length: number; get(index: number): Line | undefined }
-  addMarker(
-    line: number
-  ): Disposable & { onDispose(callback: () => void): Disposable }
+  addMarker(line: number): Disposable & {
+    isDisposed: boolean
+    onDispose(callback: () => void): Disposable
+  }
 }
 type ImageSpec = {
   orig: Bitmap
@@ -42,7 +44,10 @@ type ImageSpec = {
   origCellSize: CellSize
   actualCellSize: CellSize
   marker:
-    | (Disposable & { onDispose(callback: () => void): Disposable })
+    | (Disposable & {
+        isDisposed: boolean
+        onDispose(callback: () => void): Disposable
+      })
     | undefined
   tileCount: number
   bufferType: 'normal' | 'alternate'
@@ -115,6 +120,7 @@ interface TerminalInternals {
     _bufferService: { buffers: { normal: Buffer; alt: Buffer } }
     _inputHandler: {
       lineFeed(): boolean
+      eraseInLine(params: ParserParams, respectProtect: boolean): boolean
       _parser: { currentState: number }
     }
   }
@@ -139,6 +145,7 @@ export class TerminalImages {
   private restoring: TerminalImagePlacement | null = null
   private activeCommand: Command = {}
   private cellSize = { ...DEFAULT_CELL_SIZE }
+  private restoreEraseInLine: (() => void) | null = null
 
   constructor(private readonly headless = false) {
     this.addon = new ImageAddon({
@@ -188,8 +195,13 @@ export class TerminalImages {
 
     // Canvas eviction, erasure, scrolling and buffer switches remove placements,
     // not transmitted images. Pi legitimately reuses those uploads with a=p.
+    const preserved = new Set<number>()
     storage.onImageDeleted = (id) => this.placements.delete(id)
     storage._delImg = (id) => {
+      if (preserved.has(id)) {
+        return
+      }
+
       const spec = storage._images.get(id)
       if (!spec) {
         return
@@ -202,6 +214,49 @@ export class TerminalImages {
       }
 
       storage.onImageDeleted?.(id)
+    }
+    // Kitty graphics are independent of EL text erasure. Pi clears each
+    // placeholder row after placing an image; xterm would otherwise erase its
+    // tiles (and dispose the end marker), leaving only the first image row.
+    // Keep ED/full-screen clearing and explicit Kitty deletion unchanged.
+    const input = core._inputHandler
+    const eraseInLine = input.eraseInLine
+    this.restoreEraseInLine = () => {
+      input.eraseInLine = eraseInLine
+    }
+    input.eraseInLine = (params, respectProtect) => {
+      const buffer = core.buffer
+      const row = buffer.ybase + buffer.y
+      const line = buffer.lines.get(row)
+      const tiles: [number, number, number][] = []
+      if (line && this.placements.size) {
+        for (let column = 0; column < terminal.cols; column++) {
+          const tile = line.getExtended(column).payload
+          if (tile && storage._images.has(tile.imageId)) {
+            tiles.push([column, tile.imageId, tile.tileId])
+            preserved.add(tile.imageId)
+          }
+        }
+      }
+
+      const result = eraseInLine.call(input, params, respectProtect)
+
+      for (const [column, imageId, tileId] of tiles) {
+        // Untouched tiles must not be rewritten: the addon would decrement
+        // their placement's tile count as though another image replaced them.
+        const tile = line!.getExtended(column).payload
+        if (tile?.imageId !== imageId || tile.tileId !== tileId) {
+          storage._writeToCell(line!, column, imageId, tileId)
+        }
+
+        const spec = storage._images.get(imageId)!
+        if (spec.marker?.isDisposed) {
+          spec.marker = buffer.addMarker(row)
+          spec.marker.onDispose(() => storage._delImg(imageId))
+        }
+      }
+      preserved.clear()
+      return result
     }
     const resetStorage = storage.reset.bind(storage)
     storage.reset = () => {
@@ -800,6 +855,8 @@ export class TerminalImages {
   }
 
   dispose(): void {
+    this.restoreEraseInLine?.()
+    this.restoreEraseInLine = null
     this.addon.dispose()
     this.placements.clear()
     this.pending.clear()
