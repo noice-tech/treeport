@@ -81,6 +81,12 @@ class FakeBrowser implements BrowserSessionBrowser {
     if (message.type === 'navigate') {
       this.state = { ...this.state, url: message.url }
       this.callbacks.state(this.state)
+    } else if (message.type === 'resize') {
+      this.state = {
+        ...this.state,
+        viewport: { width: message.width, height: message.height }
+      }
+      this.callbacks.state(this.state)
     }
   }
   async agentCommand(input: BrowserAgentCommand): Promise<string> {
@@ -359,17 +365,110 @@ describe('Browser sessions', () => {
         sdp: 'answer'
       })
     )
+    const observer = value.transport('observer')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'observer')),
+        observer.transport
+      )
+    )
+    value.manager.message('viewer', { type: 'resize', width: 900, height: 600 })
+    value.manager.message('observer', {
+      type: 'resize',
+      width: 600,
+      height: 900
+    })
+    await vi.waitFor(() =>
+      expect(browser.state.viewport).toEqual({ width: 900, height: 600 })
+    )
+
+    // Visibility handoff must use the observer's already-reported dimensions.
+    value.manager.message('viewer', { type: 'setVisible', visible: false })
+    await vi.waitFor(() =>
+      expect(observer.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: true, viewport: { width: 600, height: 900 } }
+      })
+    )
+    expect(browser.state.viewport).toEqual({ width: 600, height: 900 })
+
+    value.manager.message('viewer', { type: 'setVisible', visible: true })
+    // Disconnect handoff must restore the original size without a new resize
+    // event: this viewer's panel dimensions never changed.
+    value.manager.close('observer')
+    await vi.waitFor(() =>
+      expect(viewer.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: true, viewport: { width: 900, height: 600 } }
+      })
+    )
+    expect(browser.state.viewport).toEqual({ width: 900, height: 600 })
+
     value.manager.close('viewer')
     expect(browser.closeVideoPeer).toHaveBeenCalledWith('viewer')
+
+    // Restoring a workspace must not see its disconnected viewer as someone
+    // else's controller, even if client storage was unavailable on reload.
+    const restored = value.transport('restored-viewer')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket('panel_browser', 'restored-client')
+        ),
+        restored.transport
+      )
+    )
+    expect(restored.messages).toContainEqual({
+      type: 'ready',
+      state: expect.objectContaining({ controlled: true, controller: 'you' })
+    })
+    expect(browsers).toHaveLength(1)
+    await value.manager.dispose()
   })
 
   it('authorizes one-use attachment tickets, shares control, and isolates video peers', async () => {
     const value = fixture()
+    const identity = {
+      account: {
+        source: 'tailscale',
+        login: 'alice@example.test',
+        name: 'Alice',
+        profilePicture: null
+      },
+      deviceId: 'tailscale:100.64.0.10'
+    } as const
+    const otherDevice = { ...identity, deviceId: 'tailscale:100.64.0.11' }
+    const otherAccount = {
+      ...identity,
+      account: { ...identity.account, login: 'bob@example.test', name: 'Bob' }
+    }
+    // Tickets are bound to the authenticated ingress, not renderer claims.
+    for (const requester of [otherDevice, otherAccount, null]) {
+      const ticket = await runEffect(
+        value.manager.issueTicket(
+          'panel_browser',
+          'client-first',
+          true,
+          identity
+        )
+      )
+      await expect(
+        runEffect(
+          value.manager.accept(
+            ticket,
+            value.transport('wrong-identity').transport,
+            requester
+          )
+        )
+      ).rejects.toThrow('INVALID_BROWSER_TICKET')
+    }
     const first = value.transport('first')
     const firstTicket = await runEffect(
-      value.manager.issueTicket('panel_browser', 'client-first')
+      value.manager.issueTicket('panel_browser', 'client-first', true, identity)
     )
-    await runEffect(value.manager.accept(firstTicket, first.transport))
+    await runEffect(
+      value.manager.accept(firstTicket, first.transport, identity)
+    )
     expect(first.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
       state: { controlled: true }
@@ -384,15 +483,31 @@ describe('Browser sessions', () => {
     await runEffect(
       value.manager.accept(
         await runEffect(
-          value.manager.issueTicket('panel_browser', 'client-second')
+          value.manager.issueTicket(
+            'panel_browser',
+            'client-second',
+            true,
+            identity
+          )
         ),
-        second.transport
+        second.transport,
+        identity
       )
     )
     expect(second.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
-      state: { controlled: false, hasController: true }
+      state: {
+        controlled: false,
+        hasController: true,
+        controllerDetails: {
+          kind: 'viewer',
+          account: identity.account,
+          sameAccount: true,
+          sameDevice: true
+        }
+      }
     })
+    expect(first.disconnects).toBe(0)
 
     const browser = browsers[0]!
     value.manager.message('first', {
@@ -426,12 +541,58 @@ describe('Browser sessions', () => {
     await runEffect(
       value.manager.accept(
         await runEffect(
-          value.manager.issueTicket('panel_browser', 'client-late')
+          value.manager.issueTicket(
+            'panel_browser',
+            'client-late',
+            true,
+            otherDevice
+          )
         ),
-        lateObserver.transport
+        lateObserver.transport,
+        otherDevice
       )
     )
     expect(lateObserver.messages).toContainEqual({ type: 'videoReady' })
+    expect(lateObserver.messages).toContainEqual({
+      type: 'ready',
+      state: expect.objectContaining({
+        controlled: false,
+        controllerDetails: {
+          kind: 'viewer',
+          account: identity.account,
+          sameAccount: true,
+          sameDevice: false
+        }
+      })
+    })
+    const differentAccount = value.transport('different-account')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket(
+            'panel_browser',
+            'client-different-account',
+            true,
+            otherAccount
+          )
+        ),
+        differentAccount.transport,
+        otherAccount
+      )
+    )
+    expect(differentAccount.messages).toContainEqual({
+      type: 'ready',
+      state: expect.objectContaining({
+        controlled: false,
+        controllerDetails: {
+          kind: 'viewer',
+          account: identity.account,
+          sameAccount: false,
+          sameDevice: true
+        }
+      })
+    })
+    expect(first.disconnects).toBe(0)
 
     const observerMessageCount = second.messages.length
     value.manager.message('second', {
@@ -531,10 +692,50 @@ describe('Browser sessions', () => {
     // A grant from the previous controller cannot write after a handoff.
     expect(browser.callbacks.clipboard(clipboard)).toBe(false)
 
+    value.manager.close('first')
+    await vi.waitFor(() =>
+      expect(second.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: true, controller: 'you' }
+      })
+    )
+    expect(lateObserver.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: false, controller: 'other' }
+    })
+
+    // A fresh ticket can report a new device address without changing the
+    // persistent viewer's control or leaving its previous socket attached.
+    const resumed = value.transport('second-resumed')
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket(
+            'panel_browser',
+            'client-second',
+            true,
+            otherDevice
+          )
+        ),
+        resumed.transport,
+        otherDevice
+      )
+    )
+    expect(second.disconnects).toBe(1)
+    expect(resumed.messages).toContainEqual({
+      type: 'ready',
+      state: expect.objectContaining({ controlled: true })
+    })
+    // The old socket's delayed close cannot release the replacement's control.
+    value.manager.close('second')
+    expect(resumed.messages.at(-1)).toMatchObject({
+      state: { controlled: true }
+    })
+
     await value.manager.dispose()
     expect(browser.callbacks.clipboard(clipboard)).toBe(false)
     expect(browser.closes).toBe(1)
-    expect(first.disconnects).toBe(1)
+    expect(first.disconnects).toBe(0)
     expect(second.disconnects).toBe(1)
   })
 
@@ -1031,10 +1232,22 @@ describe('Browser sessions', () => {
         reconnectedRemote.transport
       )
     )
-    expect(reconnectedRemote.messages.at(-1)).toMatchObject({
+    expect(observer.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
       state: { controlled: true, controller: 'you' }
     })
+    expect(reconnectedRemote.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: false, controller: 'other' }
+    })
+    // Reconnecting must not steal control from the viewer that took over.
+    value.manager.message('remote-reconnected', { type: 'takeControl' })
+    await vi.waitFor(() =>
+      expect(reconnectedRemote.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: true, controller: 'you' }
+      })
+    )
     value.manager.ownerMessage('local-owner', {
       type: 'takeControl',
       generation

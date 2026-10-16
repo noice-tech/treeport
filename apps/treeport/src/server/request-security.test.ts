@@ -99,7 +99,8 @@ async function fixture(): Promise<{
     response.end(
       JSON.stringify({
         source: security.principal?.source,
-        login: security.principal?.login
+        login: security.principal?.login,
+        deviceId: security.deviceId
       })
     )
   })
@@ -206,7 +207,11 @@ describe('request security over a real HTTP server', () => {
 
     const local = await request(value.url, { path: '/api/local' })
     expect(local.status).toBe(200)
-    expect(JSON.parse(local.body)).toEqual({ source: 'local', login: null })
+    expect(JSON.parse(local.body)).toEqual({
+      source: 'local',
+      login: null,
+      deviceId: 'local'
+    })
 
     const tailscaleHeaders = {
       Host: 'treeport.tailnet.ts.net',
@@ -215,7 +220,8 @@ describe('request security over a real HTTP server', () => {
       'Tailscale-User-Name': 'Treeport Developer',
       'Tailscale-User-Profile-Pic': 'https://example.test/profile.png',
       'X-Forwarded-Host': 'treeport.tailnet.ts.net',
-      'X-Forwarded-Proto': 'https'
+      'X-Forwarded-Proto': 'https',
+      'X-Forwarded-For': '100.64.0.10'
     }
     const tailscale = await request(value.url, {
       path: '/api/remote',
@@ -224,8 +230,31 @@ describe('request security over a real HTTP server', () => {
     expect(tailscale.status).toBe(200)
     expect(JSON.parse(tailscale.body)).toEqual({
       source: 'tailscale',
-      login: 'developer@example.test'
+      login: 'developer@example.test',
+      deviceId: 'tailscale:100.64.0.10'
     })
+
+    for (const forwarded of [
+      '',
+      'not-an-ip',
+      'fe80::1%eth0',
+      '100.64.0.10, 100.64.0.11',
+      ['100.64.0.10', '100.64.0.11']
+    ]) {
+      const unknownDevice = await request(value.url, {
+        headers: { ...tailscaleHeaders, 'X-Forwarded-For': forwarded }
+      })
+      expect(unknownDevice.status).toBe(200)
+      expect(JSON.parse(unknownDevice.body).deviceId).toBeNull()
+    }
+    const ipv6 = await request(value.url, {
+      headers: { ...tailscaleHeaders, 'X-Forwarded-For': 'fd7a:115c:a1e0::1' }
+    })
+    expect(JSON.parse(ipv6.body).deviceId).toBe('tailscale:[fd7a:115c:a1e0::1]')
+    const localWithForgedDevice = await request(value.url, {
+      headers: { 'X-Forwarded-For': '100.64.0.10' }
+    })
+    expect(JSON.parse(localWithForgedDevice.body).deviceId).toBe('local')
 
     const identityWithoutProfile = await request(value.url, {
       path: '/api/remote',

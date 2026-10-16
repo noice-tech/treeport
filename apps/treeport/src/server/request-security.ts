@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { isIP } from 'node:net'
 import type { ViewerIdentity } from '@treeport/shared'
 
 const MAX_HOST_BYTES = 512
@@ -9,15 +10,23 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 type RequestPrincipal = ViewerIdentity
 
+export interface AuthenticatedViewer {
+  account: ViewerIdentity
+  // Verified ingress address, not a client-supplied device claim. Null means
+  // unavailable; it must never imply that two viewers use the same device.
+  deviceId: string | null
+}
+
 // Only the Node ingress can attach an authenticated identity to a request.
-export const authenticatedPrincipals = new WeakMap<
+export const authenticatedViewers = new WeakMap<
   IncomingMessage,
-  ViewerIdentity
+  AuthenticatedViewer
 >()
 
 export interface RequestSecurityDecision {
   allowed: boolean
   principal: RequestPrincipal | null
+  deviceId: string | null
   effectiveOrigin: string | null
   status: 200 | 400 | 401 | 403
   code: string | null
@@ -32,6 +41,7 @@ function denied(
   return {
     allowed: false,
     principal: null,
+    deviceId: null,
     effectiveOrigin: null,
     status,
     code,
@@ -355,9 +365,22 @@ export function authorizeRequest(
     return denied(403, 'INVALID_ORIGIN', 'The request origin is not allowed.')
   }
 
+  // Serve overwrites X-Forwarded-For with the single source IP. Never accept
+  // a proxy chain, duplicate headers, or a device ID supplied by the renderer.
+  // Local ingress is on this host; it does not identify an OS user.
+  const forwardedFor = singleHeader(request, 'x-forwarded-for')
+  const address = forwardedFor.valid ? forwardedFor.value : null
+  const deviceId =
+    principal.source === 'local'
+      ? 'local'
+      : address && !address.includes('%') && isIP(address)
+        ? `tailscale:${new URL(`http://${isIP(address) === 6 ? `[${address}]` : address}`).hostname}`
+        : null
+
   return {
     allowed: true,
     principal,
+    deviceId,
     effectiveOrigin,
     status: 200,
     code: null,

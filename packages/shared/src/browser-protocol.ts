@@ -2,6 +2,7 @@
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 import { browserClipboardSchema } from './browser-clipboard.js'
+import { viewerIdentitySchema } from './presence-protocol.js'
 import {
   browserPanelIdSchema,
   browserObservedUrlSchema,
@@ -224,11 +225,45 @@ export type BrowserRuntimeState = Schema.Schema.Type<
   typeof browserRuntimeStateSchema
 >
 
+export const browserControllerDetailsSchema = Schema.Struct({
+  kind: Schema.Literal('viewer', 'local'),
+  account: Schema.NullOr(viewerIdentitySchema),
+  sameAccount: Schema.Boolean,
+  sameDevice: Schema.Boolean
+})
+export type BrowserControllerDetails = Schema.Schema.Type<
+  typeof browserControllerDetailsSchema
+>
+
+export function browserControllerDescription(
+  details: BrowserControllerDetails | null
+): string {
+  if (details?.sameAccount) {
+    return details.sameDevice
+      ? 'Another window on this device controls this browser.'
+      : 'Another window or device on your account controls this browser.'
+  }
+
+  if (details?.sameDevice) {
+    return 'Another window on this device controls this browser.'
+  }
+
+  if (details?.kind === 'local') {
+    return 'A desktop window on the server controls this browser.'
+  }
+
+  const name = details?.account?.name ?? details?.account?.login
+  return name
+    ? `${name} controls this browser.`
+    : 'Another window or device controls this browser.'
+}
+
 export const browserSessionStateSchema = Schema.Struct({
   ...browserRuntimeStateSchema.fields,
   controlled: Schema.Boolean,
   hasController: Schema.Boolean,
   controller: Schema.Literal('you', 'other', 'none'),
+  controllerDetails: Schema.NullOr(browserControllerDetailsSchema),
   agentActive: Schema.Boolean
 })
 export type BrowserSessionState = Schema.Schema.Type<
@@ -335,6 +370,8 @@ export type BrowserServerMessage = Schema.Schema.Type<
 >
 
 export const browserTicketRequestSchema = Schema.Struct({
+  // Persistent viewer/window ID. Account and device identity come from ingress,
+  // never from this request body; the socket gets its own ephemeral ID.
   clientId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
   visible: Schema.Boolean
 })

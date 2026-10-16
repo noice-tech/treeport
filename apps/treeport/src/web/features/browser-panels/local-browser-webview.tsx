@@ -170,6 +170,7 @@ export function LocalBrowserWebview({
       controlled: externalControllerRef.current === null,
       hasController: true,
       controller: externalControllerRef.current ?? 'you',
+      controllerDetails: null,
       agentActive: agentActiveRef.current
     })
     const emitState = (

@@ -38,6 +38,7 @@ import {
   browserUrlSchema,
   browserObservedUrlSchema,
   BROWSER_MAX_INSERT_TEXT_LENGTH,
+  browserControllerDescription,
   decodeUnknownOrNull
 } from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
@@ -1974,8 +1975,8 @@ export function BrowserPanelWorkspace({
       ) : null}
       {state?.hasController && !state.controlled ? (
         <p className="bg-amber-950 px-2.5 py-1.5 text-amber-200" role="status">
-          Another Treeport client controls this browser. Interact with the
-          viewport to take control.
+          {browserControllerDescription(state.controllerDetails)} Interact with
+          the viewport to take control.
         </p>
       ) : null}
       {viewportOverride ? (

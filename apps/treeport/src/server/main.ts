@@ -24,7 +24,7 @@ import { BrowserSessionManager } from './browser-sessions'
 import { acquireDaemonOwnership } from './daemon-ownership'
 import type { installDaemonDiagnostics } from './daemon-diagnostics'
 import {
-  authenticatedPrincipals,
+  authenticatedViewers,
   authorizeRequest,
   rejectHttpRequest
 } from './request-security'
@@ -272,7 +272,10 @@ export async function main(
               }
 
               if (security.principal) {
-                authenticatedPrincipals.set(request, security.principal)
+                authenticatedViewers.set(request, {
+                  account: security.principal,
+                  deviceId: security.deviceId
+                })
               }
 
               service.handleWebPanelDevelopmentRequest(

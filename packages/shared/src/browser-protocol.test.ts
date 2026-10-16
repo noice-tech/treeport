@@ -4,6 +4,7 @@ import {
   browserOwnerAuthSchema as browserOwnerAuthEffectSchema,
   browserOwnerClientMessageSchema as browserOwnerClientMessageEffectSchema,
   browserOwnerServerMessageSchema as browserOwnerServerMessageEffectSchema,
+  browserControllerDescription,
   parseBrowserAuth,
   parseBrowserClientMessage,
   parseBrowserServerMessage
@@ -199,6 +200,42 @@ describe('hosted browser protocol', () => {
     const answer = { ...offer, type: 'videoAnswer' }
     expect(parseBrowserServerMessage(answer)).toEqual(answer)
     expect(parseBrowserServerMessage({ type: 'videoReady' })).not.toBeNull()
+    const account = {
+      source: 'tailscale',
+      login: 'alice@example.test',
+      name: 'Alice',
+      profilePicture: null
+    } as const
+    const details = {
+      kind: 'viewer',
+      account,
+      sameAccount: true,
+      sameDevice: true
+    } as const
+    expect(browserControllerDescription(details)).toBe(
+      'Another window on this device controls this browser.'
+    )
+    expect(
+      browserControllerDescription({ ...details, sameDevice: false })
+    ).toBe('Another window or device on your account controls this browser.')
+    expect(
+      browserControllerDescription({
+        ...details,
+        sameAccount: false,
+        sameDevice: false
+      })
+    ).toBe('Alice controls this browser.')
+    expect(
+      browserControllerDescription({
+        kind: 'local',
+        account: null,
+        sameAccount: false,
+        sameDevice: false
+      })
+    ).toBe('A desktop window on the server controls this browser.')
+    expect(browserControllerDescription(null)).toBe(
+      'Another window or device controls this browser.'
+    )
   })
 
   it('requires a bounded opaque ticket', () => {

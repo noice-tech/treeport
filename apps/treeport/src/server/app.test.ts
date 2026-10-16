@@ -3,7 +3,7 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import {
-  authenticatedPrincipals,
+  authenticatedViewers,
   authorizeRequest,
   rejectHttpRequest
 } from './request-security'
@@ -594,9 +594,11 @@ function fixture(webDist = '/missing') {
     start: vi.fn(async () => applicationUpdateStatus),
     dispose: vi.fn()
   })
+  const browserIssueTicket = vi.fn(() => Effect.succeed('b'.repeat(43)))
   const browserAgentCommand = vi.fn(async () => 'browser output')
   const browserRequestPanelClose = vi.fn(async () => true)
   const browserSessions = testAccess<BrowserSessionManager>({
+    issueTicket: browserIssueTicket,
     agentCommand: browserAgentCommand,
     requestPanelClose: browserRequestPanelClose
   })
@@ -620,6 +622,7 @@ function fixture(webDist = '/missing') {
     app,
     presence,
     applicationUpdate,
+    browserIssueTicket,
     browserAgentCommand,
     browserRequestPanelClose,
     captureTerminal,
@@ -637,7 +640,7 @@ describe('HTTP API validation', () => {
   it('binds workspace presence to authenticated requests and validates focus', async ({
     onTestFinished
   }) => {
-    const { app, presence, service } = fixture()
+    const { app, presence, service, browserIssueTicket } = fixture()
     const listener = await service.runEffect(
       NodeHttpServer.makeHandler(app.httpApp)
     )
@@ -649,7 +652,10 @@ describe('HTTP API validation', () => {
       }
 
       if (security.principal) {
-        authenticatedPrincipals.set(request, security.principal)
+        authenticatedViewers.set(request, {
+          account: security.principal,
+          deviceId: security.deviceId
+        })
       }
 
       listener(request, response)
@@ -669,7 +675,8 @@ describe('HTTP API validation', () => {
       'x-forwarded-host': 'treeport.tailnet.ts.net',
       'x-forwarded-proto': 'https',
       'tailscale-user-login': 'alice@example.test',
-      'tailscale-user-name': 'Alice'
+      'tailscale-user-name': 'Alice',
+      'x-forwarded-for': '100.64.0.10'
     }
     const input = {
       sessionId: crypto.randomUUID(),
@@ -695,6 +702,47 @@ describe('HTTP API validation', () => {
     expect(presence.snapshot()).toMatchObject([
       { ...input, identity: { name: 'Alice' } }
     ])
+
+    const ticketPath = '/api/panels/panel_browser/browser-ticket'
+    const ticketInput = { clientId: 'viewer-one', visible: true }
+    const ticketResponse = await fetch(new URL(ticketPath, url), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(ticketInput)
+    })
+    expect(ticketResponse.status).toBe(200)
+    expect(browserIssueTicket).toHaveBeenCalledWith(
+      'panel_browser',
+      'viewer-one',
+      true,
+      {
+        account: {
+          source: 'tailscale',
+          login: 'alice@example.test',
+          name: 'Alice',
+          profilePicture: null
+        },
+        deviceId: 'tailscale:100.64.0.10'
+      }
+    )
+    for (const field of ['account', 'deviceId', 'identity']) {
+      const forged = await fetch(new URL(ticketPath, url), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ...ticketInput, [field]: 'forged' })
+      })
+      expect(forged.status).toBe(400)
+    }
+    expect(
+      (
+        await app.request(ticketPath, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(ticketInput)
+        })
+      ).status
+    ).toBe(401)
+    expect(browserIssueTicket).toHaveBeenCalledTimes(1)
 
     const bobHeaders = {
       ...headers,
