@@ -29,9 +29,10 @@ import { updateElectronApp, UpdateSourceType } from 'update-electron-app'
 import { z } from 'zod'
 import { WebSocket, WebSocketServer } from 'ws'
 import * as Effect from 'effect/Effect'
-import * as Fiber from 'effect/Fiber'
+import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
-import { checkActivity, checkHealth, phoneAccess } from './backend-connection'
+import { checkActivity, phoneAccess } from './backend-connection'
+import { HostSession, HostSessions } from './host-session'
 import { ComputerStore } from './computer-store'
 import type {
   DesktopBrowserToolbarCommand,
@@ -40,15 +41,10 @@ import type {
 import type {
   ComputerMutationResult,
   ComputerUpdate,
-  ConnectionState,
   DesktopNavigationDirection,
   DesktopNavigationState,
   DesktopShellState
 } from './desktop-contract'
-import {
-  installBrowserWebviewPolicy,
-  type BrowserWebviewPolicy
-} from './browser-webview-policy'
 import { filePathFromUrl } from './file-url'
 import {
   localSourcePathSchema,
@@ -125,24 +121,19 @@ const seedComputerUrl =
   process.env.TREEPORT_DESKTOP_URL?.trim() || defaultComputerUrl
 
 let mainWindow: BrowserWindow | null = null
-let workspaceView: WebContentsView | null = null
+let hostSessions: HostSessions | null = null
 let shellView: WebContentsView | null = null
 let shellOverlayOpen = false
 let windowState: WindowState | null = null
 let store: ComputerStore | null = null
-let connection: ConnectionState = { status: 'empty' }
-let connectionGeneration = 0
 const desktopRuntime = new DesktopRuntime()
 let windowRuntime: DesktopRuntime | null = null
-let connectionFiber: Fiber.RuntimeFiber<void> | null = null
 let fullscreen = false
 let updateReady = desktopUpdateReady
 let updateError: string | null = null
 let installUpdateOnQuit = false
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 const workspaceTargets = Effect.unsafeMakeSemaphore(1)
-let terminalSelectionActive = false
-let browserWebviews: BrowserWebviewPolicy | null = null
 
 let dockBounceId: number | null = null
 let frameFlashing = false
@@ -178,8 +169,12 @@ const installRendererRequestRouting = Effect.gen(function* () {
 })
 
 function navigationState(): DesktopNavigationState {
-  const renderer = workspaceView?.webContents
-  if (!renderer || renderer.isDestroyed() || connection.status !== 'ready') {
+  const renderer = hostSessions?.active?.view.webContents
+  if (
+    !renderer ||
+    renderer.isDestroyed() ||
+    hostSessions?.active?.connection.status !== 'ready'
+  ) {
     return { canGoBack: false, canGoForward: false }
   }
 
@@ -199,7 +194,7 @@ function shellState(): DesktopShellState {
     updateReady,
     updateError,
     computers: store?.summaries() ?? [],
-    connection,
+    connection: hostSessions?.active?.connection ?? { status: 'empty' },
     navigation: navigationState()
   }
   if (store?.selectedComputer) {
@@ -210,26 +205,29 @@ function shellState(): DesktopShellState {
 }
 
 function layoutWorkspace(): void {
-  if (!mainWindow || !workspaceView || !shellView) {
+  if (!mainWindow || !shellView) {
     return
   }
 
+  const host = hostSessions?.active
+  const workspace = host?.view
   const { width, height } = mainWindow.getContentBounds()
   const top = process.platform === 'darwin' && fullscreen ? 0 : TITLEBAR_HEIGHT
-  workspaceView.setBounds({
+  workspace?.setBounds({
     x: 0,
     y: top,
     width,
     height: Math.max(0, height - top)
   })
   shellView.setBounds({ x: 0, y: 0, width, height })
-  workspaceView.setVisible(connection.status === 'ready')
-  // Native child views stack above one another regardless of CSS z-index.
-  // Raise the transparent shell for menus/dialogs, not hide the live workspace.
-  const topView = shellOverlayOpen ? shellView : workspaceView
+  workspace?.setVisible(host?.connection.status === 'ready')
+  // Raise the transparent shell for menus/dialogs without tearing down guests.
+  const topView = shellOverlayOpen || !workspace ? shellView : workspace
   if (mainWindow.contentView.children.at(-1) !== topView) {
     mainWindow.contentView.addChildView(topView)
   }
+
+  mainWindow.setTitle(workspace?.webContents.getTitle() || app.name)
 }
 
 function broadcastState(): void {
@@ -252,18 +250,12 @@ function broadcastState(): void {
   }
 }
 
+// Foreground actions are distinct from host-owned background Browser/CDP work.
 function isTrustedRendererEvent(
   event: IpcMainEvent | IpcMainInvokeEvent
 ): boolean {
-  const origin = selectedOrigin()
-  return Boolean(
-    workspaceView &&
-    event.sender === workspaceView.webContents &&
-    event.senderFrame === event.sender.mainFrame &&
-    origin &&
-    URL.canParse(event.senderFrame.url) &&
-    new URL(event.senderFrame.url).origin === origin
-  )
+  const host = hostSessions?.sender(event)
+  return Boolean(host && host === hostSessions?.active && !shellOverlayOpen)
 }
 
 function isTrustedShellEvent(
@@ -278,11 +270,10 @@ function isTrustedShellEvent(
 }
 
 function selectedOrigin(): string | null {
-  return store?.selectedComputer?.origin ?? null
+  return hostSessions?.active?.computer.origin ?? null
 }
 
 function setTerminalSelectionActive(active: boolean): void {
-  terminalSelectionActive = active
   const renderer = shellView?.webContents
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('terminal-selection:active', active)
@@ -291,7 +282,7 @@ function setTerminalSelectionActive(active: boolean): void {
 
 function releaseTerminalSelection(): void {
   setTerminalSelectionActive(false)
-  const renderer = workspaceView?.webContents
+  const renderer = hostSessions?.active?.view.webContents
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('terminal-selection:release')
   }
@@ -325,21 +316,17 @@ function requestBellAttention(): void {
   }
 }
 
-const disposeBrowserWebviews = Effect.gen(function* () {
-  if (browserWebviews) {
-    yield* browserWebviews.disposeAll()
-  }
-
-  if (terminalSelectionActive) {
-    setTerminalSelectionActive(false)
-  }
-
-  broadcastState()
-})
-
 function navigateRendererHistory(direction: DesktopNavigationDirection): void {
-  const renderer = workspaceView?.webContents
-  if (!renderer || renderer.isDestroyed() || connection.status !== 'ready') {
+  if (shellOverlayOpen) {
+    return
+  }
+
+  const renderer = hostSessions?.active?.view.webContents
+  if (
+    !renderer ||
+    renderer.isDestroyed() ||
+    hostSessions?.active?.connection.status !== 'ready'
+  ) {
     return
   }
 
@@ -350,7 +337,7 @@ function navigateRendererHistory(direction: DesktopNavigationDirection): void {
 }
 
 function zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset'): void {
-  const renderer = workspaceView?.webContents
+  const renderer = hostSessions?.active?.view.webContents
   if (!renderer || renderer.isDestroyed()) {
     return
   }
@@ -368,7 +355,7 @@ function sendDesktopCommand(command: DesktopCommand): void {
     return
   }
 
-  if (connection.status !== 'ready') {
+  if (hostSessions?.active?.connection.status !== 'ready') {
     if (
       command === 'zoom-in' ||
       command === 'zoom-out' ||
@@ -380,11 +367,27 @@ function sendDesktopCommand(command: DesktopCommand): void {
     return
   }
 
-  workspaceView?.webContents.send('desktop-command', command)
+  hostSessions?.active?.view.webContents.send('desktop-command', command)
 }
 
-function installRendererSecurity(renderer: WebContents): void {
+function installRendererSecurity(
+  renderer: WebContents,
+  host: HostSession | null = null
+): void {
+  renderer.on('focus', () => {
+    if (host && (hostSessions?.active !== host || shellOverlayOpen)) {
+      const foreground = shellOverlayOpen
+        ? shellView
+        : (hostSessions?.active?.view ?? shellView)
+      foreground?.webContents.focus()
+    }
+  })
   renderer.on('before-input-event', (event, input) => {
+    if (host && (hostSessions?.active !== host || shellOverlayOpen)) {
+      event.preventDefault()
+      return
+    }
+
     const key = input.key.toLowerCase()
     const code = input.code.toLowerCase()
     if (
@@ -467,20 +470,19 @@ function installRendererSecurity(renderer: WebContents): void {
     event: Electron.Event,
     targetUrl: string
   ) => {
-    const origin = selectedOrigin()
     if (
       (renderer === shellView?.webContents &&
         targetUrl.startsWith(PRIVATE_RENDERER_URL)) ||
-      (renderer === workspaceView?.webContents &&
-        origin &&
-        URL.canParse(targetUrl) &&
-        new URL(targetUrl).origin === origin)
+      host?.ownsUrl(targetUrl)
     ) {
       return
     }
 
     event.preventDefault()
-    if (URL.canParse(targetUrl)) {
+    if (
+      (!host || (hostSessions?.active === host && !shellOverlayOpen)) &&
+      URL.canParse(targetUrl)
+    ) {
       const targetProtocol = new URL(targetUrl).protocol
       if (targetProtocol === 'http:' || targetProtocol === 'https:') {
         windowRuntime?.fork(
@@ -496,7 +498,10 @@ function installRendererSecurity(renderer: WebContents): void {
     }
   })
   renderer.setWindowOpenHandler(({ url }) => {
-    if (URL.canParse(url)) {
+    if (
+      (!host || (hostSessions?.active === host && !shellOverlayOpen)) &&
+      URL.canParse(url)
+    ) {
       const targetProtocol = new URL(url).protocol
       if (targetProtocol === 'http:' || targetProtocol === 'https:') {
         windowRuntime?.fork(Effect.tryPromise(() => shell.openExternal(url)))
@@ -515,7 +520,7 @@ function installRendererSecurity(renderer: WebContents): void {
   ) =>
     permission === 'clipboard-sanitized-write' &&
     mainFrame &&
-    contents === workspaceView?.webContents &&
+    contents === hostSessions?.active?.view.webContents &&
     URL.canParse(url) &&
     new URL(url).origin === selectedOrigin()
   renderer.session.setPermissionCheckHandler(
@@ -537,83 +542,8 @@ function installRendererSecurity(renderer: WebContents): void {
     callback({})
   )
   renderer.session.setDevicePermissionHandler(() => false)
-  const refreshNavigationState = () => broadcastState()
-  let documentAvailable = false
-  let historyOrigin: string | null = null
-  renderer.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) {
-      documentAvailable = false
-    }
-  })
-  renderer.on('did-navigate', (_event, url, status) => {
-    documentAvailable = status < 400
-    refreshNavigationState()
-    if (
-      renderer === workspaceView?.webContents &&
-      connection.status === 'ready' &&
-      status >= 400 &&
-      URL.canParse(url) &&
-      new URL(url).origin === selectedOrigin()
-    ) {
-      connectSelected({ unavailableImmediately: true, url })
-    }
-  })
-  renderer.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
-    if (isMainFrame) {
-      refreshNavigationState()
-    }
-  })
-  renderer.on('did-finish-load', () => {
+  renderer.on('did-finish-load', () =>
     renderer.send('fullscreen-change', fullscreen)
-    const computer = store?.selectedComputer
-    const url = renderer.getURL()
-    if (
-      renderer === workspaceView?.webContents &&
-      documentAvailable &&
-      computer &&
-      URL.canParse(url) &&
-      new URL(url).origin === computer.origin
-    ) {
-      // A same-origin page may navigate itself during startup, superseding
-      // loadURL. Its successful final document still makes the workspace ready.
-      if (historyOrigin !== computer.origin) {
-        renderer.navigationHistory.clear()
-        historyOrigin = computer.origin
-      }
-
-      connection = {
-        status: 'ready',
-        computerId: computer.id,
-        serverVersion:
-          connection.status === 'ready' ? connection.serverVersion : null,
-        url
-      }
-    }
-
-    refreshNavigationState()
-  })
-  renderer.on(
-    'did-fail-load',
-    (_event, code, _description, url, isMainFrame) => {
-      if (isMainFrame && code !== -3) {
-        documentAvailable = false
-      }
-
-      if (
-        renderer === workspaceView?.webContents &&
-        isMainFrame &&
-        code !== -3 &&
-        connection.status === 'ready' &&
-        URL.canParse(url) &&
-        new URL(url).origin === selectedOrigin()
-      ) {
-        connectSelected({
-          unavailableImmediately: true,
-          unavailableMessage: `The connection to ${selectedOrigin()} was lost.`,
-          url
-        })
-      }
-    }
   )
 }
 
@@ -655,121 +585,80 @@ const nativeBrowserPresentationSchema = nativeBrowserPanelSchema.extend({
   active: z.boolean()
 })
 
-function connectSelected(
-  options: {
-    unavailableImmediately?: boolean
-    unavailableMessage?: string
-    url?: string
-  } = {}
-): void {
+function connectSelected(options: { url?: string } = {}): void {
+  const hosts = hostSessions
   const runtime = windowRuntime
-  if (!runtime) {
+  if (!hosts || !runtime) {
     return
   }
 
+  // A changed origin is a new authority, not a navigation of the old session.
+  for (const [id, host] of hosts.visited) {
+    if (store?.getComputer(id)?.origin !== host.computer.origin) {
+      hosts.visited.delete(id)
+      if (hosts.active === host) {
+        hosts.active = null
+      }
+
+      desktopRuntime.fork(host.dispose())
+    }
+  }
+
   const computer = store?.selectedComputer
-  const generation = ++connectionGeneration
-  const previous = connectionFiber
-  connectionFiber = runtime.fork(
-    Effect.gen(function* () {
-      if (previous) {
-        yield* Fiber.interrupt(previous)
-      }
-
-      if (generation !== connectionGeneration) {
-        return
-      }
-
-      yield* disposeBrowserWebviews
-      if (generation !== connectionGeneration) {
-        return
-      }
-
-      if (!computer) {
-        connection = { status: 'empty' }
-        broadcastState()
-        if (workspaceView) {
-          yield* loadRenderer(workspaceView.webContents, 'about:blank')
-        }
-
-        return
-      }
-
-      const renderer = workspaceView?.webContents
-      if (!renderer) {
-        return
-      }
-
-      const currentRendererUrl = renderer.getURL()
-      const requestedUrl =
-        options.url &&
-        URL.canParse(options.url) &&
-        new URL(options.url).origin === computer.origin
-          ? options.url
-          : URL.canParse(currentRendererUrl) &&
-              new URL(currentRendererUrl).origin === computer.origin
-            ? currentRendererUrl
-            : computer.origin
-      const unavailableMessage =
-        options.unavailableMessage ??
-        `The desktop app could not reach ${computer.origin}.`
-      connection = options.unavailableImmediately
-        ? {
-            status: 'unavailable',
-            computerId: computer.id,
-            message: unavailableMessage
+  let host = computer ? (hosts.visited.get(computer.id) ?? null) : null
+  if (computer && !host) {
+    const created = new HostSession(
+      { id: computer.id, origin: computer.origin },
+      {
+        window: hosts.window,
+        runtime,
+        preferences: rendererWindowPreferences(),
+        isForeground: () => hosts.active === created && !shellOverlayOpen,
+        changed: () => {
+          if (hostSessions === hosts && hosts.active === created) {
+            broadcastState()
           }
-        : { status: 'connecting', computerId: computer.id }
-      broadcastState()
-
-      // The daemon serves its matching workspace. No daemon metadata is
-      // required to load it, and the private shell remains available on failure.
-      const loaded = yield* loadRenderer(renderer, requestedUrl, () => {
-        if (generation === connectionGeneration) {
-          connection = {
-            status: 'unavailable',
-            computerId: computer.id,
-            message: unavailableMessage
+        },
+        ready: () => {
+          if (
+            hostSessions === hosts &&
+            hosts.active === created &&
+            !shellOverlayOpen
+          ) {
+            created.view.webContents.focus()
           }
-          broadcastState()
-        }
-      })
-      if (!loaded || generation !== connectionGeneration) {
-        return
+        },
+        rememberHostname: (hostname) =>
+          Effect.suspend(() =>
+            store?.getComputer(computer.id)?.origin === computer.origin
+              ? store.rememberHostname(computer.id, hostname)
+              : Effect.void
+          )
       }
+    )
+    host = created
+    hosts.visited.set(computer.id, host)
+    installRendererSecurity(host.view.webContents, host)
+  }
 
-      connection = {
-        status: 'ready',
-        computerId: computer.id,
-        serverVersion: null,
-        url: requestedUrl
-      }
-      broadcastState()
-      if (!shellOverlayOpen) {
-        renderer.focus()
-      }
+  if (hosts.active !== host) {
+    releaseTerminalSelection()
+    hosts.active?.deactivate()
+    hosts.active = host
+  }
 
-      // Metadata is best-effort decoration, never a connection prerequisite.
-      const health = yield* checkHealth(computer.origin)
-      if (!health || generation !== connectionGeneration) {
-        return
-      }
-
-      if (health.hostname && store) {
-        yield* store
-          .rememberHostname(computer.id, health.hostname)
-          .pipe(Effect.catchAll(() => Effect.void))
-      }
-
-      if (
-        generation === connectionGeneration &&
-        connection.status === 'ready'
-      ) {
-        connection = { ...connection, serverVersion: health.version }
-        broadcastState()
-      }
-    })
-  )
+  broadcastState()
+  if (host) {
+    host.view.webContents.send('fullscreen-change', fullscreen)
+    host.connect(options.url)
+    if (!shellOverlayOpen && host.connection.status === 'ready') {
+      host.view.webContents.focus()
+    } else {
+      shellView?.webContents.focus()
+    }
+  } else {
+    shellView?.webContents.focus()
+  }
 }
 
 function rendererWindowPreferences(): Electron.WebPreferences {
@@ -900,13 +789,14 @@ function installMenu(): void {
         {
           label: 'Force Reload',
           accelerator: 'CommandOrControl+Shift+R',
-          click: () => workspaceView?.webContents.reloadIgnoringCache()
+          click: () =>
+            hostSessions?.active?.view.webContents.reloadIgnoringCache()
         },
         {
           label: 'Toggle Developer Tools',
           accelerator:
             process.platform === 'darwin' ? 'Alt+Command+I' : 'Control+Shift+I',
-          click: () => workspaceView?.webContents.toggleDevTools()
+          click: () => hostSessions?.active?.view.webContents.toggleDevTools()
         },
         { type: 'separator' },
         {
@@ -1075,51 +965,32 @@ function createWindow(url?: string): BrowserWindow {
   mainWindow = window
   windowRuntime = runtime
   shellOverlayOpen = false
-  const workspace = new WebContentsView({
-    webPreferences: rendererWindowPreferences()
-  })
-  workspaceView = workspace
-  workspace.setBackgroundColor('#09090b')
+  const hosts = new HostSessions(window)
+  hostSessions = hosts
   const shell = new WebContentsView({
     webPreferences: { ...rendererWindowPreferences(), webviewTag: false }
   })
   shellView = shell
   shell.setBackgroundColor('#00000000')
   window.contentView.addChildView(shell)
-  window.contentView.addChildView(workspace)
   installRendererSecurity(shell.webContents)
-  installRendererSecurity(workspace.webContents)
   window.on('resize', layoutWorkspace)
-  workspace.webContents.on('page-title-updated', (_event, title) =>
-    window.setTitle(title)
-  )
-  workspace.webContents.on('render-process-gone', () => {
-    if (mainWindow === window) {
-      connectSelected({ unavailableImmediately: true })
-    }
-  })
   layoutWorkspace()
-  browserWebviews = installBrowserWebviewPolicy({
-    runtime,
-    window,
-    trustedRenderer: workspace.webContents,
-    selectedComputer: () => {
-      const computer = store?.selectedComputer
-      return computer
-        ? { id: computer.id, loopback: isLoopbackUrl(new URL(computer.origin)) }
-        : null
-    },
-    isTrustedEvent: isTrustedRendererEvent
-  })
 
   window.on('enter-full-screen', () => {
     fullscreen = true
-    workspace.webContents.send('fullscreen-change', true)
+    for (const host of hosts.visited.values()) {
+      host.view.webContents.send('fullscreen-change', true)
+    }
+    shell.webContents.send('fullscreen-change', true)
     broadcastState()
   })
   window.on('leave-full-screen', () => {
     fullscreen = false
-    workspace.webContents.send('fullscreen-change', false)
+    for (const host of hosts.visited.values()) {
+      host.view.webContents.send('fullscreen-change', false)
+    }
+    shell.webContents.send('fullscreen-change', false)
     broadcastState()
   })
   window.on('focus', stopBellAttention)
@@ -1130,20 +1001,18 @@ function createWindow(url?: string): BrowserWindow {
     stopBellAttention()
     if (mainWindow === window) {
       mainWindow = null
-      workspaceView = null
+      hostSessions = null
       shellView = null
       if (!shell.webContents.isDestroyed()) {
         shell.webContents.close()
       }
 
-      if (!workspace.webContents.isDestroyed()) {
-        workspace.webContents.close()
+      for (const host of hosts.visited.values()) {
+        desktopRuntime.fork(host.dispose())
       }
-
-      browserWebviews = null
+      hosts.visited.clear()
+      hosts.active = null
       windowRuntime = null
-      connectionFiber = null
-      connectionGeneration += 1
       desktopRuntime.fork(runtime.close)
     }
   })
@@ -1168,22 +1037,28 @@ function mutationError(cause: unknown): ComputerMutationResult {
 
 function registerIpc(): void {
   ipcMain.on('desktop:runtime', (event) => {
-    const computer = store?.selectedComputer
-    event.returnValue =
-      isTrustedRendererEvent(event) && computer
-        ? {
-            computerId: computer.id,
-            localBrowser: isLoopbackUrl(new URL(computer.origin))
-          }
-        : null
+    const computer = hostSessions?.sender(event)?.computer
+    event.returnValue = computer
+      ? {
+          computerId: computer.id,
+          localBrowser: isLoopbackUrl(new URL(computer.origin))
+        }
+      : null
   })
   ipcMain.on('shell:set-overlay-open', (event, value) => {
     const parsed = z.boolean().safeParse(value)
     if (isTrustedShellEvent(event) && parsed.success) {
       shellOverlayOpen = parsed.data
+      if (shellOverlayOpen) {
+        hostSessions?.active?.browser.suspendPresentation()
+      }
+
       layoutWorkspace()
-      if (!shellOverlayOpen && connection.status === 'ready') {
-        workspaceView?.webContents.focus()
+      if (
+        !shellOverlayOpen &&
+        hostSessions?.active?.connection.status === 'ready'
+      ) {
+        hostSessions?.active?.view.webContents.focus()
       }
     }
   })
@@ -1199,8 +1074,9 @@ function registerIpc(): void {
       })
       .strict()
       .safeParse(value)
-    const origin = selectedOrigin()
-    if (!isTrustedRendererEvent(event) || !target.success || !origin) {
+    const host = hostSessions?.sender(event)
+    const origin = host?.computer.origin
+    if (!isTrustedRendererEvent(event) || !target.success || !origin || !host) {
       return false
     }
 
@@ -1224,8 +1100,14 @@ function registerIpc(): void {
     })
     const address = relay.address()
     // ws exposes Node's AddressInfo | string result at this I/O boundary.
-    // eslint-disable-next-line anti-slop/no-runtime-typeof -- Discriminate the Node listener address before using its port.
-    if (!listening || !address || typeof address === 'string') {
+    if (
+      !listening ||
+      !address ||
+      // eslint-disable-next-line anti-slop/no-runtime-typeof -- Discriminate the Node listener address before using its port.
+      typeof address === 'string' ||
+      host.runtime.isClosed ||
+      !isTrustedRendererEvent(event)
+    ) {
       relay.close()
       return false
     }
@@ -1375,12 +1257,22 @@ function registerIpc(): void {
       upstream.on('error', () => viewer.close())
       viewer.on('error', () => upstream.terminate())
     })
-    window.once('closed', () => {
-      for (const viewer of relay.clients) {
-        viewer.terminate()
-      }
-      relay.close()
-    })
+    const relayRuntime = new DesktopRuntime(host.runtime)
+    Effect.runSync(
+      Scope.addFinalizer(
+        relayRuntime.scope,
+        Effect.sync(() => {
+          for (const viewer of relay.clients) {
+            viewer.terminate()
+          }
+          relay.close()
+          if (!window.isDestroyed()) {
+            window.destroy()
+          }
+        })
+      )
+    )
+    window.once('closed', () => desktopRuntime.fork(relayRuntime.close))
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (navigation, url) => {
       if (url !== frontend.href) {
@@ -1466,10 +1358,8 @@ function registerIpc(): void {
           return false
         }
 
-        if (store.selectedComputer?.id === parsedId.data) {
-          return true
-        }
-
+        // Admit every request to the store's mutation queue. A same-host click
+        // may be the newest intent while an earlier switch is still persisting.
         const selected = yield* store.select(parsedId.data)
         if (selected) {
           void connectSelected()
@@ -1535,8 +1425,8 @@ function registerIpc(): void {
           return { ok: false, error: 'That computer no longer exists.' }
         }
 
-        if (result.originChanged && store.selectedComputer?.id === update.id) {
-          void connectSelected()
+        if (result.originChanged) {
+          connectSelected()
         } else {
           broadcastState()
         }
@@ -1560,12 +1450,8 @@ function registerIpc(): void {
           return false
         }
 
-        const result = yield* store.remove(computerId)
-        if (result.selectedChanged) {
-          void connectSelected()
-        } else {
-          broadcastState()
-        }
+        yield* store.remove(computerId)
+        connectSelected()
 
         return true
       })
@@ -1686,9 +1572,11 @@ function registerIpc(): void {
     event.returnValue = resolvedPath ? [resolvedPath] : []
   })
   ipcMain.handle('native-browser:register', (event, value) => {
+    const host = hostSessions?.sender(event)
+    const browserWebviews = host?.browser
     const parsed = nativeBrowserRegisterSchema.safeParse(value)
-    return parsed.success && browserWebviews
-      ? desktopRuntime.run(
+    return parsed.success && host && browserWebviews
+      ? host.runtime.run(
           browserWebviews.register(
             event,
             parsed.data.panelId,
@@ -1699,14 +1587,16 @@ function registerIpc(): void {
       : null
   })
   ipcMain.handle('native-browser:command', (event, value) => {
+    const host = hostSessions?.sender(event)
+    const browserWebviews = host?.browser
     const parsed = z
       .strictObject({
         panelId: z.string().min(1).max(128),
         command: nativeBrowserCommandSchema
       })
       .safeParse(value)
-    return parsed.success && browserWebviews
-      ? desktopRuntime.run(
+    return parsed.success && host && browserWebviews
+      ? host.runtime.run(
           browserWebviews.command(
             event,
             parsed.data.panelId,
@@ -1716,9 +1606,11 @@ function registerIpc(): void {
       : { ok: false, error: 'The Browser command was rejected.' }
   })
   ipcMain.handle('native-browser:set-input-control', (event, value) => {
+    const host = hostSessions?.sender(event)
+    const browserWebviews = host?.browser
     const parsed = nativeBrowserInputControlSchema.safeParse(value)
-    return parsed.success && browserWebviews
-      ? desktopRuntime.run(
+    return parsed.success && host && browserWebviews
+      ? host.runtime.run(
           browserWebviews.setInputControl(
             event,
             parsed.data.panelId,
@@ -1728,9 +1620,11 @@ function registerIpc(): void {
       : false
   })
   ipcMain.handle('native-browser:set-presentation-active', (event, value) => {
+    const host = hostSessions?.sender(event)
+    const browserWebviews = host?.browser
     const parsed = nativeBrowserPresentationSchema.safeParse(value)
-    return parsed.success && browserWebviews
-      ? desktopRuntime.run(
+    return parsed.success && host && browserWebviews
+      ? host.runtime.run(
           browserWebviews.setPresentationActive(
             event,
             parsed.data.panelId,
@@ -1740,13 +1634,15 @@ function registerIpc(): void {
       : false
   })
   ipcMain.handle('native-browser:request-close', (event, value) => {
+    const host = hostSessions?.sender(event)
+    const browserWebviews = host?.browser
     const parsed = nativeBrowserCloseSchema.safeParse(value)
     if (!parsed.success) {
       return false
     }
 
-    return browserWebviews
-      ? desktopRuntime.run(
+    return host && browserWebviews
+      ? host.runtime.run(
           browserWebviews.requestClose(
             event,
             parsed.data.panelId,
@@ -1756,12 +1652,14 @@ function registerIpc(): void {
       : true
   })
   ipcMain.handle('native-browser:permissions', (event, value) => {
+    const browserWebviews = hostSessions?.sender(event)?.browser
     const parsed = nativeBrowserPanelSchema.safeParse(value)
     return parsed.success && browserWebviews
       ? browserWebviews.permissions(event, parsed.data.panelId)
       : null
   })
   ipcMain.handle('native-browser:reset-permissions', (event, value) => {
+    const browserWebviews = hostSessions?.sender(event)?.browser
     const parsed = nativeBrowserPanelSchema
       .extend({
         origin: z.string().max(2048),
@@ -1778,6 +1676,9 @@ function registerIpc(): void {
       : false
   })
   ipcMain.on('native-browser:permission-response', (event, value) => {
+    const browserWebviews = isTrustedRendererEvent(event)
+      ? hostSessions?.sender(event)?.browser
+      : null
     const parsed = z
       .strictObject({
         id: z.string().uuid(),
@@ -1793,13 +1694,15 @@ function registerIpc(): void {
     }
   })
   ipcMain.on('native-browser:dispose', (event, value) => {
+    const host = hostSessions?.sender(event)
+    const browserWebviews = host?.browser
     const parsed = nativeBrowserPanelSchema.safeParse(value)
     if (!parsed.success) {
       return
     }
 
-    if (browserWebviews) {
-      desktopRuntime.fork(browserWebviews.dispose(event, parsed.data.panelId))
+    if (host && browserWebviews) {
+      host.runtime.fork(browserWebviews.dispose(event, parsed.data.panelId))
     }
   })
   ipcMain.on('desktop:zoom-page', (event, value) => {

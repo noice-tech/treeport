@@ -40,7 +40,6 @@ import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
 
 const BROWSER_PARTITION = 'persist:treeport-browser'
-const DECISIONS_FILE = 'browser-site-permissions.json'
 const capabilities = {
   'clipboard-read': 'read your clipboard',
   geolocation: 'know your location',
@@ -103,6 +102,8 @@ export interface BrowserWebviewPolicy {
   ): Effect.Effect<boolean>
   dispose(event: IpcMainEvent, panelId: string): Effect.Effect<void>
   disposeAll(): Effect.Effect<void>
+  suspendPresentation(): void
+  detach(): void
   respondPermission(event: IpcMainEvent, id: string, allow: boolean): void
   permissions(
     event: IpcMainInvokeEvent,
@@ -120,14 +121,20 @@ export function installBrowserWebviewPolicy(options: {
   runtime: DesktopRuntime
   window: BrowserWindow
   trustedRenderer: WebContents
-  selectedComputer(): { loopback: boolean } | null
+  storageKey: string
+  computer: { loopback: boolean }
+  isForeground(): boolean
   isTrustedEvent(event: IpcMainEvent | IpcMainInvokeEvent): boolean
 }): BrowserWebviewPolicy {
   const entries = new Map<string, BrowserEntry>()
   const pendingGuests = new Map<number, BrowserEntry>()
   const guestEntries = new Map<number, BrowserEntry>()
-  const browserSession = session.fromPartition(BROWSER_PARTITION)
-  const decisionsPath = path.join(app.getPath('userData'), DECISIONS_FILE)
+  const partition = `${BROWSER_PARTITION}-${options.storageKey}`
+  const browserSession = session.fromPartition(partition)
+  const decisionsPath = path.join(
+    app.getPath('userData'),
+    `browser-site-permissions-${options.storageKey}.json`
+  )
   const decisions = new Map<string, boolean>()
   // The file is data, not authority: only exact, known origin/capability keys are loaded.
   try {
@@ -189,6 +196,7 @@ export function installBrowserWebviewPolicy(options: {
     }
     return true
   }
+  let contextMenu: Menu | null = null
   let promptQueue = Promise.resolve()
   let pendingPrompt: {
     id: string
@@ -203,6 +211,7 @@ export function installBrowserWebviewPolicy(options: {
   ): Promise<boolean> => {
     if (
       !entry.panelId ||
+      !options.isForeground() ||
       options.trustedRenderer.isDestroyed() ||
       options.window.isDestroyed()
     ) {
@@ -246,7 +255,7 @@ export function installBrowserWebviewPolicy(options: {
       entry.panelId &&
       entries.get(entry.panelId) === entry &&
       contents.hostWebContents === options.trustedRenderer &&
-      options.selectedComputer()?.loopback === true &&
+      options.computer.loopback === true &&
       !options.window.isDestroyed()
       ? entry
       : null
@@ -314,9 +323,10 @@ export function installBrowserWebviewPolicy(options: {
     guestEntries.get(entry.guest.id) === entry &&
     !entry.guest.isDestroyed() &&
     entry.guest.hostWebContents === options.trustedRenderer &&
+    options.isForeground() &&
     entry.presentationActive &&
     !entry.inputLocked &&
-    options.selectedComputer()?.loopback === true &&
+    options.computer.loopback === true &&
     !options.window.isDestroyed() &&
     options.window.isVisible() &&
     options.window.isFocused()
@@ -484,6 +494,11 @@ export function installBrowserWebviewPolicy(options: {
         )
         if (!missing.length) {
           callback(true)
+          return
+        }
+
+        if (!options.isForeground()) {
+          callback(false)
           return
         }
 
@@ -655,6 +670,11 @@ export function installBrowserWebviewPolicy(options: {
         return
       }
 
+      if (!options.isForeground()) {
+        callback({ cancel: true })
+        return
+      }
+
       const version = entry.navigationVersion
       let settled = false
       const resolve = (allowed: boolean) => {
@@ -734,21 +754,50 @@ export function installBrowserWebviewPolicy(options: {
     callback({})
   )
   browserSession.setDevicePermissionHandler(() => false)
-  browserSession.on('select-usb-device', (event, _details, callback) => {
+  const denyDevice = (
+    event: Electron.Event,
+    _details: Electron.SelectUsbDeviceDetails | Electron.SelectHidDeviceDetails,
+    callback: (id: string) => void
+  ) => {
     event.preventDefault()
     callback('')
-  })
-  browserSession.on('select-hid-device', (event, _details, callback) => {
+  }
+  const denySerial = (
+    event: Electron.Event,
+    _ports: Electron.SerialPort[],
+    _contents: WebContents,
+    callback: (id: string) => void
+  ) => {
     event.preventDefault()
     callback('')
-  })
-  browserSession.on(
-    'select-serial-port',
-    (event, _ports, _contents, callback) => {
-      event.preventDefault()
-      callback('')
+  }
+  browserSession.on('select-usb-device', denyDevice)
+  browserSession.on('select-hid-device', denyDevice)
+  browserSession.on('select-serial-port', denySerial)
+
+  let detached = false
+  const detach = () => {
+    if (detached) {
+      return
     }
-  )
+
+    detached = true
+    for (const entry of guestEntries.values()) {
+      cancelPending(entry)
+      if (!entry.guest.isDestroyed()) {
+        entry.guest.close({ waitForBeforeUnload: false })
+      }
+    }
+    browserSession.setPermissionCheckHandler(() => false)
+    browserSession.setPermissionRequestHandler(
+      (_contents, _permission, callback) => callback(false)
+    )
+    browserSession.webRequest.onBeforeRequest(null)
+    browserSession.removeListener('select-usb-device', denyDevice)
+    browserSession.removeListener('select-hid-device', denyDevice)
+    browserSession.removeListener('select-serial-port', denySerial)
+  }
+  Effect.runSync(Scope.addFinalizer(options.runtime.scope, Effect.sync(detach)))
 
   const disposeEntry = (entry: BrowserEntry) =>
     Effect.gen(function* () {
@@ -767,12 +816,13 @@ export function installBrowserWebviewPolicy(options: {
   options.trustedRenderer.on(
     'will-attach-webview',
     (event, webPreferences, params) => {
-      const computer = options.selectedComputer()
-      const partition = params.partition ?? webPreferences.partition ?? ''
+      const computer = options.computer
+      const requestedPartition =
+        params.partition ?? webPreferences.partition ?? ''
       const panelId = browserBootstrapPanelId(params.src ?? '') ?? ''
       if (
         !computer?.loopback ||
-        partition !== BROWSER_PARTITION ||
+        requestedPartition !== BROWSER_PARTITION ||
         !decodeUnknownOrNull(browserPanelIdSchema, panelId) ||
         entries.has(panelId)
       ) {
@@ -786,7 +836,9 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       delete webPreferences.preload
+      // Keep the served frontend contract, but bind actual guest storage to its host.
       webPreferences.partition = partition
+      params.partition = partition
       webPreferences.nodeIntegration = false
       webPreferences.nodeIntegrationInSubFrames = false
       webPreferences.contextIsolation = true
@@ -799,7 +851,7 @@ export function installBrowserWebviewPolicy(options: {
   )
 
   options.trustedRenderer.on('did-attach-webview', (_event, guest) => {
-    const computer = options.selectedComputer()
+    const computer = options.computer
     if (
       !computer?.loopback ||
       guest.hostWebContents !== options.trustedRenderer ||
@@ -988,22 +1040,33 @@ export function installBrowserWebviewPolicy(options: {
     const reportBrowserFocus = () => {
       if (
         entry.panelId &&
+        options.isForeground() &&
         !entry.inputLocked &&
         !options.trustedRenderer.isDestroyed()
       ) {
         options.trustedRenderer.send('native-browser:focus', entry.panelId)
       }
     }
-    guest.on('focus', reportBrowserFocus)
+    guest.on('focus', () => {
+      if (!options.isForeground()) {
+        // The workspace focus guard redirects to the visible host or shell.
+        options.trustedRenderer.focus()
+        return
+      }
+
+      reportBrowserFocus()
+    })
     guest.on('before-mouse-event', (_event, mouse) => {
       if (mouse.type === 'mouseDown') {
         reportBrowserFocus()
       }
     })
     guest.on('before-input-event', (event, input) => {
-      // Agent/remote page shortcuts must not invoke Treeport's native menu
-      // commands (for example Ctrl+W must not close a workspace panel).
-      if (entry.inputLocked) {
+      // Background/agent input still belongs to the guest. Suppress native
+      // accelerators, not the input itself (CDP must work while a host is hidden).
+      const backgroundInput = entry.inputLocked || !options.isForeground()
+      guest.setIgnoreMenuShortcuts(backgroundInput)
+      if (backgroundInput) {
         return
       }
 
@@ -1051,7 +1114,7 @@ export function installBrowserWebviewPolicy(options: {
       }
     })
     guest.on('context-menu', (event, params) => {
-      if (entry.inputLocked) {
+      if (entry.inputLocked || !options.isForeground()) {
         event.preventDefault()
         return
       }
@@ -1120,7 +1183,8 @@ export function installBrowserWebviewPolicy(options: {
         popupOptions.frame = params.frame
       }
 
-      Menu.buildFromTemplate(template).popup(popupOptions)
+      contextMenu = Menu.buildFromTemplate(template)
+      contextMenu.popup(popupOptions)
     })
     guest.once('destroyed', () => {
       options.runtime.fork(disposeEntry(entry))
@@ -1128,6 +1192,18 @@ export function installBrowserWebviewPolicy(options: {
   })
 
   return {
+    detach,
+    suspendPresentation() {
+      if (!options.window.isDestroyed()) {
+        contextMenu?.closePopup(options.window)
+      }
+
+      contextMenu = null
+      for (const entry of guestEntries.values()) {
+        cancelPending(entry)
+        releasePresentation(entry)
+      }
+    },
     register(event, panelId, webContentsId, challenge) {
       return Effect.gen(function* () {
         if (!options.isTrustedEvent(event) || options.runtime.isClosed) {
@@ -1422,6 +1498,7 @@ export function installBrowserWebviewPolicy(options: {
     },
     respondPermission(event, id, allow) {
       if (
+        options.isForeground() &&
         options.isTrustedEvent(event) &&
         pendingPrompt?.id === id &&
         registered(pendingPrompt.entry.guest) === pendingPrompt.entry

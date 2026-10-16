@@ -341,7 +341,7 @@ export class ComputerStore {
 
       return this.mutate((draft) => {
         const candidate = draft.computers.find((value) => value.id === id)
-        if (candidate) {
+        if (candidate && candidate.origin === computer.origin) {
           candidate.advertisedHostname = normalized
         }
       })
