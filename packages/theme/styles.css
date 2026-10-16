@@ -9,7 +9,7 @@
 
   @keyframes comet {
     to {
-      stroke-dashoffset: -100;
+      transform: translateX(-100%);
     }
   }
 }

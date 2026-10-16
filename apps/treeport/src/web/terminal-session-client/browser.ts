@@ -27,6 +27,7 @@ const TERMINAL_SYNCHRONIZED_OUTPUT_MAX_DELAY_MS = 5_000
 interface SynchronizedOutputInternals {
   _core: {
     coreService: { decPrivateModes: { synchronizedOutput: boolean } }
+    _inputHandler: { _dirtyRowTracker: { start: number; end: number } }
     _renderService: {
       _syncOutputHandler: {
         _timeout: number | undefined
@@ -116,6 +117,30 @@ export function makeBrowser(
           }, TERMINAL_SYNCHRONIZED_OUTPUT_MAX_DELAY_MS)
         }
       }
+      terminal.parser.registerCsiHandler(
+        { prefix: '?', final: 'l' },
+        (params) => {
+          if (params.length !== 1 || params[0] !== 2026) {
+            return false
+          }
+
+          // SAFETY: The pinned xterm ends synchronized output with a full-screen
+          // refresh, even for a one-cell update. Use its current parser dirty range;
+          // RenderService merges buffered ranges from earlier writes and clears the
+          // timer. Flush here, not at parse completion: a following image handler
+          // can pause parsing. Leave combined mode resets to xterm's default handler.
+          core.coreService.decPrivateModes.synchronizedOutput = false
+          const buffer = terminal.buffer.active
+          const offset = buffer.baseY - buffer.viewportY
+          const dirty = core._inputHandler._dirtyRowTracker
+          // Clamp offscreen ranges too, so scrollback cannot leave a frame buffered.
+          terminal.refresh(
+            Math.min(dirty.start + offset, terminal.rows - 1),
+            Math.min(dirty.end + offset, terminal.rows - 1)
+          )
+          return true
+        }
+      )
       terminal.parser.registerOscHandler(52, (payload) => {
         // OSC 52 is write-only. Never expose the clipboard to a remote process,
         // or let viewers, background sessions or snapshot restoration change it.
