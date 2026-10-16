@@ -34,6 +34,7 @@ type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   worktreeId: string
   status: TerminalRecord['status']
+  commandExitCode: number | null
   terminalTitle: string | null
   currentCommand: string | null
   commandLine: string | null
@@ -214,6 +215,7 @@ export class TerminalMetadataManager {
           terminalId: terminal.id,
           worktreeId: terminal.worktreeId,
           status: terminal.status,
+          commandExitCode: terminal.commandExitCode ?? null,
           title: launchCommandLine,
           program: launchProgram,
           hasForegroundProcess: terminal.status === 'running' ? null : false,
@@ -240,6 +242,12 @@ export class TerminalMetadataManager {
       } else {
         entry.worktreeId = terminal.worktreeId
         entry.status = terminal.status
+        entry.commandExitCode = terminal.commandExitCode ?? null
+        this.reconcileTitleState(entry, {
+          terminalTitle: entry.terminalTitle,
+          currentCommand: entry.currentCommand,
+          commandLine: entry.commandLine
+        })
       }
 
       if (entry.status === 'running') {
@@ -451,6 +459,15 @@ export class TerminalMetadataManager {
           this.terminalHost.runtimeEvents(entry.terminalId),
           (event) =>
             Effect.gen(this, function* () {
+              if (event.commandExitCode != null) {
+                entry.commandExitCode = event.commandExitCode
+                this.reconcileTitleState(entry, {
+                  terminalTitle: entry.terminalTitle,
+                  currentCommand: entry.currentCommand,
+                  commandLine: entry.commandLine
+                })
+              }
+
               if (event.titleState) {
                 this.reconcileTitleState(entry, event.titleState)
               } else if (event.title !== undefined) {
@@ -607,10 +624,14 @@ export class TerminalMetadataManager {
   ): void {
     entry.terminalTitle = state.terminalTitle?.trim().slice(0, 256) || null
     entry.currentCommand = state.currentCommand?.trim().slice(0, 256) || null
-    entry.commandLine =
-      state.commandLine?.trim().slice(0, 256) || entry.launchCommandLine
+    // A cleared command after launch completion is the fallback shell's idle
+    // report, not a reason to resurrect the original launch command.
+    entry.commandLine = state.commandLine?.trim().slice(0, 256) || null
+    const commandLine =
+      entry.commandLine ??
+      (entry.commandExitCode === null ? entry.launchCommandLine : null)
 
-    const token = entry.commandLine?.match(
+    const token = commandLine?.match(
       /^(?:exec\s+|command\s+)?(?:"([^"]+)"|'([^']+)'|(\S+))/
     )
     const executable = token
@@ -620,13 +641,15 @@ export class TerminalMetadataManager {
       PROGRAM_COMMANDS.get(path.basename(executable ?? '').replace(/^-/, '')) ??
       null
     const shellIdle =
-      entry.interactiveShellCommand !== null &&
-      (entry.commandLine === null ||
-        entry.commandLine === entry.interactiveShellCommand)
+      ((entry.interactiveShellCommand !== null ||
+        entry.commandExitCode !== null) &&
+        commandLine === null) ||
+      (entry.interactiveShellCommand !== null &&
+        commandLine === entry.interactiveShellCommand)
     this.update(entry, {
       title: shellIdle
         ? (entry.terminalTitle ?? entry.interactiveShellCommand)
-        : (entry.terminalTitle ?? entry.commandLine ?? entry.currentCommand),
+        : (entry.terminalTitle ?? commandLine ?? entry.currentCommand),
       program:
         observedProgram ??
         (entry.interactiveShellCommand === null ? entry.launchProgram : null),
@@ -635,7 +658,7 @@ export class TerminalMetadataManager {
           ? false
           : shellIdle
             ? false
-            : entry.commandLine === null && entry.currentCommand === null
+            : commandLine === null && entry.currentCommand === null
               ? null
               : true
     })
