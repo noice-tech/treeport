@@ -684,7 +684,10 @@ export class TerminalService {
         )
       }
 
-      yield* projectStore.requireOpenProject(worktree.projectId)
+      if (!reservedByCreation) {
+        yield* projectStore.requireOpenProject(worktree.projectId)
+      }
+
       if (worktree.prunable) {
         return yield* Effect.fail(
           new DomainError(
@@ -722,7 +725,10 @@ export class TerminalService {
           preverifiedWorktree.path === worktree.path &&
           preverifiedWorktree.kind === worktree.kind
             ? worktree
-            : yield* observations.verifyWorktreeLaunchTarget(worktree)
+            : yield* observations.verifyWorktreeLaunchTarget(
+                worktree,
+                reservedByCreation
+              )
         return yield* createTerminalSession(launchWorktree, name, argv, options)
       }).pipe(
         Effect.ensuring(

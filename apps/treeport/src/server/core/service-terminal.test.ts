@@ -45,7 +45,7 @@ describe('terminal operations', () => {
     })
   })
 
-  it('creates terminals in existing trees while Git creates another tree', async () => {
+  it('keeps terminals and accepted tree creation running across project visibility changes', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainTree = project.worktrees[0]!
@@ -85,6 +85,14 @@ describe('terminal operations', () => {
       expect([...runner.sessions.keys()]).toEqual(
         expect.arrayContaining(sessionsBefore)
       )
+      await expect(
+        service.updateProjectColor(project.id, 'blue')
+      ).resolves.toMatchObject({ color: 'blue' })
+      await service.closeProject(project.id)
+      expect(await service.listProjects()).toEqual([])
+      await service.openProject(project.id)
+      await service.beginCreateWorktree(project.id, 'queued-tree', 'default')
+      await service.closeProject(project.id)
     } finally {
       releaseCreation()
     }
@@ -93,6 +101,21 @@ describe('terminal operations', () => {
         'completed'
       )
     )
+    await vi.waitFor(async () => {
+      const operations = await service.listActiveOperations()
+      expect(operations).toEqual([])
+    })
+    expect(await service.listProjects()).toEqual([])
+    const reopened = await service.openProject(project.id)
+    expect(reopened.worktrees.map((tree) => tree.name)).toEqual(
+      expect.arrayContaining(['blocking-tree', 'queued-tree'])
+    )
+    for (const name of ['blocking-tree', 'queued-tree']) {
+      const tree = reopened.worktrees.find((tree) => tree.name === name)!
+      expect(tree.terminals.some((terminal) => terminal.name === 'Shell')).toBe(
+        true
+      )
+    }
     await expect(
       service.createTerminal(mainTree.id, 'After creation')
     ).resolves.toMatchObject({ name: 'After creation' })
@@ -132,7 +155,7 @@ describe('terminal operations', () => {
     }
   )
 
-  it('protects a terminal launch from project closure and deletion', async () => {
+  it('allows project closure during a terminal launch but protects against deletion', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const tree = project.worktrees[0]!
@@ -146,9 +169,8 @@ describe('terminal operations', () => {
       await vi.waitFor(() =>
         expect(runner.terminalCreateAttempts).toBe(attempts + 1)
       )
-      await expect(service.closeProject(project.id)).rejects.toMatchObject({
-        code: 'PROJECT_BUSY'
-      })
+      await expect(service.closeProject(project.id)).resolves.toBeUndefined()
+      expect(await service.listProjects()).toEqual([])
       await expect(service.deleteProject(project.id)).rejects.toMatchObject({
         code: 'PROJECT_BUSY'
       })
@@ -302,7 +324,7 @@ describe('terminal operations', () => {
     })
   })
 
-  it('closes a terminal while another tree cleanup is running', async () => {
+  it('allows terminal and project metadata changes while another tree is being removed', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const blockingWorktree = (
@@ -334,6 +356,13 @@ describe('terminal operations', () => {
     runner.setupGate = new Promise<void>((resolve) => {
       releaseCleanup = resolve
     })
+    let releaseGitRemoval!: () => void
+    runner.removeAfterDeregisterGates.set(
+      blockingWorktree.path,
+      new Promise<void>((resolve) => {
+        releaseGitRemoval = resolve
+      })
+    )
     const preview = await service.removePreview(blockingWorktree.id)
     const removal = await service.beginRemove(blockingWorktree.id, {
       confirmationToken: preview.confirmationToken,
@@ -349,11 +378,46 @@ describe('terminal operations', () => {
         }
       })
       await expect(service.deleteTerminal(terminal.id)).resolves.toBeUndefined()
+      for (const phase of ['cleanup', 'git']) {
+        if (phase === 'git') {
+          releaseCleanup()
+          await vi.waitFor(() =>
+            expect(
+              runner.worktrees.some(
+                (tree) => tree.path === blockingWorktree.path
+              )
+            ).toBe(false)
+          )
+        }
+
+        await expect(
+          service.updateProjectColor(project.id, 'blue')
+        ).resolves.toMatchObject({ color: 'blue' })
+        await service.closeProject(project.id)
+        expect(await service.listProjects()).toEqual([])
+        expect(await service.listRecentProjects()).toEqual([
+          expect.objectContaining({ id: project.id })
+        ])
+        await service.dismissRecentProject(project.id)
+        expect(await service.listRecentProjects()).toEqual([])
+        await service.openProject(project.id)
+        await expect(service.deleteProject(project.id)).rejects.toMatchObject({
+          code: 'PROJECT_BUSY'
+        })
+        expect((await service.getOperation(removal.id)).status).toBe('running')
+      }
+      await service.closeProject(project.id)
     } finally {
       releaseCleanup()
+      releaseGitRemoval()
     }
     await vi.waitFor(async () =>
       expect((await service.getOperation(removal.id)).status).toBe('completed')
     )
+    expect(await service.listProjects()).toEqual([])
+    const reopened = await service.openProject(project.id)
+    expect(
+      reopened.worktrees.some((tree) => tree.id === blockingWorktree.id)
+    ).toBe(false)
   })
 })

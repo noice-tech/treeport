@@ -196,22 +196,8 @@ export class ProjectService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
-      const locks = yield* MutationLocks
       const projectStore = yield* ProjectStore
-      const worktreeMutations = yield* WorktreeMutations
       yield* projectStore.requireOpenProject(projectId)
-      if (
-        (yield* locks.isProjectLocked(projectId)) ||
-        (yield* worktreeMutations.isBusy(projectId))
-      ) {
-        return yield* Effect.fail(
-          new DomainError(
-            'PROJECT_BUSY',
-            'Project is already being modified',
-            409
-          )
-        )
-      }
 
       yield* database
         .execute('project.service.215', (db) =>
@@ -482,67 +468,34 @@ export class ProjectService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
-      const locks = yield* MutationLocks
       const packages = yield* PackageSystemPort
       const projectObservations = yield* ProjectObservations
       const projectSnapshots = yield* ProjectSnapshotOperations
       const projectStore = yield* ProjectStore
-      const worktreeMutations = yield* WorktreeMutations
       yield* projectObservations.enqueue(
         projectId,
         Effect.gen(function* () {
           yield* projectStore.getProject(projectId)
-          if (yield* worktreeMutations.isBusy(projectId)) {
-            return yield* Effect.fail(
-              new DomainError(
-                'PROJECT_BUSY',
-                'Project is already being modified',
-                409
-              )
-            )
-          }
-
-          yield* Effect.acquireUseRelease(
-            locks
-              .tryAcquire({ projectId })
-              .pipe(
-                Effect.flatMap((acquired) =>
-                  acquired
-                    ? Effect.void
-                    : Effect.fail(
-                        new DomainError(
-                          'PROJECT_BUSY',
-                          'Project is already being modified',
-                          409
-                        )
-                      )
-                )
-              ),
-            () =>
-              Effect.gen(function* () {
-                const timestamp = now()
-                yield* database
-                  .execute('project.service.517', (db) =>
-                    db
-                      .update(projects)
-                      .set({
-                        isOpen: 1,
-                        showInRecents: 0,
-                        lastOpenedAt: timestamp,
-                        updatedAt: timestamp
-                      })
-                      .where(eq(projects.id, projectId))
-                  )
-                  .pipe(Effect.orDie)
-                const project = yield* projectStore.getProject(projectId)
-                yield* packages.registerProject(project)
-                yield* invalidateProjectsSnapshot()
-                yield* Effect.sync(() => {
-                  events.publish('project.updated', { projectId })
+          const timestamp = now()
+          yield* database
+            .execute('project.service.517', (db) =>
+              db
+                .update(projects)
+                .set({
+                  isOpen: 1,
+                  showInRecents: 0,
+                  lastOpenedAt: timestamp,
+                  updatedAt: timestamp
                 })
-              }),
-            () => locks.release({ projectId })
-          )
+                .where(eq(projects.id, projectId))
+            )
+            .pipe(Effect.orDie)
+          const project = yield* projectStore.getProject(projectId)
+          yield* packages.registerProject(project)
+          yield* invalidateProjectsSnapshot()
+          yield* Effect.sync(() => {
+            events.publish('project.updated', { projectId })
+          })
         })
       )
       return yield* projectSnapshots.getProjectSnapshot(projectId)
@@ -558,71 +511,30 @@ export class ProjectService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
-      const locks = yield* MutationLocks
       const projectObservations = yield* ProjectObservations
       const projectStore = yield* ProjectStore
-      const worktreeMutations = yield* WorktreeMutations
+      // Visibility changes serialize with observations, not filesystem work.
+      // Closing neither cancels accepted operations nor stops terminals.
       yield* projectObservations.enqueue(
         projectId,
         Effect.gen(function* () {
-          const project = yield* projectStore.getProject(projectId)
+          yield* projectStore.getProject(projectId)
           if ((yield* projectStore.projectOpenState(projectId)) !== true) {
             return
           }
 
-          const lockedWorktreeIds = project.worktrees.map(
-            (worktree) => worktree.id
-          )
-          if (yield* worktreeMutations.isBusy(projectId)) {
-            return yield* Effect.fail(
-              new DomainError(
-                'PROJECT_BUSY',
-                'Project is already being modified',
-                409
-              )
+          yield* database
+            .execute('project.service.598', (db) =>
+              db
+                .update(projects)
+                .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
+                .where(eq(projects.id, projectId))
             )
-          }
-
-          yield* Effect.acquireUseRelease(
-            locks
-              .tryAcquire({
-                projectId,
-                worktreeIds: lockedWorktreeIds
-              })
-              .pipe(
-                Effect.flatMap((acquired) =>
-                  acquired
-                    ? Effect.void
-                    : Effect.fail(
-                        new DomainError(
-                          'PROJECT_BUSY',
-                          'Project is already being modified',
-                          409
-                        )
-                      )
-                )
-              ),
-            () =>
-              Effect.gen(function* () {
-                yield* database
-                  .execute('project.service.598', (db) =>
-                    db
-                      .update(projects)
-                      .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
-                      .where(eq(projects.id, projectId))
-                  )
-                  .pipe(Effect.orDie)
-                yield* invalidateProjectsSnapshot()
-                yield* Effect.sync(() => {
-                  events.publish('project.updated', { projectId })
-                })
-              }),
-            () =>
-              locks.release({
-                projectId,
-                worktreeIds: lockedWorktreeIds
-              })
-          )
+            .pipe(Effect.orDie)
+          yield* invalidateProjectsSnapshot()
+          yield* Effect.sync(() => {
+            events.publish('project.updated', { projectId })
+          })
         })
       )
     })
