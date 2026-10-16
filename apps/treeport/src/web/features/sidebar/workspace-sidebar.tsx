@@ -37,7 +37,7 @@ export function WorkspaceSidebar({
       collapsible="none"
       mobileTitle="Projects and trees"
       mobileDescription="Navigate projects, trees, and terminals."
-      className="sidebar relative min-h-0 border-r border-white/8 bg-zinc-900/80 text-zinc-200 backdrop-blur-xl"
+      className="sidebar relative min-h-0 border-r border-white/8 bg-zinc-900/80 text-zinc-200 max-[700px]:backdrop-blur-xl"
     >
       <SidebarHeader className="gap-0 border-b border-white/8 p-0">
         <div className="flex items-center gap-1 p-2 max-[700px]:h-10 max-[700px]:px-1.5 max-[700px]:py-1">
