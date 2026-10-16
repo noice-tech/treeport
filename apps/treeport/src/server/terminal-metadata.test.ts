@@ -197,7 +197,10 @@ describe('TerminalMetadataManager', () => {
     })
     await service.runEffect(manager.initialize())
     await service.runEffect(
-      manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
+      manager.trackTerminal(
+        { ...terminal, argv: ['pnpm', 'test'], interactiveShell: false },
+        testAccess({ id: 'worktree' })
+      )
     )
 
     host.emit('terminal', {
@@ -241,6 +244,53 @@ describe('TerminalMetadataManager', () => {
       value: 42
     })
     refreshTerminalStatus.mockClear()
+
+    host.titleState = {
+      terminalTitle: null,
+      currentCommand: 'zsh',
+      commandLine: ''
+    }
+    host.emit('terminal', { titleState: host.titleState })
+    await vi.waitFor(() =>
+      expect(manager.get('terminal').hasForegroundProcess).toBe(false)
+    )
+    await service.runEffect(
+      manager.trackTerminal(
+        {
+          ...terminal,
+          argv: ['pnpm', 'test'],
+          interactiveShell: false,
+          commandExitCode: 7
+        },
+        testAccess({ id: 'worktree' })
+      )
+    )
+    expect(manager.get('terminal').hasForegroundProcess).toBe(false)
+    const restored = new TerminalMetadataManager(service, host, bells)
+    await service.runEffect(
+      restored.trackTerminal(
+        {
+          ...terminal,
+          argv: ['pnpm', 'test'],
+          interactiveShell: false,
+          commandExitCode: 7
+        },
+        testAccess({ id: 'worktree' })
+      )
+    )
+    expect(restored.get('terminal').hasForegroundProcess).toBe(false)
+    restored.dispose()
+
+    host.emit('terminal', {
+      titleState: {
+        terminalTitle: null,
+        currentCommand: 'pi',
+        commandLine: 'pi --mode rpc'
+      }
+    })
+    await vi.waitFor(() =>
+      expect(manager.get('terminal').hasForegroundProcess).toBe(true)
+    )
 
     host.emit('terminal', { exitCode: 7 })
     await vi.waitFor(() => {
