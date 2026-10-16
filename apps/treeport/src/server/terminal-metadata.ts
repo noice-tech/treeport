@@ -466,9 +466,12 @@ export class TerminalMetadataManager {
                 yield* this.recordBell(entry, event.bell, true)
               }
 
-              if ('exitCode' in event) {
-                entry.status = 'exited'
-                this.stopRuntime(entry)
+              if ('exitCode' in event || event.commandExitCode != null) {
+                if ('exitCode' in event) {
+                  entry.status = 'exited'
+                  this.stopRuntime(entry)
+                }
+
                 // Refresh outside the runtime scope, which stopRuntime closes.
                 // Waiters need terminal.updated, not just cleared metadata.
                 this.service.forkApplicationEffect(
@@ -484,7 +487,7 @@ export class TerminalMetadataManager {
                         }
 
                         return Effect.logError(
-                          `Failed to refresh exited terminal ${entry.terminalId}`
+                          `Failed to refresh terminal completion ${entry.terminalId}`
                         ).pipe(Effect.annotateLogs({ cause: String(error) }))
                       }),
                       Effect.asVoid

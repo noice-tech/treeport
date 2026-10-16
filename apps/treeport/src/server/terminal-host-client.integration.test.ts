@@ -1028,7 +1028,8 @@ child.once('exit', (code) => process.exit(code ?? 1))
     clients.add(archivedDaemon)
     expect(await archivedDaemon.terminalState('archived-terminal')).toEqual({
       status: 'exited',
-      exitCode: null
+      exitCode: null,
+      commandExitCode: null
     })
     expect(
       await archivedDaemon.captureTerminal('archived-terminal', 10)
@@ -1046,7 +1047,8 @@ child.once('exit', (code) => process.exit(code ?? 1))
     ).toBe(commandPid)
     expect(await archivedDaemon.terminalState('unavailable-terminal')).toEqual({
       status: 'running',
-      exitCode: null
+      exitCode: null,
+      commandExitCode: null
     })
     expect(processExists(unavailableStatus.ownerPid)).toBe(true)
     expect(processExists(unavailableStatus.pid)).toBe(true)

@@ -7,6 +7,44 @@ import { TerminalOperations } from './services/domain-services'
 import { MutationLocks } from './services/infrastructure/mutation-locks'
 
 describe('terminal operations', () => {
+  it('publishes command completion without exiting or closing the fallback session', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const tree = project.worktrees[0]!
+    const terminal = await service.createTerminal(tree.id, 'Command')
+    const hosted = runner.sessions.get(`${tree.id}/${terminal.id}`)!
+    hosted.closeOnSuccess = true
+    const updates: string[] = []
+    service.events.subscribe((event) => {
+      if (event.type === 'terminal.updated') {
+        updates.push(event.data.terminalId)
+      }
+    })
+    hosted.commandExitCode = 0
+    expect(
+      await service.refreshTerminalStatus(terminal.id, false)
+    ).toMatchObject({
+      status: 'running',
+      exitCode: null,
+      commandExitCode: 0
+    })
+    expect(updates).toContain(terminal.id)
+    expect(hosted.alive).toBe(true)
+    expect(await service.getTerminal(terminal.id)).toMatchObject({
+      status: 'running',
+      commandExitCode: 0
+    })
+    hosted.alive = false
+    hosted.exitCode = 3
+    expect(
+      await service.refreshTerminalStatus(terminal.id, false)
+    ).toMatchObject({
+      status: 'exited',
+      exitCode: 3,
+      commandExitCode: 0
+    })
+  })
+
   it('creates terminals in existing trees while Git creates another tree', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)

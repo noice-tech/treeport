@@ -85,6 +85,9 @@ export interface TerminalLaunchSpec {
 export interface TerminalSessionState {
   status: 'running' | 'exited' | 'missing'
   exitCode: number | null
+  // Initial launched process, not commands typed into a shell. Older retained
+  // hosts may omit this; null means no authoritative completion is available.
+  commandExitCode?: number | null | undefined
 }
 
 export interface TerminalTitleState {
@@ -103,6 +106,7 @@ export interface HostedTerminal {
   closeOnSuccess: boolean
   status: 'running' | 'exited'
   exitCode: number | null
+  commandExitCode?: number | null | undefined
   createdAt: string
   updatedAt: string
 }
@@ -140,6 +144,7 @@ export interface TerminalHostRuntimeEvent {
   title?: string | undefined
   progress?: TerminalProgress | null | undefined
   bell?: { sequence: number; at: string } | undefined
+  commandExitCode?: number | null | undefined
   exitCode?: number | null | undefined
   titleState?: TerminalTitleState | undefined
 }

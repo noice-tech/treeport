@@ -157,6 +157,7 @@ export class TerminalService {
           interactiveShell: terminal.interactiveShell,
           status: terminal.status,
           exitCode: terminal.exitCode,
+          commandExitCode: terminal.commandExitCode ?? null,
           createdAt: terminal.createdAt,
           updatedAt: terminal.updatedAt
         }))
@@ -547,6 +548,7 @@ export class TerminalService {
         interactiveShell,
         status: 'running',
         exitCode: null,
+        commandExitCode: null,
         createdAt: timestamp,
         updatedAt: timestamp
       }
@@ -779,12 +781,14 @@ export class TerminalService {
       const refreshed = {
         ...terminal,
         status: state.status,
-        exitCode: state.exitCode
+        exitCode: state.exitCode,
+        commandExitCode: state.commandExitCode ?? null
       }
       yield* terminalState.updateTerminal(refreshed)
       if (
         state.status !== terminal.status ||
-        state.exitCode !== terminal.exitCode
+        state.exitCode !== terminal.exitCode ||
+        (state.commandExitCode ?? null) !== (terminal.commandExitCode ?? null)
       ) {
         yield* invalidateProjectsSnapshot()
         yield* Effect.sync(() => {

@@ -148,7 +148,9 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               if (
                 previous &&
                 (previous.status !== terminal.status ||
-                  previous.exitCode !== terminal.exitCode)
+                  previous.exitCode !== terminal.exitCode ||
+                  (previous.commandExitCode ?? null) !==
+                    (terminal.commandExitCode ?? null))
               ) {
                 updatedTerminalIds.push(terminal.id)
               }

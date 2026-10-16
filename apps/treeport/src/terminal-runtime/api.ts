@@ -323,6 +323,7 @@ const runtimeEventSchema = Schema.Struct({
   bell: Schema.optional(
     Schema.Struct({ sequence: positiveInteger, at: Schema.String })
   ),
+  commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   exitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   titleState: Schema.optional(
     Schema.Struct({
@@ -408,6 +409,7 @@ const hostedTerminalSchema = Schema.Struct({
   closeOnSuccess: Schema.Boolean,
   status: terminalStatusSchema,
   exitCode: Schema.NullOr(Schema.Int),
+  commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
@@ -423,7 +425,8 @@ const terminalHostResultSchemas = {
   inventory: Schema.Array(hostedTerminalSchema),
   state: Schema.Struct({
     status: Schema.Literal('running', 'exited', 'missing'),
-    exitCode: Schema.NullOr(Schema.Int)
+    exitCode: Schema.NullOr(Schema.Int),
+    commandExitCode: Schema.optional(Schema.NullOr(Schema.Int))
   }),
   attach: Schema.NullOr(
     Schema.Struct({

@@ -123,6 +123,8 @@ export interface TerminalRecord {
   interactiveShell: boolean
   status: TerminalStatus
   exitCode: number | null
+  // Initial launched process, independent of the persistent shell/session.
+  commandExitCode?: number | null | undefined
   createdAt: string
   updatedAt: string
 }

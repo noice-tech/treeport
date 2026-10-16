@@ -71,6 +71,7 @@ export interface LauncherDependencies {
   stdout?: Writable
   stderr?: Writable
   signalSource?: SignalSource
+  onCommandExit?: (exitCode: number) => Promise<void>
 }
 
 interface ChildResult {
@@ -319,6 +320,13 @@ export function runLaunchSpec(
       )
     }
 
+    // Report the child result before starting the fallback. This is not a PTY
+    // exit and must not depend on shell integration or terminal output parsing.
+    if (dependencies.onCommandExit) {
+      const exitCode = result.spawnError ? 127 : (result.code ?? 1)
+      yield* Effect.promise(() => dependencies.onCommandExit!(exitCode))
+    }
+
     if (
       result.forwardedSignal &&
       (!spec.fallbackArgv || result.forwardedSignal !== 'SIGINT')
@@ -388,7 +396,17 @@ function main(): Effect.Effect<number> {
         catch: (cause) => cause
       })
     ),
-    Effect.flatMap(runLaunchSpec),
+    Effect.flatMap((spec) =>
+      runLaunchSpec(spec, {
+        onCommandExit: async (exitCode) => {
+          const resultPath = `${specPath}.result`
+          await fs.writeFile(`${resultPath}.tmp`, JSON.stringify(exitCode), {
+            mode: 0o600
+          })
+          await fs.rename(`${resultPath}.tmp`, resultPath)
+        }
+      })
+    ),
     Effect.catchAll((error) =>
       Effect.sync(() => {
         process.stderr.write(

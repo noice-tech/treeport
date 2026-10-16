@@ -104,6 +104,39 @@ describe('terminal launcher setup pipeline', () => {
     expect(error.value()).toBe('')
   })
 
+  it.each([0, 7])(
+    'reports command exit %i before the fallback shell exits',
+    async (exitCode) => {
+      const command = new FakeChild()
+      const shell = new FakeChild()
+      const onCommandExit = vi.fn(async () => {})
+      const spawnProcess = vi
+        .fn()
+        .mockReturnValueOnce(command)
+        .mockImplementationOnce(() => {
+          expect(onCommandExit).toHaveBeenCalledExactlyOnceWith(exitCode)
+          return shell
+        })
+      let finished = false
+      const launch = Effect.runPromise(
+        runLaunchSpec(spec({ fallbackArgv: ['/bin/bash', '-i'] }), {
+          spawnProcess,
+          onCommandExit,
+          signalSource: new EventEmitter()
+        })
+      ).then((code) => {
+        finished = true
+        return code
+      })
+      command.emit('exit', exitCode, null)
+      await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(2))
+      expect(finished).toBe(false)
+      shell.emit('exit', 3, null)
+      await expect(launch).resolves.toBe(3)
+      expect(onCommandExit).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('starts a title-integrated fallback shell after the final command exits', async () => {
     const calls: Array<{
       argv: string[]

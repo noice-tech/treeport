@@ -10,6 +10,22 @@ import {
 } from './api'
 
 describe('stable terminal host API', () => {
+  it('retains independent command completion in state and runtime event frames', async () => {
+    const state = { status: 'running', exitCode: null, commandExitCode: 7 }
+    expect(
+      await Effect.runPromise(decodeTerminalHostResult('state', state))
+    ).toEqual(state)
+    const frame = {
+      type: 'event' as const,
+      event: 'runtime' as const,
+      data: { terminalId: 'term', value: { commandExitCode: 0 } }
+    }
+    const encoded = await Effect.runPromise(encodeTerminalHostFrame(frame))
+    expect(
+      await Effect.runPromise(makeTerminalHostFrameDecoder()(encoded))
+    ).toEqual([frame])
+  })
+
   it('discards additive unknown fields while validating known fields', async () => {
     await expect(
       Effect.runPromise(
