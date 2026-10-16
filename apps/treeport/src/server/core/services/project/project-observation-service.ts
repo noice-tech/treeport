@@ -149,7 +149,9 @@ export class ProjectObservationService {
   }
 
   verifyWorktreeLaunchTarget(
-    binding: WorktreeRecord
+    binding: WorktreeRecord,
+    // Accepted tree creation owns its target even after the project is hidden.
+    allowClosed = false
   ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
@@ -177,7 +179,7 @@ export class ProjectObservationService {
         )
       }
 
-      if (!metadata.isOpen) {
+      if (!allowClosed && !metadata.isOpen) {
         return yield* Effect.fail(
           new DomainError(
             'PROJECT_CLOSED',

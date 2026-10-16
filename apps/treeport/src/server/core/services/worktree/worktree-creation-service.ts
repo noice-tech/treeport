@@ -486,8 +486,7 @@ export class WorktreeCreationService {
 
           return parsed
         })
-        yield* projectStore.requireOpenProject(projectId)
-
+        // Acceptance requires an open project; accepted work survives closure.
         const { project, worktree } = yield* Effect.acquireUseRelease(
           locks
             .tryAcquire({ projectId, projectLockKind: 'worktree-creation' })
@@ -506,9 +505,10 @@ export class WorktreeCreationService {
             ),
           () =>
             Effect.gen(function* () {
-              const openProject =
-                yield* projectStore.requireOpenProject(projectId)
-              const project = yield* observeAvailableProject(openProject)
+              const project = yield* observeAvailableProject(
+                yield* projectStore.getProject(projectId),
+                true
+              )
               if (project.kind === 'folder') {
                 return yield* Effect.fail(
                   new DomainError(
@@ -649,6 +649,7 @@ export class WorktreeCreationService {
                 project.id,
                 project.repositoryPath,
                 project.mainWorktreePath,
+                true,
                 true
               )
               yield* database
