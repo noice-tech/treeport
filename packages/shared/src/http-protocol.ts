@@ -58,6 +58,7 @@ export const terminalRecordSchema = Schema.Struct({
   interactiveShell: Schema.Boolean,
   status: Schema.Literal('running', 'exited', 'missing'),
   exitCode: Schema.NullOr(Schema.Int),
+  commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })

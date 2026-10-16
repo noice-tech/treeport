@@ -228,6 +228,20 @@ describe('TerminalMetadataManager', () => {
     expect(bells.upsert).toHaveBeenCalledOnce()
     expect(published).toContain('pi --mode rpc:pi:42')
 
+    host.emit('terminal', { commandExitCode: 7 })
+    await vi.waitFor(() =>
+      expect(refreshTerminalStatus).toHaveBeenCalledExactlyOnceWith(
+        'terminal',
+        false
+      )
+    )
+    expect(host.listeners.get('terminal')?.size).toBe(1)
+    expect(manager.get('terminal').progress).toEqual({
+      state: 'normal',
+      value: 42
+    })
+    refreshTerminalStatus.mockClear()
+
     host.emit('terminal', { exitCode: 7 })
     await vi.waitFor(() => {
       expect(manager.get('terminal').hasForegroundProcess).toBe(false)

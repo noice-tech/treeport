@@ -830,7 +830,8 @@ export class TerminalHostDouble implements TerminalSessionBackend {
       return terminal
         ? {
             status: terminal.alive ? ('running' as const) : ('exited' as const),
-            exitCode: terminal.exitCode
+            exitCode: terminal.exitCode,
+            commandExitCode: terminal.commandExitCode ?? null
           }
         : { status: 'missing' as const, exitCode: null }
     })

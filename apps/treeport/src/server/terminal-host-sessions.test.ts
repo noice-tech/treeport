@@ -458,7 +458,8 @@ describe('TerminalHostSessionManager', () => {
     pty.exit(7)
     await expect(run(manager.terminalState('term'))).resolves.toEqual({
       status: 'exited',
-      exitCode: 7
+      exitCode: 7,
+      commandExitCode: null
     })
     await run(manager.resize('term', 60, 20))
     expect(await run(manager.snapshot('term'))).toMatchObject({

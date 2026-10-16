@@ -594,6 +594,41 @@ export class TerminalHostSessions {
           yield* nodePromise(() => owner.activate())
         }
 
+        if (ownedSession.specPath) {
+          // The launcher's atomic sidecar is authoritative even while the engine
+          // is detached. Poll only until completion (or final session exit), so
+          // neither a missed notification nor journal rotation can lose it.
+          const observeCommand = this.observeCommandExit(ownedSession)
+          yield* observeCommand
+          if (ownedSession.commandExitCode === null) {
+            yield* Effect.forkIn(
+              Effect.gen(function* () {
+                while (ownedSession.commandExitCode === null) {
+                  const exited = ownedSession.status === 'exited'
+                  yield* observeCommand
+                  if (exited) {
+                    return
+                  }
+
+                  yield* Effect.sleep(250)
+                }
+              }).pipe(
+                Effect.catchAll((error) =>
+                  Effect.logError(
+                    'Failed to observe launched command exit'
+                  ).pipe(
+                    Effect.annotateLogs({
+                      terminalId: input.terminalId,
+                      cause: error.message
+                    })
+                  )
+                )
+              ),
+              childScope
+            )
+          }
+        }
+
         retained = true
       }).pipe(
         Effect.onExit((exit) =>
@@ -886,6 +921,7 @@ export class TerminalHostSessions {
         closeOnSuccess: input.closeOnSuccess ?? false,
         status: 'running',
         exitCode: null,
+        commandExitCode: null,
         createdAt: input.createdAt,
         updatedAt: retainedMetadata?.updatedAt ?? input.createdAt,
         cwd: input.cwd,
@@ -1136,6 +1172,38 @@ export class TerminalHostSessions {
     )
   }
 
+  private observeCommandExit(
+    session: HostedTerminalSession
+  ): Effect.Effect<void, TerminalHostSessionError> {
+    return Effect.gen(function* () {
+      if (!session.specPath || session.commandExitCode != null) {
+        return
+      }
+
+      const source = yield* nodePromise(() =>
+        fs
+          .readFile(`${session.specPath}.result`, 'utf8')
+          .catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') {
+              return null
+            }
+
+            throw error
+          })
+      )
+      if (source === null || session.commandExitCode != null) {
+        return
+      }
+
+      const exitCode = yield* Effect.try({
+        try: () => z.int().parse(JSON.parse(source)),
+        catch: effectError
+      })
+      session.commandExitCode = exitCode
+      yield* PubSub.publish(session.runtime, { commandExitCode: exitCode })
+    })
+  }
+
   private runtimeWorker(session: HostedTerminalSession): Effect.Effect<void> {
     return Effect.forever(
       Effect.gen(this, function* () {
@@ -1199,6 +1267,11 @@ export class TerminalHostSessions {
             return
           }
           case 'Exit':
+            // The launcher commits its child result before exiting. Read it
+            // before the session-exit event stops product runtime subscriptions.
+            yield* this.observeCommandExit(session).pipe(
+              Effect.catchAll((error) => Effect.logError(error.message))
+            )
             if (session.progressFiber) {
               yield* Fiber.interrupt(session.progressFiber)
               session.progressFiber = null
@@ -1760,6 +1833,7 @@ export class TerminalHostSessions {
             closeOnSuccess: session.closeOnSuccess,
             status: session.status,
             exitCode: session.exitCode,
+            commandExitCode: session.commandExitCode ?? null,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt
           }))
@@ -1771,7 +1845,11 @@ export class TerminalHostSessions {
     return this.session(terminalId).pipe(
       Effect.map((session) =>
         session
-          ? { status: session.status, exitCode: session.exitCode }
+          ? {
+              status: session.status,
+              exitCode: session.exitCode,
+              commandExitCode: session.commandExitCode ?? null
+            }
           : { status: 'missing' as const, exitCode: null }
       )
     )
@@ -2034,17 +2112,22 @@ export class TerminalHostSessions {
       this.pendingCleanups.add(cleanup)
       yield* FiberSet.run(
         this.cleanups,
-        Effect.all(
-          [
-            session.specPath
-              ? nodePromise(() => fs.rm(session.specPath!, { force: true }))
-              : Effect.void,
-            session.pty instanceof PersistentSession
-              ? Effect.void
-              : this.options.terminateProcessTree(session.pty)
-          ],
-          { discard: true, concurrency: 'unbounded' }
+        (session.pty instanceof PersistentSession
+          ? Effect.void
+          : this.options.terminateProcessTree(session.pty)
         ).pipe(
+          // Stop the writer before removing its result, including direct PTYs.
+          Effect.zipRight(
+            session.specPath
+              ? nodePromise(() =>
+                  Promise.all(
+                    ['', '.result', '.result.tmp'].map((suffix) =>
+                      fs.rm(`${session.specPath}${suffix}`, { force: true })
+                    )
+                  )
+                )
+              : Effect.void
+          ),
           Effect.exit,
           Effect.tap((result) => Deferred.done(completed, result)),
           Effect.ensuring(

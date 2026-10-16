@@ -736,7 +736,9 @@ async function waitForTerminal(
     const matches =
       (condition === 'idle' && observation.metadata.progress === null) ||
       (condition === 'working' && observation.metadata.progress !== null) ||
-      (condition === 'exit' && observation.terminal.status === 'exited') ||
+      (condition === 'exit' &&
+        (observation.terminal.commandExitCode != null ||
+          observation.terminal.status === 'exited')) ||
       (condition === 'bell' &&
         bellBaseline !== null &&
         (observation.metadata.bell?.sequence ?? 0) > bellBaseline)
@@ -2576,7 +2578,11 @@ async function main(args: string[]): Promise<void> {
         terminal.status === 'exited'
           ? `exited${terminal.exitCode === null ? '' : ` (${terminal.exitCode})`}`
           : terminal.status
-      return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}\nTitle:    ${metadata.title ?? '—'}\nProgress: ${progress}\nStarted:  ${metadata.progressStartedAt ?? '—'}\nCleared:  ${metadata.progressClearedAt ?? '—'}\nBell:     ${metadata.bell ? `${metadata.bell.at} (#${metadata.bell.sequence})` : '—'}`
+      const command =
+        terminal.commandExitCode == null
+          ? ''
+          : `\nCommand:  exited (${terminal.commandExitCode})`
+      return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}${command}\nTitle:    ${metadata.title ?? '—'}\nProgress: ${progress}\nStarted:  ${metadata.progressStartedAt ?? '—'}\nCleared:  ${metadata.progressClearedAt ?? '—'}\nBell:     ${metadata.bell ? `${metadata.bell.at} (#${metadata.bell.sequence})` : '—'}`
     })
   })
 
@@ -2614,7 +2620,10 @@ async function main(args: string[]): Promise<void> {
     .command('wait')
     .description('Wait for a terminal runtime condition')
     .argument('<terminal-id-or-dot>', 'terminal to observe')
-    .requiredOption('--until <idle|working|bell|exit>', 'condition to wait for')
+    .requiredOption(
+      '--until <idle|working|bell|exit>',
+      'condition to wait for (exit: initial launched process or terminal session)'
+    )
     .option('--timeout <duration>', 'maximum wait, such as 30s or 5m')
     .option('--json', 'emit machine-readable JSON')
   terminalWaitCommand.action(async (identifier: string) => {
