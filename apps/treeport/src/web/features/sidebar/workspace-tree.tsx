@@ -656,7 +656,6 @@ export function WorkspaceTree({
                   .map((pending) => (
                     <SidebarMenuItem key={pending.id} className="min-w-0">
                       <WorktreeShell
-                        id={`pending-worktree-${pending.id}`}
                         name={pending.typedName}
                         title={`Creating ${pending.typedName}`}
                         pending

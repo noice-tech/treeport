@@ -124,7 +124,6 @@ export function useWorktreeWorkflows({
     })
   }, [serverPendingWorktrees])
   const handledCreationsRef = useRef(new Set<string>())
-  const focusedCreationsRef = useRef(new Set<string>())
   const trackedCreationQueries = useQueries({
     queries: trackedCreations.map((creation) => ({
       queryKey: ['operation', creation.id] as const,
@@ -300,22 +299,6 @@ export function useWorktreeWorkflows({
       })
     }
   })
-
-  useEffect(() => {
-    for (const pending of pendingWorktrees) {
-      if (
-        trackedCreations.some(
-          (creation) => creation.id === pending.id && creation.owned
-        ) &&
-        !focusedCreationsRef.current.has(pending.id)
-      ) {
-        focusedCreationsRef.current.add(pending.id)
-        window.requestAnimationFrame(() => {
-          document.getElementById(`pending-worktree-${pending.id}`)?.focus()
-        })
-      }
-    }
-  }, [pendingWorktrees, trackedCreations])
 
   useEffect(() => {
     trackedCreationQueries.forEach((query, index) => {
