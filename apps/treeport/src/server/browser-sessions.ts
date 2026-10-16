@@ -22,6 +22,7 @@ import type {
   BrowserOwnerClientMessage,
   BrowserOwnerServerMessage,
   BrowserServerMessage,
+  BrowserRuntimeState,
   BrowserSessionState,
   BrowserNativeCdpSession,
   BrowserClipboard
@@ -51,6 +52,7 @@ import { browserKey, browserTouch, browserWheel } from './browser-input'
 import { browserSetupGuidance } from './browser-runtime'
 
 import { browserCursor } from './browser-cursor'
+import type { AuthenticatedViewer } from './request-security'
 
 export interface BrowserTransport {
   id: string
@@ -83,10 +85,7 @@ export type BrowserSessionConfig = Pick<
 >
 
 export interface BrowserSessionBrowser {
-  readonly state: Omit<
-    BrowserSessionState,
-    'controlled' | 'hasController' | 'controller' | 'agentActive'
-  >
+  readonly state: BrowserRuntimeState
   launch(): Promise<void>
   command(
     message: BrowserClientMessage
@@ -127,14 +126,15 @@ export type BrowserLocalAutomationConnector = (
 
 interface BrowserTicket {
   panelId: string
-  clientId: string
+  viewerId: string
+  identity: AuthenticatedViewer | null
   visible: boolean
   expiresAt: number
 }
 
 interface BrowserOwnerTicket {
   panelId: string
-  clientId: string
+  viewerId: string
   challenge: string
   expiresAt: number
 }
@@ -155,7 +155,7 @@ interface BrowserLocalAutomation {
 
 interface BrowserLocalOwner {
   transport: BrowserOwnerTransport
-  clientId: string
+  viewerId: string
   endpoint: string
   challenge: string
   generation: number
@@ -170,8 +170,10 @@ interface BrowserLocalOwner {
 }
 
 interface BrowserAttachment {
+  // A connection is ephemeral; a viewer survives reconnects and reloads.
   id: string
-  clientId: string
+  viewerId: string
+  identity: AuthenticatedViewer | null
   transport: BrowserTransport
   visible: boolean
   closing: boolean
@@ -239,10 +241,7 @@ interface BrowserSession {
   touchIds: Set<number>
   agentActive: boolean
   retainLocalAgentPaint: boolean
-  state: Omit<
-    BrowserSessionState,
-    'controlled' | 'hasController' | 'controller' | 'agentActive'
-  >
+  state: BrowserRuntimeState
   videoError: string | null
   scheduler: BrowserScheduler
   persistence: BrowserPanelStatePersistence
@@ -260,7 +259,10 @@ interface BrowserSession {
 const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
 const LOCAL_BROWSER_OWNER_CONTROLLER = 'local-owner'
-const attachmentController = (clientId: string) => `attachment:${clientId}`
+// Control follows the viewer; socket IDs govern cleanup. Account/device metadata
+// describes the controller but must not change who a reconnecting viewer is.
+const attachmentController = (viewer: Pick<BrowserAttachment, 'viewerId'>) =>
+  `attachment:${viewer.viewerId}`
 const MAX_BROWSER_SCHEDULED_OPERATIONS = 64
 const MAX_BROWSER_REGULAR_OPERATIONS = 46
 const defaultBrowserFactory: BrowserSessionBrowserFactory = (
@@ -272,10 +274,7 @@ const defaultBrowserFactory: BrowserSessionBrowserFactory = (
   callbacks
 ) => new PlaywrightBrowser(host, workspacePath, callbacks)
 
-const DEFAULT_STATE: Omit<
-  BrowserSessionState,
-  'controlled' | 'hasController' | 'controller' | 'agentActive'
-> = {
+const DEFAULT_STATE: BrowserRuntimeState = {
   url: 'about:blank',
   title: '',
   faviconUrl: null,
@@ -357,8 +356,9 @@ export class BrowserSessionManager {
 
   issueTicket(
     panelId: string,
-    clientId: string,
-    visible = true
+    viewerId: string,
+    visible = true,
+    identity: AuthenticatedViewer | null = null
   ): Effect.Effect<string, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
       yield* this.service.panels.authorizeBrowserPanel(panelId)
@@ -376,7 +376,8 @@ export class BrowserSessionManager {
       const ticket = crypto.randomBytes(32).toString('base64url')
       this.tickets.set(ticket, {
         panelId,
-        clientId,
+        viewerId,
+        identity,
         visible,
         expiresAt: Date.now() + 30_000
       })
@@ -403,7 +404,7 @@ export class BrowserSessionManager {
 
   issueOwnerTicket(
     panelId: string,
-    clientId: string
+    viewerId: string
   ): Effect.Effect<
     { ticket: string; challenge: string },
     unknown,
@@ -425,12 +426,12 @@ export class BrowserSessionManager {
       const ticket = crypto.randomBytes(32).toString('base64url')
       const currentOwner = this.sessions.get(panelId)?.localOwner
       const challenge =
-        currentOwner?.clientId === clientId
+        currentOwner?.viewerId === viewerId
           ? currentOwner.challenge
           : crypto.randomBytes(32).toString('base64url')
       this.ownerTickets.set(ticket, {
         panelId,
-        clientId,
+        viewerId,
         challenge,
         expiresAt: Date.now() + 30_000
       })
@@ -442,18 +443,58 @@ export class BrowserSessionManager {
     session: BrowserSession,
     attachment: BrowserAttachment
   ): BrowserSessionState {
+    const controller = [...session.attachments.values()].find(
+      (candidate) =>
+        !candidate.closing &&
+        candidate.transport.isConnected() &&
+        attachmentController(candidate) === session.controllerId
+    )
+    const local =
+      session.controllerId === LOCAL_BROWSER_OWNER_CONTROLLER &&
+      session.localOwner !== null
+    const identity: AuthenticatedViewer | null =
+      controller?.identity ??
+      (local
+        ? {
+            account: {
+              source: 'local',
+              login: null,
+              name: null,
+              profilePicture: null
+            },
+            deviceId: 'local'
+          }
+        : null)
+    const sameAccount =
+      identity?.account.source === 'tailscale' &&
+      attachment.identity?.account.source === 'tailscale' &&
+      identity.account.login !== null &&
+      identity.account.login === attachment.identity.account.login
+    const sameDevice =
+      identity !== null &&
+      identity.deviceId !== null &&
+      identity.deviceId === attachment.identity?.deviceId
+
     return {
       ...session.state,
-      controlled:
-        session.controllerId === attachmentController(attachment.clientId),
+      controlled: session.controllerId === attachmentController(attachment),
       hasController:
         session.localOwner !== null || session.controllerId !== null,
       controller:
-        session.controllerId === attachmentController(attachment.clientId)
+        session.controllerId === attachmentController(attachment)
           ? 'you'
           : session.localOwner || session.controllerId
             ? 'other'
             : 'none',
+      controllerDetails:
+        controller || local
+          ? {
+              kind: local ? 'local' : 'viewer',
+              account: identity?.account ?? null,
+              sameAccount,
+              sameDevice
+            }
+          : null,
       agentActive: session.agentActive
     }
   }
@@ -971,8 +1012,7 @@ export class BrowserSessionManager {
               !input.attachment.visible ||
               session.attachments.get(input.attachment.id) !==
                 input.attachment ||
-              session.controllerId !==
-                attachmentController(input.attachment.clientId)
+              session.controllerId !== attachmentController(input.attachment)
             ) {
               return false
             }
@@ -1132,19 +1172,28 @@ export class BrowserSessionManager {
 
   accept(
     ticketValue: string,
-    transport: BrowserTransport
+    transport: BrowserTransport,
+    identity: AuthenticatedViewer | null = null
   ): Effect.Effect<string, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
       const ticket = this.tickets.get(ticketValue)
       this.tickets.delete(ticketValue)
-      if (!ticket || ticket.expiresAt < Date.now()) {
+      if (
+        !ticket ||
+        ticket.expiresAt < Date.now() ||
+        (ticket.identity !== null &&
+          (identity === null ||
+            ticket.identity.account.source !== identity.account.source ||
+            ticket.identity.account.login !== identity.account.login ||
+            ticket.identity.deviceId !== identity.deviceId))
+      ) {
         return yield* Effect.fail(new Error('INVALID_BROWSER_TICKET'))
       }
 
       yield* Effect.annotateCurrentSpan({
         'treeport.connection.id': transport.id,
         'treeport.panel.id': ticket.panelId,
-        'treeport.client.id': ticket.clientId
+        'treeport.client.id': ticket.viewerId
       })
       const session = yield* this.getSession(ticket.panelId)
       return yield* Effect.tryPromise({
@@ -1162,7 +1211,8 @@ export class BrowserSessionManager {
     transport: BrowserTransport
   ): Promise<string> {
     const supersededAttachments = [...session.attachments.values()].filter(
-      (candidate) => candidate.clientId === ticket.clientId
+      (candidate) =>
+        attachmentController(candidate) === attachmentController(ticket)
     )
     if (supersededAttachments.length > 0) {
       networkTelemetry.reconnectNow('browsers')
@@ -1183,7 +1233,8 @@ export class BrowserSessionManager {
 
     const attachment: BrowserAttachment = {
       id: transport.id,
-      clientId: ticket.clientId,
+      viewerId: ticket.viewerId,
+      identity: ticket.identity,
       transport,
       visible: ticket.visible,
       closing: false,
@@ -1223,7 +1274,7 @@ export class BrowserSessionManager {
           }
 
           if (attachment.visible && session.controllerId === null) {
-            session.controllerId = attachmentController(attachment.clientId)
+            session.controllerId = attachmentController(attachment)
           }
 
           await this.updateScreencast(session)
@@ -1260,9 +1311,10 @@ export class BrowserSessionManager {
       this.closeVideoPeer(session, attachment)
       session.attachments.delete(attachment.id)
       if (
-        session.controllerId === attachmentController(attachment.clientId) &&
+        session.controllerId === attachmentController(attachment) &&
         ![...session.attachments.values()].some(
-          (candidate) => candidate.clientId === attachment.clientId
+          (candidate) =>
+            attachmentController(candidate) === attachmentController(attachment)
         )
       ) {
         session.controllerId = session.localOwner
@@ -1300,7 +1352,7 @@ export class BrowserSessionManager {
       yield* Effect.annotateCurrentSpan({
         'treeport.connection.id': transport.id,
         'treeport.panel.id': ticket.panelId,
-        'treeport.client.id': ticket.clientId
+        'treeport.client.id': ticket.viewerId
       })
       const identityResult = yield* Effect.tryPromise({
         try: async (signal) => {
@@ -1357,7 +1409,7 @@ export class BrowserSessionManager {
         }
 
         const readiness = Effect.runSync(Deferred.make<void>())
-        const resumed = previousOwner?.clientId === ticket.clientId
+        const resumed = previousOwner?.viewerId === ticket.viewerId
         if (resumed) {
           networkTelemetry.reconnectNow('browser-owners')
         }
@@ -1376,7 +1428,7 @@ export class BrowserSessionManager {
           }
 
           previousOwner.transport = transport
-          previousOwner.clientId = ticket.clientId
+          previousOwner.viewerId = ticket.viewerId
           previousOwner.endpoint = auth.endpoint
           previousOwner.challenge = auth.challenge
           previousOwner.generation = resumed
@@ -1394,7 +1446,7 @@ export class BrowserSessionManager {
           await this.closePlaywrightRuntime(session)
           owner = {
             transport,
-            clientId: ticket.clientId,
+            viewerId: ticket.viewerId,
             endpoint: auth.endpoint,
             challenge: auth.challenge,
             generation: ++session.generation,
@@ -1603,7 +1655,7 @@ export class BrowserSessionManager {
           candidate.transport.isConnected()
       )
       session.controllerId = attachment
-        ? attachmentController(attachment.clientId)
+        ? attachmentController(attachment)
         : null
     }
 
@@ -1867,10 +1919,10 @@ export class BrowserSessionManager {
           const previousController = session.controllerId
           let nextController = previousController
           if (attachment.visible && previousController === null) {
-            nextController = attachmentController(attachment.clientId)
+            nextController = attachmentController(attachment)
           } else if (
             !attachment.visible &&
-            previousController === attachmentController(attachment.clientId)
+            previousController === attachmentController(attachment)
           ) {
             const nextAttachment = [...session.attachments.values()].find(
               (candidate) =>
@@ -1879,7 +1931,7 @@ export class BrowserSessionManager {
                 candidate.visible
             )
             nextController = nextAttachment
-              ? attachmentController(nextAttachment.clientId)
+              ? attachmentController(nextAttachment)
               : session.localOwner
                 ? LOCAL_BROWSER_OWNER_CONTROLLER
                 : null
@@ -1906,7 +1958,7 @@ export class BrowserSessionManager {
             queuedMessage?.type !== 'resize' ||
             attachment.closing ||
             session.attachments.get(attachment.id) !== attachment ||
-            session.controllerId !== attachmentController(attachment.clientId)
+            session.controllerId !== attachmentController(attachment)
           ) {
             return
           }
@@ -1940,7 +1992,7 @@ export class BrowserSessionManager {
         (scheduler.controlKey === key ||
           (scheduler.active.size === 0 &&
             scheduler.pending.size === 0 &&
-            session.controllerId === attachmentController(attachment.clientId)))
+            session.controllerId === attachmentController(attachment)))
       ) {
         networkTelemetry.droppedNow('browsers', 'coalesced')
         return
@@ -1958,7 +2010,7 @@ export class BrowserSessionManager {
           }
 
           const previousController = session.controllerId
-          const nextController = attachmentController(attachment.clientId)
+          const nextController = attachmentController(attachment)
           // Input bursts request control repeatedly; ownership already held
           // must not resize the page or restart its video stream.
           if (previousController === nextController) {
@@ -2013,9 +2065,7 @@ export class BrowserSessionManager {
           return
         }
 
-        if (
-          session.controllerId !== attachmentController(attachment.clientId)
-        ) {
+        if (session.controllerId !== attachmentController(attachment)) {
           attachment.transport.sendMessage(
             queuedMessage.type === 'copy'
               ? {
@@ -2210,7 +2260,7 @@ export class BrowserSessionManager {
       (!touchAttachment ||
         touchAttachment.closing ||
         !touchAttachment.visible ||
-        attachmentController(touchAttachment.clientId) !== controllerId)
+        attachmentController(touchAttachment) !== controllerId)
     ) {
       await this.cancelTouches(session)
     }
@@ -2230,8 +2280,7 @@ export class BrowserSessionManager {
       const viewport =
         controller === 'other'
           ? ([...session.attachments.values()].find(
-              (attachment) =>
-                attachmentController(attachment.clientId) === controllerId
+              (attachment) => attachmentController(attachment) === controllerId
             )?.viewport ?? null)
           : null
       const retainPaint = visible || session.retainLocalAgentPaint
@@ -2268,6 +2317,24 @@ export class BrowserSessionManager {
     }
 
     const browser = await session.launch.catch(() => null)
+    const viewport = [...session.attachments.values()].find(
+      (attachment) =>
+        !attachment.closing &&
+        attachment.visible &&
+        attachmentController(attachment) === controllerId
+    )?.viewport
+    // Visibility and disconnect handoffs need the same viewport update as an
+    // explicit takeover. An unchanged panel will not emit another resize event.
+    if (
+      browser &&
+      viewport &&
+      (browser.state.viewport.width !== viewport.width ||
+        browser.state.viewport.height !== viewport.height)
+    ) {
+      await this.cancelTouches(session)
+      await browser.command({ type: 'resize', ...viewport })
+    }
+
     if (visible) {
       session.videoError = null
     }
@@ -2382,7 +2449,34 @@ export class BrowserSessionManager {
         session,
         async () => {
           session.attachments.delete(connectionId)
+          const previousController = session.controllerId
+          if (previousController === attachmentController(attachment)) {
+            // A disconnected viewer must not leave a phantom controller behind.
+            // Prefer its replacement if it reattached before cleanup ran.
+            const visibleAttachments = [...session.attachments.values()].filter(
+              (candidate) =>
+                !candidate.closing &&
+                candidate.visible &&
+                candidate.transport.isConnected()
+            )
+            const nextAttachment =
+              visibleAttachments.find(
+                (candidate) =>
+                  attachmentController(candidate) ===
+                  attachmentController(attachment)
+              ) ?? visibleAttachments[0]
+            session.controllerId = nextAttachment
+              ? attachmentController(nextAttachment)
+              : session.localOwner
+                ? LOCAL_BROWSER_OWNER_CONTROLLER
+                : null
+            session.clipboardInput = null
+          }
+
           await this.updateScreencast(session)
+          if (session.controllerId !== previousController) {
+            this.broadcastState(session, 'controlChanged')
+          }
         },
         { required: true }
       ).catch(() => undefined)

@@ -24,7 +24,7 @@ import type {
   BrowserClientMessage,
   BrowserContextResult,
   BrowserContextActionResult,
-  BrowserSessionState
+  BrowserRuntimeState
 } from '@treeport/shared'
 
 import {
@@ -39,12 +39,7 @@ import { installBrowserClipboardBridge } from './browser-clipboard-bridge'
 import { browserCursor } from './browser-cursor'
 
 export interface PlaywrightBrowserCallbacks {
-  state(
-    state: Omit<
-      BrowserSessionState,
-      'controlled' | 'hasController' | 'controller' | 'agentActive'
-    >
-  ): void
+  state(state: BrowserRuntimeState): void
   clipboard(clipboard: BrowserClipboard): boolean
   popup(url: string): void
   navigationError(message: string, source?: 'video'): void
@@ -356,10 +351,7 @@ export class PlaywrightBrowser {
   private pointerPoint: { x: number; y: number } | null = null
   private titleTimer: NodeJS.Timeout | null = null
   private faviconSource: string | null = null
-  private stateValue: Omit<
-    BrowserSessionState,
-    'controlled' | 'hasController' | 'controller' | 'agentActive'
-  > = {
+  private stateValue: BrowserRuntimeState = {
     url: 'about:blank',
     title: '',
     faviconUrl: null,
@@ -648,14 +640,7 @@ export class PlaywrightBrowser {
     await this.refreshPageState()
   }
 
-  private updateState(
-    patch: Partial<
-      Omit<
-        BrowserSessionState,
-        'controlled' | 'hasController' | 'controller' | 'agentActive'
-      >
-    >
-  ): void {
+  private updateState(patch: Partial<BrowserRuntimeState>): void {
     const observedUrl = patch.url ?? this.stateValue.url
     // Chromium error pages are not navigable protocol URLs. Keep the last
     // supported address (including a failed navigation's target) for recovery.

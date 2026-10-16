@@ -53,6 +53,8 @@ const defaultSocketFactory: BrowserPanelSocketFactory = (
   >(namespace, options)
 }
 
+let browserViewerId: string | null = null
+
 export function connectBrowserPanel(
   panelId: string,
   initialVisible: boolean,
@@ -61,7 +63,19 @@ export function connectBrowserPanel(
   },
   socketFactory: BrowserPanelSocketFactory = defaultSocketFactory
 ): BrowserPanelConnection {
-  const clientId = crypto.randomUUID()
+  if (browserViewerId === null) {
+    // Keep this viewer stable across panel remounts and server-switch reloads.
+    browserViewerId = crypto.randomUUID()
+    try {
+      browserViewerId =
+        sessionStorage.getItem('treeport-browser-client-id') || browserViewerId
+      sessionStorage.setItem('treeport-browser-client-id', browserViewerId)
+    } catch {
+      // Storage can be unavailable; the in-memory identity remains stable.
+    }
+  }
+
+  const viewerId = browserViewerId
   let disposed = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let currentVisible = initialVisible
@@ -116,7 +130,7 @@ export function connectBrowserPanel(
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ clientId, visible: currentVisible }),
+        body: JSON.stringify({ clientId: viewerId, visible: currentVisible }),
         signal: AbortSignal.timeout(10_000)
       }
     )

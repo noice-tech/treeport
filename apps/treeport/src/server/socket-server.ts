@@ -35,7 +35,7 @@ import {
   TerminalAttachmentManager,
   type TerminalTransport
 } from './terminal-attachments'
-import { authorizeRequest } from './request-security'
+import { authorizeRequest, type AuthenticatedViewer } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { TerminalAttachmentBackend } from './core/terminal'
 import {
@@ -130,7 +130,11 @@ export function createSocketServer({
   const connectionFibers = new Set<Fiber.RuntimeFiber<void, unknown>>()
   let closing = false
 
-  const runConnection = (channel: string, accepted: WebSocket) => {
+  const runConnection = (
+    channel: string,
+    accepted: WebSocket,
+    identity: AuthenticatedViewer | null
+  ) => {
     let observedClose: { code: number; reason: string } | null = null
     let telemetryOpened = false
     accepted.once('close', (code, reason) => {
@@ -304,7 +308,7 @@ export function createSocketServer({
             disconnect: () => accepted.close(4001, 'Browser rejected')
           }
           protocolConnectionId = yield* Effect.raceFirst(
-            hostedBrowsers.accept(auth.ticket, transport),
+            hostedBrowsers.accept(auth.ticket, transport, identity),
             Fiber.join(reader).pipe(
               Effect.zipRight(
                 Effect.fail(
@@ -473,7 +477,18 @@ export function createSocketServer({
 
     websocketServer.handleUpgrade(request, socket, head, (accepted) => {
       websocketServer.emit('connection', accepted, request)
-      const fiber = service.forkEffect(runConnection(channel, accepted))
+      const fiber = service.forkEffect(
+        runConnection(
+          channel,
+          accepted,
+          security.principal
+            ? {
+                account: security.principal,
+                deviceId: security.deviceId
+              }
+            : null
+        )
+      )
       connectionFibers.add(fiber)
       fiber.addObserver(() => connectionFibers.delete(fiber))
     })

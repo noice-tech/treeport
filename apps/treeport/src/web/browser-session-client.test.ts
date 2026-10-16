@@ -49,6 +49,13 @@ class FakeSocket implements BrowserPanelSocket {
 
 beforeEach(() => {
   vi.stubGlobal('window', { location: { reload: vi.fn() } })
+  const storage = new Map<string, string>([
+    ['treeport-browser-client-id', '12121212-1212-4212-9212-121212121212']
+  ])
+  vi.stubGlobal('sessionStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value)
+  })
   vi.stubGlobal(
     'fetch',
     vi.fn(
@@ -89,7 +96,10 @@ it('preserves control and video signaling and reconnects without replaying offer
   )
   expect(
     JSON.parse(String(vi.mocked(fetch).mock.calls[0]![1]?.body))
-  ).toMatchObject({ clientId: expect.any(String), visible: true })
+  ).toMatchObject({
+    clientId: sessionStorage.getItem('treeport-browser-client-id'),
+    visible: true
+  })
 
   const ready: BrowserServerMessage = {
     type: 'ready',
@@ -103,6 +113,7 @@ it('preserves control and video signaling and reconnects without replaying offer
       controlled: true,
       hasController: true,
       controller: 'you',
+      controllerDetails: null,
       agentActive: false,
       viewport: { width: 1_280, height: 800 }
     }
@@ -149,4 +160,48 @@ it('preserves control and video signaling and reconnects without replaying offer
 
   connection.dispose()
   expect(reconnectedSocket.disconnect).toHaveBeenCalledOnce()
+
+  const clientId = sessionStorage.getItem('treeport-browser-client-id')
+  const remounted = connectBrowserPanel(
+    'panel-one',
+    true,
+    { message: vi.fn() },
+    () => new FakeSocket()
+  )
+  expect(fetch).toHaveBeenCalledTimes(3)
+  expect(
+    JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))
+  ).toMatchObject({ clientId })
+  remounted.dispose()
+
+  // Switching away and back reloads the module, but retains this origin's
+  // sessionStorage in the desktop workspace's WebContents.
+  vi.resetModules()
+  const restoredClient = await import('./browser-session-client')
+  const restored = restoredClient.connectBrowserPanel(
+    'panel-one',
+    true,
+    { message: vi.fn() },
+    () => new FakeSocket()
+  )
+  expect(fetch).toHaveBeenCalledTimes(4)
+  expect(
+    JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))
+  ).toMatchObject({ clientId })
+  restored.dispose()
+
+  vi.resetModules()
+  vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: vi.fn() })
+  const otherWindowClient = await import('./browser-session-client')
+  const otherWindow = otherWindowClient.connectBrowserPanel(
+    'panel-one',
+    true,
+    { message: vi.fn() },
+    () => new FakeSocket()
+  )
+  expect(fetch).toHaveBeenCalledTimes(5)
+  expect(
+    JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))
+  ).not.toMatchObject({ clientId })
+  otherWindow.dispose()
 })

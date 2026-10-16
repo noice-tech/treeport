@@ -135,7 +135,7 @@ import {
 import type { ApplicationUpdateManager } from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
-import { authenticatedPrincipals, isLoopbackAddress } from './request-security'
+import { authenticatedViewers, isLoopbackAddress } from './request-security'
 import type { WorkspacePresenceManager } from './workspace-presence'
 import type { WebPushManager } from './web-push'
 import { networkTelemetry } from './network-telemetry'
@@ -450,9 +450,9 @@ export function createApp({
   })
   const pushIdentity = Effect.gen(function* () {
     const request = yield* serverRequest
-    const identity = authenticatedPrincipals.get(
+    const identity = authenticatedViewers.get(
       NodeHttpServerRequest.toIncomingMessage(request)
-    )
+    )?.account
     if (!identity) {
       return yield* Effect.fail(
         new DomainError(
@@ -510,9 +510,9 @@ export function createApp({
       '/api/presence',
       Effect.gen(function* () {
         const request = yield* serverRequest
-        const identity = authenticatedPrincipals.get(
+        const identity = authenticatedViewers.get(
           NodeHttpServerRequest.toIncomingMessage(request)
-        )
+        )?.account
         if (!identity) {
           return yield* Effect.fail(
             new DomainError(
@@ -770,12 +770,27 @@ export function createApp({
 
         const params = yield* routeParams
         const body = yield* requestBody(browserTicketRequestSchema)
+        const request = yield* serverRequest
+        const identity = authenticatedViewers.get(
+          NodeHttpServerRequest.toIncomingMessage(request)
+        )
+        if (!identity) {
+          return yield* Effect.fail(
+            new DomainError(
+              'AUTHENTICATION_REQUIRED',
+              'An authenticated request is required',
+              401
+            )
+          )
+        }
+
         return jsonContractResponse(browserTicketResponseSchema, {
           ticket: yield* operation(() =>
             browserSessions.issueTicket(
               params.panelId!,
               body.clientId,
-              body.visible
+              body.visible,
+              identity
             )
           )
         })

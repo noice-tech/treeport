@@ -395,6 +395,7 @@ describe('Effect WebSocket real network', () => {
               controlled: true,
               hasController: true,
               controller: 'you',
+              controllerDetails: null,
               agentActive: false,
               viewport: { width: 800, height: 600 }
             }
@@ -449,6 +450,13 @@ describe('Effect WebSocket real network', () => {
       BrowserClientToServerEvents
     >(`${value.url}/browsers`, {
       reconnection: false,
+      webSocketConstructor: webSocketConstructor({
+        Host: 'treeport.tailnet.ts.net',
+        'X-Forwarded-Host': 'treeport.tailnet.ts.net',
+        'X-Forwarded-Proto': 'https',
+        'X-Forwarded-For': '100.64.0.10',
+        'Tailscale-User-Login': 'alice@example.test'
+      })!,
       auth: {
         ticket: 'b'.repeat(43)
       }
@@ -477,6 +485,19 @@ describe('Effect WebSocket real network', () => {
       type: 'ready',
       state: { controlled: true, viewport: { width: 800, height: 600 } }
     })
+    expect(browserSessions.accept).toHaveBeenCalledWith(
+      'b'.repeat(43),
+      expect.any(Object),
+      {
+        account: {
+          source: 'tailscale',
+          login: 'alice@example.test',
+          name: null,
+          profilePicture: null
+        },
+        deviceId: 'tailscale:100.64.0.10'
+      }
+    )
     await expect(answer).resolves.toEqual({
       type: 'videoAnswer',
       requestId: 'offer-id',
