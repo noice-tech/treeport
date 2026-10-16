@@ -92,7 +92,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         name: 'Creating tree new-topic-preview'
       })
       await expect(pending).toHaveText('new-topic-preview')
-      await expect(pending).toBeFocused()
+      await expect(pending).not.toBeFocused()
       const projectRequestsBeforeEvent = mocked.projectRequests()
       await mocked.emitProjectEvent('worktree.created', {
         projectId: 'proj_1',
