@@ -1466,6 +1466,10 @@ function registerIpc(): void {
           return false
         }
 
+        if (store.selectedComputer?.id === parsedId.data) {
+          return true
+        }
+
         const selected = yield* store.select(parsedId.data)
         if (selected) {
           void connectSelected()
