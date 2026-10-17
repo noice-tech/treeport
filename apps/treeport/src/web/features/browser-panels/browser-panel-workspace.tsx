@@ -19,7 +19,6 @@ import {
   CodeBracketSquareIcon,
   DevicePhoneMobileIcon,
   EllipsisHorizontalIcon,
-  ServerStackIcon,
   ShieldCheckIcon,
   ShieldExclamationIcon,
   XMarkIcon
@@ -30,9 +29,7 @@ import type {
   BrowserContextResult,
   BrowserContextAction,
   BrowserServerMessage,
-  BrowserSessionState,
-  WorktreeListener,
-  WorktreeListenerDiscovery
+  BrowserSessionState
 } from '@treeport/shared'
 import {
   browserUrlSchema,
@@ -41,7 +38,6 @@ import {
   browserControllerDescription,
   decodeUnknownOrNull
 } from '@treeport/shared'
-import { parseResponse, rpc } from '../../api'
 import { cn } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import {
@@ -52,7 +48,6 @@ import {
   ContextMenuItem,
   ContextMenuSeparator
 } from '../../components/ui/context-menu'
-import { Empty, EmptyDescription, EmptyTitle } from '../../components/ui/empty'
 import { Input } from '../../components/ui/input'
 import { NativeSelect } from '../../components/ui/native-select'
 import {
@@ -101,20 +96,6 @@ function parseBrowserAddress(value: string): URL | null {
   search.searchParams.set('q', input)
   return decodeUnknownOrNull(browserUrlSchema, search.href) !== null
     ? search
-    : null
-}
-
-function listenerUrl(listener: WorktreeListener): URL | null {
-  let host = listener.host
-  if (['*', '0.0.0.0', '::', '::1', '127.0.0.1'].includes(host)) {
-    host = 'localhost'
-  } else if (host.includes(':')) {
-    host = `[${host}]`
-  }
-
-  const value = `http://${host}:${listener.port}/`
-  return decodeUnknownOrNull(browserUrlSchema, value) !== null
-    ? new URL(value)
     : null
 }
 
@@ -196,7 +177,6 @@ export function BrowserPanelWorkspace({
   const [inputValue, setInputValue] = useState(
     panel.url === 'about:blank' ? '' : panel.url
   )
-  const [serversOpen, setServersOpen] = useState(false)
   const [permissionsOpen, setPermissionsOpen] = useState(false)
   const [permissionSettings, setPermissionSettings] = useState<{
     origin: string | null
@@ -224,10 +204,6 @@ export function BrowserPanelWorkspace({
   const [failure, setFailure] = useState<{
     message: string
   } | null>(null)
-  const [listeners, setListeners] = useState<WorktreeListenerDiscovery | null>(
-    null
-  )
-  const [listenersLoading, setListenersLoading] = useState(false)
   const { localBrowser, computerId } = getDesktopRuntime()
 
   useEffect(() => {
@@ -1033,26 +1009,6 @@ export function BrowserPanelWorkspace({
     })
   }, [active, autoFocusBlocked, focusAddress, focusFind, send])
 
-  const discoverListeners = useCallback(async () => {
-    setListenersLoading(true)
-    try {
-      const parsed = await parseResponse(
-        rpc.api.panels[':panelId'].network.listeners.$get({
-          param: { panelId: panel.id }
-        })
-      )
-      setListeners(parsed.discovery)
-    } catch (cause) {
-      setListeners({
-        supported: false,
-        message: cause instanceof Error ? cause.message : String(cause),
-        listeners: []
-      })
-    } finally {
-      setListenersLoading(false)
-    }
-  }, [panel.id])
-
   const navigate = (value: string) => {
     const parsed = parseBrowserAddress(value)
     if (!parsed) {
@@ -1288,24 +1244,6 @@ export function BrowserPanelWorkspace({
     canvas.addEventListener('wheel', wheel, { passive: false })
     return () => canvas.removeEventListener('wheel', wheel)
   }, [active, inputBlocked, localBrowser, point, send])
-
-  const candidates = new Map<string, { url: URL; listener: WorktreeListener }>()
-  for (const listener of listeners?.listeners ?? []) {
-    const url = listenerUrl(listener)
-    if (!url) {
-      continue
-    }
-
-    const existing = candidates.get(url.href)
-    if (!existing || (!existing.listener.terminalId && listener.terminalId)) {
-      candidates.set(url.href, { url, listener })
-    }
-  }
-  const discoveredServers = [...candidates.values()].sort(
-    (left, right) =>
-      left.listener.port - right.listener.port ||
-      left.url.href.localeCompare(right.url.href)
-  )
 
   const sitePermissions =
     permissionSettings &&
@@ -1683,106 +1621,6 @@ export function BrowserPanelWorkspace({
             <CodeBracketSquareIcon />
           </Button>
         ) : null}
-        <Popover
-          open={serversOpen}
-          onOpenChange={(open) => {
-            setServersOpen(open)
-            if (open && !listenersLoading) {
-              void discoverListeners()
-            }
-          }}
-        >
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Development servers"
-              title="Development servers"
-            >
-              <ServerStackIcon />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            className="flex max-h-[min(28rem,50dvh)] w-[min(22rem,calc(100vw-1rem))] flex-col overflow-hidden p-0"
-            aria-label="Development servers"
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 px-3 pt-3 pb-2">
-              <div className="min-w-0">
-                <h2 className="text-sm font-semibold">Development servers</h2>
-                <p className="text-xs text-zinc-400">
-                  Select a listening server from this tree.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Refresh development servers"
-                title="Refresh development servers"
-                disabled={listenersLoading}
-                onClick={() => void discoverListeners()}
-              >
-                <ArrowPathIcon />
-              </Button>
-            </div>
-            <div className="min-h-0 overflow-y-auto overscroll-contain px-1.5 pb-1.5">
-              {listenersLoading ? (
-                <p className="px-2 py-4 text-sm text-zinc-400" role="status">
-                  Scanning for development servers…
-                </p>
-              ) : null}
-              {!listenersLoading && listeners && !listeners.supported ? (
-                <Empty className="min-h-28 p-4">
-                  <EmptyTitle>Server discovery unavailable</EmptyTitle>
-                  <EmptyDescription>
-                    {listeners.message ??
-                      'TCP listener discovery is unavailable.'}
-                  </EmptyDescription>
-                </Empty>
-              ) : null}
-              {!listenersLoading &&
-              listeners?.supported &&
-              discoveredServers.length === 0 ? (
-                <Empty className="min-h-28 p-4">
-                  <EmptyTitle>No development servers</EmptyTitle>
-                  <EmptyDescription>
-                    Start a server in a Treeport terminal. Then, refresh this
-                    list.
-                  </EmptyDescription>
-                </Empty>
-              ) : null}
-              {!listenersLoading && discoveredServers.length > 0 ? (
-                <ul role="list" className="flex flex-col gap-0.5">
-                  {discoveredServers.map(({ url, listener }) => (
-                    <li key={url.href} className="min-w-0">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="h-auto w-full justify-start px-2 py-2 text-left"
-                        aria-label={`Open ${url.href}, ${
-                          listener.command || 'unknown command'
-                        }`}
-                        onClick={() => {
-                          setServersOpen(false)
-                          navigate(url.href)
-                        }}
-                      >
-                        <span className="min-w-0">
-                          <strong className="block truncate">{url.href}</strong>
-                          <span className="mt-0.5 block truncate text-xs text-zinc-400">
-                            {listener.command || 'Unknown command'}
-                          </span>
-                        </span>
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          </PopoverContent>
-        </Popover>
         {localBrowser &&
         window.treeportDesktop?.browserPermissions &&
         window.treeportDesktop.resetBrowserPermissions ? (
