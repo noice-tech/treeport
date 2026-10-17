@@ -221,6 +221,7 @@ describe('TerminalHostSessionManager', () => {
         rows: 24,
         env: expect.objectContaining({
           TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
           TREEPORT_TERMINAL_ID: 'term',
           TREEPORT_SHELL_INTEGRATION: '1',
           TREEPORT_USER_HOME: '/home/test',

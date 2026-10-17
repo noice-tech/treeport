@@ -747,6 +747,8 @@ export class TerminalHostSessions {
         )
       )
       inheritedEnvironment.TERM = 'xterm-256color'
+      // xterm supports RGB colors; TERM alone makes apps fall back to 256 colors.
+      inheritedEnvironment.COLORTERM = 'truecolor'
       if (
         this.options.sshAgentDiscovery.platform === 'darwin' &&
         inheritedEnvironment.SSH_AUTH_SOCK === undefined &&
