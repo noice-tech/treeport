@@ -72,7 +72,8 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   hoveredLink: null,
   pasteRequestSerial: 0,
   fontZoomPercent: null,
-  error: null
+  error: null,
+  inputError: null
 }
 
 export function TerminalView({
@@ -131,6 +132,10 @@ export function TerminalView({
       }
 
       let previous = activeSession.getSnapshot()
+      if (previous.inputError) {
+        toast.error(previous.inputError)
+      }
+
       return activeSession.subscribe(() => {
         const next = activeSession.getSnapshot()
         if (next.pasteRequestSerial > previous.pasteRequestSerial) {
@@ -142,6 +147,10 @@ export function TerminalView({
                 ? current.value
                 : ''
           }))
+        }
+
+        if (next.inputError && next.inputError !== previous.inputError) {
+          toast.error(next.inputError)
         }
 
         if (next.exitSerial > previous.exitSerial) {

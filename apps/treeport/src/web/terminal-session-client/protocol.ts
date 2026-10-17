@@ -21,6 +21,9 @@ interface Dependencies {
   ): void
   cancelControllerResizeIntent(clearPending?: boolean): void
   clearDegraded(): void
+  acknowledgeInput(generation: number): void
+  cancelInput(): void
+  flushInput(): void
   drainTerminalWrites(): Effect.Effect<void, TerminalRenderError>
   enqueueRender(
     epoch: number,
@@ -58,7 +61,6 @@ export function makeProtocol(
     | 'images'
     | 'lastParsedSequence'
     | 'parsedSequences'
-    | 'pendingPaste'
     | 'queryAuthorityActive'
     | 'ready'
     | 'reconnectAllowed'
@@ -94,6 +96,19 @@ export function makeProtocol(
       value: TerminalProtocolInput
     ): void {
       if (state.disposed || state.renderFailed) {
+        return
+      }
+
+      if (event === 'input_ack') {
+        const message = parseTerminalServerEvent('input_ack', value)
+        if (!message) {
+          dependencies.failProtocol(
+            'The terminal server sent an invalid input acknowledgement'
+          )
+          return
+        }
+
+        dependencies.acknowledgeInput(message.generation)
         return
       }
 
@@ -304,6 +319,12 @@ export function makeProtocol(
           message.controller !== state.snapshotValue.controller ||
           message.generation !== state.controllerGeneration
         if (controllerChanged) {
+          // A pending paste may be the user action requesting initial control.
+          // Only discard it when losing control or replacing an existing lease.
+          if (state.snapshotValue.controller || !message.controller) {
+            dependencies.cancelInput()
+          }
+
           dependencies.cancelControllerResizeIntent()
         }
 
@@ -340,12 +361,6 @@ export function makeProtocol(
           }
         }
 
-        if (message.controller && state.pendingPaste) {
-          const pendingPaste = state.pendingPaste
-          state.pendingPaste = ''
-          state.terminal?.paste(pendingPaste)
-        }
-
         if (controllerChanged) {
           dependencies.scheduleFit()
         }
@@ -369,7 +384,11 @@ export function makeProtocol(
           return
         }
 
-        state.queryAuthorityActive = message.active
+        state.queryAuthorityActive =
+          message.active && message.transitionId === null
+        if (state.queryAuthorityActive) {
+          dependencies.flushInput()
+        }
 
         if (message.transitionId) {
           const transitionId = message.transitionId
@@ -401,6 +420,7 @@ export function makeProtocol(
           return
         }
 
+        dependencies.cancelInput()
         dependencies.update({ exitSerial: state.snapshotValue.exitSerial + 1 })
         return
       }

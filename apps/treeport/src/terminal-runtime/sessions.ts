@@ -1587,17 +1587,24 @@ export class TerminalHostSessions {
     terminalId: string,
     data: string | Buffer,
     authority: { attachmentId: string; generation: number }
-  ): Effect.Effect<void> {
+  ): Effect.Effect<void, TerminalHostSessionError> {
     return this.session(terminalId).pipe(
       Effect.tap((session) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           if (
             session?.status === 'running' &&
             session.queryAuthorityAttachmentId === authority.attachmentId &&
             session.queryAuthorityGeneration === authority.generation &&
             session.queryTransition === null
           ) {
-            session.pty.write(data)
+            const pty = session.pty
+            if (pty instanceof PersistentSession) {
+              // Acknowledge only after the keeper admits this chunk into its
+              // bounded PTY writer, propagating backpressure to the browser.
+              yield* nodePromise(() => pty.writeAndWait(data))
+            } else {
+              pty.write(data)
+            }
           }
         })
       ),

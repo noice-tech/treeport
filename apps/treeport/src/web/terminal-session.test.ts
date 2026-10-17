@@ -139,6 +139,7 @@ class FakeSession {
     hoveredLink: null,
     pasteRequestSerial: 0,
     fontZoomPercent: null,
+    inputError: null,
     error: null
   }
 
@@ -314,6 +315,7 @@ function controllerSessionFixture() {
       hoveredLink: null,
       pasteRequestSerial: 0,
       fontZoomPercent: null,
+      inputError: null,
       error: null
     }
   })
@@ -596,7 +598,7 @@ describe('TerminalSession', () => {
         reconnectionDelay: 100,
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
-        query: { terminalProtocol: '9' }
+        query: { terminalProtocol: '10' }
       })
     )
     const options = testAccess<{
@@ -1713,6 +1715,7 @@ describe('TerminalSession', () => {
         hoveredLink: null,
         pasteRequestSerial: 0,
         fontZoomPercent: null,
+        inputError: null,
         error: null
       }
     })
