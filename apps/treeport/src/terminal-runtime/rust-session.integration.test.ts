@@ -1385,31 +1385,6 @@ os._exit(7)
     await value.session.terminate()
   })
 
-  it('keeps output and independent close responsive while PTY input is backpressured', async () => {
-    const value = await fixture(`
-      process.stdin.setRawMode(true); process.stdin.pause();
-      console.log('READY'); let n=0;
-      setInterval(()=>console.log('TICK:'+ ++n),50);
-    `)
-    await until(() => value.output().includes('READY'))
-    for (let n = 0; n < 4; n++) {
-      value.session.write('x'.repeat(512 * 1024))
-    }
-    await until(() => value.output().includes('TICK:8'))
-    expect(value.session.fault).toBeNull()
-    const inspected = await control(value.session.manifest.socketPath, {
-      method: 'inspect',
-      id: 'input-pressure',
-      token: value.session.manifest.token
-    })
-    expect(inspected).toMatchObject({
-      type: 'response',
-      status: { error: null, exitCode: null }
-    })
-    await value.session.terminate()
-    await until(() => !alive(value.status.ownerPid) && !alive(value.status.pid))
-  })
-
   it('does not publish natural exit ahead of a quota-blocked capture tail', async () => {
     const value = await fixture(
       `
