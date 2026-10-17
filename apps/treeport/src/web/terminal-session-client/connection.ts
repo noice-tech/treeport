@@ -2,6 +2,9 @@ import type { SessionTimer } from './timers'
 import * as Effect from 'effect/Effect'
 import {
   TERMINAL_PROTOCOL_VERSION,
+  TERMINAL_MAX_INPUT_BYTES,
+  TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
+  type TerminalInput,
   type TerminalClientToServerEvents,
   type TerminalServerEvent,
   type TerminalProtocolInput
@@ -75,6 +78,7 @@ export function makeConnection(
     | 'disposed'
     | 'host'
     | 'opened'
+    | 'pendingPaste'
     | 'proposedDimensions'
     | 'queryAuthorityActive'
     | 'ready'
@@ -92,6 +96,90 @@ export function makeConnection(
   createSocket: TerminalSocketFactory
 ) {
   return Effect.gen(function* () {
+    const inputQueue: Array<{
+      event: 'input' | 'binary'
+      generation: number
+      data: string
+      offset: number
+    }> = []
+    let inputInFlight: { generation: number; end: number } | null = null
+    // UTF-8 needs at most three bytes per UTF-16 code unit; JSON escaping can
+    // need six. Bound both representations without encoding the whole paste.
+    const chunkLength = Math.min(
+      Math.floor(TERMINAL_MAX_INPUT_BYTES / 3),
+      Math.floor((TERMINAL_MAX_CLIENT_MESSAGE_BYTES - 1024) / 6)
+    )
+
+    function cancelInput(): void {
+      const interrupted = inputQueue.length > 0 || !!state.pendingPaste
+      inputQueue.length = 0
+      inputInFlight = null
+      state.pendingPaste = ''
+      if (interrupted && !state.disposed) {
+        dependencies.update({
+          inputError:
+            'Terminal input was interrupted. Some text may not have been inserted. The remaining text was not sent or retried.'
+        })
+      }
+    }
+
+    function flushInput(): void {
+      if (!state.socket?.connected || !canInput()) {
+        return
+      }
+
+      if (state.pendingPaste) {
+        const pendingPaste = state.pendingPaste
+        state.pendingPaste = ''
+        state.terminal?.paste(pendingPaste)
+      }
+
+      const input = inputQueue[0]
+      if (!input || inputInFlight) {
+        return
+      }
+
+      if (input.generation !== state.controllerGeneration) {
+        cancelInput()
+        return
+      }
+
+      let end = Math.min(input.offset + chunkLength, input.data.length)
+      if (
+        input.event === 'input' &&
+        end < input.data.length &&
+        input.data.charCodeAt(end - 1) >= 0xd800 &&
+        input.data.charCodeAt(end - 1) <= 0xdbff &&
+        input.data.charCodeAt(end) >= 0xdc00 &&
+        input.data.charCodeAt(end) <= 0xdfff
+      ) {
+        end -= 1
+      }
+
+      inputInFlight = { generation: input.generation, end }
+      // One outstanding chunk bounds every downstream queue. The server ACKs
+      // only after the host/keeper has capacity, never just on socket receipt.
+      state.socket.volatile.emit(input.event, {
+        generation: input.generation,
+        data: input.data.slice(input.offset, end)
+      })
+    }
+
+    function acknowledgeInput(generation: number): void {
+      if (inputInFlight?.generation !== generation) {
+        return
+      }
+
+      const input = inputQueue[0]!
+      input.offset = inputInFlight.end
+      if (input.offset === input.data.length) {
+        inputQueue.shift()
+      }
+
+      inputInFlight = null
+      flushInput()
+    }
+
     function reconnectImmediately(): void {
       if (
         !state.host ||
@@ -175,6 +263,7 @@ export function makeConnection(
       socket.on('ready', (value) => receive('ready', value))
       socket.on('dimensions', (value) => receive('dimensions', value))
       socket.on('output', (value) => receive('output', value))
+      socket.on('input_ack', (value) => receive('input_ack', value))
       socket.on('title', (value) => receive('title', value))
       socket.on('progress', (value) => receive('progress', value))
       socket.on('control', (value) => receive('control', value))
@@ -199,6 +288,7 @@ export function makeConnection(
           return
         }
 
+        cancelInput()
         const connected = state.ready
         state.renderEpoch += 1
         state.ready = false
@@ -263,6 +353,19 @@ export function makeConnection(
         return
       }
 
+      if (event === 'input' || event === 'binary') {
+        // SAFETY: Both input events have the same generation/data shape.
+        const input = payload as TerminalInput
+        if (!input.data) {
+          return
+        }
+
+        inputQueue.push({ event, ...input, offset: 0 })
+        dependencies.update({ inputError: null })
+        flushInput()
+        return
+      }
+
       if (
         event === 'output_ack' ||
         event === 'resize' ||
@@ -315,6 +418,7 @@ export function makeConnection(
     }
 
     function stopWithError(message: string): void {
+      cancelInput()
       state.renderEpoch += 1
       state.ready = false
       clearDegraded()
@@ -345,6 +449,9 @@ export function makeConnection(
       connect,
       canInput,
       send,
+      acknowledgeInput,
+      cancelInput,
+      flushInput,
       clearDegraded,
       failProtocol,
       stopWithError

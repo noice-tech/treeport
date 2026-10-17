@@ -3,7 +3,7 @@ import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
 
 export const SOCKET_PATH = '/api/socket'
-export const TERMINAL_PROTOCOL_VERSION = 9
+export const TERMINAL_PROTOCOL_VERSION = 10
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
@@ -300,6 +300,7 @@ export const terminalQueryAuthoritySchema = Schema.Struct({
   ),
   active: Schema.Boolean
 })
+export const terminalInputAckSchema = Schema.Struct({ generation })
 export const terminalErrorSchema = Schema.Struct({
   code: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(80)),
   message: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000)),
@@ -308,6 +309,7 @@ export const terminalErrorSchema = Schema.Struct({
 
 export type TerminalAuth = Schema.Schema.Type<typeof terminalAuthSchema>
 export type TerminalInput = Schema.Schema.Type<typeof terminalInputSchema>
+export type TerminalInputAck = Schema.Schema.Type<typeof terminalInputAckSchema>
 export type TerminalBinary = Schema.Schema.Type<typeof terminalBinarySchema>
 export type TerminalResize = Schema.Schema.Type<typeof terminalResizeSchema>
 export type TerminalTakeControl = Schema.Schema.Type<
@@ -361,6 +363,7 @@ export interface TerminalServerEventPayloads {
   exit: TerminalExit
   query_authority: TerminalQueryAuthority
   terminal_error: TerminalError
+  input_ack: TerminalInputAck
 }
 export type TerminalServerEvent = keyof TerminalServerEventPayloads
 export type TerminalServerPayload =
@@ -414,7 +417,8 @@ export function parseTerminalServerEvent<E extends TerminalServerEvent>(
     control: terminalControlSchema,
     exit: terminalExitSchema,
     query_authority: terminalQueryAuthoritySchema,
-    terminal_error: terminalErrorSchema
+    terminal_error: terminalErrorSchema,
+    input_ack: terminalInputAckSchema
   }[event]
   // SAFETY: The event key selects one schema from the server payload map.
   // eslint-disable-next-line anti-slop/no-chained-type-assertions -- TypeScript cannot correlate a generic key with an indexed schema map.

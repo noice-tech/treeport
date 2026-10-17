@@ -848,6 +848,7 @@ export class TerminalAttachmentManager {
               attachmentId: connection.id,
               generation
             })
+            this.send(connection, 'input_ack', { generation })
           }
         }),
       (error) => this.failInputWrite(connection, error)

@@ -754,10 +754,14 @@ export class TerminalHostClient
       }
 
       return yield* Deferred.await(response).pipe(
-        Effect.timeoutFail({
-          duration: TERMINAL_HOST_REQUEST_TIMEOUT_MS,
-          onTimeout: () => new TerminalHostRequestTimeout({ method })
-        }),
+        // Input is allowed to wait for a slow PTY. Disconnects still fail
+        // pending requests; a deadline must never cause an input retry.
+        method === 'write'
+          ? (effect) => effect
+          : Effect.timeoutFail({
+              duration: TERMINAL_HOST_REQUEST_TIMEOUT_MS,
+              onTimeout: () => new TerminalHostRequestTimeout({ method })
+            }),
         Effect.flatMap((result) => decodeTerminalHostResult(method, result)),
         Effect.ensuring(
           SynchronizedRef.update(this.pending, (current) => {

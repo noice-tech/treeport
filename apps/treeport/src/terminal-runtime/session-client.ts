@@ -317,6 +317,8 @@ export class PersistentSession implements EnginePty {
               clearTimeout(pending.timer)
             }
 
+            this.resumeRequestTimeouts()
+
             if (frame.error) {
               pending.reject(new Error(frame.error))
             } else {
@@ -544,9 +546,11 @@ export class PersistentSession implements EnginePty {
         method: input.method
       }
       this.pending.set(id, pending)
-      if (!this.archivePaused) {
-        this.armRequestTimeout(id, pending)
+      if (input.method === 'write') {
+        this.pauseRequestTimeouts()
       }
+
+      this.resumeRequestTimeouts()
 
       socket.write(`${JSON.stringify({ ...input, id })}\n`)
     })
@@ -566,7 +570,10 @@ export class PersistentSession implements EnginePty {
     void this.request(input).catch((error) => this.fail(error))
   }
   write(data: string | Buffer): void {
-    this.submit({
+    void this.writeAndWait(data).catch((error) => this.fail(error))
+  }
+  async writeAndWait(data: string | Buffer): Promise<void> {
+    await this.request({
       method: 'write',
       data: Buffer.isBuffer(data) ? data.toString('base64') : data,
       encoding: Buffer.isBuffer(data) ? 'base64' : 'utf8'
@@ -584,8 +591,12 @@ export class PersistentSession implements EnginePty {
     }
 
     this.archivePaused = true
-    // Control replies share this bounded stream. Intentional read backpressure
-    // must not consume a request's timeout budget while its reply is unreadable.
+    this.pauseRequestTimeouts()
+    this.socket?.pause()
+  }
+  private pauseRequestTimeouts(): void {
+    // Replies share the keeper stream. Neither output backpressure nor input
+    // waiting for PTY capacity may consume unrelated requests' timeout budgets.
     for (const pending of this.pending.values()) {
       if (pending.timer !== null) {
         clearTimeout(pending.timer)
@@ -593,16 +604,25 @@ export class PersistentSession implements EnginePty {
         pending.remainingMs = Math.max(0, pending.deadline - Date.now())
       }
     }
-    this.socket?.pause()
+  }
+  private resumeRequestTimeouts(): void {
+    if (
+      this.archivePaused ||
+      [...this.pending.values()].some((pending) => pending.method === 'write')
+    ) {
+      return
+    }
+
+    for (const [id, pending] of this.pending) {
+      if (pending.timer === null) {
+        this.armRequestTimeout(id, pending)
+      }
+    }
   }
   resume(): void {
     if (this.archivePaused) {
       this.archivePaused = false
-      for (const [id, pending] of this.pending) {
-        if (pending.timer === null) {
-          this.armRequestTimeout(id, pending)
-        }
-      }
+      this.resumeRequestTimeouts()
     }
 
     this.archiveResume?.()

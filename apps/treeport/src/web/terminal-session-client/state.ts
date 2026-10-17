@@ -65,6 +65,7 @@ export interface TerminalSessionSnapshot {
   pasteRequestSerial: number
   fontZoomPercent: number | null
   error: string | null
+  inputError: string | null
 }
 
 const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
@@ -81,7 +82,8 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   hoveredLink: null,
   pasteRequestSerial: 0,
   fontZoomPercent: null,
-  error: null
+  error: null,
+  inputError: null
 }
 
 // Coordination state is session-owned, never mount-owned. Each service receives

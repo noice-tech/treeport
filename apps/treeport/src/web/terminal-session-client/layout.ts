@@ -16,6 +16,7 @@ const TERMINAL_RESIZE_SETTLE_MS = 150
 interface Dependencies {
   cancelTimer(key: SessionTimer): void
   failRendering(cause: unknown): void
+  flushInput(): void
   scheduleTimer(key: SessionTimer, callback: () => void, delay: number): void
   send<E extends keyof TerminalClientToServerEvents>(
     event: E,
@@ -71,6 +72,7 @@ export function makeLayout(
 
       if (revision === state.canonicalRevision) {
         fit(queueControllerResize)
+        dependencies.flushInput()
       }
     }
 

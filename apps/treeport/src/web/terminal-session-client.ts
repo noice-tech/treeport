@@ -73,6 +73,7 @@ export class TerminalSession {
           const layout = yield* makeLayout(state, {
             cancelTimer: timers.cancelTimer,
             failRendering: render.failRendering,
+            flushInput: () => connection.flushInput(),
             scheduleTimer: timers.scheduleTimer,
             send: (...args) => connection.send(...args)
           })
@@ -124,6 +125,9 @@ export class TerminalSession {
             applyCanonicalDimensions: layout.applyCanonicalDimensions,
             cancelControllerResizeIntent: layout.cancelControllerResizeIntent,
             clearDegraded: connection.clearDegraded,
+            acknowledgeInput: connection.acknowledgeInput,
+            cancelInput: connection.cancelInput,
+            flushInput: connection.flushInput,
             drainTerminalWrites: render.drainTerminalWrites,
             enqueueRender: render.enqueueRender,
             failProtocol: connection.failProtocol,
@@ -316,6 +320,7 @@ export class TerminalSession {
       return
     }
 
+    this.update({ inputError: null })
     this.requestControl()
     this.clearSelection()
     if (this.services.connection.canInput()) {
