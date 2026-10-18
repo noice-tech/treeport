@@ -37,7 +37,7 @@ test.describe('mobile terminal UI', () => {
       )
 
     await page.clock.install()
-    // Exercise side panel toggles while controlling the terminal, so a resize would
+    // Exercise apps panel toggles while controlling the terminal, so a resize would
     // reach the process rather than being suppressed for a read-only viewer.
     await page.clock.runFor(250)
     const screen = page.locator('.xterm-screen')
@@ -46,19 +46,19 @@ test.describe('mobile terminal UI', () => {
     {
       mocked.terminal.messages = []
     }
-    const sidePanelToggle = page.getByRole('button', {
-      name: 'Toggle side panel'
+    const appsPanelToggle = page.getByRole('button', {
+      name: 'Toggle apps panel'
     })
     for (let cycle = 0; cycle < 2; cycle++) {
-      await sidePanelToggle.click()
+      await appsPanelToggle.click()
       await expect(
-        page.getByRole('region', { name: 'topic tool tab group' })
+        page.getByRole('region', { name: 'topic apps panel' })
       ).toBeVisible()
       expect(await screen.boundingBox()).toEqual(screenBounds)
       // Observe long enough for a debounced resize to reach the socket.
       await page.clock.runFor(250)
       expect(await screen.boundingBox()).toEqual(screenBounds)
-      await sidePanelToggle.click()
+      await appsPanelToggle.click()
       await expect(
         page.getByRole('main', { name: 'topic terminal workspace' })
       ).toBeVisible()

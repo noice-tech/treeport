@@ -229,7 +229,7 @@ function BrowserAppLoadingIcon() {
   )
 }
 
-export function SidePanelToggle({
+export function AppsPanelToggle({
   open,
   fullView,
   disabled,
@@ -258,7 +258,7 @@ export function SidePanelToggle({
               className="max-[701px]:hidden"
               aria-label={fullView ? 'Exit full view' : 'Enter full view'}
               aria-pressed={fullView}
-              aria-controls="worktree-side-panel"
+              aria-controls="worktree-apps-panel"
               disabled={disabled}
               onClick={onToggleFullView}
             >
@@ -276,9 +276,9 @@ export function SidePanelToggle({
             type="button"
             variant={open ? 'secondary' : 'ghost'}
             size="icon-sm"
-            aria-label="Toggle side panel"
+            aria-label="Toggle apps panel"
             aria-expanded={open}
-            aria-controls="worktree-side-panel"
+            aria-controls="worktree-apps-panel"
             disabled={disabled}
             onClick={onToggle}
           >
@@ -286,33 +286,33 @@ export function SidePanelToggle({
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom" align="end" sideOffset={8}>
-          Toggle side panel · {shortcut}
+          Toggle apps panel · {shortcut}
         </TooltipContent>
       </Tooltip>
     </div>
   )
 }
 
-const MIN_SIDE_PANEL_WIDTH = 320
+const MIN_APPS_PANEL_WIDTH = 320
 const MIN_TERMINAL_WIDTH = 96
-const DEFAULT_SIDE_PANEL_WIDTH = 560
-const SIDE_PANEL_WIDTH_STORAGE_KEY = 'treeport-side-panel-width'
+const DEFAULT_APPS_PANEL_WIDTH = 560
+const APPS_PANEL_WIDTH_STORAGE_KEY = 'treeport-side-panel-width'
 
-function sidePanelMaxWidth(rail: HTMLDivElement): number {
+function appsPanelMaxWidth(rail: HTMLDivElement): number {
   const layoutWidth =
     rail.parentElement?.parentElement?.parentElement?.getBoundingClientRect()
       .width
   return Math.max(
-    MIN_SIDE_PANEL_WIDTH,
+    MIN_APPS_PANEL_WIDTH,
     (layoutWidth ?? window.innerWidth) - MIN_TERMINAL_WIDTH
   )
 }
 
-function clampSidePanelWidth(width: number, maxWidth: number): number {
-  return Math.min(maxWidth, Math.max(MIN_SIDE_PANEL_WIDTH, width))
+function clampAppsPanelWidth(width: number, maxWidth: number): number {
+  return Math.min(maxWidth, Math.max(MIN_APPS_PANEL_WIDTH, width))
 }
 
-function SidePanelResizeRail({
+function AppsPanelResizeRail({
   width,
   onWidthChange
 }: {
@@ -335,7 +335,7 @@ function SidePanelResizeRail({
       width:
         event.currentTarget.parentElement?.getBoundingClientRect().width ??
         width,
-      maxWidth: sidePanelMaxWidth(event.currentTarget)
+      maxWidth: appsPanelMaxWidth(event.currentTarget)
     }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
@@ -345,7 +345,7 @@ function SidePanelResizeRail({
     }
 
     onWidthChange(
-      clampSidePanelWidth(
+      clampAppsPanelWidth(
         resizeOrigin.current.width +
           resizeOrigin.current.pointerX -
           event.clientX,
@@ -360,7 +360,7 @@ function SidePanelResizeRail({
     }
   }
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
-    const maxWidth = sidePanelMaxWidth(event.currentTarget)
+    const maxWidth = appsPanelMaxWidth(event.currentTarget)
     let nextWidth =
       event.currentTarget.parentElement?.getBoundingClientRect().width ?? width
     if (event.key === 'ArrowLeft') {
@@ -368,7 +368,7 @@ function SidePanelResizeRail({
     } else if (event.key === 'ArrowRight') {
       nextWidth -= event.shiftKey ? 32 : 16
     } else if (event.key === 'Home') {
-      nextWidth = MIN_SIDE_PANEL_WIDTH
+      nextWidth = MIN_APPS_PANEL_WIDTH
     } else if (event.key === 'End') {
       nextWidth = maxWidth
     } else {
@@ -376,19 +376,19 @@ function SidePanelResizeRail({
     }
 
     event.preventDefault()
-    onWidthChange(clampSidePanelWidth(nextWidth, maxWidth))
+    onWidthChange(clampAppsPanelWidth(nextWidth, maxWidth))
   }
 
   return (
     <div
       className="absolute inset-y-0 left-0 z-30 hidden w-3 -translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-white/8 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-700 hover:before:w-0.5 hover:before:bg-cyan-400/60 hover:after:bg-cyan-400 focus-visible:before:w-0.5 focus-visible:before:bg-cyan-400 focus-visible:after:bg-cyan-400 min-[701px]:block"
       role="separator"
-      aria-label="Resize side panel"
+      aria-label="Resize apps panel"
       aria-orientation="vertical"
-      aria-controls="worktree-side-panel"
-      aria-valuemin={MIN_SIDE_PANEL_WIDTH}
+      aria-controls="worktree-apps-panel"
+      aria-valuemin={MIN_APPS_PANEL_WIDTH}
       aria-valuemax={Math.max(
-        MIN_SIDE_PANEL_WIDTH,
+        MIN_APPS_PANEL_WIDTH,
         window.innerWidth - MIN_TERMINAL_WIDTH
       )}
       aria-valuenow={width}
@@ -400,12 +400,12 @@ function SidePanelResizeRail({
       onPointerUp={stopResize}
       onPointerCancel={stopResize}
       onKeyDown={resizeWithKeyboard}
-      onDoubleClick={() => onWidthChange(DEFAULT_SIDE_PANEL_WIDTH)}
+      onDoubleClick={() => onWidthChange(DEFAULT_APPS_PANEL_WIDTH)}
     />
   )
 }
 
-export function WorktreeToolPane({
+export function WorktreeAppsPanel({
   worktreeName,
   visible,
   fullView,
@@ -466,26 +466,26 @@ export function WorktreeToolPane({
   const toolPickerCommandRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLElement>(null)
   const restoredEmptyFocusRevisionRef = useRef(0)
-  const [preferredSidePanelWidth, setPreferredSidePanelWidth] = useState(() => {
+  const [preferredAppsPanelWidth, setPreferredAppsPanelWidth] = useState(() => {
     const savedWidth = Number.parseInt(
-      localStorage.getItem(SIDE_PANEL_WIDTH_STORAGE_KEY) ?? '',
+      localStorage.getItem(APPS_PANEL_WIDTH_STORAGE_KEY) ?? '',
       10
     )
     return Number.isFinite(savedWidth)
-      ? Math.max(MIN_SIDE_PANEL_WIDTH, savedWidth)
-      : DEFAULT_SIDE_PANEL_WIDTH
+      ? Math.max(MIN_APPS_PANEL_WIDTH, savedWidth)
+      : DEFAULT_APPS_PANEL_WIDTH
   })
-  const [maximumSidePanelWidth, setMaximumSidePanelWidth] = useState(() =>
-    Math.max(MIN_SIDE_PANEL_WIDTH, window.innerWidth - MIN_TERMINAL_WIDTH)
+  const [maximumAppsPanelWidth, setMaximumAppsPanelWidth] = useState(() =>
+    Math.max(MIN_APPS_PANEL_WIDTH, window.innerWidth - MIN_TERMINAL_WIDTH)
   )
-  const sidePanelWidth = clampSidePanelWidth(
-    preferredSidePanelWidth,
-    maximumSidePanelWidth
+  const appsPanelWidth = clampAppsPanelWidth(
+    preferredAppsPanelWidth,
+    maximumAppsPanelWidth
   )
-  const setAndSaveSidePanelWidth = (width: number) => {
-    const nextWidth = Math.max(MIN_SIDE_PANEL_WIDTH, width)
-    setPreferredSidePanelWidth(nextWidth)
-    localStorage.setItem(SIDE_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
+  const setAndSaveAppsPanelWidth = (width: number) => {
+    const nextWidth = Math.max(MIN_APPS_PANEL_WIDTH, width)
+    setPreferredAppsPanelWidth(nextWidth)
+    localStorage.setItem(APPS_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
   }
   const [permissionDefinition, setPermissionDefinition] =
     useState<WebAppDefinition | null>(null)
@@ -517,9 +517,9 @@ export function WorktreeToolPane({
     }
 
     const updateMaximumWidth = () => {
-      setMaximumSidePanelWidth(
+      setMaximumAppsPanelWidth(
         Math.max(
-          MIN_SIDE_PANEL_WIDTH,
+          MIN_APPS_PANEL_WIDTH,
           layout.getBoundingClientRect().width - MIN_TERMINAL_WIDTH
         )
       )
@@ -574,17 +574,17 @@ export function WorktreeToolPane({
     // reserve the split width during full-view transitions to avoid resizing it.
     <div
       className={cn(
-        'grid min-h-0 min-w-0 w-[var(--side-panel-width)] max-[701px]:absolute max-[701px]:inset-0 max-[701px]:z-20 max-[701px]:w-full',
+        'grid min-h-0 min-w-0 w-[var(--apps-panel-width)] max-[701px]:absolute max-[701px]:inset-0 max-[701px]:z-20 max-[701px]:w-full',
         !visible && 'pointer-events-none absolute inset-0 opacity-0'
       )}
       style={
         // SAFETY: This custom property contains a clamped CSS pixel value.
-        { '--side-panel-width': `${sidePanelWidth}px` } as CSSProperties
+        { '--apps-panel-width': `${appsPanelWidth}px` } as CSSProperties
       }
     >
       <section
         ref={paneRef}
-        id="worktree-side-panel"
+        id="worktree-apps-panel"
         className={cn(
           'relative grid min-h-0 min-w-0 border-l border-white/8 bg-zinc-950 outline-none max-[701px]:border-l-0',
           tools.length > 0
@@ -594,16 +594,16 @@ export function WorktreeToolPane({
         )}
         role="region"
         tabIndex={-1}
-        aria-label={`${worktreeName} tool tab group`}
+        aria-label={`${worktreeName} apps panel`}
         aria-hidden={visible ? undefined : true}
         inert={visible ? undefined : true}
         onPointerDownCapture={onFocusSurface}
         onFocusCapture={onFocusSurface}
       >
         {!fullView ? (
-          <SidePanelResizeRail
-            width={sidePanelWidth}
-            onWidthChange={setAndSaveSidePanelWidth}
+          <AppsPanelResizeRail
+            width={appsPanelWidth}
+            onWidthChange={setAndSaveAppsPanelWidth}
           />
         ) : null}
         {tools.length > 0 ? (
@@ -727,7 +727,7 @@ export function WorktreeToolPane({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Open another tool"
+                  aria-label="Open another app"
                 >
                   <PlusIcon />
                 </Button>
@@ -735,7 +735,7 @@ export function WorktreeToolPane({
               <PopoverContent
                 align="end"
                 className="w-[min(17rem,calc(100vw-1rem))] p-0"
-                aria-label="Open a tool"
+                aria-label="Open an app"
                 onOpenAutoFocus={(event) => {
                   event.preventDefault()
                   toolPickerCommandRef.current?.focus()
@@ -761,7 +761,7 @@ export function WorktreeToolPane({
         >
           {tools.length === 0 ? (
             <Empty className="mx-auto w-full max-w-md items-stretch text-left">
-              <EmptyTitle>Open a tool</EmptyTitle>
+              <EmptyTitle>Open an app</EmptyTitle>
               <EmptyDescription>
                 Open Browser or a web app beside the terminal.
               </EmptyDescription>

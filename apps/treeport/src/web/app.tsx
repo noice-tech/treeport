@@ -54,9 +54,9 @@ import { NewAppDialog } from './features/apps/new-app-dialog'
 import { useToolPicker } from './features/apps/tool-picker-context'
 import { useWorkspaceSurfaceFocus } from './features/apps/workspace-surface-focus-context'
 import {
-  SidePanelToggle,
-  WorktreeToolPane
-} from './features/apps/worktree-tool-pane'
+  AppsPanelToggle,
+  WorktreeAppsPanel
+} from './features/apps/worktree-apps-panel'
 import {
   TerminalWorkspace,
   useTerminalWorkflows
@@ -113,7 +113,7 @@ const WebAppWorkspace = lazy(() =>
   }))
 )
 
-const TOOL_PANE_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
+const APPS_PANEL_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
 
 type CloseAppReason =
   | 'browser-before-unload'
@@ -228,7 +228,7 @@ function WorkspaceApp() {
   const [retainedAppIds, setRetainedAppIds] = useState<Set<string>>(
     () => new Set()
   )
-  const [toolPaneOpenByWorktree, setToolPaneOpenByWorktree] = useState<
+  const [appsPanelOpenByWorktree, setAppsPanelOpenByWorktree] = useState<
     Record<string, boolean>
   >({})
   const [fullViewWorktreeId, setFullViewWorktreeId] = useState<string | null>(
@@ -237,29 +237,29 @@ function WorkspaceApp() {
   useEffect(() => {
     setFullViewWorktreeId(null)
   }, [selectedWorktree?.id])
-  const setToolPaneOpen = useCallback((worktreeId: string, open: boolean) => {
+  const setAppsPanelOpen = useCallback((worktreeId: string, open: boolean) => {
     if (!open) {
       setFullViewWorktreeId(null)
     }
 
-    setToolPaneOpenByWorktree((current) =>
+    setAppsPanelOpenByWorktree((current) =>
       current[worktreeId] === open
         ? current
         : { ...current, [worktreeId]: open }
     )
     localStorage.setItem(
-      `${TOOL_PANE_OPEN_STORAGE_PREFIX}${worktreeId}`,
+      `${APPS_PANEL_OPEN_STORAGE_PREFIX}${worktreeId}`,
       String(open)
     )
   }, [])
-  const toolPaneOpen = selectedWorktree
-    ? (toolPaneOpenByWorktree[selectedWorktree.id] ??
+  const appsPanelOpen = selectedWorktree
+    ? (appsPanelOpenByWorktree[selectedWorktree.id] ??
       localStorage.getItem(
-        `${TOOL_PANE_OPEN_STORAGE_PREFIX}${selectedWorktree.id}`
+        `${APPS_PANEL_OPEN_STORAGE_PREFIX}${selectedWorktree.id}`
       ) === 'true')
     : false
-  const toolPaneFullView =
-    toolPaneOpen &&
+  const appsPanelFullView =
+    appsPanelOpen &&
     selectedWorktree !== null &&
     fullViewWorktreeId === selectedWorktree.id
   const [activeAppByWorktree, setActiveAppByWorktree] = useState<
@@ -379,7 +379,7 @@ function WorkspaceApp() {
   const activeApp =
     selectedApp ??
     rememberedActiveApp ??
-    (toolPaneOpen ? selectedWorktreeTools.at(-1) : null) ??
+    (appsPanelOpen ? selectedWorktreeTools.at(-1) : null) ??
     null
   const activeAppId = activeApp?.id ?? null
   const retainApp = useCallback((appId: string) => {
@@ -400,10 +400,10 @@ function WorkspaceApp() {
         ...current,
         [app.worktreeId]: app.id
       }))
-      setToolPaneOpen(app.worktreeId, true)
+      setAppsPanelOpen(app.worktreeId, true)
       setPreserveTerminalFocusAppId(preserveTerminalFocus ? app.id : null)
     },
-    [retainApp, setToolPaneOpen]
+    [retainApp, setAppsPanelOpen]
   )
   const [webAppReloadRevisions, setWebAppReloadRevisions] = useState<
     Record<string, number>
@@ -545,7 +545,7 @@ function WorkspaceApp() {
         ) ?? null)
       : null
   const webAppDefinitionsWorktree =
-    appDialogWorktree ?? (toolPaneOpen ? selectedWorktree : null)
+    appDialogWorktree ?? (appsPanelOpen ? selectedWorktree : null)
   const presetDefinitionsContext =
     dialog?.type === 'worktree'
       ? { projectId: dialog.project.id }
@@ -1090,7 +1090,7 @@ function WorkspaceApp() {
     selectedWorktree?.id ?? null,
     dialog !== null
       ? null
-      : toolPaneOpen && focusedSurface === 'tool'
+      : appsPanelOpen && focusedSurface === 'tool'
         ? activeAppId
         : (selectedWorktree?.workspaceItems.find(
             (app) =>
@@ -1126,8 +1126,8 @@ function WorkspaceApp() {
         ? current
         : { ...current, [selectedApp.worktreeId]: selectedApp.id }
     )
-    setToolPaneOpen(selectedApp.worktreeId, true)
-  }, [retainApp, selectedApp, setToolPaneOpen, workspaceResolution?.canonical])
+    setAppsPanelOpen(selectedApp.worktreeId, true)
+  }, [retainApp, selectedApp, setAppsPanelOpen, workspaceResolution?.canonical])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
@@ -1381,7 +1381,7 @@ function WorkspaceApp() {
         return false
       }
 
-      if (toolPaneOpen && focusedSurfaceRef.current === 'tool') {
+      if (appsPanelOpen && focusedSurfaceRef.current === 'tool') {
         const app = selectedWorktreeTools[index]
         if (!app) {
           return false
@@ -1398,7 +1398,7 @@ function WorkspaceApp() {
       selectApp,
       selectedWorktreeTools,
       selectWorkspaceByIndex,
-      toolPaneOpen,
+      appsPanelOpen,
       workspaceActionsBlocked
     ]
   )
@@ -1437,13 +1437,13 @@ function WorkspaceApp() {
     selectedProject.availability.state === 'unavailable' ||
     Boolean(selectedWorktree.prunable) ||
     Boolean(pendingRemovals[selectedWorktree.id])
-  const toggleToolPane = useCallback(() => {
+  const toggleAppsPanel = useCallback(() => {
     if (!selectedWorktree) {
       return
     }
 
-    if (toolPaneOpen) {
-      setToolPaneOpen(selectedWorktree.id, false)
+    if (appsPanelOpen) {
+      setAppsPanelOpen(selectedWorktree.id, false)
       focusSurface('terminal')
       return
     }
@@ -1457,15 +1457,15 @@ function WorkspaceApp() {
       }))
     }
 
-    setToolPaneOpen(selectedWorktree.id, true)
+    setAppsPanelOpen(selectedWorktree.id, true)
   }, [
     activeApp,
     focusSurface,
     retainApp,
     selectedWorktree,
     selectedWorktreeTools,
-    setToolPaneOpen,
-    toolPaneOpen
+    setAppsPanelOpen,
+    appsPanelOpen
   ])
   const focusToolSurface = useCallback(() => {
     focusSurface('tool')
@@ -1490,7 +1490,7 @@ function WorkspaceApp() {
         if (
           event.key.toLowerCase() !== 't' ||
           workspaceActionsBlocked ||
-          !toolPaneOpen ||
+          !appsPanelOpen ||
           focusedSurfaceRef.current !== 'tool' ||
           !selectedWorktree
         ) {
@@ -1537,7 +1537,7 @@ function WorkspaceApp() {
         !workspaceActionsBlocked &&
         selectedWorktree
       ) {
-        toggleToolPane()
+        toggleAppsPanel()
       } else {
         return
       }
@@ -1554,9 +1554,9 @@ function WorkspaceApp() {
     desktopBridge,
     dismissToolPicker,
     selectedWorktree,
-    toggleToolPane,
+    toggleAppsPanel,
     toolLaunchDisabled,
-    toolPaneOpen,
+    appsPanelOpen,
     workspaceActionsBlocked
   ])
 
@@ -1579,7 +1579,7 @@ function WorkspaceApp() {
       }
 
       if (command === 'reload') {
-        if (!(toolPaneOpen && activeApp?.kind === 'browser')) {
+        if (!(appsPanelOpen && activeApp?.kind === 'browser')) {
           window.location.reload()
         }
 
@@ -1626,7 +1626,7 @@ function WorkspaceApp() {
       }
 
       const toolSurfaceHasFocus =
-        toolPaneOpen && focusedSurfaceRef.current === 'tool'
+        appsPanelOpen && focusedSurfaceRef.current === 'tool'
       const selectedTabIndex = command.startsWith('select-tab-')
         ? Number(command.at(-1)) - 1
         : null
@@ -1636,8 +1636,8 @@ function WorkspaceApp() {
         : null
       if (selectedTabIndex !== null) {
         selectFocusedSurfaceByIndex(selectedTabIndex)
-      } else if (command === 'toggle-side-panel') {
-        toggleToolPane()
+      } else if (command === 'toggle-apps-panel') {
+        toggleAppsPanel()
       } else if (command === 'new-terminal') {
         if (toolSurfaceHasFocus) {
           if (!toolLaunchDisabled && !createBrowserApp.isPending) {
@@ -1683,9 +1683,9 @@ function WorkspaceApp() {
     dismissToolPicker,
     selectFocusedSurfaceByIndex,
     selectWorktree,
-    toggleToolPane,
+    toggleAppsPanel,
     toolLaunchDisabled,
-    toolPaneOpen,
+    appsPanelOpen,
     workspaceActionsBlocked
   ])
 
@@ -1779,27 +1779,27 @@ function WorkspaceApp() {
         }
       >
         <div className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]">
-          <SidePanelToggle
-            open={toolPaneOpen}
-            fullView={toolPaneFullView}
+          <AppsPanelToggle
+            open={appsPanelOpen}
+            fullView={appsPanelFullView}
             disabled={!selectedProject || !selectedWorktree}
-            onToggle={toggleToolPane}
+            onToggle={toggleAppsPanel}
             onToggleFullView={() => {
-              if (!selectedWorktree || !toolPaneOpen) {
+              if (!selectedWorktree || !appsPanelOpen) {
                 return
               }
 
               dismissToolPicker()
               focusToolSurface()
               setFullViewWorktreeId(
-                toolPaneFullView ? null : selectedWorktree.id
+                appsPanelFullView ? null : selectedWorktree.id
               )
             }}
           />
           <div
             className={cn(
               'relative grid min-h-0 min-w-0 grid-cols-1',
-              toolPaneOpen && 'min-[701px]:grid-cols-[minmax(0,1fr)_auto]'
+              appsPanelOpen && 'min-[701px]:grid-cols-[minmax(0,1fr)_auto]'
             )}
           >
             <div
@@ -1807,12 +1807,12 @@ function WorkspaceApp() {
               role="group"
               aria-label="Terminal tab group"
               aria-hidden={
-                toolPaneOpen && (isMobile || toolPaneFullView)
+                appsPanelOpen && (isMobile || appsPanelFullView)
                   ? true
                   : undefined
               }
               inert={
-                toolPaneOpen && (isMobile || toolPaneFullView)
+                appsPanelOpen && (isMobile || appsPanelFullView)
                   ? true
                   : undefined
               }
@@ -1834,10 +1834,10 @@ function WorkspaceApp() {
               />
             </div>
             {selectedWorktree ? (
-              <WorktreeToolPane
+              <WorktreeAppsPanel
                 worktreeName={selectedWorktree.name}
-                visible={toolPaneOpen}
-                fullView={toolPaneFullView}
+                visible={appsPanelOpen}
+                fullView={appsPanelFullView}
                 tools={selectedWorktreeTools}
                 activeAppId={activeAppId}
                 webAppRuntimeTitles={webAppRuntimeTitles}
@@ -1845,7 +1845,7 @@ function WorkspaceApp() {
                 browserAppFavicons={browserAppFavicons}
                 definitions={webAppDefinitionsQuery.data ?? []}
                 definitionsLoading={
-                  toolPaneOpen && webAppDefinitionsQuery.isPending
+                  appsPanelOpen && webAppDefinitionsQuery.isPending
                 }
                 definitionsError={webAppDefinitionsQuery.isError}
                 launchDisabled={
@@ -1869,7 +1869,7 @@ function WorkspaceApp() {
                 onFocusSurface={focusToolSurface}
               >
                 {retainedApps.map((app) => {
-                  const active = app.id === activeAppId && toolPaneOpen
+                  const active = app.id === activeAppId && appsPanelOpen
                   const autoFocusBlocked =
                     workspaceActionsBlocked ||
                     preserveTerminalFocusAppId === app.id
@@ -1907,13 +1907,13 @@ function WorkspaceApp() {
                     </Suspense>
                   )
                 })}
-              </WorktreeToolPane>
+              </WorktreeAppsPanel>
             ) : null}
           </div>
         </div>
       </WorkspaceMain>
       {browserPermissionPrompt &&
-      (browserPermissionPrompt.appId !== activeAppId || !toolPaneOpen) ? (
+      (browserPermissionPrompt.appId !== activeAppId || !appsPanelOpen) ? (
         <div
           className={cn(
             'fixed right-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-100 shadow-2xl ring-1 ring-white/10',

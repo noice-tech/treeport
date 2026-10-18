@@ -461,14 +461,14 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
   })
 
-  test('expands the side panel and restores its split layout', async ({
+  test('expands the apps panel and restores its split layout', async ({
     page
   }) => {
     await mockApp(page)
-    const toggle = page.getByRole('button', { name: 'Toggle side panel' })
+    const toggle = page.getByRole('button', { name: 'Toggle apps panel' })
     await toggle.click()
-    const app = page.getByRole('region', { name: 'main tree tool tab group' })
-    const rail = page.getByRole('separator', { name: 'Resize side panel' })
+    const app = page.getByRole('region', { name: 'main tree apps panel' })
+    const rail = page.getByRole('separator', { name: 'Resize apps panel' })
     const defaultBounds = await app.boundingBox()
     expect(defaultBounds).not.toBeNull()
     await rail.press('ArrowRight')
@@ -487,7 +487,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     const tooltip = page.getByRole('tooltip')
     await rail.hover()
     await toggle.hover()
-    await expect(tooltip).toContainText('Toggle side panel ·')
+    await expect(tooltip).toContainText('Toggle apps panel ·')
     await enter.click()
 
     const exit = page.getByRole('button', { name: 'Exit full view' })
