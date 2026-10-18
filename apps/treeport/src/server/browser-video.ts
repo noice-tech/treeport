@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { BrowserContext, Page } from 'playwright'
+import type { Page } from 'playwright'
 import { BROWSER_VIDEO_CAPTURE_SOURCE } from '@treeport/shared/browser-host'
 
 export async function prepareBrowserVideoExtension(directory: string) {
@@ -49,12 +49,19 @@ export async function prepareBrowserVideoExtension(directory: string) {
   return { id, directory }
 }
 
+export interface BrowserCapturePage {
+  readonly page: Pick<
+    Page,
+    'goto' | 'evaluate' | 'exposeFunction' | 'once' | 'close'
+  >
+  readonly targetId: string
+}
+
 export class PlaywrightBrowserVideo {
-  private helper: Page | null = null
+  private helper: BrowserCapturePage['page'] | null = null
 
   constructor(
-    private readonly context: BrowserContext,
-    private readonly page: Page,
+    private readonly openCapturePage: () => Promise<BrowserCapturePage>,
     private readonly extensionId: string,
     private readonly failed: (message: string) => void
   ) {}
@@ -73,10 +80,7 @@ export class PlaywrightBrowserVideo {
       return
     }
 
-    const cdp = await this.context.newCDPSession(this.page)
-    const { targetInfo } = await cdp.send('Target.getTargetInfo')
-    await cdp.detach()
-    const helper = await this.context.newPage()
+    const { page: helper, targetId } = await this.openCapturePage()
     this.helper = helper
     const lost = () => {
       if (this.helper === helper) {
@@ -95,7 +99,7 @@ export class PlaywrightBrowserVideo {
       })
       await helper.evaluate(`(async () => {
         const target = (await chrome.debugger.getTargets()).find(
-          target => target.id === ${JSON.stringify(targetInfo.targetId)}
+          target => target.id === ${JSON.stringify(targetId)}
         );
         if (!target?.tabId) throw new Error('The Browser capture target is unavailable.');
         const source = () => chrome.tabCapture.getMediaStreamId({ targetTabId: target.tabId });

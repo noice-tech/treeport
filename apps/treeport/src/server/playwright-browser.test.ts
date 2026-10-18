@@ -2,14 +2,16 @@ import { EventEmitter } from 'node:events'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, it, onTestFinished, vi } from 'vitest'
+import { expect, expectTypeOf, it, onTestFinished, vi } from 'vitest'
 import { parseBrowserOwnerServerMessage } from '@treeport/shared'
 import type { BrowserRuntimeState } from '@treeport/shared'
-import { prepareBrowserVideoExtension } from './browser-video'
 import {
-  PlaywrightBrowser,
-  type PlaywrightBrowserHost
-} from './playwright-browser'
+  prepareBrowserVideoExtension,
+  type BrowserCapturePage
+} from './browser-video'
+import type { BrowserClipboardReader } from './browser-clipboard'
+import { PlaywrightBrowser } from './playwright-browser'
+import type { PlaywrightBrowserHost } from './browser-page-host'
 import { testAccess } from './test-access'
 
 it('keeps the attempted HTTP URL when Chromium navigates to an internal error page', async () => {
@@ -176,6 +178,17 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
   expect(host.closePage).not.toHaveBeenCalled()
   rejectReload(new Error('Browser disconnected during cleanup'))
   await new Promise<void>((resolve) => setImmediate(resolve))
+})
+
+it('does not grant helper pages allocation or viewport capabilities', () => {
+  expectTypeOf<BrowserCapturePage['page']>().not.toHaveProperty(
+    'setViewportSize'
+  )
+  expectTypeOf<BrowserCapturePage['page']>().not.toHaveProperty('context')
+  expectTypeOf<BrowserClipboardReader['page']>().not.toHaveProperty(
+    'setViewportSize'
+  )
+  expectTypeOf<BrowserClipboardReader['page']>().not.toHaveProperty('context')
 })
 
 it('prepares a private exact-tab capture extension without website entry points', async () => {

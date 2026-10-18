@@ -43,11 +43,11 @@ import type { ApplicationServices } from './core/services/infrastructure/applica
 import { networkTelemetry } from './network-telemetry'
 import {
   PlaywrightBrowser,
-  PlaywrightBrowserHost,
   type BrowserInstallStatus,
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
 import { browserNavigation } from './browser-navigation'
+import { PlaywrightBrowserHost } from './browser-page-host'
 import { browserKey, browserTouch, browserWheel } from './browser-input'
 import { browserSetupGuidance } from './browser-runtime'
 

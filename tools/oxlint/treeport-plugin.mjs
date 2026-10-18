@@ -1,4 +1,5 @@
 import moduleBoundaries from './module-boundaries.mjs'
+import browserBoundaries from './browser-boundaries.mjs'
 
 const noRecordStringUnknown = {
   meta: {
@@ -123,6 +124,7 @@ export default {
   rules: {
     'no-record-string-unknown': noRecordStringUnknown,
     'module-boundaries': moduleBoundaries,
+    'browser-boundaries': browserBoundaries,
     'no-browser-test-state': noBrowserTestState
   }
 }
