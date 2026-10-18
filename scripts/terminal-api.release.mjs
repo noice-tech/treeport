@@ -13,7 +13,7 @@ import { PersistentSession } from '../apps/treeport/src/terminal-runtime/session
 const execute = promisify(execFile)
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const appRoot = path.join(repositoryRoot, 'apps/treeport')
-const panelSdkRoot = path.join(repositoryRoot, 'packages/panel-sdk')
+const appSdkRoot = path.join(repositoryRoot, 'packages/app-sdk')
 const keeperRoot = path.join(repositoryRoot, 'packages/session-keeper')
 let root
 let npmCache
@@ -21,7 +21,7 @@ let candidateCliA
 let candidateCliB
 let candidateVersion
 let candidateTarball
-let candidatePanelSdkTarball
+let candidateAppSdkTarball
 let candidateKeeperTarball
 let candidateIntegrity
 let candidatePrefix
@@ -173,7 +173,7 @@ async function waitForCapture(cli, env, terminalId, marker) {
   throw new Error(`Terminal output did not contain ${marker}: ${content}`)
 }
 
-async function fakeNpm(directory, prefix, panelSdkTarball) {
+async function fakeNpm(directory, prefix, appSdkTarball) {
   const executable = path.join(directory, 'npm')
   const realNpm = (
     await command('/bin/sh', ['-c', 'command -v npm'], { env: process.env })
@@ -204,7 +204,7 @@ if (args[0] === 'prefix' && args[1] === '--global') {
   fs.copyFileSync(${JSON.stringify(candidateTarball)}, path.join(destination, filename))
   process.stdout.write(JSON.stringify([{ filename, integrity: ${JSON.stringify(candidateIntegrity)} }]) + '\\n')
 } else {
-  const commandArgs = args[0] === 'install' ? [...args, ${JSON.stringify(panelSdkTarball)}, ${JSON.stringify(candidateKeeperTarball)}] : args
+  const commandArgs = args[0] === 'install' ? [...args, ${JSON.stringify(appSdkTarball)}, ${JSON.stringify(candidateKeeperTarball)}] : args
   const result = spawnSync(${JSON.stringify(realNpm)}, commandArgs, { stdio: 'inherit', env: process.env })
   process.exit(result.status ?? 1)
 }
@@ -375,13 +375,13 @@ beforeAll(async () => {
   npmCache = (await command('npm', ['config', 'get', 'cache'])).stdout.trim()
   assert(path.isAbsolute(npmCache), 'npm cache path must be absolute')
   const candidate = path.join(root, 'candidate')
-  const candidatePanelSdk = path.join(root, 'candidate-panel-sdk')
+  const candidateAppSdk = path.join(root, 'candidate-app-sdk')
   const candidateKeeper = path.join(root, 'candidate-session-keeper')
   candidateVersion = JSON.parse(
     await fs.readFile(path.join(appRoot, 'package.json'), 'utf8')
   ).version
   await Promise.all(
-    [candidate, candidatePanelSdk, candidateKeeper].map((directory) =>
+    [candidate, candidateAppSdk, candidateKeeper].map((directory) =>
       fs.mkdir(directory, { recursive: true })
     )
   )
@@ -397,9 +397,9 @@ beforeAll(async () => {
         '--config.ignore-scripts=true',
         'pack',
         '--pack-destination',
-        candidatePanelSdk
+        candidateAppSdk
       ],
-      { cwd: panelSdkRoot, env: process.env }
+      { cwd: appSdkRoot, env: process.env }
     ),
     command(
       'pnpm',
@@ -416,9 +416,9 @@ beforeAll(async () => {
     candidate,
     (await fs.readdir(candidate)).find((name) => name.endsWith('.tgz'))
   )
-  candidatePanelSdkTarball = path.join(
-    candidatePanelSdk,
-    (await fs.readdir(candidatePanelSdk)).find((name) => name.endsWith('.tgz'))
+  candidateAppSdkTarball = path.join(
+    candidateAppSdk,
+    (await fs.readdir(candidateAppSdk)).find((name) => name.endsWith('.tgz'))
   )
   candidateKeeperTarball = path.join(
     candidateKeeper,
@@ -430,11 +430,11 @@ beforeAll(async () => {
     .digest('base64')}`
   candidatePrefix = path.join(root, 'candidate-prefix-a')
   candidateCliA = await installTarballs(
-    [candidateTarball, candidatePanelSdkTarball, candidateKeeperTarball],
+    [candidateTarball, candidateAppSdkTarball, candidateKeeperTarball],
     candidatePrefix
   )
   candidateCliB = await installTarballs(
-    [candidateTarball, candidatePanelSdkTarball, candidateKeeperTarball],
+    [candidateTarball, candidateAppSdkTarball, candidateKeeperTarball],
     path.join(root, 'candidate-prefix-b')
   )
 }, 300_000)
@@ -640,7 +640,7 @@ describe('packaged stable terminal API lifecycle', () => {
       })}\n`
       await fs.writeFile(host.path, source)
       await fs.mkdir(fakeBin)
-      await fakeNpm(fakeBin, updaterPrefix, candidatePanelSdkTarball)
+      await fakeNpm(fakeBin, updaterPrefix, candidateAppSdkTarball)
 
       const refusal = await runCli(
         updaterCli,

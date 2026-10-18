@@ -1,11 +1,11 @@
 ---
 title: Packages
-description: Add web panels and terminal presets globally or for one project.
+description: Add web apps and terminal presets globally or for one project.
 ---
 
 Treeport's package and extension system is proudly stolen from [Pi](https://pi.dev).
 
-Treeport packages supply [Web panels](/features/web-panels/) and [Terminal presets](/features/terminal-presets/).
+Treeport packages supply [Web apps](/features/web-apps/) and [Terminal presets](/features/terminal-presets/).
 
 A package can come from npm or a local directory.
 
@@ -26,4 +26,4 @@ Packages are global by default. To install a package for the current project, ad
 
 Removal does not stop terminals that were started from package presets.
 
-Install only packages you trust. Review requested web panel permissions before approval; they can allow access to Treeport or tree files.
+Install only packages you trust. Review requested web app permissions before approval; they can allow access to Treeport or tree files.

@@ -35,7 +35,7 @@ import { makeRpcHttpApp } from './rpc-server'
 import { acquireTerminalMetadataManager } from './terminal-metadata'
 import { connectOrStartTerminalHost } from './terminal-host-client'
 import { WebPushManager } from './web-push'
-import { PanelServices } from './panel-services'
+import { AppServices } from './app-services'
 
 const updateStartupTransactionSchema = z.looseObject({
   schemaVersion: z.literal(1),
@@ -161,10 +161,10 @@ export async function main(
       )
     )
 
-    const panelServices = await Effect.runPromise(
+    const appServices = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
-          Effect.sync(() => new PanelServices(config.dataDir)),
+          Effect.sync(() => new AppServices(config.dataDir)),
           (manager) =>
             Effect.tryPromise(() => manager.dispose()).pipe(Effect.orDie)
         ),
@@ -261,7 +261,7 @@ export async function main(
       applicationUpdate,
       terminalMetadata,
       browserSessions,
-      panelServices,
+      appServices,
       presence,
       push,
       rpcHttpApp
@@ -291,29 +291,25 @@ export async function main(
                 })
               }
 
-              if (panelServices.handleRequest(request, response)) {
+              if (appServices.handleRequest(request, response)) {
                 return
               }
 
-              service.handleWebPanelDevelopmentRequest(
-                request,
-                response,
-                () => {
-                  if (vite && !request.url?.startsWith('/api')) {
-                    vite.middlewares(request, response, () => {
-                      effectListener(request, response)
-                    })
-                    return
-                  }
-
-                  effectListener(request, response)
+              service.handleWebAppDevelopmentRequest(request, response, () => {
+                if (vite && !request.url?.startsWith('/api')) {
+                  vite.middlewares(request, response, () => {
+                    effectListener(request, response)
+                  })
+                  return
                 }
-              )
+
+                effectListener(request, response)
+              })
             })
           ),
           (httpServer) =>
             // Upgraded service connections must close before server.close waits.
-            Effect.tryPromise(() => panelServices.dispose()).pipe(
+            Effect.tryPromise(() => appServices.dispose()).pipe(
               Effect.orDie,
               Effect.andThen(
                 Effect.async<void>((resume) => {
@@ -331,8 +327,8 @@ export async function main(
       )
     )
     let socketServer: ReturnType<typeof createSocketServer> | null = null
-    const devtoolsBridge = createBrowserDevtoolsBridge((panelId) =>
-      service.runEffect(browserSessions.devtoolsEndpoint(panelId))
+    const devtoolsBridge = createBrowserDevtoolsBridge((appId) =>
+      service.runEffect(browserSessions.devtoolsEndpoint(appId))
     )
     server.on('upgrade', (request, socket, head) => {
       if (devtoolsBridge.handleUpgrade(request, socket, head)) {
@@ -341,7 +337,7 @@ export async function main(
 
       const security = authorizeRequest(request, { socketUpgrade: true })
       if (security.allowed) {
-        if (panelServices.handleRequest(request, null, socket, head)) {
+        if (appServices.handleRequest(request, null, socket, head)) {
           return
         }
 
@@ -349,7 +345,7 @@ export async function main(
           return
         }
 
-        if (service.handleWebPanelDevelopmentUpgrade(request, socket, head)) {
+        if (service.handleWebAppDevelopmentUpgrade(request, socket, head)) {
           return
         }
 

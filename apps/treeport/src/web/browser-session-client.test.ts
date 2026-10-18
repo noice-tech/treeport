@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { BrowserServerMessage } from '@treeport/shared'
 import {
-  connectBrowserPanel,
-  type BrowserPanelSocket
+  connectBrowserApp,
+  type BrowserAppSocket
 } from './browser-session-client'
 
 type SocketEvent = 'message' | 'disconnect' | 'connect_error'
 type SocketEventValue = BrowserServerMessage | Error | undefined
 
-class FakeSocket implements BrowserPanelSocket {
+class FakeSocket implements BrowserAppSocket {
   connected = true
   readonly emit = vi.fn()
   readonly disconnect = vi.fn()
@@ -78,8 +78,8 @@ it('preserves control and video signaling and reconnects without replaying offer
   const reconnectedSocket = new FakeSocket()
   let socketCount = 0
   const messages: BrowserServerMessage[] = []
-  const connection = connectBrowserPanel(
-    'panel-one',
+  const connection = connectBrowserApp(
+    'app-one',
     true,
     {
       message: (message) => messages.push(message)
@@ -91,7 +91,7 @@ it('preserves control and video signaling and reconnects without replaying offer
   connection.send({ type: 'navigate', url: 'https://example.com/' })
   await vi.waitFor(() => expect(socket.hasHandler('message')).toBe(true))
   expect(fetch).toHaveBeenCalledWith(
-    '/api/panels/panel-one/browser-ticket',
+    '/api/apps/app-one/browser-ticket',
     expect.objectContaining({ method: 'POST' })
   )
   expect(
@@ -162,8 +162,8 @@ it('preserves control and video signaling and reconnects without replaying offer
   expect(reconnectedSocket.disconnect).toHaveBeenCalledOnce()
 
   const clientId = sessionStorage.getItem('treeport-browser-client-id')
-  const remounted = connectBrowserPanel(
-    'panel-one',
+  const remounted = connectBrowserApp(
+    'app-one',
     true,
     { message: vi.fn() },
     () => new FakeSocket()
@@ -178,8 +178,8 @@ it('preserves control and video signaling and reconnects without replaying offer
   // sessionStorage in the desktop workspace's WebContents.
   vi.resetModules()
   const restoredClient = await import('./browser-session-client')
-  const restored = restoredClient.connectBrowserPanel(
-    'panel-one',
+  const restored = restoredClient.connectBrowserApp(
+    'app-one',
     true,
     { message: vi.fn() },
     () => new FakeSocket()
@@ -193,8 +193,8 @@ it('preserves control and video signaling and reconnects without replaying offer
   vi.resetModules()
   vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: vi.fn() })
   const otherWindowClient = await import('./browser-session-client')
-  const otherWindow = otherWindowClient.connectBrowserPanel(
-    'panel-one',
+  const otherWindow = otherWindowClient.connectBrowserApp(
+    'app-one',
     true,
     { message: vi.fn() },
     () => new FakeSocket()

@@ -2,7 +2,7 @@ import * as Schema from 'effect/Schema'
 import { browserObservedUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import { terminalRuntimeMetadataSchema } from './terminal-protocol.js'
-import { webPanelPermissionSchema } from './web-panel-protocol.js'
+import { webAppPermissionSchema } from './web-app-protocol.js'
 
 const projectColorSchema = Schema.Literal(
   'rose',
@@ -42,7 +42,7 @@ export const operationQuerySchema = Schema.Struct({
   ),
   projectId: Schema.optional(Schema.String)
 })
-export const deletePanelQuerySchema = Schema.Struct({
+export const deleteAppQuerySchema = Schema.Struct({
   discardStoredData: Schema.optional(Schema.String),
   force: Schema.optional(Schema.String)
 })
@@ -73,27 +73,27 @@ export const terminalPresetSchema = Schema.Struct({
   updatedAt: Schema.String
 })
 
-const webPanelLaunchSchema = Schema.Struct({
+const webAppLaunchSchema = Schema.Struct({
   input: Schema.NullOr(jsonObjectSchema),
   cwd: nullableStringSchema
 })
-const webPanelSandboxSchema = Schema.Struct({
+const webAppSandboxSchema = Schema.Struct({
   enabled: Schema.Boolean,
   allowSameOrigin: Schema.Boolean
 })
-export const webPanelSchema = Schema.Struct({
+export const webAppSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('web'),
   worktreeId: Schema.String,
   definitionId: Schema.String,
   title: Schema.String,
-  launch: webPanelLaunchSchema,
-  permissions: Schema.Array(webPanelPermissionSchema),
-  sandbox: webPanelSandboxSchema,
+  launch: webAppLaunchSchema,
+  permissions: Schema.Array(webAppPermissionSchema),
+  sandbox: webAppSandboxSchema,
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-export const browserPanelSchema = Schema.Struct({
+export const browserAppSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('browser'),
   worktreeId: Schema.String,
@@ -102,7 +102,7 @@ export const browserPanelSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const terminalPanelSchema = Schema.Struct({
+const terminalWorkspaceItemSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('terminal'),
   worktreeId: Schema.String,
@@ -111,10 +111,10 @@ const terminalPanelSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const panelSchema = Schema.Union(
-  terminalPanelSchema,
-  webPanelSchema,
-  browserPanelSchema
+const workspaceItemSchema = Schema.Union(
+  terminalWorkspaceItemSchema,
+  webAppSchema,
+  browserAppSchema
 )
 
 export const prInfoSchema = Schema.Struct({
@@ -150,7 +150,7 @@ export const worktreeRecordSchema = Schema.Struct({
   pr: prInfoSchema,
   dirty: Schema.NullOr(dirtyStateSchema),
   terminals: Schema.Array(terminalRecordSchema),
-  panels: Schema.Array(panelSchema),
+  workspaceItems: Schema.Array(workspaceItemSchema),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
@@ -444,7 +444,7 @@ export const treeContextFieldListingSchema = Schema.Struct({
     })
   )
 })
-export const webPanelDefinitionSchema = Schema.Struct({
+export const webAppDefinitionSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
   icon: nullableStringSchema,
@@ -457,15 +457,15 @@ export const webPanelDefinitionSchema = Schema.Struct({
       scope: Schema.Literal('global', 'project')
     })
   ),
-  permissions: Schema.Array(webPanelPermissionSchema),
+  permissions: Schema.Array(webAppPermissionSchema),
   permissionsGranted: Schema.Boolean,
-  sandbox: webPanelSandboxSchema
+  sandbox: webAppSandboxSchema
 })
 
-export const webPanelContextSchema = Schema.Struct({
+export const webAppContextSchema = Schema.Struct({
   apiVersion: Schema.Literal(1),
-  panel: webPanelSchema,
-  launch: webPanelLaunchSchema,
+  app: webAppSchema,
+  launch: webAppLaunchSchema,
   project: Schema.Struct({
     id: Schema.String,
     name: Schema.String,
@@ -557,7 +557,7 @@ const packageResourceDiagnosticSchema = Schema.Struct({
   scope: Schema.Literal('global', 'project'),
   source: Schema.optional(Schema.String),
   projectId: Schema.optional(Schema.String),
-  resourceType: Schema.optional(Schema.Literal('web-panel', 'terminal-preset')),
+  resourceType: Schema.optional(Schema.Literal('web-app', 'terminal-preset')),
   path: Schema.optional(Schema.String)
 })
 const packageListingSchema = Schema.Struct({
@@ -568,7 +568,7 @@ const packageListingSchema = Schema.Struct({
   projectName: nullableStringSchema,
   installedPath: nullableStringSchema,
   resources: Schema.Struct({
-    webPanels: Schema.NonNegativeInt,
+    webApps: Schema.NonNegativeInt,
     terminalPresets: Schema.NonNegativeInt
   }),
   diagnostics: Schema.Array(packageResourceDiagnosticSchema)
@@ -680,16 +680,16 @@ export const terminalPresetsResponseSchema = Schema.Struct({
 export const terminalPresetResponseSchema = Schema.Struct({
   preset: terminalPresetSchema
 })
-export const webPanelDefinitionsResponseSchema = Schema.Struct({
-  definitions: Schema.Array(webPanelDefinitionSchema)
+export const webAppDefinitionsResponseSchema = Schema.Struct({
+  definitions: Schema.Array(webAppDefinitionSchema)
 })
-export const openWebPanelResponseSchema = Schema.Struct({
-  panel: webPanelSchema,
+export const openWebAppResponseSchema = Schema.Struct({
+  app: webAppSchema,
   created: Schema.Boolean,
   reused: Schema.Boolean
 })
-export const openBrowserPanelResponseSchema = Schema.Struct({
-  panel: browserPanelSchema
+export const openBrowserAppResponseSchema = Schema.Struct({
+  app: browserAppSchema
 })
 export const terminalResponseSchema = Schema.Struct({
   terminal: terminalRecordSchema
@@ -707,8 +707,8 @@ export const terminalCaptureResponseSchema = Schema.Struct({
 export const removePreviewResponseSchema = Schema.Struct({
   preview: removePreviewSchema
 })
-export const webPanelContextResponseSchema = Schema.Struct({
-  context: webPanelContextSchema
+export const webAppContextResponseSchema = Schema.Struct({
+  context: webAppContextSchema
 })
 export const gitDiffResponseSchema = Schema.Struct({ diff: gitDiffSchema })
 export const gitFileDiffResponseSchema = Schema.Struct({
@@ -721,9 +721,9 @@ export const gitFileDiffResponseSchema = Schema.Struct({
 export const listenerDiscoveryResponseSchema = Schema.Struct({
   discovery: worktreeListenerDiscoverySchema
 })
-export const webPanelResponseSchema = Schema.Struct({ panel: webPanelSchema })
-export const webPanelDefinitionResponseSchema = Schema.Struct({
-  definition: webPanelDefinitionSchema
+export const webAppResponseSchema = Schema.Struct({ app: webAppSchema })
+export const webAppDefinitionResponseSchema = Schema.Struct({
+  definition: webAppDefinitionSchema
 })
 export const prResponseSchema = Schema.Struct({ pr: prInfoSchema })
 export const terminatedTerminalsResponseSchema = Schema.Struct({

@@ -23,7 +23,7 @@ import type {
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
 import { DomainError } from '../../domain'
-import { PanelOperations } from '../domain-services'
+import { AppOperations } from '../domain-services'
 import {
   type ApplicationServices,
   TreeFileMutations
@@ -45,14 +45,13 @@ function domainPromise<Result>(
 
 export class TreeFileService {
   listTreeFiles(
-    panelId: string
+    appId: string
   ): Effect.Effect<TreeFileListing, DomainError<unknown>, ApplicationServices> {
     const listTreeFilesForTree = this.listTreeFilesForTree.bind(this)
 
     return Effect.gen(function* () {
-      const panels = yield* PanelOperations
-      const { project, worktree } =
-        yield* panels.requireWebPanelTreeFiles(panelId)
+      const apps = yield* AppOperations
+      const { project, worktree } = yield* apps.requireWebAppTreeFiles(appId)
       return yield* listTreeFilesForTree(project, worktree)
     })
   }
@@ -142,14 +141,14 @@ export class TreeFileService {
   }
 
   readTreeFile(
-    panelId: string,
+    appId: string,
     requestedPath: string
   ): Effect.Effect<TreeFile, DomainError<unknown>, ApplicationServices> {
     const readTreeFileFromRoot = this.readTreeFileFromRoot.bind(this)
 
     return Effect.gen(function* () {
-      const panels = yield* PanelOperations
-      const { worktree } = yield* panels.requireWebPanelTreeFiles(panelId)
+      const apps = yield* AppOperations
+      const { worktree } = yield* apps.requireWebAppTreeFiles(appId)
       const root = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
       ).pipe(Effect.orDie)
@@ -163,7 +162,7 @@ export class TreeFileService {
   }
 
   searchTreeFiles(
-    panelId: string,
+    appId: string,
     query: string
   ): Effect.Effect<
     TreeFileSearchResult,
@@ -174,9 +173,8 @@ export class TreeFileService {
     const readTreeFileFromRoot = this.readTreeFileFromRoot.bind(this)
 
     return Effect.gen(function* () {
-      const panels = yield* PanelOperations
-      const { project, worktree } =
-        yield* panels.requireWebPanelTreeFiles(panelId)
+      const apps = yield* AppOperations
+      const { project, worktree } = yield* apps.requireWebAppTreeFiles(appId)
       const listing = yield* listTreeFilesForTree(project, worktree)
       const root = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
@@ -271,7 +269,7 @@ export class TreeFileService {
   }
 
   writeTreeFile(
-    panelId: string,
+    appId: string,
     input: TreeFileWrite
   ): Effect.Effect<
     TreeFileWriteResult,
@@ -282,8 +280,8 @@ export class TreeFileService {
     const resolveTreeFile = this.resolveTreeFile.bind(this)
 
     return Effect.gen(function* () {
-      const panels = yield* PanelOperations
-      const { worktree } = yield* panels.requireWebPanelTreeFiles(panelId)
+      const apps = yield* AppOperations
+      const { worktree } = yield* apps.requireWebAppTreeFiles(appId)
       const content = Buffer.from(input.content, 'utf8')
       if (content.length > TREE_FILE_MAX_BYTES) {
         return yield* Effect.fail(

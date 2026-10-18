@@ -173,9 +173,9 @@ describe('WebSocket contracts', () => {
         presence: [],
         at: '2026-01-01T00:00:00.000Z',
         terminalMetadata: [{ terminalId: 'term', title: null, progress: null }],
-        webPanels: [
+        webApps: [
           {
-            id: 'panel',
+            id: 'app',
             kind: 'web',
             worktreeId: 'worktree',
             definitionId: 'project:review',
@@ -190,7 +190,7 @@ describe('WebSocket contracts', () => {
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
         ],
-        browserPanels: [
+        browserApps: [
           {
             id: 'browser',
             kind: 'browser',
@@ -204,17 +204,17 @@ describe('WebSocket contracts', () => {
       })
     ).toMatchObject({
       terminalMetadata: [{ terminalId: 'term' }],
-      webPanels: [{ id: 'panel' }],
-      browserPanels: [{ id: 'browser' }]
+      webApps: [{ id: 'app' }],
+      browserApps: [{ id: 'browser' }]
     })
     expect(
       parseEventsSnapshot({
         at: '2026-01-01T00:00:00.000Z',
         presence: [],
         terminalMetadata: [],
-        webPanels: [
+        webApps: [
           {
-            id: 'panel',
+            id: 'app',
             kind: 'web',
             worktreeId: 'worktree',
             definitionId: 'project:review',
@@ -226,7 +226,7 @@ describe('WebSocket contracts', () => {
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
         ],
-        browserPanels: []
+        browserApps: []
       })
     ).toBeNull()
     expect(
@@ -234,8 +234,8 @@ describe('WebSocket contracts', () => {
         presence: [],
         at: 'not-a-date',
         terminalMetadata: [],
-        webPanels: [],
-        browserPanels: []
+        webApps: [],
+        browserApps: []
       })
     ).toBeNull()
     expect(
@@ -243,8 +243,8 @@ describe('WebSocket contracts', () => {
         at: '2026-01-01T00:00:00.000Z',
         presence: [],
         terminalMetadata: [],
-        webPanels: [],
-        browserPanels: [
+        webApps: [],
+        browserApps: [
           {
             id: 'browser',
             kind: 'browser',
@@ -294,14 +294,14 @@ describe('WebSocket contracts', () => {
     ).toMatchObject({ type: 'terminal.updated' })
     expect(
       parseProductEvent({
-        id: 'event-panel',
-        type: 'panel.open_requested',
+        id: 'event-app',
+        type: 'app.open_requested',
         at: '2026-01-01T00:00:00.000Z',
         data: {
           worktreeId: 'worktree',
-          panelId: 'panel-popup',
-          panel: {
-            id: 'panel-popup',
+          appId: 'app-popup',
+          app: {
+            id: 'app-popup',
             kind: 'browser',
             worktreeId: 'worktree',
             title: 'Popup',
@@ -310,12 +310,12 @@ describe('WebSocket contracts', () => {
             updatedAt: '2026-01-01T00:00:00.000Z'
           },
           sourceTerminalId: null,
-          sourcePanelId: 'panel-browser'
+          sourceAppId: 'app-browser'
         }
       })
     ).toMatchObject({
-      type: 'panel.open_requested',
-      data: { sourcePanelId: 'panel-browser' }
+      type: 'app.open_requested',
+      data: { sourceAppId: 'app-browser' }
     })
     expect(
       parseProductEvent({

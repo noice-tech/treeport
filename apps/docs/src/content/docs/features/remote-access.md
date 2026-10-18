@@ -27,7 +27,7 @@ Keep the backend on loopback. Do not use Tailscale Funnel or expose Treeport dir
 
 ## See who is connected
 
-Treeport shows other people in the workspace. Select the people button to see their focused panel or background status.
+Treeport shows other people in the workspace. Select the people button to see their focused app or background status.
 
 ## Manage access
 

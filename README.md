@@ -11,7 +11,7 @@ Give each task an isolated Git worktree. Keep its agents, terminals, servers, an
 - ♾️ **Persistent terminal sessions.** Disconnect without stopping processes. Reconnect later with the same terminal history and state.
 - 🔔 **Attention without constant watching.** See terminal titles, progress, exit states, and notifications when a task needs you.
 - 🖥️ **Your terminal tools still work.** Run Pi, shells, servers, and other TUIs with their normal interfaces.
-- 🧩 **More than terminal tabs.** Start reusable presets, open development servers beside terminals, and build custom web panels for each tree.
+- 🧩 **More than terminal tabs.** Start reusable presets, open development servers beside terminals, and build custom web apps for each tree.
 - 📱 **Access from another device.** Reconnect from the macOS app, a browser, or a phone through private Tailscale access.
 - 🔧 **Git stays in control.** Treeport finds worktrees made by Git, editors, agents, and scripts instead of replacing them.
 

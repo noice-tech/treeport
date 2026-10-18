@@ -11,9 +11,9 @@ import type { DomainError } from './domain'
 import { ProductEventBus } from './events'
 import { PackageSystem } from './package-system'
 import {
-  type WebPanelViteRuntime,
-  WebPanelRuntimePort
-} from './web-panel-vite-runtime'
+  type WebAppViteRuntime,
+  WebAppRuntimePort
+} from './web-app-vite-runtime'
 import { ApplicationLifecycle } from './services/infrastructure/application-lifecycle'
 import {
   type ApplicationRuntime,
@@ -31,7 +31,7 @@ import { ProjectObservationService } from './services/project/project-observatio
 import { ProjectRegistrationService } from './services/project/project-registration-service'
 import { ProjectSnapshotService } from './services/project/project-snapshot-service'
 import { ProjectService } from './services/project/project-service'
-import { PanelService } from './services/panel/panel-service'
+import { AppService } from './services/app/app-service'
 import { TerminalPresetService } from './services/terminal/terminal-preset-service'
 import { TerminalService } from './services/terminal/terminal-service'
 import { TreeFileService } from './services/tree-file/tree-file-service'
@@ -98,38 +98,38 @@ type TerminalPresetApi = Pick<
   | 'listTerminalPresets'
   | 'updateTerminalPreset'
 >
-type PanelApi = Pick<
-  PanelService,
-  | 'authorizeBrowserPanel'
-  | 'createBrowserPanel'
-  | 'createWebPanel'
-  | 'deleteBrowserPanel'
-  | 'deletePanel'
-  | 'deleteWebPanel'
-  | 'deleteWebPanelStorage'
-  | 'getBrowserPanel'
-  | 'getBrowserPanelListeners'
-  | 'getPanelListeners'
-  | 'getWebPanelContext'
-  | 'getWebPanelServiceContext'
-  | 'getWebPanelDiff'
-  | 'getWebPanelFileDiff'
-  | 'getWebPanelDiffImage'
-  | 'getWebPanelListeners'
-  | 'getWebPanelStorage'
-  | 'hasWebPanelStorage'
-  | 'listBrowserPanels'
-  | 'listWebPanelDefinitions'
-  | 'listWebPanels'
-  | 'openBrowserPanel'
-  | 'openBrowserPanelFromPanel'
-  | 'openBrowserPanelFromTerminal'
-  | 'openWebPanel'
-  | 'reorderPanels'
-  | 'resolveWebPanelAsset'
-  | 'setWebPanelPermissionGrant'
-  | 'setWebPanelStorage'
-  | 'updateBrowserPanelState'
+type AppApi = Pick<
+  AppService,
+  | 'authorizeBrowserApp'
+  | 'createBrowserApp'
+  | 'createWebApp'
+  | 'deleteBrowserApp'
+  | 'deleteApp'
+  | 'deleteWebApp'
+  | 'deleteWebAppStorage'
+  | 'getBrowserApp'
+  | 'getBrowserAppListeners'
+  | 'getAppListeners'
+  | 'getWebAppContext'
+  | 'getWebAppServiceContext'
+  | 'getWebAppDiff'
+  | 'getWebAppFileDiff'
+  | 'getWebAppDiffImage'
+  | 'getWebAppListeners'
+  | 'getWebAppStorage'
+  | 'hasWebAppStorage'
+  | 'listBrowserApps'
+  | 'listWebAppDefinitions'
+  | 'listWebApps'
+  | 'openBrowserApp'
+  | 'openBrowserAppFromApp'
+  | 'openBrowserAppFromTerminal'
+  | 'openWebApp'
+  | 'reorderApps'
+  | 'resolveWebAppAsset'
+  | 'setWebAppPermissionGrant'
+  | 'setWebAppStorage'
+  | 'updateBrowserAppState'
 >
 type TreeFileApi = Pick<
   TreeFileService,
@@ -152,13 +152,13 @@ export class TreeportService {
   private readonly projectRegistrationService: ProjectRegistrationService
   private readonly projectSnapshotService: ProjectSnapshotService
   private readonly projectService: ProjectService
-  private readonly panelService: PanelService
+  private readonly appService: AppService
   private readonly terminalService: TerminalService
   private readonly terminalPresetService: TerminalPresetService
   private readonly treeFileService: TreeFileService
   private readonly worktreeService: WorktreeService
   private readonly worktreeReconciler: WorktreeReconciler
-  private webPanelRuntime: WebPanelViteRuntime | null = null
+  private webAppRuntime: WebAppViteRuntime | null = null
   private readonly runtime: ApplicationRuntime
   private readonly lifecycle: ApplicationLifecycle
 
@@ -167,7 +167,7 @@ export class TreeportService {
     this.packages = new PackageSystem(deps.config, deps.runner)
     this.terminalService = new TerminalService()
     this.terminalPresetService = new TerminalPresetService()
-    this.panelService = new PanelService()
+    this.appService = new AppService()
     this.packageService = new PackageService()
     this.treeFileService = new TreeFileService()
     this.worktreeReconciler = new WorktreeReconciler()
@@ -182,7 +182,7 @@ export class TreeportService {
       runner: asEffectCommandRunner(deps.runner),
       events: this.events,
       packages: this.packages,
-      panelService: this.panelService,
+      appService: this.appService,
       projectObservationService: this.projectObservationService,
       projectRegistrationService: this.projectRegistrationService,
       projectSnapshotService: this.projectSnapshotService,
@@ -249,36 +249,36 @@ export class TreeportService {
     )
   }
 
-  private requireWebPanelRuntime(): WebPanelViteRuntime {
-    if (!this.webPanelRuntime) {
+  private requireWebAppRuntime(): WebAppViteRuntime {
+    if (!this.webAppRuntime) {
       throw new Error('Treeport service is not initialized')
     }
 
-    return this.webPanelRuntime
+    return this.webAppRuntime
   }
 
   attachHttpServer(server: HttpServer): void {
-    this.requireWebPanelRuntime().attachHttpServer(server)
+    this.requireWebAppRuntime().attachHttpServer(server)
   }
 
-  handleWebPanelDevelopmentRequest(
+  handleWebAppDevelopmentRequest(
     request: IncomingMessage,
     response: ServerResponse,
     next: () => void
   ): void {
-    this.requireWebPanelRuntime().handleDevelopmentRequest(
+    this.requireWebAppRuntime().handleDevelopmentRequest(
       request,
       response,
       next
     )
   }
 
-  handleWebPanelDevelopmentUpgrade(
+  handleWebAppDevelopmentUpgrade(
     request: IncomingMessage,
     socket: Duplex,
     head: Buffer
   ): boolean {
-    return this.requireWebPanelRuntime().handleDevelopmentUpgrade(
+    return this.requireWebAppRuntime().handleDevelopmentUpgrade(
       request,
       socket,
       head
@@ -305,8 +305,8 @@ export class TreeportService {
     return this.terminalPresetService
   }
 
-  get panels(): PanelApi {
-    return this.panelService
+  get apps(): AppApi {
+    return this.appService
   }
 
   get treeFiles(): TreeFileApi {
@@ -319,7 +319,7 @@ export class TreeportService {
 
   prepareStartup(): Effect.Effect<void, never, ApplicationServices> {
     return Effect.gen(this, function* () {
-      this.webPanelRuntime = yield* WebPanelRuntimePort
+      this.webAppRuntime = yield* WebAppRuntimePort
       yield* this.lifecycle.prepareStartup()
     })
   }

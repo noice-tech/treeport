@@ -16,13 +16,13 @@ import {
   parseBrowserServerMessage
 } from '@treeport/shared'
 
-export interface BrowserPanelConnection {
+export interface BrowserAppConnection {
   dispose(): void
   send(message: BrowserClientMessage): void
   setVisible(visible: boolean): void
 }
 
-export interface BrowserPanelSocket {
+export interface BrowserAppSocket {
   connected: boolean
   emit(event: 'command', message: BrowserClientMessage): void
   on(event: 'message', listener: (message: BrowserServerMessage) => void): void
@@ -31,22 +31,19 @@ export interface BrowserPanelSocket {
   disconnect(): void
 }
 
-interface BrowserPanelSocketOptions {
+interface BrowserAppSocketOptions {
   reconnection: false
   auth: {
     ticket: string
   }
 }
 
-export type BrowserPanelSocketFactory = (
+export type BrowserAppSocketFactory = (
   namespace: string,
-  options: BrowserPanelSocketOptions
-) => BrowserPanelSocket
+  options: BrowserAppSocketOptions
+) => BrowserAppSocket
 
-const defaultSocketFactory: BrowserPanelSocketFactory = (
-  namespace,
-  options
-) => {
+const defaultSocketFactory: BrowserAppSocketFactory = (namespace, options) => {
   return createProtocolSocket<
     BrowserServerToClientEvents,
     BrowserClientToServerEvents
@@ -55,16 +52,16 @@ const defaultSocketFactory: BrowserPanelSocketFactory = (
 
 let browserViewerId: string | null = null
 
-export function connectBrowserPanel(
-  panelId: string,
+export function connectBrowserApp(
+  appId: string,
   initialVisible: boolean,
   handlers: {
     message(message: BrowserServerMessage): void
   },
-  socketFactory: BrowserPanelSocketFactory = defaultSocketFactory
-): BrowserPanelConnection {
+  socketFactory: BrowserAppSocketFactory = defaultSocketFactory
+): BrowserAppConnection {
   if (browserViewerId === null) {
-    // Keep this viewer stable across panel remounts and server-switch reloads.
+    // Keep this viewer stable across app remounts and server-switch reloads.
     browserViewerId = crypto.randomUUID()
     try {
       browserViewerId =
@@ -85,7 +82,7 @@ export function connectBrowserPanel(
   let readyAt: number | null = null
   let connectedOnce = false
   let connecting = false
-  let socket: BrowserPanelSocket | null = null
+  let socket: BrowserAppSocket | null = null
   const pendingCommands: BrowserClientMessage[] = []
   let viewport: Extract<BrowserClientMessage, { type: 'resize' }> | null = null
 
@@ -126,7 +123,7 @@ export function connectBrowserPanel(
 
     connecting = true
     const response = await fetch(
-      `/api/panels/${encodeURIComponent(panelId)}/browser-ticket`,
+      `/api/apps/${encodeURIComponent(appId)}/browser-ticket`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -178,7 +175,7 @@ export function connectBrowserPanel(
       }
 
       // Reattach in place. The project event bridge owns workspace updates;
-      // reconnecting this panel must not reload every terminal and browser.
+      // reconnecting this app must not reload every terminal and browser.
 
       handlers.message(message)
       if (message.type !== 'ready') {
@@ -195,7 +192,7 @@ export function connectBrowserPanel(
         type: 'setVisible',
         visible: currentVisible
       })
-      // A new attachment starts with the server viewport, not this panel's.
+      // A new attachment starts with the server viewport, not this app's.
       // Send layout even when no ResizeObserver notification follows readiness.
       if (viewport) {
         connectedSocket.emit('command', viewport)

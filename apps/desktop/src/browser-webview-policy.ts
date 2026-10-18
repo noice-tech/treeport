@@ -1,5 +1,5 @@
 import {
-  browserPanelIdSchema,
+  browserAppIdSchema,
   browserUrlSchema,
   decodeUnknownOrNull
 } from '@treeport/shared/browser-host'
@@ -50,18 +50,18 @@ const capabilities = {
 } as const
 type Capability = keyof typeof capabilities
 
-function browserBootstrapPanelId(value: string): string | null {
+function browserBootstrapAppId(value: string): string | null {
   if (!value.startsWith('about:blank#')) {
     return null
   }
 
   return new URLSearchParams(value.slice('about:blank#'.length)).get(
-    'treeport-panel'
+    'treeport-app'
   )
 }
 
 interface BrowserEntry {
-  panelId: string | null
+  appId: string | null
   guest: WebContents
   bridge: BrowserCdpBridge | null
   inputLocked: boolean
@@ -76,42 +76,42 @@ interface BrowserEntry {
 export interface BrowserWebviewPolicy {
   register(
     event: IpcMainInvokeEvent,
-    panelId: string,
+    appId: string,
     webContentsId: number,
     challenge: string
   ): Effect.Effect<DesktopBrowserBridgeDescriptor | null, unknown>
   command(
     event: IpcMainInvokeEvent,
-    panelId: string,
+    appId: string,
     command: DesktopBrowserToolbarCommand
   ): Effect.Effect<DesktopBrowserCommandResult>
   setInputControl(
     event: IpcMainInvokeEvent,
-    panelId: string,
+    appId: string,
     locked: boolean
   ): Effect.Effect<boolean>
   setPresentationActive(
     event: IpcMainInvokeEvent,
-    panelId: string,
+    appId: string,
     active: boolean
   ): Effect.Effect<boolean>
   requestClose(
     event: IpcMainInvokeEvent,
-    panelId: string,
+    appId: string,
     force: boolean
   ): Effect.Effect<boolean>
-  dispose(event: IpcMainEvent, panelId: string): Effect.Effect<void>
+  dispose(event: IpcMainEvent, appId: string): Effect.Effect<void>
   disposeAll(): Effect.Effect<void>
   suspendPresentation(): void
   detach(): void
   respondPermission(event: IpcMainEvent, id: string, allow: boolean): void
   permissions(
     event: IpcMainInvokeEvent,
-    panelId: string
+    appId: string
   ): DesktopBrowserPermissions | null
   resetPermissions(
     event: IpcMainInvokeEvent,
-    panelId: string,
+    appId: string,
     origin: string,
     capability: string | null
   ): boolean
@@ -210,7 +210,7 @@ export function installBrowserWebviewPolicy(options: {
     destination: string | null
   ): Promise<boolean> => {
     if (
-      !entry.panelId ||
+      !entry.appId ||
       !options.isForeground() ||
       options.trustedRenderer.isDestroyed() ||
       options.window.isDestroyed()
@@ -237,7 +237,7 @@ export function installBrowserWebviewPolicy(options: {
       pendingPrompt = { id, entry, finish }
       options.trustedRenderer.send('native-browser:permission-prompt', {
         id,
-        panelId: entry.panelId,
+        appId: entry.appId,
         origin,
         capability,
         destination
@@ -252,8 +252,8 @@ export function installBrowserWebviewPolicy(options: {
     const entry = guestEntries.get(contents.id)
     return entry &&
       entry.guest === contents &&
-      entry.panelId &&
-      entries.get(entry.panelId) === entry &&
+      entry.appId &&
+      entries.get(entry.appId) === entry &&
       contents.hostWebContents === options.trustedRenderer &&
       options.computer.loopback === true &&
       !options.window.isDestroyed()
@@ -318,8 +318,8 @@ export function installBrowserWebviewPolicy(options: {
   }
 
   const isPresentationEligible = (entry: BrowserEntry): boolean =>
-    entry.panelId !== null &&
-    entries.get(entry.panelId) === entry &&
+    entry.appId !== null &&
+    entries.get(entry.appId) === entry &&
     guestEntries.get(entry.guest.id) === entry &&
     !entry.guest.isDestroyed() &&
     entry.guest.hostWebContents === options.trustedRenderer &&
@@ -803,8 +803,8 @@ export function installBrowserWebviewPolicy(options: {
     Effect.gen(function* () {
       cancelPending(entry)
       releasePresentation(entry)
-      if (entry.panelId && entries.get(entry.panelId) === entry) {
-        entries.delete(entry.panelId)
+      if (entry.appId && entries.get(entry.appId) === entry) {
+        entries.delete(entry.appId)
       }
 
       pendingGuests.delete(entry.guest.id)
@@ -819,16 +819,16 @@ export function installBrowserWebviewPolicy(options: {
       const computer = options.computer
       const requestedPartition =
         params.partition ?? webPreferences.partition ?? ''
-      const panelId = browserBootstrapPanelId(params.src ?? '') ?? ''
+      const appId = browserBootstrapAppId(params.src ?? '') ?? ''
       if (
         !computer?.loopback ||
         requestedPartition !== BROWSER_PARTITION ||
-        !decodeUnknownOrNull(browserPanelIdSchema, panelId) ||
-        entries.has(panelId)
+        !decodeUnknownOrNull(browserAppIdSchema, appId) ||
+        entries.has(appId)
       ) {
         event.preventDefault()
         options.trustedRenderer.send('native-browser:unavailable', {
-          panelId,
+          appId,
           message:
             'The desktop app rejected this Browser. Select Retry to reopen it.'
         })
@@ -862,7 +862,7 @@ export function installBrowserWebviewPolicy(options: {
     }
 
     const entry: BrowserEntry = {
-      panelId: null,
+      appId: null,
       guest,
       bridge: null,
       inputLocked: false,
@@ -880,8 +880,8 @@ export function installBrowserWebviewPolicy(options: {
           cancelPending(entry)
           pendingGuests.delete(guest.id)
           guestEntries.delete(guest.id)
-          if (entry.panelId && entries.get(entry.panelId) === entry) {
-            entries.delete(entry.panelId)
+          if (entry.appId && entries.get(entry.appId) === entry) {
+            entries.delete(entry.appId)
           }
 
           entry.bridge = null
@@ -985,20 +985,20 @@ export function installBrowserWebviewPolicy(options: {
         releasePresentation(entry)
       }
     })
-    const openInNewPanel = (url: string) => {
+    const openInNewApp = (url: string) => {
       const popup = decodeUnknownOrNull(browserUrlSchema, url)
-      const panelId = entry.panelId
-      if (!popup || !panelId || options.trustedRenderer.isDestroyed()) {
+      const appId = entry.appId
+      if (!popup || !appId || options.trustedRenderer.isDestroyed()) {
         return
       }
 
       options.trustedRenderer.send('native-browser:popup', {
-        panelId,
+        appId,
         url: new URL(popup).href
       })
     }
     guest.setWindowOpenHandler(({ url }) => {
-      openInNewPanel(url)
+      openInNewApp(url)
       return { action: 'deny' }
     })
     guest.on('enter-html-full-screen', () => {
@@ -1039,12 +1039,12 @@ export function installBrowserWebviewPolicy(options: {
     })
     const reportBrowserFocus = () => {
       if (
-        entry.panelId &&
+        entry.appId &&
         options.isForeground() &&
         !entry.inputLocked &&
         !options.trustedRenderer.isDestroyed()
       ) {
-        options.trustedRenderer.send('native-browser:focus', entry.panelId)
+        options.trustedRenderer.send('native-browser:focus', entry.appId)
       }
     }
     guest.on('focus', () => {
@@ -1085,12 +1085,12 @@ export function installBrowserWebviewPolicy(options: {
             : code === 'bracketright'
               ? 'select-next-worktree'
               : key === 't'
-                ? 'new-panel'
+                ? 'new-app'
                 : undefined
           : key === 't'
             ? 'new-terminal'
             : key === 'w'
-              ? 'close-panel'
+              ? 'close-app'
               : key === 'l'
                 ? 'focus-location'
                 : key === 'f'
@@ -1125,7 +1125,7 @@ export function installBrowserWebviewPolicy(options: {
         if (link) {
           template.push({
             label: 'Open Link in New Tab',
-            click: () => openInNewPanel(link)
+            click: () => openInNewApp(link)
           })
         }
 
@@ -1204,23 +1204,23 @@ export function installBrowserWebviewPolicy(options: {
         releasePresentation(entry)
       }
     },
-    register(event, panelId, webContentsId, challenge) {
+    register(event, appId, webContentsId, challenge) {
       return Effect.gen(function* () {
         if (!options.isTrustedEvent(event) || options.runtime.isClosed) {
           return null
         }
 
-        let entry = entries.get(panelId)
+        let entry = entries.get(appId)
         if (!entry) {
           const pending = pendingGuests.get(webContentsId)
           if (
             pending &&
-            browserBootstrapPanelId(pending.guest.getURL()) === panelId &&
-            decodeUnknownOrNull(browserPanelIdSchema, panelId) !== null
+            browserBootstrapAppId(pending.guest.getURL()) === appId &&
+            decodeUnknownOrNull(browserAppIdSchema, appId) !== null
           ) {
             pendingGuests.delete(webContentsId)
-            pending.panelId = panelId
-            entries.set(panelId, pending)
+            pending.appId = appId
+            entries.set(appId, pending)
             entry = pending
           }
         }
@@ -1240,7 +1240,7 @@ export function installBrowserWebviewPolicy(options: {
             // Validate after admission, not only before waiting for a replacement.
             if (
               registered.runtime.isClosed ||
-              entries.get(panelId) !== registered ||
+              entries.get(appId) !== registered ||
               registered.guest.isDestroyed()
             ) {
               return null
@@ -1254,12 +1254,12 @@ export function installBrowserWebviewPolicy(options: {
 
             const bridge = yield* createBrowserCdpBridge(
               registered.guest,
-              { panelId, challenge },
+              { appId, challenge },
               registered.runtime
             )
             if (
               registered.runtime.isClosed ||
-              entries.get(panelId) !== registered ||
+              entries.get(appId) !== registered ||
               registered.guest.isDestroyed()
             ) {
               yield* bridge.stop
@@ -1272,9 +1272,9 @@ export function installBrowserWebviewPolicy(options: {
         )
       })
     },
-    command(event, panelId, command) {
+    command(event, appId, command) {
       return Effect.gen(function* () {
-        const entry = entries.get(panelId)
+        const entry = entries.get(appId)
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -1356,9 +1356,9 @@ export function installBrowserWebviewPolicy(options: {
         )
       })
     },
-    setInputControl(event, panelId, locked) {
+    setInputControl(event, appId, locked) {
       return Effect.sync(() => {
-        const entry = entries.get(panelId)
+        const entry = entries.get(appId)
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -1372,12 +1372,12 @@ export function installBrowserWebviewPolicy(options: {
           releasePresentation(entry)
         }
 
-        return entries.get(panelId) === entry && !entry.guest.isDestroyed()
+        return entries.get(appId) === entry && !entry.guest.isDestroyed()
       })
     },
-    setPresentationActive(event, panelId, active) {
+    setPresentationActive(event, appId, active) {
       return Effect.sync(() => {
-        const entry = entries.get(panelId)
+        const entry = entries.get(appId)
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -1391,16 +1391,16 @@ export function installBrowserWebviewPolicy(options: {
           releasePresentation(entry)
         }
 
-        return entries.get(panelId) === entry && !entry.guest.isDestroyed()
+        return entries.get(appId) === entry && !entry.guest.isDestroyed()
       })
     },
-    requestClose(event, panelId, force) {
+    requestClose(event, appId, force) {
       return Effect.gen(function* () {
         if (!options.isTrustedEvent(event)) {
           return false
         }
 
-        const entry = entries.get(panelId)
+        const entry = entries.get(appId)
         if (!entry || entry.guest.isDestroyed()) {
           return true
         }
@@ -1435,13 +1435,13 @@ export function installBrowserWebviewPolicy(options: {
         )
       })
     },
-    dispose(event, panelId) {
+    dispose(event, appId) {
       return Effect.suspend(() => {
         if (!options.isTrustedEvent(event)) {
           return Effect.void
         }
 
-        const entry = entries.get(panelId)
+        const entry = entries.get(appId)
         return entry ? disposeEntry(entry) : Effect.void
       })
     },
@@ -1454,8 +1454,8 @@ export function installBrowserWebviewPolicy(options: {
         )
       )
     },
-    permissions(event, panelId) {
-      const entry = entries.get(panelId)
+    permissions(event, appId) {
+      const entry = entries.get(appId)
       if (
         !options.isTrustedEvent(event) ||
         !entry ||
@@ -1477,8 +1477,8 @@ export function installBrowserWebviewPolicy(options: {
           : []
       }
     },
-    resetPermissions(event, panelId, origin, capability) {
-      const entry = entries.get(panelId)
+    resetPermissions(event, appId, origin, capability) {
+      const entry = entries.get(appId)
       if (
         !options.isTrustedEvent(event) ||
         !entry ||

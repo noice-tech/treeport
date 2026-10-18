@@ -142,8 +142,8 @@ export const workspaceItemOrders = sqliteTable(
   ]
 )
 
-export const browserPanels = sqliteTable(
-  'browser_panels',
+export const browserApps = sqliteTable(
+  'browser_apps',
   {
     id: text().primaryKey(),
     worktreeId: text('worktree_id')
@@ -155,7 +155,7 @@ export const browserPanels = sqliteTable(
     updatedAt: text('updated_at').notNull()
   },
   (table) => [
-    index('browser_panels_worktree_order_idx').on(
+    index('browser_apps_worktree_order_idx').on(
       table.worktreeId,
       table.createdAt,
       table.id
@@ -163,8 +163,8 @@ export const browserPanels = sqliteTable(
   ]
 )
 
-export const webPanels = sqliteTable(
-  'web_panels',
+export const webApps = sqliteTable(
+  'web_apps',
   {
     id: text().primaryKey(),
     worktreeId: text('worktree_id')
@@ -178,7 +178,7 @@ export const webPanels = sqliteTable(
     updatedAt: text('updated_at').notNull()
   },
   (table) => [
-    index('web_panels_worktree_order_idx').on(
+    index('web_apps_worktree_order_idx').on(
       table.worktreeId,
       table.createdAt,
       table.id
@@ -186,8 +186,8 @@ export const webPanels = sqliteTable(
   ]
 )
 
-export const webPanelPermissionGrants = sqliteTable(
-  'web_panel_permission_grants',
+export const webAppPermissionGrants = sqliteTable(
+  'web_app_permission_grants',
   {
     sourceKey: text('source_key').primaryKey(),
     definitionId: text('definition_id').notNull(),
@@ -195,23 +195,21 @@ export const webPanelPermissionGrants = sqliteTable(
     grantedAt: text('granted_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },
-  (table) => [
-    index('web_panel_permission_definition_idx').on(table.definitionId)
-  ]
+  (table) => [index('web_app_permission_definition_idx').on(table.definitionId)]
 )
 
-export const webPanelStorage = sqliteTable(
-  'web_panel_storage',
+export const webAppStorage = sqliteTable(
+  'web_app_storage',
   {
-    panelId: text('panel_id')
+    appId: text('app_id')
       .notNull()
-      .references(() => webPanels.id, { onDelete: 'cascade' }),
+      .references(() => webApps.id, { onDelete: 'cascade' }),
     key: text().notNull(),
     valueJson: text('value_json').notNull(),
     updatedAt: text('updated_at').notNull()
   },
   (table) => [
-    uniqueIndex('web_panel_storage_panel_key_idx').on(table.panelId, table.key)
+    uniqueIndex('web_app_storage_app_key_idx').on(table.appId, table.key)
   ]
 )
 

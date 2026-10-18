@@ -3,10 +3,10 @@ import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import { authorizeRequest } from './request-security'
 
-const PANEL_PATH = /^\/api\/browser-devtools\/(panel_[a-f0-9]{32})$/u
+const APP_PATH = /^\/api\/browser-devtools\/(app_[a-f0-9]{32})$/u
 
 export function createBrowserDevtoolsBridge(
-  resolveEndpoint: (panelId: string) => Promise<string>
+  resolveEndpoint: (appId: string) => Promise<string>
 ) {
   const server = new WebSocketServer({
     noServer: true,
@@ -23,18 +23,18 @@ export function createBrowserDevtoolsBridge(
         return false
       }
 
-      const panelId = PANEL_PATH.exec(pathname)?.[1]
+      const appId = APP_PATH.exec(pathname)?.[1]
       const security = authorizeRequest(request, {
         socketUpgrade: true,
         devtoolsUpgrade: true
       })
-      if (!panelId || !security.allowed) {
+      if (!appId || !security.allowed) {
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
         socket.destroy()
         return true
       }
 
-      void resolveEndpoint(panelId).then(
+      void resolveEndpoint(appId).then(
         (endpoint) => {
           if (socket.destroyed) {
             return

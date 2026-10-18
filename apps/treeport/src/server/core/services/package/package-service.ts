@@ -5,13 +5,13 @@ import type {
 } from '@treeport/shared'
 import { eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import { webPanelPermissionGrants } from '../../database-schema'
+import { webAppPermissionGrants } from '../../database-schema'
 import type { DomainError } from '../../domain'
-import { PanelOperations, ProjectSnapshotOperations } from '../domain-services'
+import { AppOperations, ProjectSnapshotOperations } from '../domain-services'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
 import { EventBusPort, PackageSystemPort } from '../infrastructure/ports'
 import { DatabasePort } from '../../database'
-import { WebPanelRuntimePort } from '../../web-panel-vite-runtime'
+import { WebAppRuntimePort } from '../../web-app-vite-runtime'
 import { ProjectStore } from '../project/project-store'
 
 export class PackageService {
@@ -45,14 +45,14 @@ export class PackageService {
     return Effect.gen(function* () {
       const packages = yield* PackageSystemPort
       const projectStore = yield* ProjectStore
-      const webPanelRuntime = yield* WebPanelRuntimePort
+      const webAppRuntime = yield* WebAppRuntimePort
       if (projectId) {
         const project = yield* projectStore.getProject(projectId)
         yield* Effect.sync(() => packages.syncProjects([project]))
       }
 
       const result = yield* packages.install(source, projectId)
-      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
+      yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
       return result
     })
@@ -71,9 +71,9 @@ export class PackageService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const packages = yield* PackageSystemPort
-      const panels = yield* PanelOperations
+      const apps = yield* AppOperations
       const projectStore = yield* ProjectStore
-      const webPanelRuntime = yield* WebPanelRuntimePort
+      const webAppRuntime = yield* WebAppRuntimePort
       if (projectId) {
         const project = yield* projectStore.getProject(projectId)
         yield* Effect.sync(() => packages.syncProjects([project]))
@@ -91,16 +91,13 @@ export class PackageService {
           }
 
           const definitions = yield* Effect.catchAll(
-            panels.effectiveWebPanelDefinitions(worktree.id),
+            apps.effectiveWebAppDefinitions(worktree.id),
             () => Effect.succeed([])
           )
           for (const definition of definitions) {
             if (definition.permissions.length > 0) {
               keys.add(
-                yield* panels.webPanelPermissionSourceKey(
-                  worktree.id,
-                  definition
-                )
+                yield* apps.webAppPermissionSourceKey(worktree.id, definition)
               )
             }
           }
@@ -115,13 +112,13 @@ export class PackageService {
           yield* database
             .execute('package.service.118', (db) =>
               db
-                .delete(webPanelPermissionGrants)
-                .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+                .delete(webAppPermissionGrants)
+                .where(eq(webAppPermissionGrants.sourceKey, sourceKey))
             )
             .pipe(Effect.orDie)
         }
       }
-      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
+      yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
       return result
     })
@@ -139,11 +136,11 @@ export class PackageService {
     return Effect.gen(function* () {
       const packages = yield* PackageSystemPort
       const projectStore = yield* ProjectStore
-      const webPanelRuntime = yield* WebPanelRuntimePort
+      const webAppRuntime = yield* WebAppRuntimePort
       const projects = yield* projectStore.storedProjects()
       yield* Effect.sync(() => packages.syncProjects(projects))
       const results = yield* packages.update(source)
-      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
+      yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged()
       return results
     })
@@ -162,7 +159,7 @@ export class PackageService {
     return Effect.gen(function* () {
       const packages = yield* PackageSystemPort
       const projectStore = yield* ProjectStore
-      const webPanelRuntime = yield* WebPanelRuntimePort
+      const webAppRuntime = yield* WebAppRuntimePort
       const projects = yield* projectStore.storedProjects()
       yield* Effect.sync(() => packages.syncProjects(projects))
       if (projectId) {
@@ -170,7 +167,7 @@ export class PackageService {
       }
 
       const result = yield* packages.reload(projectId)
-      yield* webPanelRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
+      yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
       return result
     })

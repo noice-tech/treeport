@@ -16,7 +16,7 @@ afterEach(async () => {
   )
 })
 
-it('relays only the selected page after the DevTools origin and panel check', async () => {
+it('relays only the selected page after the DevTools origin and app check', async () => {
   const chrome = new WebSocketServer({ host: '127.0.0.1', port: 0 })
   servers.push(chrome)
   await new Promise<void>((resolve) => chrome.once('listening', resolve))
@@ -26,10 +26,10 @@ it('relays only the selected page after the DevTools origin and panel check', as
     socket.on('message', (message) => socket.send(message))
   })
 
-  const panelId = `panel_${'a'.repeat(32)}`
+  const appId = `app_${'a'.repeat(32)}`
   const bridge = createBrowserDevtoolsBridge(async (selected) => {
-    if (selected !== panelId) {
-      throw new Error('Unknown panel')
+    if (selected !== appId) {
+      throw new Error('Unknown app')
     }
 
     return `ws://127.0.0.1:${chromePort}`
@@ -45,7 +45,7 @@ it('relays only the selected page after the DevTools origin and panel check', as
   // SAFETY: the HTTP server has started listening.
   const port = (treeport.address() as AddressInfo).port
 
-  const connect = (origin: string, id = panelId) =>
+  const connect = (origin: string, id = appId) =>
     new WebSocket(`ws://127.0.0.1:${port}/api/browser-devtools/${id}`, {
       origin
     })
@@ -59,7 +59,7 @@ it('relays only the selected page after the DevTools origin and panel check', as
     })
   ).toBe(403)
 
-  const missing = connect('devtools://devtools', `panel_${'b'.repeat(32)}`)
+  const missing = connect('devtools://devtools', `app_${'b'.repeat(32)}`)
   missing.on('error', () => undefined)
   expect(
     await new Promise<number>((resolve) => {

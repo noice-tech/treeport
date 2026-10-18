@@ -1,5 +1,5 @@
 import {
-  panelServiceSchema,
+  appServiceSchema,
   pushConfigResponseSchema,
   presenceResponseSchema,
   apiErrorBodySchema,
@@ -13,8 +13,8 @@ import {
   hasDataResponseSchema,
   listenerDiscoveryResponseSchema,
   okResponseSchema,
-  openBrowserPanelResponseSchema,
-  openWebPanelResponseSchema,
+  openBrowserAppResponseSchema,
+  openWebAppResponseSchema,
   operationResponseSchema,
   operationsResponseSchema,
   projectResponseSchema,
@@ -32,13 +32,13 @@ import {
   treeFileSearchResultSchema,
   treeFileWriteResultSchema,
   uploadedFileResponseSchema,
-  webPanelContextResponseSchema,
-  webPanelDefinitionResponseSchema,
-  webPanelDefinitionsResponseSchema
+  webAppContextResponseSchema,
+  webAppDefinitionResponseSchema,
+  webAppDefinitionsResponseSchema
 } from '@treeport/shared'
 import type * as Schema from 'effect/Schema'
 import type {
-  PanelService,
+  AppService,
   WebPushSubscription,
   PresenceUpdate,
   ViewerIdentity,
@@ -50,8 +50,8 @@ import type {
   GitDiffImage,
   GitDiffImageRequest,
   JsonValue,
-  OpenBrowserPanelResult,
-  OpenWebPanelResult,
+  OpenBrowserAppResult,
+  OpenWebAppResult,
   OperationRecord,
   ProjectRecord,
   RecentProjectRecord,
@@ -63,8 +63,8 @@ import type {
   TreeFileListing,
   TreeFileSearchResult,
   TreeFileWriteResult,
-  WebPanelContext,
-  WebPanelDefinition,
+  WebAppContext,
+  WebAppDefinition,
   WorktreeListenerDiscovery
 } from '@treeport/shared'
 import type { ApplicationUpdateStatus } from '../server/application-update'
@@ -445,13 +445,13 @@ export const rpc = {
     },
     worktrees: {
       ':worktreeId': {
-        'web-panel-definitions': Object.assign(
+        'web-app-definitions': Object.assign(
           {
             $get: ({ param }: RequestInput<{ worktreeId: string }>) =>
-              endpoint<{ definitions: WebPanelDefinition[] }>(
+              endpoint<{ definitions: WebAppDefinition[] }>(
                 'GET',
-                `/api/worktrees/${id(param.worktreeId)}/web-panel-definitions`,
-                webPanelDefinitionsResponseSchema
+                `/api/worktrees/${id(param.worktreeId)}/web-app-definitions`,
+                webAppDefinitionsResponseSchema
               )
           },
           {
@@ -464,26 +464,26 @@ export const rpc = {
                   { worktreeId: string; definitionId: string },
                   unknown
                 >) =>
-                  endpoint<{ definition: WebPanelDefinition }>(
+                  endpoint<{ definition: WebAppDefinition }>(
                     'PUT',
-                    `/api/worktrees/${id(param.worktreeId)}/web-panel-definitions/${id(param.definitionId)}/permission-grant`,
-                    webPanelDefinitionResponseSchema,
+                    `/api/worktrees/${id(param.worktreeId)}/web-app-definitions/${id(param.definitionId)}/permission-grant`,
+                    webAppDefinitionResponseSchema,
                     { json }
                   )
               }
             }
           }
         ),
-        panels: {
+        apps: {
           open: {
             $post: (
               { param, json }: RequestInput<{ worktreeId: string }, unknown>,
               options?: { readonly init: RequestInit }
             ) =>
-              endpoint<OpenWebPanelResult>(
+              endpoint<OpenWebAppResult>(
                 'POST',
-                `/api/worktrees/${id(param.worktreeId)}/panels/open`,
-                openWebPanelResponseSchema,
+                `/api/worktrees/${id(param.worktreeId)}/apps/open`,
+                openWebAppResponseSchema,
                 { json },
                 options?.init
               )
@@ -495,21 +495,21 @@ export const rpc = {
             }: RequestInput<{ worktreeId: string }, unknown>) =>
               endpoint<{ ok: true }>(
                 'PUT',
-                `/api/worktrees/${id(param.worktreeId)}/panels/order`,
+                `/api/worktrees/${id(param.worktreeId)}/apps/order`,
                 okResponseSchema,
                 { json }
               )
           }
         },
-        'browser-panels': {
+        'browser-apps': {
           $post: ({
             param,
             json
           }: RequestInput<{ worktreeId: string }, unknown>) =>
-            endpoint<OpenBrowserPanelResult>(
+            endpoint<OpenBrowserAppResult>(
               'POST',
-              `/api/worktrees/${id(param.worktreeId)}/browser-panels`,
-              openBrowserPanelResponseSchema,
+              `/api/worktrees/${id(param.worktreeId)}/browser-apps`,
+              openBrowserAppResponseSchema,
               { json }
             )
         },
@@ -560,15 +560,15 @@ export const rpc = {
         }
       }
     },
-    panels: {
-      ':panelId': {
+    apps: {
+      ':appId': {
         $delete: (
-          { param, query }: RequestInput<{ panelId: string }>,
+          { param, query }: RequestInput<{ appId: string }>,
           init?: RequestInit
         ) =>
           endpoint<{ ok: true }>(
             'DELETE',
-            `/api/panels/${id(param.panelId)}`,
+            `/api/apps/${id(param.appId)}`,
             okResponseSchema,
             query ? { query } : undefined,
             init
@@ -578,22 +578,22 @@ export const rpc = {
             param,
             json
           }: RequestInput<
-            { panelId: string; action: 'ensure' | 'status' | 'stop' },
+            { appId: string; action: 'ensure' | 'status' | 'stop' },
             { name: string }
           >) =>
-            endpoint<PanelService>(
+            endpoint<AppService>(
               'POST',
-              `/api/panels/${id(param.panelId)}/services/${param.action}`,
-              panelServiceSchema,
+              `/api/apps/${id(param.appId)}/services/${param.action}`,
+              appServiceSchema,
               { json }
             )
         },
         context: {
-          $get: ({ param }: RequestInput<{ panelId: string }>) =>
-            endpoint<{ context: WebPanelContext }>(
+          $get: ({ param }: RequestInput<{ appId: string }>) =>
+            endpoint<{ context: WebAppContext }>(
               'GET',
-              `/api/panels/${id(param.panelId)}/context`,
-              webPanelContextResponseSchema
+              `/api/apps/${id(param.appId)}/context`,
+              webAppContextResponseSchema
             )
         },
         diff: {
@@ -601,10 +601,10 @@ export const rpc = {
             $post: ({
               param,
               json
-            }: RequestInput<{ panelId: string }, GitFileDiffRequest>) =>
+            }: RequestInput<{ appId: string }, GitFileDiffRequest>) =>
               endpoint<GitFileDiff>(
                 'POST',
-                `/api/panels/${id(param.panelId)}/diff/file`,
+                `/api/apps/${id(param.appId)}/diff/file`,
                 gitFileDiffResponseSchema,
                 { json }
               )
@@ -613,10 +613,10 @@ export const rpc = {
             $post: ({
               param,
               json
-            }: RequestInput<{ panelId: string }, GitDiffImageRequest>) =>
+            }: RequestInput<{ appId: string }, GitDiffImageRequest>) =>
               endpoint<GitDiffImage>(
                 'POST',
-                `/api/panels/${id(param.panelId)}/diff/image`,
+                `/api/apps/${id(param.appId)}/diff/image`,
                 gitDiffImageSchema,
                 { json }
               )
@@ -624,49 +624,46 @@ export const rpc = {
           $get: ({
             param,
             query
-          }: RequestInput<{ panelId: string }> & { query?: GitDiffRequest }) =>
+          }: RequestInput<{ appId: string }> & { query?: GitDiffRequest }) =>
             endpoint<{ diff: GitDiff }>(
               'GET',
-              `/api/panels/${id(param.panelId)}/diff`,
+              `/api/apps/${id(param.appId)}/diff`,
               gitDiffResponseSchema,
               query ? { query } : undefined
             )
         },
         network: {
           listeners: {
-            $get: ({ param }: RequestInput<{ panelId: string }>) =>
+            $get: ({ param }: RequestInput<{ appId: string }>) =>
               endpoint<{ discovery: WorktreeListenerDiscovery }>(
                 'GET',
-                `/api/panels/${id(param.panelId)}/network/listeners`,
+                `/api/apps/${id(param.appId)}/network/listeners`,
                 listenerDiscoveryResponseSchema
               )
           }
         },
         storage: Object.assign(
           {
-            $get: ({ param }: RequestInput<{ panelId: string }>) =>
+            $get: ({ param }: RequestInput<{ appId: string }>) =>
               endpoint<{ hasData: boolean }>(
                 'GET',
-                `/api/panels/${id(param.panelId)}/storage`,
+                `/api/apps/${id(param.appId)}/storage`,
                 hasDataResponseSchema
               ),
-            $put: ({
-              param,
-              json
-            }: RequestInput<{ panelId: string }, unknown>) =>
+            $put: ({ param, json }: RequestInput<{ appId: string }, unknown>) =>
               endpoint<{ ok: true }>(
                 'PUT',
-                `/api/panels/${id(param.panelId)}/storage`,
+                `/api/apps/${id(param.appId)}/storage`,
                 okResponseSchema,
                 { json }
               ),
             $delete: ({
               param,
               json
-            }: RequestInput<{ panelId: string }, unknown>) =>
+            }: RequestInput<{ appId: string }, unknown>) =>
               endpoint<{ ok: true }>(
                 'DELETE',
-                `/api/panels/${id(param.panelId)}/storage`,
+                `/api/apps/${id(param.appId)}/storage`,
                 okResponseSchema,
                 { json }
               )
@@ -676,10 +673,10 @@ export const rpc = {
               $post: ({
                 param,
                 json
-              }: RequestInput<{ panelId: string }, unknown>) =>
+              }: RequestInput<{ appId: string }, unknown>) =>
                 endpoint<{ found: boolean; value: JsonValue }>(
                   'POST',
-                  `/api/panels/${id(param.panelId)}/storage/get`,
+                  `/api/apps/${id(param.appId)}/storage/get`,
                   storageValueResponseSchema,
                   { json }
                 )
@@ -776,23 +773,20 @@ export const rpc = {
 
 export const treeFilesRpc = {
   api: {
-    panels: {
-      ':panelId': {
+    apps: {
+      ':appId': {
         files: Object.assign(
           {
-            $get: ({ param }: RequestInput<{ panelId: string }>) =>
+            $get: ({ param }: RequestInput<{ appId: string }>) =>
               endpoint<TreeFileListing>(
                 'GET',
-                `/api/panels/${id(param.panelId)}/files`,
+                `/api/apps/${id(param.appId)}/files`,
                 treeFileListingSchema
               ),
-            $put: ({
-              param,
-              json
-            }: RequestInput<{ panelId: string }, unknown>) =>
+            $put: ({ param, json }: RequestInput<{ appId: string }, unknown>) =>
               endpoint<TreeFileWriteResult>(
                 'PUT',
-                `/api/panels/${id(param.panelId)}/files`,
+                `/api/apps/${id(param.appId)}/files`,
                 treeFileWriteResultSchema,
                 { json }
               )
@@ -802,10 +796,10 @@ export const treeFilesRpc = {
               $post: ({
                 param,
                 json
-              }: RequestInput<{ panelId: string }, unknown>) =>
+              }: RequestInput<{ appId: string }, unknown>) =>
                 endpoint<TreeFileSearchResult>(
                   'POST',
-                  `/api/panels/${id(param.panelId)}/files/search`,
+                  `/api/apps/${id(param.appId)}/files/search`,
                   treeFileSearchResultSchema,
                   { json }
                 )
@@ -814,10 +808,10 @@ export const treeFilesRpc = {
               $post: ({
                 param,
                 json
-              }: RequestInput<{ panelId: string }, unknown>) =>
+              }: RequestInput<{ appId: string }, unknown>) =>
                 endpoint<{ path: string; content: string; revision: string }>(
                   'POST',
-                  `/api/panels/${id(param.panelId)}/files/read`,
+                  `/api/apps/${id(param.appId)}/files/read`,
                   treeFileSchema,
                   { json }
                 )

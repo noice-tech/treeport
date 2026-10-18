@@ -8,12 +8,12 @@ import { parseResponse, rpc } from '../../api'
 
 export function useWorkspacePresence(
   worktreeId: string | null,
-  focusedPanelId: string | null
+  focusedAppId: string | null
 ) {
   const [identity, setIdentity] = useState<ViewerIdentity | null>(null)
   const [viewers, setViewers] = useState<readonly WorkspacePresence[]>([])
-  const latest = useRef({ worktreeId, focusedPanelId })
-  latest.current = { worktreeId, focusedPanelId }
+  const latest = useRef({ worktreeId, focusedAppId })
+  latest.current = { worktreeId, focusedAppId }
   const publish = useRef(() => {})
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export function useWorkspacePresence(
           {
             sessionId,
             worktreeId: disposed || leaving ? null : latest.current.worktreeId,
-            focusedPanelId: focused ? latest.current.focusedPanelId : null,
+            focusedAppId: focused ? latest.current.focusedAppId : null,
             visible,
             focused
           },
@@ -97,7 +97,7 @@ export function useWorkspacePresence(
   // Navigation and workspace surface focus are external to this hook.
   useEffect(() => {
     publish.current()
-  }, [worktreeId, focusedPanelId])
+  }, [worktreeId, focusedAppId])
 
   // Display-only fixture: never sent to the daemon or used as our identity.
   const mockViewer: WorkspacePresence | null =
@@ -107,7 +107,7 @@ export function useWorkspacePresence(
       ? {
           sessionId: '00000000-0000-4000-8000-000000000001',
           worktreeId,
-          focusedPanelId,
+          focusedAppId,
           visible: true,
           focused: true,
           identity: {

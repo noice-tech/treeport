@@ -134,10 +134,10 @@ afterEach(async () => {
 
 describe('request security over a real HTTP server', () => {
   it('allows only the bundled DevTools origin on the dedicated upgrade route', () => {
-    const panelId = `panel_${'a'.repeat(32)}`
+    const appId = `app_${'a'.repeat(32)}`
     const request = testAccess<IncomingMessage>({
       method: 'GET',
-      url: `/api/browser-devtools/${panelId}`,
+      url: `/api/browser-devtools/${appId}`,
       headers: {
         host: '127.0.0.1:8733',
         origin: 'devtools://devtools',
@@ -338,20 +338,20 @@ describe('request security over a real HTTP server', () => {
     })
     expect(missingForwardedOrigin.status).toBe(400)
 
-    const panelId = `panel_${'a'.repeat(32)}`
+    const appId = `app_${'a'.repeat(32)}`
     const developmentKey = '0123456789abcdef01234567'
-    const sandboxedPanelModule = await request(value.url, {
-      path: `/api/web-panels/${panelId}/assets/__treeport/${'b'.repeat(64)}/assets/review.js`,
+    const sandboxedAppModule = await request(value.url, {
+      path: `/api/web-apps/${appId}/assets/__treeport/${'b'.repeat(64)}/assets/review.js`,
       headers: {
         ...tailscaleHeaders,
         Origin: 'null',
         'Sec-Fetch-Site': 'cross-site'
       }
     })
-    expect(sandboxedPanelModule.status).toBe(200)
+    expect(sandboxedAppModule.status).toBe(200)
 
     const sandboxedDevelopmentModule = await request(value.url, {
-      path: `/api/web-panel-dev/${developmentKey}/src/review.tsx`,
+      path: `/api/web-app-dev/${developmentKey}/src/review.tsx`,
       headers: {
         ...tailscaleHeaders,
         Origin: 'null',
@@ -362,19 +362,19 @@ describe('request security over a real HTTP server', () => {
 
     expect(
       await upgrade(value.url, {
-        path: `/api/web-panel-dev/${developmentKey}/@vite-hmr`,
+        path: `/api/web-app-dev/${developmentKey}/@vite-hmr`,
         headers: { ...tailscaleHeaders, Origin: 'null' }
       })
     ).toBe(101)
     expect(
       await upgrade(value.url, {
-        path: `/api/web-panel-dev/${developmentKey}/src/review.tsx`,
+        path: `/api/web-app-dev/${developmentKey}/src/review.tsx`,
         headers: { ...tailscaleHeaders, Origin: 'null' }
       })
     ).toBe(403)
     expect(
       await upgrade(value.url, {
-        path: `/api/web-panel-dev/${developmentKey}/@vite-hmr`,
+        path: `/api/web-app-dev/${developmentKey}/@vite-hmr`,
         headers: { ...tailscaleHeaders, Origin: 'https://evil.example' }
       })
     ).toBe(403)
@@ -390,11 +390,11 @@ describe('request security over a real HTTP server', () => {
     expect(opaqueApiRead.status).toBe(403)
     expect(JSON.parse(opaqueApiRead.body).error.code).toBe('INVALID_ORIGIN')
 
-    const foreignPanelAsset = await request(value.url, {
-      path: `/api/web-panels/${panelId}/assets/review.js`,
+    const foreignAppAsset = await request(value.url, {
+      path: `/api/web-apps/${appId}/assets/review.js`,
       headers: { ...tailscaleHeaders, Origin: 'https://evil.example' }
     })
-    expect(foreignPanelAsset.status).toBe(403)
+    expect(foreignAppAsset.status).toBe(403)
 
     const foreignMutation = await request(value.url, {
       method: 'POST',
@@ -408,12 +408,12 @@ describe('request security over a real HTTP server', () => {
     expect(JSON.parse(foreignMutation.body).error.code).toBe('INVALID_ORIGIN')
     expect(value.mutations.count).toBe(0)
 
-    const opaquePanelMutation = await request(value.url, {
+    const opaqueAppMutation = await request(value.url, {
       method: 'POST',
-      path: `/api/web-panels/${panelId}/assets/review.js`,
+      path: `/api/web-apps/${appId}/assets/review.js`,
       headers: { ...tailscaleHeaders, Origin: 'null' }
     })
-    expect(opaquePanelMutation.status).toBe(403)
+    expect(opaqueAppMutation.status).toBe(403)
     expect(value.mutations.count).toBe(0)
 
     const crossSiteMutation = await request(value.url, {

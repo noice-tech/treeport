@@ -42,14 +42,14 @@ const SAFE_ATTRIBUTE_NAMES = new Set([
   'http.response.status_code',
   'network.protocol',
   'url.path',
-  'treeport.browser.panel_reused',
+  'treeport.browser.app_reused',
   'treeport.channel',
   'treeport.client.id',
   'treeport.connection.id',
   'treeport.mutation.coordinator',
   'treeport.mutation.queue_wait_ms',
   'treeport.mutation.queued_ahead',
-  'treeport.panel.id',
+  'treeport.app.id',
   'treeport.request.id',
   'treeport.terminal.id',
   'treeport.terminal.launch_kind',
@@ -58,10 +58,10 @@ const SAFE_ATTRIBUTE_NAMES = new Set([
   'treeport.terminal_host.method',
   'treeport.terminal_host.queue_wait_ms',
   'treeport.worktree.id',
-  'treeport.web_panel.reused',
-  'treeport.web_panel.development',
-  'treeport.web_panel.build_pending',
-  'treeport.web_panel.resolution'
+  'treeport.web_app.reused',
+  'treeport.web_app.development',
+  'treeport.web_app.build_pending',
+  'treeport.web_app.resolution'
 ])
 
 function tracingDestination(

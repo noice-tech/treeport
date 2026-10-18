@@ -1,10 +1,10 @@
-import { decodeUnknownOrNull, webPanelInputSchema } from '@treeport/shared'
+import { decodeUnknownOrNull, webAppInputSchema } from '@treeport/shared'
 import type {
-  BrowserPanel,
+  BrowserApp,
   ProjectRecord,
   RecentProjectRecord,
-  WebPanel,
-  WebPanelPermission,
+  WebApp,
+  WebAppPermission,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, asc, desc, eq } from 'drizzle-orm'
@@ -14,14 +14,14 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Schema from 'effect/Schema'
 import {
-  browserPanels,
+  browserApps,
   projects,
-  webPanels,
+  webApps,
   workspaceItemOrders
 } from '../../database-schema'
 import { DomainError } from '../../domain'
 import {
-  PanelOperations,
+  AppOperations,
   ProjectObservationOperations,
   TerminalOperations
 } from '../domain-services'
@@ -279,7 +279,7 @@ export class ProjectSnapshotService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const observations = yield* ProjectObservationOperations
-      const panels = yield* PanelOperations
+      const apps = yield* AppOperations
       const projectStore = yield* ProjectStore
       const terminalService = yield* TerminalOperations
       const storedProjects = projectId
@@ -353,67 +353,64 @@ export class ProjectSnapshotService {
 
                   worktree.dirty = dirty
                   worktree.terminals = terminals
-                  const [
-                    storedBrowserPanels,
-                    storedWebPanels,
-                    storedToolOrder
-                  ] = yield* Effect.all(
-                    [
-                      database
-                        .execute('project.snapshot.service.255', (db) =>
-                          db
-                            .select()
-                            .from(browserPanels)
-                            .where(eq(browserPanels.worktreeId, worktree.id))
-                            .orderBy(
-                              asc(browserPanels.createdAt),
-                              asc(browserPanels.id)
-                            )
-                        )
-                        .pipe(Effect.orDie),
-                      database
-                        .execute('project.snapshot.service.265', (db) =>
-                          db
-                            .select()
-                            .from(webPanels)
-                            .where(eq(webPanels.worktreeId, worktree.id))
-                            .orderBy(
-                              asc(webPanels.createdAt),
-                              asc(webPanels.id)
-                            )
-                        )
-                        .pipe(Effect.orDie),
-                      database
-                        .execute('project.snapshot.service.272', (db) =>
-                          db
-                            .select()
-                            .from(workspaceItemOrders)
-                            .where(
-                              and(
-                                eq(workspaceItemOrders.worktreeId, worktree.id),
-                                eq(workspaceItemOrders.surface, 'tool')
+                  const [storedBrowserApps, storedWebApps, storedToolOrder] =
+                    yield* Effect.all(
+                      [
+                        database
+                          .execute('project.snapshot.service.255', (db) =>
+                            db
+                              .select()
+                              .from(browserApps)
+                              .where(eq(browserApps.worktreeId, worktree.id))
+                              .orderBy(
+                                asc(browserApps.createdAt),
+                                asc(browserApps.id)
                               )
-                            )
-                            .orderBy(asc(workspaceItemOrders.position))
-                        )
-                        .pipe(Effect.orDie)
-                    ],
-                    { concurrency: 'unbounded' }
-                  )
+                          )
+                          .pipe(Effect.orDie),
+                        database
+                          .execute('project.snapshot.service.265', (db) =>
+                            db
+                              .select()
+                              .from(webApps)
+                              .where(eq(webApps.worktreeId, worktree.id))
+                              .orderBy(asc(webApps.createdAt), asc(webApps.id))
+                          )
+                          .pipe(Effect.orDie),
+                        database
+                          .execute('project.snapshot.service.272', (db) =>
+                            db
+                              .select()
+                              .from(workspaceItemOrders)
+                              .where(
+                                and(
+                                  eq(
+                                    workspaceItemOrders.worktreeId,
+                                    worktree.id
+                                  ),
+                                  eq(workspaceItemOrders.surface, 'tool')
+                                )
+                              )
+                              .orderBy(asc(workspaceItemOrders.position))
+                          )
+                          .pipe(Effect.orDie)
+                      ],
+                      { concurrency: 'unbounded' }
+                    )
                   const definitions =
                     project.availability.state === 'available' &&
-                    storedWebPanels.length > 0
+                    storedWebApps.length > 0
                       ? yield* Effect.catchAll(
-                          panels.listWebPanelDefinitions(worktree.id),
+                          apps.listWebAppDefinitions(worktree.id),
                           () => Effect.succeed([])
                         )
                       : []
                   const definitionsById = new Map(
                     definitions.map((definition) => [definition.id, definition])
                   )
-                  const panelSlots = [
+                  const workspaceItems = [
                     ...terminals.map((terminal) => ({
-                      id: `panel_${terminal.id}`,
+                      id: `terminal_${terminal.id}`,
                       kind: 'terminal' as const,
                       worktreeId: worktree.id,
                       terminalId: terminal.id,
@@ -421,11 +418,11 @@ export class ProjectSnapshotService {
                       createdAt: terminal.createdAt,
                       updatedAt: terminal.updatedAt
                     })),
-                    ...storedBrowserPanels.map(mapBrowserPanel),
-                    ...storedWebPanels.map((panel) => {
-                      const definition = definitionsById.get(panel.definitionId)
-                      return mapWebPanel(
-                        panel,
+                    ...storedBrowserApps.map(mapBrowserApp),
+                    ...storedWebApps.map((app) => {
+                      const definition = definitionsById.get(app.definitionId)
+                      return mapWebApp(
+                        app,
                         definition?.permissions ?? [],
                         definition?.permissionsGranted ?? false,
                         definition?.sandbox.enabled ?? true
@@ -439,8 +436,8 @@ export class ProjectSnapshotService {
                   const toolPositionById = new Map(
                     storedToolOrder.map((item) => [item.itemId, item.position])
                   )
-                  const orderedTools = panelSlots
-                    .filter((panel) => panel.kind !== 'terminal')
+                  const orderedTools = workspaceItems
+                    .filter((app) => app.kind !== 'terminal')
                     .sort((left, right) => {
                       const leftPosition = toolPositionById.get(left.id)
                       const rightPosition = toolPositionById.get(right.id)
@@ -461,10 +458,8 @@ export class ProjectSnapshotService {
                       )
                     })
                   let toolIndex = 0
-                  worktree.panels = panelSlots.map((panel) =>
-                    panel.kind === 'terminal'
-                      ? panel
-                      : orderedTools[toolIndex++]!
+                  worktree.workspaceItems = workspaceItems.map((app) =>
+                    app.kind === 'terminal' ? app : orderedTools[toolIndex++]!
                   )
                 })
               ),
@@ -482,7 +477,7 @@ export class ProjectSnapshotService {
   }
 }
 
-function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
+function mapBrowserApp(row: typeof browserApps.$inferSelect): BrowserApp {
   return {
     id: row.id,
     kind: 'browser',
@@ -494,18 +489,18 @@ function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
   }
 }
 
-function mapWebPanel(
-  row: typeof webPanels.$inferSelect,
-  permissions: WebPanelPermission[] = [],
+function mapWebApp(
+  row: typeof webApps.$inferSelect,
+  permissions: WebAppPermission[] = [],
   permissionsGranted = permissions.length === 0,
   sandboxEnabled = true
-): WebPanel {
+): WebApp {
   const parsedInput = decodeUnknownOrNull(
-    Schema.NullOr(webPanelInputSchema),
+    Schema.NullOr(webAppInputSchema),
     JSON.parse(row.inputJson)
   )
   if (parsedInput === null && row.inputJson !== 'null') {
-    throw new Error(`Web panel ${row.id} has invalid stored launch input`)
+    throw new Error(`Web app ${row.id} has invalid stored launch input`)
   }
 
   return {

@@ -4,12 +4,12 @@ import * as Schema from 'effect/Schema'
 import { browserClipboardSchema } from './browser-clipboard.js'
 import { viewerIdentitySchema } from './presence-protocol.js'
 import {
-  browserPanelIdSchema,
+  browserAppIdSchema,
   browserObservedUrlSchema,
   browserUrlSchema
 } from './browser-host.js'
 export {
-  browserPanelIdSchema,
+  browserAppIdSchema,
   browserObservedUrlSchema,
   browserUrlSchema
 } from './browser-host.js'
@@ -386,7 +386,7 @@ export const browserOwnerTicketResponseSchema = Schema.Struct({
   challenge: opaqueTokenSchema
 })
 export const browserOwnerIdentitySchema = Schema.Struct({
-  panelId: browserPanelIdSchema,
+  appId: browserAppIdSchema,
   challenge: opaqueTokenSchema
 })
 
@@ -518,7 +518,7 @@ export type BrowserOwnerClientMessage = Schema.Schema.Type<
 export const browserOwnerServerMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('claimGranted'),
-    panelId: browserPanelIdSchema,
+    appId: browserAppIdSchema,
     generation: browserGenerationSchema,
     resumed: Schema.Boolean,
     state: browserRuntimeStateSchema

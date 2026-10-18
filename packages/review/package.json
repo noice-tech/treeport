@@ -3,15 +3,15 @@
   "version": "0.13.0",
   "description": "Code review for Treeport.",
   "files": [
-    "web-panels/review"
+    "web-apps/review"
   ],
   "type": "module",
   "keywords": [
     "treeport-package"
   ],
   "treeport": {
-    "webPanels": [
-      "./web-panels/review"
+    "webApps": [
+      "./web-apps/review"
     ]
   },
   "license": "MIT",
@@ -40,7 +40,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@treeport/panel-sdk": "workspace:*",
+    "@treeport/app-sdk": "workspace:*",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "typescript": "catalog:"

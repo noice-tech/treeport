@@ -180,9 +180,9 @@ function effectiveOriginFor(
   return `https://${forwardedHost.host}`
 }
 
-// A sandboxed panel has an opaque browser origin. Allow this origin only for
-// read-only panel resources and the dedicated development HMR upgrade.
-function allowsOpaqueWebPanelOrigin(
+// A sandboxed app has an opaque browser origin. Allow this origin only for
+// read-only app resources and the dedicated development HMR upgrade.
+function allowsOpaqueWebAppOrigin(
   request: IncomingMessage,
   socketUpgrade: boolean
 ): boolean {
@@ -192,12 +192,12 @@ function allowsOpaqueWebPanelOrigin(
 
   const pathname = new URL(request.url ?? '/', 'http://treeport.local').pathname
   if (socketUpgrade) {
-    return /^\/api\/web-panel-dev\/[a-f0-9]{24}\/@vite-hmr$/u.test(pathname)
+    return /^\/api\/web-app-dev\/[a-f0-9]{24}\/@vite-hmr$/u.test(pathname)
   }
 
   return (
-    /^\/api\/web-panels\/panel_[a-f0-9]{32}\/assets(?:\/|$)/u.test(pathname) ||
-    /^\/api\/web-panel-dev\/[a-f0-9]{24}\//u.test(pathname)
+    /^\/api\/web-apps\/app_[a-f0-9]{32}\/assets(?:\/|$)/u.test(pathname) ||
+    /^\/api\/web-app-dev\/[a-f0-9]{24}\//u.test(pathname)
   )
 }
 
@@ -221,7 +221,7 @@ function originIsAllowed(
       // Only Electron's bundled DevTools frontend may use this cross-origin
       // connection; the page target is checked by the bridge separately.
     } else if (value === 'null') {
-      if (!allowsOpaqueWebPanelOrigin(request, socketUpgrade)) {
+      if (!allowsOpaqueWebAppOrigin(request, socketUpgrade)) {
         return false
       }
     } else {
@@ -357,7 +357,7 @@ export function authorizeRequest(
       options.socketUpgrade === true,
       options.devtoolsUpgrade === true &&
         options.socketUpgrade === true &&
-        /^\/api\/browser-devtools\/panel_[a-f0-9]{32}$/u.test(
+        /^\/api\/browser-devtools\/app_[a-f0-9]{32}$/u.test(
           new URL(request.url ?? '/', 'http://treeport.local').pathname
         )
     )

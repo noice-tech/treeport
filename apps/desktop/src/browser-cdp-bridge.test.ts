@@ -23,7 +23,7 @@ it('keeps native beforeunload out of automation and reports only canceled naviga
       createBrowserCdpBridge(
         guest as never,
         {
-          panelId: 'test',
+          appId: 'test',
           challenge: 'test'
         },
         runtime

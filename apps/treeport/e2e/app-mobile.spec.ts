@@ -37,7 +37,7 @@ test.describe('mobile terminal UI', () => {
       )
 
     await page.clock.install()
-    // Exercise panel toggles while controlling the terminal, so a resize would
+    // Exercise side panel toggles while controlling the terminal, so a resize would
     // reach the process rather than being suppressed for a read-only viewer.
     await page.clock.runFor(250)
     const screen = page.locator('.xterm-screen')
@@ -152,9 +152,9 @@ test.describe('mobile terminal UI', () => {
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
     await page.getByLabel('Open tree drawer').click()
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: /^New app/ }).click()
     await page
-      .getByRole('dialog', { name: 'New panel' })
+      .getByRole('dialog', { name: 'New app' })
       .getByRole('button', { name: 'Hunk' })
       .click()
     expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })

@@ -62,9 +62,9 @@ async function fixture() {
   const snapshot = vi.fn(() => [observation.metadata])
   const service = testAccess<TreeportService>({
     events,
-    panels: {
-      listWebPanels: () => Effect.succeed([]),
-      listBrowserPanels: () => Effect.succeed([])
+    apps: {
+      listWebApps: () => Effect.succeed([]),
+      listBrowserApps: () => Effect.succeed([])
     },
     runEffect: (effect: Effect.Effect<unknown, unknown, never>) =>
       Effect.runPromise(effect)

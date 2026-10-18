@@ -10,8 +10,8 @@ import * as HttpRouter from '@effect/platform/HttpRouter'
 import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import {
-  panelServiceSchema,
-  panelServiceRequestSchema,
+  appServiceSchema,
+  appServiceRequestSchema,
   pushConfigResponseSchema,
   pushSubscriptionSchema,
   pushUnsubscribeSchema,
@@ -28,24 +28,24 @@ import {
   browserOwnerTicketResponseSchema,
   browserTicketRequestSchema,
   browserTicketResponseSchema,
-  createBrowserPanelSchema,
+  createBrowserAppSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
   createWorktreeSchema,
-  createWebPanelSchema,
-  deletePanelQuerySchema,
+  createWebAppSchema,
+  deleteAppQuerySchema,
   deleteTerminalPresetSchema,
-  deleteWebPanelStorageSchema,
+  deleteWebAppStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
   directoryBrowseResponseSchema,
-  getWebPanelStorageSchema,
+  getWebAppStorageSchema,
   healthResponseSchema,
   phoneAccessResponseSchema,
   workspaceActivityResponseSchema,
-  openBrowserPanelFromTerminalSchema,
-  openBrowserPanelResponseSchema,
-  openWebPanelResponseSchema,
-  openWebPanelSchema,
+  openBrowserAppFromTerminalSchema,
+  openBrowserAppResponseSchema,
+  openWebAppResponseSchema,
+  openWebAppSchema,
   operationQuerySchema,
   operationResponseSchema,
   operationsResponseSchema,
@@ -70,7 +70,7 @@ import {
   reorderWorkspaceItemsSchema,
   requestWorkspaceOpenSchema,
   searchTreeFilesSchema,
-  setWebPanelStorageSchema,
+  setWebAppStorageSchema,
   storageValueResponseSchema,
   terminalBellAcknowledgementSchema,
   terminalCaptureQuerySchema,
@@ -94,11 +94,11 @@ import {
   updateProjectSchema,
   updateTerminalPresetSchema,
   updateTerminalSchema,
-  updateWebPanelPermissionGrantSchema,
-  webPanelContextResponseSchema,
-  webPanelDefinitionResponseSchema,
-  webPanelDefinitionsResponseSchema,
-  webPanelResponseSchema,
+  updateWebAppPermissionGrantSchema,
+  webAppContextResponseSchema,
+  webAppDefinitionResponseSchema,
+  webAppDefinitionsResponseSchema,
+  webAppResponseSchema,
   worktreeResponseSchema,
   worktreesResponseSchema,
   gitDiffResponseSchema,
@@ -131,16 +131,16 @@ import type {
 import { DomainError } from './core/index'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
 import {
-  webPanelBrowserOrigin,
-  webPanelContentSecurityPolicy
-} from './core/web-panel-csp'
+  webAppBrowserOrigin,
+  webAppContentSecurityPolicy
+} from './core/web-app-csp'
 import type { ApplicationUpdateManager } from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
 import { authenticatedViewers, isLoopbackAddress } from './request-security'
 import type { WorkspacePresenceManager } from './workspace-presence'
 import type { WebPushManager } from './web-push'
-import type { PanelServices } from './panel-services'
+import type { AppServices } from './app-services'
 import { networkTelemetry } from './network-telemetry'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
@@ -214,7 +214,7 @@ interface AppDependencies {
   terminalHost: TerminalSessionBackend
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata: TerminalMetadataManager
-  panelServices?: PanelServices
+  appServices?: AppServices
   browserSessions?: BrowserSessionManager
   presence: WorkspacePresenceManager
   push?: WebPushManager
@@ -386,27 +386,25 @@ export function createApp({
   applicationUpdate,
   terminalMetadata: metadata,
   browserSessions,
-  panelServices,
+  appServices,
   presence,
   push,
   rpcHttpApp,
   webDist
 }: AppDependencies): TreeportHttpApp {
   const activeUploadPaths = new Set<string>()
-  const webPanelAsset = Effect.gen(function* () {
+  const webAppAsset = Effect.gen(function* () {
     const params = yield* routeParams
     const request = yield* serverRequest
     const pathname = new URL(request.url, 'http://treeport.local').pathname
-    const marker = `/api/web-panels/${encodeURIComponent(
-      params.panelId!
-    )}/assets/`
+    const marker = `/api/web-apps/${encodeURIComponent(params.appId!)}/assets/`
     const markerStart = pathname.indexOf(marker)
     const requestedPath =
       markerStart < 0
         ? ''
         : decodeURI(pathname.slice(markerStart + marker.length))
     const resolution = yield* operation(() =>
-      service.panels.resolveWebPanelAsset(params.panelId!, requestedPath)
+      service.apps.resolveWebAppAsset(params.appId!, requestedPath)
     )
     if (resolution.kind === 'redirect') {
       return HttpServerResponse.redirect(resolution.location, {
@@ -415,7 +413,7 @@ export function createApp({
       })
     }
 
-    const browserOrigin = webPanelBrowserOrigin({
+    const browserOrigin = webAppBrowserOrigin({
       referrer: request.headers.referer,
       forwardedHost: request.headers['x-forwarded-host'],
       host: request.headers.host,
@@ -427,7 +425,7 @@ export function createApp({
         resolution.kind === 'error'
           ? 'no-store'
           : 'public, max-age=31536000, immutable',
-      'content-security-policy': webPanelContentSecurityPolicy(
+      'content-security-policy': webAppContentSecurityPolicy(
         resolution.kind === 'error' ? 'error' : 'immutable',
         browserOrigin,
         resolution.allowNetworkRequests
@@ -534,22 +532,22 @@ export function createApp({
             service.projects.getWorktreeSnapshot(body.worktreeId!)
           )
           if (
-            body.focusedPanelId !== null &&
-            !worktree.panels.some((panel) => panel.id === body.focusedPanelId)
+            body.focusedAppId !== null &&
+            !worktree.workspaceItems.some((app) => app.id === body.focusedAppId)
           ) {
             return yield* Effect.fail(
               new DomainError(
-                'INVALID_PRESENCE_PANEL',
-                'The focused panel must belong to this tree',
+                'INVALID_PRESENCE_APP',
+                'The focused app must belong to this tree',
                 400
               )
             )
           }
-        } else if (body.focusedPanelId !== null) {
+        } else if (body.focusedAppId !== null) {
           return yield* Effect.fail(
             new DomainError(
-              'INVALID_PRESENCE_PANEL',
-              'A focused panel requires a tree',
+              'INVALID_PRESENCE_APP',
+              'A focused app requires a tree',
               400
             )
           )
@@ -563,55 +561,53 @@ export function createApp({
     ),
     route(
       'GET',
-      '/api/panels/:panelId/files',
+      '/api/apps/:appId/files',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(
           treeFileListingSchema,
-          yield* operation(() =>
-            service.treeFiles.listTreeFiles(params.panelId!)
-          )
+          yield* operation(() => service.treeFiles.listTreeFiles(params.appId!))
         )
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/files/search',
+      '/api/apps/:appId/files/search',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(searchTreeFilesSchema)
         return jsonContractResponse(
           treeFileSearchResultSchema,
           yield* operation(() =>
-            service.treeFiles.searchTreeFiles(params.panelId!, body.query)
+            service.treeFiles.searchTreeFiles(params.appId!, body.query)
           )
         )
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/files/read',
+      '/api/apps/:appId/files/read',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(readTreeFileSchema)
         return jsonContractResponse(
           treeFileSchema,
           yield* operation(() =>
-            service.treeFiles.readTreeFile(params.panelId!, body.path)
+            service.treeFiles.readTreeFile(params.appId!, body.path)
           )
         )
       })
     ),
     route(
       'PUT',
-      '/api/panels/:panelId/files',
+      '/api/apps/:appId/files',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(writeTreeFileSchema)
         return jsonContractResponse(
           treeFileWriteResultSchema,
           yield* operation(() =>
-            service.treeFiles.writeTreeFile(params.panelId!, body)
+            service.treeFiles.writeTreeFile(params.appId!, body)
           )
         )
       })
@@ -658,26 +654,26 @@ export function createApp({
     ),
     route(
       'PUT',
-      '/api/worktrees/:worktreeId/web-panel-definitions/:definitionId/permission-grant',
+      '/api/worktrees/:worktreeId/web-app-definitions/:definitionId/permission-grant',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(updateWebPanelPermissionGrantSchema)
+        const body = yield* requestBody(updateWebAppPermissionGrantSchema)
         const definition = yield* operation(() =>
-          service.panels.setWebPanelPermissionGrant(
+          service.apps.setWebAppPermissionGrant(
             params.worktreeId!,
             params.definitionId!,
             body.granted,
             [...body.permissions]
           )
         )
-        return jsonContractResponse(webPanelDefinitionResponseSchema, {
+        return jsonContractResponse(webAppDefinitionResponseSchema, {
           definition
         })
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/browser-agent',
+      '/api/apps/:appId/browser-agent',
       Effect.gen(function* () {
         if (!browserSessions) {
           return yield* Effect.fail(
@@ -692,7 +688,7 @@ export function createApp({
         const params = yield* routeParams
         const input = yield* requestBody(browserAgentCommandSchema)
         const output = yield* operation(() =>
-          browserSessions.agentCommand(params.panelId!, input)
+          browserSessions.agentCommand(params.appId!, input)
         ).pipe(
           Effect.mapError((cause) =>
             cause instanceof DomainError
@@ -707,10 +703,10 @@ export function createApp({
                     command: input.command,
                     recovery:
                       input.command === 'snapshot'
-                        ? `Retry \`treeport browser snapshot --panel ${params.panelId}\`.`
+                        ? `Retry \`treeport browser snapshot --app ${params.appId}\`.`
                         : input.command === 'screenshot'
-                          ? `Open Browser ${params.panelId} in Treeport, then retry the screenshot.`
-                          : `Run \`treeport browser snapshot --panel ${params.panelId}\`, then retry this Browser command.`
+                          ? `Open Browser ${params.appId} in Treeport, then retry the screenshot.`
+                          : `Run \`treeport browser snapshot --app ${params.appId}\`, then retry this Browser command.`
                   }
                 )
           )
@@ -720,7 +716,7 @@ export function createApp({
     ),
     route(
       'POST',
-      '/api/panels/:panelId/browser-owner-ticket',
+      '/api/apps/:appId/browser-owner-ticket',
       Effect.gen(function* () {
         if (!browserSessions) {
           return yield* Effect.fail(
@@ -754,14 +750,14 @@ export function createApp({
         return jsonContractResponse(
           browserOwnerTicketResponseSchema,
           yield* operation(() =>
-            browserSessions.issueOwnerTicket(params.panelId!, body.clientId)
+            browserSessions.issueOwnerTicket(params.appId!, body.clientId)
           )
         )
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/browser-ticket',
+      '/api/apps/:appId/browser-ticket',
       Effect.gen(function* () {
         if (!browserSessions) {
           return yield* Effect.fail(
@@ -792,7 +788,7 @@ export function createApp({
         return jsonContractResponse(browserTicketResponseSchema, {
           ticket: yield* operation(() =>
             browserSessions.issueTicket(
-              params.panelId!,
+              params.appId!,
               body.clientId,
               body.visible,
               identity
@@ -1348,26 +1344,26 @@ export function createApp({
     ),
     route(
       'PUT',
-      '/api/worktrees/:worktreeId/panels/order',
+      '/api/worktrees/:worktreeId/apps/order',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(reorderWorkspaceItemsSchema)
         yield* operation(() =>
-          service.panels.reorderPanels(params.worktreeId!, body.itemIds)
+          service.apps.reorderApps(params.worktreeId!, body.itemIds)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
     route(
       'POST',
-      '/api/worktrees/:worktreeId/browser-panels',
+      '/api/worktrees/:worktreeId/browser-apps',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(createBrowserPanelSchema)
+        const body = yield* requestBody(createBrowserAppSchema)
         return jsonContractResponse(
-          openBrowserPanelResponseSchema,
+          openBrowserAppResponseSchema,
           yield* operation(() =>
-            service.panels.openBrowserPanel(
+            service.apps.openBrowserApp(
               params.worktreeId!,
               body.url,
               body.sourceTerminalId ?? null,
@@ -1380,15 +1376,15 @@ export function createApp({
     ),
     route(
       'POST',
-      '/api/terminals/:terminalId/browser-panels/open',
+      '/api/terminals/:terminalId/browser-apps/open',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(openBrowserPanelFromTerminalSchema)
+        const body = yield* requestBody(openBrowserAppFromTerminalSchema)
         const request = yield* HttpServerRequest.HttpServerRequest
         return jsonContractResponse(
-          openBrowserPanelResponseSchema,
+          openBrowserAppResponseSchema,
           yield* operation(() =>
-            service.panels.openBrowserPanelFromTerminal(
+            service.apps.openBrowserAppFromTerminal(
               params.terminalId!,
               body.url,
               request.headers['x-request-id'] ?? null
@@ -1400,42 +1396,42 @@ export function createApp({
     ),
     route(
       'GET',
-      '/api/worktrees/:worktreeId/web-panel-definitions',
+      '/api/worktrees/:worktreeId/web-app-definitions',
       Effect.gen(function* () {
         const params = yield* routeParams
-        return jsonContractResponse(webPanelDefinitionsResponseSchema, {
+        return jsonContractResponse(webAppDefinitionsResponseSchema, {
           definitions: yield* operation(() =>
-            service.panels.listWebPanelDefinitions(params.worktreeId!)
+            service.apps.listWebAppDefinitions(params.worktreeId!)
           )
         })
       })
     ),
     route(
       'POST',
-      '/api/worktrees/:worktreeId/panels',
+      '/api/worktrees/:worktreeId/apps',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(createWebPanelSchema)
-        const panel = yield* operation(() =>
-          service.panels.createWebPanel(params.worktreeId!, body.definitionId, {
+        const body = yield* requestBody(createWebAppSchema)
+        const app = yield* operation(() =>
+          service.apps.createWebApp(params.worktreeId!, body.definitionId, {
             input: body.input ?? null,
             cwd: body.launchCwd ?? null
           })
         )
-        return jsonContractResponse(webPanelResponseSchema, { panel }, 201)
+        return jsonContractResponse(webAppResponseSchema, { app }, 201)
       })
     ),
     route(
       'POST',
-      '/api/worktrees/:worktreeId/panels/open',
+      '/api/worktrees/:worktreeId/apps/open',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(openWebPanelSchema)
+        const body = yield* requestBody(openWebAppSchema)
         const request = yield* serverRequest
         return jsonContractResponse(
-          openWebPanelResponseSchema,
+          openWebAppResponseSchema,
           yield* operation(() =>
-            service.panels.openWebPanel(
+            service.apps.openWebApp(
               params.worktreeId!,
               body.definitionId,
               { input: body.input ?? null, cwd: body.launchCwd ?? null },
@@ -1449,20 +1445,20 @@ export function createApp({
     ),
     route(
       'DELETE',
-      '/api/panels/:panelId',
+      '/api/apps/:appId',
       Effect.gen(function* () {
         const params = yield* routeParams
         yield* Effect.annotateCurrentSpan({
-          'treeport.panel.id': params.panelId!
+          'treeport.app.id': params.appId!
         })
-        const query = yield* requestQuery(deletePanelQuerySchema)
+        const query = yield* requestQuery(deleteAppQuerySchema)
         const canClose = browserSessions
           ? yield* operation(() =>
-              browserSessions.requestPanelClose(
-                params.panelId!,
+              browserSessions.requestAppClose(
+                params.appId!,
                 query.force === 'true'
               )
-            ).pipe(Effect.withSpan('treeport.panel.remove.close_guard'))
+            ).pipe(Effect.withSpan('treeport.app.remove.close_guard'))
           : undefined
         if (canClose === false) {
           return yield* Effect.fail(
@@ -1475,130 +1471,126 @@ export function createApp({
         }
 
         yield* operation(() =>
-          service.panels.deletePanel(
-            params.panelId!,
+          service.apps.deleteApp(
+            params.appId!,
             query.discardStoredData === 'true'
           )
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
-      }).pipe(Effect.withSpan('treeport.panel.remove.request'))
+      }).pipe(Effect.withSpan('treeport.app.remove.request'))
     ),
     ...(['ensure', 'status', 'stop'] as const).map((action) =>
       route(
         'POST',
-        `/api/panels/:panelId/services/${action}`,
+        `/api/apps/:appId/services/${action}`,
         Effect.gen(function* () {
           const params = yield* routeParams
-          const body = yield* requestBody(panelServiceRequestSchema)
+          const body = yield* requestBody(appServiceRequestSchema)
           const context = yield* operation(() =>
-            service.panels.getWebPanelServiceContext(params.panelId!)
+            service.apps.getWebAppServiceContext(params.appId!)
           )
-          if (!panelServices) {
+          if (!appServices) {
             return yield* Effect.fail(
               new DomainError(
                 'SERVICES_UNAVAILABLE',
-                'Panel services are unavailable',
+                'App services are unavailable',
                 503
               )
             )
           }
 
           return jsonContractResponse(
-            panelServiceSchema,
-            yield* operation(() => panelServices[action](context, body.name))
+            appServiceSchema,
+            yield* operation(() => appServices[action](context, body.name))
           )
         })
       )
     ),
     route(
       'GET',
-      '/api/panels/:panelId/context',
+      '/api/apps/:appId/context',
       Effect.gen(function* () {
         const params = yield* routeParams
-        return jsonContractResponse(webPanelContextResponseSchema, {
+        return jsonContractResponse(webAppContextResponseSchema, {
           context: yield* operation(() =>
-            service.panels.getWebPanelContext(params.panelId!)
+            service.apps.getWebAppContext(params.appId!)
           )
         })
       })
     ),
     route(
       'GET',
-      '/api/panels/:panelId/diff',
+      '/api/apps/:appId/diff',
       Effect.gen(function* () {
         const params = yield* routeParams
         const query = yield* requestQuery(gitDiffRequestSchema)
         return jsonContractResponse(gitDiffResponseSchema, {
           diff: yield* operation(() =>
-            service.panels.getWebPanelDiff(params.panelId!, query.scope)
+            service.apps.getWebAppDiff(params.appId!, query.scope)
           )
         })
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/diff/file',
+      '/api/apps/:appId/diff/file',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(gitFileDiffRequestSchema)
         return jsonContractResponse(
           gitFileDiffResponseSchema,
           yield* operation(() =>
-            service.panels.getWebPanelFileDiff(
-              params.panelId!,
-              body.path,
-              body.scope
-            )
+            service.apps.getWebAppFileDiff(params.appId!, body.path, body.scope)
           )
         )
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/diff/image',
+      '/api/apps/:appId/diff/image',
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(gitDiffImageRequestSchema)
         return jsonContractResponse(
           gitDiffImageSchema,
           yield* operation(() =>
-            service.panels.getWebPanelDiffImage(params.panelId!, body)
+            service.apps.getWebAppDiffImage(params.appId!, body)
           )
         )
       })
     ),
     route(
       'GET',
-      '/api/panels/:panelId/network/listeners',
+      '/api/apps/:appId/network/listeners',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(listenerDiscoveryResponseSchema, {
           discovery: yield* operation(() =>
-            service.panels.getPanelListeners(params.panelId!)
+            service.apps.getAppListeners(params.appId!)
           )
         })
       })
     ),
     route(
       'GET',
-      '/api/panels/:panelId/storage',
+      '/api/apps/:appId/storage',
       Effect.gen(function* () {
         const params = yield* routeParams
         return jsonContractResponse(hasDataResponseSchema, {
           hasData: yield* operation(() =>
-            service.panels.hasWebPanelStorage(params.panelId!)
+            service.apps.hasWebAppStorage(params.appId!)
           )
         })
       })
     ),
     route(
       'POST',
-      '/api/panels/:panelId/storage/get',
+      '/api/apps/:appId/storage/get',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(getWebPanelStorageSchema)
+        const body = yield* requestBody(getWebAppStorageSchema)
         const value = yield* operation(() =>
-          service.panels.getWebPanelStorage(params.panelId!, body.key)
+          service.apps.getWebAppStorage(params.appId!, body.key)
         )
         return jsonContractResponse(storageValueResponseSchema, {
           found: value !== undefined,
@@ -1608,34 +1600,30 @@ export function createApp({
     ),
     route(
       'PUT',
-      '/api/panels/:panelId/storage',
+      '/api/apps/:appId/storage',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(setWebPanelStorageSchema)
+        const body = yield* requestBody(setWebAppStorageSchema)
         yield* operation(() =>
-          service.panels.setWebPanelStorage(
-            params.panelId!,
-            body.key,
-            body.value
-          )
+          service.apps.setWebAppStorage(params.appId!, body.key, body.value)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
     route(
       'DELETE',
-      '/api/panels/:panelId/storage',
+      '/api/apps/:appId/storage',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(deleteWebPanelStorageSchema)
+        const body = yield* requestBody(deleteWebAppStorageSchema)
         yield* operation(() =>
-          service.panels.deleteWebPanelStorage(params.panelId!, body.key)
+          service.apps.deleteWebAppStorage(params.appId!, body.key)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
-    route('GET', '/api/web-panels/:panelId/assets', webPanelAsset),
-    route('GET', '/api/web-panels/:panelId/assets/*', webPanelAsset),
+    route('GET', '/api/web-apps/:appId/assets', webAppAsset),
+    route('GET', '/api/web-apps/:appId/assets/*', webAppAsset),
 
     route(
       'POST',
