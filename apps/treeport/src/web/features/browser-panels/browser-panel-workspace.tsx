@@ -1,4 +1,5 @@
 import type { DesktopBrowserPermissionPrompt } from '@treeport/desktop-bridge'
+import { z } from 'zod'
 import {
   useCallback,
   useEffect,
@@ -64,6 +65,22 @@ import { writeBrowserClipboard } from '../../browser-clipboard'
 import { BrowserVideoReceiver } from '../../browser-video-receiver'
 import { LocalBrowserWebview } from './local-browser-webview'
 import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
+
+const viewportPresetSchema = z.enum([
+  'responsive',
+  'phone',
+  'tablet',
+  'desktop'
+])
+const viewportSettingsSchema = z.object({
+  viewport: z
+    .object({
+      width: z.number().int().min(1).max(3840),
+      height: z.number().int().min(1).max(2160)
+    })
+    .nullable(),
+  preset: viewportPresetSchema
+})
 
 function parseBrowserAddress(value: string): URL | null {
   const input = value.trim()
@@ -136,9 +153,6 @@ export function BrowserPanelWorkspace({
   )
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
-  const viewportOverrideRef = useRef<{ width: number; height: number } | null>(
-    null
-  )
   const viewportDragRef = useRef<{
     x: number
     y: number
@@ -188,14 +202,35 @@ export function BrowserPanelWorkspace({
   >(null)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
-  const [viewportOverride, setViewportOverride] = useState<{
-    width: number
-    height: number
-  } | null>(null)
-  const [viewportPreset, setViewportPreset] = useState('responsive')
+  const [
+    { viewport: viewportOverride, preset: viewportPreset },
+    setViewportSettings
+  ] = useState<z.infer<typeof viewportSettingsSchema>>(() => {
+    // Restore before observing layout: a remount must not replace a fixed
+    // portrait viewport with the workspace's current landscape dimensions.
+    try {
+      const stored = sessionStorage.getItem(
+        `treeport-browser-viewport:${panel.id}`
+      )
+      const parsed = viewportSettingsSchema.safeParse(
+        stored ? JSON.parse(stored) : null
+      )
+      if (parsed.success) {
+        return parsed.data
+      }
+    } catch {
+      // Storage may be unavailable or contain an invalid value.
+    }
+    return { viewport: null, preset: 'responsive' }
+  })
+  const viewportOverrideRef = useRef(viewportOverride)
   const [viewportSpace, setViewportSpace] = useState({ width: 0, height: 0 })
-  const [viewportWidth, setViewportWidth] = useState('390')
-  const [viewportHeight, setViewportHeight] = useState('844')
+  const [viewportWidth, setViewportWidth] = useState(
+    String(viewportOverride?.width ?? 390)
+  )
+  const [viewportHeight, setViewportHeight] = useState(
+    String(viewportOverride?.height ?? 844)
+  )
   const [findOpen, setFindOpen] = useState(false)
   const [findValue, setFindValue] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -1035,12 +1070,20 @@ export function BrowserPanelWorkspace({
 
   const resizeViewport = (
     size: { width: number; height: number } | null,
-    preset = 'responsive'
+    preset: z.infer<typeof viewportSettingsSchema>['preset'] = 'responsive'
   ) => {
-    setViewportPreset(preset)
+    const settings = { viewport: size, preset }
+    setViewportSettings(settings)
+    try {
+      sessionStorage.setItem(
+        `treeport-browser-viewport:${panel.id}`,
+        JSON.stringify(settings)
+      )
+    } catch {
+      // The current panel remains usable when storage is unavailable.
+    }
     const needsControl = !stateRef.current?.controlled
     viewportOverrideRef.current = size
-    setViewportOverride(size)
     if (needsControl) {
       send({ type: 'takeControl' })
     }
@@ -1289,8 +1332,9 @@ export function BrowserPanelWorkspace({
         aria-label="Viewport preset"
         value={viewportPreset}
         onChange={(event) => {
-          const preset = event.target.value
+          const preset = viewportPresetSchema.parse(event.target.value)
           const size = {
+            responsive: null,
             phone: { width: 390, height: 844 },
             tablet: { width: 768, height: 1024 },
             desktop: { width: 1280, height: 800 }

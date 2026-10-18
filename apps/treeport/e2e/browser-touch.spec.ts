@@ -85,7 +85,7 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
           createRoot(document.getElementById('root')).render(createElement(BrowserPanelWorkspace, {
             panel: { id: 'touch-check', title: 'Touch check', url: 'https://example.com/' },
             active: true, autoFocusBlocked: true, inputBlocked: false,
-            onLoadingChange() {}, onFocusSurface() {}
+            onLoadingChange() {}, onFaviconChange() {}, onFocusSurface() {}
           }));
         </script>`
     })
@@ -358,4 +358,50 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     x: pointers[2]!.x,
     y: pointers[2]!.y
   })
+
+  // The viewer's desired viewport survives remounts independently of the
+  // host's confirmed viewport. Returning in a landscape window must not
+  // overwrite a custom portrait size, even in the first resize command.
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page
+    .getByRole('button', { name: 'Responsive mode', exact: true })
+    .click()
+  await page
+    .getByRole('combobox', { name: 'Viewport preset' })
+    .selectOption('phone')
+  await page.getByRole('spinbutton', { name: 'Viewport width' }).fill('412')
+  await page.getByRole('spinbutton', { name: 'Viewport width' }).press('Enter')
+  await page.getByRole('spinbutton', { name: 'Viewport height' }).fill('915')
+  await page.getByRole('spinbutton', { name: 'Viewport height' }).press('Enter')
+  await page.reload()
+  const resizes = () =>
+    page.evaluate(() =>
+      (window.browserMessages ?? []).filter(
+        (message) => message.type === 'resize'
+      )
+    )
+  await expect
+    .poll(resizes)
+    .toEqual([{ type: 'resize', width: 412, height: 915 }])
+  await expect(
+    page.getByRole('spinbutton', { name: 'Viewport width' })
+  ).toHaveValue('412')
+  await expect(
+    page.getByRole('spinbutton', { name: 'Viewport height' })
+  ).toHaveValue('915')
+
+  // Exiting fixed-size mode must also survive a reload.
+  await page
+    .getByRole('button', { name: 'Responsive mode', exact: true })
+    .click()
+  await page.reload()
+  await expect(
+    page.getByRole('button', { name: 'Responsive mode', exact: true })
+  ).toHaveAttribute('aria-pressed', 'false')
+  await expect(
+    page.getByRole('spinbutton', { name: 'Viewport width' })
+  ).toHaveCount(0)
+  await expect
+    .poll(resizes)
+    .toEqual([{ type: 'resize', width: 400, height: expect.any(Number) }])
 })
