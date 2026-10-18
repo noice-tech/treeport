@@ -6,7 +6,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Treeport',
-      description: 'A workspace for coding agents, browsers, custom apps, and services.',
+      description:
+        'A workspace for coding agents, browsers, custom apps, and services.',
       favicon: '/favicon.svg',
       disable404Route: true,
       head: [
