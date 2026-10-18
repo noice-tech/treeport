@@ -1,27 +1,50 @@
 ---
 title: Treeport
-description: Persistent terminals for Git worktrees.
+description: A workspace for coding agents, browsers, custom apps, and services.
 template: splash
 hero:
-  tagline: Persistent terminals for Git worktrees.
+  tagline: A place for your agents to work.
   actions:
     - text: Install Treeport
       link: /getting-started/installation/
       icon: right-arrow
+    - text: Explore the workspace
+      link: /concepts/projects-worktrees-terminals/
+      icon: open-book
+      variant: secondary
 ---
 
-## Features
+Treeport is a workspace for coding agents, terminals, browser tabs, and custom apps. Run an agent, open the app it's building, and review its changes in the same tree.
 
-- [Git worktrees](/concepts/projects-worktrees-terminals/): Create separate workspaces or open existing worktrees and folders.
-- [Coding agents](/building-apps/coding-agents/): Pi is the only supported integration.
-- [Persistent terminals](/features/persistent-terminals/): Keep processes running when you disconnect.
-- [Terminal presets](/features/terminal-presets/): Save and reuse commands.
-- [Packages](/features/packages/): Add terminal presets and web apps.
-- [Browser](/features/browser-app/) and [web apps](/features/web-apps/) (experimental): Open websites and project tools beside terminals.
-- [Remote access](/features/remote-access/): Connect from another computer or phone through Tailscale.
-- [Service supervision](/features/service-supervision/): Start automatically and restart after an unexpected exit.
-- [Tree setup and cleanup](/features/worktree-setup-hooks/): Run commands when creating or removing a tree.
+## A workspace for each task
 
-## Reference
+Open a project and create a tree for each task. Each tree has its own Git worktree and apps, keeping files and sessions separate while you work on several changes. You can also open existing worktrees or ordinary folders.
 
-- [Project configuration](/reference/project-configuration/): Set commands, terminal presets, and project settings.
+[Learn about projects, trees, and apps →](/concepts/projects-worktrees-terminals/)
+
+## Agents and their tools
+
+Run an agent and a development server in separate persistent terminals, then open the result in a browser. The Pi integration lets your agent manage terminals, interact with visible browser tabs, and work in separate trees.
+
+[Set up a coding agent →](/building-apps/coding-agents/)
+
+## Browsers and custom apps
+
+- Open websites and development servers in [browser tabs →](/features/browser-app/) that you and your agent can use.
+- Add a diff viewer, editor, dashboard, or another project tool with [web apps →](/features/web-apps/). Apps can use managed backend services.
+- Install [packages →](/features/packages/) to add apps and reusable terminal commands to any project.
+
+## Keep work running
+
+Agents, development servers, and other terminal programs keep running when you close the client or disconnect. Reconnect to the same host from the macOS app or a browser, including from another computer or phone through Tailscale.
+
+The host must stay running for these processes to continue.
+
+[Terminals →](/features/persistent-terminals/) · [Remote access →](/features/remote-access/)
+
+## Setup and configuration
+
+- [Terminal presets](/features/terminal-presets/): Save commands you run often.
+- [Service supervision](/features/service-supervision/): Start the Treeport backend automatically.
+- [Tree setup and cleanup](/features/worktree-setup-hooks/): Prepare dependencies and resources for each tree.
+- [Project configuration](/reference/project-configuration/): Share settings with your project.
