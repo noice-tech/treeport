@@ -18,7 +18,8 @@ export class BrowserVideoReceiver {
   constructor(
     private readonly video: HTMLVideoElement,
     private readonly send: (message: BrowserClientMessage) => void,
-    private readonly failed: (message: string) => void
+    private readonly failed: (message: string) => void,
+    private readonly statusChanged: (message: string) => void
   ) {}
 
   receive(message: BrowserServerMessage): void {
@@ -62,6 +63,7 @@ export class BrowserVideoReceiver {
     this.visible = visible
     if (!visible) {
       this.stop()
+      this.statusChanged('Waiting for browser video…')
     } else if (this.available && !this.peer) {
       this.attempts = 0
       this.start()
@@ -95,11 +97,13 @@ export class BrowserVideoReceiver {
       return
     }
 
+    this.statusChanged('Reconnecting browser video…')
     this.timer = setTimeout(() => this.start(), 500 * this.attempts)
   }
 
   private start(): void {
     this.stop()
+    this.statusChanged('Connecting browser video…')
     // eslint-disable-next-line anti-slop/no-runtime-typeof -- WebRTC availability is a browser capability, not an untrusted protocol shape.
     if (typeof RTCPeerConnection === 'undefined') {
       this.failed('This browser does not support WebRTC video.')
@@ -130,6 +134,7 @@ export class BrowserVideoReceiver {
         return
       }
 
+      this.statusChanged('Waiting for the first frame…')
       this.stopPresentation?.()
       this.stopPresentation = presentBrowserVideo(
         this.video,

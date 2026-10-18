@@ -55,7 +55,8 @@ it('negotiates native video only when visible and ignores superseded answers', a
   const receiver = new BrowserVideoReceiver(
     video,
     (message) => messages.push(message),
-    failed
+    failed,
+    vi.fn()
   )
   receiver.receive({ type: 'videoReady' })
   expect(FakePeer.instances).toHaveLength(0)
@@ -129,7 +130,7 @@ it('bounds connection retries and closes media when the signaling session is los
     play: vi.fn(async () => undefined)
   })
   const failed = vi.fn()
-  const receiver = new BrowserVideoReceiver(video, vi.fn(), failed)
+  const receiver = new BrowserVideoReceiver(video, vi.fn(), failed, vi.fn())
   receiver.setVisible(true)
   receiver.receive({ type: 'videoReady' })
   await vi.advanceTimersByTimeAsync(60_000)
