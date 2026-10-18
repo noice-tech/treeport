@@ -296,7 +296,7 @@ export function AppsPanelToggle({
 const MIN_APPS_PANEL_WIDTH = 320
 const MIN_TERMINAL_WIDTH = 96
 const DEFAULT_APPS_PANEL_WIDTH = 560
-const APPS_PANEL_WIDTH_STORAGE_KEY = 'treeport-side-panel-width'
+const APPS_PANEL_WIDTH_STORAGE_PREFIX = 'treeport-side-panel-width:'
 
 function appsPanelMaxWidth(rail: HTMLDivElement): number {
   const layoutWidth =
@@ -406,6 +406,7 @@ function AppsPanelResizeRail({
 }
 
 export function WorktreeAppsPanel({
+  worktreeId,
   worktreeName,
   visible,
   fullView,
@@ -426,6 +427,7 @@ export function WorktreeAppsPanel({
   onOpenWebApp,
   onFocusSurface
 }: {
+  worktreeId: string
   worktreeName: string
   visible: boolean
   fullView: boolean
@@ -466,15 +468,19 @@ export function WorktreeAppsPanel({
   const toolPickerCommandRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLElement>(null)
   const restoredEmptyFocusRevisionRef = useRef(0)
-  const [preferredAppsPanelWidth, setPreferredAppsPanelWidth] = useState(() => {
-    const savedWidth = Number.parseInt(
-      localStorage.getItem(APPS_PANEL_WIDTH_STORAGE_KEY) ?? '',
-      10
-    )
-    return Number.isFinite(savedWidth)
+  const [preferredWidthByWorktree, setPreferredWidthByWorktree] = useState<
+    Record<string, number>
+  >({})
+  const savedWidth = Number.parseInt(
+    localStorage.getItem(`${APPS_PANEL_WIDTH_STORAGE_PREFIX}${worktreeId}`) ??
+      '',
+    10
+  )
+  const preferredAppsPanelWidth =
+    preferredWidthByWorktree[worktreeId] ??
+    (Number.isFinite(savedWidth)
       ? Math.max(MIN_APPS_PANEL_WIDTH, savedWidth)
-      : DEFAULT_APPS_PANEL_WIDTH
-  })
+      : DEFAULT_APPS_PANEL_WIDTH)
   const [maximumAppsPanelWidth, setMaximumAppsPanelWidth] = useState(() =>
     Math.max(MIN_APPS_PANEL_WIDTH, window.innerWidth - MIN_TERMINAL_WIDTH)
   )
@@ -484,8 +490,14 @@ export function WorktreeAppsPanel({
   )
   const setAndSaveAppsPanelWidth = (width: number) => {
     const nextWidth = Math.max(MIN_APPS_PANEL_WIDTH, width)
-    setPreferredAppsPanelWidth(nextWidth)
-    localStorage.setItem(APPS_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
+    setPreferredWidthByWorktree((current) => ({
+      ...current,
+      [worktreeId]: nextWidth
+    }))
+    localStorage.setItem(
+      `${APPS_PANEL_WIDTH_STORAGE_PREFIX}${worktreeId}`,
+      String(nextWidth)
+    )
   }
   const [permissionDefinition, setPermissionDefinition] =
     useState<WebAppDefinition | null>(null)
