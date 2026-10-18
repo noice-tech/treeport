@@ -35,7 +35,7 @@ export default defineConfig({
     '**/dist/**',
     '**/dist-types/**',
     '**/coverage/**',
-    'packages/web-panel-review/web-panels/review/assets/**',
+    'packages/review/web-panels/review/assets/**',
     'node_modules/**',
     'playwright-report/**',
     'test-results/**'

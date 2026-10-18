@@ -1,8 +1,10 @@
 {
-  "name": "@treeport/web-panel-review",
-  "version": "0.1.0",
-  "description": "Treeport's internal code-review web panel package.",
-  "private": true,
+  "name": "@treeport/review",
+  "version": "0.13.0",
+  "description": "Code review for Treeport.",
+  "files": [
+    "web-panels/review"
+  ],
   "type": "module",
   "keywords": [
     "treeport-package"
@@ -13,6 +15,18 @@
     ]
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git",
+    "directory": "packages/review"
+  },
+  "bugs": {
+    "url": "https://github.com/noice-tech/treeport/issues"
+  },
+  "homepage": "https://treeport.app",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit --pretty"
   },
