@@ -58,6 +58,7 @@ export default defineConfig({
     'anti-slop/require-safety-comment-for-type-assertion': 'error',
     'treeport/no-record-string-unknown': 'error',
     'treeport/module-boundaries': 'error',
+    'treeport/browser-boundaries': 'error',
     'react-you-might-not-need-an-effect/no-derived-state': 'warn',
     'react-you-might-not-need-an-effect/no-chain-state-updates': 'warn',
     'react-you-might-not-need-an-effect/no-event-handler': 'warn',

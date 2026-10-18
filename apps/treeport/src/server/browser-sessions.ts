@@ -43,11 +43,12 @@ import type { ApplicationServices } from './core/services/infrastructure/applica
 import { networkTelemetry } from './network-telemetry'
 import {
   PlaywrightBrowser,
-  PlaywrightBrowserHost,
   type BrowserInstallStatus,
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
 import { browserNavigation } from './browser-navigation'
+import { PlaywrightBrowserHost } from './browser-page-host'
+import { BrowserVideoViewer } from './browser-video-viewer'
 import { browserKey, browserTouch, browserWheel } from './browser-input'
 import { browserSetupGuidance } from './browser-runtime'
 
@@ -175,9 +176,7 @@ interface BrowserAttachment {
   transport: BrowserTransport
   visible: boolean
   closing: boolean
-  videoReady: boolean
-  videoRequest: string | null
-  videoNegotiating: boolean
+  video: BrowserVideoViewer
   cursorPoint: { x: number; y: number } | null
   viewport: { width: number; height: number }
 }
@@ -734,29 +733,15 @@ export class BrowserSessionManager {
   ): void {
     session.videoError = message
     for (const attachment of session.attachments.values()) {
-      attachment.transport.sendMessage({ type: 'videoUnavailable', message })
+      attachment.video.fail(message)
     }
   }
 
   private resetVideoDelivery(session: BrowserSession): void {
     session.videoError = null
     for (const attachment of session.attachments.values()) {
-      this.closeVideoPeer(session, attachment)
+      attachment.video.suspend()
     }
-  }
-
-  private closeVideoPeer(
-    session: BrowserSession,
-    attachment: BrowserAttachment
-  ): void {
-    attachment.videoRequest = null
-    attachment.videoReady = false
-    const operation = session.localOwner
-      ? session.localAutomation?.video.send('Treeport.closeVideoPeer', {
-          peerId: attachment.id
-        })
-      : session.browser?.closeVideoPeer(attachment.id)
-    void operation?.catch(() => undefined)
   }
 
   private openPopup(session: BrowserSession, url: string): void {
@@ -1226,9 +1211,9 @@ export class BrowserSessionManager {
       transport,
       visible: ticket.visible,
       closing: false,
-      videoReady: false,
-      videoRequest: null,
-      videoNegotiating: false,
+      video: new BrowserVideoViewer((message) =>
+        transport.sendMessage(message)
+      ),
       cursorPoint: null,
       viewport: { ...session.state.viewport }
     }
@@ -1256,7 +1241,7 @@ export class BrowserSessionManager {
             }
 
             superseded.closing = true
-            this.closeVideoPeer(session, superseded)
+            superseded.video.dispose()
             session.attachments.delete(superseded.id)
             superseded.transport.disconnect()
           }
@@ -1296,7 +1281,7 @@ export class BrowserSessionManager {
       this.prepareVideoViewer(session, attachment)
     } catch (error) {
       attachment.closing = true
-      this.closeVideoPeer(session, attachment)
+      attachment.video.dispose()
       session.attachments.delete(attachment.id)
       if (
         session.controllerId === attachmentController(attachment) &&
@@ -1410,7 +1395,7 @@ export class BrowserSessionManager {
           }
           previousOwner.requests.clear()
 
-          if (previousOwner.endpoint !== auth.endpoint) {
+          if (!resumed || previousOwner.endpoint !== auth.endpoint) {
             await this.closeLocalAutomation(session)
             this.resetVideoDelivery(session)
           }
@@ -1778,15 +1763,30 @@ export class BrowserSessionManager {
       session.videoError ||
       attachment.closing ||
       !attachment.visible ||
-      !attachment.transport.isConnected() ||
-      attachment.videoReady
+      !attachment.transport.isConnected()
     ) {
       return
     }
 
-    attachment.videoReady = attachment.transport.sendMessage({
-      type: 'videoReady'
-    })
+    const video = session.localAutomation?.video
+    const browser = session.browser
+    if (session.localOwner && video) {
+      attachment.video.resume({
+        negotiate: (sdp) =>
+          video
+            .send('Treeport.negotiateVideo', { peerId: attachment.id, sdp })
+            .then((result) => result.sdp),
+        close: () =>
+          video
+            .send('Treeport.closeVideoPeer', { peerId: attachment.id })
+            .then(() => undefined)
+      })
+    } else if (!session.localOwner && browser) {
+      attachment.video.resume({
+        negotiate: (sdp) => browser.negotiateVideo(attachment.id, sdp),
+        close: () => browser.closeVideoPeer(attachment.id)
+      })
+    }
   }
 
   message(connectionId: string, value: BrowserClientMessage): void {
@@ -1819,71 +1819,7 @@ export class BrowserSessionManager {
     }
 
     if (message.type === 'videoOffer') {
-      if (
-        !attachment.visible ||
-        !attachment.videoReady ||
-        attachment.videoNegotiating
-      ) {
-        return
-      }
-
-      attachment.videoNegotiating = true
-      attachment.videoRequest = message.requestId
-      const generation = session.generation
-      const browser = session.browser
-      const video = session.localAutomation?.video ?? null
-      const local = session.localOwner !== null
-      // ICE gathering must not occupy the input scheduler. Each attachment has
-      // at most one negotiation; generation/request checks revoke stale answers.
-      const operation = local
-        ? video
-            ?.send('Treeport.negotiateVideo', {
-              peerId: attachment.id,
-              sdp: message.sdp
-            })
-            .then((result) => result.sdp)
-        : browser?.negotiateVideo(attachment.id, message.sdp)
-      void (
-        operation ?? Promise.reject(new Error('Browser video is unavailable.'))
-      )
-        .then(async (sdp) => {
-          if (
-            attachment.closing ||
-            !attachment.visible ||
-            attachment.videoRequest !== message.requestId ||
-            session.generation !== generation ||
-            session.attachments.get(attachment.id) !== attachment
-          ) {
-            await (local
-              ? video?.send('Treeport.closeVideoPeer', {
-                  peerId: attachment.id
-                })
-              : browser?.closeVideoPeer(attachment.id))
-            return
-          }
-
-          attachment.transport.sendMessage({
-            type: 'videoAnswer',
-            requestId: message.requestId,
-            sdp
-          })
-        })
-        .catch((cause) => {
-          if (
-            !attachment.closing &&
-            attachment.visible &&
-            attachment.videoRequest === message.requestId &&
-            session.generation === generation
-          ) {
-            attachment.transport.sendMessage({
-              type: 'videoUnavailable',
-              message: cause instanceof Error ? cause.message : String(cause)
-            })
-          }
-        })
-        .finally(() => {
-          attachment.videoNegotiating = false
-        })
+      attachment.video.offer(message.requestId, message.sdp)
       return
     }
 
@@ -1897,7 +1833,7 @@ export class BrowserSessionManager {
       }
 
       if (!message.visible) {
-        this.closeVideoPeer(session, attachment)
+        attachment.video.suspend()
       }
 
       this.queueClientOperation(session, attachment, {
@@ -2398,6 +2334,7 @@ export class BrowserSessionManager {
 
             for (const attachment of session.attachments.values()) {
               attachment.closing = true
+              attachment.video.dispose()
               attachment.transport.sendMessage({ type: 'closed', reason })
               attachment.transport.disconnect()
             }
@@ -2432,7 +2369,7 @@ export class BrowserSessionManager {
       }
 
       attachment.closing = true
-      this.closeVideoPeer(session, attachment)
+      attachment.video.dispose()
       void this.scheduleOperation(
         session,
         async () => {

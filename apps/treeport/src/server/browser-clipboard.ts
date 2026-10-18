@@ -5,10 +5,18 @@ import {
   decodeUnknownOrNull,
   type BrowserClipboard
 } from '@treeport/shared'
-import type { Page } from 'playwright'
+import type { CDPSession, Page } from 'playwright'
+
+export interface BrowserClipboardReader {
+  readonly page: Pick<Page, 'setContent' | 'evaluateHandle'>
+  readonly cdp: CDPSession
+}
 
 export async function browserClipboard(
-  page: Page
+  page: Page,
+  withReader: (
+    read: (reader: BrowserClipboardReader) => Promise<BrowserClipboard>
+  ) => Promise<BrowserClipboard>
 ): Promise<BrowserClipboard | null> {
   let copied = false
   // Cross-origin frames can live in separate renderer targets. Same-process
@@ -27,18 +35,7 @@ export async function browserClipboard(
     return null
   }
 
-  // A new tab in the source context applies its default viewport to the shared
-  // native window. Use a separate, script-free context without viewport emulation
-  // so reading the native clipboard cannot resize the source window.
-  const browser = page.context().browser()
-  if (!browser) {
-    throw new Error('The hosted browser is unavailable.')
-  }
-
-  const readerContext = await browser.newContext({ viewport: null })
-  try {
-    const reader = await readerContext.newPage()
-    const cdp = await readerContext.newCDPSession(reader)
+  return withReader(async ({ page: reader, cdp }) => {
     await reader.setContent('<body contenteditable="true"></body>')
     const result = await reader.evaluateHandle(
       (limit) => ({
@@ -112,7 +109,5 @@ export async function browserClipboard(
     }
 
     return clipboard
-  } finally {
-    await readerContext.close().catch(() => undefined)
-  }
+  })
 }
