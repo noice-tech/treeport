@@ -73,6 +73,7 @@ try {
     'package/README.md',
     'package/extensions/treeport/index.ts',
     'package/extensions/treeport/treeport-cli.ts',
+    'package/extensions/treeport/tools.ts',
     'package/skills/treeport/SKILL.md',
     'package/package.json'
   ]

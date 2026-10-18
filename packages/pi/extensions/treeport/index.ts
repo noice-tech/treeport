@@ -4,6 +4,7 @@ import type {
 } from '@earendil-works/pi-coding-agent'
 import { Type, type Static } from 'typebox'
 import { runTreeportJson } from './treeport-cli.ts'
+import { registerTreeportTools, TREEPORT_GUIDELINES } from './tools.ts'
 
 const CONTEXT_TIMEOUT_MS = 5_000
 const CONTEXT_REFRESH_MS = 30_000
@@ -54,7 +55,8 @@ const ContextSchema = Type.Union([
           id: Type.String({ minLength: 1 }),
           projectId: Type.String({ minLength: 1 }),
           name: Type.String({ minLength: 1 }),
-          path: Type.String({ minLength: 1 })
+          path: Type.String({ minLength: 1 }),
+          context: Type.Optional(Type.Record(Type.String(), Type.String()))
         },
         { additionalProperties: true }
       ),
@@ -104,11 +106,79 @@ function managedContext(value: ContextOutput): ManagedContext | null {
 
 export default function treeportExtension(pi: ExtensionAPI): void {
   let badgeVisible = false
-  let guidance: string | null = null
   let lastWarning: string | null = null
   let refreshTimer: ReturnType<typeof setInterval> | null = null
   let lifecycle: AbortController | null = null
   let refreshing = false
+
+  const toolNames = registerTreeportTools(pi, ContextSchema)
+  const enabledOnBranch = (ctx: ExtensionContext) =>
+    ctx.sessionManager
+      .getBranch()
+      .some(
+        (entry) =>
+          entry.type === 'custom' &&
+          entry.customType === 'treeport-tools-enabled'
+      )
+  const restoreTools = (ctx: ExtensionContext) => {
+    const others = pi
+      .getActiveTools()
+      .filter((name) => !toolNames.includes(name))
+    pi.setActiveTools([
+      ...new Set([
+        ...others,
+        'treeport_enable',
+        ...(enabledOnBranch(ctx) ? toolNames : [])
+      ])
+    ])
+  }
+
+  pi.registerTool({
+    name: 'treeport_enable',
+    label: 'Enable Treeport',
+    description:
+      'Enable Treeport tools for persistent terminals, shared browser tabs, projects, and worktrees. Returns the current context, including assigned tree tasks. Tools are available on the next model request and callable from codemode.',
+    promptSnippet:
+      'Call treeport_enable before using Treeport terminals, browser tabs, projects, or worktrees. Prefer its typed tools over CLI help discovery.',
+    promptGuidelines: TREEPORT_GUIDELINES,
+    parameters: Type.Object({}, { additionalProperties: false }),
+    outputSchema: Type.Object({
+      enabled: Type.Array(Type.String()),
+      context: ContextSchema
+    }),
+    async execute(_id, _params, signal, _update, ctx) {
+      const context = await runTreeportJson(pi, ['context'], ContextSchema, {
+        cwd: ctx.cwd,
+        signal,
+        timeout: CONTEXT_TIMEOUT_MS
+      })
+      if (context.managed && !managedContext(context)) {
+        throw new Error('Treeport context is invalid. Tools were not enabled.')
+      }
+
+      signal?.throwIfAborted()
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), ...toolNames])])
+      const active = new Set(pi.getActiveTools())
+      const missing = toolNames.filter((name) => !active.has(name))
+      if (missing.length > 0) {
+        throw new Error(
+          `Treeport tools could not be enabled: ${missing.join(', ')}`
+        )
+      }
+
+      if (!enabledOnBranch(ctx)) {
+        pi.appendEntry('treeport-tools-enabled', {})
+      }
+
+      const result = { enabled: toolNames, context }
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+        structuredContent: result,
+        details: result
+      }
+    }
+  })
+  pi.on('session_tree', (_event, ctx) => restoreTools(ctx))
 
   const warn = (sessionContext: ExtensionContext, message: string) => {
     if (sessionContext.hasUI && lastWarning !== message) {
@@ -151,7 +221,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
           return
         }
 
-        guidance = null
         clearBadge(sessionContext)
         const injectedIds = [
           process.env.TREEPORT_PROJECT_ID,
@@ -173,7 +242,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
       }
 
       if (detectedValue.managed === false) {
-        guidance = null
         lastWarning = null
         clearBadge(sessionContext)
         return
@@ -181,7 +249,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
 
       const detected = managedContext(detectedValue)
       if (!detected) {
-        guidance = null
         clearBadge(sessionContext)
         const injectedIds = [
           process.env.TREEPORT_PROJECT_ID,
@@ -197,25 +264,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
 
         return
       }
-
-      const guidanceLines = [
-        'Treeport context:',
-        'You are working inside Treeport, a worktree-first workspace. This Pi session runs in a persistent terminal managed by Treeport.',
-        `Your current Treeport project is ${JSON.stringify(
-          detected.project.name
-        )} and your tree is ${JSON.stringify(detected.worktree.name)}.`,
-        'A project is a registered repository or folder. A tree is its main checkout or a linked Git worktree.',
-        'Treeport provides persistent terminals for shells, development servers, and other agents. You can start processes, inspect their status, read their output, and wait for runtime conditions. The user can view and take control of these terminals.',
-        'Treeport has browser support. You can open and control visible browser tabs, navigate pages, interact with page elements, inspect accessibility snapshots, and capture screenshots, console messages, and network requests. You and the user share the same live page.',
-        'Treeport can manage projects and trees, including creating a separate tree and terminal for independent work.',
-        'Use the `treeport` CLI through bash for Treeport operations. When you need command syntax or options, consult `treeport --help`, `treeport <area> --help`, or `treeport <area> <command> --help` (for example, `treeport browser --help` or `treeport terminal --help`).',
-        'Delete a terminal only when the user asks to stop or close its process. Never delete this Pi session terminal.',
-        'Leave browser tabs open for user inspection. Do not install a browser runtime without user approval.',
-        'Do not put secrets in browser URLs or command arguments.'
-      ]
-      // Publish the complete snapshot atomically. Discovery never edits history,
-      // including when a user submits while the context CLI call is in flight.
-      guidance = guidanceLines.join('\n')
 
       lastWarning = null
 
@@ -245,10 +293,10 @@ export default function treeportExtension(pi: ExtensionAPI): void {
     const startedLifecycle = new AbortController()
     lifecycle = startedLifecycle
     refreshTimer = null
-    guidance = null
+    restoreTools(sessionContext)
     refreshing = false
     lastWarning = null
-    // Warm the cache during initialization, without adding a transcript entry.
+    // Discover the status badge without adding context to the transcript.
     await refreshContext(sessionContext)
     if (startedLifecycle.signal.aborted) {
       return
@@ -265,38 +313,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
     void refreshContext(sessionContext)
   })
 
-  // Submission is the opt-in. Input runs before the user message is appended;
-  // startup, reload, and merely browsing /tree must not create new entries.
-  pi.on('input', (_event, sessionContext) => {
-    // Never await discovery here. Use the last completed snapshot; a background
-    // refresh can only affect a later submission, not this request's prefix.
-    if (guidance && sessionContext.isIdle()) {
-      // Compare the latest context on this branch, not all entries or process state.
-      // A -> B -> A needs an update even though A already exists earlier in history.
-      const previous = sessionContext.sessionManager
-        .getBranch()
-        .filter(
-          (entry) =>
-            entry.type === 'custom_message' &&
-            entry.customType === 'treeport-context'
-        )
-        .pop()
-      if (
-        previous?.type !== 'custom_message' ||
-        previous.content !== guidance
-      ) {
-        // Hidden in chat, retained in /tree and model context. Never rewrite older
-        // entries (including their display flag) or insert at the conversation top.
-        pi.sendMessage(
-          { customType: 'treeport-context', content: guidance, display: false },
-          { triggerTurn: false }
-        )
-      }
-    }
-
-    return { action: 'continue' }
-  })
-
   pi.on('session_shutdown', (_event, sessionContext) => {
     if (refreshTimer) {
       clearInterval(refreshTimer)
@@ -304,7 +320,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
 
     refreshTimer = null
     lifecycle?.abort()
-    guidance = null
     clearBadge(sessionContext)
   })
 }
