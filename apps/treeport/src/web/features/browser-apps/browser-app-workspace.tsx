@@ -183,6 +183,9 @@ export function BrowserAppWorkspace({
     startUrl: string
     targetUrl: string
   } | null>(null)
+  const [streamStatus, setStreamStatus] = useState<string | null>(
+    'Connecting to remote browser…'
+  )
   const [connectionRevision, setConnectionRevision] = useState(0)
   const [addressFocusRevision, setAddressFocusRevision] = useState(0)
   const [localBrowserPaintRetained, setLocalBrowserPaintRetained] =
@@ -755,15 +758,24 @@ export function BrowserAppWorkspace({
         traceBrowserOpen(app.id, 'browser.hosted.first_frame_drawn')
       }
 
+      setStreamStatus(null)
+      setFailure(null)
       setError(null)
     }
     video.addEventListener('playing', playing)
-    const receiver = new BrowserVideoReceiver(video, send, (message) => {
-      setFailure({ message })
-    })
+    const receiver = new BrowserVideoReceiver(
+      video,
+      send,
+      (message) => setFailure({ message }),
+      setStreamStatus
+    )
     videoReceiverRef.current = receiver
     const connection = connectBrowserApp(app.id, false, {
       message: (message) => {
+        if (message.type === 'ready') {
+          setStreamStatus('Waiting for browser video…')
+        }
+
         receiver.receive(message)
         if (message.type !== 'videoReady' && message.type !== 'videoAnswer') {
           receiveMessage(message)
@@ -2461,6 +2473,22 @@ export function BrowserAppWorkspace({
                 aria-hidden="true"
               />
             ) : null}
+            {!localBrowser &&
+            (state?.url ?? app.url) !== 'about:blank' &&
+            streamStatus &&
+            !failure ? (
+              <div
+                className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background p-6 text-center text-muted-foreground"
+                role="status"
+                aria-live="polite"
+              >
+                <ArrowPathIcon
+                  className="size-6 motion-safe:animate-spin"
+                  aria-hidden="true"
+                />
+                <span className="text-sm">{streamStatus}</span>
+              </div>
+            ) : null}
             {failure ? (
               <div
                 className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center text-zinc-400"
@@ -2476,6 +2504,7 @@ export function BrowserAppWorkspace({
                     variant="outline"
                     onClick={() => {
                       setFailure(null)
+                      setStreamStatus('Connecting to remote browser…')
                       setConnectionRevision((value) => value + 1)
                     }}
                   >
