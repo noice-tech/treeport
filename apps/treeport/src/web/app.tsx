@@ -1835,6 +1835,7 @@ function WorkspaceApp() {
             </div>
             {selectedWorktree ? (
               <WorktreeAppsPanel
+                worktreeId={selectedWorktree.id}
                 worktreeName={selectedWorktree.name}
                 visible={appsPanelOpen}
                 fullView={appsPanelFullView}
