@@ -647,34 +647,6 @@ importers:
         specifier: 'catalog:'
         version: 7.0.2
 
-  packages/web-panel-files:
-    dependencies:
-      '@pierre/diffs':
-        specifier: 1.3.1
-        version: 1.3.1(@shikijs/themes@4.3.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@pierre/trees':
-        specifier: 1.0.0-beta.6
-        version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.3.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.3.1)
-      react:
-        specifier: 'catalog:'
-        version: 19.3.0
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.3.0(react@19.3.0)
-    devDependencies:
-      '@treeport/panel-sdk':
-        specifier: workspace:*
-        version: link:../panel-sdk
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: 'catalog:'
-        version: 19.2.3(@types/react@19.2.17)
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
-
   packages/web-panel-review:
     dependencies:
       '@base-ui/react':
