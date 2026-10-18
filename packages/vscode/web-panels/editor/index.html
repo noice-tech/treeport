@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Editor</title>
+  </head>
+  <body>
+    <main>
+      <h1>Editor</h1>
+      <p id="status" role="status">Starting the shared code-server service…</p>
+      <button id="retry" type="button" hidden>Retry</button>
+      <details id="output" hidden>
+        <summary>Service output</summary>
+        <pre id="logs"></pre>
+      </details>
+    </main>
+    <script type="module" src="./editor.ts"></script>
+  </body>
+</html>

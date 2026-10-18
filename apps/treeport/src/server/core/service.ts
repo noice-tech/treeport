@@ -111,6 +111,7 @@ type PanelApi = Pick<
   | 'getBrowserPanelListeners'
   | 'getPanelListeners'
   | 'getWebPanelContext'
+  | 'getWebPanelServiceContext'
   | 'getWebPanelDiff'
   | 'getWebPanelFileDiff'
   | 'getWebPanelDiffImage'

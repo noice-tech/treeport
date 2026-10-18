@@ -1,0 +1,57 @@
+{
+  "name": "@treeport/vscode",
+  "version": "0.1.0",
+  "description": "Treeport's VS Code editor panel, powered by a shared code-server service.",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "treeport-package"
+  ],
+  "treeport": {
+    "webPanels": [
+      {
+        "source": "./web-panels/editor",
+        "sandbox": false
+      }
+    ],
+    "services": {
+      "code-server": {
+        "scope": "instance",
+        "executable": "code-server",
+        "args": [
+          "--config",
+          "/dev/null",
+          "--auth",
+          "none",
+          "--socket",
+          "${socket}",
+          "--socket-mode",
+          "600",
+          "--session-socket",
+          "${socket}.session",
+          "--user-data-dir",
+          "${dataDir}/user",
+          "--extensions-dir",
+          "${dataDir}/extensions",
+          "--disable-proxy",
+          "--disable-telemetry",
+          "--disable-update-check",
+          "--disable-getting-started-override",
+          "--ignore-last-opened"
+        ],
+        "readinessPath": "/healthz",
+        "query": {
+          "folder": "${treePath}"
+        }
+      }
+    }
+  },
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit --pretty"
+  },
+  "devDependencies": {
+    "@treeport/panel-sdk": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

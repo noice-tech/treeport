@@ -185,7 +185,7 @@ describe('WebSocket contracts', () => {
               cwd: '.'
             },
             permissions: ['tree-files'],
-            sandbox: { allowSameOrigin: false },
+            sandbox: { enabled: true, allowSameOrigin: false },
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
@@ -221,7 +221,7 @@ describe('WebSocket contracts', () => {
             renderer: 'unknown',
             title: 'Review',
             launch: { input: null, cwd: null },
-            sandbox: { allowSameOrigin: false },
+            sandbox: { enabled: true, allowSameOrigin: false },
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }

@@ -256,6 +256,8 @@ export type WebPanelSource =
     }
 
 export interface WebPanelSandbox {
+  /** False only for panels explicitly declared as trusted and unsandboxed. */
+  enabled: boolean
   allowSameOrigin: boolean
 }
 

@@ -57,7 +57,10 @@ const webPanelSnapshotSchema = Schema.Struct({
     cwd: Schema.NullOr(Schema.String)
   }),
   permissions: Schema.mutable(Schema.Array(webPanelPermissionSchema)),
-  sandbox: Schema.Struct({ allowSameOrigin: Schema.Boolean }),
+  sandbox: Schema.Struct({
+    enabled: Schema.Boolean,
+    allowSameOrigin: Schema.Boolean
+  }),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })

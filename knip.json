@@ -32,6 +32,9 @@
     },
     "packages/web-panel-files": {
       "entry": ["web-panels/files/files.tsx"]
+    },
+    "packages/vscode": {
+      "entry": ["web-panels/editor/editor.ts"]
     }
   }
 }

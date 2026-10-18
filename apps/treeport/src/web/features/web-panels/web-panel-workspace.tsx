@@ -37,7 +37,8 @@ export function WebPanelWorkspace({
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
-  const panelRevision = `${panel.id}:${reloadRevision}`
+  // Sandbox changes only take effect on a new document, so remount on policy changes.
+  const panelRevision = `${panel.id}:${reloadRevision}:${panel.sandbox.enabled}:${panel.sandbox.allowSameOrigin}`
   const [loadedPanelRevision, setLoadedPanelRevision] = useState<string | null>(
     null
   )
@@ -169,6 +170,23 @@ export function WebPanelWorkspace({
             param: { panelId: panel.id }
           })
         ).then((result) => result.context)
+      } else if (
+        method === 'services.ensure' ||
+        method === 'services.status' ||
+        method === 'services.stop'
+      ) {
+        const action =
+          method === 'services.status'
+            ? 'status'
+            : method === 'services.stop'
+              ? 'stop'
+              : 'ensure'
+        request = parseResponse(
+          rpc.api.panels[':panelId'].services.$post({
+            param: { panelId: panel.id, action },
+            json: { name: message.name }
+          })
+        )
       } else if (method === 'diff') {
         request = parseResponse(
           rpc.api.panels[':panelId'].diff.$get({
@@ -333,7 +351,12 @@ export function WebPanelWorkspace({
           ref={frameRef}
           title={title}
           src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
-          sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads${panel.sandbox.allowSameOrigin ? ' allow-same-origin' : ''}`}
+          // Frame policy comes from the package, never from service operations.
+          sandbox={
+            !panel.sandbox.enabled
+              ? undefined
+              : `allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads${panel.sandbox.allowSameOrigin ? ' allow-same-origin' : ''}`
+          }
           allow="clipboard-read; clipboard-write; fullscreen"
           onFocus={onFocusSurface}
           tabIndex={loadedPanelRevision === panelRevision ? 0 : -1}

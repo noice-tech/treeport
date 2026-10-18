@@ -1,4 +1,5 @@
 import {
+  panelServiceSchema,
   pushConfigResponseSchema,
   presenceResponseSchema,
   apiErrorBodySchema,
@@ -37,6 +38,7 @@ import {
 } from '@treeport/shared'
 import type * as Schema from 'effect/Schema'
 import type {
+  PanelService,
   WebPushSubscription,
   PresenceUpdate,
   ViewerIdentity,
@@ -571,6 +573,21 @@ export const rpc = {
             query ? { query } : undefined,
             init
           ),
+        services: {
+          $post: ({
+            param,
+            json
+          }: RequestInput<
+            { panelId: string; action: 'ensure' | 'status' | 'stop' },
+            { name: string }
+          >) =>
+            endpoint<PanelService>(
+              'POST',
+              `/api/panels/${id(param.panelId)}/services/${param.action}`,
+              panelServiceSchema,
+              { json }
+            )
+        },
         context: {
           $get: ({ param }: RequestInput<{ panelId: string }>) =>
             endpoint<{ context: WebPanelContext }>(
