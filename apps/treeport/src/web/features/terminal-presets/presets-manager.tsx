@@ -1,89 +1,111 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { PlusIcon, TrashIcon } from '@heroicons/react/16/solid'
+import {
+  PlusIcon,
+  TrashIcon,
+  DocumentDuplicateIcon,
+  ArrowLeftIcon,
+  CheckIcon
+} from '@heroicons/react/16/solid'
+import { QuestionMarkCircleIcon } from '@heroicons/react/24/outline'
 import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
-import { Button } from '../../components/ui/button'
-import { Checkbox } from '../../components/ui/checkbox'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '../../components/ui/alert-dialog'
+import { Button, buttonVariants } from '../../components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from '../../components/ui/dialog'
+import { Empty, EmptyTitle } from '../../components/ui/empty'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from '../../components/ui/tooltip'
 import { cn } from '../../lib/utils'
 import { terminalPresetsQueryKey } from '../../project-metadata'
 import { notifyError } from '../notifications/error-notifications'
+
+type PresetValues = { name: string; command: string; closeOnSuccess: boolean }
+type Draft = {
+  editingId: string | null
+  loadedUpdatedAt: string | null
+  values: PresetValues
+  savedValues: PresetValues
+}
 
 export function TerminalPresetsManager({
   presets,
   loading,
   loadError,
-  onRetry
+  onRetry,
+  onClose,
+  restoreFocusTo
 }: {
   presets: TerminalPreset[]
   loading: boolean
   loadError: boolean
   onRetry: () => void
+  onClose: () => void
+  restoreFocusTo: HTMLElement | null
 }) {
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState({
-    // SAFETY: The component contract supplies the asserted browser value used here.
-    editingId: null as string | null,
-    // SAFETY: The component contract supplies the asserted browser value used here.
-    loadedUpdatedAt: null as string | null,
-    name: '',
-    command: '',
-    closeOnSuccess: false,
-    // SAFETY: The component contract supplies the asserted browser value used here.
-    commandError: null as string | null,
-    // SAFETY: The component contract supplies the asserted browser value used here.
-    notice: null as string | null
-  })
-  const {
-    editingId,
-    loadedUpdatedAt,
-    name,
-    command,
-    closeOnSuccess,
-    commandError,
-    notice
-  } = draft
+  const nameInput = useRef<HTMLInputElement>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [commandError, setCommandError] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<TerminalPreset | null>(null)
+  const selected = presets.find((preset) => preset.id === draft?.editingId)
+  const dirty =
+    draft !== null &&
+    (draft.values.name !== draft.savedValues.name ||
+      draft.values.command !== draft.savedValues.command ||
+      draft.values.closeOnSuccess !== draft.savedValues.closeOnSuccess)
+  const stale =
+    draft?.editingId != null && selected?.updatedAt !== draft.loadedUpdatedAt
 
-  const resetForm = () => {
+  const loadPreset = (preset: TerminalPreset | null) => {
+    const values = {
+      name: preset?.name ?? '',
+      command: preset
+        ? formatCommandLine([preset.executable, ...preset.args])
+        : '',
+      closeOnSuccess: preset?.closeOnSuccess ?? false
+    }
     setDraft({
-      editingId: null,
-      loadedUpdatedAt: null,
-      name: '',
-      command: '',
-      closeOnSuccess: false,
-      commandError: null,
-      notice: null
+      editingId: preset?.id ?? null,
+      loadedUpdatedAt: preset?.updatedAt ?? null,
+      values,
+      savedValues: values
     })
+    setCommandError(null)
   }
 
-  if (editingId) {
-    const preset = presets.find((candidate) => candidate.id === editingId)
-    if (!preset) {
-      setDraft({
-        editingId: null,
-        loadedUpdatedAt: null,
-        name: '',
-        command: '',
-        closeOnSuccess: false,
-        commandError: null,
-        notice: 'That preset was deleted. You can create a new one.'
-      })
-    } else if (preset.updatedAt !== loadedUpdatedAt) {
-      setDraft({
-        editingId: preset.id,
-        loadedUpdatedAt: preset.updatedAt,
-        name: preset.name,
-        command: formatCommandLine([preset.executable, ...preset.args]),
-        closeOnSuccess: preset.closeOnSuccess,
-        commandError: null,
-        notice: loadedUpdatedAt
-          ? 'This preset changed, so the latest saved values were loaded.'
-          : notice
-      })
+  const requestAction = (action: () => void) => {
+    if (busy) {
+      return
+    }
+
+    if (dirty) {
+      setPendingAction(() => action)
+    } else {
+      action()
     }
   }
 
@@ -120,15 +142,7 @@ export function TerminalPresetsManager({
               )
             : [...(current ?? []), preset]
       )
-      setDraft({
-        editingId: preset.id,
-        loadedUpdatedAt: preset.updatedAt,
-        name: preset.name,
-        command: formatCommandLine([preset.executable, ...preset.args]),
-        closeOnSuccess: preset.closeOnSuccess,
-        commandError: null,
-        notice: 'Preset saved.'
-      })
+      loadPreset(preset)
     },
     onError: (mutationError, { presetId, input }) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
@@ -159,17 +173,7 @@ export function TerminalPresetsManager({
         terminalPresetsQueryKey,
         (current) => current?.filter((preset) => preset.id !== deletedPreset.id)
       )
-      if (editingId === deletedPreset.id) {
-        setDraft({
-          editingId: null,
-          loadedUpdatedAt: null,
-          name: '',
-          command: '',
-          closeOnSuccess: false,
-          commandError: null,
-          notice: 'Preset deleted.'
-        })
-      }
+      setDraft(null)
     },
     onError: (mutationError, preset) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
@@ -188,244 +192,451 @@ export function TerminalPresetsManager({
   })
 
   const busy = savePreset.isPending || deletePreset.isPending
+
   return (
-    <>
-      <div className="grid min-h-0 gap-5 border-t border-white/8 pt-4 md:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.35fr)]">
-        <section
-          className="flex min-w-0 flex-col gap-2"
-          aria-labelledby="saved-presets-title"
-        >
-          <div className="flex min-h-8 items-center justify-between gap-3">
-            <h3
-              id="saved-presets-title"
-              className="text-sm font-medium text-zinc-200"
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          requestAction(onClose)
+        }
+      }}
+    >
+      <DialogContent
+        className="max-w-3xl shadow-none min-[701px]:[&>button:last-child]:top-5 min-[701px]:[&>button:last-child]:right-3.5"
+        restoreFocusTo={restoreFocusTo}
+      >
+        <DialogHeader>
+          <DialogTitle className="text-base sm:text-lg">
+            Terminal presets
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Manage commands available in every repository.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid min-h-0 gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+          <section
+            className={cn(
+              'flex min-w-0 flex-col md:pt-7',
+              draft && 'max-md:hidden'
+            )}
+            aria-label="Saved presets"
+          >
+            <div
+              className="flex max-h-72 flex-col gap-0.5 overflow-y-auto md:max-h-96"
+              aria-busy={loading}
             >
-              Presets
-            </h3>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={resetForm}
-            >
-              <PlusIcon /> New
-            </Button>
-          </div>
-          <div className="max-h-72 overflow-y-auto rounded-lg bg-white/3 p-1 ring-1 ring-white/8 [scrollbar-color:var(--color-zinc-700)_transparent]">
-            <div className="grid min-h-14 min-w-0 content-center gap-0.5 rounded-md px-3 py-2">
-              <span className="truncate text-sm font-medium text-zinc-100">
-                Shell
-              </span>
-              <span className="truncate text-xs text-zinc-500">
-                Built in · login shell
-              </span>
-            </div>
-            {presets.map((preset) => (
-              <div
-                key={preset.id}
-                className={cn(
-                  'group/preset flex min-h-14 items-center rounded-md px-1 transition-colors hover:bg-white/5',
-                  editingId === preset.id && 'bg-white/7 hover:bg-white/7'
-                )}
+              <div className="flex flex-col gap-0.5">
+                {presets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={cn(
+                      'flex min-w-0 flex-col rounded-md px-3 py-1 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring',
+                      draft?.editingId === preset.id && 'bg-sidebar-accent'
+                    )}
+                    aria-current={
+                      draft?.editingId === preset.id ? 'true' : undefined
+                    }
+                    disabled={busy}
+                    onClick={() => {
+                      if (draft?.editingId !== preset.id) {
+                        requestAction(() => loadPreset(preset))
+                      }
+                    }}
+                  >
+                    <p className="w-full truncate text-base font-medium sm:text-sm">
+                      {preset.name}
+                    </p>
+                    <p className="w-full truncate font-mono text-base text-sidebar-foreground/60 sm:text-sm">
+                      {formatCommandLine([preset.executable, ...preset.args])}
+                    </p>
+                  </button>
+                ))}
+              </div>
+              {loading ? (
+                <p
+                  className="p-3 text-base text-pretty text-sidebar-foreground/60 sm:text-sm"
+                  role="status"
+                >
+                  Loading…
+                </p>
+              ) : loadError ? (
+                <Empty>
+                  <EmptyTitle className="text-base sm:text-sm">
+                    Could not load presets
+                  </EmptyTitle>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={onRetry}
+                  >
+                    Retry
+                  </Button>
+                </Empty>
+              ) : (
+                presets.length === 0 && (
+                  <Empty>
+                    <EmptyTitle className="text-base sm:text-sm">
+                      No presets yet
+                    </EmptyTitle>
+                  </Empty>
+                )
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full justify-start max-[700px]:h-9"
+                disabled={busy || loading || loadError}
+                onClick={() =>
+                  requestAction(() => {
+                    loadPreset(null)
+                    nameInput.current?.focus()
+                  })
+                }
               >
-                <button
-                  type="button"
-                  className="grid min-w-0 flex-1 cursor-pointer gap-0.5 rounded-sm px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-cyan-400"
-                  aria-current={editingId === preset.id ? 'true' : undefined}
+                <PlusIcon data-icon="inline-start" /> New preset
+              </Button>
+            </div>
+          </section>
+          {draft ? (
+            <form
+              className="flex min-w-0 flex-col gap-5 md:border-l md:border-sidebar-border md:pl-6"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (busy || stale || !draft.values.name.trim()) {
+                  return
+                }
+
+                const parsed = parseCommandLine(draft.values.command)
+                if (parsed.argv === null || !parsed.argv[0]) {
+                  setCommandError(parsed.error ?? 'Enter an executable name.')
+                  return
+                }
+
+                const [executable, ...args] = parsed.argv
+                savePreset.mutate({
+                  presetId: draft.editingId,
+                  input: {
+                    name: draft.values.name.trim(),
+                    executable: executable!,
+                    args,
+                    closeOnSuccess: draft.values.closeOnSuccess
+                  },
+                  expectedUpdatedAt: draft.loadedUpdatedAt
+                })
+              }}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="self-start md:hidden"
+                disabled={busy}
+                onClick={() => requestAction(() => setDraft(null))}
+              >
+                <ArrowLeftIcon data-icon="inline-start" /> All presets
+              </Button>
+              {stale && (
+                <div
+                  role="alert"
+                  className="flex flex-col gap-2 text-base text-sidebar-foreground/60 sm:text-sm"
+                >
+                  <p className="text-pretty">
+                    {selected
+                      ? 'Changed elsewhere. Reload or duplicate to keep your edits.'
+                      : 'Deleted elsewhere. Duplicate to keep your edits.'}
+                  </p>
+                  {selected && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="self-start"
+                      onClick={() => requestAction(() => loadPreset(selected))}
+                    >
+                      Reload
+                    </Button>
+                  )}
+                </div>
+              )}
+              <FormField>
+                <Label htmlFor="preset-name">Name</Label>
+                <Input
+                  ref={nameInput}
+                  id="preset-name"
+                  name="preset-name"
+                  autoComplete="off"
+                  className="max-[700px]:h-9"
+                  value={draft.values.name}
+                  maxLength={TERMINAL_NAME_MAX_LENGTH}
                   disabled={busy}
-                  onClick={() => {
+                  required
+                  autoFocus
+                  placeholder="Dev server"
+                  onChange={(event) => {
                     setDraft({
-                      editingId: preset.id,
-                      loadedUpdatedAt: preset.updatedAt,
-                      name: preset.name,
-                      command: formatCommandLine([
-                        preset.executable,
-                        ...preset.args
-                      ]),
-                      closeOnSuccess: preset.closeOnSuccess,
-                      commandError: null,
-                      notice: null
+                      ...draft,
+                      values: { ...draft.values, name: event.target.value }
                     })
                   }}
-                >
-                  <span className="truncate text-sm font-medium text-zinc-100">
-                    {preset.name}
-                  </span>
-                  <span className="truncate text-xs text-zinc-500">
-                    {formatCommandLine([preset.executable, ...preset.args])}
-                  </span>
-                </button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="mr-1 size-11 shrink-0 hover:text-rose-300 min-[701px]:size-8 min-[701px]:opacity-0 min-[701px]:group-hover/preset:opacity-100 min-[701px]:focus-visible:opacity-100"
-                  aria-label={`Delete ${preset.name}`}
+                />
+              </FormField>
+              <FormField>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="preset-command">Command</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-sidebar-ring"
+                        aria-label="Shell syntax"
+                      >
+                        <QuestionMarkCircleIcon className="size-4 shrink-0 stroke-zinc-500" />
+                        <span className="touch-target" aria-hidden="true" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="top"
+                      align="start"
+                      className="max-w-xs text-sm font-normal"
+                    >
+                      <p className="text-pretty">
+                        For pipes or &amp;&amp;, use an explicit shell:
+                      </p>
+                      <p className="pt-1 font-mono">
+                        sh -c 'pnpm build &amp;&amp; pnpm start'
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Input
+                  id="preset-command"
+                  name="preset-command"
+                  className="font-mono max-[700px]:h-9"
+                  value={draft.values.command}
                   disabled={busy}
-                  onClick={() => {
-                    if (
-                      window.confirm(`Delete terminal preset “${preset.name}”?`)
-                    ) {
-                      deletePreset.mutate(preset)
-                    }
+                  required
+                  placeholder="pnpm dev"
+                  aria-invalid={commandError ? true : undefined}
+                  aria-describedby={
+                    commandError ? 'preset-command-error' : undefined
+                  }
+                  onChange={(event) => {
+                    setDraft({
+                      ...draft,
+                      values: { ...draft.values, command: event.target.value }
+                    })
+                    setCommandError(null)
                   }}
-                >
-                  <TrashIcon />
-                </Button>
+                />
+                {commandError && (
+                  <p
+                    id="preset-command-error"
+                    className="text-base text-pretty text-rose-300 sm:text-sm"
+                    role="alert"
+                  >
+                    {commandError}
+                  </p>
+                )}
+              </FormField>
+              <label
+                htmlFor="preset-close-on-success"
+                className="flex items-center gap-2.5 text-base sm:text-sm"
+              >
+                <span className="group inline-grid size-5 shrink-0 grid-cols-1 sm:size-4">
+                  <input
+                    type="checkbox"
+                    id="preset-close-on-success"
+                    name="preset-close-on-success"
+                    className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-white/20 bg-zinc-950 checked:border-cyan-400 checked:bg-cyan-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:opacity-50 forced-colors:appearance-auto"
+                    checked={draft.values.closeOnSuccess}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setDraft({
+                        ...draft,
+                        values: {
+                          ...draft.values,
+                          closeOnSuccess: event.target.checked
+                        }
+                      })
+                    }}
+                  />
+                  <CheckIcon
+                    aria-hidden="true"
+                    className="pointer-events-none col-start-1 row-start-1 size-4 place-self-center fill-zinc-950 group-not-has-checked:opacity-0"
+                  />
+                </span>
+                Close on success
+              </label>
+              <div className="flex items-center justify-between gap-3 border-t border-sidebar-border pt-4">
+                <div className="flex items-center gap-3">
+                  {draft.editingId && (
+                    <>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="max-[700px]:size-9"
+                            aria-label="Duplicate"
+                            disabled={busy}
+                            onClick={() => {
+                              setDraft({
+                                ...draft,
+                                editingId: null,
+                                loadedUpdatedAt: null,
+                                values: {
+                                  ...draft.values,
+                                  name: `${draft.values.name.slice(0, TERMINAL_NAME_MAX_LENGTH - 5)} copy`
+                                },
+                                savedValues: {
+                                  name: '',
+                                  command: '',
+                                  closeOnSuccess: false
+                                }
+                              })
+                              nameInput.current?.focus()
+                            }}
+                          >
+                            <DocumentDuplicateIcon data-icon="inline-start" />
+                            <span
+                              className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+                              aria-hidden="true"
+                            />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Duplicate</TooltipContent>
+                      </Tooltip>
+                      {selected && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="max-[700px]:size-9"
+                              aria-label="Delete"
+                              disabled={busy}
+                              onClick={() => setDeleteTarget(selected)}
+                            >
+                              <TrashIcon data-icon="inline-start" />
+                              <span
+                                className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+                                aria-hidden="true"
+                              />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {(dirty || !draft.editingId) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="max-[700px]:h-9"
+                      disabled={busy}
+                      onClick={() => requestAction(() => setDraft(null))}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    type="submit"
+                    className="max-[700px]:h-9"
+                    disabled={
+                      busy ||
+                      stale ||
+                      !draft.values.name.trim() ||
+                      !draft.values.command.trim() ||
+                      (!!draft.editingId && !dirty)
+                    }
+                  >
+                    {savePreset.isPending
+                      ? 'Saving…'
+                      : draft.editingId
+                        ? 'Save'
+                        : 'Create'}
+                  </Button>
+                </div>
               </div>
-            ))}
-            {loading && (
-              <p className="px-2.5 py-3 text-sm text-zinc-500" role="status">
-                Loading presets…
-              </p>
-            )}
-            {loadError && (
-              <div className="flex items-center justify-between gap-3 px-2.5 py-3">
-                <p className="text-sm text-zinc-400">Could not load presets.</p>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={onRetry}
-                >
-                  Retry
-                </Button>
-              </div>
-            )}
-          </div>
-        </section>
-        <form
-          className="flex min-w-0 flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            const parsed = parseCommandLine(command)
-            if (parsed.argv === null) {
-              setDraft((current) => ({
-                ...current,
-                commandError: parsed.error
-              }))
-              return
+            </form>
+          ) : (
+            <Empty className="min-h-64 max-md:hidden md:border-l md:border-sidebar-border">
+              <EmptyTitle className="text-base text-balance text-sidebar-foreground/60 sm:text-sm">
+                {presets.length ? 'Select a preset' : 'Create a preset'}
+              </EmptyTitle>
+            </Empty>
+          )}
+        </div>
+        <AlertDialog
+          open={pendingAction !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingAction(null)
             }
-
-            const [executable, ...args] = parsed.argv
-            savePreset.mutate({
-              presetId: editingId,
-              input: {
-                name,
-                executable: executable!,
-                args,
-                closeOnSuccess
-              },
-              expectedUpdatedAt: loadedUpdatedAt
-            })
           }}
         >
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium text-zinc-200">
-              Preset details
-            </h3>
-            {notice && (
-              <span className="text-xs text-zinc-400" role="status">
-                {notice}
-              </span>
-            )}
-          </div>
-          <FormField>
-            <Label htmlFor="preset-name">Name</Label>
-            <Input
-              id="preset-name"
-              name="preset-name"
-              value={name}
-              maxLength={TERMINAL_NAME_MAX_LENGTH}
-              disabled={busy}
-              autoFocus
-              required
-              onChange={(event) => {
-                setDraft((current) => ({
-                  ...current,
-                  name: event.target.value,
-                  notice: null
-                }))
-              }}
-              placeholder="Code review"
-            />
-          </FormField>
-          <FormField>
-            <Label htmlFor="preset-command">Command</Label>
-            <Input
-              id="preset-command"
-              name="preset-command"
-              value={command}
-              disabled={busy}
-              required
-              aria-invalid={commandError ? true : undefined}
-              aria-describedby={
-                commandError ? 'preset-command-error' : undefined
-              }
-              onChange={(event) => {
-                setDraft((current) => ({
-                  ...current,
-                  command: event.target.value,
-                  commandError: null,
-                  notice: null
-                }))
-              }}
-              placeholder="diff main --mode split"
-            />
-            {commandError && (
-              <p
-                id="preset-command-error"
-                className="text-xs text-rose-300"
-                role="alert"
-              >
-                {commandError}
-              </p>
-            )}
-          </FormField>
-          <FormField>
-            <div className="flex items-start gap-2.5">
-              <Checkbox
-                id="preset-close-on-success"
-                checked={closeOnSuccess}
-                disabled={busy}
-                onCheckedChange={(checked) => {
-                  setDraft((current) => ({
-                    ...current,
-                    closeOnSuccess: checked === true,
-                    notice: null
-                  }))
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your edits will be lost.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep editing</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  pendingAction?.()
+                  setPendingAction(null)
                 }}
-              />
-              <div className="grid gap-1">
-                <Label htmlFor="preset-close-on-success">
-                  Close on success
-                </Label>
-                <p className="form-note">
-                  Use for one-off commands such as opening an editor. Failed
-                  commands remain open for inspection.
-                </p>
-              </div>
-            </div>
-          </FormField>
-          <Button
-            type="submit"
-            className="self-end"
-            disabled={
-              busy ||
-              !name.trim() ||
-              !command.trim() ||
-              (editingId !== null && loadedUpdatedAt === null)
+              >
+                Discard changes
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setDeleteTarget(null)
             }
-          >
-            {savePreset.isPending
-              ? 'Saving…'
-              : editingId
-                ? 'Save changes'
-                : 'Create preset'}
-          </Button>
-        </form>
-      </div>
-    </>
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Delete “{deleteTarget?.name}”?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This cannot be undone. Running terminals are not affected.
+                {dirty && ' Your unsaved edits will also be discarded.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep preset</AlertDialogCancel>
+              <AlertDialogAction
+                className={buttonVariants({ variant: 'destructive' })}
+                onClick={() => {
+                  if (deleteTarget) {
+                    deletePreset.mutate(deleteTarget)
+                  }
+                }}
+              >
+                Delete preset
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </DialogContent>
+    </Dialog>
   )
 }

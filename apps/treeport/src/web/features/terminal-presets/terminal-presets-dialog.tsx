@@ -3,7 +3,6 @@ import type { TerminalPreset } from '@treeport/shared'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle
 } from '../../components/ui/dialog'
@@ -32,25 +31,37 @@ export function TerminalPresetsDialog({
   loadError: boolean
   onRetry: () => void
 }) {
+  if (!open) {
+    return null
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl" restoreFocusTo={restoreFocusTo}>
-        <DialogHeader>
-          <DialogTitle>Global terminal presets</DialogTitle>
-          <DialogDescription>
-            Create commands available in every repository. Arguments are passed
-            exactly as entered.
-          </DialogDescription>
-        </DialogHeader>
-        <Suspense fallback={<LoadingFallback />}>
-          <TerminalPresetsManager
-            presets={presets}
-            loading={loading}
-            loadError={loadError}
-            onRetry={onRetry}
-          />
-        </Suspense>
-      </DialogContent>
-    </Dialog>
+    <Suspense
+      fallback={
+        <Dialog open onOpenChange={onOpenChange}>
+          <DialogContent
+            className="min-[701px]:[&>button:last-child]:top-5 min-[701px]:[&>button:last-child]:right-3.5"
+            restoreFocusTo={restoreFocusTo}
+            aria-describedby={undefined}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-base sm:text-lg">
+                Terminal presets
+              </DialogTitle>
+            </DialogHeader>
+            <LoadingFallback />
+          </DialogContent>
+        </Dialog>
+      }
+    >
+      <TerminalPresetsManager
+        presets={presets}
+        loading={loading}
+        loadError={loadError}
+        onRetry={onRetry}
+        onClose={() => onOpenChange(false)}
+        restoreFocusTo={restoreFocusTo}
+      />
+    </Suspense>
   )
 }
