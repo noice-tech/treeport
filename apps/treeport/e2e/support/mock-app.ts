@@ -18,8 +18,7 @@ type MockApp = {
 } & Omit<Awaited<ReturnType<typeof createProjectMock>>, 'state'> &
   Awaited<ReturnType<typeof createUpdateMock>> &
   Awaited<ReturnType<typeof createWorktreeMock>> &
-  Awaited<ReturnType<typeof createTerminalMock>> &
-  Awaited<ReturnType<typeof createPanelMock>>
+  Awaited<ReturnType<typeof createTerminalMock>>
 
 export async function mockApp(
   page: Page,
@@ -67,7 +66,7 @@ export async function mockApp(
   await createPresetMock(page, options)
   const worktrees = await createWorktreeMock(page, state)
   const terminals = await createTerminalMock(page, state)
-  const panels = await createPanelMock(page, state, options)
+  await createPanelMock(page)
 
   await page.goto(options.initialPath ?? '/')
   return {
@@ -75,7 +74,6 @@ export async function mockApp(
     ...projects,
     ...updates,
     ...worktrees,
-    ...terminals,
-    ...panels
+    ...terminals
   }
 }

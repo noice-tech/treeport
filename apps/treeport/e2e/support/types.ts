@@ -9,5 +9,4 @@ export interface MockAppOptions {
   initialPath?: string
   treeContextFields?: TreeContextFieldDefinition[]
   applicationUpdate?: ApplicationUpdateStatus
-  realFilesPanel?: boolean
 }
