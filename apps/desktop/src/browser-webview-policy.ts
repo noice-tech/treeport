@@ -1077,7 +1077,7 @@ export function installBrowserWebviewPolicy(options: {
       // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
       const command: DesktopCommand | undefined = input.alt
         ? !input.shift && code === 'keyb'
-          ? 'toggle-side-panel'
+          ? 'toggle-apps-panel'
           : undefined
         : input.shift
           ? code === 'bracketleft'

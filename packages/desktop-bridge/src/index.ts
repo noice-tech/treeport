@@ -4,7 +4,7 @@ export type DesktopCommand =
   | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
   | 'new-app'
   | 'close-app'
-  | 'toggle-side-panel'
+  | 'toggle-apps-panel'
   | 'focus-location'
   | 'find-in-page'
   | 'reload'
