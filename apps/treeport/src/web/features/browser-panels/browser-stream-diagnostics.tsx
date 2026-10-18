@@ -56,7 +56,8 @@ export function BrowserStreamDiagnostics({
       connectionId: string
       inbound: RTCInboundRtpStreamStats
     } | null = null
-    let timings: Array<{ capture: number | null; receive: number | null }> = []
+    let lastCounter: number | null = null
+    let nextRead = 0
     let pending: { started: number; counter: number } | null = null
     let ambiguous = false
     const canvas = document.createElement('canvas')
@@ -117,7 +118,8 @@ export function BrowserStreamDiagnostics({
         return
       }
 
-      const value = counter()
+      // Do not read pixels here: it would delay the actual input WebSocket send.
+      const value = lastCounter
       pending = value === null ? null : { started, counter: (value + 1) & 255 }
       setStatus(
         value === null
@@ -125,77 +127,51 @@ export function BrowserStreamDiagnostics({
           : 'Waiting for the changed video frame…'
       )
     }
-    const frame: VideoFrameRequestCallback = (now, metadata) => {
+    const frame = (now: number) => {
       if (disposed) {
         return
       }
 
-      if (!document.hidden) {
-        timings.push({
-          capture:
-            metadata.captureTime !== undefined &&
-            metadata.expectedDisplayTime >= metadata.captureTime
-              ? metadata.expectedDisplayTime - metadata.captureTime
-              : null,
-          receive:
-            metadata.receiveTime !== undefined &&
-            metadata.expectedDisplayTime >= metadata.receiveTime
-              ? metadata.expectedDisplayTime - metadata.receiveTime
-              : null
-        })
-        if (timings.length > 240) {
-          timings.shift()
-        }
-
-        if (pending) {
-          if (now - pending.started > 5_000) {
-            pending = null
+      // Sparse generated tracks can have expectedDisplayTime far in the future.
+      // Observe the actual video image instead, without pairing it with unrelated
+      // frame metadata. Sampling is opt-in and runs outside the input handler.
+      if (!document.hidden && !ambiguous && (pending || now >= nextRead)) {
+        const value = counter()
+        nextRead = now + 250
+        if (!pending) {
+          lastCounter = value
+        } else if (value === pending.counter) {
+          const elapsed = performance.now() - pending.started
+          pending = null
+          lastCounter = value
+          if (elapsed >= 0 && elapsed <= 5_000) {
+            setClicks((values) => [
+              ...values.slice(-59),
+              {
+                totalMs: elapsed,
+                inputToCaptureMs: null,
+                captureToReceiveMs: null,
+                receiveToDisplayMs: null
+              }
+            ])
+            setStatus('Matched video frame. Click again for another sample.')
+          } else {
             ambiguous = true
             setStatus(
               'Probe timed out. Stop and restart test-click measurement.'
             )
-          } else if (counter() === pending.counter) {
-            const elapsed = metadata.expectedDisplayTime - pending.started
-            const inputToCaptureMs =
-              metadata.captureTime !== undefined &&
-              metadata.captureTime >= pending.started
-                ? metadata.captureTime - pending.started
-                : null
-            const captureToReceiveMs =
-              metadata.captureTime !== undefined &&
-              metadata.receiveTime !== undefined &&
-              metadata.receiveTime >= metadata.captureTime
-                ? metadata.receiveTime - metadata.captureTime
-                : null
-            const receiveToDisplayMs =
-              metadata.receiveTime !== undefined &&
-              metadata.expectedDisplayTime >= metadata.receiveTime
-                ? metadata.expectedDisplayTime - metadata.receiveTime
-                : null
-            pending = null
-            if (elapsed >= 0 && elapsed <= 5_000) {
-              setClicks((values) => [
-                ...values.slice(-59),
-                {
-                  totalMs: elapsed,
-                  inputToCaptureMs,
-                  captureToReceiveMs,
-                  receiveToDisplayMs
-                }
-              ])
-              setStatus('Matched video frame. Click again for another sample.')
-            }
           }
         }
       }
 
-      frameId = video.requestVideoFrameCallback(frame)
+      frameId = requestAnimationFrame(frame)
     }
     const reset = () => {
       previous = null
       pending = null
       ambiguous = false
-      timings = []
+      lastCounter = null
+      nextRead = 0
       setSample(null)
       setClicks([])
       history.current = []
@@ -267,12 +243,6 @@ export function BrowserStreamDiagnostics({
           )
           const pair: RTCIceCandidatePairStats | undefined =
             snapshot.report.get(transport?.selectedCandidatePairId ?? '')
-          const capture = timings.flatMap((value) =>
-            value.capture === null ? [] : [value.capture]
-          )
-          const receive = timings.flatMap((value) =>
-            value.receive === null ? [] : [value.receive]
-          )
           const next: StreamSample = {
             time: new Date().toISOString(),
             codec: codec?.mimeType ?? null,
@@ -308,18 +278,13 @@ export function BrowserStreamDiagnostics({
               old?.totalDecodeTime,
               frames
             ),
-            captureToDisplayMs: capture.length
-              ? capture.reduce((sum, value) => sum + value, 0) / capture.length
-              : null,
-            receiveToDisplayMs: receive.length
-              ? receive.reduce((sum, value) => sum + value, 0) / receive.length
-              : null,
+            captureToDisplayMs: null,
+            receiveToDisplayMs: null,
             packetsLost: delta(current.packetsLost, old?.packetsLost),
             framesDropped: delta(current.framesDropped, old?.framesDropped),
             freezes: delta(current.freezeCount, old?.freezeCount)
           }
           previous = { connectionId: snapshot.connectionId, inbound: current }
-          timings = []
           history.current = [...history.current.slice(-59), next]
           setSample(next)
         }
@@ -333,9 +298,8 @@ export function BrowserStreamDiagnostics({
     // eslint-disable-next-line react-you-might-not-need-an-effect/no-adjust-state-on-prop-change, react-you-might-not-need-an-effect/no-external-store-subscription -- This effect owns asynchronous browser instrumentation, not a React external store.
     reset()
     void poll()
-    // Optional browser capability: statistics still work without frame callbacks.
-    if (video.requestVideoFrameCallback) {
-      frameId = video.requestVideoFrameCallback(frame)
+    if (probe) {
+      frameId = requestAnimationFrame(frame)
     }
 
     video.addEventListener('pointerdown', input, true)
@@ -348,7 +312,7 @@ export function BrowserStreamDiagnostics({
       }
 
       if (frameId !== null) {
-        video.cancelVideoFrameCallback(frameId)
+        cancelAnimationFrame(frameId)
       }
 
       video.removeEventListener('pointerdown', input, true)
@@ -364,8 +328,6 @@ export function BrowserStreamDiagnostics({
     ['Receiver buffer', sample?.bufferMs, 'ms'],
     ['Buffer target', sample?.bufferTargetMs, 'ms'],
     ['Decode', sample?.decodeMs, 'ms'],
-    ['Receive → display', sample?.receiveToDisplayMs, 'ms'],
-    ['Capture → display*', sample?.captureToDisplayMs, 'ms'],
     ['Decoded rate', sample?.fps, 'fps'],
     ['Video payload', sample?.mbps, 'Mbps']
   ] as const
@@ -390,9 +352,8 @@ export function BrowserStreamDiagnostics({
         ))}
       </dl>
       <p className="text-sidebar-foreground/70">
-        One-second samples; idle/unsupported timings show —. Timing stages
-        overlap: do not add them. *Capture time is estimated from RTP clock
-        synchronization, not input latency.
+        One-second samples. Buffering and decoding intervals overlap and should
+        not be added.
       </p>
       <Button
         type="button"
@@ -409,7 +370,8 @@ export function BrowserStreamDiagnostics({
       {probe ? (
         <>
           <p>
-            On the latency test page, click once per second. Input → video:{' '}
+            On the latency test page, use one controlling viewer and click once
+            per second. Input → video:{' '}
             <strong>
               {clicks.length ? `${clicks.at(-1)!.totalMs.toFixed(0)} ms` : '—'}
             </strong>
@@ -426,9 +388,9 @@ export function BrowserStreamDiagnostics({
             ms
           </p>
           <p className="text-sidebar-foreground/70">
-            Viewer pointer event → matching remote frame’s expected
-            presentation. Includes the normal input path; excludes physical
-            display scanout. No cross-device clock subtraction.
+            Viewer pointer event to first observed changed video pixels.
+            Includes sampling and scheduling delay, not physical display
+            scanout. No cross-device clock subtraction.
           </p>
         </>
       ) : null}
@@ -445,8 +407,8 @@ export function BrowserStreamDiagnostics({
                   inputToVideoMs: clicks.map((value) => value.totalMs),
                   matchedFrameTimings: clicks,
                   inputTiming:
-                    'viewer-pointerdown-to-matching-frame-expected-display',
-                  captureTiming: 'estimated-rtp-clock-synchronization'
+                    'viewer-pointerdown-to-first-observed-video-pixels',
+                  captureTiming: 'unavailable'
                 },
                 null,
                 2
