@@ -10,7 +10,8 @@
   "treeport": {
     "webPanels": [
       {
-        "source": "./web-panels/editor",
+        "source": "./web-panels/vscode",
+        "title": "VSCode",
         "sandbox": false
       }
     ],
