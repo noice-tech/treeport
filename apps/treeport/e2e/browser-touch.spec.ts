@@ -23,7 +23,7 @@ declare global {
 
 test.use({ hasTouch: true, viewport: { width: 400, height: 600 } })
 
-test('remote canvas forwards native touch, trackpad pinch and cancellation', async ({
+test('remote video forwards native touch, trackpad pinch and cancellation', async ({
   page
 }) => {
   const remote = await page.context().newPage()
@@ -91,10 +91,10 @@ test('remote canvas forwards native touch, trackpad pinch and cancellation', asy
     })
   )
   await page.goto('/touch-check')
-  const canvas = page.locator('canvas')
-  await expect(canvas).toBeVisible()
-  await expect(canvas).toHaveCSS('touch-action', 'none')
-  const bounds = (await canvas.boundingBox())!
+  const video = page.locator('video')
+  await expect(video).toBeVisible()
+  await expect(video).toHaveCSS('touch-action', 'none')
+  const bounds = (await video.boundingBox())!
   const x = bounds.x + bounds.width / 2
   const y = bounds.y + bounds.height / 2
   const messages = () =>
@@ -220,7 +220,7 @@ test('remote canvas forwards native touch, trackpad pinch and cancellation', asy
     contacts.filter((event) => event.type === 'touchmove').at(-1)?.ids
   ).toEqual([secondId])
 
-  // Native pinch zoom affects the remote page, not the workspace canvas.
+  // Native pinch zoom affects the remote page, not the workspace viewport.
   await remote.evaluate(() => {
     document.body.style.touchAction = 'auto'
   })
@@ -255,7 +255,7 @@ test('remote canvas forwards native touch, trackpad pinch and cancellation', asy
     { x, y, id: 1 },
     { x: x + 50, y, id: 2 }
   ])
-  await canvas.evaluate((element) => element.blur())
+  await video.evaluate((element) => element.blur())
   await touch('touchEnd', [])
   expect((await messages()).at(-1)).toEqual({
     type: 'touch',
@@ -338,7 +338,8 @@ test('remote canvas forwards native touch, trackpad pinch and cancellation', asy
   await page.mouse.move(x, y)
   await clear()
   await page.mouse.down()
-  await page.mouse.move(x + 20, y + 20)
+  // Fractional viewer coordinates must map consistently for moves and buttons.
+  await page.mouse.move(x + 20.25, y + 20.75)
   await page.mouse.up()
   expect(
     (await messages()).map((message) => [
@@ -350,4 +351,11 @@ test('remote canvas forwards native touch, trackpad pinch and cancellation', asy
     ['pointer', 'move'],
     ['pointer', 'up']
   ])
+  const pointers = (await messages()).filter(
+    (message) => message.type === 'pointer'
+  )
+  expect(pointers[1]).toMatchObject({
+    x: pointers[2]!.x,
+    y: pointers[2]!.y
+  })
 })

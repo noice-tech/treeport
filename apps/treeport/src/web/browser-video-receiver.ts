@@ -3,6 +3,7 @@ import {
   type BrowserClientMessage,
   type BrowserServerMessage
 } from '@treeport/shared'
+import { presentBrowserVideo } from './browser-video-presentation'
 
 export class BrowserVideoReceiver {
   private peer: RTCPeerConnection | null = null
@@ -10,6 +11,7 @@ export class BrowserVideoReceiver {
   private visible = false
   private available = false
   private disposed = false
+  private stopPresentation: (() => void) | null = null
   private attempts = 0
   private timer: ReturnType<typeof setTimeout> | null = null
 
@@ -128,12 +130,16 @@ export class BrowserVideoReceiver {
         return
       }
 
-      this.video.srcObject = new MediaStream([track])
-      void this.video.play().catch((cause) => {
-        if (this.peer === peer) {
-          this.retry(cause instanceof Error ? cause.message : String(cause))
+      this.stopPresentation?.()
+      this.stopPresentation = presentBrowserVideo(
+        this.video,
+        track,
+        (cause) => {
+          if (this.peer === peer) {
+            this.retry(cause instanceof Error ? cause.message : String(cause))
+          }
         }
-      })
+      )
     }
     peer.onconnectionstatechange = () => {
       if (this.peer !== peer) {
@@ -186,6 +192,8 @@ export class BrowserVideoReceiver {
     const peer = this.peer
     this.peer = null
     this.requestId = null
+    this.stopPresentation?.()
+    this.stopPresentation = null
     peer?.close()
     this.video.srcObject = null
   }

@@ -123,8 +123,11 @@ it('bounds connection retries and closes media when the signaling session is los
   vi.useFakeTimers()
   vi.stubGlobal('RTCPeerConnection', FakePeer)
   vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => null })
-  // SAFETY: No track arrives in this test; only srcObject is accessed.
-  const video = Object.assign({} as HTMLVideoElement, { srcObject: null })
+  // SAFETY: No track is delivered in this signaling-lifecycle test.
+  const video = Object.assign({} as HTMLVideoElement, {
+    srcObject: null,
+    play: vi.fn(async () => undefined)
+  })
   const failed = vi.fn()
   const receiver = new BrowserVideoReceiver(video, vi.fn(), failed)
   receiver.setVisible(true)

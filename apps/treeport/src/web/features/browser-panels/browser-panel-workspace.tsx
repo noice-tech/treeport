@@ -2128,34 +2128,37 @@ export function BrowserPanelWorkspace({
                     aria-label="Browser viewport. Streamed page content is not available to assistive technology."
                     onFocus={onFocusSurface}
                     onPointerMove={(event) => {
-                      if (contextRequestRef.current || contextRef.current) {
-                        return
-                      }
-
-                      if (event.pointerType === 'touch') {
-                        if (!touchesRef.current.has(event.pointerId)) {
-                          return
-                        }
-
-                        touchesRef.current.set(event.pointerId, {
-                          id: event.pointerId,
-                          ...point(event)
-                        })
-                        send({
-                          type: 'touch',
-                          phase: 'move',
-                          points: [...touchesRef.current.values()]
-                        })
-                        return
-                      }
-
                       if (
-                        !stateRef.current?.controlled &&
-                        !pointerActiveRef.current
+                        contextRequestRef.current ||
+                        contextRef.current ||
+                        event.pointerType !== 'touch' ||
+                        !touchesRef.current.has(event.pointerId)
                       ) {
                         return
                       }
 
+                      touchesRef.current.set(event.pointerId, {
+                        id: event.pointerId,
+                        ...point(event)
+                      })
+                      send({
+                        type: 'touch',
+                        phase: 'move',
+                        points: [...touchesRef.current.values()]
+                      })
+                    }}
+                    onMouseMove={(event) => {
+                      if (
+                        contextRequestRef.current ||
+                        contextRef.current ||
+                        (!stateRef.current?.controlled &&
+                          !pointerActiveRef.current)
+                      ) {
+                        return
+                      }
+
+                      // Match mouse down/up precision. Pointer events can retain
+                      // fractions that mouse events discard, causing a second move.
                       send({ type: 'pointer', phase: 'move', ...point(event) })
                     }}
                     onPointerLeave={(event) => {
