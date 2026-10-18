@@ -638,6 +638,15 @@ importers:
         specifier: 'catalog:'
         version: 4.3.3
 
+  packages/vscode:
+    devDependencies:
+      '@treeport/panel-sdk':
+        specifier: workspace:*
+        version: link:../panel-sdk
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/web-panel-files:
     dependencies:
       '@pierre/diffs':

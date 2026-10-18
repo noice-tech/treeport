@@ -31,7 +31,10 @@
       "entry": ["web-panels/review/review.tsx"]
     },
     "packages/web-panel-files": {
-      "entry": ["web-panels/files/files.tsx", "web-panels/editor/editor.ts"]
+      "entry": ["web-panels/files/files.tsx"]
+    },
+    "packages/vscode": {
+      "entry": ["web-panels/editor/editor.ts"]
     }
   }
 }
