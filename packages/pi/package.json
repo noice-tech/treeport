@@ -1,11 +1,12 @@
 {
   "name": "@treeport/pi",
   "version": "0.13.0",
-  "description": "Treeport context and CLI guidance for Pi.",
+  "description": "On-demand Treeport tools for Pi and codemode.",
   "type": "module",
   "files": [
     "extensions/treeport/index.ts",
     "extensions/treeport/treeport-cli.ts",
+    "extensions/treeport/tools.ts",
     "skills/treeport/SKILL.md",
     "LICENSE",
     "README.md"
@@ -52,7 +53,7 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.4",
-    "typebox": "^1.3.7"
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "typebox": "^1.3.27"
   }
 }
