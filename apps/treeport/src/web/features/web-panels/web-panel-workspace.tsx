@@ -360,8 +360,10 @@ export function WebPanelWorkspace({
           allow="clipboard-read; clipboard-write; fullscreen"
           onFocus={onFocusSurface}
           tabIndex={loadedPanelRevision === panelRevision ? 0 : -1}
+          // A dark host scheme with a default-scheme document makes Chromium
+          // paint an opaque white canvas instead of this loading background.
           className={cn(
-            'h-full w-full border-0 bg-zinc-950',
+            'h-full w-full border-0 bg-zinc-950 [color-scheme:normal]',
             loadedPanelRevision === panelRevision ? 'opacity-100' : 'opacity-0'
           )}
           onLoad={() => {
