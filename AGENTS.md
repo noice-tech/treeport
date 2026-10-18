@@ -40,13 +40,6 @@ Treeport development terminals are usually managed by an outer Treeport instance
 - Do not add backward-compatibility paths for internal changes. For user-facing contracts, preserve compatibility when required; otherwise prefer a deliberate migration or clean change over maintaining legacy behavior.
 - Do not add new tests unless the user explicitly requests them. Update existing tests only when needed to reflect the change. Use existing checks or manual verification to validate changes.
 
-## Enforced browser boundaries
-
-| Rule                                                                                                                             | Enforcement                                                                                                        |
-| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Allocate hosted browser pages through `PlaywrightBrowserHost`; helper tabs never set context-wide dimensions.                    | `treeport/browser-boundaries` in `pnpm lint`; regression fixtures in `pnpm test:unit`.                             |
-| Route remote browser visibility and disposal through `connectRemoteBrowser`; route host handshakes through `BrowserVideoViewer`. | Private viewer state, `treeport/browser-boundaries` in `pnpm lint`, and lifecycle regressions in `pnpm test:unit`. |
-
 ## Validation
 
 - Use the smallest relevant check while developing.
