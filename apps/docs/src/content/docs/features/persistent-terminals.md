@@ -1,5 +1,5 @@
 ---
-title: Persistent terminals
+title: Terminals
 description: Keep terminal programs running when you disconnect.
 ---
 

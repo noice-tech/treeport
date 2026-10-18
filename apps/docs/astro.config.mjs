@@ -6,7 +6,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Treeport',
-      description: 'Use persistent terminals in Git worktrees.',
+      description:
+        'A workspace for coding agents, browsers, custom apps, and services.',
       favicon: '/favicon.svg',
       disable404Route: true,
       head: [
@@ -21,7 +22,7 @@ export default defineConfig({
           tag: 'meta',
           attrs: {
             property: 'og:image:alt',
-            content: 'Treeport: Persistent terminals for Git worktrees.'
+            content: 'Treeport: A place for your agents to work.'
           }
         },
         {
@@ -35,7 +36,7 @@ export default defineConfig({
           tag: 'meta',
           attrs: {
             name: 'twitter:image:alt',
-            content: 'Treeport: Persistent terminals for Git worktrees.'
+            content: 'Treeport: A place for your agents to work.'
           }
         }
       ],
@@ -56,7 +57,7 @@ export default defineConfig({
           items: [
             { label: 'Install Treeport', slug: 'getting-started/installation' },
             {
-              label: 'Projects, trees, and terminals',
+              label: 'Projects, trees, and apps',
               slug: 'concepts/projects-worktrees-terminals'
             }
           ]
@@ -66,23 +67,23 @@ export default defineConfig({
           items: [
             { label: 'Coding agents', slug: 'building-apps/coding-agents' },
             {
-              label: 'Persistent terminals',
+              label: 'Terminals',
               slug: 'features/persistent-terminals'
             },
-            { label: 'Terminal presets', slug: 'features/terminal-presets' },
+            {
+              label: 'Browser',
+              slug: 'features/browser-app'
+            },
+            {
+              label: 'Web apps',
+              slug: 'features/web-apps'
+            },
             { label: 'Packages', slug: 'features/packages' },
+            { label: 'Terminal presets', slug: 'features/terminal-presets' },
+            { label: 'Remote access', slug: 'features/remote-access' },
             {
               label: 'Service supervision',
               slug: 'features/service-supervision'
-            },
-            { label: 'Remote access', slug: 'features/remote-access' },
-            {
-              label: 'Web apps (experimental)',
-              slug: 'features/web-apps'
-            },
-            {
-              label: 'Browser (experimental)',
-              slug: 'features/browser-app'
             },
             {
               label: 'Tree setup and cleanup',

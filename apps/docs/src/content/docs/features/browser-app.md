@@ -1,5 +1,5 @@
 ---
-title: Browser (experimental)
+title: Browser
 description: Open web pages beside your terminals.
 ---
 
