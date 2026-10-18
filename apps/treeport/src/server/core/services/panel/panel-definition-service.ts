@@ -82,7 +82,7 @@ export class PanelDefinitionService {
           source: { type: 'project' },
           permissions: [],
           permissionsGranted: true,
-          sandbox: { allowSameOrigin: false },
+          sandbox: { enabled: true, allowSameOrigin: false },
           root,
           entry,
           packageRoot: worktree.path,

@@ -32,7 +32,7 @@ export async function createPanelMock(
           },
           permissions: ['tree-files'],
           permissionsGranted: false,
-          sandbox: { allowSameOrigin: false }
+          sandbox: { enabled: true, allowSameOrigin: false }
         }
       ]
     : []

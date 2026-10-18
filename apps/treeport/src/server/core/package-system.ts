@@ -125,6 +125,7 @@ interface ResourceCandidates {
 interface WebPanelManifestEntry {
   source: string
   permissions: WebPanelPermission[]
+  sandbox: boolean
 }
 
 interface PackageManifest {
@@ -139,6 +140,7 @@ const webPanelManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
     source: z.string(),
+    sandbox: z.boolean().optional(),
     permissions: z
       .array(
         z.custom<WebPanelPermission>((value) =>
@@ -945,12 +947,13 @@ export class PackageSystem {
           'webPanels',
           packageJsonPath
         )
-        return { source: parsedSource.data, permissions: [] }
+        return { source: parsedSource.data, permissions: [], sandbox: true }
       }
 
       const parsedDefinition = z
         .strictObject({
           source: z.string(),
+          sandbox: z.boolean().optional(),
           permissions: z
             .array(
               z.custom<WebPanelPermission>((value) =>
@@ -960,7 +963,7 @@ export class PackageSystem {
             .optional()
         })
         .parse(parsed.data)
-      const { source, permissions = [] } = parsedDefinition
+      const { source, permissions = [], sandbox = true } = parsedDefinition
       if (source.startsWith('!')) {
         throw new Error(
           `${packageJsonPath} contains an invalid web panel definition`
@@ -975,7 +978,7 @@ export class PackageSystem {
         )
       }
 
-      return { source, permissions: [...uniquePermissions] }
+      return { source, permissions: [...uniquePermissions], sandbox }
     })
   }
 
@@ -1251,19 +1254,18 @@ export class PackageSystem {
         const resourceId = encodeURIComponent(
           path.posix.basename(candidate.relativePath)
         )
-        const permissions = [
-          ...new Set(
-            (manifest?.webPanels ?? [])
-              .filter((entry) =>
-                this.manifestAllows(
-                  candidate.relativePath,
-                  [entry.source],
-                  'web-panel'
-                )
-              )
-              .flatMap((entry) => entry.permissions)
+        const declarations = (manifest?.webPanels ?? []).filter((entry) =>
+          this.manifestAllows(
+            candidate.relativePath,
+            [entry.source],
+            'web-panel'
           )
+        )
+        const permissions = [
+          ...new Set(declarations.flatMap((entry) => entry.permissions))
         ]
+        // Only an explicit package declaration may disable the frame sandbox.
+        const sandboxEnabled = declarations.every((entry) => entry.sandbox)
         const resolved: ResolvedWebPanel = {
           definition: {
             id: `package:${parsed.packageId}:web-panel:${resourceId}`,
@@ -1272,7 +1274,11 @@ export class PackageSystem {
             source: metadata,
             permissions,
             permissionsGranted: permissions.length === 0,
-            sandbox: { allowSameOrigin: permissions.includes('same-origin') }
+            sandbox: {
+              enabled: sandboxEnabled,
+              allowSameOrigin:
+                !sandboxEnabled || permissions.includes('same-origin')
+            }
           },
           root: candidate.root,
           entry: 'index.html',

@@ -31,7 +31,7 @@
       "entry": ["web-panels/review/review.tsx"]
     },
     "packages/web-panel-files": {
-      "entry": ["web-panels/files/files.tsx"]
+      "entry": ["web-panels/files/files.tsx", "web-panels/editor/editor.ts"]
     }
   }
 }

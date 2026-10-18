@@ -78,6 +78,7 @@ const webPanelLaunchSchema = Schema.Struct({
   cwd: nullableStringSchema
 })
 const webPanelSandboxSchema = Schema.Struct({
+  enabled: Schema.Boolean,
   allowSameOrigin: Schema.Boolean
 })
 export const webPanelSchema = Schema.Struct({

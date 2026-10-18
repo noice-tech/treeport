@@ -304,7 +304,7 @@ function fixture(webDist = '/missing') {
         source: { type: 'project' },
         permissions: [],
         permissionsGranted: true,
-        sandbox: { allowSameOrigin: false }
+        sandbox: { enabled: true, allowSameOrigin: false }
       }
     ]),
     openBrowserPanel: vi.fn(async (worktreeId: string, url?: string) => ({
@@ -360,7 +360,7 @@ function fixture(webDist = '/missing') {
       title: 'Review',
       launch: { input: null, cwd: null },
       permissions: [],
-      sandbox: { allowSameOrigin: false },
+      sandbox: { enabled: true, allowSameOrigin: false },
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })),
@@ -376,7 +376,7 @@ function fixture(webDist = '/missing') {
           cwd: 'packages/preview'
         },
         permissions: [],
-        sandbox: { allowSameOrigin: false },
+        sandbox: { enabled: true, allowSameOrigin: false },
         createdAt: '2026-01-01',
         updatedAt: '2026-01-02'
       },
@@ -394,7 +394,7 @@ function fixture(webDist = '/missing') {
         title: 'Review',
         launch: { input: null, cwd: null },
         permissions: [],
-        sandbox: { allowSameOrigin: false },
+        sandbox: { enabled: true, allowSameOrigin: false },
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01'
       },

@@ -35,6 +35,7 @@ import { makeRpcHttpApp } from './rpc-server'
 import { acquireTerminalMetadataManager } from './terminal-metadata'
 import { connectOrStartTerminalHost } from './terminal-host-client'
 import { WebPushManager } from './web-push'
+import { PanelServices } from './panel-services'
 
 const updateStartupTransactionSchema = z.looseObject({
   schemaVersion: z.literal(1),
@@ -160,6 +161,17 @@ export async function main(
       )
     )
 
+    const panelServices = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(() => new PanelServices(config.dataDir)),
+          (manager) =>
+            Effect.tryPromise(() => manager.dispose()).pipe(Effect.orDie)
+        ),
+        resourceScope
+      )
+    )
+
     const presence = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
@@ -249,6 +261,7 @@ export async function main(
       applicationUpdate,
       terminalMetadata,
       browserSessions,
+      panelServices,
       presence,
       push,
       rpcHttpApp
@@ -278,6 +291,10 @@ export async function main(
                 })
               }
 
+              if (panelServices.handleRequest(request, response)) {
+                return
+              }
+
               service.handleWebPanelDevelopmentRequest(
                 request,
                 response,
@@ -295,14 +312,20 @@ export async function main(
             })
           ),
           (httpServer) =>
-            Effect.async<void>((resume) => {
-              if (!httpServer.listening) {
-                resume(Effect.void)
-                return
-              }
+            // Upgraded service connections must close before server.close waits.
+            Effect.tryPromise(() => panelServices.dispose()).pipe(
+              Effect.orDie,
+              Effect.andThen(
+                Effect.async<void>((resume) => {
+                  if (!httpServer.listening) {
+                    resume(Effect.void)
+                    return
+                  }
 
-              httpServer.close(() => resume(Effect.void))
-            })
+                  httpServer.close(() => resume(Effect.void))
+                })
+              )
+            )
         ),
         resourceScope
       )
@@ -318,6 +341,10 @@ export async function main(
 
       const security = authorizeRequest(request, { socketUpgrade: true })
       if (security.allowed) {
+        if (panelServices.handleRequest(request, null, socket, head)) {
+          return
+        }
+
         if (socketServer?.handleUpgrade(request, socket, head)) {
           return
         }

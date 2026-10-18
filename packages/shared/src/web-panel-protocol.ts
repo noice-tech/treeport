@@ -6,6 +6,21 @@ export const webPanelPermissionSchema = Schema.Literal(
   'tree-files'
 )
 
+export const panelServiceRequestSchema = Schema.Struct({
+  name: Schema.String.pipe(Schema.pattern(/^[a-z0-9][a-z0-9-]{0,63}$/))
+})
+
+export const panelServiceSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  status: Schema.Literal('stopped', 'starting', 'ready', 'failed'),
+  pid: Schema.NullOr(Schema.Int),
+  url: Schema.NullOr(Schema.String),
+  logs: Schema.String,
+  error: Schema.NullOr(Schema.String)
+})
+export type PanelService = typeof panelServiceSchema.Type
+
 const panelMessageSourceSchema = Schema.Literal('treeport-panel-v1')
 export const panelTitleMessageSchema = Schema.Struct({
   source: panelMessageSourceSchema,
@@ -41,6 +56,15 @@ export const gitDiffImageRequestSchema = Schema.Struct({
 })
 export const panelRequestMessageSchema = Schema.Union(
   Schema.Struct({ ...panelRequestFields, method: Schema.Literal('context') }),
+  Schema.Struct({
+    ...panelRequestFields,
+    method: Schema.Literal(
+      'services.ensure',
+      'services.status',
+      'services.stop'
+    ),
+    ...panelServiceRequestSchema.fields
+  }),
   Schema.Struct({
     ...panelRequestFields,
     method: Schema.Literal('diff'),

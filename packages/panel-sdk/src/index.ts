@@ -28,6 +28,8 @@ export interface WebPanel {
   launch: WebPanelLaunch
   permissions: WebPanelPermission[]
   sandbox: {
+    /** False only for panels explicitly declared as trusted and unsandboxed. */
+    enabled: boolean
     allowSameOrigin: boolean
   }
   /** ISO 8601 timestamp. */
@@ -222,11 +224,31 @@ export interface WebPanelShortcuts {
   onFind(handler: () => void): () => void
 }
 
+/** A package-declared backend shared by every panel in this Treeport instance. */
+export interface PanelService {
+  id: string
+  name: string
+  status: 'stopped' | 'starting' | 'ready' | 'failed'
+  pid: number | null
+  /** Treeport-proxied URL with this panel's tree context, when ready. */
+  url: string | null
+  logs: string
+  error: string | null
+}
+
 /** The tree-scoped API available to a Treeport web panel. */
 export interface TreeportPanelSdk {
   readonly version: 1
   /** Client-local controls for the current panel. */
   readonly panel: WebPanelControls
+  readonly services: {
+    /** Start or attach to a declared service and wait for readiness. Does not navigate or change the panel UI. */
+    ensure(name: string): Promise<PanelService>
+    /** Inspect state and bounded process output without starting the service. */
+    status(name: string): Promise<PanelService>
+    /** Stop the shared backend; affects every attached panel. */
+    stop(name: string): Promise<PanelService>
+  }
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
   /** Return the changed-file index and its Git-layer file groups. */
@@ -348,6 +370,9 @@ addEventListener(
 function call<Result>(
   method:
     | 'context'
+    | 'services.ensure'
+    | 'services.status'
+    | 'services.stop'
     | 'diff'
     | 'diff.file'
     | 'diff.image'
@@ -361,6 +386,7 @@ function call<Result>(
     | 'storage.delete',
   params?: {
     scope?: GitDiffRequest['scope']
+    name?: string
     key?: string
     value?: JsonValue
     path?: string
@@ -417,6 +443,11 @@ export const treeport: TreeportPanelSdk = Object.freeze({
         '*'
       )
     }
+  }),
+  services: Object.freeze({
+    ensure: (name: string) => call<PanelService>('services.ensure', { name }),
+    status: (name: string) => call<PanelService>('services.status', { name }),
+    stop: (name: string) => call<PanelService>('services.stop', { name })
   }),
   context: () => call<WebPanelContext>('context'),
   diff: (input?: GitDiffRequest) => call<GitDiff>('diff', { ...input }),

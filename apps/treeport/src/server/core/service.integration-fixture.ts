@@ -238,6 +238,9 @@ export function integrationService(
     getPanelListeners: run(
       application.panels.getPanelListeners.bind(application.panels)
     ),
+    getWebPanelServiceContext: run(
+      application.panels.getWebPanelServiceContext.bind(application.panels)
+    ),
     getWebPanelContext: run(
       application.panels.getWebPanelContext.bind(application.panels)
     ),

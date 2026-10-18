@@ -14,8 +14,43 @@
         "permissions": [
           "tree-files"
         ]
+      },
+      {
+        "source": "./web-panels/editor",
+        "sandbox": false
       }
-    ]
+    ],
+    "services": {
+      "code-server": {
+        "scope": "instance",
+        "executable": "code-server",
+        "args": [
+          "--config",
+          "/dev/null",
+          "--auth",
+          "none",
+          "--socket",
+          "${socket}",
+          "--socket-mode",
+          "600",
+          "--session-socket",
+          "${socket}.session",
+          "--user-data-dir",
+          "${dataDir}/user",
+          "--extensions-dir",
+          "${dataDir}/extensions",
+          "--disable-proxy",
+          "--disable-telemetry",
+          "--disable-update-check",
+          "--disable-getting-started-override",
+          "--ignore-last-opened"
+        ],
+        "readinessPath": "/healthz",
+        "query": {
+          "folder": "${treePath}"
+        }
+      }
+    }
   },
   "license": "MIT",
   "scripts": {

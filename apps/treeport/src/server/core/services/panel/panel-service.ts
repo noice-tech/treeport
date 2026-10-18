@@ -815,7 +815,8 @@ export class PanelService {
           updatedAt
         },
         definition.permissions,
-        true
+        true,
+        definition.sandbox.enabled
       )
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
@@ -952,6 +953,29 @@ export class PanelService {
     })
   }
 
+  getWebPanelServiceContext(
+    panelId: string
+  ): PanelEffect<{ packageRoot: string; treePath: string }> {
+    return Effect.gen(this, function* () {
+      const context = yield* this.getWebPanelContext(panelId)
+      const worktree = yield* this.requireAvailableWorktree(context.worktree.id)
+      const definition = (yield* this.effectiveWebPanelDefinitions(
+        worktree.id
+      )).find((candidate) => candidate.id === context.panel.definitionId)
+      if (!definition) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_DEFINITION_NOT_FOUND',
+            'The definition for this panel is unavailable',
+            404
+          )
+        )
+      }
+
+      return { packageRoot: definition.packageRoot, treePath: worktree.path }
+    })
+  }
+
   getWebPanelContext(panelId: string): PanelEffect<WebPanelContext> {
     const effectiveWebPanelDefinitions =
       this.effectiveWebPanelDefinitions.bind(this)
@@ -982,7 +1006,8 @@ export class PanelService {
       const panel = mapWebPanel(
         panelRow,
         definition?.permissions ?? [],
-        permissionsGranted
+        permissionsGranted,
+        definition?.sandbox.enabled ?? true
       )
       const worktree = yield* getWorktree(panel.worktreeId)
       const project = yield* getProject(worktree.projectId)
@@ -1421,7 +1446,8 @@ export class PanelService {
             definition?.permissions ?? [],
             definition
               ? yield* webPanelPermissionsGranted(row.worktreeId, definition)
-              : false
+              : false,
+            definition?.sandbox.enabled ?? true
           )
         })
       )
@@ -1444,7 +1470,8 @@ function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
 function mapWebPanel(
   row: typeof webPanels.$inferSelect,
   permissions: WebPanelPermission[] = [],
-  permissionsGranted = permissions.length === 0
+  permissionsGranted = permissions.length === 0,
+  sandboxEnabled = true
 ): WebPanel {
   const parsedInput = decodeUnknownOrNull(
     Schema.NullOr(webPanelInputSchema),
@@ -1466,7 +1493,10 @@ function mapWebPanel(
     },
     permissions,
     sandbox: {
-      allowSameOrigin: permissionsGranted && permissions.includes('same-origin')
+      enabled: sandboxEnabled,
+      allowSameOrigin:
+        !sandboxEnabled ||
+        (permissionsGranted && permissions.includes('same-origin'))
     },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt

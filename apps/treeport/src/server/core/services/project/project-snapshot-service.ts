@@ -427,7 +427,8 @@ export class ProjectSnapshotService {
                       return mapWebPanel(
                         panel,
                         definition?.permissions ?? [],
-                        definition?.permissionsGranted ?? false
+                        definition?.permissionsGranted ?? false,
+                        definition?.sandbox.enabled ?? true
                       )
                     })
                   ].sort(
@@ -496,7 +497,8 @@ function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
 function mapWebPanel(
   row: typeof webPanels.$inferSelect,
   permissions: WebPanelPermission[] = [],
-  permissionsGranted = permissions.length === 0
+  permissionsGranted = permissions.length === 0,
+  sandboxEnabled = true
 ): WebPanel {
   const parsedInput = decodeUnknownOrNull(
     Schema.NullOr(webPanelInputSchema),
@@ -515,7 +517,10 @@ function mapWebPanel(
     launch: { input: parsedInput, cwd: row.launchCwd },
     permissions,
     sandbox: {
-      allowSameOrigin: permissionsGranted && permissions.includes('same-origin')
+      enabled: sandboxEnabled,
+      allowSameOrigin:
+        !sandboxEnabled ||
+        (permissionsGranted && permissions.includes('same-origin'))
     },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt

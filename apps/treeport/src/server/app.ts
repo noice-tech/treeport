@@ -10,6 +10,8 @@ import * as HttpRouter from '@effect/platform/HttpRouter'
 import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import {
+  panelServiceSchema,
+  panelServiceRequestSchema,
   pushConfigResponseSchema,
   pushSubscriptionSchema,
   pushUnsubscribeSchema,
@@ -138,6 +140,7 @@ import type { BrowserSessionManager } from './browser-sessions'
 import { authenticatedViewers, isLoopbackAddress } from './request-security'
 import type { WorkspacePresenceManager } from './workspace-presence'
 import type { WebPushManager } from './web-push'
+import type { PanelServices } from './panel-services'
 import { networkTelemetry } from './network-telemetry'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
@@ -211,6 +214,7 @@ interface AppDependencies {
   terminalHost: TerminalSessionBackend
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata: TerminalMetadataManager
+  panelServices?: PanelServices
   browserSessions?: BrowserSessionManager
   presence: WorkspacePresenceManager
   push?: WebPushManager
@@ -382,6 +386,7 @@ export function createApp({
   applicationUpdate,
   terminalMetadata: metadata,
   browserSessions,
+  panelServices,
   presence,
   push,
   rpcHttpApp,
@@ -1477,6 +1482,33 @@ export function createApp({
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       }).pipe(Effect.withSpan('treeport.panel.remove.request'))
+    ),
+    ...(['ensure', 'status', 'stop'] as const).map((action) =>
+      route(
+        'POST',
+        `/api/panels/:panelId/services/${action}`,
+        Effect.gen(function* () {
+          const params = yield* routeParams
+          const body = yield* requestBody(panelServiceRequestSchema)
+          const context = yield* operation(() =>
+            service.panels.getWebPanelServiceContext(params.panelId!)
+          )
+          if (!panelServices) {
+            return yield* Effect.fail(
+              new DomainError(
+                'SERVICES_UNAVAILABLE',
+                'Panel services are unavailable',
+                503
+              )
+            )
+          }
+
+          return jsonContractResponse(
+            panelServiceSchema,
+            yield* operation(() => panelServices[action](context, body.name))
+          )
+        })
+      )
     ),
     route(
       'GET',
