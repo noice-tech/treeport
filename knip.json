@@ -27,7 +27,7 @@
       ],
       "ignoreBinaries": ["iconutil", "lipo", "plutil"]
     },
-    "packages/web-panel-review": {
+    "packages/review": {
       "entry": ["web-panels/review/review.tsx"]
     },
     "packages/vscode": {

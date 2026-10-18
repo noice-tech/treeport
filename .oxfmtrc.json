@@ -18,6 +18,6 @@
     ".roo/**",
     ".windsurf/**",
     "tools/oxlint/anti-slop/**",
-    "packages/web-panel-review/web-panels/review/**"
+    "packages/review/web-panels/review/**"
   ]
 }

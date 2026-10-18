@@ -592,6 +592,43 @@ importers:
         specifier: ^1.3.7
         version: 1.3.18
 
+  packages/review:
+    dependencies:
+      '@base-ui/react':
+        specifier: ^1.9.0
+        version: 1.9.0(@types/react@19.2.17)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@heroicons/react':
+        specifier: ^2.2.0
+        version: 2.2.0(react@19.3.0)
+      '@pierre/diffs':
+        specifier: 1.3.1
+        version: 1.3.1(@shikijs/themes@4.3.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@pierre/trees':
+        specifier: 1.0.0-beta.6
+        version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.3.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.3.1)
+      react:
+        specifier: 'catalog:'
+        version: 19.3.0
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.3.0(react@19.3.0)
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
+      '@treeport/panel-sdk':
+        specifier: workspace:*
+        version: link:../panel-sdk
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.17)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/session-keeper:
     devDependencies:
       '@types/node':
@@ -643,43 +680,6 @@ importers:
       '@treeport/panel-sdk':
         specifier: workspace:*
         version: link:../panel-sdk
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
-
-  packages/web-panel-review:
-    dependencies:
-      '@base-ui/react':
-        specifier: ^1.9.0
-        version: 1.9.0(@types/react@19.2.17)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@heroicons/react':
-        specifier: ^2.2.0
-        version: 2.2.0(react@19.3.0)
-      '@pierre/diffs':
-        specifier: 1.3.1
-        version: 1.3.1(@shikijs/themes@4.3.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@pierre/trees':
-        specifier: 1.0.0-beta.6
-        version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.3.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.3.1)
-      react:
-        specifier: 'catalog:'
-        version: 19.3.0
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.3.0(react@19.3.0)
-      zod:
-        specifier: 'catalog:'
-        version: 4.4.3
-    devDependencies:
-      '@treeport/panel-sdk':
-        specifier: workspace:*
-        version: link:../panel-sdk
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: 'catalog:'
-        version: 19.2.3(@types/react@19.2.17)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
