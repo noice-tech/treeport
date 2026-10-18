@@ -123,6 +123,7 @@ interface ResourceCandidates {
 }
 
 interface WebPanelManifestEntry {
+  title: string | null
   source: string
   permissions: WebPanelPermission[]
   sandbox: boolean
@@ -140,6 +141,7 @@ const webPanelManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
     source: z.string(),
+    title: z.string().trim().min(1).optional(),
     sandbox: z.boolean().optional(),
     permissions: z
       .array(
@@ -947,12 +949,18 @@ export class PackageSystem {
           'webPanels',
           packageJsonPath
         )
-        return { source: parsedSource.data, permissions: [], sandbox: true }
+        return {
+          source: parsedSource.data,
+          title: null,
+          permissions: [],
+          sandbox: true
+        }
       }
 
       const parsedDefinition = z
         .strictObject({
           source: z.string(),
+          title: z.string().trim().min(1).optional(),
           sandbox: z.boolean().optional(),
           permissions: z
             .array(
@@ -963,7 +971,12 @@ export class PackageSystem {
             .optional()
         })
         .parse(parsed.data)
-      const { source, permissions = [], sandbox = true } = parsedDefinition
+      const {
+        source,
+        title = null,
+        permissions = [],
+        sandbox = true
+      } = parsedDefinition
       if (source.startsWith('!')) {
         throw new Error(
           `${packageJsonPath} contains an invalid web panel definition`
@@ -978,7 +991,7 @@ export class PackageSystem {
         )
       }
 
-      return { source, permissions: [...uniquePermissions], sandbox }
+      return { source, title, permissions: [...uniquePermissions], sandbox }
     })
   }
 
@@ -1269,7 +1282,9 @@ export class PackageSystem {
         const resolved: ResolvedWebPanel = {
           definition: {
             id: `package:${parsed.packageId}:web-panel:${resourceId}`,
-            title: titleFromPath(candidate.relativePath),
+            title:
+              declarations.find((entry) => entry.title !== null)?.title ??
+              titleFromPath(candidate.relativePath),
             icon: null,
             source: metadata,
             permissions,

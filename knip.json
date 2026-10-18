@@ -31,7 +31,7 @@
       "entry": ["web-panels/review/review.tsx"]
     },
     "packages/vscode": {
-      "entry": ["web-panels/editor/editor.ts"]
+      "entry": ["web-panels/vscode/editor.ts"]
     }
   }
 }
