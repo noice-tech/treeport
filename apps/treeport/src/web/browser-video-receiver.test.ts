@@ -1,5 +1,10 @@
+import { EventEmitter } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { BrowserClientMessage } from '@treeport/shared'
+import type {
+  BrowserClientMessage,
+  BrowserServerMessage
+} from '@treeport/shared'
+import { connectRemoteBrowser } from './browser-remote-connection'
 import { BrowserVideoReceiver } from './browser-video-receiver'
 
 class FakePeer extends EventTarget {
@@ -61,6 +66,8 @@ it('negotiates native video only when visible and ignores superseded answers', a
   receiver.receive({ type: 'videoReady' })
   expect(FakePeer.instances).toHaveLength(0)
   receiver.setVisible(true)
+  expect(FakePeer.instances).toHaveLength(0)
+  receiver.receive({ type: 'videoReady' })
   await vi.waitFor(() => expect(messages).toHaveLength(1))
   const offer = messages[0]!
   expect(offer).toMatchObject({ type: 'videoOffer', sdp: 'offer-sdp' })
@@ -95,7 +102,11 @@ it('negotiates native video only when visible and ignores superseded answers', a
     sdp: 'stale'
   })
   expect(first.setRemoteDescription).not.toHaveBeenCalled()
+  // Late readiness from the hidden cycle cannot start a resumed offer.
+  receiver.receive({ type: 'videoReady' })
   receiver.setVisible(true)
+  expect(FakePeer.instances).toHaveLength(1)
+  receiver.receive({ type: 'videoReady' })
   await vi.waitFor(() => expect(messages).toHaveLength(2))
   const next = messages[1]!
   if (next.type !== 'videoOffer') {
@@ -118,6 +129,72 @@ it('negotiates native video only when visible and ignores superseded answers', a
   receiver.dispose()
   expect(second.close).toHaveBeenCalledOnce()
   expect(failed).not.toHaveBeenCalled()
+})
+
+it('owns signaling and media visibility/disposal together even for immediate host replies', async () => {
+  vi.stubGlobal('RTCPeerConnection', FakePeer)
+  vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => null })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ ticket: 'b'.repeat(43) })))
+  )
+  const events = new EventEmitter()
+  const socket = {
+    connected: true,
+    on: events.on.bind(events),
+    emit: vi.fn((_event: string, message: BrowserClientMessage) => {
+      if (message.type === 'setVisible' && message.visible) {
+        events.emit('message', { type: 'videoReady' })
+      }
+    }),
+    disconnect: vi.fn()
+  }
+  // SAFETY: Signaling does not deliver tracks; the receiver only clears srcObject.
+  const video = { srcObject: null } as HTMLVideoElement
+  const connection = connectRemoteBrowser(
+    'app-browser',
+    video,
+    {
+      message: vi.fn(),
+      failed: vi.fn(),
+      statusChanged: vi.fn()
+    },
+    () => socket
+  )
+  connection.setVisible(true)
+  await vi.waitFor(() => expect(events.listenerCount('message')).toBe(1))
+  const ready: BrowserServerMessage = {
+    type: 'ready',
+    state: {
+      url: 'about:blank',
+      title: '',
+      faviconUrl: null,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      controlled: true,
+      hasController: true,
+      controller: 'you',
+      controllerDetails: null,
+      agentActive: false,
+      viewport: { width: 390, height: 844 }
+    }
+  }
+  events.emit('message', ready)
+  await vi.waitFor(() =>
+    expect(socket.emit).toHaveBeenCalledWith(
+      'command',
+      expect.objectContaining({ type: 'videoOffer' })
+    )
+  )
+  connection.setVisible(false)
+  expect(FakePeer.instances[0]!.close).toHaveBeenCalledOnce()
+  connection.setVisible(true)
+  await vi.waitFor(() => expect(FakePeer.instances).toHaveLength(2))
+  expect(FakePeer.instances[1]!.close).not.toHaveBeenCalled()
+  connection.dispose()
+  expect(FakePeer.instances[1]!.close).toHaveBeenCalledOnce()
+  expect(socket.disconnect).toHaveBeenCalledOnce()
 })
 
 it('bounds connection retries and closes media when the signaling session is lost', async () => {

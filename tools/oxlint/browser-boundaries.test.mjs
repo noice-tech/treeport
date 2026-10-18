@@ -10,6 +10,7 @@ beforeAll(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'browser-boundaries-'))
   await mkdir(path.join(root, 'tools/oxlint'), { recursive: true })
   await mkdir(path.join(root, 'apps/treeport/src/server'), { recursive: true })
+  await mkdir(path.join(root, 'apps/treeport/src/web'), { recursive: true })
   await copyFile(
     'tools/oxlint/browser-boundaries.mjs',
     path.join(root, 'tools/oxlint/browser-boundaries.mjs')
@@ -30,8 +31,8 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-async function lint(filename, input) {
-  const file = `apps/treeport/src/server/${filename}`
+async function lint(filename, input, directory = 'server') {
+  const file = `apps/treeport/src/${directory}/${filename}`
   await writeFile(path.join(root, file), input)
   return spawnSync(oxlint, [file], { cwd: root, encoding: 'utf8' })
 }
@@ -61,6 +62,42 @@ it.each([
   expect(result.stdout + result.stderr).toMatch(
     /PlaywrightBrowserHost|PlaywrightBrowser owns/
   )
+})
+
+it.each(['videoReady', 'videoAnswer'])(
+  'rejects the old session-manager %s emission',
+  async (type) => {
+    const result = await lint(
+      'browser-sessions.ts',
+      `transport.sendMessage({ type: '${type}' })`
+    )
+    expect(result.status).toBe(1)
+    expect(result.stdout + result.stderr).toContain('BrowserVideoViewer owns')
+  }
+)
+
+it.each([
+  "import { BrowserVideoReceiver } from './browser-video-receiver'",
+  "export { BrowserVideoReceiver } from './browser-video-receiver'",
+  "import('./browser-video-receiver')",
+  "import { connectBrowserApp } from './browser-session-client'"
+])('rejects independently wired workspace media: %s', async (input) => {
+  const result = await lint('workspace.ts', input, 'web')
+  expect(result.status).toBe(1)
+  expect(result.stdout + result.stderr).toContain('Use connectRemoteBrowser')
+})
+
+it('allows the connection owner and read-only connection contracts', async () => {
+  const source =
+    "export { BrowserVideoReceiver } from './browser-video-receiver'"
+  const owner = await lint('browser-remote-connection.ts', source, 'web')
+  expect(owner.status, owner.stdout + owner.stderr).toBe(0)
+  const consumer = await lint(
+    'workspace.ts',
+    "export type { BrowserAppConnection } from './browser-session-client'",
+    'web'
+  )
+  expect(consumer.status, consumer.stdout + consumer.stderr).toBe(0)
 })
 
 it('allows only the host to allocate unsized contexts and helper pages', async () => {

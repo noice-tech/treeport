@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Button } from '../../components/ui/button'
-import type { BrowserVideoReceiver } from '../../browser-video-receiver'
+import type { RemoteBrowserConnection } from '../../browser-remote-connection'
 
 interface StreamSample {
   time: string
@@ -35,7 +35,7 @@ export function BrowserStreamDiagnostics({
   receiverRef
 }: {
   videoRef: RefObject<HTMLVideoElement | null>
-  receiverRef: RefObject<BrowserVideoReceiver | null>
+  receiverRef: RefObject<RemoteBrowserConnection | null>
 }) {
   const [sample, setSample] = useState<StreamSample | null>(null)
   const [probe, setProbe] = useState(false)

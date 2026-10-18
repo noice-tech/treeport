@@ -56,13 +56,13 @@ import {
   PopoverContent,
   PopoverTrigger
 } from '../../components/ui/popover'
-import {
-  connectBrowserApp,
-  type BrowserAppConnection
-} from '../../browser-session-client'
+import type { BrowserAppConnection } from '../../browser-session-client'
 import { getDesktopRuntime } from '../../desktop-runtime'
 import { writeBrowserClipboard } from '../../browser-clipboard'
-import { BrowserVideoReceiver } from '../../browser-video-receiver'
+import {
+  connectRemoteBrowser,
+  type RemoteBrowserConnection
+} from '../../browser-remote-connection'
 import { LocalBrowserWebview } from './local-browser-webview'
 import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
 
@@ -137,7 +137,7 @@ export function BrowserAppWorkspace({
 }) {
   const sectionRef = useRef<HTMLElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const videoReceiverRef = useRef<BrowserVideoReceiver | null>(null)
+  const remoteConnectionRef = useRef<RemoteBrowserConnection | null>(null)
   const viewportAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
@@ -763,25 +763,12 @@ export function BrowserAppWorkspace({
       setError(null)
     }
     video.addEventListener('playing', playing)
-    const receiver = new BrowserVideoReceiver(
-      video,
-      send,
-      (message) => setFailure({ message }),
-      setStreamStatus
-    )
-    videoReceiverRef.current = receiver
-    const connection = connectBrowserApp(app.id, false, {
-      message: (message) => {
-        if (message.type === 'ready') {
-          setStreamStatus('Waiting for browser video…')
-        }
-
-        receiver.receive(message)
-        if (message.type !== 'videoReady' && message.type !== 'videoAnswer') {
-          receiveMessage(message)
-        }
-      }
+    const connection = connectRemoteBrowser(app.id, video, {
+      message: receiveMessage,
+      failed: (message) => setFailure({ message }),
+      statusChanged: setStreamStatus
     })
+    remoteConnectionRef.current = connection
     connectionRef.current = connection
     return () => {
       if (touchesRef.current.size > 0) {
@@ -805,9 +792,8 @@ export function BrowserAppWorkspace({
 
       pendingCopiesRef.current.clear()
       video.removeEventListener('playing', playing)
-      receiver.dispose()
-      if (videoReceiverRef.current === receiver) {
-        videoReceiverRef.current = null
+      if (remoteConnectionRef.current === connection) {
+        remoteConnectionRef.current = null
       }
 
       connection.dispose()
@@ -875,7 +861,6 @@ export function BrowserAppWorkspace({
     cancelTouches()
     if (!localBrowser) {
       connectionRef.current?.setVisible(active && !inputBlocked)
-      videoReceiverRef.current?.setVisible(active && !inputBlocked)
     }
 
     const visibility = () => {
@@ -2518,7 +2503,7 @@ export function BrowserAppWorkspace({
         {diagnosticsOpen && active && !inputBlocked && !localBrowser ? (
           <BrowserStreamDiagnostics
             videoRef={videoRef}
-            receiverRef={videoReceiverRef}
+            receiverRef={remoteConnectionRef}
           />
         ) : null}
       </div>

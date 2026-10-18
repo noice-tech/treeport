@@ -28,11 +28,13 @@ export class BrowserVideoReceiver {
     }
 
     if (message.type === 'videoReady') {
+      if (!this.visible) {
+        return
+      }
+
       this.available = true
       this.attempts = 0
-      if (this.visible) {
-        this.start()
-      }
+      this.start()
     } else if (
       message.type === 'videoAnswer' &&
       message.requestId === this.requestId &&
@@ -62,11 +64,11 @@ export class BrowserVideoReceiver {
   setVisible(visible: boolean): void {
     this.visible = visible
     if (!visible) {
+      // Hiding closes the host peer and may stop capture. Wait for a fresh
+      // videoReady on return instead of racing capture restart with an offer.
+      this.available = false
       this.stop()
       this.statusChanged('Waiting for browser video…')
-    } else if (this.available && !this.peer) {
-      this.attempts = 0
-      this.start()
     }
   }
 

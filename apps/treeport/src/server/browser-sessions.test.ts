@@ -335,12 +335,19 @@ describe('Browser sessions', () => {
     await vi.waitFor(() => expect(browser.commands).toHaveLength(1))
     value.manager.message('viewer', { type: 'setVisible', visible: false })
     expect(browser.closeVideoPeer).toHaveBeenCalledWith('viewer')
+    // Return before the hidden negotiation finishes. Readiness must wait for
+    // its cleanup, otherwise the only resumed offer is silently discarded.
+    browser.screencasting.length = 0
+    value.manager.message('viewer', { type: 'setVisible', visible: true })
+    await vi.waitFor(() => expect(browser.screencasting).toContain(true))
+    expect(
+      viewer.messages.filter((message) => message.type === 'videoReady')
+    ).toHaveLength(1)
     answer('stale-answer')
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(
       viewer.messages.some((message) => message.type === 'videoAnswer')
     ).toBe(false)
-    value.manager.message('viewer', { type: 'setVisible', visible: true })
     await vi.waitFor(() =>
       expect(
         viewer.messages.filter((message) => message.type === 'videoReady')

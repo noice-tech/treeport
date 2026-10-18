@@ -42,9 +42,10 @@ Treeport development terminals are usually managed by an outer Treeport instance
 
 ## Enforced browser boundaries
 
-| Rule                                                                                                          | Enforcement                                                                            |
-| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Allocate hosted browser pages through `PlaywrightBrowserHost`; helper tabs never set context-wide dimensions. | `treeport/browser-boundaries` in `pnpm lint`; regression fixtures in `pnpm test:unit`. |
+| Rule                                                                                                                             | Enforcement                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Allocate hosted browser pages through `PlaywrightBrowserHost`; helper tabs never set context-wide dimensions.                    | `treeport/browser-boundaries` in `pnpm lint`; regression fixtures in `pnpm test:unit`.                             |
+| Route remote browser visibility and disposal through `connectRemoteBrowser`; route host handshakes through `BrowserVideoViewer`. | Private viewer state, `treeport/browser-boundaries` in `pnpm lint`, and lifecycle regressions in `pnpm test:unit`. |
 
 ## Validation
 
