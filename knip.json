@@ -28,10 +28,10 @@
       "ignoreBinaries": ["iconutil", "lipo", "plutil"]
     },
     "packages/review": {
-      "entry": ["web-panels/review/review.tsx"]
+      "entry": ["web-apps/review/review.tsx"]
     },
     "packages/vscode": {
-      "entry": ["web-panels/vscode/editor.ts"]
+      "entry": ["web-apps/vscode/editor.ts"]
     }
   }
 }

@@ -1,16 +1,16 @@
 {
   "name": "@treeport/vscode",
   "version": "0.1.0",
-  "description": "Treeport's VS Code editor panel, powered by a shared code-server service.",
+  "description": "Treeport's VS Code editor app, powered by a shared code-server service.",
   "private": true,
   "type": "module",
   "keywords": [
     "treeport-package"
   ],
   "treeport": {
-    "webPanels": [
+    "webApps": [
       {
-        "source": "./web-panels/vscode",
+        "source": "./web-apps/vscode",
         "title": "VSCode",
         "sandbox": false
       }
@@ -52,7 +52,7 @@
     "typecheck": "tsc --noEmit --pretty"
   },
   "devDependencies": {
-    "@treeport/panel-sdk": "workspace:*",
+    "@treeport/app-sdk": "workspace:*",
     "typescript": "catalog:"
   }
 }

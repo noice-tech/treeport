@@ -1,5 +1,5 @@
 import * as Context from 'effect/Context'
-import type { PanelService } from './panel/panel-service'
+import type { AppService } from './app/app-service'
 import type { ProjectObservationService } from './project/project-observation-service'
 import type { ProjectRegistrationService } from './project/project-registration-service'
 import type { ProjectSnapshotService } from './project/project-snapshot-service'
@@ -7,9 +7,9 @@ import type { TerminalService } from './terminal/terminal-service'
 import type { WorktreeReconciler } from './worktree/worktree-reconciler'
 import type { WorktreeService } from './worktree/worktree-service'
 
-export class PanelOperations extends Context.Tag('treeport/PanelOperations')<
-  PanelOperations,
-  PanelService
+export class AppOperations extends Context.Tag('treeport/AppOperations')<
+  AppOperations,
+  AppService
 >() {}
 
 export class ProjectObservationOperations extends Context.Tag(

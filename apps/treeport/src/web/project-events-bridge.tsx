@@ -21,8 +21,8 @@ import { terminalSessions } from './terminal-session'
 
 export function useProjectEventsBridge(
   projects: ProjectRecord[] | undefined,
-  onPanelOpenRequested?: (
-    request: ProductEventDataMap['panel.open_requested']
+  onAppOpenRequested?: (
+    request: ProductEventDataMap['app.open_requested']
   ) => void,
   onWorkspaceOpenRequested?: (
     request: ProductEventDataMap['workspace.open_requested']
@@ -32,8 +32,8 @@ export function useProjectEventsBridge(
   const queryClient = useQueryClient()
   const onPresenceChangedRef = useRef(onPresenceChanged)
   onPresenceChangedRef.current = onPresenceChanged
-  const onPanelOpenRequestedRef = useRef(onPanelOpenRequested)
-  onPanelOpenRequestedRef.current = onPanelOpenRequested
+  const onAppOpenRequestedRef = useRef(onAppOpenRequested)
+  onAppOpenRequestedRef.current = onAppOpenRequested
   const onWorkspaceOpenRequestedRef = useRef(onWorkspaceOpenRequested)
   onWorkspaceOpenRequestedRef.current = onWorkspaceOpenRequested
   const [eventsDisconnected, setEventsDisconnected] = useState(false)
@@ -68,7 +68,7 @@ export function useProjectEventsBridge(
           { cancelRefetch: false }
         ),
         queryClient.invalidateQueries(
-          { queryKey: ['web-panel-definitions'] },
+          { queryKey: ['web-app-definitions'] },
           { cancelRefetch: false }
         )
       ]).then(() => undefined)
@@ -157,9 +157,9 @@ export function useProjectEventsBridge(
         return
       }
 
-      if (event.type === 'panel.open_requested') {
+      if (event.type === 'app.open_requested') {
         refresh()
-        onPanelOpenRequestedRef.current?.(event.data)
+        onAppOpenRequestedRef.current?.(event.data)
         return
       }
 

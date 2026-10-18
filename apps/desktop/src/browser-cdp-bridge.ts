@@ -25,7 +25,7 @@ interface CdpRequest {
 
 interface BrowserCdpBridgeDescriptor {
   endpoint: string
-  panelId: string
+  appId: string
   challenge: string
 }
 
@@ -53,7 +53,7 @@ const ALLOWED_DOMAINS = new Set([
 
 export function createBrowserCdpBridge(
   guest: WebContents,
-  identity: { panelId: string; challenge: string },
+  identity: { appId: string; challenge: string },
   parent: DesktopRuntime
 ) {
   return Effect.gen(function* () {
@@ -273,7 +273,7 @@ export function createBrowserCdpBridge(
       guest.once('destroyed', onDestroyed)
       // Chromium must deliver input to this guest even when the terminal or a
       // desktop control has keyboard focus. Emulation does not focus the native
-      // WebContents, reveal a panel, or activate a worktree.
+      // WebContents, reveal a app, or activate a worktree.
       yield* Effect.tryPromise(() =>
         guest.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
           enabled: true
@@ -708,7 +708,7 @@ export function createBrowserCdpBridge(
             }
 
             if (request.method === 'Page.bringToFront') {
-              // Automation must not move desktop focus or select/reveal a panel.
+              // Automation must not move desktop focus or select/reveal a app.
               sendResult(socket, request, {})
               return
             }
@@ -807,7 +807,7 @@ export function createBrowserCdpBridge(
                 sendError(
                   socket,
                   request,
-                  'The Browser panel is not visible. Open it in the Treeport desktop app, then retry the screenshot.'
+                  'The Browser app is not visible. Open it in the Treeport desktop app, then retry the screenshot.'
                 )
                 return
               }
@@ -957,7 +957,7 @@ export function createBrowserCdpBridge(
       return {
         descriptor: {
           endpoint: `http://127.0.0.1:${port}${basePath}`,
-          panelId: identity.panelId,
+          appId: identity.appId,
           challenge: identity.challenge
         },
         stop

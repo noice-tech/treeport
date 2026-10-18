@@ -5,7 +5,7 @@
 .app-frame {
   height: var(--app-visual-viewport-height, 100dvh);
   transform: translateY(var(--app-visual-viewport-offset-top, 0px));
-  /* Paint edge-to-edge, but keep every panel clear of the notch/home indicator. */
+  /* Paint edge-to-edge, but keep every app clear of the notch/home indicator. */
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }

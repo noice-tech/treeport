@@ -2,8 +2,8 @@ export type DesktopCommand =
   | 'new-worktree'
   | 'new-terminal'
   | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-  | 'new-panel'
-  | 'close-panel'
+  | 'new-app'
+  | 'close-app'
   | 'toggle-side-panel'
   | 'focus-location'
   | 'find-in-page'
@@ -18,7 +18,7 @@ export type DesktopCommand =
 export type DesktopFileActionResult = 'opened' | 'rejected'
 
 export interface DesktopBrowserPopup {
-  panelId: string
+  appId: string
   url: string
 }
 
@@ -29,20 +29,20 @@ export interface DesktopBrowserPermissions {
 
 export interface DesktopBrowserPermissionPrompt {
   id: string
-  panelId: string
+  appId: string
   origin: string
   capability: string
   destination: string | null
 }
 
 export interface DesktopBrowserUnavailable {
-  panelId: string
+  appId: string
   message: string
 }
 
 export interface DesktopBrowserBridgeDescriptor {
   endpoint: string
-  panelId: string
+  appId: string
   challenge: string
 }
 
@@ -64,9 +64,9 @@ export type DesktopBridge = Readonly<
   Partial<{
     runtime: { computerId: string; localBrowser: boolean } | null
     platform: string
-    openBrowserDevtools: (panelId: string) => Promise<boolean>
+    openBrowserDevtools: (appId: string) => Promise<boolean>
     inspectBrowserElement: (
-      panelId: string,
+      appId: string,
       backendNodeId: number,
       targetId: string | null
     ) => Promise<boolean>
@@ -79,33 +79,30 @@ export type DesktopBridge = Readonly<
     setTerminalSelectionActive: (active: boolean) => void
     onTerminalSelectionRelease: (listener: () => void) => () => void
     registerBrowser: (
-      panelId: string,
+      appId: string,
       webContentsId: number,
       challenge: string
     ) => Promise<DesktopBrowserBridgeDescriptor | null>
     browserCommand: (
-      panelId: string,
+      appId: string,
       command: DesktopBrowserToolbarCommand
     ) => Promise<DesktopBrowserCommandResult>
-    setBrowserInputControl: (
-      panelId: string,
-      locked: boolean
-    ) => Promise<boolean>
+    setBrowserInputControl: (appId: string, locked: boolean) => Promise<boolean>
     setBrowserPresentationActive: (
-      panelId: string,
+      appId: string,
       active: boolean
     ) => Promise<boolean>
-    requestBrowserClose: (panelId: string, force: boolean) => Promise<boolean>
-    disposeBrowser: (panelId: string) => void
-    onBrowserFocus: (listener: (panelId: string) => void) => () => void
+    requestBrowserClose: (appId: string, force: boolean) => Promise<boolean>
+    disposeBrowser: (appId: string) => void
+    onBrowserFocus: (listener: (appId: string) => void) => () => void
     onBrowserPopup: (
       listener: (popup: DesktopBrowserPopup) => void
     ) => () => void
     browserPermissions: (
-      panelId: string
+      appId: string
     ) => Promise<DesktopBrowserPermissions | null>
     resetBrowserPermissions: (
-      panelId: string,
+      appId: string,
       origin: string,
       capability: string | null
     ) => Promise<boolean>

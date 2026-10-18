@@ -5,8 +5,8 @@ declare global {
     | 'new-worktree'
     | 'new-terminal'
     | `split-terminal-${'left' | 'right' | 'up' | 'down'}`
-    | 'new-panel'
-    | 'close-panel'
+    | 'new-app'
+    | 'close-app'
     | 'toggle-side-panel'
     | 'focus-location'
     | 'find-in-page'

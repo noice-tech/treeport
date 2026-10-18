@@ -8,5 +8,5 @@
     "moduleResolution": "Bundler",
     "noEmit": true
   },
-  "include": ["web-panels"]
+  "include": ["web-apps"]
 }

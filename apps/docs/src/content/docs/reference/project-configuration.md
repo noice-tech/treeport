@@ -25,7 +25,7 @@ description: Set commands, terminal presets, and project settings.
     ],
     "cleanup": []
   },
-  // Shared commands for New panel, read from the current tree.
+  // Shared commands for New app, read from the current tree.
   "terminalPresets": {
     "dev": {
       "name": "Development server",
@@ -43,7 +43,7 @@ description: Set commands, terminal presets, and project settings.
 }
 ```
 
-To add [web panels](/features/web-panels/), put the panel files in `.treeport/web-panels/`.
+To add [web apps](/features/web-apps/), put the app files in `.treeport/web-apps/`.
 
 ## Setup
 

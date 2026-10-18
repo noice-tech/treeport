@@ -51,12 +51,12 @@ if (
 
 const packageManifestPath = 'apps/treeport/package.json'
 const desktopManifestPath = 'apps/desktop/package.json'
-const panelSdkManifestPath = 'packages/panel-sdk/package.json'
+const appSdkManifestPath = 'packages/app-sdk/package.json'
 const piManifestPath = 'packages/pi/package.json'
 const reviewManifestPath = 'packages/review/package.json'
 const keeperManifestPath = 'packages/session-keeper/package.json'
 const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
-const panelSdkManifest = JSON.parse(readFileSync(panelSdkManifestPath, 'utf8'))
+const appSdkManifest = JSON.parse(readFileSync(appSdkManifestPath, 'utf8'))
 const piManifest = JSON.parse(readFileSync(piManifestPath, 'utf8'))
 const reviewManifest = JSON.parse(readFileSync(reviewManifestPath, 'utf8'))
 const keeperManifest = JSON.parse(readFileSync(keeperManifestPath, 'utf8'))
@@ -68,7 +68,7 @@ if (!currentVersion) {
 }
 
 for (const manifest of [
-  panelSdkManifest,
+  appSdkManifest,
   piManifest,
   reviewManifest,
   keeperManifest
@@ -137,12 +137,12 @@ if (desktopManifest.version !== version) {
   )
 }
 
-if (panelSdkManifest.version !== version) {
-  expectedFiles.push(panelSdkManifestPath)
-  panelSdkManifest.version = version
+if (appSdkManifest.version !== version) {
+  expectedFiles.push(appSdkManifestPath)
+  appSdkManifest.version = version
   writeFileSync(
-    panelSdkManifestPath,
-    `${JSON.stringify(panelSdkManifest, null, 2)}\n`
+    appSdkManifestPath,
+    `${JSON.stringify(appSdkManifest, null, 2)}\n`
   )
 }
 

@@ -252,7 +252,7 @@ function activateTerminalLink(
     }
 
     void fetch(
-      `/api/terminals/${encodeURIComponent(terminalId)}/browser-panels/open`,
+      `/api/terminals/${encodeURIComponent(terminalId)}/browser-apps/open`,
       {
         method: 'POST',
         headers,

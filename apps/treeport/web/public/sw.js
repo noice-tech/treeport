@@ -63,7 +63,7 @@ self.addEventListener('notificationclick', (event) => {
           Number(right.url === target.href) - Number(left.url === target.href)
       )
       for (const client of clients) {
-        // Do not replace auxiliary panel pages on the same origin.
+        // Do not replace auxiliary app pages on the same origin.
         const pathname = new URL(client.url).pathname
         if (pathname !== '/' && !pathname.startsWith('/projects/')) {
           continue

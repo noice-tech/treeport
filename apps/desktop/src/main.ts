@@ -441,14 +441,14 @@ function installRendererSecurity(
           : code === 'bracketright'
             ? 'select-next-worktree'
             : key === 't'
-              ? 'new-panel'
+              ? 'new-app'
               : undefined
         : key === 'n'
           ? 'new-worktree'
           : key === 't'
             ? 'new-terminal'
             : key === 'w'
-              ? 'close-panel'
+              ? 'close-app'
               : /^[1-9]$/.test(key)
                 ? (`select-tab-${key}` as DesktopCommand)
                 : undefined
@@ -552,14 +552,14 @@ const computerUpdateSchema = z.object({
   origin: z.string(),
   nameOverride: z.string().optional()
 })
-const nativeBrowserPanelSchema = z.strictObject({
-  panelId: z.string().min(1).max(128)
+const nativeBrowserAppSchema = z.strictObject({
+  appId: z.string().min(1).max(128)
 })
-const nativeBrowserRegisterSchema = nativeBrowserPanelSchema.extend({
+const nativeBrowserRegisterSchema = nativeBrowserAppSchema.extend({
   webContentsId: z.number().int().positive(),
   challenge: z.string().min(32).max(256)
 })
-const nativeBrowserCloseSchema = nativeBrowserPanelSchema.extend({
+const nativeBrowserCloseSchema = nativeBrowserAppSchema.extend({
   force: z.boolean()
 })
 const nativeBrowserUrlSchema = z.string().transform((value, context) => {
@@ -578,10 +578,10 @@ const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('reload') }),
   z.strictObject({ type: z.literal('stop') })
 ]) satisfies z.ZodType<DesktopBrowserToolbarCommand>
-const nativeBrowserInputControlSchema = nativeBrowserPanelSchema.extend({
+const nativeBrowserInputControlSchema = nativeBrowserAppSchema.extend({
   locked: z.boolean()
 })
-const nativeBrowserPresentationSchema = nativeBrowserPanelSchema.extend({
+const nativeBrowserPresentationSchema = nativeBrowserAppSchema.extend({
   active: z.boolean()
 })
 
@@ -718,17 +718,17 @@ function installMenu(): void {
           click: () => sendDesktopCommand('split-terminal-down')
         },
         {
-          id: 'new-panel',
-          label: 'New Panel…',
+          id: 'new-app',
+          label: 'New app…',
           accelerator: 'CommandOrControl+Shift+T',
-          click: () => sendDesktopCommand('new-panel')
+          click: () => sendDesktopCommand('new-app')
         },
         { type: 'separator' },
         {
-          id: 'close-panel',
-          label: 'Close Panel',
+          id: 'close-app',
+          label: 'Close app',
           accelerator: 'CommandOrControl+W',
-          click: () => sendDesktopCommand('close-panel')
+          click: () => sendDesktopCommand('close-app')
         },
         ...(process.platform === 'darwin'
           ? []
@@ -1065,7 +1065,7 @@ function registerIpc(): void {
   ipcMain.handle('hosted-browser:open-devtools', async (event, value) => {
     const target = z
       .object({
-        panelId: z.string().regex(/^panel_[a-f0-9]{32}$/u),
+        appId: z.string().regex(/^app_[a-f0-9]{32}$/u),
         backendNodeId: z.number().int().positive().nullable(),
         targetId: z
           .string()
@@ -1082,7 +1082,7 @@ function registerIpc(): void {
 
     const endpoint = new URL(origin)
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
-    endpoint.pathname = `/api/browser-devtools/${target.data.panelId}`
+    endpoint.pathname = `/api/browser-devtools/${target.data.appId}`
     endpoint.search = ''
     endpoint.hash = ''
 
@@ -1228,7 +1228,7 @@ function registerIpc(): void {
                   response.data.id === documentRequest &&
                   (response.data.sessionId ?? null) === inspectSession
                 ) {
-                  // Feed the native Elements panel the same backend-node event
+                  // Feed the native Elements app the same backend-node event
                   // Chrome emits for its inspect picker, after its DOM is ready.
                   viewer.send(
                     JSON.stringify({
@@ -1579,7 +1579,7 @@ function registerIpc(): void {
       ? host.runtime.run(
           browserWebviews.register(
             event,
-            parsed.data.panelId,
+            parsed.data.appId,
             parsed.data.webContentsId,
             parsed.data.challenge
           )
@@ -1591,17 +1591,13 @@ function registerIpc(): void {
     const browserWebviews = host?.browser
     const parsed = z
       .strictObject({
-        panelId: z.string().min(1).max(128),
+        appId: z.string().min(1).max(128),
         command: nativeBrowserCommandSchema
       })
       .safeParse(value)
     return parsed.success && host && browserWebviews
       ? host.runtime.run(
-          browserWebviews.command(
-            event,
-            parsed.data.panelId,
-            parsed.data.command
-          )
+          browserWebviews.command(event, parsed.data.appId, parsed.data.command)
         )
       : { ok: false, error: 'The Browser command was rejected.' }
   })
@@ -1613,7 +1609,7 @@ function registerIpc(): void {
       ? host.runtime.run(
           browserWebviews.setInputControl(
             event,
-            parsed.data.panelId,
+            parsed.data.appId,
             parsed.data.locked
           )
         )
@@ -1627,7 +1623,7 @@ function registerIpc(): void {
       ? host.runtime.run(
           browserWebviews.setPresentationActive(
             event,
-            parsed.data.panelId,
+            parsed.data.appId,
             parsed.data.active
           )
         )
@@ -1645,7 +1641,7 @@ function registerIpc(): void {
       ? host.runtime.run(
           browserWebviews.requestClose(
             event,
-            parsed.data.panelId,
+            parsed.data.appId,
             parsed.data.force
           )
         )
@@ -1653,14 +1649,14 @@ function registerIpc(): void {
   })
   ipcMain.handle('native-browser:permissions', (event, value) => {
     const browserWebviews = hostSessions?.sender(event)?.browser
-    const parsed = nativeBrowserPanelSchema.safeParse(value)
+    const parsed = nativeBrowserAppSchema.safeParse(value)
     return parsed.success && browserWebviews
-      ? browserWebviews.permissions(event, parsed.data.panelId)
+      ? browserWebviews.permissions(event, parsed.data.appId)
       : null
   })
   ipcMain.handle('native-browser:reset-permissions', (event, value) => {
     const browserWebviews = hostSessions?.sender(event)?.browser
-    const parsed = nativeBrowserPanelSchema
+    const parsed = nativeBrowserAppSchema
       .extend({
         origin: z.string().max(2048),
         capability: z.string().max(80).nullable()
@@ -1669,7 +1665,7 @@ function registerIpc(): void {
     return parsed.success && browserWebviews
       ? browserWebviews.resetPermissions(
           event,
-          parsed.data.panelId,
+          parsed.data.appId,
           parsed.data.origin,
           parsed.data.capability
         )
@@ -1696,13 +1692,13 @@ function registerIpc(): void {
   ipcMain.on('native-browser:dispose', (event, value) => {
     const host = hostSessions?.sender(event)
     const browserWebviews = host?.browser
-    const parsed = nativeBrowserPanelSchema.safeParse(value)
+    const parsed = nativeBrowserAppSchema.safeParse(value)
     if (!parsed.success) {
       return
     }
 
     if (host && browserWebviews) {
-      host.runtime.fork(browserWebviews.dispose(event, parsed.data.panelId))
+      host.runtime.fork(browserWebviews.dispose(event, parsed.data.appId))
     }
   })
   ipcMain.on('desktop:zoom-page', (event, value) => {

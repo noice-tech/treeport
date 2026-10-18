@@ -20,12 +20,12 @@ import { SetupLive, type Setup } from '../../setup'
 import type { TerminalSessionBackend } from '../../terminal'
 import { ZedLive, type Zed } from '../../zed'
 import {
-  WebPanelRuntimeLayer,
-  type WebPanelRuntimePort
-} from '../../web-panel-vite-runtime'
+  WebAppRuntimeLayer,
+  type WebAppRuntimePort
+} from '../../web-app-vite-runtime'
 import { tracingLayerFromEnvironment } from '../../../tracing'
 import {
-  PanelOperations,
+  AppOperations,
   ProjectObservationOperations,
   ProjectRegistrationOperations,
   ProjectSnapshotOperations,
@@ -33,7 +33,7 @@ import {
   WorktreeOperations,
   WorktreeReconciliation
 } from '../domain-services'
-import type { PanelService } from '../panel/panel-service'
+import type { AppService } from '../app/app-service'
 import { PackageMutations } from '../package/package-mutations'
 import { ProjectFolderIdentities } from '../project/project-folder-identities'
 import type { ProjectObservationService } from '../project/project-observation-service'
@@ -151,7 +151,7 @@ export interface ApplicationResources {
   readonly terminalHost: TerminalSessionBackend
   readonly events: ProductEventBus
   readonly packages: PackageSystem
-  readonly panelService: PanelService
+  readonly appService: AppService
   readonly projectObservationService: ProjectObservationService
   readonly projectRegistrationService: ProjectRegistrationService
   readonly projectSnapshotService: ProjectSnapshotService
@@ -170,7 +170,7 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
     Layer.succeed(TerminalHostPort, resources.terminalHost),
     Layer.succeed(EventBusPort, resources.events),
     Layer.succeed(PackageSystemPort, resources.packages),
-    Layer.succeed(PanelOperations, resources.panelService),
+    Layer.succeed(AppOperations, resources.appService),
     Layer.succeed(
       ProjectObservationOperations,
       resources.projectObservationService
@@ -184,7 +184,7 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
     Layer.succeed(WorktreeReconciliation, resources.worktreeReconciler),
     Layer.succeed(WorktreeOperations, resources.worktreeService),
     NetworkListenersLayer(resources.runner),
-    WebPanelRuntimeLayer(resources.config)
+    WebAppRuntimeLayer(resources.config)
   )
 
   const projectStore = ProjectStoreLive.pipe(Layer.provide(adapters))
@@ -226,7 +226,7 @@ export type ApplicationServices =
   | TerminalHostPort
   | EventBusPort
   | PackageSystemPort
-  | PanelOperations
+  | AppOperations
   | ProjectObservationOperations
   | ProjectRegistrationOperations
   | ProjectSnapshotOperations
@@ -234,7 +234,7 @@ export type ApplicationServices =
   | WorktreeReconciliation
   | WorktreeOperations
   | NetworkListenerPort
-  | WebPanelRuntimePort
+  | WebAppRuntimePort
   | Setup
   | Zed
   | ProjectStore

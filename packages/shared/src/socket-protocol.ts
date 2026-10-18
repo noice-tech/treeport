@@ -8,7 +8,7 @@ import {
   terminalRuntimeMetadataFields,
   terminalRuntimeMetadataSchema
 } from './terminal-protocol.js'
-import { webPanelPermissionSchema } from './web-panel-protocol.js'
+import { webAppPermissionSchema } from './web-app-protocol.js'
 
 export const EVENT_PROTOCOL_VERSION = 3
 
@@ -42,7 +42,7 @@ const operationEventDataSchema = Schema.Struct({
   operationId: identifierSchema,
   worktreeId: identifierSchema
 })
-const webPanelSnapshotSchema = Schema.Struct({
+const webAppSnapshotSchema = Schema.Struct({
   id: identifierSchema,
   kind: Schema.Literal('web'),
   worktreeId: identifierSchema,
@@ -56,7 +56,7 @@ const webPanelSnapshotSchema = Schema.Struct({
     ),
     cwd: Schema.NullOr(Schema.String)
   }),
-  permissions: Schema.mutable(Schema.Array(webPanelPermissionSchema)),
+  permissions: Schema.mutable(Schema.Array(webAppPermissionSchema)),
   sandbox: Schema.Struct({
     enabled: Schema.Boolean,
     allowSameOrigin: Schema.Boolean
@@ -64,7 +64,7 @@ const webPanelSnapshotSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const browserPanelSnapshotSchema = Schema.Struct({
+const browserAppSnapshotSchema = Schema.Struct({
   id: identifierSchema,
   kind: Schema.Literal('browser'),
   worktreeId: identifierSchema,
@@ -73,9 +73,9 @@ const browserPanelSnapshotSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
-const openPanelSnapshotSchema = Schema.Union(
-  webPanelSnapshotSchema,
-  browserPanelSnapshotSchema
+const openAppSnapshotSchema = Schema.Union(
+  webAppSnapshotSchema,
+  browserAppSnapshotSchema
 )
 const terminalRecordSchema = Schema.Struct({
   id: identifierSchema,
@@ -172,37 +172,37 @@ export const productEventSchema = Schema.Union(
     })
   ),
   eventEnvelope(
-    'panel.created',
+    'app.created',
     Schema.Struct({
       worktreeId: identifierSchema,
-      panelId: identifierSchema
+      appId: identifierSchema
     })
   ),
   eventEnvelope(
-    'panel.updated',
+    'app.updated',
     Schema.Struct({
       worktreeId: identifierSchema,
-      panelId: identifierSchema
+      appId: identifierSchema
     })
   ),
   eventEnvelope(
-    'panel.open_requested',
+    'app.open_requested',
     Schema.Struct({
       worktreeId: identifierSchema,
-      panelId: identifierSchema,
-      panel: openPanelSnapshotSchema,
+      appId: identifierSchema,
+      app: openAppSnapshotSchema,
       requestId: Schema.optionalWith(Schema.NullOr(Schema.String), {
         exact: true
       }),
       sourceTerminalId: Schema.NullOr(identifierSchema),
-      sourcePanelId: Schema.NullOr(identifierSchema)
+      sourceAppId: Schema.NullOr(identifierSchema)
     })
   ),
   eventEnvelope(
-    'panel.removed',
+    'app.removed',
     Schema.Struct({
       worktreeId: identifierSchema,
-      panelId: identifierSchema
+      appId: identifierSchema
     })
   ),
   eventEnvelope(
@@ -234,8 +234,8 @@ export type NetworkProductEvent = Schema.Schema.Type<typeof productEventSchema>
 export const eventsSnapshotSchema = Schema.Struct({
   at: dateTimeString,
   terminalMetadata: Schema.Array(terminalRuntimeMetadataSchema),
-  webPanels: Schema.Array(webPanelSnapshotSchema),
-  browserPanels: Schema.Array(browserPanelSnapshotSchema),
+  webApps: Schema.Array(webAppSnapshotSchema),
+  browserApps: Schema.Array(browserAppSnapshotSchema),
   presence: Schema.Array(workspacePresenceSchema)
 })
 export type EventsSnapshot = Schema.Schema.Type<typeof eventsSnapshotSchema>

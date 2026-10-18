@@ -1,8 +1,8 @@
 import type {
-  BrowserPanel,
+  BrowserApp,
   ProjectRecord,
   TerminalRecord,
-  WebPanel,
+  WebApp,
   WorktreeRecord
 } from '@treeport/shared'
 
@@ -19,13 +19,13 @@ export function openRequestMatchesTerminal(
 
 export function openRequestMatchesWorkspace(
   sourceTerminalId: string | null,
-  sourcePanelId: string | null,
+  sourceAppId: string | null,
   selectedTerminalId: string | null,
-  selectedPanelId: string | null
+  selectedAppId: string | null
 ): boolean {
   return (
     openRequestMatchesTerminal(sourceTerminalId, selectedTerminalId) ||
-    (sourcePanelId !== null && sourcePanelId === selectedPanelId)
+    (sourceAppId !== null && sourceAppId === selectedAppId)
   )
 }
 
@@ -50,18 +50,18 @@ export type WorkspaceTarget =
       terminalId: string
     }
   | {
-      kind: 'panel'
+      kind: 'app'
       pathname: string
       projectId: string
       worktreeId: string
-      panelId: string
+      appId: string
     }
 
 interface WorkspaceSelection {
   project: ProjectRecord | null
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
-  panel: BrowserPanel | WebPanel | null
+  app: BrowserApp | WebApp | null
 }
 
 export interface WorkspaceResolution {
@@ -108,17 +108,17 @@ export function terminalTarget(
   }
 }
 
-export function panelTarget(
+export function appTarget(
   projectId: string,
   worktreeId: string,
-  panelId: string
+  appId: string
 ): WorkspaceTarget {
   return {
-    kind: 'panel',
-    pathname: `/projects/${segment(projectId)}/worktrees/${segment(worktreeId)}/panels/${segment(panelId)}`,
+    kind: 'app',
+    pathname: `/projects/${segment(projectId)}/worktrees/${segment(worktreeId)}/apps/${segment(appId)}`,
     projectId,
     worktreeId,
-    panelId
+    appId
   }
 }
 
@@ -162,21 +162,20 @@ function deepestWorktreeTarget(
     : worktreeTarget(project.id, worktree.id)
 }
 
-export function targetForPanel(
+export function targetForApp(
   projects: ProjectRecord[],
-  panel: BrowserPanel | WebPanel
+  app: BrowserApp | WebApp
 ): WorkspaceTarget | null {
   for (const project of projects) {
     const worktree = project.worktrees.find(
-      (candidate) => candidate.id === panel.worktreeId
+      (candidate) => candidate.id === app.worktreeId
     )
     if (
-      worktree?.panels.some(
-        (candidate) =>
-          candidate.kind !== 'terminal' && candidate.id === panel.id
+      worktree?.workspaceItems.some(
+        (candidate) => candidate.kind !== 'terminal' && candidate.id === app.id
       )
     ) {
-      return panelTarget(project.id, worktree.id, panel.id)
+      return appTarget(project.id, worktree.id, app.id)
     }
   }
 
@@ -229,36 +228,36 @@ function selectionForTarget(
   target: WorkspaceTarget
 ): WorkspaceSelection {
   if (target.kind === 'root') {
-    return { project: null, worktree: null, terminal: null, panel: null }
+    return { project: null, worktree: null, terminal: null, app: null }
   }
 
   const project =
     projects.find((candidate) => candidate.id === target.projectId) ?? null
   if (!project || target.kind === 'project') {
-    return { project, worktree: null, terminal: null, panel: null }
+    return { project, worktree: null, terminal: null, app: null }
   }
 
   const worktree =
     project.worktrees.find((candidate) => candidate.id === target.worktreeId) ??
     null
   if (!worktree || target.kind === 'worktree') {
-    return { project, worktree, terminal: null, panel: null }
+    return { project, worktree, terminal: null, app: null }
   }
 
-  if (target.kind === 'panel') {
-    const panel =
-      worktree.panels.find(
-        (candidate): candidate is BrowserPanel | WebPanel =>
-          candidate.kind !== 'terminal' && candidate.id === target.panelId
+  if (target.kind === 'app') {
+    const app =
+      worktree.workspaceItems.find(
+        (candidate): candidate is BrowserApp | WebApp =>
+          candidate.kind !== 'terminal' && candidate.id === target.appId
       ) ?? null
-    return { project, worktree, terminal: null, panel }
+    return { project, worktree, terminal: null, app }
   }
 
   const terminal =
     worktree.terminals.find(
       (candidate) => candidate.id === target.terminalId
     ) ?? null
-  return { project, worktree, terminal, panel: null }
+  return { project, worktree, terminal, app: null }
 }
 
 function decode(value: string): string | null {
@@ -310,8 +309,8 @@ function requestedTarget(pathname: string): WorkspaceTarget | null {
     return terminalTarget(projectId, worktreeId, descendantId)
   }
 
-  if (parts[4] === 'panels') {
-    return panelTarget(projectId, worktreeId, descendantId)
+  if (parts[4] === 'apps') {
+    return appTarget(projectId, worktreeId, descendantId)
   }
 
   return null
@@ -357,13 +356,13 @@ function resolveTarget(
     return deepestWorktreeTarget(project, worktree)
   }
 
-  if (requested.kind === 'panel') {
-    const panel = worktree.panels.find(
+  if (requested.kind === 'app') {
+    const app = worktree.workspaceItems.find(
       (candidate) =>
-        candidate.kind !== 'terminal' && candidate.id === requested.panelId
+        candidate.kind !== 'terminal' && candidate.id === requested.appId
     )
-    return panel
-      ? panelTarget(project.id, worktree.id, panel.id)
+    return app
+      ? appTarget(project.id, worktree.id, app.id)
       : deepestWorktreeTarget(project, worktree)
   }
 

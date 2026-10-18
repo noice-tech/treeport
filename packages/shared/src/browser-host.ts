@@ -6,7 +6,7 @@ export { decodeUnknownOrNull } from './schema.js'
 export { BROWSER_VIDEO_CAPTURE_SOURCE } from './browser-video.js'
 export { browserClipboardSchema, copyBrowserPage } from './browser-clipboard.js'
 
-export const browserPanelIdSchema = Schema.String.pipe(
+export const browserAppIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)
 )

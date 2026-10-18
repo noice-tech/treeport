@@ -32,7 +32,7 @@
     "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@effect/platform": "^0.97.1",
     "@effect/rpc": "^0.76.2",
-    "@treeport/panel-sdk": "workspace:*",
+    "@treeport/app-sdk": "workspace:*",
     "effect": "^3.22.1"
   }
 }

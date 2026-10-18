@@ -15,9 +15,9 @@ import {
   type PackageSource,
   type ProjectRecord,
   type TerminalPresetDefinition,
-  type WebPanelDefinition,
-  type WebPanelPermission,
-  webPanelPermissionSchema
+  type WebAppDefinition,
+  type WebAppPermission,
+  webAppPermissionSchema
 } from '@treeport/shared'
 import type { AppConfig } from './config'
 import { runChecked, type CommandRunner } from './command'
@@ -72,8 +72,8 @@ type ParsedPackageSource = ParsedNpmSource | ParsedLocalSource
 
 type PackageSourceObject = Exclude<PackageSource, string>
 
-export interface ResolvedWebPanel {
-  definition: WebPanelDefinition
+export interface ResolvedWebApp {
+  definition: WebAppDefinition
   root: string
   entry: string
   packageRoot: string
@@ -97,7 +97,7 @@ interface ResolvedPackage {
   projectId: string | null
   root: string
   installedPath: string
-  webPanels: ResolvedWebPanel[]
+  webApps: ResolvedWebApp[]
   terminalPresets: ResolvedTerminalPreset[]
   diagnostics: PackageResourceDiagnostic[]
 }
@@ -117,27 +117,27 @@ interface ProjectPackageState {
 }
 
 interface ResourceCandidates {
-  webPanels: Array<{ root: string; relativePath: string }>
+  webApps: Array<{ root: string; relativePath: string }>
   terminalPresets: Array<{ path: string; relativePath: string }>
   diagnostics: PackageResourceDiagnostic[]
 }
 
-interface WebPanelManifestEntry {
+interface WebAppManifestEntry {
   title: string | null
   source: string
-  permissions: WebPanelPermission[]
+  permissions: WebAppPermission[]
   sandbox: boolean
 }
 
 interface PackageManifest {
-  webPanels: WebPanelManifestEntry[]
+  webApps: WebAppManifestEntry[]
   terminalPresets: string[]
 }
 
 const packageManifestInputSchema = z.unknown()
 type PackageManifestInput = z.input<typeof packageManifestInputSchema>
 const manifestPatternsSchema = z.array(z.string())
-const webPanelManifestEntrySchema = z.union([
+const webAppManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
     source: z.string(),
@@ -145,8 +145,8 @@ const webPanelManifestEntrySchema = z.union([
     sandbox: z.boolean().optional(),
     permissions: z
       .array(
-        z.custom<WebPanelPermission>((value) =>
-          isSchemaValue(webPanelPermissionSchema, value)
+        z.custom<WebAppPermission>((value) =>
+          isSchemaValue(webAppPermissionSchema, value)
         )
       )
       .optional()
@@ -188,7 +188,7 @@ function packageFilter(source: PackageSource): PackageSourceObject | undefined {
     .object({
       source: z.string(),
       autoload: z.boolean().optional(),
-      webPanels: z.array(z.string()).optional(),
+      webApps: z.array(z.string()).optional(),
       terminalPresets: z.array(z.string()).optional()
     })
     .parse(source)
@@ -197,8 +197,8 @@ function packageFilter(source: PackageSource): PackageSourceObject | undefined {
     result.autoload = data.autoload
   }
 
-  if (data.webPanels !== undefined) {
-    result.webPanels = data.webPanels
+  if (data.webApps !== undefined) {
+    result.webApps = data.webApps
   }
 
   if (data.terminalPresets !== undefined) {
@@ -245,7 +245,7 @@ function diagnostic(
     severity?: 'warning' | 'error' | undefined
     source?: string | undefined
     projectId?: string | undefined
-    resourceType?: 'web-panel' | 'terminal-preset' | undefined
+    resourceType?: 'web-app' | 'terminal-preset' | undefined
     path?: string | undefined
   } = {}
 ): PackageResourceDiagnostic {
@@ -528,7 +528,7 @@ export class PackageSystem {
     const packageObjectSchema = z.looseObject({
       source: z.unknown().optional(),
       autoload: z.unknown().optional(),
-      webPanels: z.unknown().optional(),
+      webApps: z.unknown().optional(),
       terminalPresets: z.unknown().optional()
     })
     const packages: PackageSource[] = []
@@ -572,14 +572,14 @@ export class PackageSystem {
         }
       }
 
-      const parsedWebPanels = z
+      const parsedWebApps = z
         .array(z.string())
-        .safeParse(parsedEntry.data.webPanels)
+        .safeParse(parsedEntry.data.webApps)
       const parsedTerminalPresets = z
         .array(z.string())
         .safeParse(parsedEntry.data.terminalPresets)
       for (const [key, original, parsed] of [
-        ['webPanels', parsedEntry.data.webPanels, parsedWebPanels],
+        ['webApps', parsedEntry.data.webApps, parsedWebApps],
         [
           'terminalPresets',
           parsedEntry.data.terminalPresets,
@@ -602,8 +602,8 @@ export class PackageSystem {
         configured.autoload = parsedAutoload.data
       }
 
-      if (parsedWebPanels.success) {
-        configured.webPanels = parsedWebPanels.data
+      if (parsedWebApps.success) {
+        configured.webApps = parsedWebApps.data
       }
 
       if (parsedTerminalPresets.success) {
@@ -925,20 +925,20 @@ export class PackageSystem {
     return [...parsed.data]
   }
 
-  private validateWebPanelManifest(
+  private validateWebAppManifest(
     entries: PackageManifestInput,
     packageJsonPath: string
-  ): WebPanelManifestEntry[] {
+  ): WebAppManifestEntry[] {
     const parsedEntries = z.array(z.unknown()).safeParse(entries)
     if (!parsedEntries.success) {
-      throw new Error(`${packageJsonPath} treeport.webPanels must be an array`)
+      throw new Error(`${packageJsonPath} treeport.webApps must be an array`)
     }
 
-    return parsedEntries.data.map((entry): WebPanelManifestEntry => {
-      const parsed = webPanelManifestEntrySchema.safeParse(entry)
+    return parsedEntries.data.map((entry): WebAppManifestEntry => {
+      const parsed = webAppManifestEntrySchema.safeParse(entry)
       if (!parsed.success) {
         throw new Error(
-          `${packageJsonPath} contains an invalid web panel definition`
+          `${packageJsonPath} contains an invalid web app definition`
         )
       }
 
@@ -946,7 +946,7 @@ export class PackageSystem {
       if (parsedSource.success) {
         this.validateManifestPatterns(
           [parsedSource.data],
-          'webPanels',
+          'webApps',
           packageJsonPath
         )
         return {
@@ -964,8 +964,8 @@ export class PackageSystem {
           sandbox: z.boolean().optional(),
           permissions: z
             .array(
-              z.custom<WebPanelPermission>((value) =>
-                isSchemaValue(webPanelPermissionSchema, value)
+              z.custom<WebAppPermission>((value) =>
+                isSchemaValue(webAppPermissionSchema, value)
               )
             )
             .optional()
@@ -979,15 +979,15 @@ export class PackageSystem {
       } = parsedDefinition
       if (source.startsWith('!')) {
         throw new Error(
-          `${packageJsonPath} contains an invalid web panel definition`
+          `${packageJsonPath} contains an invalid web app definition`
         )
       }
 
-      this.validateManifestPatterns([source], 'webPanels', packageJsonPath)
+      this.validateManifestPatterns([source], 'webApps', packageJsonPath)
       const uniquePermissions = new Set(permissions)
       if (uniquePermissions.size !== permissions.length) {
         throw new Error(
-          `${packageJsonPath} contains an invalid web panel permission`
+          `${packageJsonPath} contains an invalid web app permission`
         )
       }
 
@@ -1002,7 +1002,7 @@ export class PackageSystem {
     projectId: string | null
   ): Promise<ResourceCandidates> {
     const canonicalRoot = await fs.realpath(root)
-    const webPanels: ResourceCandidates['webPanels'] = []
+    const webApps: ResourceCandidates['webApps'] = []
     const terminalPresets: ResourceCandidates['terminalPresets'] = []
     const diagnostics: PackageResourceDiagnostic[] = []
     const visited = new Set<string>()
@@ -1062,16 +1062,16 @@ export class PackageSystem {
               .catch(() => false)
           : false
         if (realIndex && indexIsFile && isWithin(realIndex, canonicalRoot)) {
-          webPanels.push({
+          webApps.push({
             root: directory,
             relativePath: toPosix(path.relative(root, directory)) || '.'
           })
         } else {
           diagnostics.push(
-            diagnostic(scope, 'Web panel entry escapes the package root', {
+            diagnostic(scope, 'Web app entry escapes the package root', {
               source,
               projectId: projectId ?? undefined,
-              resourceType: 'web-panel',
+              resourceType: 'web-app',
               path: indexPath
             })
           )
@@ -1121,20 +1121,20 @@ export class PackageSystem {
     }
 
     await walk(root)
-    return { webPanels, terminalPresets, diagnostics }
+    return { webApps, terminalPresets, diagnostics }
   }
 
   private manifestAllows(
     relativePath: string,
     patterns: string[],
-    resourceType: 'web-panel' | 'terminal-preset'
+    resourceType: 'web-app' | 'terminal-preset'
   ): boolean {
     const positives = patterns.filter((pattern) => !pattern.startsWith('!'))
     const exclusions = patterns
       .filter((pattern) => pattern.startsWith('!'))
       .map((pattern) => pattern.slice(1))
     const comparable =
-      resourceType === 'web-panel'
+      resourceType === 'web-app'
         ? [relativePath, `${relativePath}/index.html`]
         : [relativePath]
     const matches = (pattern: string) =>
@@ -1186,7 +1186,7 @@ export class PackageSystem {
       if (parsedPackageJson.data.treeport !== undefined) {
         const parsedTreeport = z
           .looseObject({
-            webPanels: z.unknown().optional(),
+            webApps: z.unknown().optional(),
             terminalPresets: z.unknown().optional()
           })
           .safeParse(parsedPackageJson.data.treeport)
@@ -1197,8 +1197,8 @@ export class PackageSystem {
         }
 
         manifest = {
-          webPanels: this.validateWebPanelManifest(
-            parsedTreeport.data.webPanels ?? [],
+          webApps: this.validateWebAppManifest(
+            parsedTreeport.data.webApps ?? [],
             packageJsonPath
           ),
           terminalPresets: this.validateManifestPatterns(
@@ -1216,14 +1216,14 @@ export class PackageSystem {
       source,
       projectId
     )
-    const panelCandidates = candidates.webPanels.filter((candidate) =>
+    const appCandidates = candidates.webApps.filter((candidate) =>
       manifest
         ? this.manifestAllows(
             candidate.relativePath,
-            manifest.webPanels.map((entry) => entry.source),
-            'web-panel'
+            manifest.webApps.map((entry) => entry.source),
+            'web-app'
           )
-        : candidate.relativePath.startsWith('web-panels/') &&
+        : candidate.relativePath.startsWith('web-apps/') &&
           candidate.relativePath.split('/').length === 2
     )
     const presetCandidates = candidates.terminalPresets.filter((candidate) =>
@@ -1262,26 +1262,22 @@ export class PackageSystem {
             })
           ).then((values) => values.find(Boolean))
         : undefined
-    const webPanels = applyNormalFilter(
-      panelCandidates.map((candidate): ResolvedWebPanel => {
+    const webApps = applyNormalFilter(
+      appCandidates.map((candidate): ResolvedWebApp => {
         const resourceId = encodeURIComponent(
           path.posix.basename(candidate.relativePath)
         )
-        const declarations = (manifest?.webPanels ?? []).filter((entry) =>
-          this.manifestAllows(
-            candidate.relativePath,
-            [entry.source],
-            'web-panel'
-          )
+        const declarations = (manifest?.webApps ?? []).filter((entry) =>
+          this.manifestAllows(candidate.relativePath, [entry.source], 'web-app')
         )
         const permissions = [
           ...new Set(declarations.flatMap((entry) => entry.permissions))
         ]
         // Only an explicit package declaration may disable the frame sandbox.
         const sandboxEnabled = declarations.every((entry) => entry.sandbox)
-        const resolved: ResolvedWebPanel = {
+        const resolved: ResolvedWebApp = {
           definition: {
-            id: `package:${parsed.packageId}:web-panel:${resourceId}`,
+            id: `package:${parsed.packageId}:web-app:${resourceId}`,
             title:
               declarations.find((entry) => entry.title !== null)?.title ??
               titleFromPath(candidate.relativePath),
@@ -1308,7 +1304,7 @@ export class PackageSystem {
 
         return resolved
       }),
-      filter?.webPanels,
+      filter?.webApps,
       autoload
     )
     const terminalPresets: ResolvedTerminalPreset[] = []
@@ -1376,7 +1372,7 @@ export class PackageSystem {
       autoload
     )
     const duplicateIds = new Set<string>()
-    for (const resource of [...webPanels, ...filteredPresets]) {
+    for (const resource of [...webApps, ...filteredPresets]) {
       const resourceId = resource.definition.id
       if (duplicateIds.has(resourceId)) {
         candidates.diagnostics.push(
@@ -1404,7 +1400,7 @@ export class PackageSystem {
       projectId,
       root,
       installedPath: root,
-      webPanels,
+      webApps,
       terminalPresets: filteredPresets,
       diagnostics: candidates.diagnostics
     }
@@ -1413,7 +1409,7 @@ export class PackageSystem {
   private clonePackage(pkg: ResolvedPackage): ResolvedPackage {
     return {
       ...pkg,
-      webPanels: pkg.webPanels.map((resource) => ({
+      webApps: pkg.webApps.map((resource) => ({
         ...resource,
         definition: {
           ...resource.definition,
@@ -1441,12 +1437,12 @@ export class PackageSystem {
     result.source = configured.source
     result.scope = 'project'
     result.projectId = projectId
-    result.webPanels = applyDelta(result.webPanels, configured.webPanels)
+    result.webApps = applyDelta(result.webApps, configured.webApps)
     result.terminalPresets = applyDelta(
       result.terminalPresets,
       configured.terminalPresets
     )
-    for (const resource of [...result.webPanels, ...result.terminalPresets]) {
+    for (const resource of [...result.webApps, ...result.terminalPresets]) {
       resource.definition.source = {
         type: 'package',
         packageId: result.packageId,
@@ -1510,7 +1506,7 @@ export class PackageSystem {
           parsed.type === 'local'
             ? parsed.path
             : this.npmPackagePath(parsed, scope, projectId),
-        webPanels: [],
+        webApps: [],
         terminalPresets: [],
         diagnostics: [
           diagnostic(
@@ -1776,7 +1772,7 @@ export class PackageSystem {
                   ? this.applyProjectDelta(
                       {
                         ...resolved,
-                        webPanels: resolved.webPanels.map((resource) => ({
+                        webApps: resolved.webApps.map((resource) => ({
                           ...resource,
                           enabled: false
                         })),
@@ -1885,17 +1881,17 @@ export class PackageSystem {
     })
   }
 
-  webPanelDefinitions(
+  webAppDefinitions(
     projectId: string
   ): Effect.Effect<
-    ResolvedWebPanel[],
+    ResolvedWebApp[],
     DomainError<unknown>,
     ApplicationServices
   > {
     return this.ensureProject(projectId).pipe(
       Effect.map((state) =>
         [...state.effectivePackages.values()].flatMap((pkg) =>
-          pkg.webPanels.filter((resource) => resource.enabled)
+          pkg.webApps.filter((resource) => resource.enabled)
         )
       )
     )
@@ -1947,8 +1943,7 @@ export class PackageSystem {
           projectName: null,
           installedPath: pkg.installedPath,
           resources: {
-            webPanels: pkg.webPanels.filter((resource) => resource.enabled)
-              .length,
+            webApps: pkg.webApps.filter((resource) => resource.enabled).length,
             terminalPresets: pkg.terminalPresets.filter(
               (resource) => resource.enabled
             ).length
@@ -1966,7 +1961,7 @@ export class PackageSystem {
             projectName: state.context.name,
             installedPath: pkg.installedPath,
             resources: {
-              webPanels: pkg.webPanels.filter((resource) => resource.enabled)
+              webApps: pkg.webApps.filter((resource) => resource.enabled)
                 .length,
               terminalPresets: pkg.terminalPresets.filter(
                 (resource) => resource.enabled

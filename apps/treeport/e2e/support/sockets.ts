@@ -147,8 +147,8 @@ export async function installMockSockets(
             snapshot: {
               at: new Date().toISOString(),
               terminalMetadata: initialMetadata,
-              webPanels: [],
-              browserPanels: [],
+              webApps: [],
+              browserApps: [],
               presence: []
             }
           })

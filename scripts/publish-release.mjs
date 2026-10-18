@@ -13,7 +13,7 @@ import {
 
 const githubRepository = 'noice-tech/treeport'
 const packageDirectories = [
-  'packages/panel-sdk',
+  'packages/app-sdk',
   'packages/pi',
   'packages/review',
   'packages/session-keeper',

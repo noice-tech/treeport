@@ -10,7 +10,7 @@ import { checkSessionKeeperPackage } from '../../../packages/session-keeper/scri
 
 const execute = promisify(execFile)
 const directory = fileURLToPath(new URL('..', import.meta.url))
-const sdkDirectory = path.resolve(directory, '../../packages/panel-sdk')
+const sdkDirectory = path.resolve(directory, '../../packages/app-sdk')
 const keeperDirectory = path.resolve(directory, '../../packages/session-keeper')
 const packed = process.argv.includes('--packed')
 
@@ -31,7 +31,7 @@ async function checkPackage(
   }
 
   const cli = manifest.name === '@treeport/treeport'
-  assert(cli || manifest.name === '@treeport/panel-sdk', 'Unexpected package')
+  assert(cli || manifest.name === '@treeport/app-sdk', 'Unexpected package')
   for (const kind of [
     'dependencies',
     'optionalDependencies',
@@ -56,7 +56,7 @@ async function checkPackage(
         String(version).startsWith('workspace:')
       ) {
         assert(
-          (name === '@treeport/panel-sdk' ||
+          (name === '@treeport/app-sdk' ||
             name === '@treeport/session-keeper') &&
             version === 'workspace:*',
           `Published dependency ${name} uses ${version}`
@@ -93,7 +93,7 @@ async function checkPackage(
   if (cli) {
     assert.deepEqual(manifest.bin, { treeport: 'bin/treeport.mjs' })
     assert.equal(
-      manifest.dependencies['@treeport/panel-sdk'],
+      manifest.dependencies['@treeport/app-sdk'],
       published ? sdkVersion : 'workspace:*'
     )
     assert.equal(

@@ -77,12 +77,12 @@ export default defineConfig({
             },
             { label: 'Remote access', slug: 'features/remote-access' },
             {
-              label: 'Web panels (experimental)',
-              slug: 'features/web-panels'
+              label: 'Web apps (experimental)',
+              slug: 'features/web-apps'
             },
             {
               label: 'Browser (experimental)',
-              slug: 'features/browser-panel'
+              slug: 'features/browser-app'
             },
             {
               label: 'Tree setup and cleanup',

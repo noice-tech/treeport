@@ -1,13 +1,9 @@
 import * as Schema from 'effect/Schema'
-import type {
-  WebPanel,
-  WebPanelInput,
-  WebPanelPermission
-} from '@treeport/panel-sdk'
+import type { WebApp, WebAppInput, WebAppPermission } from '@treeport/app-sdk'
 import { browserUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import type { WorkspacePresence } from './presence-protocol.js'
-import { webPanelPermissionSchema } from './web-panel-protocol.js'
+import { webAppPermissionSchema } from './web-app-protocol.js'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
@@ -30,14 +26,14 @@ export type {
   TreeFileSearchResult,
   TreeFileWrite,
   TreeFileWriteResult,
-  WebPanel,
-  WebPanelContext,
-  WebPanelInput,
-  WebPanelLaunch,
-  WebPanelPermission,
+  WebApp,
+  WebAppContext,
+  WebAppInput,
+  WebAppLaunch,
+  WebAppPermission,
   WorktreeListener,
   WorktreeListenerDiscovery
-} from '@treeport/panel-sdk'
+} from '@treeport/app-sdk'
 export * from './browser-protocol.js'
 export * from './browser-clipboard.js'
 export * from './browser-page-metadata.js'
@@ -52,7 +48,7 @@ export * from './push-protocol.js'
 export * from './schema.js'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
-export * from './web-panel-protocol.js'
+export * from './web-app-protocol.js'
 
 export const PRODUCT_NAME = 'Treeport'
 export const API_VERSION = 1
@@ -65,7 +61,7 @@ export const TERMINAL_ARGUMENT_MAX_LENGTH = 4_096
 export const TERMINAL_PRESET_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
 export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
-export const WEB_PANEL_INPUT_MAX_BYTES = 64 * 1024
+export const WEB_APP_INPUT_MAX_BYTES = 64 * 1024
 export const TREE_CONTEXT_FIELD_MAX_COUNT = 64
 export const TREE_CONTEXT_VALUE_MAX_LENGTH = 16 * 1024
 export const TREE_CONTEXT_VALUES_MAX_LENGTH = 64 * 1024
@@ -140,7 +136,7 @@ export interface TerminalPreset {
 }
 
 export type PackageScope = 'global' | 'project'
-export type PackageResourceType = 'web-panel' | 'terminal-preset'
+export type PackageResourceType = 'web-app' | 'terminal-preset'
 
 export interface PackageResourceDiagnostic {
   severity: 'warning' | 'error'
@@ -157,7 +153,7 @@ export type PackageSource =
   | {
       source: string
       autoload?: boolean
-      webPanels?: string[]
+      webApps?: string[]
       terminalPresets?: string[]
     }
 
@@ -169,7 +165,7 @@ export interface PackageListing {
   projectName: string | null
   installedPath: string | null
   resources: {
-    webPanels: number
+    webApps: number
     terminalPresets: number
   }
   diagnostics: PackageResourceDiagnostic[]
@@ -224,7 +220,7 @@ export interface TerminalCapture {
   content: string
 }
 
-export interface TerminalPanel {
+export interface TerminalWorkspaceItem {
   id: string
   kind: 'terminal'
   worktreeId: string
@@ -234,7 +230,7 @@ export interface TerminalPanel {
   updatedAt: string
 }
 
-export interface BrowserPanel {
+export interface BrowserApp {
   id: string
   kind: 'browser'
   worktreeId: string
@@ -244,9 +240,10 @@ export interface BrowserPanel {
   updatedAt: string
 }
 
-export type Panel = TerminalPanel | WebPanel | BrowserPanel
+export type App = WebApp | BrowserApp
+export type WorkspaceItem = TerminalWorkspaceItem | App
 
-export type WebPanelSource =
+export type WebAppSource =
   | { type: 'project' }
   | {
       type: 'package'
@@ -255,30 +252,30 @@ export type WebPanelSource =
       scope: PackageScope
     }
 
-export interface WebPanelSandbox {
-  /** False only for panels explicitly declared as trusted and unsandboxed. */
+export interface WebAppSandbox {
+  /** False only for apps explicitly declared as trusted and unsandboxed. */
   enabled: boolean
   allowSameOrigin: boolean
 }
 
-export interface WebPanelDefinition {
+export interface WebAppDefinition {
   id: string
   title: string
   icon: string | null
-  source: WebPanelSource
-  permissions: WebPanelPermission[]
+  source: WebAppSource
+  permissions: WebAppPermission[]
   permissionsGranted: boolean
-  sandbox: WebPanelSandbox
+  sandbox: WebAppSandbox
 }
 
-export interface OpenWebPanelResult {
-  panel: WebPanel
+export interface OpenWebAppResult {
+  app: WebApp
   created: boolean
   reused: boolean
 }
 
-export interface OpenBrowserPanelResult {
-  panel: BrowserPanel
+export interface OpenBrowserAppResult {
+  app: BrowserApp
 }
 
 export type TreeContextFieldInput = 'text' | 'textarea'
@@ -318,7 +315,7 @@ export interface WorktreeRecord {
   pr: PrInfo
   dirty: DirtyState | null
   terminals: TerminalRecord[]
-  panels: Panel[]
+  workspaceItems: WorkspaceItem[]
   createdAt: string
   updatedAt: string
 }
@@ -848,23 +845,23 @@ export const reorderWorkspaceItemsSchema = Schema.Struct({
   )
 })
 
-export const webPanelInputSchema: Schema.Schema<WebPanelInput> = Schema.Record({
+export const webAppInputSchema: Schema.Schema<WebAppInput> = Schema.Record({
   key: Schema.String,
   value: jsonValueSchema
 })
 
-export const createWebPanelSchema = Schema.Struct({
+export const createWebAppSchema = Schema.Struct({
   definitionId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
-  input: Schema.optional(Schema.NullOr(webPanelInputSchema)),
+  input: Schema.optional(Schema.NullOr(webAppInputSchema)),
   launchCwd: Schema.optional(
     Schema.NullOr(Schema.String.pipe(Schema.maxLength(4_096)))
   )
 })
-export const updateWebPanelPermissionGrantSchema = Schema.Struct({
+export const updateWebAppPermissionGrantSchema = Schema.Struct({
   granted: Schema.Boolean,
-  permissions: Schema.Array(webPanelPermissionSchema)
+  permissions: Schema.Array(webAppPermissionSchema)
 })
-export const createBrowserPanelSchema = Schema.Struct({
+export const createBrowserAppSchema = Schema.Struct({
   url: Schema.optional(browserUrlSchema),
   sourceTerminalId: Schema.optional(
     Schema.NullOr(
@@ -872,11 +869,11 @@ export const createBrowserPanelSchema = Schema.Struct({
     )
   )
 })
-export const openBrowserPanelFromTerminalSchema = Schema.Struct({
+export const openBrowserAppFromTerminalSchema = Schema.Struct({
   url: browserUrlSchema
 })
-export const openWebPanelSchema = Schema.Struct({
-  ...createWebPanelSchema.fields,
+export const openWebAppSchema = Schema.Struct({
+  ...createWebAppSchema.fields,
   newInstance: Schema.optional(Schema.Boolean),
   sourceTerminalId: Schema.optional(
     Schema.NullOr(
@@ -891,19 +888,19 @@ export const requestWorkspaceOpenSchema = Schema.Struct({
   )
 })
 
-export const webPanelStorageKeySchema = Schema.String.pipe(
+export const webAppStorageKeySchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)
 )
-export const getWebPanelStorageSchema = Schema.Struct({
-  key: webPanelStorageKeySchema
+export const getWebAppStorageSchema = Schema.Struct({
+  key: webAppStorageKeySchema
 })
-export const setWebPanelStorageSchema = Schema.Struct({
-  key: webPanelStorageKeySchema,
+export const setWebAppStorageSchema = Schema.Struct({
+  key: webAppStorageKeySchema,
   value: jsonValueSchema
 })
-export const deleteWebPanelStorageSchema = Schema.Struct({
-  key: webPanelStorageKeySchema
+export const deleteWebAppStorageSchema = Schema.Struct({
+  key: webAppStorageKeySchema
 })
 
 export const treeFilePathSchema = Schema.String.pipe(
@@ -1015,17 +1012,17 @@ interface ProductEventPayloadMap {
   'terminal.removed': { worktreeId: string; terminalId: string }
   'terminal.metadata': TerminalRuntimeMetadata
   'terminal.controller_changed': { terminalId: string; controlled: boolean }
-  'panel.created': { worktreeId: string; panelId: string }
-  'panel.updated': { worktreeId: string; panelId: string }
-  'panel.open_requested': {
+  'app.created': { worktreeId: string; appId: string }
+  'app.updated': { worktreeId: string; appId: string }
+  'app.open_requested': {
     worktreeId: string
-    panelId: string
-    panel: BrowserPanel | WebPanel
+    appId: string
+    app: BrowserApp | WebApp
     requestId?: string | null
     sourceTerminalId: string | null
-    sourcePanelId: string | null
+    sourceAppId: string | null
   }
-  'panel.removed': { worktreeId: string; panelId: string }
+  'app.removed': { worktreeId: string; appId: string }
   'workspace.open_requested': {
     worktreeId: string
     sourceTerminalId: string

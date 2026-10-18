@@ -421,9 +421,9 @@ test.describe('desktop worktree and terminal workflows', () => {
       }
     ])
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
-    await page.getByRole('button', { name: 'New panel in topic' }).click()
+    await page.getByRole('button', { name: 'New app in topic' }).click()
     await page
-      .getByRole('dialog', { name: 'New panel' })
+      .getByRole('dialog', { name: 'New app' })
       .getByRole('button', { name: 'Shell' })
       .click()
     const topicTerminals = page.getByRole('list', {
@@ -467,15 +467,15 @@ test.describe('desktop worktree and terminal workflows', () => {
     await mockApp(page)
     const toggle = page.getByRole('button', { name: 'Toggle side panel' })
     await toggle.click()
-    const panel = page.getByRole('region', { name: 'main tree tool tab group' })
+    const app = page.getByRole('region', { name: 'main tree tool tab group' })
     const rail = page.getByRole('separator', { name: 'Resize side panel' })
-    const defaultBounds = await panel.boundingBox()
+    const defaultBounds = await app.boundingBox()
     expect(defaultBounds).not.toBeNull()
     await rail.press('ArrowRight')
     await expect
-      .poll(async () => (await panel.boundingBox())?.width)
+      .poll(async () => (await app.boundingBox())?.width)
       .toBeLessThan(defaultBounds!.width)
-    const splitBounds = await panel.boundingBox()
+    const splitBounds = await app.boundingBox()
     const terminal = page.getByRole('main', {
       name: 'main tree terminal workspace'
     })
@@ -494,7 +494,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(exit).toBeVisible()
     await expect(rail).toBeHidden()
     await expect
-      .poll(() => panel.boundingBox())
+      .poll(() => app.boundingBox())
       .toEqual({
         x: terminalBounds!.x,
         y: splitBounds!.y,
@@ -521,7 +521,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     await expect(exit).toBeFocused()
     await page.keyboard.press('Enter')
-    await expect.poll(() => panel.boundingBox()).toEqual(splitBounds)
+    await expect.poll(() => app.boundingBox()).toEqual(splitBounds)
     await expect(terminal).toBeVisible()
     await expect(rail).toBeVisible()
 
@@ -529,17 +529,17 @@ test.describe('desktop worktree and terminal workflows', () => {
     await enter.hover()
     await expect(tooltip).toHaveText('Enter full view')
     await toggle.click()
-    await expect(panel).toBeHidden()
+    await expect(app).toBeHidden()
     await toggle.click()
     await expect(enter).toBeVisible()
 
     await enter.click()
     await toggle.click()
-    await expect(panel).toBeHidden()
+    await expect(app).toBeHidden()
     await expect(terminal).toBeVisible()
     await toggle.click()
     await expect(enter).toBeVisible()
-    await expect.poll(() => panel.boundingBox()).toEqual(splitBounds)
+    await expect.poll(() => app.boundingBox()).toEqual(splitBounds)
 
     await enter.click()
     await page
@@ -560,7 +560,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(terminal).toBeHidden()
     await expect
       .poll(async () => {
-        const bounds = await panel.boundingBox()
+        const bounds = await app.boundingBox()
         return bounds ? bounds.x + bounds.width : null
       })
       .toBe(page.viewportSize()!.width)

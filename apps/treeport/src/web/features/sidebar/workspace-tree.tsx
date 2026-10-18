@@ -42,7 +42,7 @@ import {
   terminalIdsInLayoutNode,
   terminalWorkspaceLayouts
 } from '../terminals/terminal-workspace-layout'
-import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
+import { useWorkspaceSurfaceFocus } from '../apps/workspace-surface-focus-context'
 import type {
   PendingWorktreeCreation,
   RemovalStage
@@ -157,7 +157,7 @@ export interface WorkspaceTreeProps {
     worktree: WorktreeRecord,
     trigger: HTMLElement
   ) => Promise<void>
-  onOpenPanelDialog: (
+  onOpenAppDialog: (
     project: ProjectRecord,
     worktree: WorktreeRecord | null,
     trigger: HTMLElement
@@ -181,7 +181,7 @@ export function WorkspaceTree({
   onReorderTerminals: reorderTerminals,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
-  onOpenPanelDialog,
+  onOpenAppDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
   useSyncExternalStore(
@@ -202,7 +202,7 @@ export function WorkspaceTree({
       ? '⌘N'
       : 'Ctrl+N'
     : null
-  const newPanelShortcut = desktopBridge?.onCommand
+  const newAppShortcut = desktopBridge?.onCommand
     ? desktopBridge.platform === 'darwin'
       ? '⌘⇧T'
       : 'Ctrl+Shift+T'
@@ -365,13 +365,11 @@ export function WorkspaceTree({
                           {selectedWorktree?.id === worktree.id ? (
                             <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center max-[700px]:static max-[700px]:shrink-0">
                               <SidebarAction
-                                label={`New panel in ${worktree.name}`}
-                                tooltip={`New panel in ${worktree.name}${
-                                  newPanelShortcut
-                                    ? ` — ${newPanelShortcut}`
-                                    : ''
+                                label={`New app in ${worktree.name}`}
+                                tooltip={`New app in ${worktree.name}${
+                                  newAppShortcut ? ` — ${newAppShortcut}` : ''
                                 }`}
-                                {...(newPanelShortcut
+                                {...(newAppShortcut
                                   ? {
                                       keyShortcuts:
                                         desktopBridge?.platform === 'darwin'
@@ -381,7 +379,7 @@ export function WorkspaceTree({
                                   : {})}
                                 className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 max-[700px]:text-zinc-300 min-[701px]:size-6"
                                 onClick={(trigger) =>
-                                  onOpenPanelDialog(project, worktree, trigger)
+                                  onOpenAppDialog(project, worktree, trigger)
                                 }
                               >
                                 <PlusIcon />
@@ -640,13 +638,13 @@ export function WorkspaceTree({
                         type="button"
                         variant="ghost"
                         className="h-auto min-h-8 max-[700px]:h-auto w-full justify-start gap-1 px-2 py-1 text-[0.8125rem]/4 font-normal min-[701px]:text-sm/5 text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5"
-                        aria-label="New panel"
+                        aria-label="New app"
                         onClick={(event) =>
-                          onOpenPanelDialog(project, null, event.currentTarget)
+                          onOpenAppDialog(project, null, event.currentTarget)
                         }
                       >
                         <PlusIcon className="min-[701px]:size-3.5!" />
-                        <span>New panel</span>
+                        <span>New app</span>
                       </Button>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

@@ -27,7 +27,7 @@ import {
 } from './core/index'
 import { testAccess } from './test-access'
 import { createApp } from './app'
-import type { WebPanelAssetResolution } from './core/web-panel-vite-runtime'
+import type { WebAppAssetResolution } from './core/web-app-vite-runtime'
 import type {
   ApplicationUpdateManager,
   ApplicationUpdateStatus
@@ -291,12 +291,12 @@ function fixture(webDist = '/missing') {
         throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
       }
 
-      return { id, panels: [{ id: `${id}_panel` }] }
+      return { id, workspaceItems: [{ id: `${id}_app` }] }
     }),
     getWorktree: vi.fn(() => ({ id: 'wt_1' })),
     getWorktreeContext: vi.fn(() => ({ issue: 'TREE-123' })),
     requestWorkspaceOpen: vi.fn(async () => undefined),
-    listWebPanelDefinitions: vi.fn(async () => [
+    listWebAppDefinitions: vi.fn(async () => [
       {
         id: 'project:review',
         title: 'Review',
@@ -307,9 +307,9 @@ function fixture(webDist = '/missing') {
         sandbox: { enabled: true, allowSameOrigin: false }
       }
     ]),
-    openBrowserPanel: vi.fn(async (worktreeId: string, url?: string) => ({
-      panel: {
-        id: 'panel_browser',
+    openBrowserApp: vi.fn(async (worktreeId: string, url?: string) => ({
+      app: {
+        id: 'app_browser',
         kind: 'browser',
         worktreeId,
         title: url ? 'example.com' : 'Browser',
@@ -318,10 +318,10 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01'
       }
     })),
-    openBrowserPanelFromTerminal: vi.fn(
+    openBrowserAppFromTerminal: vi.fn(
       async (_terminalId: string, url: string) => ({
-        panel: {
-          id: 'panel_browser',
+        app: {
+          id: 'app_browser',
           kind: 'browser',
           worktreeId: 'wt_1',
           title: 'example.com',
@@ -331,9 +331,9 @@ function fixture(webDist = '/missing') {
         }
       })
     ),
-    openBrowserPanelFromPanel: vi.fn(async (_panelId: string, url: string) => ({
-      panel: {
-        id: 'panel_popup',
+    openBrowserAppFromApp: vi.fn(async (_appId: string, url: string) => ({
+      app: {
+        id: 'app_popup',
         kind: 'browser',
         worktreeId: 'wt_1',
         title: 'popup.example.com',
@@ -342,9 +342,9 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01'
       }
     })),
-    updateBrowserPanelState: vi.fn(
-      async (panelId: string, state: { url: string; title: string }) => ({
-        id: panelId,
+    updateBrowserAppState: vi.fn(
+      async (appId: string, state: { url: string; title: string }) => ({
+        id: appId,
         kind: 'browser',
         worktreeId: 'wt_1',
         ...state,
@@ -352,8 +352,8 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-02'
       })
     ),
-    createWebPanel: vi.fn(async (worktreeId: string) => ({
-      id: 'panel_review',
+    createWebApp: vi.fn(async (worktreeId: string) => ({
+      id: 'app_review',
       kind: 'web',
       worktreeId,
       definitionId: 'project:review',
@@ -364,9 +364,9 @@ function fixture(webDist = '/missing') {
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })),
-    openWebPanel: vi.fn(async (worktreeId: string) => ({
-      panel: {
-        id: 'panel_review',
+    openWebApp: vi.fn(async (worktreeId: string) => ({
+      app: {
+        id: 'app_review',
         kind: 'web',
         worktreeId,
         definitionId: 'project:review',
@@ -383,11 +383,11 @@ function fixture(webDist = '/missing') {
       created: false,
       reused: true
     })),
-    deletePanel: vi.fn(async () => undefined),
-    getWebPanelContext: vi.fn(async () => ({
+    deleteApp: vi.fn(async () => undefined),
+    getWebAppContext: vi.fn(async () => ({
       apiVersion: 1,
-      panel: {
-        id: 'panel_review',
+      app: {
+        id: 'app_review',
         kind: 'web',
         worktreeId: 'wt_1',
         definitionId: 'project:review',
@@ -417,7 +417,7 @@ function fixture(webDist = '/missing') {
       paths: ['src/app.ts'],
       truncated: false
     })),
-    readTreeFile: vi.fn(async (_panelId: string, filePath: string) => ({
+    readTreeFile: vi.fn(async (_appId: string, filePath: string) => ({
       path: filePath,
       content: 'export const value = 1\n',
       revision: 'revision-1'
@@ -440,22 +440,22 @@ function fixture(webDist = '/missing') {
       ],
       truncated: false
     })),
-    writeTreeFile: vi.fn(async (_panelId: string, input: { path: string }) => ({
+    writeTreeFile: vi.fn(async (_appId: string, input: { path: string }) => ({
       path: input.path,
       revision: 'revision-2'
     })),
-    getWebPanelDiffImage: vi.fn(async () => ({
+    getWebAppDiffImage: vi.fn(async () => ({
       dataUrl: 'data:image/png;base64,iVBORw==',
       byteLength: 4
     })),
-    getWebPanelFileDiff: vi.fn(async (_panelId: string, filePath: string) => ({
+    getWebAppFileDiff: vi.fn(async (_appId: string, filePath: string) => ({
       path: filePath,
       status: 'ready' as const,
       unified: 'diff --git a/a b/a',
       revision: 'revision-1',
       message: null
     })),
-    getWebPanelDiff: vi.fn(async () => ({
+    getWebAppDiff: vi.fn(async () => ({
       baseRef: 'origin/trunk',
       baseCommit: 'base',
       headCommit: 'head',
@@ -475,7 +475,7 @@ function fixture(webDist = '/missing') {
         untracked: []
       }
     })),
-    getPanelListeners: vi.fn(async () => ({
+    getAppListeners: vi.fn(async () => ({
       supported: true,
       message: null,
       listeners: [
@@ -488,19 +488,16 @@ function fixture(webDist = '/missing') {
         }
       ]
     })),
-    hasWebPanelStorage: vi.fn(async () => true),
-    getWebPanelStorage: vi.fn(
+    hasWebAppStorage: vi.fn(async () => true),
+    getWebAppStorage: vi.fn(
       async (): Promise<JsonValue | undefined> => [
         { file: 'src/app.ts', line: 12 }
       ]
     ),
-    setWebPanelStorage: vi.fn(async () => undefined),
-    deleteWebPanelStorage: vi.fn(async () => undefined),
-    resolveWebPanelAsset: vi.fn<
-      (
-        panelId: string,
-        requestedPath: string
-      ) => Promise<WebPanelAssetResolution>
+    setWebAppStorage: vi.fn(async () => undefined),
+    deleteWebAppStorage: vi.fn(async () => undefined),
+    resolveWebAppAsset: vi.fn<
+      (appId: string, requestedPath: string) => Promise<WebAppAssetResolution>
     >(async () => ({
       kind: 'asset',
       path: '/missing',
@@ -544,7 +541,7 @@ function fixture(webDist = '/missing') {
     worktrees: serviceMethods,
     terminals: serviceMethods,
     terminalPresets: serviceMethods,
-    panels: serviceMethods,
+    apps: serviceMethods,
     treeFiles: serviceMethods,
     packageManagement: serviceMethods
   })
@@ -596,11 +593,11 @@ function fixture(webDist = '/missing') {
   })
   const browserIssueTicket = vi.fn(() => Effect.succeed('b'.repeat(43)))
   const browserAgentCommand = vi.fn(async () => 'browser output')
-  const browserRequestPanelClose = vi.fn(async () => true)
+  const browserRequestAppClose = vi.fn(async () => true)
   const browserSessions = testAccess<BrowserSessionManager>({
     issueTicket: browserIssueTicket,
     agentCommand: browserAgentCommand,
-    requestPanelClose: browserRequestPanelClose
+    requestAppClose: browserRequestAppClose
   })
   const terminalHost = testAccess<TerminalSessionBackend>({
     captureTerminal: (terminalId: string, lines: number) =>
@@ -624,7 +621,7 @@ function fixture(webDist = '/missing') {
     applicationUpdate,
     browserIssueTicket,
     browserAgentCommand,
-    browserRequestPanelClose,
+    browserRequestAppClose,
     captureTerminal,
     config,
     metadataAcknowledgeBell,
@@ -681,7 +678,7 @@ describe('HTTP API validation', () => {
     const input = {
       sessionId: crypto.randomUUID(),
       worktreeId: 'wt_1',
-      focusedPanelId: 'wt_1_panel',
+      focusedAppId: 'wt_1_app',
       visible: true,
       focused: true
     }
@@ -703,7 +700,7 @@ describe('HTTP API validation', () => {
       { ...input, identity: { name: 'Alice' } }
     ])
 
-    const ticketPath = '/api/panels/panel_browser/browser-ticket'
+    const ticketPath = '/api/apps/app_browser/browser-ticket'
     const ticketInput = { clientId: 'viewer-one', visible: true }
     const ticketResponse = await fetch(new URL(ticketPath, url), {
       method: 'POST',
@@ -712,7 +709,7 @@ describe('HTTP API validation', () => {
     })
     expect(ticketResponse.status).toBe(200)
     expect(browserIssueTicket).toHaveBeenCalledWith(
-      'panel_browser',
+      'app_browser',
       'viewer-one',
       true,
       {
@@ -764,7 +761,7 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({
         ...input,
         worktreeId: 'wt_2',
-        focusedPanelId: 'wt_2_panel'
+        focusedAppId: 'wt_2_app'
       })
     })
     expect(presence.snapshot().map((viewer) => viewer.worktreeId)).toEqual([
@@ -779,12 +776,12 @@ describe('HTTP API validation', () => {
     expect(presence.snapshot()[0]).toMatchObject({
       visible: false,
       focused: false,
-      focusedPanelId: null
+      focusedAppId: null
     })
 
     for (const [body, status] of [
       [{ ...input, identity: { name: 'Mallory' } }, 400],
-      [{ ...input, focusedPanelId: 'wt_2_panel' }, 400],
+      [{ ...input, focusedAppId: 'wt_2_app' }, 400],
       [{ ...input, worktreeId: null }, 400],
       [{ ...input, worktreeId: 'missing' }, 404],
       [{ ...input, sessionId: 'not-a-session' }, 400]
@@ -817,7 +814,7 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({
         ...input,
         worktreeId: null,
-        focusedPanelId: null
+        focusedAppId: null
       })
     })
     expect(presence.snapshot().map((viewer) => viewer.identity.name)).toEqual([
@@ -903,9 +900,9 @@ describe('HTTP API validation', () => {
     })
   })
 
-  it('routes persistent Browser and web-panel lifecycle with scoped runtime reads', async () => {
+  it('routes persistent Browser and web-app lifecycle with scoped runtime reads', async () => {
     const { app, browserAgentCommand, service } = fixture()
-    const browser = await app.request('/api/worktrees/wt_1/browser-panels', {
+    const browser = await app.request('/api/worktrees/wt_1/browser-apps', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -915,9 +912,9 @@ describe('HTTP API validation', () => {
     })
     expect(browser.status).toBe(201)
     expect(await browser.json()).toMatchObject({
-      panel: { kind: 'browser', worktreeId: 'wt_1' }
+      app: { kind: 'browser', worktreeId: 'wt_1' }
     })
-    expect(service.openBrowserPanel).toHaveBeenCalledWith(
+    expect(service.openBrowserApp).toHaveBeenCalledWith(
       'wt_1',
       'https://example.com/application',
       'term_1',
@@ -925,7 +922,7 @@ describe('HTTP API validation', () => {
     )
 
     const terminalBrowser = await app.request(
-      '/api/terminals/term_1/browser-panels/open',
+      '/api/terminals/term_1/browser-apps/open',
       {
         method: 'POST',
         headers: {
@@ -936,7 +933,7 @@ describe('HTTP API validation', () => {
       }
     )
     expect(terminalBrowser.status).toBe(201)
-    expect(service.openBrowserPanelFromTerminal).toHaveBeenCalledWith(
+    expect(service.openBrowserAppFromTerminal).toHaveBeenCalledWith(
       'term_1',
       'http://localhost:4173/',
       'link-click-1'
@@ -944,7 +941,7 @@ describe('HTTP API validation', () => {
 
     expect(
       (
-        await app.request('/api/panels/panel_browser/browser-state', {
+        await app.request('/api/apps/app_browser/browser-state', {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -956,7 +953,7 @@ describe('HTTP API validation', () => {
     ).toBe(404)
     expect(
       (
-        await app.request('/api/panels/panel_browser/browser-popups', {
+        await app.request('/api/apps/app_browser/browser-popups', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ url: 'https://popup.example.com/' })
@@ -970,7 +967,7 @@ describe('HTTP API validation', () => {
     ]) {
       expect(
         (
-          await app.request('/api/worktrees/wt_1/browser-panels', {
+          await app.request('/api/worktrees/wt_1/browser-apps', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ url })
@@ -978,26 +975,23 @@ describe('HTTP API validation', () => {
         ).status
       ).toBe(400)
     }
-    expect(service.openBrowserPanel).toHaveBeenCalledOnce()
+    expect(service.openBrowserApp).toHaveBeenCalledOnce()
 
     const fileUrl = 'file:///tmp/preview%20draft.html#section'
-    const fileBrowser = await app.request(
-      '/api/worktrees/wt_1/browser-panels',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: fileUrl })
-      }
-    )
+    const fileBrowser = await app.request('/api/worktrees/wt_1/browser-apps', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: fileUrl })
+    })
     expect(fileBrowser.status).toBe(201)
-    expect(service.openBrowserPanel).toHaveBeenLastCalledWith(
+    expect(service.openBrowserApp).toHaveBeenLastCalledWith(
       'wt_1',
       fileUrl,
       null,
       null
     )
     const fileNavigation = await app.request(
-      '/api/panels/panel_browser/browser-agent',
+      '/api/apps/app_browser/browser-agent',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1005,31 +999,28 @@ describe('HTTP API validation', () => {
       }
     )
     expect(fileNavigation.status).toBe(200)
-    expect(browserAgentCommand).toHaveBeenLastCalledWith('panel_browser', {
+    expect(browserAgentCommand).toHaveBeenLastCalledWith('app_browser', {
       command: 'goto',
       args: [fileUrl]
     })
 
-    const snapshot = await app.request(
-      '/api/panels/panel_browser/browser-agent',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ command: 'snapshot', args: [] })
-      }
-    )
+    const snapshot = await app.request('/api/apps/app_browser/browser-agent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: 'snapshot', args: [] })
+    })
     expect(snapshot.status).toBe(200)
     expect(await snapshot.json()).toEqual({ output: 'browser output' })
-    expect(browserAgentCommand).toHaveBeenCalledWith('panel_browser', {
+    expect(browserAgentCommand).toHaveBeenCalledWith('app_browser', {
       command: 'snapshot',
       args: []
     })
 
     browserAgentCommand.mockRejectedValueOnce(
-      new Error('The Browser panel is not visible.')
+      new Error('The Browser app is not visible.')
     )
     const failedScreenshot = await app.request(
-      '/api/panels/panel_browser/browser-agent',
+      '/api/apps/app_browser/browser-agent',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1040,23 +1031,23 @@ describe('HTTP API validation', () => {
     expect(await failedScreenshot.json()).toEqual({
       error: {
         code: 'BROWSER_COMMAND_FAILED',
-        message: 'The Browser panel is not visible.',
+        message: 'The Browser app is not visible.',
         details: {
           command: 'screenshot',
           recovery:
-            'Open Browser panel_browser in Treeport, then retry the screenshot.'
+            'Open Browser app_browser in Treeport, then retry the screenshot.'
         }
       }
     })
 
     const definitions = await app.request(
-      '/api/worktrees/wt_1/web-panel-definitions'
+      '/api/worktrees/wt_1/web-app-definitions'
     )
     expect(await definitions.json()).toMatchObject({
       definitions: [{ id: 'project:review', source: { type: 'project' } }]
     })
 
-    const created = await app.request('/api/worktrees/wt_1/panels', {
+    const created = await app.request('/api/worktrees/wt_1/apps', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1066,7 +1057,7 @@ describe('HTTP API validation', () => {
       })
     })
     expect(created.status).toBe(201)
-    expect(service.createWebPanel).toHaveBeenCalledWith(
+    expect(service.createWebApp).toHaveBeenCalledWith(
       'wt_1',
       'project:review',
       {
@@ -1075,7 +1066,7 @@ describe('HTTP API validation', () => {
       }
     )
 
-    const opened = await app.request('/api/worktrees/wt_1/panels/open', {
+    const opened = await app.request('/api/worktrees/wt_1/apps/open', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1088,7 +1079,7 @@ describe('HTTP API validation', () => {
     })
     expect(opened.status).toBe(200)
     expect(await opened.json()).toMatchObject({ reused: true, created: false })
-    expect(service.openWebPanel).toHaveBeenCalledWith(
+    expect(service.openWebApp).toHaveBeenCalledWith(
       'wt_1',
       'project:review',
       {
@@ -1100,28 +1091,20 @@ describe('HTTP API validation', () => {
       opened.headers.get('x-request-id')
     )
 
-    expect((await app.request('/api/panels/panel_review/context')).status).toBe(
-      200
-    )
-    expect((await app.request('/api/panels/panel_review/diff')).status).toBe(
-      200
-    )
-    expect(service.getWebPanelDiff).toHaveBeenCalledWith(
-      'panel_review',
-      undefined
-    )
+    expect((await app.request('/api/apps/app_review/context')).status).toBe(200)
+    expect((await app.request('/api/apps/app_review/diff')).status).toBe(200)
+    expect(service.getWebAppDiff).toHaveBeenCalledWith('app_review', undefined)
     expect(
-      (await app.request('/api/panels/panel_review/diff?scope=committed'))
-        .status
+      (await app.request('/api/apps/app_review/diff?scope=committed')).status
     ).toBe(200)
-    expect(service.getWebPanelDiff).toHaveBeenCalledWith(
-      'panel_review',
+    expect(service.getWebAppDiff).toHaveBeenCalledWith(
+      'app_review',
       'committed'
     )
     expect(
-      (await app.request('/api/panels/panel_review/diff?scope=invalid')).status
+      (await app.request('/api/apps/app_review/diff?scope=invalid')).status
     ).toBe(400)
-    const fileDiff = await app.request('/api/panels/panel_review/diff/file', {
+    const fileDiff = await app.request('/api/apps/app_review/diff/file', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'a' })
@@ -1134,26 +1117,26 @@ describe('HTTP API validation', () => {
       revision: 'revision-1',
       message: null
     })
-    expect(service.getWebPanelFileDiff).toHaveBeenCalledWith(
-      'panel_review',
+    expect(service.getWebAppFileDiff).toHaveBeenCalledWith(
+      'app_review',
       'a',
       undefined
     )
     expect(
       (
-        await app.request('/api/panels/panel_review/diff/file', {
+        await app.request('/api/apps/app_review/diff/file', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ path: 'a', scope: 'uncommitted' })
         })
       ).status
     ).toBe(200)
-    expect(service.getWebPanelFileDiff).toHaveBeenCalledWith(
-      'panel_review',
+    expect(service.getWebAppFileDiff).toHaveBeenCalledWith(
+      'app_review',
       'a',
       'uncommitted'
     )
-    const image = await app.request('/api/panels/panel_review/diff/image', {
+    const image = await app.request('/api/apps/app_review/diff/image', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'image.png', commit: null })
@@ -1163,24 +1146,21 @@ describe('HTTP API validation', () => {
       dataUrl: 'data:image/png;base64,iVBORw==',
       byteLength: 4
     })
-    expect(service.getWebPanelDiffImage).toHaveBeenCalledWith('panel_review', {
+    expect(service.getWebAppDiffImage).toHaveBeenCalledWith('app_review', {
       path: 'image.png',
       commit: null
     })
 
     expect(
-      await (await app.request('/api/panels/panel_review/files')).json()
+      await (await app.request('/api/apps/app_review/files')).json()
     ).toEqual({ paths: ['src/app.ts'], truncated: false })
-    expect(service.listTreeFiles).toHaveBeenCalledWith('panel_review')
+    expect(service.listTreeFiles).toHaveBeenCalledWith('app_review')
 
-    const searchFiles = await app.request(
-      '/api/panels/panel_review/files/search',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query: 'value' })
-      }
-    )
+    const searchFiles = await app.request('/api/apps/app_review/files/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: 'value' })
+    })
     expect(await searchFiles.json()).toEqual({
       files: [
         {
@@ -1199,14 +1179,11 @@ describe('HTTP API validation', () => {
       ],
       truncated: false
     })
-    expect(service.searchTreeFiles).toHaveBeenCalledWith(
-      'panel_review',
-      'value'
-    )
+    expect(service.searchTreeFiles).toHaveBeenCalledWith('app_review', 'value')
     for (const query of ['', 'two\nlines']) {
       expect(
         (
-          await app.request('/api/panels/panel_review/files/search', {
+          await app.request('/api/apps/app_review/files/search', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ query })
@@ -1216,7 +1193,7 @@ describe('HTTP API validation', () => {
     }
     expect(service.searchTreeFiles).toHaveBeenCalledOnce()
 
-    const readFile = await app.request('/api/panels/panel_review/files/read', {
+    const readFile = await app.request('/api/apps/app_review/files/read', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'src/app.ts' })
@@ -1227,11 +1204,11 @@ describe('HTTP API validation', () => {
       revision: 'revision-1'
     })
     expect(service.readTreeFile).toHaveBeenCalledWith(
-      'panel_review',
+      'app_review',
       'src/app.ts'
     )
 
-    const writeFile = await app.request('/api/panels/panel_review/files', {
+    const writeFile = await app.request('/api/apps/app_review/files', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1244,14 +1221,14 @@ describe('HTTP API validation', () => {
       path: 'src/app.ts',
       revision: 'revision-2'
     })
-    expect(service.writeTreeFile).toHaveBeenCalledWith('panel_review', {
+    expect(service.writeTreeFile).toHaveBeenCalledWith('app_review', {
       path: 'src/app.ts',
       content: 'export const value = 2\n',
       expectedRevision: 'revision-1'
     })
     expect(
       (
-        await app.request('/api/panels/panel_review/files/read', {
+        await app.request('/api/apps/app_review/files/read', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ path: '../outside' })
@@ -1260,9 +1237,7 @@ describe('HTTP API validation', () => {
     ).toBe(400)
 
     expect(
-      await (
-        await app.request('/api/panels/panel_review/network/listeners')
-      ).json()
+      await (await app.request('/api/apps/app_review/network/listeners')).json()
     ).toEqual({
       discovery: {
         supported: true,
@@ -1278,26 +1253,26 @@ describe('HTTP API validation', () => {
         ]
       }
     })
-    expect(service.getPanelListeners).toHaveBeenCalledWith('panel_review')
+    expect(service.getAppListeners).toHaveBeenCalledWith('app_review')
 
     expect(
-      await (await app.request('/api/panels/panel_review/storage')).json()
+      await (await app.request('/api/apps/app_review/storage')).json()
     ).toEqual({ hasData: true })
-    expect(service.hasWebPanelStorage).toHaveBeenCalledWith('panel_review')
+    expect(service.hasWebAppStorage).toHaveBeenCalledWith('app_review')
 
-    const stored = await app.request('/api/panels/panel_review/storage', {
+    const stored = await app.request('/api/apps/app_review/storage', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'comments', value: [{ line: 12 }] })
     })
     expect(stored.status).toBe(200)
-    expect(service.setWebPanelStorage).toHaveBeenCalledWith(
-      'panel_review',
+    expect(service.setWebAppStorage).toHaveBeenCalledWith(
+      'app_review',
       'comments',
       [{ line: 12 }]
     )
 
-    const restored = await app.request('/api/panels/panel_review/storage/get', {
+    const restored = await app.request('/api/apps/app_review/storage/get', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'comments' })
@@ -1307,11 +1282,11 @@ describe('HTTP API validation', () => {
       value: [{ file: 'src/app.ts', line: 12 }]
     })
 
-    vi.mocked(service.getWebPanelStorage)
+    vi.mocked(service.getWebAppStorage)
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(null)
     const missingStorage = await app.request(
-      '/api/panels/panel_review/storage/get',
+      '/api/apps/app_review/storage/get',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1319,47 +1294,41 @@ describe('HTTP API validation', () => {
       }
     )
     expect(await missingStorage.json()).toEqual({ found: false, value: null })
-    const nullStorage = await app.request(
-      '/api/panels/panel_review/storage/get',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: 'null-value' })
-      }
-    )
+    const nullStorage = await app.request('/api/apps/app_review/storage/get', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'null-value' })
+    })
     expect(await nullStorage.json()).toEqual({ found: true, value: null })
 
-    const removedStorage = await app.request(
-      '/api/panels/panel_review/storage',
-      {
-        method: 'DELETE',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: 'comments' })
-      }
-    )
+    const removedStorage = await app.request('/api/apps/app_review/storage', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'comments' })
+    })
     expect(removedStorage.status).toBe(200)
-    expect(service.deleteWebPanelStorage).toHaveBeenCalledWith(
-      'panel_review',
+    expect(service.deleteWebAppStorage).toHaveBeenCalledWith(
+      'app_review',
       'comments'
     )
 
-    const closed = await app.request('/api/panels/panel_review', {
+    const closed = await app.request('/api/apps/app_review', {
       method: 'DELETE'
     })
     expect(closed.status).toBe(200)
-    expect(service.deletePanel).toHaveBeenCalledWith('panel_review', false)
+    expect(service.deleteApp).toHaveBeenCalledWith('app_review', false)
 
-    await app.request('/api/panels/panel_review?discardStoredData=true', {
+    await app.request('/api/apps/app_review?discardStoredData=true', {
       method: 'DELETE'
     })
-    expect(service.deletePanel).toHaveBeenLastCalledWith('panel_review', true)
+    expect(service.deleteApp).toHaveBeenLastCalledWith('app_review', true)
   })
 
   it('asks for confirmation only when Browser reports beforeunload', async () => {
-    const { app, browserRequestPanelClose, service } = fixture()
-    browserRequestPanelClose.mockResolvedValueOnce(false)
+    const { app, browserRequestAppClose, service } = fixture()
+    browserRequestAppClose.mockResolvedValueOnce(false)
 
-    const blocked = await app.request('/api/panels/browser_panel', {
+    const blocked = await app.request('/api/apps/browser_app', {
       method: 'DELETE'
     })
     expect(blocked.status).toBe(409)
@@ -1369,23 +1338,20 @@ describe('HTTP API validation', () => {
         message: 'Changes you made may not be saved.'
       }
     })
-    expect(service.deletePanel).not.toHaveBeenCalled()
+    expect(service.deleteApp).not.toHaveBeenCalled()
 
-    const closed = await app.request('/api/panels/browser_panel?force=true', {
+    const closed = await app.request('/api/apps/browser_app?force=true', {
       method: 'DELETE'
     })
     expect(closed.status).toBe(200)
-    expect(browserRequestPanelClose).toHaveBeenLastCalledWith(
-      'browser_panel',
-      true
-    )
-    expect(service.deletePanel).toHaveBeenCalledWith('browser_panel', false)
+    expect(browserRequestAppClose).toHaveBeenLastCalledWith('browser_app', true)
+    expect(service.deleteApp).toHaveBeenCalledWith('browser_app', false)
   })
 
-  it('uses the panel SDK to broker scoped panel requests', async () => {
+  it('uses the app SDK to broker scoped app requests', async () => {
     const listeners = new Map<string, EventListener>()
-    const panelParent = { postMessage: vi.fn() }
-    vi.stubGlobal('parent', panelParent)
+    const appParent = { postMessage: vi.fn() }
+    vi.stubGlobal('parent', appParent)
     vi.stubGlobal('self', globalThis)
     vi.stubGlobal('addEventListener', (type: string, listener: EventListener) =>
       listeners.set(type, listener)
@@ -1396,10 +1362,10 @@ describe('HTTP API validation', () => {
     ) => listeners.get(type)!(testAccess<Event>(event))
     try {
       // SAFETY: The test fixture provides the asserted contract used here.
-      const sdk = (await import('@treeport/panel-sdk')) as {
+      const sdk = (await import('@treeport/app-sdk')) as {
         treeport: {
           version: number
-          panel: { setTitle: (title: string | null) => void }
+          app: { setTitle: (title: string | null) => void }
           context: () => Promise<object>
           network: { listeners: () => Promise<object> }
           files: { search: (query: string) => Promise<object> }
@@ -1412,38 +1378,38 @@ describe('HTTP API validation', () => {
         }
       }
       const context = sdk.treeport.context()
-      const message = panelParent.postMessage.mock.calls[0]![0]
+      const message = appParent.postMessage.mock.calls[0]![0]
       dispatch('message', {
-        source: panelParent,
+        source: appParent,
         data: {
           source: 'treeport-host-v1',
           id: message.id,
           ok: true,
-          value: { apiVersion: 1, panel: { id: 'panel_review' } }
+          value: { apiVersion: 1, app: { id: 'app_review' } }
         }
       })
 
       await expect(context).resolves.toMatchObject({
         apiVersion: 1,
-        panel: { id: 'panel_review' }
+        app: { id: 'app_review' }
       })
       expect(sdk.treeport.version).toBe(1)
-      expect(panelParent.postMessage).toHaveBeenCalledWith(
+      expect(appParent.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
-          source: 'treeport-panel-v1',
+          source: 'treeport-app-v1',
           method: 'context'
         }),
         '*'
       )
 
       const discovery = sdk.treeport.network.listeners()
-      const discoveryMessage = panelParent.postMessage.mock.calls[1]![0]
+      const discoveryMessage = appParent.postMessage.mock.calls[1]![0]
       expect(discoveryMessage).toMatchObject({
-        source: 'treeport-panel-v1',
+        source: 'treeport-app-v1',
         method: 'network.listeners'
       })
       dispatch('message', {
-        source: panelParent,
+        source: appParent,
         data: {
           source: 'treeport-host-v1',
           id: discoveryMessage.id,
@@ -1458,14 +1424,14 @@ describe('HTTP API validation', () => {
       })
 
       const search = sdk.treeport.files.search('exact value')
-      const searchMessage = panelParent.postMessage.mock.calls.at(-1)![0]
+      const searchMessage = appParent.postMessage.mock.calls.at(-1)![0]
       expect(searchMessage).toMatchObject({
-        source: 'treeport-panel-v1',
+        source: 'treeport-app-v1',
         method: 'files.search',
         query: 'exact value'
       })
       dispatch('message', {
-        source: panelParent,
+        source: appParent,
         data: {
           source: 'treeport-host-v1',
           id: searchMessage.id,
@@ -1482,15 +1448,15 @@ describe('HTTP API validation', () => {
       })
 
       const stored = sdk.treeport.storage.set('comments', [{ line: 12 }])
-      const storageMessage = panelParent.postMessage.mock.calls.at(-1)![0]
+      const storageMessage = appParent.postMessage.mock.calls.at(-1)![0]
       expect(storageMessage).toMatchObject({
-        source: 'treeport-panel-v1',
+        source: 'treeport-app-v1',
         method: 'storage.set',
         key: 'comments',
         value: [{ line: 12 }]
       })
       dispatch('message', {
-        source: panelParent,
+        source: appParent,
         data: {
           source: 'treeport-host-v1',
           id: storageMessage.id,
@@ -1499,11 +1465,11 @@ describe('HTTP API validation', () => {
       })
       await expect(stored).resolves.toBeUndefined()
 
-      sdk.treeport.panel.setTitle('Review route')
-      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+      sdk.treeport.app.setTitle('Review route')
+      expect(appParent.postMessage).toHaveBeenLastCalledWith(
         {
-          source: 'treeport-panel-v1',
-          method: 'panel.title.set',
+          source: 'treeport-app-v1',
+          method: 'app.title.set',
           title: 'Review route'
         },
         '*'
@@ -1527,7 +1493,7 @@ describe('HTTP API validation', () => {
       expect(stopFindPropagation).toHaveBeenCalledOnce()
 
       dispatch('message', {
-        source: panelParent,
+        source: appParent,
         data: {
           source: 'treeport-host-v1',
           method: 'shortcut',
@@ -1538,7 +1504,7 @@ describe('HTTP API validation', () => {
 
       unsubscribeFind()
       dispatch('message', {
-        source: panelParent,
+        source: appParent,
         data: {
           source: 'treeport-host-v1',
           method: 'shortcut',
@@ -1558,9 +1524,9 @@ describe('HTTP API validation', () => {
         preventDefault,
         stopPropagation
       })
-      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+      expect(appParent.postMessage).toHaveBeenLastCalledWith(
         {
-          source: 'treeport-panel-v1',
+          source: 'treeport-app-v1',
           method: 'workspace.select',
           index: 1
         },
@@ -1575,18 +1541,18 @@ describe('HTTP API validation', () => {
 
   it('serves immutable Vite output with restrictive browser headers', async () => {
     const { app, config, service } = fixture()
-    const panelRoot = path.join(config.runtimeDir, 'typed-panel')
-    const indexPath = path.join(panelRoot, 'index.html')
-    const modulePath = path.join(panelRoot, 'panel.js')
+    const appRoot = path.join(config.runtimeDir, 'typed-app')
+    const indexPath = path.join(appRoot, 'index.html')
+    const modulePath = path.join(appRoot, 'app.js')
     const indexSource =
-      '<!doctype html><html><body><script type="module" src="panel.js"></script></body></html>'
-    await fs.mkdir(panelRoot, { recursive: true })
+      '<!doctype html><html><body><script type="module" src="app.js"></script></body></html>'
+    await fs.mkdir(appRoot, { recursive: true })
     await fs.writeFile(indexPath, indexSource)
     await fs.writeFile(modulePath, 'export const answer = 42')
-    vi.mocked(service.resolveWebPanelAsset).mockImplementation(
-      async (_panelId, requestedPath) => ({
+    vi.mocked(service.resolveWebAppAsset).mockImplementation(
+      async (_appId, requestedPath) => ({
         kind: 'asset',
-        path: requestedPath ? path.join(panelRoot, requestedPath) : indexPath,
+        path: requestedPath ? path.join(appRoot, requestedPath) : indexPath,
         immutable: true,
         development: false,
         allowNetworkRequests: false
@@ -1596,10 +1562,10 @@ describe('HTTP API validation', () => {
     try {
       const browserOrigin = 'https://treeport.example.ts.net:5173'
       const documentResponse = await app.request(
-        '/api/web-panels/panel_review/assets/',
+        '/api/web-apps/app_review/assets/',
         {
           headers: {
-            referer: `${browserOrigin}/projects/project_1/panels/panel_review`,
+            referer: `${browserOrigin}/projects/project_1/apps/app_review`,
             'x-forwarded-host': 'treeport.example.ts.net:5173',
             'x-forwarded-proto': 'https'
           }
@@ -1625,7 +1591,7 @@ describe('HTTP API validation', () => {
       )
 
       const moduleResponse = await app.request(
-        '/api/web-panels/panel_review/assets/panel.js'
+        '/api/web-apps/app_review/assets/app.js'
       )
       expect(moduleResponse.status).toBe(200)
       expect(moduleResponse.headers.get('content-type')).toBe(
@@ -1642,12 +1608,12 @@ describe('HTTP API validation', () => {
     }
   })
 
-  it('serves nested panel modules with their browser MIME type', async () => {
+  it('serves nested app modules with their browser MIME type', async () => {
     const { app, config, service } = fixture()
     const modulePath = path.join(config.runtimeDir, 'nested', 'review.js')
     await fs.mkdir(path.dirname(modulePath), { recursive: true })
     await fs.writeFile(modulePath, 'export const loaded = true')
-    vi.mocked(service.resolveWebPanelAsset).mockResolvedValue({
+    vi.mocked(service.resolveWebAppAsset).mockResolvedValue({
       kind: 'asset',
       path: modulePath,
       immutable: true,
@@ -1657,7 +1623,7 @@ describe('HTTP API validation', () => {
 
     try {
       const response = await app.request(
-        '/api/web-panels/panel_review/assets/nested/review.js'
+        '/api/web-apps/app_review/assets/nested/review.js'
       )
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toBe(
@@ -1667,8 +1633,8 @@ describe('HTTP API validation', () => {
         'connect-src http: https:'
       )
       expect(await response.text()).toBe('export const loaded = true')
-      expect(service.resolveWebPanelAsset).toHaveBeenCalledWith(
-        'panel_review',
+      expect(service.resolveWebAppAsset).toHaveBeenCalledWith(
+        'app_review',
         'nested/review.js'
       )
     } finally {
