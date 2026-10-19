@@ -621,6 +621,10 @@ export function makeTerminalHostServer(
                     createInput.closeOnSuccess = input.closeOnSuccess
                   }
 
+                  if (input.closeOnExit !== undefined) {
+                    createInput.closeOnExit = input.closeOnExit
+                  }
+
                   if (input.initialSize !== undefined) {
                     createInput.initialSize = { ...input.initialSize }
                   }

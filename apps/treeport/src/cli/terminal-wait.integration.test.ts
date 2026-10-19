@@ -159,7 +159,11 @@ async function runtimeFixture() {
   const value = await fixture()
   value.inspect.mockImplementation(async () => {
     const terminals = await Effect.runPromise(manager.listTerminals('tree'))
-    const { closeOnSuccess: _closeOnSuccess, ...terminal } = terminals[0]!
+    const {
+      closeOnSuccess: _closeOnSuccess,
+      closeOnExit: _closeOnExit,
+      ...terminal
+    } = terminals[0]!
     return { terminal, metadata: value.observation.metadata }
   })
   const subscribe = async () => {
