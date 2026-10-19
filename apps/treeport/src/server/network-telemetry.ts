@@ -1,3 +1,4 @@
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks'
 import * as Effect from 'effect/Effect'
 import * as Metric from 'effect/Metric'
 import * as MetricBoundaries from 'effect/MetricBoundaries'
@@ -38,10 +39,56 @@ type NetworkCloseReason =
   | 'slow_client'
   | 'stream_closed'
 
+const taggedMetrics = new WeakMap<object, Map<string, unknown>>()
+function tagged<Type, In, Out>(
+  metric: Metric.Metric<Type, In, Out>,
+  key: string,
+  value: string
+): Metric.Metric<Type, In, Out> {
+  let tags = taggedMetrics.get(metric)
+  if (!tags) {
+    tags = new Map()
+    taggedMetrics.set(metric, tags)
+  }
+
+  const cacheKey = `${key}:${value}`
+  let result = tags.get(cacheKey)
+  if (!result) {
+    result = Metric.tagged(metric, key, value)
+    tags.set(cacheKey, result)
+  }
+
+  // SAFETY: Tagging preserves the input/output types of this exact metric.
+  return result as Metric.Metric<Type, In, Out>
+}
+
+export function observeDaemonEventLoop(): () => void {
+  const delay = monitorEventLoopDelay({ resolution: 20 })
+  const utilization = Metric.gauge('treeport_daemon_event_loop_utilization')
+  const p99 = Metric.gauge('treeport_daemon_event_loop_delay_p99_ms')
+  let previous = performance.eventLoopUtilization()
+  delay.enable()
+  const timer = setInterval(() => {
+    const current = performance.eventLoopUtilization()
+    utilization.unsafeUpdate(
+      performance.eventLoopUtilization(current, previous).utilization,
+      []
+    )
+    previous = current
+    p99.unsafeUpdate(delay.percentile(99) / 1e6, [])
+    delay.reset()
+  }, 1_000)
+  timer.unref()
+  return () => {
+    clearInterval(timer)
+    delay.disable()
+  }
+}
+
 const channelMetric = <Type, In, Out>(
   metric: Metric.Metric<Type, In, Out>,
   channel: string
-) => Metric.tagged(metric, 'channel', channel)
+) => tagged(metric, 'channel', channel)
 
 export const networkTelemetry = {
   connectionOpened: (channel: string) =>
@@ -54,7 +101,7 @@ export const networkTelemetry = {
     Effect.all([
       Metric.incrementBy(channelMetric(activeConnections, channel), -1),
       Metric.increment(
-        Metric.tagged(channelMetric(closes, channel), 'reason', reason)
+        tagged(channelMetric(closes, channel), 'reason', reason)
       ),
       Effect.logDebug('Network connection closed').pipe(
         Effect.annotateLogs({
@@ -66,15 +113,18 @@ export const networkTelemetry = {
       )
     ]).pipe(Effect.asVoid),
   message: (channel: string, direction: 'in' | 'out', byteLength: number) =>
-    Effect.all([
-      Metric.increment(
-        Metric.tagged(channelMetric(messages, channel), 'direction', direction)
-      ),
-      Metric.incrementBy(
-        Metric.tagged(channelMetric(bytes, channel), 'direction', direction),
-        byteLength
-      )
-    ]).pipe(Effect.asVoid),
+    Effect.sync(() => {
+      tagged(
+        channelMetric(messages, channel),
+        'direction',
+        direction
+      ).unsafeUpdate(1, [])
+      tagged(
+        channelMetric(bytes, channel),
+        'direction',
+        direction
+      ).unsafeUpdate(byteLength, [])
+    }),
   decodeFailure: (channel: string) =>
     Metric.increment(channelMetric(decodeFailures, channel)),
   decodeFailureNow: (channel: string) =>
@@ -84,14 +134,9 @@ export const networkTelemetry = {
   reconnectNow: (channel: string) =>
     channelMetric(reconnects, channel).unsafeUpdate(1, []),
   dropped: (channel: string, kind: 'dropped' | 'coalesced') =>
-    Metric.increment(
-      Metric.tagged(channelMetric(dropped, channel), 'kind', kind)
-    ),
+    Metric.increment(tagged(channelMetric(dropped, channel), 'kind', kind)),
   droppedNow: (channel: string, kind: 'dropped' | 'coalesced') =>
-    Metric.tagged(channelMetric(dropped, channel), 'kind', kind).unsafeUpdate(
-      1,
-      []
-    ),
+    tagged(channelMetric(dropped, channel), 'kind', kind).unsafeUpdate(1, []),
   interrupted: (channel: string) =>
     Metric.increment(channelMetric(interruptions, channel)),
   queueDepth: (channel: string, value: number) =>
@@ -100,11 +145,11 @@ export const networkTelemetry = {
     channelMetric(queueDepth, channel).unsafeUpdate(value, []),
   duration: (channel: string, operation: string, milliseconds: number) =>
     Metric.update(
-      Metric.tagged(channelMetric(duration, channel), 'operation', operation),
+      tagged(channelMetric(duration, channel), 'operation', operation),
       milliseconds
     ),
   durationNow: (channel: string, operation: string, milliseconds: number) =>
-    Metric.tagged(
+    tagged(
       channelMetric(duration, channel),
       'operation',
       operation
@@ -114,9 +159,8 @@ export const networkTelemetry = {
     kind: 'unacknowledged_output' | 'queued_input' | 'pending_output',
     bytes: number
   ) =>
-    Metric.tagged(
-      channelMetric(watermarkBytes, channel),
-      'kind',
-      kind
-    ).unsafeUpdate(bytes, [])
+    tagged(channelMetric(watermarkBytes, channel), 'kind', kind).unsafeUpdate(
+      bytes,
+      []
+    )
 }

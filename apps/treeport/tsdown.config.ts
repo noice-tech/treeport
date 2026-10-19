@@ -20,7 +20,10 @@ export default defineConfig({
     'node/server/index': 'src/server/index.ts',
     // Keep application import.meta URLs at the server entrypoint depth.
     'node/server/main': 'src/server/main.ts',
+    'node/server/daemon-log-worker': 'src/server/daemon-log-worker.ts',
     'node/server/terminal-host-entry': 'src/terminal-runtime/entry.ts',
+    'node/server/terminal-engine-worker':
+      'src/terminal-runtime/engine-worker.ts',
     'node/server/terminal-host-preflight': 'src/terminal-runtime/preflight.ts',
     'node/server/core/launcher': 'src/terminal-runtime/launcher.ts',
     'session-journal': 'src/terminal-runtime/session-journal.ts',

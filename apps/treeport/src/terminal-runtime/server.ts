@@ -46,6 +46,7 @@ export interface TerminalHostServerOptions {
   readonly startupTransactionId?: string | undefined
   readonly startupTimeoutMs?: number | undefined
   readonly embedded?: boolean
+  readonly binaryOutput?: boolean
 }
 
 export interface TerminalHostServerHandle {
@@ -328,9 +329,10 @@ export function makeTerminalHostServer(
                 return
               }
 
-              const encoded = yield* encodeTerminalHostFrame(frame).pipe(
-                Effect.mapError(serverError)
-              )
+              const encoded = yield* encodeTerminalHostFrame(
+                frame,
+                options.binaryOutput
+              ).pipe(Effect.mapError(serverError))
               if (
                 connection.queuedEventBytes + encoded.byteLength >
                 TERMINAL_HOST_MAX_QUEUED_EVENT_BYTES
@@ -912,22 +914,46 @@ export function makeTerminalHostServer(
           const write = yield* socket.writer
           const writer = Effect.forever(
             Effect.gen(function* () {
-              const frame = yield* Queue.take(outgoing)
-              connection.queuedEventBytes = Math.max(
-                0,
-                connection.queuedEventBytes - frame.queuedEventBytes
+              const frames = Array.from(
+                yield* Queue.takeBetween(outgoing, 1, 64)
               )
-              yield* write(frame.encoded)
-              if (
-                connection.queuedEventBytes <=
-                  TERMINAL_HOST_EVENT_LOW_WATERMARK &&
-                connection.outputPauseScopes.size > 0
-              ) {
-                yield* closeSubscriptions(connection.outputPauseScopes)
-              }
-
-              if (frame.completion) {
-                yield* Deferred.succeed(frame.completion, undefined)
+              // Drain only already-queued frames, preserving every sequence and
+              // response fence. Bound each copy; snapshots may exceed the batch.
+              for (let index = 0; index < frames.length;) {
+                const batch = [frames[index++]!]
+                let bytes = batch[0]!.encoded.length
+                while (
+                  index < frames.length &&
+                  bytes + frames[index]!.encoded.length <= 256 * 1024
+                ) {
+                  const frame = frames[index++]!
+                  bytes += frame.encoded.length
+                  batch.push(frame)
+                }
+                yield* write(
+                  batch.length === 1
+                    ? batch[0]!.encoded
+                    : Buffer.concat(
+                        batch.map((frame) => frame.encoded),
+                        bytes
+                      )
+                )
+                for (const frame of batch) {
+                  connection.queuedEventBytes = Math.max(
+                    0,
+                    connection.queuedEventBytes - frame.queuedEventBytes
+                  )
+                  if (frame.completion) {
+                    yield* Deferred.succeed(frame.completion, undefined)
+                  }
+                }
+                if (
+                  connection.queuedEventBytes <=
+                    TERMINAL_HOST_EVENT_LOW_WATERMARK &&
+                  connection.outputPauseScopes.size > 0
+                ) {
+                  yield* closeSubscriptions(connection.outputPauseScopes)
+                }
               }
             })
           )

@@ -45,9 +45,8 @@ import {
   type TerminalHostResults
 } from '../terminal-runtime/api'
 import { decodeTerminalHostDiscoveryRecord } from '../terminal-runtime/legacy-record'
-import { makeTerminalHostSessions } from '../terminal-runtime/sessions'
 import { prepareSessionKeeper } from '@treeport/session-keeper'
-import { makeTerminalHostServer } from '../terminal-runtime/server'
+import { startTerminalEngineWorker } from './terminal-engine-worker'
 
 const TERMINAL_HOST_REQUEST_TIMEOUT_MS = 30_000
 const TERMINAL_HOST_START_TIMEOUT_MS = 10_000
@@ -1104,24 +1103,26 @@ export function connectOrStartTerminalHost(
           path.join(paths.hostRuntimeDir, 'keepers')
         )
       )
-      // There is no independently replaceable engine process: this listener and
-      // the emulator are scoped to the daemon. Only raw PTY sessions detach.
-      const sessions = yield* makeTerminalHostSessions({
-        runtimeDir: paths.hostRuntimeDir,
-        launcherPath: options.launcherPath,
-        sessionExecutable,
-        journalLimitBytes: options.journalLimitBytes
-      }).pipe(Effect.mapError(connectionError))
-      yield* makeTerminalHostServer({
-        hostId,
-        hostKey: paths.hostKey,
-        token,
-        socketPath: paths.socketPath,
-        recordPath: paths.recordPath,
-        sessions,
-        launcherPath: options.launcherPath,
-        embedded: true
-      }).pipe(Effect.mapError(connectionError))
+      // Workers die with the daemon; only raw PTY keepers detach. Keep emulator
+      // parsing and snapshots off the HTTP/browser-control event loop.
+      yield* startTerminalEngineWorker(
+        path.join(
+          path.dirname(options.hostEntryPath),
+          'terminal-engine-worker.js'
+        ),
+        {
+          runtimeDir: paths.hostRuntimeDir,
+          launcherPath: options.launcherPath,
+          sessionExecutable,
+          journalLimitBytes: options.journalLimitBytes,
+          hostId,
+          hostKey: paths.hostKey,
+          token,
+          socketPath: paths.socketPath,
+          recordPath: paths.recordPath
+        },
+        options.environment ?? process.env
+      )
       return yield* TerminalHostClient.connect(
         paths.socketPath,
         token,

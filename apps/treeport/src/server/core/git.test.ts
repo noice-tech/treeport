@@ -102,6 +102,105 @@ locked editor owns it
 })
 
 describe('worktree review diff', () => {
+  it('shares review scans, bounds subprocesses, and caches only immutable patches', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-diff-load-'))
+    const runner = new SpawnCommandRunner()
+    const run = async (...args: string[]) => {
+      const result = await runner.run({ executable: 'git', args, cwd })
+      expect(result.exitCode, result.stderr).toBe(0)
+    }
+    try {
+      await run('init', '-b', 'main')
+      await run('config', 'user.name', 'Test')
+      await run('config', 'user.email', 'test@example.test')
+      const files = Array.from(
+        { length: 20 },
+        (_, index) => `file-${index}.txt`
+      )
+      await Promise.all(
+        files.map((file) => fs.writeFile(path.join(cwd, file), 'base\n'))
+      )
+      await run('add', '.')
+      await run('commit', '-m', 'base')
+      await run('switch', '-c', 'feature')
+      await Promise.all(
+        files.map((file) => fs.appendFile(path.join(cwd, file), 'changed\n'))
+      )
+      let active = 0
+      let peak = 0
+      const recorded: string[][] = []
+      const git = new GitAdapter({
+        run: async (request) => {
+          active++
+          peak = Math.max(peak, active)
+          recorded.push([...request.args])
+          return runner.run(request).finally(() => {
+            active--
+          })
+        }
+      })
+      const patches = await Promise.all(
+        files.map((file) =>
+          Effect.runPromise(
+            git.worktreeFileDiff(cwd, 'main', file, 'uncommitted')
+          )
+        )
+      )
+      expect(
+        patches.every((patch) => patch.unified?.includes('+changed'))
+      ).toBe(true)
+      // Six shared context commands (including the missing origin fallback),
+      // then one patch per file, instead of ten commands per file.
+      expect(recorded.length).toBe(26)
+      expect(peak).toBeLessThanOrEqual(4)
+      expect(recorded.filter((args) => args.includes('--cached'))).toHaveLength(
+        0
+      )
+      recorded.length = 0
+      const summaries = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          Effect.runPromise(git.worktreeDiff(cwd, 'main', 'uncommitted'))
+        )
+      )
+      expect(summaries.every((summary) => summary.files.length === 20)).toBe(
+        true
+      )
+      expect(recorded).toHaveLength(10)
+      await fs.appendFile(path.join(cwd, files[0]!), 'fresh\n')
+      expect(
+        (
+          await Effect.runPromise(
+            git.worktreeFileDiff(cwd, 'main', files[0]!, 'uncommitted')
+          )
+        ).unified
+      ).toContain('+fresh')
+      await run('add', '.')
+      await run('commit', '-m', 'changes')
+      const first = await Effect.runPromise(
+        git.worktreeFileDiff(cwd, 'main', files[0]!, 'committed')
+      )
+      recorded.length = 0
+      expect(
+        await Effect.runPromise(
+          git.worktreeFileDiff(cwd, 'main', files[0]!, 'committed')
+        )
+      ).toEqual(first)
+      expect(recorded.some((args) => args.includes('--binary'))).toBe(false)
+      await fs.appendFile(path.join(cwd, files[0]!), 'new commit\n')
+      await run('add', '.')
+      await run('commit', '-m', 'new head')
+      expect(
+        (
+          await Effect.runPromise(
+            git.worktreeFileDiff(cwd, 'main', files[0]!, 'committed')
+          )
+        ).unified
+      ).toContain('+new commit')
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it('lists every changed file while returning an explicit bounded oversized patch', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-diff-'))
     const runner = new SpawnCommandRunner()

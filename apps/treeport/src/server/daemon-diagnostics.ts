@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 import { z } from 'zod'
 import { appendDaemonLog } from './daemon-log'
+import { createBufferedDaemonLog } from './buffered-daemon-log'
 import { resolveDataDir } from './core/config'
 
 // A failed diagnostic write must not replace the error we are investigating.
@@ -59,12 +60,35 @@ export function installDaemonDiagnostics(entrypoint: URL) {
   let loggingFailed = false
   let fatal = false
   let shutdownReason: string | null = null
-  const persist = (value: string | Uint8Array): boolean => {
+  const buffered = createBufferedDaemonLog(
+    new URL('./daemon-log-worker.js', entrypoint),
+    logPath,
+    (error) => {
+      loggingFailed = true
+      originalErrorWrite(
+        `Treeport could not persist daemon logs at ${logPath}: ${inspect(error)}\n`
+      )
+    }
+  )
+  const persist = (
+    value: string | Uint8Array,
+    synchronous = false
+  ): boolean => {
     if (loggingFailed) {
       return false
     }
 
     try {
+      if (!synchronous) {
+        return buffered.write(value)
+      }
+
+      // Drain the worker before synchronous lifecycle/fatal writes so rotation
+      // cannot race and exit diagnostics remain ordered after normal logs.
+      if (!buffered.flushSync()) {
+        return false
+      }
+
       appendDaemonLog(logPath, value)
       return true
     } catch (error) {
@@ -89,7 +113,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
     } = {}
   ) => {
     const value = `${JSON.stringify({ timestamp: new Date().toISOString(), event: name, ...context, ...details })}\n`
-    if (!persist(value)) {
+    if (!persist(value, fatal || name === 'exit')) {
       originalErrorWrite(value)
     }
   }

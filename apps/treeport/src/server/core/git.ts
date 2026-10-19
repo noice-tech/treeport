@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { SharedRead } from './shared-read'
 import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -218,10 +219,26 @@ export function parseDirtyStatus(output: string): DirtyState {
 }
 
 class PromiseGitAdapter {
+  private readonly reads = new SharedRead()
+  private readonly committedPatches = new Map<string, GitFileDiff>()
+  private committedPatchBytes = 0
+
   constructor(
     private readonly runner: CommandRunner,
-    private readonly executable = 'git'
+    private readonly executable = 'git',
+    private readonly cancellation = new AsyncLocalStorage<AbortSignal>()
   ) {}
+
+  private read<A>(
+    key: readonly unknown[],
+    evaluate: () => Promise<A>
+  ): Promise<A> {
+    return this.reads.run(
+      JSON.stringify(key),
+      this.cancellation.getStore(),
+      (signal) => this.cancellation.run(signal, evaluate)
+    )
+  }
 
   private async checked(cwd: string, args: string[]) {
     return runChecked(this.runner, {
@@ -889,97 +906,131 @@ class PromiseGitAdapter {
     }
   }
 
-  private async worktreeDiffContext(
+  private worktreeDiffContext(
     cwd: string,
     defaultBranch: string,
-    scope?: GitDiffRequest['scope']
+    scope?: GitDiffRequest['scope'],
+    includeChangeSets = true
   ) {
-    const candidates = [`origin/${defaultBranch}`, defaultBranch]
-    let baseRef = ''
-    for (const candidate of candidates) {
-      const resolved = await this.runner.run({
-        executable: this.executable,
-        args: ['rev-parse', '--verify', `${candidate}^{commit}`],
-        cwd,
-        timeoutMs: 10_000
-      })
-      if (resolved.exitCode === 0) {
-        baseRef = candidate
-        break
-      }
-    }
-    if (!baseRef) {
-      throw new Error(`Default branch ${defaultBranch} is unavailable locally`)
-    }
+    return this.read(
+      ['context', cwd, defaultBranch, scope, includeChangeSets],
+      async () => {
+        const { baseRef, baseCommit, headCommit } = await this.read(
+          ['diff-refs', cwd, defaultBranch],
+          async () => {
+            const candidates = [`origin/${defaultBranch}`, defaultBranch]
+            let baseRef = ''
+            let baseTip = ''
+            for (const candidate of candidates) {
+              const resolved = await this.runner.run({
+                executable: this.executable,
+                args: ['rev-parse', '--verify', `${candidate}^{commit}`],
+                cwd,
+                timeoutMs: 10_000
+              })
+              if (resolved.exitCode === 0) {
+                baseRef = candidate
+                baseTip = resolved.stdout.trim()
+                break
+              }
+            }
+            if (!baseRef) {
+              throw new Error(
+                `Default branch ${defaultBranch} is unavailable locally`
+              )
+            }
 
-    const mergeBase = await this.checked(cwd, ['merge-base', baseRef, 'HEAD'])
-    const baseCommit = mergeBase.stdout.trim()
-    const headCommit = await this.resolveCommit(cwd)
-    const [changed, branch, staged, unstaged, untracked] = await Promise.all([
-      this.checked(cwd, [
-        'diff',
-        '--no-ext-diff',
-        '--name-status',
-        '-z',
-        '--find-renames',
-        ...(scope === 'uncommitted' ? [headCommit] : [baseCommit]),
-        ...(scope === 'committed' ? [headCommit] : [])
-      ]),
-      this.checked(cwd, [
-        'diff',
-        '--no-ext-diff',
-        '--name-only',
-        '-z',
-        '--find-renames',
-        baseCommit,
-        headCommit
-      ]),
-      this.checked(cwd, [
-        'diff',
-        '--no-ext-diff',
-        '--cached',
-        '--name-only',
-        '-z',
-        '--find-renames',
-        headCommit
-      ]),
-      this.checked(cwd, [
-        'diff',
-        '--no-ext-diff',
-        '--name-only',
-        '-z',
-        '--find-renames'
-      ]),
-      this.checked(cwd, ['ls-files', '--others', '--exclude-standard', '-z'])
-    ])
-    const paths = (output: string) =>
-      [...new Set(output.split('\0').filter(Boolean))].sort()
-    const untrackedPaths = paths(untracked.stdout)
-    const files = parseGitDiffFiles(changed.stdout)
-    const trackedPaths = new Set(files.map((file) => file.path))
-    for (const filePath of scope === 'committed' ? [] : untrackedPaths) {
-      if (!trackedPaths.has(filePath)) {
-        files.push({
-          path: filePath,
-          previousPath: null,
-          status: 'untracked'
-        })
-      }
-    }
-    files.sort((left, right) => left.path.localeCompare(right.path))
+            const headCommit = await this.resolveCommit(cwd)
+            // Resolve once, then use immutable IDs even if a branch moves mid-read.
+            const mergeBase = await this.checked(cwd, [
+              'merge-base',
+              baseTip,
+              headCommit
+            ])
+            return { baseRef, baseCommit: mergeBase.stdout.trim(), headCommit }
+          }
+        )
+        const [changed, branch, staged, unstaged, untracked] =
+          await Promise.all([
+            this.checked(cwd, [
+              'diff',
+              '--no-ext-diff',
+              '--name-status',
+              '-z',
+              '--find-renames',
+              ...(scope === 'uncommitted' ? [headCommit] : [baseCommit]),
+              ...(scope === 'committed' ? [headCommit] : [])
+            ]),
+            includeChangeSets
+              ? this.checked(cwd, [
+                  'diff',
+                  '--no-ext-diff',
+                  '--name-only',
+                  '-z',
+                  '--find-renames',
+                  baseCommit,
+                  headCommit
+                ])
+              : { stdout: '' },
+            includeChangeSets
+              ? this.checked(cwd, [
+                  'diff',
+                  '--no-ext-diff',
+                  '--cached',
+                  '--name-only',
+                  '-z',
+                  '--find-renames',
+                  headCommit
+                ])
+              : { stdout: '' },
+            includeChangeSets
+              ? this.checked(cwd, [
+                  'diff',
+                  '--no-ext-diff',
+                  '--name-only',
+                  '-z',
+                  '--find-renames'
+                ])
+              : { stdout: '' },
+            includeChangeSets || scope !== 'committed'
+              ? this.checked(cwd, [
+                  'ls-files',
+                  '--others',
+                  '--exclude-standard',
+                  '-z'
+                ])
+              : { stdout: '' }
+          ])
+        const paths = (output: string) =>
+          [...new Set(output.split('\0').filter(Boolean))].sort()
+        const untrackedPaths = paths(untracked.stdout)
+        const files = parseGitDiffFiles(changed.stdout)
+        const trackedPaths = new Set(files.map((file) => file.path))
+        for (const filePath of scope === 'committed' ? [] : untrackedPaths) {
+          if (!trackedPaths.has(filePath)) {
+            files.push({
+              path: filePath,
+              previousPath: null,
+              status: 'untracked'
+            })
+          }
+        }
+        files.sort((left, right) => left.path.localeCompare(right.path))
 
-    return {
-      baseRef,
-      baseCommit: scope === 'uncommitted' ? headCommit : baseCommit,
-      headCommit,
-      files,
-      changeSets: {
-        branch: paths(branch.stdout),
-        staged: paths(staged.stdout),
-        unstaged: paths(unstaged.stdout),
-        untracked: untrackedPaths
+        return {
+          baseRef,
+          baseCommit: scope === 'uncommitted' ? headCommit : baseCommit,
+          headCommit,
+          files,
+          changeSets: {
+            branch: paths(branch.stdout),
+            staged: paths(staged.stdout),
+            unstaged: paths(unstaged.stdout),
+            untracked: untrackedPaths
+          }
+        }
       }
-    }
+    )
   }
 
   async worktreeDiff(
@@ -987,53 +1038,55 @@ class PromiseGitAdapter {
     defaultBranch: string,
     scope?: GitDiffRequest['scope']
   ): Promise<GitDiff> {
-    const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
-    // Fetch compact statistics independently of the bounded, lazy patches.
-    const stats = await this.checked(cwd, [
-      'diff',
-      '--no-ext-diff',
-      '--numstat',
-      '-z',
-      '--find-renames',
-      context.baseCommit,
-      ...(scope === 'committed' ? [context.headCommit] : [])
-    ])
-    const lineCounts = parseGitDiffLineCounts(stats.stdout)
-    for (const file of context.files) {
-      if (file.status !== 'untracked') {
-        continue
-      }
+    return this.read(['summary', cwd, defaultBranch, scope], async () => {
+      const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
+      // Fetch compact statistics independently of the bounded, lazy patches.
+      const stats = await this.checked(cwd, [
+        'diff',
+        '--no-ext-diff',
+        '--numstat',
+        '-z',
+        '--find-renames',
+        context.baseCommit,
+        ...(scope === 'committed' ? [context.headCommit] : [])
+      ])
+      const lineCounts = parseGitDiffLineCounts(stats.stdout)
+      for (const file of context.files) {
+        if (file.status !== 'untracked') {
+          continue
+        }
 
-      const request = {
-        executable: this.executable,
-        args: [
-          'diff',
-          '--no-ext-diff',
-          '--no-index',
-          '--numstat',
-          '-z',
-          '--',
-          '/dev/null',
-          file.path
-        ],
-        cwd,
-        timeoutMs: 30_000
-      }
-      const result = await this.runner.run(request)
-      // --no-index returns 1 when the files differ, including binary files.
-      if (result.exitCode !== 0 && result.exitCode !== 1) {
-        throw new ExternalCommandError(
-          result.stderr.trim() || `Could not count lines in ${file.path}`,
-          request,
-          result
-        )
-      }
+        const request = {
+          executable: this.executable,
+          args: [
+            'diff',
+            '--no-ext-diff',
+            '--no-index',
+            '--numstat',
+            '-z',
+            '--',
+            '/dev/null',
+            file.path
+          ],
+          cwd,
+          timeoutMs: 30_000
+        }
+        const result = await this.runner.run(request)
+        // --no-index returns 1 when the files differ, including binary files.
+        if (result.exitCode !== 0 && result.exitCode !== 1) {
+          throw new ExternalCommandError(
+            result.stderr.trim() || `Could not count lines in ${file.path}`,
+            request,
+            result
+          )
+        }
 
-      const counts = parseGitDiffLineCounts(result.stdout)
-      lineCounts.additions += counts.additions
-      lineCounts.deletions += counts.deletions
-    }
-    return { ...context, lineCounts, generatedAt: new Date().toISOString() }
+        const counts = parseGitDiffLineCounts(result.stdout)
+        lineCounts.additions += counts.additions
+        lineCounts.deletions += counts.deletions
+      }
+      return { ...context, lineCounts, generatedAt: new Date().toISOString() }
+    })
   }
 
   async worktreeFileDiff(
@@ -1042,80 +1095,125 @@ class PromiseGitAdapter {
     filePath: string,
     scope?: GitDiffRequest['scope']
   ): Promise<GitFileDiff> {
-    const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
-    const file = context.files.find((candidate) => candidate.path === filePath)
-    if (!file) {
-      throw new Error('The requested path is not in the current tree diff')
-    }
-
-    const args =
-      file.status === 'untracked'
-        ? ['diff', '--no-index', '--binary', '--', '/dev/null', file.path]
-        : [
-            'diff',
-            '--no-ext-diff',
-            '--binary',
-            '--find-renames',
-            context.baseCommit,
-            ...(scope === 'committed' ? [context.headCommit] : []),
-            '--',
-            ...(file.previousPath ? [file.previousPath] : []),
-            file.path
-          ]
-    let result
-    try {
-      result = await this.runner.run({
-        executable: this.executable,
-        args,
-        cwd,
-        timeoutMs: 30_000,
-        maxStdoutBytes: MAX_FILE_DIFF_BYTES,
-        maxStderrBytes: 64 * 1024
-      })
-    } catch (cause) {
-      if (
-        (cause instanceof OutputLimitCommandError &&
-          cause.stream === 'stdout') ||
-        (cause instanceof Error &&
-          cause.message.includes('exceeded the stdout limit'))
-      ) {
-        return {
-          path: file.path,
-          status: 'oversized',
-          unified: null,
-          revision: null,
-          message: `Patch exceeds the ${
-            MAX_FILE_DIFF_BYTES / 1024 / 1024
-          } MiB review limit. Open the file or use Git locally to inspect it.`
-        }
-      }
-
-      throw cause
-    }
-
-    const expectedExitCodes = file.status === 'untracked' ? [0, 1] : [0]
-    if (!expectedExitCodes.includes(result.exitCode)) {
-      throw new ExternalCommandError(
-        result.stderr.trim() || `Could not diff ${file.path}`,
-        {
-          executable: this.executable,
-          args,
+    return this.read(
+      ['patch', cwd, defaultBranch, filePath, scope],
+      async () => {
+        const context = await this.worktreeDiffContext(
           cwd,
-          timeoutMs: 30_000,
-          maxStdoutBytes: MAX_FILE_DIFF_BYTES,
-          maxStderrBytes: 64 * 1024
-        },
-        result
-      )
-    }
+          defaultBranch,
+          scope,
+          false
+        )
+        const cacheKey = JSON.stringify([
+          cwd,
+          context.baseCommit,
+          context.headCommit,
+          filePath
+        ])
+        const cached =
+          scope === 'committed' ? this.committedPatches.get(cacheKey) : null
+        if (cached) {
+          return cached
+        }
 
-    return {
-      path: file.path,
-      status: 'ready',
-      unified: result.stdout,
-      revision: crypto.createHash('sha256').update(result.stdout).digest('hex'),
-      message: null
-    }
+        const file = context.files.find(
+          (candidate) => candidate.path === filePath
+        )
+        if (!file) {
+          throw new Error('The requested path is not in the current tree diff')
+        }
+
+        const args =
+          file.status === 'untracked'
+            ? ['diff', '--no-index', '--binary', '--', '/dev/null', file.path]
+            : [
+                'diff',
+                '--no-ext-diff',
+                '--binary',
+                '--find-renames',
+                context.baseCommit,
+                ...(scope === 'committed' ? [context.headCommit] : []),
+                '--',
+                ...(file.previousPath ? [file.previousPath] : []),
+                file.path
+              ]
+        let result
+        try {
+          result = await this.runner.run({
+            executable: this.executable,
+            args,
+            cwd,
+            timeoutMs: 30_000,
+            maxStdoutBytes: MAX_FILE_DIFF_BYTES,
+            maxStderrBytes: 64 * 1024
+          })
+        } catch (cause) {
+          if (
+            (cause instanceof OutputLimitCommandError &&
+              cause.stream === 'stdout') ||
+            (cause instanceof Error &&
+              cause.message.includes('exceeded the stdout limit'))
+          ) {
+            return {
+              path: file.path,
+              status: 'oversized',
+              unified: null,
+              revision: null,
+              message: `Patch exceeds the ${
+                MAX_FILE_DIFF_BYTES / 1024 / 1024
+              } MiB review limit. Open the file or use Git locally to inspect it.`
+            }
+          }
+
+          throw cause
+        }
+
+        const expectedExitCodes = file.status === 'untracked' ? [0, 1] : [0]
+        if (!expectedExitCodes.includes(result.exitCode)) {
+          throw new ExternalCommandError(
+            result.stderr.trim() || `Could not diff ${file.path}`,
+            {
+              executable: this.executable,
+              args,
+              cwd,
+              timeoutMs: 30_000,
+              maxStdoutBytes: MAX_FILE_DIFF_BYTES,
+              maxStderrBytes: 64 * 1024
+            },
+            result
+          )
+        }
+
+        const patch: GitFileDiff = {
+          path: file.path,
+          status: 'ready',
+          unified: result.stdout,
+          revision: crypto
+            .createHash('sha256')
+            .update(result.stdout)
+            .digest('hex'),
+          message: null
+        }
+        if (scope === 'committed') {
+          // Immutable commit IDs make this cache independent of working-tree edits.
+          // Bound both tiny-entry overhead and retained UTF-16 patch storage.
+          this.committedPatchBytes -=
+            (this.committedPatches.get(cacheKey)?.unified?.length ?? 0) * 2
+          this.committedPatches.set(cacheKey, patch)
+          this.committedPatchBytes += result.stdout.length * 2
+          while (
+            this.committedPatches.size > 128 ||
+            this.committedPatchBytes > 16 * 1024 * 1024
+          ) {
+            const oldest = this.committedPatches.entries().next().value!
+            this.committedPatchBytes -= (oldest[1].unified?.length ?? 0) * 2
+            this.committedPatches.delete(oldest[0])
+          }
+        }
+
+        return patch
+      }
+    )
   }
 
   async isMerged(cwd: string, branch: string): Promise<boolean> {
@@ -1203,14 +1301,33 @@ export class GitAdapter {
 
   constructor(runner: CommandRunner, executable = 'git') {
     const effectRunner = asEffectCommandRunner(runner)
+    // Bound read fan-out, including parallel scans within one request. Long
+    // fetches/worktree mutations must not occupy the interactive read budget.
+    const permits = Effect.unsafeMakeSemaphore(4)
+    const boundedReads = new Set([
+      'diff',
+      'ls-files',
+      'status',
+      'rev-parse',
+      'merge-base',
+      'show',
+      'ls-tree',
+      'cat-file'
+    ])
     this.implementation = new PromiseGitAdapter(
       {
         run: (request) =>
-          Effect.runPromise(effectRunner.runEffect(request), {
-            signal: this.cancellation.getStore()
-          })
+          Effect.runPromise(
+            boundedReads.has(request.args[0] ?? '')
+              ? permits.withPermits(1)(effectRunner.runEffect(request))
+              : effectRunner.runEffect(request),
+            {
+              signal: this.cancellation.getStore()
+            }
+          )
       },
-      executable
+      executable,
+      this.cancellation
     )
   }
 

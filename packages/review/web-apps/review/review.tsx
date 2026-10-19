@@ -32,6 +32,7 @@ import {
 import { createRoot } from 'react-dom/client'
 import { z } from 'zod'
 import './review.css'
+import { refreshVisibleFiles } from './refresh-visible-files'
 
 type CommentSide = 'additions' | 'deletions'
 
@@ -896,6 +897,8 @@ function ReviewApp() {
     }
   }, [clearCopyFeedback])
 
+  const visibleFiles = useRef(new Set<string>())
+  const refreshPending = useRef(false)
   const fileLoads = useRef(new Set<string>())
   const loadFile = useCallback(async (fileId: string, reload = false) => {
     const currentFile = loadedRef.current?.files.find(
@@ -991,19 +994,27 @@ function ReviewApp() {
     }
   }, [])
 
+  const observedFileIds = files.map((file) => file.id).join('\0')
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const filePath =
-              entry.target instanceof HTMLElement
-                ? entry.target.dataset.reviewFile
-                : null
+          const id =
+            entry.target instanceof HTMLElement
+              ? entry.target.dataset.reviewFile
+              : null
+          if (!id) {
+            continue
+          }
 
-            if (filePath) {
-              void loadFile(filePath)
+          if (entry.isIntersecting) {
+            visibleFiles.current.add(id)
+            if (!collapsedFilesRef.current.has(id)) {
+              const file = loadedRef.current?.files.find((file) => file.id === id)
+              void loadFile(id, file?.scope === 'uncommitted')
             }
+          } else {
+            visibleFiles.current.delete(id)
           }
         }
       },
@@ -1012,16 +1023,31 @@ function ReviewApp() {
     for (const section of sectionRefs.current.values()) {
       observer.observe(section)
     }
-    return () => observer.disconnect()
-  }, [files, loadFile])
+    return () => {
+      observer.disconnect()
+      visibleFiles.current.clear()
+    }
+  }, [observedFileIds, loadFile])
 
   useEffect(() => {
-    const refresh = () => {
-      void load()
-      for (const file of loadedRef.current?.files ?? []) {
-        if (file.loadState === 'ready') {
-          void loadFile(file.id, true)
-        }
+    const refresh = async () => {
+      if (refreshPending.current || document.hidden) {
+        return
+      }
+
+      refreshPending.current = true
+      try {
+        // Update commit identities before requesting patches; unchanged committed
+        // patches are immutable. Only the viewport needs working-tree refreshes.
+        await load()
+        await refreshVisibleFiles(
+          loadedRef.current?.files ?? [],
+          visibleFiles.current,
+          collapsedFilesRef.current,
+          loadFile
+        )
+      } finally {
+        refreshPending.current = false
       }
     }
     refresh()
@@ -1037,18 +1063,26 @@ function ReviewApp() {
     }
   }, [load, loadFile])
 
-  const setCollapsed = useCallback((file: string, collapsed: boolean) => {
-    setCollapsedFiles((current) => {
-      const next = new Set(current)
-      if (collapsed) {
-        next.add(file)
-      } else {
-        next.delete(file)
+  const setCollapsed = useCallback(
+    (file: string, collapsed: boolean) => {
+      if (!collapsed) {
+        const current = loadedRef.current?.files.find((item) => item.id === file)
+        void loadFile(file, current?.scope === 'uncommitted')
       }
 
-      return next
-    })
-  }, [])
+      setCollapsedFiles((current) => {
+        const next = new Set(current)
+        if (collapsed) {
+          next.add(file)
+        } else {
+          next.delete(file)
+        }
+
+        return next
+      })
+    },
+    [loadFile]
+  )
 
   const selectFile = useCallback((file: string) => {
     setFileTreeOpen(false)
