@@ -1,6 +1,8 @@
 import '../../../scripts/development-tracing.mjs'
 import { api } from '@electron-forge/core'
 import net from 'node:net'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { prepareDevelopmentApp } from './prepare-dev-app.mjs'
 
@@ -69,6 +71,13 @@ const debugPort = z.coerce
   .min(1)
   .max(65535)
   .parse(process.env.TREEPORT_DESKTOP_DEBUG_PORT)
+// Electron permission checks share the development daemon's diagnostic file,
+// without flooding Forge's inherited console output.
+process.env.TREEPORT_BROWSER_PERMISSION_LOG = path.resolve(
+  fileURLToPath(new URL('../../treeport/', import.meta.url)),
+  process.env.TREEPORT_DATA_DIR || '.treeport-dev/data',
+  'logs/daemon.log'
+)
 await api.start({
   dir: process.cwd(),
   interactive: process.stdout.isTTY,

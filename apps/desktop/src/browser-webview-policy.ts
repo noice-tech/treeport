@@ -3,7 +3,13 @@ import {
   browserUrlSchema,
   decodeUnknownOrNull
 } from '@treeport/shared/browser-host'
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync
+} from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { z } from 'zod'
@@ -350,7 +356,7 @@ export function installBrowserWebviewPolicy(options: {
 
   browserSession.setPermissionCheckHandler(
     (contents, permission, requestingOrigin, details) => {
-      console.info('[browser permission check]', {
+      const diagnostic = {
         permission,
         webContentsId: contents?.id ?? null,
         requestingOrigin,
@@ -359,7 +365,24 @@ export function installBrowserWebviewPolicy(options: {
             ? new URL(details.requestingUrl).origin
             : null,
         isMainFrame: details.isMainFrame
-      })
+      }
+      const logPath = process.env.TREEPORT_BROWSER_PERMISSION_LOG
+      if (logPath) {
+        // Diagnostic I/O must never change the permission decision. Fall back
+        // to the console if the daemon log cannot be written.
+        try {
+          mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 })
+          appendFileSync(
+            logPath,
+            `[browser permission check] ${JSON.stringify(diagnostic)}\n`,
+            { mode: 0o600 }
+          )
+        } catch {
+          console.info('[browser permission check]', diagnostic)
+        }
+      } else {
+        console.info('[browser permission check]', diagnostic)
+      }
 
       const entry = registered(contents)
       if (!entry) {
