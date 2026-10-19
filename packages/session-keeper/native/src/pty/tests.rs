@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, os::unix::fs::PermissionsExt, time::Duration};
 fn manifest(root: &std::path::Path) -> Manifest {
     Manifest {
         version: 1,
+        ownership: Some("lease-v1".into()),
         token: "a".repeat(32),
         socket_path: root.join("control.sock").to_string_lossy().into_owned(),
         argv: vec![

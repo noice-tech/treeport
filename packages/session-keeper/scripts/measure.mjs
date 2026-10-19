@@ -262,6 +262,7 @@ async function fixture(limit = 512 * 1024 * 1024) {
     path.join(directory, 'manifest.json'),
     JSON.stringify({
       version: 1,
+      ownership: 'lease-v1',
       token,
       socketPath,
       argv: [python, path.join(fixtureRoot, 'workload.py')],

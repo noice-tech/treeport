@@ -157,6 +157,8 @@ export class TerminalService {
           interactiveShell: terminal.interactiveShell,
           status: terminal.status,
           exitCode: terminal.exitCode,
+          unavailableReason: terminal.unavailableReason ?? null,
+          recoveryPending: terminal.recoveryPending ?? false,
           commandExitCode: terminal.commandExitCode ?? null,
           createdAt: terminal.createdAt,
           updatedAt: terminal.updatedAt
@@ -788,12 +790,15 @@ export class TerminalService {
         ...terminal,
         status: state.status,
         exitCode: state.exitCode,
+        unavailableReason: state.unavailableReason ?? null,
+        recoveryPending: state.recoveryPending ?? false,
         commandExitCode: state.commandExitCode ?? null
       }
       yield* terminalState.updateTerminal(refreshed)
       if (
         state.status !== terminal.status ||
         state.exitCode !== terminal.exitCode ||
+        state.unavailableReason !== terminal.unavailableReason ||
         (state.commandExitCode ?? null) !== (terminal.commandExitCode ?? null)
       ) {
         yield* invalidateProjectsSnapshot()

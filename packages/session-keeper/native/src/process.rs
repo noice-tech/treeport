@@ -4,7 +4,7 @@ use std::{
     io,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Identity {
     pub pid: u32,
     pub parent: u32,

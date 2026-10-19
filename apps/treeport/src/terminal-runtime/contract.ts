@@ -83,8 +83,10 @@ export interface TerminalLaunchSpec {
 }
 
 export interface TerminalSessionState {
-  status: 'running' | 'exited' | 'missing'
+  status: 'running' | 'exited' | 'missing' | 'unavailable'
   exitCode: number | null
+  unavailableReason?: string | null | undefined
+  recoveryPending?: boolean | undefined
   // Initial launched process, not commands typed into a shell. Older retained
   // hosts may omit this; null means no authoritative completion is available.
   commandExitCode?: number | null | undefined
@@ -104,8 +106,10 @@ export interface HostedTerminal {
   shellCommand: string | null
   interactiveShell: boolean
   closeOnSuccess: boolean
-  status: 'running' | 'exited'
+  status: 'running' | 'exited' | 'unavailable'
   exitCode: number | null
+  unavailableReason?: string | null | undefined
+  recoveryPending?: boolean | undefined
   commandExitCode?: number | null | undefined
   createdAt: string
   updatedAt: string

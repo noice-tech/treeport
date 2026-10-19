@@ -1,8 +1,13 @@
 import fs from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { getSessionKeeperPayload } from '@treeport/session-keeper'
+import {
+  getSessionKeeperPayload,
+  withSessionRecovery
+} from '@treeport/session-keeper'
 import { PersistentSession } from './session-client'
 import { sessionStatusSchema } from './session-protocol'
 
@@ -99,6 +104,76 @@ afterEach(async () => {
 })
 
 describe('Rust persistent session control and cleanup', () => {
+  it('excludes recovery and duplicate admission while owned, and serializes archive cleanup', async () => {
+    const value = await fixture([
+      process.execPath,
+      '-e',
+      "console.log('READY'); setInterval(()=>{},1000)"
+    ])
+    await waitFor(() => value.output().includes('READY'))
+    const socket = value.session.manifest.socketPath
+    await fs.rename(socket, socket + '.hidden')
+    sockets.add(socket + '.hidden')
+    await expect(
+      withSessionRecovery(value.directory, async () => undefined)
+    ).rejects.toThrow('ownership is held')
+    await expect(value.session.terminate()).rejects.toThrow('ownership is held')
+    await expect(
+      promisify(execFile)(getSessionKeeperPayload(), [value.directory])
+    ).rejects.toThrow('ownership is held')
+    expect(alive(value.status.pid)).toBe(true)
+    await fs.rename(socket + '.hidden', socket)
+    process.kill(value.status.pid, 'SIGKILL')
+    process.kill(value.status.ownerPid, 'SIGKILL')
+    await waitFor(
+      () => !alive(value.status.pid) && !alive(value.status.ownerPid)
+    )
+    value.session.dispose()
+    await expect(
+      promisify(execFile)(getSessionKeeperPayload(), [value.directory])
+    ).rejects.toThrow('already admitted')
+    const archive = await PersistentSession.open(value.directory)
+    handles.push(archive)
+    await archive.connect()
+    await archive.ready
+    await withSessionRecovery(value.directory, async () => {
+      await expect(archive.terminate()).rejects.toThrow('ownership is held')
+      await fs.access(path.join(value.directory, 'manifest.json'))
+    })
+    const lock = path.join(value.root, '.ownership', 'session')
+    const before = await fs.stat(lock)
+    await archive.terminate()
+    await expect(fs.access(value.directory)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect((await fs.stat(lock)).ino).toBe(before.ino)
+  })
+
+  it('does not manufacture ownership evidence for a legacy retained session', async () => {
+    const value = await fixture([
+      process.execPath,
+      '-e',
+      'setInterval(()=>{},1000)'
+    ])
+    // Live old keepers still use authenticated control. Only disconnected
+    // legacy sessions need explicit cutover; absence of a lease is not death.
+    await value.session.terminate()
+    const legacy = path.join(value.root, 'legacy')
+    await fs.mkdir(legacy, { mode: 0o700 })
+    const { ownership: _ownership, ...manifest } = value.session.manifest
+    await fs.writeFile(
+      path.join(legacy, 'manifest.json'),
+      JSON.stringify(manifest)
+    )
+    await expect(
+      withSessionRecovery(legacy, async () => undefined)
+    ).rejects.toThrow('predates ownership leases')
+    await expect(
+      promisify(execFile)(getSessionKeeperPayload(), [legacy])
+    ).rejects.toThrow('predates ownership leases')
+    await fs.access(path.join(legacy, 'manifest.json'))
+  })
+
   it('preserves in-flight and new requests across output pauses exceeding their timeout', async () => {
     const value = await fixture([
       process.execPath,
@@ -127,17 +202,28 @@ describe('Rust persistent session control and cleanup', () => {
     await Promise.all([value.session.terminate(), value.session.terminate()])
   }, 25000)
 
-  it('retains dead-keeper evidence while an unverified command survives', async () => {
+  it('retains dead-keeper evidence while its command or orphaned children survive', async () => {
+    const child =
+      "process.on('SIGHUP',()=>{}); console.log('CHILD:'+process.pid); setInterval(()=>{},1000)"
     const value = await fixture([
       process.execPath,
       '-e',
-      "process.on('SIGHUP',()=>{}); console.log('READY'); setInterval(()=>{},1000)"
+      `process.on('SIGHUP',()=>{}); require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}], {stdio:'inherit'}); setInterval(()=>{},1000)`
     ])
-    await waitFor(() => value.output().includes('READY'))
+    await waitFor(() => /CHILD:\d+/u.test(value.output()))
+    const childPid = Number(/CHILD:(\d+)/u.exec(value.output())![1])
+    pids.add(childPid)
     process.kill(value.status.ownerPid, 'SIGKILL')
     await waitFor(() => !alive(value.status.ownerPid))
     value.session.dispose()
     expect(alive(value.status.pid)).toBe(true)
+    // Simulate reuse of the departed keeper PID by this unrelated test runner.
+    // kill(pid, 0) succeeds; neither that PID nor file timestamps are authority.
+    const statusPath = path.join(value.directory, 'status.json')
+    await fs.writeFile(
+      statusPath,
+      JSON.stringify({ ...value.status, ownerPid: process.pid })
+    )
     const archive = await PersistentSession.open(value.directory)
     handles.push(archive)
     await archive.connect()
@@ -150,6 +236,13 @@ describe('Rust persistent session control and cleanup', () => {
     expect(alive(value.status.pid)).toBe(true)
     process.kill(value.status.pid, 'SIGKILL')
     await waitFor(() => !alive(value.status.pid))
+    expect(alive(childPid)).toBe(true)
+    await expect(archive.terminate()).rejects.toThrow(
+      'session still has processes'
+    )
+    await fs.access(path.join(value.directory, 'journal.jsonl'))
+    process.kill(childPid, 'SIGKILL')
+    await waitFor(() => !alive(childPid))
     await archive.terminate()
   })
 })

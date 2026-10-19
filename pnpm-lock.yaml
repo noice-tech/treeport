@@ -627,6 +627,10 @@ importers:
         version: 7.0.2
 
   packages/session-keeper:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^24.10.9

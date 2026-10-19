@@ -65,7 +65,22 @@ pub struct Storage {
     operation_stall: Arc<std::sync::Mutex<Option<OperationStall>>>,
 }
 impl Storage {
+    #[cfg(test)]
     pub fn start(directory: PathBuf, journal: Journal) -> Self {
+        Self::start_owned(directory, journal, None)
+    }
+    pub fn start_leased(
+        directory: PathBuf,
+        journal: Journal,
+        lease: Arc<std::sync::Mutex<crate::lease::SessionLease>>,
+    ) -> Self {
+        Self::start_owned(directory, journal, Some(lease))
+    }
+    fn start_owned(
+        directory: PathBuf,
+        journal: Journal,
+        lease: Option<Arc<std::sync::Mutex<crate::lease::SessionLease>>>,
+    ) -> Self {
         let (sender, mut receiver) = mpsc::channel(8);
         let gate = Arc::new(Mutex::new(()));
         #[cfg(test)]
@@ -73,6 +88,9 @@ impl Storage {
         #[cfg(test)]
         let worker_stall = operation_stall.clone();
         thread::spawn(move || {
+            // A canceled runtime can leave admitted writes in flight. Keep
+            // recovery excluded until this worker exits (or the process dies).
+            let _lease = lease;
             let mut journal = Some(journal);
             while let Some((operation, _guard)) = receiver.blocking_recv() {
                 #[cfg(test)]
@@ -249,6 +267,10 @@ impl std::error::Error for CloseFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.cause)
     }
+}
+
+pub(crate) fn remove_retained_session(lease: &crate::lease::SessionLease) -> Result<()> {
+    remove_session(lease.directory(), MAX_SESSION_ENTRIES)
 }
 
 fn remove_session(directory: &Path, entry_limit: usize) -> Result<()> {

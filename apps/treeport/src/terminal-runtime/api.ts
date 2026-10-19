@@ -393,7 +393,7 @@ const terminalImageSnapshotSchema = Schema.Struct({
   pending: Schema.String.pipe(Schema.maxLength(24 * 1024 * 1024))
 })
 
-const terminalStatusSchema = Schema.Literal('running', 'exited')
+const terminalStatusSchema = Schema.Literal('running', 'exited', 'unavailable')
 const terminalTitleStateSchema = Schema.Struct({
   terminalTitle: Schema.NullOr(Schema.String),
   currentCommand: Schema.NullOr(Schema.String),
@@ -409,6 +409,8 @@ const hostedTerminalSchema = Schema.Struct({
   closeOnSuccess: Schema.Boolean,
   status: terminalStatusSchema,
   exitCode: Schema.NullOr(Schema.Int),
+  unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
+  recoveryPending: Schema.optional(Schema.Boolean),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   createdAt: Schema.String,
   updatedAt: Schema.String
@@ -424,8 +426,10 @@ const terminalHostResultSchemas = {
   create: nullResultSchema,
   inventory: Schema.Array(hostedTerminalSchema),
   state: Schema.Struct({
-    status: Schema.Literal('running', 'exited', 'missing'),
+    status: Schema.Literal('running', 'exited', 'missing', 'unavailable'),
     exitCode: Schema.NullOr(Schema.Int),
+    unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
+    recoveryPending: Schema.optional(Schema.Boolean),
     commandExitCode: Schema.optional(Schema.NullOr(Schema.Int))
   }),
   attach: Schema.NullOr(

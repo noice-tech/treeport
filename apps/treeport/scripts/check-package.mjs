@@ -16,7 +16,8 @@ const packed = process.argv.includes('--packed')
 
 // The build uses only the local output check. The gate also checks real pnpm
 // tarballs, with lifecycle scripts disabled to avoid prepack -> build recursion.
-// Neither mode installs dependencies or proves end-to-end npm update wiring.
+// Packed keeper checks resolve its declared runtime dependencies offline; this
+// is not an end-to-end npm application installation or update qualification.
 async function checkPackage(
   packageDirectory,
   published,
@@ -273,6 +274,27 @@ if (!packed) {
       )
       await fs.mkdir(extracted)
       await execute('tar', ['-xzf', tarball, '-C', extracted])
+      if (source === keeperDirectory) {
+        const keeperManifest = JSON.parse(
+          await fs.readFile(
+            path.join(extracted, 'package/package.json'),
+            'utf8'
+          )
+        )
+        await fs.writeFile(
+          path.join(temporaryDirectory, 'package.json'),
+          JSON.stringify({
+            private: true,
+            dependencies: keeperManifest.dependencies
+          })
+        )
+        await execute(
+          'pnpm',
+          ['install', '--offline', '--ignore-scripts', '--prod'],
+          { cwd: temporaryDirectory }
+        )
+      }
+
       const manifest = await checkPackage(
         path.join(extracted, 'package'),
         true,
@@ -284,7 +306,7 @@ if (!packed) {
       manifests.push(manifest)
     }
     console.log(
-      `Packed artifact checks passed for ${manifests.map((manifest) => `${manifest.name}@${manifest.version}`).join(' and ')} (no npm installation or daemon)`
+      `Packed artifact checks passed for ${manifests.map((manifest) => `${manifest.name}@${manifest.version}`).join(' and ')} (no application installation or daemon)`
     )
   } finally {
     await fs.rm(temporaryDirectory, { recursive: true, force: true })

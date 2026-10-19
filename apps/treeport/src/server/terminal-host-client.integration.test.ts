@@ -600,7 +600,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     const sessionDirectory = path.join(
       sessionRoot,
-      (await fs.readdir(sessionRoot))[0]!
+      (await fs.readdir(sessionRoot)).filter((name) =>
+        /^[a-f0-9]{40}$/u.test(name)
+      )[0]!
     )
     const ownerPid = JSON.parse(
       await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
@@ -679,6 +681,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
       )
     })
     clients.add(restartedDaemon)
+    await waitFor(
+      async () =>
+        !(await restartedDaemon.terminalState('terminal-host')).recoveryPending,
+      'Terminal recovery did not settle'
+    )
     expect(restartedDaemon.record.hostId).not.toBe(firstHostId)
     expect(
       execFileSync('ps', ['-ww', '-p', String(ownerPid), '-o', 'args='], {
@@ -781,7 +788,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
       interactiveShell: false,
       env: {}
     })
-    const quotaNames = await fs.readdir(sessionRoot)
+    const quotaNames = (await fs.readdir(sessionRoot)).filter((name) =>
+      /^[a-f0-9]{40}$/u.test(name)
+    )
     let quotaDirectory = ''
     for (const name of quotaNames) {
       const metadata = JSON.parse(
@@ -925,9 +934,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     const archiveDirectory = path.join(
       sessionRoot,
-      (await fs.readdir(sessionRoot)).find(
-        (name) => name !== path.basename(sessionDirectory)
-      )!
+      (await fs.readdir(sessionRoot))
+        .filter((name) => /^[a-f0-9]{40}$/u.test(name))
+        .find((name) => name !== path.basename(sessionDirectory))!
     )
     const archiveStatus = sessionStatusSchema.parse(
       JSON.parse(
@@ -978,13 +987,15 @@ child.once('exit', (code) => process.exit(code ?? 1))
     })
     const unavailableDirectory = path.join(
       sessionRoot,
-      (await fs.readdir(sessionRoot)).find(
-        (name) =>
-          ![
-            path.basename(sessionDirectory),
-            path.basename(archiveDirectory)
-          ].includes(name)
-      )!
+      (await fs.readdir(sessionRoot))
+        .filter((name) => /^[a-f0-9]{40}$/u.test(name))
+        .find(
+          (name) =>
+            ![
+              path.basename(sessionDirectory),
+              path.basename(archiveDirectory)
+            ].includes(name)
+        )!
     )
     const unavailableStatus = sessionStatusSchema.parse(
       JSON.parse(
@@ -1007,25 +1018,95 @@ child.once('exit', (code) => process.exit(code ?? 1))
       unavailableManifest.socketPath,
       unavailableManifest.socketPath + '.unavailable'
     )
-    // Incomplete restoration cannot publish a ready backend with an inventory
-    // that destructive worktree operations might mistake for authoritative.
-    await expect(
-      connectOrStartTerminalHost({
-        ...options,
-        journalLimitBytes: 2 * 1024 * 1024
+    // Hold attach open without answering. Backend readiness must not depend
+    // on a session's handshake deadline (not merely catch fast ENOENT errors).
+    const stalledPeers: net.Socket[] = []
+    const stalledOwner = net
+      .createServer((socket) => {
+        stalledPeers.push(socket)
+        socket.unref()
       })
+      .unref()
+    await new Promise<void>((resolve, reject) => {
+      stalledOwner
+        .once('error', reject)
+        .listen(unavailableManifest.socketPath, resolve)
+    })
+    const degradedDaemon = await connectOrStartTerminalHost({
+      ...options,
+      journalLimitBytes: 2 * 1024 * 1024
+    })
+    clients.add(degradedDaemon)
+    await waitFor(
+      async () =>
+        !(await degradedDaemon.terminalState('terminal-host')).recoveryPending,
+      'Recovery did not settle independently'
+    )
+    expect(await degradedDaemon.listTerminals('worktree-host')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'unavailable-terminal',
+          status: 'unavailable',
+          unavailableReason: expect.any(String),
+          recoveryPending: true
+        })
+      ])
+    )
+    await expect(
+      degradedDaemon.killTerminal('unavailable-terminal')
     ).rejects.toThrow()
+    await expect(degradedDaemon.killWorktree('worktree-host')).rejects.toThrow()
+    expect((await degradedDaemon.terminalState('terminal-host')).status).toBe(
+      'running'
+    )
     expect(processExists(unavailableStatus.ownerPid)).toBe(true)
     expect(processExists(unavailableStatus.pid)).toBe(true)
+    for (const peer of stalledPeers) {
+      peer.destroy()
+    }
+    await new Promise<void>((resolve) => stalledOwner.close(() => resolve()))
+    await waitFor(
+      async () =>
+        !(await degradedDaemon.terminalState('unavailable-terminal'))
+          .recoveryPending,
+      'Failed attachment did not settle'
+    )
     await fs.rename(
       unavailableManifest.socketPath + '.unavailable',
       unavailableManifest.socketPath
     )
+    const retried = await Promise.all([
+      degradedDaemon.terminalState('unavailable-terminal'),
+      degradedDaemon.terminalState('unavailable-terminal')
+    ])
+    // A concurrent refresh may observe recovery in progress, but a completed
+    // retry must replace the unavailable entry, never duplicate its command.
+    expect(retried.some((state) => state.status === 'running')).toBe(true)
+    expect(
+      (await degradedDaemon.terminalState('unavailable-terminal')).status
+    ).toBe('running')
+    expect(
+      (await degradedDaemon.listTerminals('worktree-host')).filter(
+        (terminal) => terminal.id === 'unavailable-terminal'
+      )
+    ).toHaveLength(1)
+    await degradedDaemon.dispose()
+    clients.delete(degradedDaemon)
     const archivedDaemon = await connectOrStartTerminalHost({
       ...options,
       journalLimitBytes: 2 * 1024 * 1024
     })
     clients.add(archivedDaemon)
+    await waitFor(
+      async () =>
+        !(await archivedDaemon.terminalState('terminal-host'))
+          .recoveryPending &&
+        !(await archivedDaemon.terminalState('archived-terminal'))
+          .recoveryPending &&
+        !(await archivedDaemon.terminalState('unavailable-terminal'))
+          .recoveryPending,
+      'Archive recovery did not settle'
+    )
     expect(await archivedDaemon.terminalState('archived-terminal')).toEqual({
       status: 'exited',
       exitCode: null,
@@ -1062,6 +1143,15 @@ child.once('exit', (code) => process.exit(code ?? 1))
       journalLimitBytes: 2 * 1024 * 1024
     })
     clients.add(finalDaemon)
+    await waitFor(
+      async () =>
+        !(await finalDaemon.terminalState('terminal-host')).recoveryPending &&
+        !(await finalDaemon.terminalState('archived-terminal'))
+          .recoveryPending &&
+        !(await finalDaemon.terminalState('unavailable-terminal'))
+          .recoveryPending,
+      'Final recovery did not settle'
+    )
     expect(
       (await finalDaemon.listProcesses('worktree-host')).find(
         (item) => item.terminalId === 'unavailable-terminal'

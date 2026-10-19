@@ -56,8 +56,10 @@ export const terminalRecordSchema = Schema.Struct({
   argv: stringArraySchema,
   shellCommand: nullableStringSchema,
   interactiveShell: Schema.Boolean,
-  status: Schema.Literal('running', 'exited', 'missing'),
+  status: Schema.Literal('running', 'exited', 'missing', 'unavailable'),
   exitCode: Schema.NullOr(Schema.Int),
+  unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
+  recoveryPending: Schema.optional(Schema.Boolean),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   createdAt: Schema.String,
   updatedAt: Schema.String
@@ -225,7 +227,7 @@ export const removePreviewSchema = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       name: Schema.String,
-      status: Schema.Literal('running', 'exited', 'missing')
+      status: Schema.Literal('running', 'exited', 'missing', 'unavailable')
     })
   ),
   confirmationToken: Schema.String

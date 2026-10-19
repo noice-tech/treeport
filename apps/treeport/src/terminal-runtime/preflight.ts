@@ -14,12 +14,7 @@ import {
   type TerminalHostRecord
 } from './api'
 import { decodeTerminalHostDiscoveryRecord } from './legacy-record'
-import {
-  sessionManifestSchema,
-  sessionFrameSchema,
-  sessionStatusSchema,
-  SESSION_MAX_FRAME_BYTES
-} from './session-protocol'
+import { PersistentSession } from './session-client'
 
 export interface TerminalHostCompatibilityProbe {
   compatible: boolean
@@ -375,14 +370,8 @@ export async function probeTerminalHostCompatibility(
 
     const sessionDirectory = path.join(directory, name)
     try {
-      const manifest = sessionManifestSchema.parse(
-        JSON.parse(
-          await fs.readFile(
-            path.join(sessionDirectory, 'manifest.json'),
-            'utf8'
-          )
-        )
-      )
+      const session = await PersistentSession.open(sessionDirectory)
+      const manifest = session.manifest
       const metadata = await Effect.runPromise(
         decodeTerminalEngineMetadata(manifest.metadata)
       )
@@ -410,108 +399,7 @@ export async function probeTerminalHostCompatibility(
         throw new Error('Session launch spec is outside its installation')
       }
 
-      const status = sessionStatusSchema.parse(
-        JSON.parse(
-          await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
-        )
-      )
-      const key = crypto
-        .createHash('sha256')
-        .update(path.resolve(sessionDirectory))
-        .digest('hex')
-        .slice(0, 24)
-      const expectedSocket = path.join(
-        os.tmpdir(),
-        'treeport-' + (process.getuid?.() ?? 'user'),
-        'session-' + key + '.sock'
-      )
-      if (manifest.socketPath !== expectedSocket) {
-        throw new Error('Session socket does not identify this installation')
-      }
-
-      if (!processExists(status.ownerPid)) {
-        if (await socketAcceptsConnections(manifest.socketPath)) {
-          throw new Error('A live session socket has an unidentified owner')
-        }
-
-        // Retained output from a dead keeper is recovered read-only. There is
-        // no live ownership to hand over, and no stale artifact is deleted.
-        continue
-      }
-
-      const id = crypto.randomUUID()
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.createConnection(manifest.socketPath)
-        let buffer = ''
-        let settled = false
-        const finish = (error: Error | null) => {
-          if (settled) {
-            return
-          }
-
-          settled = true
-          socket.destroy()
-          if (error) {
-            reject(error)
-          } else {
-            resolve()
-          }
-        }
-        socket.setEncoding('utf8')
-        socket.setTimeout(3000)
-        socket.once('connect', () =>
-          socket.write(
-            JSON.stringify({ method: 'inspect', id, token: manifest.token }) +
-              '\n'
-          )
-        )
-        socket.once('error', (error) => finish(error))
-        socket.once('timeout', () =>
-          finish(new Error('Session inspection timed out'))
-        )
-        socket.once('close', () =>
-          finish(new Error('Session closed its inspection connection'))
-        )
-        socket.on('data', (chunk) => {
-          buffer += chunk
-          if (Buffer.byteLength(buffer) > SESSION_MAX_FRAME_BYTES) {
-            finish(new Error('Invalid session inspection frame'))
-            return
-          }
-
-          const end = buffer.indexOf('\n')
-          if (end < 0) {
-            return
-          }
-
-          const decoded = Effect.runSync(
-            Effect.either(Effect.try(() => JSON.parse(buffer.slice(0, end))))
-          )
-          if (decoded._tag === 'Left') {
-            finish(new Error('Invalid session inspection JSON'))
-            return
-          }
-
-          const frame = sessionFrameSchema.safeParse(decoded.right)
-          if (
-            !frame.success ||
-            frame.data.type !== 'response' ||
-            frame.data.id !== id ||
-            frame.data.error ||
-            !frame.data.status ||
-            frame.data.status.ownerPid !== status.ownerPid ||
-            frame.data.status.pid !== status.pid
-          ) {
-            finish(
-              new Error(
-                'Session owner returned an unsupported or mismatched identity'
-              )
-            )
-          } else {
-            finish(null)
-          }
-        })
-      })
+      await session.inspect()
     } catch (error) {
       return {
         compatible: false,

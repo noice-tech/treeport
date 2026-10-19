@@ -23,6 +23,8 @@ import {
   ContextMenuTrigger
 } from './components/ui/context-menu'
 import { Button } from './components/ui/button'
+import { Empty, EmptyTitle, EmptyDescription } from './components/ui/empty'
+import { parseResponse, rpc } from './api'
 import {
   Dialog,
   DialogContent,
@@ -105,9 +107,45 @@ export function TerminalView({
   const readyTraceTerminalRef = useRef<string | null>(null)
   onStatusChangeRef.current = onStatusChange
   const isMobile = useIsMobile()
+  const unavailable = terminal?.status === 'unavailable'
+  const [retrying, setRetrying] = useState(false)
+
+  // Pending recovery is external work, not a disconnected terminal stream.
+  // Refresh only while it is in flight; permanent failures need explicit retry.
+  useEffect(() => {
+    if (!terminal?.recoveryPending) {
+      return
+    }
+
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout>
+    const refresh = () => {
+      void parseResponse(
+        rpc.api.terminals[':terminalId'].$get({
+          param: { terminalId: terminal.id }
+        })
+      )
+        .then(() => {
+          if (!disposed) {
+            onStatusChangeRef.current()
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!disposed) {
+            timer = setTimeout(refresh, 1000)
+          }
+        })
+    }
+    timer = setTimeout(refresh, 1000)
+    return () => {
+      disposed = true
+      clearTimeout(timer)
+    }
+  }, [terminal?.id, terminal?.recoveryPending])
 
   useLayoutEffect(() => {
-    if (!terminal) {
+    if (!terminal || unavailable) {
       setSession(null)
       return
     }
@@ -122,9 +160,10 @@ export function TerminalView({
     const next = terminalSessions.acquire(terminal.id)
     setSession(next)
     return () => terminalSessions.release(terminal.id)
-  }, [terminal?.id])
+  }, [terminal?.id, unavailable])
 
-  const activeSession = session?.terminalId === terminal?.id ? session : null
+  const activeSession =
+    !unavailable && session?.terminalId === terminal?.id ? session : null
   const subscribeToActiveSession = useCallback(
     (onStoreChange: () => void) => {
       if (!activeSession) {
@@ -379,7 +418,36 @@ export function TerminalView({
       aria-current={active ? 'true' : undefined}
       onPointerDownCapture={onActivate}
     >
-      {terminal ? (
+      {terminal && unavailable ? (
+        <Empty role="status">
+          <EmptyTitle>Terminal unavailable</EmptyTitle>
+          <EmptyDescription>
+            {terminal.unavailableReason ??
+              'Session ownership could not be verified.'}
+          </EmptyDescription>
+          <EmptyDescription>
+            Retained session data is preserved. Treeport will not restart its
+            command or delete its tree while ownership is unresolved.
+          </EmptyDescription>
+          <Button
+            variant="outline"
+            disabled={retrying}
+            onClick={() => {
+              setRetrying(true)
+              void parseResponse(
+                rpc.api.terminals[':terminalId'].$get({
+                  param: { terminalId: terminal.id }
+                })
+              )
+                .then(() => onStatusChange())
+                .catch((error: Error) => toast.error(error.message))
+                .finally(() => setRetrying(false))
+            }}
+          >
+            {retrying ? 'Retrying…' : 'Retry recovery'}
+          </Button>
+        </Empty>
+      ) : terminal ? (
         <div className="relative min-h-0 min-w-0 overflow-hidden">
           <ContextMenu key={terminal.id}>
             <ContextMenuTrigger

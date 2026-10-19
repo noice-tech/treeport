@@ -4,6 +4,11 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import {
+  closeSession,
+  inspectSession,
+  withSessionRecovery
+} from '@treeport/session-keeper'
 import type { IDisposable, IPty } from 'node-pty'
 import { SessionJournal } from './session-journal'
 import {
@@ -47,22 +52,6 @@ function sessionSocketPath(directory: string): string {
     `treeport-${process.getuid?.() ?? 'user'}`,
     `session-${key}.sock`
   )
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (cause) {
-    // ESRCH is the expected liveness-probe result for a departed process.
-    // Permission/OS failures cannot establish death and must propagate.
-    // SAFETY: Node signaling errors expose errno codes.
-    if ((cause as NodeJS.ErrnoException).code === 'ESRCH') {
-      return false
-    }
-
-    throw new Error(`Cannot verify session process ${pid}`, { cause })
-  }
 }
 
 interface PendingRequest {
@@ -163,6 +152,7 @@ export class PersistentSession implements EnginePty {
     await fs.mkdir(ipcDirectory, { recursive: true, mode: 0o700 })
     const manifest: SessionManifest = {
       version: 1,
+      ownership: 'lease-v1',
       token: crypto.randomBytes(32).toString('hex'),
       socketPath,
       argv: options.argv,
@@ -255,7 +245,12 @@ export class PersistentSession implements EnginePty {
         const status = sessionStatusSchema.parse(JSON.parse(published))
         // An aborted owner publishes its proof before exiting. Wait until it
         // is gone so connect cannot attach to its not-yet-closed listener.
-        if (!status.startupAborted || !processExists(status.ownerPid)) {
+        if (
+          !status.startupAborted ||
+          (await withSessionRecovery(options.directory, async () => true).catch(
+            () => false
+          ))
+        ) {
           return PersistentSession.open(options.directory)
         }
       }
@@ -384,44 +379,28 @@ export class PersistentSession implements EnginePty {
         throw error
       }
 
-      const status = sessionStatusSchema.parse(
-        JSON.parse(
-          await fs
-            .readFile(path.join(this.directory, 'status.json'), 'utf8')
-            .catch((cause) => {
-              // SAFETY: Node filesystem failures expose errno codes.
-              if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
-                throw new Error(
-                  `Session status is missing; startup outcome is unknown. Retain ${this.directory} and verify keeper ownership before recovery.`,
-                  { cause }
-                )
-              }
-
-              throw cause
+      await withSessionRecovery(this.directory, async (status) => {
+        this.status = sessionStatusSchema.parse(status)
+        this.archived = true
+        this.socket = null
+        // The native recovery lease excludes a keeper or concurrent close
+        // while retained output is read. A PID is never recovery authority.
+        this.processedSequence = Number.MAX_SAFE_INTEGER
+        for await (const record of SessionJournal.readRetained(
+          this.directory
+        )) {
+          while (this.archivePaused && !this.closed) {
+            await new Promise<void>((resolve) => {
+              this.archiveResume = resolve
             })
-        )
-      )
-      if (processExists(status.ownerPid)) {
-        throw error
-      }
+          }
+          if (this.closed) {
+            throw new Error('Archived session replay detached')
+          }
 
-      this.status = status
-      this.archived = true
-      this.socket = null
-      // All archived queries are historical; there is no writable PTY.
-      this.processedSequence = Number.MAX_SAFE_INTEGER
-      for await (const record of SessionJournal.readRetained(this.directory)) {
-        while (this.archivePaused && !this.closed) {
-          await new Promise<void>((resolve) => {
-            this.archiveResume = resolve
-          })
+          this.acceptRecord(record)
         }
-        if (this.closed) {
-          throw new Error('Archived session replay detached')
-        }
-
-        this.acceptRecord(record)
-      }
+      })
       this.replaying = false
       this.readyResolve?.()
       return false
@@ -497,23 +476,13 @@ export class PersistentSession implements EnginePty {
   private request(input: RequestInput): Promise<SessionStatus | null> {
     if (this.archived) {
       if (input.method === 'metadata') {
-        const manifest = { ...this.manifest, metadata: input.metadata }
-        const temporary = path.join(
-          this.directory,
-          'manifest-' + crypto.randomUUID() + '.tmp'
-        )
-        return fs
-          .writeFile(temporary, JSON.stringify(manifest), {
-            mode: 0o600,
-            flag: 'wx'
-          })
-          .then(() =>
-            fs.rename(temporary, path.join(this.directory, 'manifest.json'))
-          )
-          .then(() => {
-            this.manifest.metadata = input.metadata
-            return this.status
-          })
+        return withSessionRecovery(this.directory, async () => this.status, {
+          method: 'metadata',
+          metadata: input.metadata
+        }).then((status) => {
+          this.manifest.metadata = input.metadata
+          return status
+        })
       }
 
       if (input.method === 'resize') {
@@ -677,88 +646,6 @@ export class PersistentSession implements EnginePty {
   async setMetadata(metadata: string): Promise<void> {
     await this.request({ method: 'metadata', metadata })
   }
-  private control(method: 'inspect' | 'terminate'): Promise<SessionStatus> {
-    // No attachment or replay: explicit close works even after the engine's
-    // channel failed, or while its parser has backpressured incoming records.
-    return new Promise((resolve, reject) => {
-      const socket = net.createConnection(this.manifest.socketPath)
-      const id = crypto.randomUUID()
-      let buffer = ''
-      let done = false
-      const finish = (status: SessionStatus | null, error: Error | null) => {
-        if (done) {
-          return
-        }
-
-        done = true
-        socket.destroy()
-        if (error) {
-          reject(error)
-        } else if (status) {
-          resolve(status)
-        }
-      }
-      socket.setEncoding('utf8')
-      socket.setTimeout(10000, () =>
-        finish(null, new Error('Independent session control timed out'))
-      )
-      socket.on('error', (error) => finish(null, error))
-      socket.on('close', () =>
-        finish(null, new Error('Independent session control disconnected'))
-      )
-      socket.on('connect', () =>
-        socket.write(
-          JSON.stringify({ id, method, token: this.manifest.token }) + '\n'
-        )
-      )
-      socket.on('data', (data) => {
-        buffer += data
-        if (Buffer.byteLength(buffer) > SESSION_MAX_FRAME_BYTES) {
-          finish(null, new Error('Session control frame exceeds its limit'))
-          return
-        }
-
-        const boundary = buffer.indexOf('\n')
-        if (boundary === -1) {
-          return
-        }
-
-        try {
-          const frame = sessionFrameSchema.parse(
-            JSON.parse(buffer.slice(0, boundary))
-          )
-          if (frame.type === 'fault') {
-            finish(null, new Error(`Session control failed: ${frame.message}`))
-            return
-          }
-
-          if (
-            frame.type !== 'response' ||
-            frame.id !== id ||
-            !frame.status ||
-            frame.error
-          ) {
-            finish(
-              null,
-              new Error(
-                frame.type === 'response'
-                  ? (frame.error ?? 'Invalid session control response')
-                  : 'Invalid session control response'
-              )
-            )
-            return
-          }
-
-          finish(frame.status, null)
-        } catch (error) {
-          finish(
-            null,
-            error instanceof Error ? error : new Error(String(error))
-          )
-        }
-      })
-    })
-  }
 
   terminate(): Promise<void> {
     // Concurrent terminal/tree closes must share the same ownership check and
@@ -769,77 +656,22 @@ export class PersistentSession implements EnginePty {
     return this.termination
   }
 
+  async inspect(): Promise<SessionStatus> {
+    return sessionStatusSchema.parse(
+      await inspectSession({
+        directory: this.directory,
+        socketPath: this.manifest.socketPath,
+        token: this.manifest.token
+      })
+    )
+  }
+
   private async terminateOwnedSession(): Promise<void> {
-    const current = await this.control('inspect').catch(async (error) => {
-      // SAFETY: Node connection errors expose errno codes. Never unlink an
-      // unidentified live owner; a dead cached owner permits explicit cleanup.
-      if (
-        !['ENOENT', 'ECONNREFUSED'].includes(
-          (error as NodeJS.ErrnoException).code ?? ''
-        ) ||
-        !this.status
-      ) {
-        throw error
-      }
-
-      if (processExists(this.status.ownerPid)) {
-        throw error
-      }
-
-      // An orphan can ignore SIGHUP. A cached PID is not authority to signal it
-      // (it may also have been reused); retain the evidence and block cleanup.
-      if (!this.status.startupAborted && processExists(this.status.pid)) {
-        throw new Error(
-          'Session keeper is gone but its recorded command still exists; identify ownership before closing',
-          { cause: error }
-        )
-      }
-
-      const source = await fs
-        .readFile(path.join(this.directory, 'manifest.json'), 'utf8')
-        .catch((cause) => {
-          // SAFETY: Node filesystem errors expose errno codes.
-          if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') {
-            throw cause
-          }
-
-          return null
-        })
-      if (source !== null) {
-        const manifest = sessionManifestSchema.parse(JSON.parse(source))
-        const status = sessionStatusSchema.parse(
-          JSON.parse(
-            await fs.readFile(path.join(this.directory, 'status.json'), 'utf8')
-          )
-        )
-        if (
-          manifest.token !== this.manifest.token ||
-          manifest.socketPath !== sessionSocketPath(this.directory) ||
-          status.ownerPid !== this.status.ownerPid ||
-          status.pid !== this.status.pid ||
-          status.startupAborted !== this.status.startupAborted
-        ) {
-          throw error
-        }
-
-        await fs.rm(this.directory, { recursive: true, force: true })
-        await fs.rm(this.manifest.socketPath, { force: true })
-      }
-
-      return null
+    await closeSession({
+      directory: this.directory,
+      socketPath: this.manifest.socketPath,
+      token: this.manifest.token
     })
-    if (current) {
-      if (
-        this.status &&
-        (current.ownerPid !== this.status.ownerPid ||
-          current.pid !== this.status.pid)
-      ) {
-        throw new Error('Session control does not identify the retained owner')
-      }
-
-      await this.control('terminate')
-    }
-
     this.dispose()
   }
   dispose(): void {

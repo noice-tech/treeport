@@ -208,7 +208,7 @@ fn backpressured_keeper_handles_close_and_natural_exit_without_idle_spin() -> Re
         std::fs::write(
             directory.join("manifest.json"),
             serde_json::to_vec(&json!({
-                "version": 1, "token": token, "socketPath": socket_path,
+                "version": 1, "ownership": "lease-v1", "token": token, "socketPath": socket_path,
                 "argv": ["/bin/sh", "-c", "stty raw -echo; printf READY; for n in 1 2 3 4 5 6 7 8 9 10; do sleep 0.1; printf 'TICK:%s\\n' \"$n\"; done; printf TAIL"],
                 "cwd": root.path(), "env": {"PATH": "/usr/bin:/bin"},
                 "cols": 80, "rows": 24, "metadata": "{}", "journalLimitBytes": 1048576

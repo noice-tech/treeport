@@ -687,6 +687,12 @@ export const rpc = {
     },
     terminals: {
       ':terminalId': {
+        $get: ({ param }: RequestInput<{ terminalId: string }>) =>
+          endpoint<{ terminal: TerminalRecord }>(
+            'GET',
+            `/api/terminals/${id(param.terminalId)}`,
+            terminalResponseSchema
+          ),
         $delete: (
           { param }: RequestInput<{ terminalId: string }>,
           options?: { readonly init: RequestInit }

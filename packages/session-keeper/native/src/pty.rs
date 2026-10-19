@@ -34,8 +34,19 @@ mod launch;
 mod tests;
 
 impl Pty {
+    #[cfg(test)]
     pub fn spawn(manifest: &Manifest) -> Result<Self> {
         Self::spawn_identified(manifest, process::identity)
+    }
+    pub fn spawn_leased(
+        manifest: &Manifest,
+        lease: &mut crate::lease::SessionLease,
+    ) -> Result<Self> {
+        Self::spawn_identified(manifest, |pid| {
+            let identity = process::identity(pid)?.context("Cannot identify admitted command")?;
+            lease.command(identity.clone())?;
+            Ok(Some(identity))
+        })
     }
     fn spawn_identified(
         manifest: &Manifest,

@@ -120,7 +120,8 @@ interface PauseLease {
   readonly release: Effect.Effect<void>
 }
 
-interface HostedTerminalSession extends HostedTerminal {
+interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
+  status: 'running' | 'exited'
   readonly cwd: string
   readonly specPath: string | null
   title: string | null
@@ -265,7 +266,18 @@ const terminatePtyProcessTree: ProcessTreeTerminator = (child) =>
 /** Replaceable terminal engine. Production PTYs belong to independent session
  * processes; closing this engine detaches them. Direct PTY injection is retained
  * for isolated emulator checks and the pre-migration host entrypoint. */
+interface UnavailableSession {
+  completed: Deferred.Deferred<void>
+  terminal: HostedTerminal & { status: 'unavailable'; recoveryPending: boolean }
+  directory: string
+  recovering: boolean
+}
+
 export class TerminalHostSessions {
+  private readonly unavailable = new Map<string, UnavailableSession>()
+  private readonly unidentified = new Map<string, string>()
+  private readonly restoring = new Set<string>()
+
   readonly shellIntegrationDir: string
 
   private constructor(
@@ -285,6 +297,7 @@ export class TerminalHostSessions {
     >,
     private readonly cleanups: FiberSet.FiberSet<void, never>,
     private readonly pendingCleanups: Set<PendingCleanup>,
+    private readonly recoveryScope: Scope.Scope,
     private readonly persistentOptions: Pick<
       TerminalHostSessionsOptions,
       'sessionExecutable' | 'journalLimitBytes'
@@ -325,6 +338,7 @@ export class TerminalHostSessions {
         sessions,
         cleanups,
         new Set(),
+        yield* Scope.Scope,
         options
       )
       yield* Effect.addFinalizer(() => manager.shutdown().pipe(Effect.orDie))
@@ -340,53 +354,151 @@ export class TerminalHostSessions {
             continue
           }
 
-          yield* Effect.gen(function* () {
-            const owner = yield* nodePromise(() =>
-              PersistentSession.open(
-                path.join(directory, name),
-                options.journalLimitBytes
-              )
-            )
-            const { input } = yield* decodeTerminalEngineMetadata(
-              owner.manifest.metadata
-            ).pipe(Effect.mapError(effectError))
-            if (
-              name !==
-              crypto
-                .createHash('sha256')
-                .update(input.terminalId)
-                .digest('hex')
-                .slice(0, 40)
-            ) {
-              return yield* Effect.fail(
-                effectError(
-                  new Error('Session metadata does not identify its directory')
-                )
-              )
-            }
-
-            yield* manager.createTerminal(
-              {
-                ...input,
-                argv: [...input.argv],
-                fallbackArgv: input.fallbackArgv
-                  ? [...input.fallbackArgv]
-                  : undefined,
-                setupTasks: input.setupTasks?.map((task) => ({
-                  ...task,
-                  argv: [...task.argv]
-                }))
-              },
-              owner
-            )
-          })
-          // Restoration failure is not an authoritative empty inventory. Fail
-          // readiness so destructive operations cannot overlook a live keeper.
+          yield* manager.restoreSession(path.join(directory, name), true)
         }
       }
 
       return manager
     })
+  }
+
+  private restoreSession(
+    directory: string,
+    background = false
+  ): Effect.Effect<void> {
+    return Effect.suspend(() => {
+      if (this.restoring.has(directory)) {
+        return Effect.void
+      }
+
+      this.restoring.add(directory)
+      return Effect.gen(this, function* () {
+        const owner = yield* nodePromise(() =>
+          PersistentSession.open(
+            directory,
+            this.persistentOptions.journalLimitBytes
+          )
+        )
+        const { input } = yield* decodeTerminalEngineMetadata(
+          owner.manifest.metadata
+        ).pipe(Effect.mapError(effectError))
+        if (
+          path.basename(directory) !==
+          crypto
+            .createHash('sha256')
+            .update(input.terminalId)
+            .digest('hex')
+            .slice(0, 40)
+        ) {
+          return yield* Effect.fail(
+            effectError(
+              new Error('Session metadata does not identify its directory')
+            )
+          )
+        }
+
+        if (yield* this.session(input.terminalId)) {
+          return
+        }
+
+        const previous = this.unavailable.get(input.terminalId)
+        if (previous?.recovering) {
+          return
+        }
+
+        const recovery: UnavailableSession = {
+          completed: yield* Deferred.make<void>(),
+          directory,
+          recovering: true,
+          terminal: {
+            id: input.terminalId,
+            worktreeId: input.worktreeId,
+            name: input.name,
+            argv: [...input.argv],
+            shellCommand: input.shellCommand,
+            interactiveShell: input.interactiveShell,
+            closeOnSuccess: input.closeOnSuccess ?? false,
+            createdAt: input.createdAt,
+            updatedAt: input.createdAt,
+            status: 'unavailable' as const,
+            unavailableReason: 'Restoring retained terminal',
+            recoveryPending: true,
+            exitCode: null,
+            commandExitCode: null
+          } satisfies HostedTerminal
+        }
+        this.unavailable.set(input.terminalId, recovery)
+        const restore = this.createTerminal(
+          {
+            ...input,
+            argv: [...input.argv],
+            fallbackArgv: input.fallbackArgv
+              ? [...input.fallbackArgv]
+              : undefined,
+            setupTasks: input.setupTasks?.map((task) => ({
+              ...task,
+              argv: [...task.argv]
+            }))
+          },
+          owner
+        ).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              this.unavailable.delete(input.terminalId)
+              this.unidentified.delete(directory)
+            })
+          ),
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              recovery.terminal.unavailableReason = error.message
+            })
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              recovery.recovering = false
+              recovery.terminal.recoveryPending = false
+            }).pipe(
+              Effect.zipRight(Deferred.succeed(recovery.completed, undefined))
+            )
+          )
+        )
+        // Discovery is authoritative before readiness; attachment/replay is
+        // not a prerequisite for serving the application or other terminals.
+        yield* background
+          ? Effect.forkIn(restore, this.recoveryScope).pipe(Effect.asVoid)
+          : restore
+      })
+        .pipe(
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              // Unreadable metadata cannot safely be assigned to a tree. Keep a global
+              // inventory barrier, not an authoritative empty result or a startup crash.
+              this.unidentified.set(directory, error.message)
+            })
+          )
+        )
+        .pipe(
+          Effect.ensuring(Effect.sync(() => this.restoring.delete(directory)))
+        )
+    })
+  }
+
+  private recoveryBarrier(
+    worktreeId: string | null
+  ): Effect.Effect<void, TerminalHostSessionError> {
+    const unknown = this.unidentified.entries().next().value
+    const unavailable = [...this.unavailable.values()].find(
+      (value) => worktreeId === null || value.terminal.worktreeId === worktreeId
+    )
+    return unknown || unavailable
+      ? Effect.fail(
+          new TerminalHostSessionError({
+            message: unknown
+              ? `Unidentified retained session ${unknown[0]}: ${unknown[1]}`
+              : `Terminal ${unavailable!.terminal.id} is unavailable: ${unavailable!.terminal.unavailableReason}`
+          })
+        )
+      : Effect.void
   }
 
   initialize(): Effect.Effect<boolean, TerminalHostSessionError> {
@@ -409,8 +521,11 @@ export class TerminalHostSessions {
       Effect.map(
         (sessions) =>
           [...sessions.values()].filter(
-            (session): session is HostedTerminalSession => session !== null
-          ).length
+            (session): session is HostedTerminalSession =>
+              session !== null && !this.unavailable.has(session.id)
+          ).length +
+          this.unavailable.size +
+          this.unidentified.size
       )
     )
   }
@@ -420,6 +535,15 @@ export class TerminalHostSessions {
     retainedOwner: PersistentSession | null = null
   ): Effect.Effect<void, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
+      if (!retainedOwner && this.unavailable.has(input.terminalId)) {
+        return yield* Effect.fail(
+          new TerminalHostSessionError({
+            message:
+              'Retained terminal ownership is unresolved; refusing duplicate creation'
+          })
+        )
+      }
+
       const reserved = yield* SynchronizedRef.modify(
         this.sessions,
         (current) => {
@@ -1310,7 +1434,11 @@ export class TerminalHostSessions {
     terminalId: string
   ): Effect.Effect<HostedTerminalSession | null> {
     return SynchronizedRef.get(this.sessions).pipe(
-      Effect.map((sessions) => sessions.get(terminalId) ?? null)
+      Effect.map((sessions) =>
+        this.unavailable.has(terminalId)
+          ? null
+          : (sessions.get(terminalId) ?? null)
+      )
     )
   }
 
@@ -1545,6 +1673,22 @@ export class TerminalHostSessions {
     Scope.Scope
   > {
     return Effect.gen(this, function* () {
+      const recovery = this.unavailable.get(terminalId)
+      if (recovery?.recovering) {
+        yield* Deferred.await(recovery.completed)
+      }
+
+      const unavailable = this.unavailable.get(terminalId)
+      if (unavailable) {
+        return yield* Effect.fail(
+          new TerminalHostSessionError({
+            message:
+              unavailable.terminal.unavailableReason ??
+              'Terminal recovery is unavailable'
+          })
+        )
+      }
+
       const session = yield* this.session(terminalId)
       if (!session) {
         return null
@@ -1565,13 +1709,28 @@ export class TerminalHostSessions {
   ): Stream.Stream<TerminalHostRuntimeEvent, TerminalHostSessionError> {
     return Stream.unwrapScoped(
       Effect.gen(this, function* () {
+        const recovery = this.unavailable.get(terminalId)
+        if (recovery?.recovering) {
+          yield* Deferred.await(recovery.completed)
+        }
+
         const session = yield* this.session(terminalId)
         if (!session) {
           return Stream.empty
         }
 
         const subscription = yield* PubSub.subscribe(session.runtime)
-        return Stream.fromQueue(subscription)
+        const live = Stream.fromQueue(subscription)
+        // Completion may have been replayed before subscriptions could attach.
+        // Publish the recovered state once, then continue with live events.
+        const restored: TerminalHostRuntimeEvent = {
+          commandExitCode: session.commandExitCode ?? null
+        }
+        if (session.status === 'exited') {
+          restored.exitCode = session.exitCode
+        }
+
+        return recovery ? Stream.concat(Stream.succeed(restored), live) : live
       })
     )
   }
@@ -1824,15 +1983,23 @@ export class TerminalHostSessions {
     })
   }
 
-  listTerminals(worktreeId: string): Effect.Effect<HostedTerminal[]> {
+  listTerminals(
+    worktreeId: string
+  ): Effect.Effect<HostedTerminal[], TerminalHostSessionError> {
+    if (this.unidentified.size > 0) {
+      return this.recoveryBarrier(null).pipe(Effect.as([]))
+    }
+
     return SynchronizedRef.get(this.sessions).pipe(
       Effect.map((sessions) =>
         [...sessions.values()]
           .filter(
             (session): session is HostedTerminalSession =>
-              session !== null && session.worktreeId === worktreeId
+              session !== null &&
+              session.worktreeId === worktreeId &&
+              !this.unavailable.has(session.id)
           )
-          .map((session) => ({
+          .map<HostedTerminal>((session) => ({
             id: session.id,
             worktreeId: session.worktreeId,
             name: session.name,
@@ -1846,20 +2013,31 @@ export class TerminalHostSessions {
             createdAt: session.createdAt,
             updatedAt: session.updatedAt
           }))
+          .concat(
+            [...this.unavailable.values()]
+              .filter((value) => value.terminal.worktreeId === worktreeId)
+              .map((value) => value.terminal)
+          )
       )
     )
   }
 
   terminalState(terminalId: string): Effect.Effect<TerminalSessionState> {
-    return this.session(terminalId).pipe(
-      Effect.map((session) =>
-        session
-          ? {
-              status: session.status,
-              exitCode: session.exitCode,
-              commandExitCode: session.commandExitCode ?? null
-            }
-          : { status: 'missing' as const, exitCode: null }
+    const recovery = this.unavailable.get(terminalId)
+    return (
+      recovery ? this.restoreSession(recovery.directory) : Effect.void
+    ).pipe(
+      Effect.zipRight(this.session(terminalId)),
+      Effect.map(
+        (session) =>
+          this.unavailable.get(terminalId)?.terminal ??
+          (session
+            ? {
+                status: session.status,
+                exitCode: session.exitCode,
+                commandExitCode: session.commandExitCode ?? null
+              }
+            : { status: 'missing' as const, exitCode: null })
       )
     )
   }
@@ -1941,7 +2119,8 @@ export class TerminalHostSessions {
             (session): session is HostedTerminalSession =>
               session !== null &&
               session.worktreeId === worktreeId &&
-              session.status === 'running'
+              session.status === 'running' &&
+              !this.unavailable.has(session.id)
           )
           .map((session) => ({
             pid: session.pty.pid,
@@ -1992,6 +2171,11 @@ export class TerminalHostSessions {
   killTerminal(
     terminalId: string
   ): Effect.Effect<void, TerminalHostSessionError> {
+    const recovery = this.unavailable.get(terminalId)
+    if (recovery || this.unidentified.size > 0) {
+      return this.recoveryBarrier(recovery?.terminal.worktreeId ?? null)
+    }
+
     return this.session(terminalId).pipe(
       Effect.flatMap((session) =>
         session ? this.destroy(session) : Effect.void
@@ -2003,6 +2187,7 @@ export class TerminalHostSessions {
     worktreeId: string
   ): Effect.Effect<string[], TerminalHostSessionError> {
     return Effect.gen(this, function* () {
+      yield* this.recoveryBarrier(worktreeId)
       const sessions = [
         ...(yield* SynchronizedRef.get(this.sessions)).values()
       ].filter(

@@ -5,6 +5,7 @@ compile_error!("Treeport's session keeper supports macOS and Linux only");
 
 pub mod diagnostics;
 pub mod journal;
+pub mod lease;
 pub mod owner;
 pub mod process;
 pub mod protocol;
