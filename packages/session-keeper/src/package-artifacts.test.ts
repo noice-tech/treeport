@@ -36,7 +36,17 @@ async function fixture() {
   )
   await linkOrCopy(path.join(source, 'LICENSE'), path.join(root, 'LICENSE'))
   await fs.mkdir(path.join(root, 'dist'))
-  for (const file of ['index.js', 'index.d.ts']) {
+  await fs.symlink(
+    path.join(source, 'node_modules'),
+    path.join(root, 'node_modules'),
+    'dir'
+  )
+  for (const file of [
+    'index.js',
+    'index.d.ts',
+    'protocol.js',
+    'protocol.d.ts'
+  ]) {
     await linkOrCopy(
       path.join(source, 'dist', file),
       path.join(root, 'dist', file)

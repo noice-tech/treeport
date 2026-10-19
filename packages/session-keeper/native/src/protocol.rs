@@ -77,6 +77,8 @@ pub fn encode_metadata_json(value: &impl serde::Serialize) -> Result<Vec<u8>> {
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
     pub version: u32,
+    #[serde(default)]
+    pub ownership: Option<String>,
     pub token: String,
     pub socket_path: String,
     pub argv: Vec<String>,

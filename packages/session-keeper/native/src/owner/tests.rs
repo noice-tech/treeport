@@ -40,6 +40,7 @@ async fn authenticated_close_bypasses_stalled_storage_and_a_full_control_queue()
             version: 1,
             token: "a".repeat(32),
             socket_path: socket.to_string_lossy().into_owned(),
+            ownership: Some("lease-v1".into()),
             argv: vec![
                 "/bin/sh".into(),
                 "-c".into(),
@@ -245,6 +246,7 @@ async fn admitted_stalled_deletion_retains_one_transaction_across_cancellation_a
             version: 1,
             token: "a".repeat(32),
             socket_path: socket.to_string_lossy().into_owned(),
+            ownership: Some("lease-v1".into()),
             argv: vec!["/bin/sh".into(), "-c".into(), "IFS= read -r line".into()],
             cwd: root.path().to_string_lossy().into_owned(),
             env: BTreeMap::new(),

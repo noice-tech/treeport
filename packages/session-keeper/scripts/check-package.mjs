@@ -25,7 +25,7 @@ export async function checkSessionKeeperPackage(
   assert.deepEqual(manifest.exports, {
     '.': { types: './dist/index.d.ts', default: './dist/index.js' }
   })
-  assert.equal(manifest.dependencies, undefined)
+  assert.deepEqual(Object.keys(manifest.dependencies ?? {}), ['zod'])
   assert.equal(manifest.scripts.install, undefined)
   assert.equal(manifest.scripts.postinstall, undefined)
   const keeper = path.join(
@@ -35,6 +35,8 @@ export async function checkSessionKeeperPackage(
   for (const file of [
     'dist/index.js',
     'dist/index.d.ts',
+    'dist/protocol.js',
+    'dist/protocol.d.ts',
     'LICENSE',
     path.relative(packageDirectory, keeper)
   ]) {
@@ -203,6 +205,21 @@ if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
         `treeport-session-keeper-${manifest.version}.tgz`
       )
       await execute('tar', ['-xzf', tarball, '-C', temporary])
+      const packedManifest = JSON.parse(
+        await fs.readFile(path.join(temporary, 'package/package.json'), 'utf8')
+      )
+      await fs.writeFile(
+        path.join(temporary, 'package.json'),
+        JSON.stringify({
+          private: true,
+          dependencies: packedManifest.dependencies
+        })
+      )
+      await execute(
+        'pnpm',
+        ['install', '--offline', '--ignore-scripts', '--prod'],
+        { cwd: temporary }
+      )
       const packaged = await checkSessionKeeperPackage(
         path.join(temporary, 'package'),
         process.argv.includes('--all-targets')

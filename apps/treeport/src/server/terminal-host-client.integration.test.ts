@@ -600,7 +600,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     const sessionDirectory = path.join(
       sessionRoot,
-      (await fs.readdir(sessionRoot))[0]!
+      (await fs.readdir(sessionRoot)).filter((name) =>
+        /^[a-f0-9]{40}$/u.test(name)
+      )[0]!
     )
     const ownerPid = JSON.parse(
       await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
@@ -781,7 +783,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
       interactiveShell: false,
       env: {}
     })
-    const quotaNames = await fs.readdir(sessionRoot)
+    const quotaNames = (await fs.readdir(sessionRoot)).filter((name) =>
+      /^[a-f0-9]{40}$/u.test(name)
+    )
     let quotaDirectory = ''
     for (const name of quotaNames) {
       const metadata = JSON.parse(
@@ -925,9 +929,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     const archiveDirectory = path.join(
       sessionRoot,
-      (await fs.readdir(sessionRoot)).find(
-        (name) => name !== path.basename(sessionDirectory)
-      )!
+      (await fs.readdir(sessionRoot))
+        .filter((name) => /^[a-f0-9]{40}$/u.test(name))
+        .find((name) => name !== path.basename(sessionDirectory))!
     )
     const archiveStatus = sessionStatusSchema.parse(
       JSON.parse(
@@ -978,13 +982,15 @@ child.once('exit', (code) => process.exit(code ?? 1))
     })
     const unavailableDirectory = path.join(
       sessionRoot,
-      (await fs.readdir(sessionRoot)).find(
-        (name) =>
-          ![
-            path.basename(sessionDirectory),
-            path.basename(archiveDirectory)
-          ].includes(name)
-      )!
+      (await fs.readdir(sessionRoot))
+        .filter((name) => /^[a-f0-9]{40}$/u.test(name))
+        .find(
+          (name) =>
+            ![
+              path.basename(sessionDirectory),
+              path.basename(archiveDirectory)
+            ].includes(name)
+        )!
     )
     const unavailableStatus = sessionStatusSchema.parse(
       JSON.parse(

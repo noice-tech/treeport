@@ -1621,7 +1621,7 @@ os._exit(7)
     ).rejects.toThrow()
     await expect(
       execute(binary, [value.directory], { timeout: 2000 })
-    ).rejects.toThrow(/not fresh/)
+    ).rejects.toThrow(/ownership is held/)
     expect(
       await fs.readFile(path.join(value.directory, 'manifest.json'), 'utf8')
     ).toBe(manifest)
@@ -2043,7 +2043,7 @@ os._exit(7)
         // discovery cannot authorize a replacement native command.
         await expect(
           execute(binary, [value.directory], { timeout: 2000 })
-        ).rejects.toThrow(/not fresh/)
+        ).rejects.toThrow(/ownership is held/)
       } finally {
         // Only this private fixture's blocked path, so authenticated teardown
         // remains possible after a failed assertion. No cached-PID signaling.

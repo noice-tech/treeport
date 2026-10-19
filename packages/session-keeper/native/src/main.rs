@@ -10,6 +10,7 @@ use std::{
 };
 use treeport_session_keeper::{
     journal::{atomic_json, open_regular, Journal},
+    lease::{self, SessionLease},
     owner::Handle,
     protocol::{Manifest, RecordData, Status, MAX_MANIFEST_BYTES},
     pty::Pty,
@@ -54,10 +55,15 @@ fn main() -> Result<()> {
         command.spawn()?;
         return Ok(());
     }
+    let recovering = first == "--recover";
+    let directory = PathBuf::from(if recovering {
+        args.next().context("Missing session directory")?
+    } else {
+        first
+    });
     if args.next().is_some() {
         bail!("Unexpected session keeper arguments");
     }
-    let directory = PathBuf::from(first);
     let metadata = fs::symlink_metadata(&directory)?;
     if !metadata.is_dir()
         || metadata.uid() != unsafe { libc::geteuid() }
@@ -75,6 +81,12 @@ fn main() -> Result<()> {
         bail!("Session manifest exceeds the byte limit");
     }
     let manifest = Manifest::read(manifest_file)?;
+    if recovering {
+        return lease::recover(&directory, &manifest);
+    }
+    let lease = std::sync::Arc::new(std::sync::Mutex::new(SessionLease::acquire(
+        &directory, &manifest, true,
+    )?));
     #[cfg(target_os = "linux")]
     {
         // Refuse an unclosable opt-in session BEFORE creating its journal or
@@ -106,8 +118,14 @@ fn main() -> Result<()> {
         let listener = tokio::net::UnixListener::from_std(listener)?;
         // Create the storage worker before releasing a verified command. A
         // thread-creation failure must not happen after user code starts.
-        let storage = Storage::start(directory.clone(), journal);
-        let pty = match Pty::spawn(&manifest) {
+        let storage = Storage::start_leased(directory.clone(), journal, lease.clone());
+        let spawned = Pty::spawn_leased(
+            &manifest,
+            &mut *lease
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Session lease poisoned"))?,
+        );
+        let pty = match spawned {
             Ok(pty) => pty,
             Err(error) => {
                 // Pty::spawn has no fallible work after gate admission. This
@@ -115,6 +133,8 @@ fn main() -> Result<()> {
                 // a timeout in the engine, or an unexpectedly dead keeper.
                 // Keep discovery and journal evidence; restore as a failed
                 // terminal, never silently skip it or relaunch its command.
+                drop(listener);
+                fs::remove_file(&manifest.socket_path)?;
                 let message = format!("Terminal startup aborted: {error:#}");
                 let at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
@@ -153,7 +173,9 @@ fn main() -> Result<()> {
         };
         let token = manifest.token.clone();
         let owner = Handle::start(manifest, pty, storage);
-        server::serve(listener, token, owner).await
+        let result = server::serve(listener, token, owner).await;
+        drop(lease);
+        result
     });
     // Explicit close can cancel a replay whose blocking reader is still inside
     // an OS filesystem call. Do not wait forever for that worker after verified
