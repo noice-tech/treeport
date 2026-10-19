@@ -81,6 +81,7 @@ interface LoadedReview {
 
 const COMMENTS_KEY = 'review-comments-v1'
 const VIEWED_KEY = 'review-viewed-files-v1'
+const DIFF_STYLE_KEY = 'review-diff-style-v1'
 // ponytail: Unfocused apps stay stale, and focused apps can lag two seconds.
 // Add a host diff-change event when either limit matters.
 const AUTO_REFRESH_INTERVAL_MS = 2_000
@@ -767,13 +768,15 @@ function ReviewApp() {
         uncommitted,
         committed,
         storedComments,
-        storedViewedFiles
+        storedViewedFiles,
+        storedDiffStyle
       ] = await Promise.all([
         initial ? treeport.context() : null,
         treeport.diff({ scope: 'uncommitted' }),
         treeport.diff({ scope: 'committed' }),
         initial ? treeport.storage.get(COMMENTS_KEY) : null,
-        initial ? treeport.storage.get(VIEWED_KEY) : null
+        initial ? treeport.storage.get(VIEWED_KEY) : null,
+        initial ? treeport.storage.get(DIFF_STYLE_KEY) : null
       ])
       if (uncommitted.headCommit !== committed.headCommit) {
         throw new Error('HEAD changed while reading the review. Retrying…')
@@ -855,6 +858,7 @@ function ReviewApp() {
             : null
         )
         setViewedFiles(parsedViewed)
+        setDiffStyle(storedDiffStyle === 'split' ? 'split' : 'unified')
         setCommentStatus('')
       }
 
@@ -1510,11 +1514,18 @@ function ReviewApp() {
               ? 'Switch to unified diff'
               : 'Switch to split diff'
           }
-          onClick={() =>
-            setDiffStyle((current) =>
-              current === 'unified' ? 'split' : 'unified'
-            )
-          }
+          disabled={loading || !loaded}
+          onClick={() => {
+            const next = diffStyle === 'unified' ? 'split' : 'unified'
+            setDiffStyle(next)
+            void treeport.storage.set(DIFF_STYLE_KEY, next).catch((reason) => {
+              setCommentStatus(
+                reason instanceof Error
+                  ? `Could not save diff style: ${reason.message}`
+                  : 'Could not save diff style'
+              )
+            })
+          }}
         >
           <ViewColumnsIcon aria-hidden="true" />
           <span className="touch-target" aria-hidden="true" />
