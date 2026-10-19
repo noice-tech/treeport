@@ -471,14 +471,21 @@ test.describe('desktop worktree and terminal workflows', () => {
     const rail = page.getByRole('separator', { name: 'Resize apps panel' })
     const defaultBounds = await app.boundingBox()
     expect(defaultBounds).not.toBeNull()
+    const terminal = page.getByRole('main', {
+      name: 'main tree terminal workspace'
+    })
+    await expect
+      .poll(async () => {
+        const terminalWidth = (await terminal.boundingBox())?.width ?? 0
+        const panelWidth = (await app.boundingBox())?.width ?? 0
+        return Math.abs(terminalWidth - panelWidth)
+      })
+      .toBeLessThanOrEqual(1)
     await rail.press('ArrowRight')
     await expect
       .poll(async () => (await app.boundingBox())?.width)
       .toBeLessThan(defaultBounds!.width)
     const splitBounds = await app.boundingBox()
-    const terminal = page.getByRole('main', {
-      name: 'main tree terminal workspace'
-    })
     const terminalBounds = await terminal.boundingBox()
     expect(splitBounds).not.toBeNull()
     expect(terminalBounds).not.toBeNull()
