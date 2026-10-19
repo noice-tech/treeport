@@ -6,6 +6,8 @@ export { decodeUnknownOrNull } from './schema.js'
 export { BROWSER_VIDEO_CAPTURE_SOURCE } from './browser-video.js'
 export { browserClipboardSchema, copyBrowserPage } from './browser-clipboard.js'
 
+export const BROWSER_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
 export const browserAppIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)

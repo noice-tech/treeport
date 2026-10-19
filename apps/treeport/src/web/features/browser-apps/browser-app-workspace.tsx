@@ -65,6 +65,7 @@ import {
 } from '../../browser-remote-connection'
 import { LocalBrowserWebview } from './local-browser-webview'
 import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
+import { BrowserFilePicker } from './browser-file-picker'
 
 const viewportPresetSchema = z.enum([
   'responsive',
@@ -186,6 +187,10 @@ export function BrowserAppWorkspace({
   const [streamStatus, setStreamStatus] = useState<string | null>(
     'Connecting to remote browser…'
   )
+  const [fileChooser, setFileChooser] = useState<Extract<
+    BrowserServerMessage,
+    { type: 'fileChooser' }
+  > | null>(null)
   const [connectionRevision, setConnectionRevision] = useState(0)
   const [addressFocusRevision, setAddressFocusRevision] = useState(0)
   const [localBrowserPaintRetained, setLocalBrowserPaintRetained] =
@@ -498,6 +503,22 @@ export function BrowserAppWorkspace({
         return
       }
 
+      if (message.type === 'fileChooser') {
+        setFileChooser(message)
+        return
+      }
+
+      if (message.type === 'fileChooserClosed') {
+        setFileChooser((current) =>
+          current?.requestId === message.requestId ? null : current
+        )
+        if (message.error) {
+          setError(message.error)
+        }
+
+        return
+      }
+
       if (message.type === 'clipboardWrite') {
         if (
           !stateRef.current?.controlled ||
@@ -707,6 +728,7 @@ export function BrowserAppWorkspace({
         canvas.style.cursor = 'default'
       }
 
+      setFileChooser(null)
       dismissContext()
       contextActionRef.current?.rejectCopy?.(
         new Error('The browser action failed.')
@@ -2473,6 +2495,19 @@ export function BrowserAppWorkspace({
                 />
                 <span className="text-sm">{streamStatus}</span>
               </div>
+            ) : null}
+            {fileChooser &&
+            connectionRef.current &&
+            state?.controlled &&
+            !state.agentActive &&
+            active &&
+            !inputBlocked ? (
+              <BrowserFilePicker
+                key={fileChooser.requestId}
+                request={fileChooser}
+                connection={connectionRef.current}
+                onCancel={() => setFileChooser(null)}
+              />
             ) : null}
             {failure ? (
               <div

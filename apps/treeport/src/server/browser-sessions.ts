@@ -12,6 +12,7 @@ import * as Data from 'effect/Data'
 import type {
   Browser as PlaywrightConnection,
   CDPSession,
+  FileChooser,
   Page
 } from 'playwright'
 import type {
@@ -150,6 +151,7 @@ interface BrowserLocalAutomation {
   requests: string[]
   screencasting: boolean
   captureViewport: { width: number; height: number } | null
+  fileChooser(chooser: FileChooser): void
 }
 
 interface BrowserLocalOwner {
@@ -234,6 +236,15 @@ interface BrowserSession {
   attachments: Map<string, BrowserAttachment>
   controllerId: string | null
   clipboardInput: { attachment: BrowserAttachment; expiresAt: number } | null
+  fileChooserInput: { attachment: BrowserAttachment; expiresAt: number } | null
+  fileChooser: {
+    id: string
+    submitted: boolean
+    chooser: FileChooser
+    attachment: BrowserAttachment
+    generation: number
+    timer: ReturnType<typeof setTimeout>
+  } | null
   touchAttachmentId: string | null
   touchIds: Set<number>
   agentActive: boolean
@@ -494,10 +505,130 @@ export class BrowserSessionManager {
     }
   }
 
+  private closeFileChooser(
+    session: BrowserSession,
+    error: string | null = null
+  ): void {
+    const pending = session.fileChooser
+    session.fileChooser = null
+    if (!pending) {
+      return
+    }
+
+    clearTimeout(pending.timer)
+    pending.attachment.transport.sendMessage({
+      type: 'fileChooserClosed',
+      requestId: pending.id,
+      error
+    })
+    void pending.chooser
+      .element()
+      .dispose()
+      .catch(() => undefined)
+  }
+
+  private openFileChooser(
+    session: BrowserSession,
+    chooser: FileChooser | null
+  ): void {
+    this.closeFileChooser(session)
+    if (!chooser) {
+      session.fileChooserInput = null
+      return
+    }
+
+    // Only a recent action from the exact controlling socket can open a picker.
+    const input = session.fileChooserInput
+    const attachment = input?.attachment
+    if (
+      !input ||
+      !attachment ||
+      Date.now() > input.expiresAt ||
+      session.closing ||
+      session.agentActive ||
+      attachment.closing ||
+      !attachment.visible ||
+      session.attachments.get(attachment.id) !== attachment ||
+      session.controllerId !== attachmentController(attachment)
+    ) {
+      void chooser
+        .element()
+        .dispose()
+        .catch(() => undefined)
+      return
+    }
+
+    const pending = {
+      id: crypto.randomUUID(),
+      submitted: false,
+      chooser,
+      attachment,
+      generation: session.generation,
+      timer: setTimeout(
+        () =>
+          this.closeFileChooser(
+            session,
+            'File selection expired. Open the file picker again.'
+          ),
+        5 * 60_000
+      )
+    }
+    session.fileChooser = pending
+    void chooser
+      .element()
+      .evaluate((element) => ({
+        accept: element instanceof HTMLInputElement ? element.accept : '',
+        directory:
+          element instanceof HTMLInputElement && element.webkitdirectory
+      }))
+      .then(({ accept, directory }) => {
+        if (session.fileChooser !== pending) {
+          return
+        }
+
+        if (directory) {
+          this.closeFileChooser(
+            session,
+            'Folder uploads are not supported. Choose individual files instead.'
+          )
+          return
+        }
+
+        attachment.transport.sendMessage({
+          type: 'fileChooser',
+          requestId: pending.id,
+          multiple: chooser.isMultiple(),
+          accept: accept.slice(0, 4_096)
+        })
+      })
+      .catch(() => {
+        if (session.fileChooser === pending) {
+          this.closeFileChooser(
+            session,
+            'The file input is no longer available.'
+          )
+        }
+      })
+  }
+
   private broadcastState(
     session: BrowserSession,
     type: 'state' | 'controlChanged' = 'state'
   ): void {
+    const pending = session.fileChooser
+    if (
+      pending &&
+      (session.closing ||
+        session.agentActive ||
+        session.generation !== pending.generation ||
+        pending.attachment.closing ||
+        !pending.attachment.visible ||
+        session.attachments.get(pending.attachment.id) !== pending.attachment ||
+        session.controllerId !== attachmentController(pending.attachment))
+    ) {
+      this.closeFileChooser(session)
+    }
+
     for (const attachment of session.attachments.values()) {
       attachment.transport.sendMessage({
         type,
@@ -875,6 +1006,8 @@ export class BrowserSessionManager {
       attachments: new Map(),
       controllerId: null,
       clipboardInput: null,
+      fileChooserInput: null,
+      fileChooser: null,
       touchAttachmentId: null,
       touchIds: new Set(),
       agentActive: false,
@@ -971,6 +1104,20 @@ export class BrowserSessionManager {
             this.queueAppState(session, state)
             this.broadcastState(session)
           },
+          fileChooser: (chooser) => {
+            if (
+              session.browser === browser &&
+              session.generation === runtimeGeneration &&
+              !session.localOwner
+            ) {
+              this.openFileChooser(session, chooser)
+            } else {
+              void chooser
+                ?.element()
+                .dispose()
+                .catch(() => undefined)
+            }
+          },
           clipboard: (clipboard) => {
             const input = session.clipboardInput
             if (
@@ -1034,6 +1181,7 @@ export class BrowserSessionManager {
               return
             }
 
+            this.closeFileChooser(session)
             session.crashMessage = message
             for (const attachment of session.attachments.values()) {
               attachment.transport.sendMessage({
@@ -1818,6 +1966,26 @@ export class BrowserSessionManager {
       return
     }
 
+    if (message.type === 'fileChooserResponse') {
+      const pending = session.fileChooser
+      if (
+        !pending ||
+        pending.id !== message.requestId ||
+        pending.attachment !== attachment ||
+        pending.submitted
+      ) {
+        attachment.transport.sendMessage({
+          type: 'fileChooserClosed',
+          requestId: message.requestId,
+          error: 'This file selection is no longer active.'
+        })
+        return
+      }
+
+      // Admit at most one bounded payload per picker, even while input is queued.
+      pending.submitted = true
+    }
+
     if (message.type === 'videoOffer') {
       attachment.video.offer(message.requestId, message.sdp)
       return
@@ -2007,6 +2175,65 @@ export class BrowserSessionManager {
         }
 
         try {
+          if (queuedMessage.type === 'fileChooserResponse') {
+            const pending = session.fileChooser
+            if (
+              !pending ||
+              pending.id !== queuedMessage.requestId ||
+              pending.attachment !== attachment ||
+              !attachment.visible ||
+              pending.generation !== session.generation ||
+              session.agentActive
+            ) {
+              attachment.transport.sendMessage({
+                type: 'fileChooserClosed',
+                requestId: queuedMessage.requestId,
+                error: 'This file selection is no longer active.'
+              })
+              return
+            }
+
+            const files = queuedMessage.files
+            if (files && !pending.chooser.isMultiple() && files.length > 1) {
+              this.closeFileChooser(
+                session,
+                'This input accepts only one file.'
+              )
+              return
+            }
+
+            if (!files) {
+              this.closeFileChooser(session)
+              return
+            }
+
+            await pending.chooser
+              .setFiles(
+                files.map((file) => ({
+                  name: file.name,
+                  mimeType: file.mimeType,
+                  buffer: Buffer.from(file.base64, 'base64')
+                })),
+                { timeout: 15_000 }
+              )
+              .then(
+                () => {
+                  if (session.fileChooser === pending) {
+                    this.closeFileChooser(session)
+                  }
+                },
+                () => {
+                  if (session.fileChooser === pending) {
+                    this.closeFileChooser(
+                      session,
+                      'Could not upload files. Open the file picker and try again.'
+                    )
+                  }
+                }
+              )
+            return
+          }
+
           if (queuedMessage.type === 'touch') {
             if (queuedMessage.phase === 'start') {
               if (session.touchAttachmentId !== attachment.id) {
@@ -2055,6 +2282,7 @@ export class BrowserSessionManager {
               attachment,
               expiresAt: Date.now() + 5_000
             }
+            session.fileChooserInput = session.clipboardInput
           } else if (
             ['copy', 'navigate', 'back', 'forward', 'reload'].includes(
               queuedMessage.type
@@ -2230,6 +2458,15 @@ export class BrowserSessionManager {
         )
       }
 
+      const automation = session.localAutomation
+      if (automation) {
+        // Keep the native desktop picker when the desktop owns control.
+        automation.page.off('filechooser', automation.fileChooser)
+        if (controller === 'other') {
+          automation.page.on('filechooser', automation.fileChooser)
+        }
+      }
+
       for (const attachment of session.attachments.values()) {
         this.prepareVideoViewer(session, attachment)
       }
@@ -2290,6 +2527,7 @@ export class BrowserSessionManager {
   }
 
   private async closePlaywrightRuntime(session: BrowserSession): Promise<void> {
+    this.closeFileChooser(session)
     await this.waitForAppState(session)
     await this.detachAgent(session)
     const launch = session.launch
@@ -2315,6 +2553,7 @@ export class BrowserSessionManager {
         // Each owned resource is released even if an earlier release fails.
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
+            this.closeFileChooser(session)
             this.resetVideoDelivery(session)
             if (this.sessions.get(session.appId) === session) {
               this.sessions.delete(session.appId)
@@ -2636,6 +2875,30 @@ export class BrowserSessionManager {
         throw new Error('The local Browser owner changed.')
       }
 
+      const fileChooser = (chooser: FileChooser) => {
+        if (
+          session.localOwner === owner &&
+          session.generation === owner.generation
+        ) {
+          this.openFileChooser(session, chooser)
+        } else {
+          void chooser
+            .element()
+            .dispose()
+            .catch(() => undefined)
+        }
+      }
+      const clearFileChooser = () => {
+        if (
+          session.localOwner === owner &&
+          session.generation === owner.generation
+        ) {
+          this.openFileChooser(session, null)
+        }
+      }
+      page.on('framenavigated', clearFileChooser)
+      page.on('framedetached', clearFileChooser)
+
       // Explicit ownership avoids Playwright's fire-and-forget default dialog
       // close. Electron keeps beforeunload; the bridge hides those native dialogs.
       page.on('dialog', (dialog) => {
@@ -2665,13 +2928,15 @@ export class BrowserSessionManager {
         console: [],
         requests: [],
         screencasting: false,
-        captureViewport: null
+        captureViewport: null,
+        fileChooser
       }
       browser.once('disconnected', () => {
         if (session.localAutomation !== automation) {
           return
         }
 
+        this.closeFileChooser(session)
         automation.screencasting = false
         session.localAutomation = null
         void this.scheduleOperation(
@@ -2718,6 +2983,7 @@ export class BrowserSessionManager {
   }
 
   private async closeLocalAutomation(session: BrowserSession): Promise<void> {
+    this.closeFileChooser(session)
     session.retainLocalAgentPaint = false
     const launch = session.localAutomationLaunch
     const automation =

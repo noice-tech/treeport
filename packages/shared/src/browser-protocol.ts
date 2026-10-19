@@ -4,16 +4,19 @@ import * as Schema from 'effect/Schema'
 import { browserClipboardSchema } from './browser-clipboard.js'
 import { viewerIdentitySchema } from './presence-protocol.js'
 import {
+  BROWSER_MAX_UPLOAD_BYTES,
   browserAppIdSchema,
   browserObservedUrlSchema,
   browserUrlSchema
 } from './browser-host.js'
 export {
+  BROWSER_MAX_UPLOAD_BYTES,
   browserAppIdSchema,
   browserObservedUrlSchema,
   browserUrlSchema
 } from './browser-host.js'
 
+export const BROWSER_MAX_UPLOAD_FILES = 100
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
 // Observed Chromium addresses can be megabytes long (including JSON escaping).
 export const BROWSER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -98,6 +101,47 @@ export type BrowserContextActionResult = Schema.Schema.Type<
 >
 
 export const browserClientMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('fileChooserResponse'),
+    requestId: browserRequestIdSchema,
+    // Null cancels without clearing the input's previous selection.
+    files: Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.String.pipe(
+            Schema.minLength(1),
+            Schema.maxLength(255),
+            // eslint-disable-next-line no-control-regex -- File names must not contain path separators or control characters.
+            Schema.pattern(/^[^/\\\x00-\x1f]+$/),
+            Schema.filter((name) => name !== '.' && name !== '..')
+          ),
+          mimeType: Schema.String.pipe(Schema.maxLength(255)),
+          base64: Schema.String.pipe(
+            Schema.maxLength(4 * Math.ceil(BROWSER_MAX_UPLOAD_BYTES / 3)),
+            Schema.pattern(/^[A-Za-z0-9+/]*={0,2}$/),
+            Schema.filter((value) => value.length % 4 === 0)
+          )
+        })
+      ).pipe(
+        Schema.minItems(1),
+        Schema.maxItems(BROWSER_MAX_UPLOAD_FILES),
+        Schema.filter(
+          (files) =>
+            files.reduce(
+              (total, file) =>
+                total +
+                (file.base64.length / 4) * 3 -
+                (file.base64.endsWith('==')
+                  ? 2
+                  : file.base64.endsWith('=')
+                    ? 1
+                    : 0),
+              0
+            ) <= BROWSER_MAX_UPLOAD_BYTES
+        )
+      )
+    )
+  }),
   Schema.Struct({
     type: Schema.Literal('contextMenu'),
     requestId: browserRequestIdSchema,
@@ -312,6 +356,17 @@ export const browserCursorSchema = Schema.Literal(
 )
 
 export const browserServerMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('fileChooser'),
+    requestId: browserRequestIdSchema,
+    multiple: Schema.Boolean,
+    accept: Schema.String.pipe(Schema.maxLength(4_096))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('fileChooserClosed'),
+    requestId: browserRequestIdSchema,
+    error: Schema.NullOr(Schema.String)
+  }),
   Schema.Struct({ type: Schema.Literal('videoReady') }),
   Schema.Struct({
     type: Schema.Literal('videoAnswer'),
