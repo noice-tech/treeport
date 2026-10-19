@@ -1733,11 +1733,12 @@ function ReviewApp() {
                         options={{
                           theme: 'pierre-dark',
                           diffStyle,
+                          diffIndicators: 'none',
                           overflow: 'wrap',
                           collapsed: collapsed || showImage,
                           unsafeCSS: DIFF_CSS,
                           enableGutterUtility: true,
-                          lineHoverHighlight: 'both',
+                          lineHoverHighlight: 'number',
                           onGutterUtilityClick: (range) => {
                             if (
                               commentsRef.current.some(
