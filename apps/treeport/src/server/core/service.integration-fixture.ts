@@ -776,6 +776,7 @@ export class TerminalHostDouble implements TerminalSessionBackend {
         shellCommand: input.shellCommand,
         interactiveShell: input.interactiveShell,
         closeOnSuccess: input.closeOnSuccess ?? false,
+        closeOnExit: input.closeOnExit ?? false,
         status: 'running',
         exitCode: null,
         createdAt: input.createdAt,

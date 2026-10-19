@@ -106,6 +106,7 @@ export interface HostedTerminal {
   shellCommand: string | null
   interactiveShell: boolean
   closeOnSuccess: boolean
+  closeOnExit: boolean
   status: 'running' | 'exited' | 'unavailable'
   exitCode: number | null
   unavailableReason?: string | null | undefined
@@ -132,6 +133,7 @@ export interface TerminalCreateInput {
   interactiveShell: boolean
   fallbackArgv?: string[] | undefined
   closeOnSuccess?: boolean | undefined
+  closeOnExit?: boolean | undefined
   initialSize?: TerminalSize | undefined
   env: Record<string, string>
   setupTasks?: TerminalSetupTask[] | undefined

@@ -824,14 +824,20 @@ export const createTerminalSchema = Schema.Struct({
   env: Schema.optional(terminalEnvironmentSchema),
   returnToShell: Schema.optional(Schema.Boolean),
   closeOnSuccess: Schema.optional(Schema.Boolean),
+  closeOnExit: Schema.optional(Schema.Boolean),
   initialSize: Schema.optional(terminalSizeSchema)
 }).pipe(
   Schema.filter((value) => !(value.argv && value.shellCommand), {
     message: () => 'A terminal cannot have both argv and a shell command'
   }),
-  Schema.filter((value) => !(value.returnToShell && value.closeOnSuccess), {
-    message: () => 'A terminal cannot return to a shell and close on success'
-  })
+  Schema.filter(
+    (value) =>
+      !(value.returnToShell && (value.closeOnSuccess || value.closeOnExit)),
+    {
+      message: () =>
+        'A terminal cannot return to a shell and close automatically'
+    }
+  )
 )
 
 export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })

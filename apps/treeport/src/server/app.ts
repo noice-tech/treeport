@@ -1649,6 +1649,10 @@ export function createApp({
           options.closeOnSuccess = true
         }
 
+        if (body.closeOnExit) {
+          options.closeOnExit = true
+        }
+
         if (body.initialSize) {
           options.initialSize = body.initialSize
         }

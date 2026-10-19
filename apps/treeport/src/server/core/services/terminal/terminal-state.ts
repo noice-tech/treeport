@@ -8,7 +8,7 @@ interface State {
   // Keep completed reservations until the tree is cleared: an inventory read
   // started before a kill may still report that terminal afterward.
   readonly removingTerminalIds: Map<string, string>
-  readonly closeOnSuccessTerminalIds: Set<string>
+  readonly terminalClosePolicies: Map<string, 'success' | 'exit'>
   readonly terminalIdsByWorktree: Map<string, Set<string>>
 }
 
@@ -20,7 +20,7 @@ interface InventoryChange {
 const emptyState = (): State => ({
   terminals: new Map(),
   removingTerminalIds: new Map(),
-  closeOnSuccessTerminalIds: new Set(),
+  terminalClosePolicies: new Map(),
   terminalIdsByWorktree: new Map()
 })
 
@@ -61,7 +61,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               (id) =>
                 id !== terminalId &&
                 !current.removingTerminalIds.has(id) &&
-                !current.closeOnSuccessTerminalIds.has(id)
+                !current.terminalClosePolicies.has(id)
             )
             if (!hasRemainingTerminal) {
               return [
@@ -103,28 +103,30 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             )
           ),
 
-        closeOnSuccessTerminalIds: Ref.get(state).pipe(
-          Effect.map((current) => new Set(current.closeOnSuccessTerminalIds))
+        terminalClosePolicies: Ref.get(state).pipe(
+          Effect.map((current) => new Map(current.terminalClosePolicies))
         ),
 
-        updateCloseOnSuccess: (
+        updateClosePolicies: (
           terminals: ReadonlyArray<{
             readonly terminalId: string
             readonly closeOnSuccess: boolean
+            readonly closeOnExit: boolean
           }>
         ) =>
           Ref.update(state, (current) => {
-            const closeOnSuccessTerminalIds = new Set(
-              current.closeOnSuccessTerminalIds
-            )
+            const terminalClosePolicies = new Map(current.terminalClosePolicies)
             for (const terminal of terminals) {
-              if (terminal.closeOnSuccess) {
-                closeOnSuccessTerminalIds.add(terminal.terminalId)
+              if (terminal.closeOnExit || terminal.closeOnSuccess) {
+                terminalClosePolicies.set(
+                  terminal.terminalId,
+                  terminal.closeOnExit ? 'exit' : 'success'
+                )
               } else {
-                closeOnSuccessTerminalIds.delete(terminal.terminalId)
+                terminalClosePolicies.delete(terminal.terminalId)
               }
             }
-            return { ...current, closeOnSuccessTerminalIds }
+            return { ...current, terminalClosePolicies }
           }),
 
         reconcileInventory: (
@@ -134,9 +136,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
           Ref.modify(state, (current) => {
             const cachedTerminals = new Map(current.terminals)
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
-            const closeOnSuccessTerminalIds = new Set(
-              current.closeOnSuccessTerminalIds
-            )
+            const terminalClosePolicies = new Map(current.terminalClosePolicies)
             const previousIds = terminalIdsByWorktree.get(worktreeId)
             const currentIds = new Set(terminals.map((terminal) => terminal.id))
             const updatedTerminalIds: string[] = []
@@ -158,7 +158,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             for (const terminalId of previousIds ?? []) {
               if (!currentIds.has(terminalId)) {
                 cachedTerminals.delete(terminalId)
-                closeOnSuccessTerminalIds.delete(terminalId)
+                terminalClosePolicies.delete(terminalId)
                 removedTerminalIds.push(terminalId)
               }
             }
@@ -169,23 +169,24 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               {
                 terminals: cachedTerminals,
                 removingTerminalIds: current.removingTerminalIds,
-                closeOnSuccessTerminalIds,
+                terminalClosePolicies,
                 terminalIdsByWorktree
               }
             ]
           }),
 
-        recordTerminal: (terminal: TerminalRecord, closeOnSuccess: boolean) =>
+        recordTerminal: (
+          terminal: TerminalRecord,
+          closePolicy: 'success' | 'exit' | null
+        ) =>
           Ref.update(state, (current) => {
             const terminals = new Map(current.terminals)
             terminals.set(terminal.id, terminal)
-            const closeOnSuccessTerminalIds = new Set(
-              current.closeOnSuccessTerminalIds
-            )
-            if (closeOnSuccess) {
-              closeOnSuccessTerminalIds.add(terminal.id)
+            const terminalClosePolicies = new Map(current.terminalClosePolicies)
+            if (closePolicy) {
+              terminalClosePolicies.set(terminal.id, closePolicy)
             } else {
-              closeOnSuccessTerminalIds.delete(terminal.id)
+              terminalClosePolicies.delete(terminal.id)
             }
 
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
@@ -197,7 +198,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             return {
               terminals,
               removingTerminalIds: current.removingTerminalIds,
-              closeOnSuccessTerminalIds,
+              terminalClosePolicies,
               terminalIdsByWorktree
             }
           }),
@@ -213,10 +214,8 @@ export class TerminalState extends Effect.Service<TerminalState>()(
           Ref.update(state, (current) => {
             const terminals = new Map(current.terminals)
             terminals.delete(terminalId)
-            const closeOnSuccessTerminalIds = new Set(
-              current.closeOnSuccessTerminalIds
-            )
-            closeOnSuccessTerminalIds.delete(terminalId)
+            const terminalClosePolicies = new Map(current.terminalClosePolicies)
+            terminalClosePolicies.delete(terminalId)
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
             const terminalIds = new Set(
               terminalIdsByWorktree.get(worktreeId) ?? []
@@ -226,7 +225,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             return {
               terminals,
               removingTerminalIds: current.removingTerminalIds,
-              closeOnSuccessTerminalIds,
+              terminalClosePolicies,
               terminalIdsByWorktree
             }
           }),
@@ -241,12 +240,10 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               ...discoveredTerminalIds
             ])
             const terminals = new Map(current.terminals)
-            const closeOnSuccessTerminalIds = new Set(
-              current.closeOnSuccessTerminalIds
-            )
+            const terminalClosePolicies = new Map(current.terminalClosePolicies)
             for (const terminalId of terminalIds) {
               terminals.delete(terminalId)
-              closeOnSuccessTerminalIds.delete(terminalId)
+              terminalClosePolicies.delete(terminalId)
             }
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
             terminalIdsByWorktree.delete(worktreeId)
@@ -261,7 +258,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               {
                 terminals,
                 removingTerminalIds,
-                closeOnSuccessTerminalIds,
+                terminalClosePolicies,
                 terminalIdsByWorktree
               }
             ]

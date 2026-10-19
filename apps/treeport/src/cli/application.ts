@@ -124,6 +124,7 @@ interface TerminalCreateBody {
   name: string
   argv?: string[]
   returnToShell?: boolean
+  closeOnExit?: boolean
 }
 
 export interface CliApplicationOptions {
@@ -2533,22 +2534,36 @@ async function main(args: string[]): Promise<void> {
 
   const terminalCreateCommand = terminalCommand
     .command('create')
-    .description('Create a persistent terminal')
+    .description('Create a terminal')
     .usage('[options] [-- <command> args...]')
     .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
     .requiredOption('--name <name>', 'terminal name')
+    .option(
+      '--close-on-exit',
+      'close the terminal when its command exits, even on failure'
+    )
     .option('--json', 'emit machine-readable JSON')
-    .addHelpText('after', '\nCommand arguments may be passed after --.\n')
+    .addHelpText(
+      'after',
+      '\nCommand arguments may be passed after --.\nAuto-close removes terminal output. A tree always keeps its last terminal.\n'
+    )
   terminalCreateCommand.action(async () => {
     const options = terminalCreateCommand.opts<{
       worktree: string
       name: string
+      closeOnExit?: boolean
     }>()
     const worktree = await resolveWorktree(options.worktree)
     const body: TerminalCreateBody = { name: options.name }
     if (argv) {
       body.argv = argv
-      body.returnToShell = true
+      if (!options.closeOnExit) {
+        body.returnToShell = true
+      }
+    }
+
+    if (options.closeOnExit) {
+      body.closeOnExit = true
     }
 
     const result = await request(

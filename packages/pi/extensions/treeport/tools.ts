@@ -180,12 +180,23 @@ export function registerTreeportTools(
   )
   register(
     ['terminal', 'create'],
-    'Start a persistent shell, development server, or agent. Returns a terminal ID; use inspect, capture, or wait to observe it.',
-    Type.Object({ tree, name: Type.String({ minLength: 1 }), argv }),
+    'Start a shell, development server, or agent. Use closeOnExit for one-off commands that should be removed on completion. Otherwise returns a persistent terminal ID; use inspect, capture, or wait to observe it.',
+    Type.Object({
+      tree,
+      name: Type.String({ minLength: 1 }),
+      argv,
+      closeOnExit: Type.Optional(
+        Type.Boolean({
+          description:
+            'Remove the terminal when its command exits, including on failure. Output is not retained after removal. A tree always keeps its last terminal.'
+        })
+      )
+    }),
     object,
     (p) => [
       `--worktree=${p.tree ?? '.'}`,
       `--name=${p.name}`,
+      ...(p.closeOnExit ? ['--close-on-exit'] : []),
       ...(p.argv ? ['--', ...p.argv] : [])
     ]
   )

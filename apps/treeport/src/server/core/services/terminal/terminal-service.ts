@@ -52,6 +52,7 @@ export interface TerminalLaunchOptions {
   initialTitle?: string
   returnToShell?: boolean
   closeOnSuccess?: boolean
+  closeOnExit?: boolean
   initialSize?: TerminalSize
   cwd?: string
   env?: Record<string, string>
@@ -116,9 +117,11 @@ export class TerminalService {
         for (const terminal of sessions) {
           if (
             sessions.length <= 1 ||
-            !terminal.closeOnSuccess ||
             terminal.status !== 'exited' ||
-            terminal.exitCode !== 0
+            !(
+              terminal.closeOnExit ||
+              (terminal.closeOnSuccess && terminal.exitCode === 0)
+            )
           ) {
             continue
           }
@@ -179,10 +182,11 @@ export class TerminalService {
             left.id.localeCompare(right.id)
           )
         })
-      yield* terminalState.updateCloseOnSuccess(
+      yield* terminalState.updateClosePolicies(
         sessions.map((terminal) => ({
           terminalId: terminal.id,
-          closeOnSuccess: terminal.closeOnSuccess
+          closeOnSuccess: terminal.closeOnSuccess,
+          closeOnExit: terminal.closeOnExit
         }))
       )
       if (yield* locks.isWorktreeLocked(worktree.id)) {
@@ -500,6 +504,10 @@ export class TerminalService {
         session.closeOnSuccess = true
       }
 
+      if (options?.closeOnExit) {
+        session.closeOnExit = true
+      }
+
       if (options?.initialSize) {
         session.initialSize = options.initialSize
       }
@@ -556,7 +564,11 @@ export class TerminalService {
       }
       yield* terminalState.recordTerminal(
         terminal,
-        options?.closeOnSuccess === true
+        options?.closeOnExit
+          ? 'exit'
+          : options?.closeOnSuccess
+            ? 'success'
+            : null
       )
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
@@ -810,10 +822,13 @@ export class TerminalService {
         })
       }
 
+      const closePolicy = (yield* terminalState.terminalClosePolicies).get(
+        terminalId
+      )
       if (
         state.status === 'exited' &&
-        state.exitCode === 0 &&
-        (yield* terminalState.closeOnSuccessTerminalIds).has(terminalId)
+        (closePolicy === 'exit' ||
+          (closePolicy === 'success' && state.exitCode === 0))
       ) {
         const deletion = yield* Effect.either(deleteTerminal(terminalId))
         if (Either.isLeft(deletion) && deletion.left.code === 'LAST_TERMINAL') {
