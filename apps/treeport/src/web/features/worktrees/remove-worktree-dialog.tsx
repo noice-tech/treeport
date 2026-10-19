@@ -82,17 +82,6 @@ export function RemoveWorktreeDialog({
           }}
         >
           <AlertDialogHeader className="shrink-0 [overflow-wrap:anywhere]">
-            <p className="eyebrow">
-              {operation
-                ? removalFailed
-                  ? 'Removal failed'
-                  : removalCompleted
-                    ? 'Removal complete'
-                    : 'Removal in progress'
-                : destructive
-                  ? 'Destructive removal'
-                  : 'Tree'}
-            </p>
             <AlertDialogTitle>
               {operation ? `Remove ${name}` : 'Remove tree'}
             </AlertDialogTitle>
