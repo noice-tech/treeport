@@ -295,7 +295,6 @@ export function AppsPanelToggle({
 
 const MIN_APPS_PANEL_WIDTH = 320
 const MIN_TERMINAL_WIDTH = 96
-const DEFAULT_APPS_PANEL_WIDTH = 560
 const APPS_PANEL_WIDTH_STORAGE_PREFIX = 'treeport-side-panel-width:'
 
 function appsPanelMaxWidth(rail: HTMLDivElement): number {
@@ -314,9 +313,11 @@ function clampAppsPanelWidth(width: number, maxWidth: number): number {
 
 function AppsPanelResizeRail({
   width,
+  defaultWidth,
   onWidthChange
 }: {
   width: number
+  defaultWidth: number
   onWidthChange: (width: number) => void
 }) {
   const resizeOrigin = useRef<{
@@ -400,7 +401,7 @@ function AppsPanelResizeRail({
       onPointerUp={stopResize}
       onPointerCancel={stopResize}
       onKeyDown={resizeWithKeyboard}
-      onDoubleClick={() => onWidthChange(DEFAULT_APPS_PANEL_WIDTH)}
+      onDoubleClick={() => onWidthChange(defaultWidth)}
     />
   )
 }
@@ -476,13 +477,16 @@ export function WorktreeAppsPanel({
       '',
     10
   )
+  const [layoutWidth, setLayoutWidth] = useState(() => window.innerWidth)
+  const defaultAppsPanelWidth = layoutWidth / 2
   const preferredAppsPanelWidth =
     preferredWidthByWorktree[worktreeId] ??
     (Number.isFinite(savedWidth)
       ? Math.max(MIN_APPS_PANEL_WIDTH, savedWidth)
-      : DEFAULT_APPS_PANEL_WIDTH)
-  const [maximumAppsPanelWidth, setMaximumAppsPanelWidth] = useState(() =>
-    Math.max(MIN_APPS_PANEL_WIDTH, window.innerWidth - MIN_TERMINAL_WIDTH)
+      : defaultAppsPanelWidth)
+  const maximumAppsPanelWidth = Math.max(
+    MIN_APPS_PANEL_WIDTH,
+    layoutWidth - MIN_TERMINAL_WIDTH
   )
   const appsPanelWidth = clampAppsPanelWidth(
     preferredAppsPanelWidth,
@@ -528,17 +532,12 @@ export function WorktreeAppsPanel({
       return
     }
 
-    const updateMaximumWidth = () => {
-      setMaximumAppsPanelWidth(
-        Math.max(
-          MIN_APPS_PANEL_WIDTH,
-          layout.getBoundingClientRect().width - MIN_TERMINAL_WIDTH
-        )
-      )
+    const updateLayoutWidth = () => {
+      setLayoutWidth(layout.getBoundingClientRect().width)
     }
-    const observer = new ResizeObserver(updateMaximumWidth)
+    const observer = new ResizeObserver(updateLayoutWidth)
     observer.observe(layout)
-    updateMaximumWidth()
+    updateLayoutWidth()
     return () => observer.disconnect()
   }, [])
 
@@ -615,6 +614,7 @@ export function WorktreeAppsPanel({
         {!fullView ? (
           <AppsPanelResizeRail
             width={appsPanelWidth}
+            defaultWidth={defaultAppsPanelWidth}
             onWidthChange={setAndSaveAppsPanelWidth}
           />
         ) : null}
