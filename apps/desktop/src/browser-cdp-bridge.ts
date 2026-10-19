@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { clipboard, type WebContents } from 'electron'
 import {
+  BROWSER_MAX_UPLOAD_BYTES,
   browserClipboardSchema,
   copyBrowserPage,
   decodeUnknownOrNull
@@ -337,7 +338,9 @@ export function createBrowserCdpBridge(
       })
       sockets = new WebSocketServer({
         noServer: true,
-        maxPayload: 2 * 1024 * 1024
+        // Playwright sends in-memory file uploads through Runtime.callFunctionOn
+        // as base64. Leave room for the CDP envelope and file metadata too.
+        maxPayload: 4 * Math.ceil(BROWSER_MAX_UPLOAD_BYTES / 3) + 1024 * 1024
       })
       const failed = (error: Error) => {
         parent.fork(

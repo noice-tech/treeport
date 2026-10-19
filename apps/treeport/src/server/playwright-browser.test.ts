@@ -53,6 +53,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     state: (state) => states.push(state),
     popup: () => undefined,
     clipboard: () => false,
+    fileChooser: () => undefined,
     navigationError,
     crashed: () => undefined
   })
@@ -163,6 +164,7 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
     state: () => undefined,
     popup: () => undefined,
     clipboard: () => false,
+    fileChooser: () => undefined,
     navigationError: () => undefined,
     crashed: () => undefined
   })

@@ -6,6 +6,7 @@ import type {
   BrowserContext,
   CDPSession,
   Dialog,
+  FileChooser,
   Page
 } from 'playwright'
 import {
@@ -37,6 +38,7 @@ import { browserCursor } from './browser-cursor'
 export interface PlaywrightBrowserCallbacks {
   state(state: BrowserRuntimeState): void
   clipboard(clipboard: BrowserClipboard): boolean
+  fileChooser(chooser: FileChooser | null): void
   popup(url: string): void
   navigationError(message: string, source?: 'video'): void
   crashed(message: string): void
@@ -275,12 +277,7 @@ export class PlaywrightBrowser {
       this.callbacks.navigationError('Downloads are not supported in Browser.')
       void download.cancel()
     })
-    page.on('filechooser', (chooser) => {
-      this.callbacks.navigationError(
-        'File pickers are not supported in Browser.'
-      )
-      void chooser.setFiles([]).catch(() => undefined)
-    })
+    page.on('filechooser', (chooser) => this.callbacks.fileChooser(chooser))
     page.on('close', () => {
       if (!this.closing) {
         this.callbacks.crashed('The hosted browser page closed.')
@@ -329,9 +326,11 @@ export class PlaywrightBrowser {
       }
     })
     page.on('framedetached', () => {
+      this.callbacks.fileChooser(null)
       this.contextMenu = null
     })
     page.on('framenavigated', (frame) => {
+      this.callbacks.fileChooser(null)
       this.contextMenu = null
       this.pointerPoint = null
       if (frame === page.mainFrame()) {

@@ -291,6 +291,7 @@ export function connectBrowserApp(
         !connectedOnce &&
         command.type !== 'insertText' &&
         command.type !== 'copy' &&
+        command.type !== 'fileChooserResponse' &&
         command.type !== 'videoOffer' &&
         pendingCommands.length < 32
       ) {
