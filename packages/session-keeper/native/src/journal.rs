@@ -391,6 +391,42 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "opt-in durable journal throughput measurement"]
+    fn measure_durable_batches() -> Result<()> {
+        use std::time::Instant;
+        for batch in [32 * 1024, 64 * 1024, 128 * 1024] {
+            let root = tempfile::tempdir()?;
+            let mut journal = Journal::new(root.path(), 64 * SEGMENT_BYTES)?;
+            let pattern = "terminal output\r\n\x1b[32m";
+            let data = pattern.repeat(batch / pattern.len());
+            let count = 8 * 1024 * 1024 / data.len();
+            let mut latencies = Vec::new();
+            let started = Instant::now();
+            for sequence in 0..count {
+                let append = Instant::now();
+                journal.append(RecordData::Output { data: data.clone() }, sequence as u64)?;
+                latencies.push(append.elapsed().as_secs_f64() * 1000.0);
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            latencies.sort_by(f64::total_cmp);
+            let mut snapshot = journal.snapshot(0)?;
+            for _ in 0..count {
+                let record = snapshot.next_record()?.expect("durable record");
+                assert_eq!(record.data, RecordData::Output { data: data.clone() });
+            }
+            assert!(snapshot.next_record()?.is_none());
+            eprintln!(
+                "batch={} records={} MiB/s={:.2} append_p99_ms={:.2}",
+                data.len(),
+                count,
+                (data.len() * count) as f64 / elapsed / 1048576.0,
+                latencies[latencies.len() * 99 / 100]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn snapshots_have_independent_offsets_and_survive_rotation() -> Result<()> {
         let root = tempfile::tempdir()?;
         let mut journal = Journal::new(root.path(), 10 * SEGMENT_BYTES)?;

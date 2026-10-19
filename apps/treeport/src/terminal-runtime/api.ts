@@ -582,11 +582,32 @@ export function decodeTerminalHostRecord(
 }
 
 export function encodeTerminalHostFrame(
-  frame: TerminalHostFrame
+  frame: TerminalHostFrame,
+  binaryOutput = false
 ): Effect.Effect<Buffer, TerminalHostFrameEncodeError> {
   return Effect.try({
     try: () => {
-      const payload = Buffer.from(JSON.stringify(decodeFrame(frame)), 'utf8')
+      const validated = decodeFrame(frame)
+      let payload: Buffer
+      if (
+        binaryOutput &&
+        validated.type === 'event' &&
+        validated.event === 'output'
+      ) {
+        const id = Buffer.from(validated.data.terminalId, 'utf8')
+        const data = Buffer.from(validated.data.output, 'utf8')
+        // Private daemon-worker output frame. Control/snapshot messages and
+        // independently running legacy hosts retain the JSON wire format.
+        payload = Buffer.allocUnsafe(13 + id.length + data.length)
+        payload[0] = 0
+        payload.writeUInt32BE(id.length, 1)
+        payload.writeBigUInt64BE(BigInt(validated.data.sequence), 5)
+        id.copy(payload, 13)
+        data.copy(payload, 13 + id.length)
+      } else {
+        payload = Buffer.from(JSON.stringify(validated), 'utf8')
+      }
+
       if (
         payload.byteLength <= 0 ||
         payload.byteLength > TERMINAL_HOST_MAX_FRAME_BYTES
@@ -625,12 +646,36 @@ export function makeTerminalHostFrameDecoder(): (
 
           const payload = buffered.subarray(4, length + 4)
           buffered = buffered.subarray(length + 4)
-          // SAFETY: decodeFrame synchronously validates the parsed value against terminalHostFrameSchema.
-          frames.push(
-            decodeFrame(
-              JSON.parse(payload.toString('utf8'))
-            ) as TerminalHostFrame
-          )
+          let value: ReturnType<typeof decodeFrame>
+          if (payload[0] === 0) {
+            if (payload.length < 13) {
+              throw new Error('Truncated terminal output frame')
+            }
+
+            const idLength = payload.readUInt32BE(1)
+            const sequence = Number(payload.readBigUInt64BE(5))
+            if (
+              idLength > payload.length - 13 ||
+              !Number.isSafeInteger(sequence)
+            ) {
+              throw new Error('Invalid terminal output frame')
+            }
+
+            value = decodeFrame({
+              type: 'event',
+              event: 'output',
+              data: {
+                terminalId: payload.toString('utf8', 13, 13 + idLength),
+                sequence,
+                output: payload.toString('utf8', 13 + idLength)
+              }
+            })
+          } else {
+            value = decodeFrame(JSON.parse(payload.toString('utf8')))
+          }
+
+          // SAFETY: decodeFrame validates both wire representations identically.
+          frames.push(value as TerminalHostFrame)
         }
         return frames
       },

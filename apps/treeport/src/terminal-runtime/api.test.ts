@@ -10,6 +10,51 @@ import {
 } from './api'
 
 describe('stable terminal host API', () => {
+  it('decodes fragmented compact output mixed with JSON without changing fences', async () => {
+    const output = {
+      type: 'event' as const,
+      event: 'output' as const,
+      data: {
+        terminalId: 'term-🌲',
+        sequence: 123,
+        output: '\u001b[32m🌲\r\n'.repeat(100)
+      }
+    }
+    const runtime = {
+      type: 'event' as const,
+      event: 'runtime' as const,
+      data: { terminalId: 'term-🌲', value: { commandExitCode: 0 } }
+    }
+    const compact = await Effect.runPromise(
+      encodeTerminalHostFrame(output, true)
+    )
+    const json = await Effect.runPromise(encodeTerminalHostFrame(output))
+    expect(compact.length).toBeLessThan(json.length)
+    const wire = Buffer.concat([
+      compact,
+      await Effect.runPromise(encodeTerminalHostFrame(runtime)),
+      json
+    ])
+    const decode = makeTerminalHostFrameDecoder()
+    const frames = []
+    for (let offset = 0; offset < wire.length; offset += 7) {
+      frames.push(
+        ...(await Effect.runPromise(decode(wire.subarray(offset, offset + 7))))
+      )
+    }
+    expect(frames).toEqual([output, runtime, output])
+    const invalid = Buffer.from(compact)
+    invalid.writeUInt32BE(0xffffffff, 5)
+    await expect(
+      Effect.runPromise(makeTerminalHostFrameDecoder()(invalid))
+    ).rejects.toThrow()
+    const unsafeSequence = Buffer.from(compact)
+    unsafeSequence.writeBigUInt64BE(2n ** 63n, 9)
+    await expect(
+      Effect.runPromise(makeTerminalHostFrameDecoder()(unsafeSequence))
+    ).rejects.toThrow()
+  })
+
   it('retains independent command completion in state and runtime event frames', async () => {
     const state = { status: 'running', exitCode: null, commandExitCode: 7 }
     expect(
