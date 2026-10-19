@@ -84,8 +84,10 @@ const terminalRecordSchema = Schema.Struct({
   argv: Schema.mutable(Schema.Array(Schema.String)),
   shellCommand: Schema.NullOr(Schema.String),
   interactiveShell: Schema.Boolean,
-  status: Schema.Literal('running', 'exited', 'missing'),
+  status: Schema.Literal('running', 'exited', 'missing', 'unavailable'),
   exitCode: Schema.NullOr(Schema.Int),
+  unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
+  recoveryPending: Schema.optional(Schema.Boolean),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   createdAt: Schema.String,
   updatedAt: Schema.String

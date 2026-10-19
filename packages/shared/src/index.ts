@@ -89,7 +89,7 @@ export function formatCommandLine(argv: readonly string[]): string {
 
 export type ProjectKind = 'repository' | 'folder'
 export type WorktreeKind = 'main' | 'linked' | 'folder'
-export type TerminalStatus = 'running' | 'exited' | 'missing'
+export type TerminalStatus = 'running' | 'exited' | 'missing' | 'unavailable'
 export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type OperationKind =
@@ -119,6 +119,8 @@ export interface TerminalRecord {
   interactiveShell: boolean
   status: TerminalStatus
   exitCode: number | null
+  unavailableReason?: string | null | undefined
+  recoveryPending?: boolean | undefined
   // Initial launched process, independent of the persistent shell/session.
   commandExitCode?: number | null | undefined
   createdAt: string
