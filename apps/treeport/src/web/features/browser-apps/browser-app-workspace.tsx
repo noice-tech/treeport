@@ -879,12 +879,16 @@ export function BrowserAppWorkspace({
     []
   )
 
+  // Stream visibility follows the workspace, not interaction eligibility.
+  // Overlays block input without hiding the page or restarting its media peer.
+  useEffect(() => {
+    if (!localBrowser) {
+      connectionRef.current?.setVisible(active)
+    }
+  }, [active, connectionRevision, localBrowser])
+
   useEffect(() => {
     cancelTouches()
-    if (!localBrowser) {
-      connectionRef.current?.setVisible(active && !inputBlocked)
-    }
-
     const visibility = () => {
       if (document.hidden) {
         cancelTouches()
@@ -897,7 +901,7 @@ export function BrowserAppWorkspace({
       document.removeEventListener('visibilitychange', visibility)
       cancelTouches()
     }
-  }, [active, cancelTouches, connectionRevision, inputBlocked, localBrowser])
+  }, [active, cancelTouches, connectionRevision, inputBlocked])
 
   useEffect(() => {
     const canvas = videoRef.current
