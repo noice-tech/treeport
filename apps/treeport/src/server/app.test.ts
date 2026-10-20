@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
+import type { WebAppStorage } from '@treeport/app-sdk'
 import {
   authenticatedViewers,
   authorizeRequest,
@@ -1263,13 +1264,18 @@ describe('HTTP API validation', () => {
     const stored = await app.request('/api/apps/app_review/storage', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ key: 'comments', value: [{ line: 12 }] })
+      body: JSON.stringify({
+        key: 'comments',
+        value: [{ line: 12 }],
+        scope: 'definition'
+      })
     })
     expect(stored.status).toBe(200)
     expect(service.setWebAppStorage).toHaveBeenCalledWith(
       'app_review',
       'comments',
-      [{ line: 12 }]
+      [{ line: 12 }],
+      'definition'
     )
 
     const restored = await app.request('/api/apps/app_review/storage/get', {
@@ -1309,7 +1315,8 @@ describe('HTTP API validation', () => {
     expect(removedStorage.status).toBe(200)
     expect(service.deleteWebAppStorage).toHaveBeenCalledWith(
       'app_review',
-      'comments'
+      'comments',
+      undefined
     )
 
     const closed = await app.request('/api/apps/app_review', {
@@ -1369,9 +1376,7 @@ describe('HTTP API validation', () => {
           context: () => Promise<object>
           network: { listeners: () => Promise<object> }
           files: { search: (query: string) => Promise<object> }
-          storage: {
-            set: (key: string, value: JsonValue) => Promise<void>
-          }
+          storage: WebAppStorage
           shortcuts: {
             onFind: (handler: () => void) => () => void
           }
@@ -1447,11 +1452,14 @@ describe('HTTP API validation', () => {
         truncated: false
       })
 
-      const stored = sdk.treeport.storage.set('comments', [{ line: 12 }])
+      const stored = sdk.treeport.storage.set('comments', [{ line: 12 }], {
+        scope: 'definition'
+      })
       const storageMessage = appParent.postMessage.mock.calls.at(-1)![0]
       expect(storageMessage).toMatchObject({
         source: 'treeport-app-v1',
         method: 'storage.set',
+        scope: 'definition',
         key: 'comments',
         value: [{ line: 12 }]
       })

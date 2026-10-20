@@ -48,16 +48,26 @@ async function restoreVersion7WorktreeSchema(
   await database.db.run(sql`
     ALTER TABLE web_app_permission_grants RENAME TO web_panel_permission_grants
   `)
-  await database.db.run(
-    sql`ALTER TABLE web_app_storage RENAME TO web_panel_storage`
-  )
+  await database.db.run(sql`
+    CREATE TABLE web_panel_storage (
+      app_id TEXT NOT NULL REFERENCES web_panels(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `)
+  await database.db.run(sql`
+    INSERT INTO web_panel_storage
+    SELECT app_id, key, value_json, updated_at FROM web_app_storage
+    WHERE app_id IS NOT NULL
+  `)
+  await database.db.run(sql`DROP TABLE web_app_storage`)
   await database.db.run(
     sql`ALTER TABLE web_panel_storage RENAME COLUMN app_id TO panel_id`
   )
   await database.db.run(sql`DROP INDEX web_apps_worktree_order_idx`)
   await database.db.run(sql`DROP INDEX browser_apps_worktree_order_idx`)
   await database.db.run(sql`DROP INDEX web_app_permission_definition_idx`)
-  await database.db.run(sql`DROP INDEX web_app_storage_app_key_idx`)
   await database.db.run(sql`
     CREATE INDEX web_panels_worktree_order_idx ON web_panels(worktree_id,created_at,id)
   `)
@@ -132,7 +142,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 15 })
+    ).toEqual({ count: 16 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -398,10 +408,24 @@ describe('SQLite migration and catalog ordering', () => {
         .then(([row]) => row?.valueJson)
     ).toBe('[{"line":13}]')
 
+    await database.db.insert(webAppStorage).values({
+      definitionId: 'project:review',
+      key: 'diff-style',
+      valueJson: '"split"',
+      updatedAt: '2026-02-04'
+    })
     await database.db.delete(worktrees).where(eq(worktrees.id, 'wt'))
     expect(await database.db.select().from(webApps)).toEqual([])
     expect(await database.db.select().from(browserApps)).toEqual([])
-    expect(await database.db.select().from(webAppStorage)).toEqual([])
+    expect(await database.db.select().from(webAppStorage)).toEqual([
+      {
+        appId: null,
+        definitionId: 'project:review',
+        key: 'diff-style',
+        valueJson: '"split"',
+        updatedAt: '2026-02-04'
+      }
+    ])
   })
 
   it('adopts a version-7 database and preserves catalog data', async () => {
@@ -520,7 +544,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 15 })
+    ).toEqual({ count: 16 })
     await expect(
       fs.stat(path.join(directory, 'database-backups'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -616,6 +640,7 @@ describe('SQLite migration and catalog ordering', () => {
         .then(([entry]) => entry)
     ).toEqual({
       appId: 'app_existing',
+      definitionId: null,
       key: 'state',
       valueJson: '{"ready":true}',
       updatedAt: '2026-01-04'
@@ -1051,6 +1076,6 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 15 })
+    ).toEqual({ count: 16 })
   })
 })

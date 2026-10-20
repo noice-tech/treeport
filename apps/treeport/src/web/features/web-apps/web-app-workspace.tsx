@@ -249,21 +249,25 @@ export function WebAppWorkspace({
         request = parseResponse(
           rpc.api.apps[':appId'].storage.get.$post({
             param: { appId: app.id },
-            json: { key: message.key }
+            json: { key: message.key, scope: message.scope }
           })
         ).then((result) => (result.found ? result.value : undefined))
       } else if (method === 'storage.set') {
         request = parseResponse(
           rpc.api.apps[':appId'].storage.$put({
             param: { appId: app.id },
-            json: { key: message.key, value: message.value }
+            json: {
+              key: message.key,
+              value: message.value,
+              scope: message.scope
+            }
           })
         ).then(() => undefined)
       } else if (method === 'storage.delete') {
         request = parseResponse(
           rpc.api.apps[':appId'].storage.$delete({
             param: { appId: app.id },
-            json: { key: message.key }
+            json: { key: message.key, scope: message.scope }
           })
         ).then(() => undefined)
       } else {

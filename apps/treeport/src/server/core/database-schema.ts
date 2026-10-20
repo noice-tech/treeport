@@ -201,15 +201,22 @@ export const webAppPermissionGrants = sqliteTable(
 export const webAppStorage = sqliteTable(
   'web_app_storage',
   {
-    appId: text('app_id')
-      .notNull()
-      .references(() => webApps.id, { onDelete: 'cascade' }),
+    appId: text('app_id').references(() => webApps.id, { onDelete: 'cascade' }),
+    definitionId: text('definition_id'),
     key: text().notNull(),
     valueJson: text('value_json').notNull(),
     updatedAt: text('updated_at').notNull()
   },
   (table) => [
-    uniqueIndex('web_app_storage_app_key_idx').on(table.appId, table.key)
+    uniqueIndex('web_app_storage_app_key_idx').on(table.appId, table.key),
+    uniqueIndex('web_app_storage_definition_key_idx').on(
+      table.definitionId,
+      table.key
+    ),
+    check(
+      'web_app_storage_owner_check',
+      sql`(${table.appId} IS NOT NULL AND ${table.definitionId} IS NULL) OR (${table.appId} IS NULL AND ${table.definitionId} IS NOT NULL)`
+    )
   ]
 )
 

@@ -1590,7 +1590,7 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(getWebAppStorageSchema)
         const value = yield* operation(() =>
-          service.apps.getWebAppStorage(params.appId!, body.key)
+          service.apps.getWebAppStorage(params.appId!, body.key, body.scope)
         )
         return jsonContractResponse(storageValueResponseSchema, {
           found: value !== undefined,
@@ -1605,7 +1605,12 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(setWebAppStorageSchema)
         yield* operation(() =>
-          service.apps.setWebAppStorage(params.appId!, body.key, body.value)
+          service.apps.setWebAppStorage(
+            params.appId!,
+            body.key,
+            body.value,
+            body.scope
+          )
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
@@ -1617,7 +1622,7 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(deleteWebAppStorageSchema)
         yield* operation(() =>
-          service.apps.deleteWebAppStorage(params.appId!, body.key)
+          service.apps.deleteWebAppStorage(params.appId!, body.key, body.scope)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
       })

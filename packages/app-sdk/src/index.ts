@@ -198,16 +198,26 @@ export interface TreeFileWriteResult {
   revision: string
 }
 
-/** Durable key-value storage scoped to one app instance. */
+export interface WebAppStorageOptions {
+  /** Defaults to instance. Definition storage is shared across trees and survives app closure. */
+  scope?: 'instance' | 'definition'
+}
+
+/** Durable key-value storage scoped to an app instance or definition. */
 export interface WebAppStorage {
   /** Return a stored JSON value, or undefined when the key does not exist. */
   get<Value extends JsonValue = JsonValue>(
-    key: string
+    key: string,
+    options?: WebAppStorageOptions
   ): Promise<Value | undefined>
   /** Store a JSON value. Values are limited to 64 KiB. */
-  set(key: string, value: JsonValue): Promise<void>
+  set(
+    key: string,
+    value: JsonValue,
+    options?: WebAppStorageOptions
+  ): Promise<void>
   /** Remove a stored value. */
-  delete(key: string): Promise<void>
+  delete(key: string, options?: WebAppStorageOptions): Promise<void>
 }
 
 /** Client-local controls for the current app. */
@@ -268,7 +278,7 @@ export interface TreeportAppSdk {
     search(query: string): Promise<TreeFileSearchResult>
     write(input: TreeFileWrite): Promise<TreeFileWriteResult>
   }
-  /** Durable storage deleted when this app instance is closed. */
+  /** Durable storage. Instance-scoped values are deleted when this app is closed. */
   readonly storage: WebAppStorage
   /** Shortcuts delivered whether focus is in the app or Treeport host. */
   readonly shortcuts: WebAppShortcuts
@@ -385,7 +395,7 @@ function call<Result>(
     | 'storage.set'
     | 'storage.delete',
   params?: {
-    scope?: GitDiffRequest['scope']
+    scope?: GitDiffRequest['scope'] | WebAppStorageOptions['scope']
     name?: string
     key?: string
     value?: JsonValue
@@ -467,11 +477,14 @@ export const treeport: TreeportAppSdk = Object.freeze({
       call<TreeFileWriteResult>('files.write', input)
   }),
   storage: Object.freeze({
-    get: <Value extends JsonValue = JsonValue>(key: string) =>
-      call<Value | undefined>('storage.get', { key }),
-    set: (key: string, value: JsonValue) =>
-      call<void>('storage.set', { key, value }),
-    delete: (key: string) => call<void>('storage.delete', { key })
+    get: <Value extends JsonValue = JsonValue>(
+      key: string,
+      options?: WebAppStorageOptions
+    ) => call<Value | undefined>('storage.get', { key, ...options }),
+    set: (key: string, value: JsonValue, options?: WebAppStorageOptions) =>
+      call<void>('storage.set', { key, value, ...options }),
+    delete: (key: string, options?: WebAppStorageOptions) =>
+      call<void>('storage.delete', { key, ...options })
   }),
   shortcuts: Object.freeze({
     onFind: (handler: () => void) => {
