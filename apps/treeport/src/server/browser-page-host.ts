@@ -85,10 +85,10 @@ export class PlaywrightBrowserHost {
           `--allowlisted-extension-id=${extension.id}`,
           '--remote-debugging-address=127.0.0.1',
           '--remote-debugging-port=0',
-          // Finish the compositor pipeline before capturing, rather than
-          // streaming a smooth but several-frames-old view of user input.
-          // Keep Chrome's frame-rate limit; uncapped rendering wastes work.
-          '--run-all-compositor-stages-before-draw'
+          // Tab capture is even-sized, but WebRTC adaptation can halve 1614
+          // pixels to 807 and force H.264 into software. Align adapted frames
+          // too, without changing the CSS viewport or copying pixels in JS.
+          '--force-fieldtrials=WebRTC-SimulcastEncoderAdapter-GetEncoderInfoOverride/requested_resolution_alignment:2/'
         ]
         // WSLg exposes Windows GPUs through Mesa's D3D12 OpenGL driver, not
         // native Linux Vulkan. Daemons often lack DISPLAY, and headless Chrome

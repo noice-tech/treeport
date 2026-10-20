@@ -40,6 +40,10 @@ async function captureBrowserVideo(
   height: number,
   failed: (message: string) => void
 ) {
+  // Cap capture itself; limiting only the sender still incurs full-rate copy-out.
+  const frameRate = 60
+  // Worktree experiment: lower capture resolution, not the page's CSS viewport.
+  const captureScale = 0.75
   const peers = new Map<string, RTCPeerConnection>()
   let track: MediaStreamTrack | null = null
   let size = { width: 0, height: 0 }
@@ -75,9 +79,20 @@ async function captureBrowserVideo(
         return
       }
 
+      // Round output dimensions to even pixels for H.264. Keep `size` in CSS
+      // viewport coordinates; scaling must not change layout or input mapping.
+      const captureWidth = Math.max(
+        2,
+        Math.round((width * captureScale) / 2) * 2
+      )
+      const captureHeight = Math.max(
+        2,
+        Math.round((height * captureScale) / 2) * 2
+      )
+
       // Release the old source before requesting another single-use tab token.
       // Keeping a 4K source and resizing its track still incurs 4K copy-out.
-      // Reopen at the viewport size instead; replaceTrack preserves each peer.
+      // Reopen at the scaled size instead; replaceTrack preserves each peer.
       const previous = track
       track = null
       previous?.stop()
@@ -94,9 +109,9 @@ async function captureBrowserVideo(
             mandatory: {
               chromeMediaSource: 'tab',
               chromeMediaSourceId: sourceId,
-              maxWidth: width,
-              maxHeight: height,
-              maxFrameRate: 60
+              maxWidth: captureWidth,
+              maxHeight: captureHeight,
+              maxFrameRate: frameRate
             }
           } as MediaTrackConstraints)
         }
@@ -104,15 +119,15 @@ async function captureBrowserVideo(
       const next = stream.getVideoTracks()[0]!
       await (async () => {
         await next.applyConstraints({
-          width: { exact: width },
-          height: { exact: height },
-          frameRate: { max: 60 }
+          width: { exact: captureWidth },
+          height: { exact: captureHeight },
+          frameRate: { max: frameRate }
         })
         if (stopped) {
           throw new Error('Browser video capture is stopped.')
         }
 
-        next.contentHint = 'detail'
+        next.contentHint = 'motion'
         next.addEventListener('ended', () => {
           if (!stopped && track === next) {
             stop()
@@ -183,13 +198,13 @@ async function captureBrowserVideo(
         })
         await peer.setLocalDescription(await peer.createAnswer())
         const parameters = transceiver.sender.getParameters()
-        parameters.degradationPreference = 'balanced'
+        parameters.degradationPreference = 'maintain-framerate'
         for (const encoding of parameters.encodings) {
           // A ceiling, not a fixed-rate encoder. Chromium adapts below this
           // according to transport feedback. Media buffering is owned by
           // WebRTC; there is no application-managed frame queue.
-          encoding.maxBitrate = 12_000_000
-          encoding.maxFramerate = 60
+          encoding.maxBitrate = 24_000_000
+          encoding.maxFramerate = frameRate
         }
         await transceiver.sender.setParameters(parameters)
         await gatherBrowserIce(peer)

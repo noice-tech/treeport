@@ -180,6 +180,7 @@ interface BrowserAttachment {
   closing: boolean
   video: BrowserVideoViewer
   cursorPoint: { x: number; y: number } | null
+  cursorUpdate: Promise<void> | null
   viewport: { width: number; height: number }
 }
 
@@ -649,7 +650,16 @@ export class BrowserSessionManager {
     // Only adjacent operations commute. In particular, moving the pointer can
     // change the wheel target, and a resize must not cross a button transition.
     const existing = scheduler.tail
-    if (input.coalesceKey && existing?.coalesceKey === input.coalesceKey) {
+    const wheelDirectionChanged =
+      existing?.message?.type === 'wheel' &&
+      input.message?.type === 'wheel' &&
+      (Math.sign(existing.message.deltaX) !== Math.sign(input.message.deltaX) ||
+        Math.sign(existing.message.deltaY) !== Math.sign(input.message.deltaY))
+    if (
+      input.coalesceKey &&
+      existing?.coalesceKey === input.coalesceKey &&
+      !wheelDirectionChanged
+    ) {
       if (
         existing.message?.type === 'wheel' &&
         input.message?.type === 'wheel'
@@ -757,14 +767,21 @@ export class BrowserSessionManager {
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(this, function* () {
           const operation = yield* restore(Queue.take(scheduler.queue))
-          const wheel = operation.message?.type === 'wheel'
+          const wheel =
+            operation.message?.type === 'wheel' ? operation.message : null
+          // Reversals cannot merge, but may be submitted in order without
+          // draining ACKs. Tiny sideways trackpad changes otherwise stall the
+          // entire gesture. browserWheel keeps preparation and dispatch ordered.
           if (!wheel || operation.coalesceKey !== wheelKey) {
             // Clicks, coordinates/modifiers, controllers, navigation and all
             // lifecycle work are barriers. Only adjacent compatible wheels
             // may overlap, and shutdown still owns their actual settlement.
             yield* Effect.promise(() => Promise.all(wheelFlights))
             wheelKey = wheel ? operation.coalesceKey : null
-          } else if (wheelFlights.size >= 2) {
+          } else if (wheelFlights.size >= (wheel.modifiers === 0 ? 8 : 2)) {
+            // CDP wheel ACKs include a compositor round trip. Allow roughly
+            // 100 ms at 60 Hz for plain scrolling. Keep modified/zoom gestures
+            // at their existing limit and retain non-wheel barriers.
             yield* Effect.promise(() => Promise.race(wheelFlights))
           }
 
@@ -1363,6 +1380,7 @@ export class BrowserSessionManager {
         transport.sendMessage(message)
       ),
       cursorPoint: null,
+      cursorUpdate: null,
       viewport: { ...session.state.viewport }
     }
     session.attachments.set(attachment.id, attachment)
@@ -2345,20 +2363,66 @@ export class BrowserSessionManager {
 
           if (
             attachment.cursorPoint &&
+            !attachment.cursorUpdate &&
             (queuedMessage.type === 'pointer' || queuedMessage.type === 'wheel')
           ) {
-            const cursor = await (
-              localOwner
-                ? browserCursor(
-                    (await this.ensureLocalAutomation(session, localOwner))
-                      .page,
-                    attachment.cursorPoint
-                  )
-                : (await this.browserFor(session)).cursor(
-                    attachment.cursorPoint
-                  )
-            ).catch(() => 'default' as const)
-            attachment.transport.sendMessage({ type: 'cursor', cursor })
+            // Cursor hit testing can force layout or wait on a busy renderer.
+            // It must never hold an input slot. Keep one best-effort lookup,
+            // sampling the latest position at roughly 30 Hz at most.
+            const generation = session.generation
+            const update = (async () => {
+              while (true) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 33))
+                if (
+                  session.closing ||
+                  attachment.closing ||
+                  !attachment.visible ||
+                  session.attachments.get(attachment.id) !== attachment ||
+                  session.controllerId !== attachmentController(attachment) ||
+                  session.generation !== generation ||
+                  session.localOwner !== localOwner
+                ) {
+                  return
+                }
+
+                const point = attachment.cursorPoint
+                if (!point) {
+                  return
+                }
+
+                const cursor = await (
+                  localOwner
+                    ? browserCursor(
+                        (await this.ensureLocalAutomation(session, localOwner))
+                          .page,
+                        point
+                      )
+                    : (await this.browserFor(session)).cursor(point)
+                ).catch(() => 'default' as const)
+                if (
+                  session.closing ||
+                  attachment.closing ||
+                  !attachment.visible ||
+                  session.attachments.get(attachment.id) !== attachment ||
+                  session.controllerId !== attachmentController(attachment) ||
+                  session.generation !== generation ||
+                  session.localOwner !== localOwner
+                ) {
+                  return
+                }
+
+                if (attachment.cursorPoint === point) {
+                  attachment.transport.sendMessage({ type: 'cursor', cursor })
+                  return
+                }
+              }
+            })().catch(() => undefined)
+            attachment.cursorUpdate = update
+            void update.then(() => {
+              if (attachment.cursorUpdate === update) {
+                attachment.cursorUpdate = null
+              }
+            })
           }
         } catch (cause) {
           const error = cause instanceof Error ? cause.message : String(cause)

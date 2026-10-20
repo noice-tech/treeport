@@ -1573,6 +1573,10 @@ describe('Browser sessions', () => {
     const boundary: BrowserClientMessage[] = [
       { type: 'pointer', phase: 'move', x: 10, y: 20 },
       { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 40 },
+      // Reversals cannot cancel at the viewport or nested scroll boundaries.
+      { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: -40 },
+      { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 30, deltaY: 0 },
+      { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: -30, deltaY: 0 },
       { type: 'pointer', phase: 'down', x: 10, y: 20, button: 'left' },
       { type: 'resize', width: 800, height: 600 },
       { type: 'pointer', phase: 'up', x: 10, y: 20, button: 'left' },
@@ -1681,10 +1685,18 @@ describe('Browser sessions', () => {
         { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 42 }
       ])
     )
-    // The native input ACK can take two display ticks. Permit two compatible
-    // dispatches, but neither a third nor the following key can pass the bound.
+    // Compositor ACK latency must not serialize trackpad direction changes.
+    // Keep a bounded, ordered wheel window; keys still drain every wheel ACK.
     browser.commands.length = 0
     const completions: Array<() => void> = []
+    // Cursor layout queries must not occupy input slots or delay shutdown.
+    let releaseCursor!: (cursor: 'default') => void
+    const cursor = vi.spyOn(browser, 'cursor').mockImplementation(
+      () =>
+        new Promise<'default'>((resolve) => {
+          releaseCursor = resolve
+        })
+    )
     const dispatch = vi
       .spyOn(browser, 'command')
       .mockImplementation(async (message) => {
@@ -1703,8 +1715,18 @@ describe('Browser sessions', () => {
     } as const
     value.manager.message('first', wheel)
     await vi.waitFor(() => expect(completions).toHaveLength(1))
-    value.manager.message('first', wheel)
+    value.manager.message('first', { ...wheel, deltaX: 1 })
     await vi.waitFor(() => expect(completions).toHaveLength(2))
+    const sideways = [0, -1, 0, 1, 0, -1]
+    for (const [index, deltaX] of sideways.entries()) {
+      value.manager.message('first', { ...wheel, deltaX })
+      await vi.waitFor(() => expect(completions).toHaveLength(index + 3))
+    }
+    expect(browser.commands).toEqual([
+      wheel,
+      { ...wheel, deltaX: 1 },
+      ...sideways.map((deltaX) => ({ ...wheel, deltaX }))
+    ])
     value.manager.message('first', wheel)
     value.manager.message('first', {
       type: 'key',
@@ -1713,14 +1735,20 @@ describe('Browser sessions', () => {
       modifiers: 0
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(dispatch).toHaveBeenCalledTimes(2)
+    expect(dispatch).toHaveBeenCalledTimes(8)
     completions[0]!()
-    await vi.waitFor(() => expect(completions).toHaveLength(3))
+    await vi.waitFor(() => expect(completions).toHaveLength(9))
+    await vi.waitFor(() => expect(cursor).toHaveBeenCalledOnce())
+    expect(browser.commands.at(-1)).toEqual(wheel)
     expect(browser.commands.every((message) => message.type === 'wheel')).toBe(
       true
     )
-    completions[1]!()
-    completions[2]!()
+    for (const complete of completions.slice(1, 8)) {
+      complete()
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(dispatch).toHaveBeenCalledTimes(9)
+    completions[8]!()
     await vi.waitFor(() =>
       expect(browser.commands.at(-1)).toEqual({
         type: 'key',
@@ -1729,8 +1757,14 @@ describe('Browser sessions', () => {
         modifiers: 0
       })
     )
+    expect(cursor).toHaveBeenCalledOnce()
     dispatch.mockRestore()
     await value.manager.dispose()
+    const messagesAfterClose = first.messages.length
+    releaseCursor('default')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(first.messages).toHaveLength(messagesAfterClose)
+    cursor.mockRestore()
   })
 
   it('rejects overload immediately and settles callers on shutdown without overlapping in-flight work', async () => {
