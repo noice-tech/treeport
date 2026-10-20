@@ -1,6 +1,9 @@
 import crypto from 'node:crypto'
 import { BrowserWindow, session, type WebContents } from 'electron'
-import { BROWSER_VIDEO_CAPTURE_SOURCE } from '@treeport/shared/browser-host'
+import {
+  BROWSER_VIDEO_CAPTURE_SOURCE,
+  type BrowserVideoSettings
+} from '@treeport/shared/browser-host'
 import * as Effect from 'effect/Effect'
 import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
@@ -48,7 +51,12 @@ export class ElectronBrowserVideo {
     private readonly runtime: DesktopRuntime
   ) {}
 
-  start(width: number, height: number, failed: (message: string) => void) {
+  start(
+    width: number,
+    height: number,
+    settings: BrowserVideoSettings,
+    failed: (message: string) => void
+  ) {
     return Effect.gen(this, function* () {
       const existing = this.helper
       if (existing) {
@@ -63,7 +71,7 @@ export class ElectronBrowserVideo {
         yield* Effect.tryPromise(() =>
           existing.webContents.executeJavaScript(`(async () => {
             globalThis.__treeportVideoSource = ${JSON.stringify(this.guest.getMediaSourceId(existing.webContents))};
-            await globalThis.__treeportVideo.resize(${width}, ${height});
+            await globalThis.__treeportVideo.resize(${width}, ${height}, ${JSON.stringify(settings)});
           })()`)
         ).pipe(
           Effect.ensuring(
@@ -207,7 +215,7 @@ export class ElectronBrowserVideo {
         const error: string | null = yield* Effect.tryPromise(() =>
           helper.webContents.executeJavaScript(`(async () => {
           globalThis.__treeportVideoSource = ${JSON.stringify(sourceId)};
-          globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(async () => globalThis.__treeportVideoSource, ${width}, ${height}, globalThis.__treeportVideoError);
+          globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(async () => globalThis.__treeportVideoSource, ${width}, ${height}, globalThis.__treeportVideoError, ${JSON.stringify(settings)});
           return null;
         })().catch(error => error.name + ': ' + error.message)`)
         )

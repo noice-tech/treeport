@@ -1,12 +1,12 @@
 import type { BrowserServerMessage } from '@treeport/shared'
 import {
   connectBrowserApp,
-  type BrowserAppConnection,
+  type BrowserVideoConnection,
   type BrowserAppSocketFactory
 } from './browser-session-client'
 import { BrowserVideoReceiver } from './browser-video-receiver'
 
-export interface RemoteBrowserConnection extends BrowserAppConnection {
+export interface RemoteBrowserConnection extends BrowserVideoConnection {
   stats(): ReturnType<BrowserVideoReceiver['stats']>
 }
 
@@ -46,6 +46,7 @@ export function connectRemoteBrowser(
     socketFactory
   )
   return {
+    configureVideo: (settings) => connection.configureVideo(settings),
     send: (message) => connection.send(message),
     setVisible: (visible) => {
       receiver.setVisible(visible)

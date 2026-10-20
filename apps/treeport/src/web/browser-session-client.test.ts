@@ -114,6 +114,7 @@ it('preserves control and video signaling and reconnects without replaying offer
       hasController: true,
       controller: 'you',
       controllerDetails: null,
+      videoSettings: null,
       agentActive: false,
       viewport: { width: 1_280, height: 800 }
     }

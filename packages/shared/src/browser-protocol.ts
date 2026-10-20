@@ -1,6 +1,7 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
+import { browserVideoSettingsSchema } from './browser-video.js'
 import { browserClipboardSchema } from './browser-clipboard.js'
 import { viewerIdentitySchema } from './presence-protocol.js'
 import {
@@ -101,6 +102,11 @@ export type BrowserContextActionResult = Schema.Schema.Type<
 >
 
 export const browserClientMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('setVideoSettings'),
+    requestId: browserRequestIdSchema,
+    settings: browserVideoSettingsSchema
+  }),
   Schema.Struct({
     type: Schema.Literal('fileChooserResponse'),
     requestId: browserRequestIdSchema,
@@ -303,6 +309,7 @@ export function browserControllerDescription(
 }
 
 export const browserSessionStateSchema = Schema.Struct({
+  videoSettings: Schema.NullOr(browserVideoSettingsSchema),
   ...browserRuntimeStateSchema.fields,
   controlled: Schema.Boolean,
   hasController: Schema.Boolean,
@@ -356,6 +363,11 @@ export const browserCursorSchema = Schema.Literal(
 )
 
 export const browserServerMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('videoSettingsResult'),
+    requestId: browserRequestIdSchema,
+    error: Schema.NullOr(Schema.String)
+  }),
   Schema.Struct({
     type: Schema.Literal('fileChooser'),
     requestId: browserRequestIdSchema,

@@ -750,6 +750,10 @@ export function BrowserAppWorkspace({
       }
 
       pendingNavigationRef.current = null
+      if (message.type === 'videoSettingsResult') {
+        return
+      }
+
       setError(message.type === 'closed' ? message.reason : message.message)
     },
     [
@@ -2539,10 +2543,20 @@ export function BrowserAppWorkspace({
             ) : null}
           </div>
         </div>
-        {diagnosticsOpen && active && !inputBlocked && !localBrowser ? (
+        {diagnosticsOpen &&
+        active &&
+        !inputBlocked &&
+        !localBrowser &&
+        state?.videoSettings ? (
           <BrowserStreamDiagnostics
             videoRef={videoRef}
             receiverRef={remoteConnectionRef}
+            settings={state.videoSettings}
+            canConfigure={state.controlled && !state.agentActive && !failure}
+            onConfigure={(settings) =>
+              remoteConnectionRef.current?.configureVideo(settings) ??
+              Promise.reject(new Error('Browser stream is not connected.'))
+            }
           />
         ) : null}
       </div>

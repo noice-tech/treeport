@@ -76,9 +76,9 @@ export async function browserWheel(
   cdp: CDPSession,
   message: Extract<BrowserClientMessage, { type: 'wheel' }>
 ): Promise<void> {
-  // The session scheduler overlaps at most two compatible wheel ACKs. Keep
-  // coordinate preparation and dispatch ordered even if CDP metrics respond
-  // at different speeds; do not serialize on the compositor's input ACK.
+  // The session scheduler bounds outstanding wheel ACKs. Keep coordinate
+  // preparation and dispatch ordered, including reversals, even if CDP metrics
+  // respond at different speeds; do not serialize on the compositor's input ACK.
   let dispatched: Promise<unknown> | null = null
   const preparation = (wheelPreparations.get(cdp) ?? Promise.resolve())
     .catch(() => undefined)
