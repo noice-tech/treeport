@@ -6,6 +6,7 @@ import { clipboard, type WebContents } from 'electron'
 import {
   BROWSER_MAX_UPLOAD_BYTES,
   browserClipboardSchema,
+  browserVideoSettingsSchema,
   copyBrowserPage,
   decodeUnknownOrNull
 } from '@treeport/shared/browser-host'
@@ -480,7 +481,12 @@ export function createBrowserCdpBridge(
 
                   if (request.method === 'Treeport.startVideo') {
                     const { width, height } = request.params
+                    const settings = decodeUnknownOrNull(
+                      browserVideoSettingsSchema,
+                      request.params.settings
+                    )
                     if (
+                      !settings ||
                       typeof width !== 'number' ||
                       typeof height !== 'number' ||
                       !Number.isInteger(width) ||
@@ -498,7 +504,7 @@ export function createBrowserCdpBridge(
                     }
 
                     videoSession = request.sessionId!
-                    yield* video.start(width, height, (message) => {
+                    yield* video.start(width, height, settings, (message) => {
                       if (
                         videoSession === request.sessionId &&
                         pageSessions.has(request.sessionId!)

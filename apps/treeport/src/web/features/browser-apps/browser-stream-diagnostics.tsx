@@ -1,9 +1,20 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import {
+  DEFAULT_BROWSER_VIDEO_SETTINGS,
+  browserVideoSettingsSchema,
+  isSchemaValue,
+  type BrowserVideoSettings
+} from '@treeport/shared'
+import { Input } from '../../components/ui/input'
+import { FormField } from '../../components/ui/form-field'
+import { Label } from '../../components/ui/label'
+import { NativeSelect } from '../../components/ui/native-select'
+import { useEffect, useId, useRef, useState, type RefObject } from 'react'
 import { Button } from '../../components/ui/button'
 import type { RemoteBrowserConnection } from '../../browser-remote-connection'
 
 interface StreamSample {
   time: string
+  settings: BrowserVideoSettings
   codec: string | null
   decoder: string | null
   resolution: string | null
@@ -32,16 +43,48 @@ interface ClickSample {
 // addresses, SDP nor page content are included in the copyable report.
 export function BrowserStreamDiagnostics({
   videoRef,
-  receiverRef
+  receiverRef,
+  settings,
+  canConfigure,
+  onConfigure
 }: {
   videoRef: RefObject<HTMLVideoElement | null>
   receiverRef: RefObject<RemoteBrowserConnection | null>
+  settings: BrowserVideoSettings
+  canConfigure: boolean
+  onConfigure(settings: BrowserVideoSettings): Promise<void>
 }) {
   const [sample, setSample] = useState<StreamSample | null>(null)
   const [probe, setProbe] = useState(false)
   const [clicks, setClicks] = useState<ClickSample[]>([])
   const [status, setStatus] = useState('')
   const history = useRef<StreamSample[]>([])
+  const id = useId()
+  const [draft, setDraft] = useState<BrowserVideoSettings | null>(null)
+  const [applying, setApplying] = useState(false)
+  const [settingsStatus, setSettingsStatus] = useState('')
+  const selected = draft ?? settings
+  const validSettings = isSchemaValue(browserVideoSettingsSchema, selected)
+  const { captureScale, frameRate, maxBitrate } = settings
+  const apply = async (next: BrowserVideoSettings) => {
+    if (!canConfigure || applying) {
+      return
+    }
+
+    setApplying(true)
+    setSettingsStatus('Applying stream settings…')
+    await onConfigure(next)
+      .then(
+        () => {
+          setDraft(null)
+          setSettingsStatus('Stream settings applied.')
+        },
+        (error: Error) => {
+          setSettingsStatus(error.message)
+        }
+      )
+      .finally(() => setApplying(false))
+  }
 
   useEffect(() => {
     const video = videoRef.current
@@ -245,6 +288,7 @@ export function BrowserStreamDiagnostics({
             snapshot.report.get(transport?.selectedCandidatePairId ?? '')
           const next: StreamSample = {
             time: new Date().toISOString(),
+            settings: { captureScale, frameRate, maxBitrate },
             codec: codec?.mimeType ?? null,
             decoder: current.decoderImplementation ?? null,
             resolution:
@@ -319,7 +363,7 @@ export function BrowserStreamDiagnostics({
       video.removeEventListener('emptied', reset)
       document.removeEventListener('visibilitychange', visibility)
     }
-  }, [probe, receiverRef, videoRef])
+  }, [probe, receiverRef, videoRef, captureScale, frameRate, maxBitrate])
 
   const sorted = clicks.map((value) => value.totalMs).sort((a, b) => a - b)
   const metrics = [
@@ -337,6 +381,105 @@ export function BrowserStreamDiagnostics({
       className="absolute right-2 bottom-2 flex max-h-[75%] w-[min(22rem,calc(100%-1rem))] flex-col gap-2 overflow-auto rounded-md border border-sidebar-border bg-sidebar p-3 text-xs text-sidebar-foreground shadow-lg"
     >
       <strong>Stream diagnostics</strong>
+      <fieldset
+        disabled={!canConfigure || applying}
+        className="flex flex-col gap-2"
+      >
+        <legend>Stream settings</legend>
+        <FormField>
+          <Label htmlFor={id + '-scale'}>Capture scale</Label>
+          <NativeSelect
+            id={id + '-scale'}
+            value={selected.captureScale}
+            onChange={(event) =>
+              setDraft({
+                ...selected,
+                captureScale: Number(event.target.value)
+              })
+            }
+          >
+            {[50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100].map((scale) => (
+              <option key={scale} value={scale / 100}>
+                {scale}%
+              </option>
+            ))}
+          </NativeSelect>
+        </FormField>
+        <FormField>
+          <Label htmlFor={id + '-fps'}>FPS cap</Label>
+          <Input
+            id={id + '-fps'}
+            type="number"
+            min={1}
+            max={60}
+            step={1}
+            value={selected.frameRate || ''}
+            aria-invalid={
+              !isSchemaValue(
+                browserVideoSettingsSchema.fields.frameRate,
+                selected.frameRate
+              )
+            }
+            onChange={(event) =>
+              setDraft({ ...selected, frameRate: Number(event.target.value) })
+            }
+          />
+        </FormField>
+        <FormField>
+          <Label htmlFor={id + '-bitrate'}>Bitrate ceiling (Mbps)</Label>
+          <Input
+            id={id + '-bitrate'}
+            type="number"
+            min={0.25}
+            max={48}
+            step="any"
+            value={selected.maxBitrate ? selected.maxBitrate / 1_000_000 : ''}
+            aria-invalid={
+              !isSchemaValue(
+                browserVideoSettingsSchema.fields.maxBitrate,
+                selected.maxBitrate
+              )
+            }
+            onChange={(event) =>
+              setDraft({
+                ...selected,
+                maxBitrate: Math.round(Number(event.target.value) * 1_000_000)
+              })
+            }
+          />
+        </FormField>
+        <p>FPS: 1–60 (whole numbers). Bitrate: 0.25–48 Mbps.</p>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={!validSettings}
+            onClick={() => void apply(selected)}
+          >
+            {applying ? 'Applying…' : 'Apply'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void apply(DEFAULT_BROWSER_VIDEO_SETTINGS)}
+          >
+            Reset to baseline
+          </Button>
+        </div>
+      </fieldset>
+      <p>
+        Applied: {Math.round(captureScale * 100)}% · {frameRate} FPS cap ·{' '}
+        {maxBitrate / 1_000_000} Mbps ceiling.
+      </p>
+      <p>
+        Session only; affects all viewers of this browser. Scale and FPS changes
+        may briefly interrupt video, but do not change page layout or input
+        coordinates.
+        {!canConfigure ? ' Take control to change settings.' : ''}
+      </p>
+      {settingsStatus ? <p role="status">{settingsStatus}</p> : null}
+      <strong>Actual stream</strong>
       <span>
         {sample?.codec ?? 'Waiting for media'} · {sample?.resolution ?? '—'} ·{' '}
         {sample?.decoder ?? 'decoder unknown'}
@@ -403,6 +546,7 @@ export function BrowserStreamDiagnostics({
             .writeText(
               JSON.stringify(
                 {
+                  settings,
                   samples: history.current,
                   inputToVideoMs: clicks.map((value) => value.totalMs),
                   matchedFrameTimings: clicks,

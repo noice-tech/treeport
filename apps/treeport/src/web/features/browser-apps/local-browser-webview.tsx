@@ -171,6 +171,7 @@ export function LocalBrowserWebview({
       hasController: true,
       controller: externalControllerRef.current ?? 'you',
       controllerDetails: null,
+      videoSettings: null,
       agentActive: agentActiveRef.current
     })
     const emitState = (

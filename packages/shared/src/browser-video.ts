@@ -1,4 +1,20 @@
 import type { BrowserClipboard } from './browser-clipboard.js'
+import * as Schema from 'effect/Schema'
+
+export const browserVideoSettingsSchema = Schema.Struct({
+  captureScale: Schema.Number.pipe(Schema.between(0.5, 1)),
+  frameRate: Schema.Int.pipe(Schema.between(1, 60)),
+  maxBitrate: Schema.Int.pipe(Schema.between(250_000, 48_000_000))
+})
+export type BrowserVideoSettings = Schema.Schema.Type<
+  typeof browserVideoSettingsSchema
+>
+
+export const DEFAULT_BROWSER_VIDEO_SETTINGS: BrowserVideoSettings = {
+  captureScale: 0.75,
+  frameRate: 30,
+  maxBitrate: 6_000_000
+}
 
 // Gathering before signaling keeps the authenticated protocol small: one offer
 // and one answer, with no candidate queue that can outlive its attachment.
@@ -38,12 +54,10 @@ async function captureBrowserVideo(
   source: () => Promise<string>,
   width: number,
   height: number,
-  failed: (message: string) => void
+  failed: (message: string) => void,
+  initialSettings: BrowserVideoSettings
 ) {
-  // Cap capture itself; limiting only the sender still incurs full-rate copy-out.
-  const frameRate = 60
-  // Worktree experiment: lower capture resolution, not the page's CSS viewport.
-  const captureScale = 0.75
+  let settings = initialSettings
   const peers = new Map<string, RTCPeerConnection>()
   let track: MediaStreamTrack | null = null
   let size = { width: 0, height: 0 }
@@ -69,15 +83,60 @@ async function captureBrowserVideo(
     track?.stop()
     track = null
   }
-  const resize = (width: number, height: number): Promise<void> =>
+  const configureSender = async (
+    sender: RTCRtpSender,
+    settings: BrowserVideoSettings
+  ) => {
+    const parameters = sender.getParameters()
+    // A peer may still be negotiating while its source is replaced.
+    if (parameters.encodings.length === 0) {
+      return
+    }
+
+    parameters.degradationPreference = 'maintain-framerate'
+    for (const encoding of parameters.encodings) {
+      // Ceilings, not fixed rates: Chromium still owns congestion adaptation.
+      encoding.maxBitrate = settings.maxBitrate
+      encoding.maxFramerate = settings.frameRate
+    }
+    await sender.setParameters(parameters)
+  }
+  const resize = (
+    width: number,
+    height: number,
+    nextSettings: BrowserVideoSettings = settings
+  ): Promise<void> =>
     serialize(async () => {
       if (stopped) {
         throw new Error('Browser video capture is stopped.')
       }
 
-      if (track && size.width === width && size.height === height) {
+      if (
+        track &&
+        size.width === width &&
+        size.height === height &&
+        settings.captureScale === nextSettings.captureScale &&
+        settings.frameRate === nextSettings.frameRate
+      ) {
+        if (settings.maxBitrate !== nextSettings.maxBitrate) {
+          for (const [id, peer] of peers) {
+            for (const sender of peer.getSenders()) {
+              await configureSender(sender, nextSettings).catch((error) => {
+                // Closing one viewer must not interrupt the other viewers.
+                if (peers.get(id) === peer && !stopped) {
+                  throw error
+                }
+              })
+            }
+          }
+        }
+
+        settings = nextSettings
         return
       }
+
+      // Cap acquisition itself, not just the sender's post-capture output.
+      const { captureScale, frameRate } = nextSettings
 
       // Round output dimensions to even pixels for H.264. Keep `size` in CSS
       // viewport coordinates; scaling must not change layout or input mapping.
@@ -136,12 +195,15 @@ async function captureBrowserVideo(
         })
         for (const [id, peer] of peers) {
           for (const sender of peer.getSenders()) {
-            await sender.replaceTrack(next).catch((error) => {
-              // A viewer may leave while a source replacement is in flight.
-              if (peers.get(id) === peer && !stopped) {
-                throw error
-              }
-            })
+            await sender
+              .replaceTrack(next)
+              .then(() => configureSender(sender, nextSettings))
+              .catch((error) => {
+                // A viewer may leave while a source replacement is in flight.
+                if (peers.get(id) === peer && !stopped) {
+                  throw error
+                }
+              })
           }
         }
         if (stopped || next.readyState === 'ended') {
@@ -150,6 +212,7 @@ async function captureBrowserVideo(
 
         track = next
         size = { width, height }
+        settings = nextSettings
       })().catch((error) => {
         stream.getTracks().forEach((track) => track.stop())
         throw error
@@ -197,16 +260,7 @@ async function captureBrowserVideo(
           await transceiver.sender.replaceTrack(track)
         })
         await peer.setLocalDescription(await peer.createAnswer())
-        const parameters = transceiver.sender.getParameters()
-        parameters.degradationPreference = 'maintain-framerate'
-        for (const encoding of parameters.encodings) {
-          // A ceiling, not a fixed-rate encoder. Chromium adapts below this
-          // according to transport feedback. Media buffering is owned by
-          // WebRTC; there is no application-managed frame queue.
-          encoding.maxBitrate = 24_000_000
-          encoding.maxFramerate = frameRate
-        }
-        await transceiver.sender.setParameters(parameters)
+        await serialize(() => configureSender(transceiver.sender, settings))
         await gatherBrowserIce(peer)
         if (stopped || peers.get(id) !== peer) {
           throw new Error('Browser video negotiation was superseded.')
@@ -233,7 +287,7 @@ export interface BrowserNativeCdpSession {
   send(method: 'Treeport.copy'): Promise<BrowserClipboard | null>
   send(
     method: 'Treeport.startVideo',
-    params: { width: number; height: number }
+    params: { width: number; height: number; settings: BrowserVideoSettings }
   ): Promise<void>
   send(
     method: 'Treeport.negotiateVideo',

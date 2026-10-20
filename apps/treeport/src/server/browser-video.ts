@@ -2,7 +2,11 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Page } from 'playwright'
-import { BROWSER_VIDEO_CAPTURE_SOURCE } from '@treeport/shared/browser-host'
+import {
+  BROWSER_VIDEO_CAPTURE_SOURCE,
+  DEFAULT_BROWSER_VIDEO_SETTINGS,
+  type BrowserVideoSettings
+} from '@treeport/shared/browser-host'
 
 export async function prepareBrowserVideoExtension(directory: string) {
   // A fresh public identity scopes unattended capture to this host's extension.
@@ -59,6 +63,7 @@ export interface BrowserCapturePage {
 
 export class PlaywrightBrowserVideo {
   private helper: BrowserCapturePage['page'] | null = null
+  private settings = DEFAULT_BROWSER_VIDEO_SETTINGS
 
   constructor(
     private readonly openCapturePage: () => Promise<BrowserCapturePage>,
@@ -66,10 +71,16 @@ export class PlaywrightBrowserVideo {
     private readonly failed: (message: string) => void
   ) {}
 
-  async start(width: number, height: number): Promise<void> {
+  async start(
+    width: number,
+    height: number,
+    settings: BrowserVideoSettings = this.settings
+  ): Promise<void> {
     if (this.helper) {
       await this.helper
-        .evaluate(`globalThis.__treeportVideo.resize(${width}, ${height})`)
+        .evaluate(
+          `globalThis.__treeportVideo.resize(${width}, ${height}, ${JSON.stringify(settings)})`
+        )
         .catch(async (error) => {
           await this.stop()
           this.failed(
@@ -77,6 +88,7 @@ export class PlaywrightBrowserVideo {
           )
           throw error
         })
+      this.settings = settings
       return
     }
 
@@ -103,12 +115,13 @@ export class PlaywrightBrowserVideo {
         );
         if (!target?.tabId) throw new Error('The Browser capture target is unavailable.');
         const source = () => chrome.tabCapture.getMediaStreamId({ targetTabId: target.tabId });
-        globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(source, ${width}, ${height}, globalThis.__treeportVideoError);
+        globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(source, ${width}, ${height}, globalThis.__treeportVideoError, ${JSON.stringify(settings)});
       })()`)
     })().catch(async (error) => {
       await this.stop()
       throw error
     })
+    this.settings = settings
   }
 
   async negotiate(peerId: string, sdp: string): Promise<string> {

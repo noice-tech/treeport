@@ -26,10 +26,12 @@ import type {
   BrowserRuntimeState,
   BrowserSessionState,
   BrowserNativeCdpSession,
-  BrowserClipboard
+  BrowserClipboard,
+  BrowserVideoSettings
 } from '@treeport/shared'
 import {
   browserClipboardSchema,
+  DEFAULT_BROWSER_VIDEO_SETTINGS,
   browserOwnerEndpointSchema,
   browserOwnerIdentitySchema,
   browserObservedUrlSchema,
@@ -93,7 +95,10 @@ export interface BrowserSessionBrowser {
   copy(): Promise<BrowserClipboard | null>
   cursor(point: { x: number; y: number }): ReturnType<typeof browserCursor>
   agentCommand(input: BrowserAgentCommand): Promise<string>
-  setScreencasting(enabled: boolean): Promise<void>
+  setScreencasting(
+    enabled: boolean,
+    settings: BrowserVideoSettings
+  ): Promise<void>
   negotiateVideo(peerId: string, sdp: string): Promise<string>
   closeVideoPeer(peerId: string): Promise<void>
   devtoolsEndpoint?(): Promise<string>
@@ -151,6 +156,7 @@ interface BrowserLocalAutomation {
   requests: string[]
   screencasting: boolean
   captureViewport: { width: number; height: number } | null
+  captureSettings: BrowserVideoSettings | null
   fileChooser(chooser: FileChooser): void
 }
 
@@ -252,6 +258,7 @@ interface BrowserSession {
   retainLocalAgentPaint: boolean
   state: BrowserRuntimeState
   videoError: string | null
+  videoSettings: BrowserVideoSettings
   scheduler: BrowserScheduler
   persistence: BrowserAppStatePersistence
   agentAttached: boolean
@@ -484,6 +491,7 @@ export class BrowserSessionManager {
 
     return {
       ...session.state,
+      videoSettings: session.videoSettings,
       controlled: session.controllerId === attachmentController(attachment),
       hasController:
         session.localOwner !== null || session.controllerId !== null,
@@ -1036,6 +1044,7 @@ export class BrowserSessionManager {
         viewport: { ...DEFAULT_STATE.viewport }
       },
       videoError: null,
+      videoSettings: DEFAULT_BROWSER_VIDEO_SETTINGS,
       scheduler: {
         queue: Effect.runSync(Queue.dropping(MAX_BROWSER_SCHEDULED_OPERATIONS)),
         scope: Effect.runSync(Scope.make()),
@@ -2004,6 +2013,61 @@ export class BrowserSessionManager {
       pending.submitted = true
     }
 
+    if (message.type === 'setVideoSettings') {
+      this.queueClientOperation(session, attachment, {
+        coalesceKey: null,
+        message,
+        required: false,
+        execute: async () => {
+          if (
+            attachment.closing ||
+            session.attachments.get(attachment.id) !== attachment
+          ) {
+            return
+          }
+
+          const respond = (error: string | null) =>
+            attachment.transport.sendMessage({
+              type: 'videoSettingsResult',
+              requestId: message.requestId,
+              error
+            })
+          if (
+            !attachment.visible ||
+            session.agentActive ||
+            session.controllerId !== attachmentController(attachment)
+          ) {
+            respond('Take control before changing stream settings.')
+            return
+          }
+
+          await this.updateScreencast(
+            session,
+            session.controllerId,
+            message.settings
+          )
+            .then(() => {
+              if (session.videoError) {
+                throw new Error(session.videoError)
+              }
+            })
+            .then(
+              () => {
+                session.videoSettings = message.settings
+                this.broadcastState(session)
+                respond(null)
+              },
+              async (cause) => {
+                await this.updateScreencast(session).catch(() => undefined)
+                this.broadcastState(session)
+                respond(cause instanceof Error ? cause.message : String(cause))
+              }
+            )
+        }
+      })
+      return
+    }
+
     if (message.type === 'videoOffer') {
       attachment.video.offer(message.requestId, message.sdp)
       return
@@ -2466,7 +2530,8 @@ export class BrowserSessionManager {
 
   private async updateScreencast(
     session: BrowserSession,
-    controllerId = session.controllerId
+    controllerId = session.controllerId,
+    settings = session.videoSettings
   ): Promise<void> {
     const touchAttachment = session.touchAttachmentId
       ? session.attachments.get(session.touchAttachmentId)
@@ -2509,9 +2574,9 @@ export class BrowserSessionManager {
           retainPaint,
           session.agentActive
         )
-        await this.setLocalScreencasting(session, localOwner, true)
+        await this.setLocalScreencasting(session, localOwner, true, settings)
       } else {
-        await this.setLocalScreencasting(session, localOwner, false)
+        await this.setLocalScreencasting(session, localOwner, false, settings)
         await this.setLocalOwnerRuntimeControl(
           session,
           localOwner,
@@ -2565,7 +2630,7 @@ export class BrowserSessionManager {
     }
 
     await browser
-      ?.setScreencasting(visible)
+      ?.setScreencasting(visible, settings)
       .catch((cause) =>
         this.broadcastVideoUnavailable(
           session,
@@ -2993,6 +3058,7 @@ export class BrowserSessionManager {
         requests: [],
         screencasting: false,
         captureViewport: null,
+        captureSettings: null,
         fileChooser
       }
       browser.once('disconnected', () => {
@@ -3064,7 +3130,8 @@ export class BrowserSessionManager {
   private async setLocalScreencasting(
     session: BrowserSession,
     owner: BrowserLocalOwner,
-    enabled: boolean
+    enabled: boolean,
+    settings: BrowserVideoSettings
   ): Promise<void> {
     const automation = enabled
       ? await this.ensureLocalAutomation(session, owner)
@@ -3082,13 +3149,15 @@ export class BrowserSessionManager {
       (automation.screencasting === enabled &&
         (!enabled ||
           (automation.captureViewport?.width === width &&
-            automation.captureViewport.height === height)))
+            automation.captureViewport.height === height &&
+            automation.captureSettings === settings)))
     ) {
       return
     }
 
     automation.screencasting = enabled
     automation.captureViewport = enabled ? { width, height } : null
+    automation.captureSettings = enabled ? settings : null
     if (!enabled) {
       await automation.video.send('Treeport.stopVideo').catch(() => undefined)
       return
@@ -3096,7 +3165,11 @@ export class BrowserSessionManager {
 
     session.videoError = null
     await automation.video
-      .send('Treeport.startVideo', { width, height })
+      .send('Treeport.startVideo', {
+        width,
+        height,
+        settings
+      })
       .catch((cause) => {
         automation.screencasting = false
         this.broadcastVideoUnavailable(

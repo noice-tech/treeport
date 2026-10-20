@@ -6,6 +6,7 @@ import {
 } from '@treeport/shared'
 import type {
   BrowserClientMessage,
+  BrowserVideoSettings,
   BrowserClientToServerEvents,
   BrowserServerMessage,
   BrowserServerToClientEvents
@@ -20,6 +21,10 @@ export interface BrowserAppConnection {
   dispose(): void
   send(message: BrowserClientMessage): void
   setVisible(visible: boolean): void
+}
+
+export interface BrowserVideoConnection extends BrowserAppConnection {
+  configureVideo(settings: BrowserVideoSettings): Promise<void>
 }
 
 export interface BrowserAppSocket {
@@ -59,7 +64,7 @@ export function connectBrowserApp(
     message(message: BrowserServerMessage): void
   },
   socketFactory: BrowserAppSocketFactory = defaultSocketFactory
-): BrowserAppConnection {
+): BrowserVideoConnection {
   if (browserViewerId === null) {
     // Keep this viewer stable across app remounts and server-switch reloads.
     browserViewerId = crypto.randomUUID()
@@ -86,7 +91,29 @@ export function connectBrowserApp(
   const pendingCommands: BrowserClientMessage[] = []
   let viewport: Extract<BrowserClientMessage, { type: 'resize' }> | null = null
 
+  let pendingVideoSettings: {
+    requestId: string
+    resolve(): void
+    reject(error: Error): void
+    timer: ReturnType<typeof setTimeout>
+  } | null = null
+  const finishVideoSettings = (error: Error | null) => {
+    const pending = pendingVideoSettings
+    pendingVideoSettings = null
+    if (pending) {
+      clearTimeout(pending.timer)
+      if (error) {
+        pending.reject(error)
+      } else {
+        pending.resolve()
+      }
+    }
+  }
+
   const reportError = (cause: unknown) => {
+    finishVideoSettings(
+      cause instanceof Error ? cause : new Error(String(cause))
+    )
     if (disposed) {
       return
     }
@@ -177,6 +204,14 @@ export function connectBrowserApp(
       // Reattach in place. The project event bridge owns workspace updates;
       // reconnecting this app must not reload every terminal and browser.
 
+      if (message.type === 'videoSettingsResult') {
+        if (pendingVideoSettings?.requestId === message.requestId) {
+          finishVideoSettings(message.error ? new Error(message.error) : null)
+        }
+
+        return
+      }
+
       handlers.message(message)
       if (message.type !== 'ready') {
         return
@@ -253,6 +288,46 @@ export function connectBrowserApp(
   })
 
   return {
+    configureVideo(settings) {
+      if (disposed || !ready || !socket?.connected) {
+        return Promise.reject(new Error('Wait for the browser to reconnect.'))
+      }
+
+      if (pendingVideoSettings) {
+        return Promise.reject(
+          new Error('Stream settings are already being applied.')
+        )
+      }
+
+      const requestId = crypto.randomUUID()
+      const command = parseBrowserClientMessage({
+        type: 'setVideoSettings',
+        requestId,
+        settings
+      })
+      if (!command) {
+        return Promise.reject(new Error('Invalid stream settings.'))
+      }
+
+      const connectedSocket = socket
+      return new Promise<void>((resolve, reject) => {
+        pendingVideoSettings = {
+          requestId,
+          resolve,
+          reject,
+          timer: setTimeout(
+            () =>
+              finishVideoSettings(
+                new Error(
+                  'Stream settings timed out. Check the applied settings before retrying.'
+                )
+              ),
+            15_000
+          )
+        }
+        connectedSocket.emit('command', command)
+      })
+    },
     send(value) {
       const command = parseBrowserClientMessage(value)
       if (disposed) {
@@ -293,6 +368,7 @@ export function connectBrowserApp(
         command.type !== 'copy' &&
         command.type !== 'fileChooserResponse' &&
         command.type !== 'videoOffer' &&
+        command.type !== 'setVideoSettings' &&
         pendingCommands.length < 32
       ) {
         pendingCommands.push(command)
@@ -316,6 +392,7 @@ export function connectBrowserApp(
       }
 
       disposed = true
+      finishVideoSettings(new Error('Browser connection closed.'))
       pendingCommands.length = 0
       if (reconnectTimer) {
         clearTimeout(reconnectTimer)

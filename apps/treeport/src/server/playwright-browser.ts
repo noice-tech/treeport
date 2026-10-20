@@ -97,6 +97,11 @@ async function readContextLink(
   }
 }
 
+import {
+  DEFAULT_BROWSER_VIDEO_SETTINGS,
+  type BrowserVideoSettings
+} from '@treeport/shared/browser-host'
+
 const DEFAULT_VIEWPORT = { width: 1_280, height: 800 }
 
 export class PlaywrightBrowser {
@@ -106,6 +111,7 @@ export class PlaywrightBrowser {
   private cdp: CDPSession | null = null
   private video: PlaywrightBrowserVideo | null = null
   private screencasting = false
+  private videoSettings = DEFAULT_BROWSER_VIDEO_SETTINGS
   private closing = false
   private dialogHandler: ((dialog: Dialog) => void) | null = null
   private readonly consoleMessages: string[] = []
@@ -477,11 +483,20 @@ export class PlaywrightBrowser {
     await this.video?.closePeer(peerId)
   }
 
-  async setScreencasting(enabled: boolean): Promise<void> {
+  async setScreencasting(
+    enabled: boolean,
+    settings: BrowserVideoSettings = this.videoSettings
+  ): Promise<void> {
     // Commands, resize stop/start pairs and cleanup share the session consumer.
     const page = this.page
     const video = this.video
-    if (!page || page.isClosed() || !video || enabled === this.screencasting) {
+    if (
+      !page ||
+      page.isClosed() ||
+      !video ||
+      (enabled === this.screencasting &&
+        (!enabled || settings === this.videoSettings))
+    ) {
       return
     }
 
@@ -492,11 +507,16 @@ export class PlaywrightBrowser {
     }
 
     await video
-      .start(this.stateValue.viewport.width, this.stateValue.viewport.height)
+      .start(
+        this.stateValue.viewport.width,
+        this.stateValue.viewport.height,
+        settings
+      )
       .catch((error) => {
         this.screencasting = false
         throw error
       })
+    this.videoSettings = settings
   }
 
   async copy(): Promise<BrowserClipboard | null> {
