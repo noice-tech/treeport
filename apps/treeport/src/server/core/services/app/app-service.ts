@@ -19,6 +19,7 @@ import type {
   WebAppDefinition,
   WebAppLaunch,
   WebAppPermission,
+  WebAppStorageScope,
   WorktreeListenerDiscovery,
   WorktreeRecord
 } from '@treeport/shared'
@@ -1209,21 +1210,24 @@ export class AppService {
 
   getWebAppStorage(
     appId: string,
-    key: string
+    key: string,
+    scope: WebAppStorageScope = 'instance'
   ): AppEffect<JsonValue | undefined> {
     const getWebAppContext = this.getWebAppContext.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      yield* getWebAppContext(appId)
+      const context = yield* getWebAppContext(appId)
+      const owner =
+        scope === 'definition'
+          ? eq(webAppStorage.definitionId, context.app.definitionId)
+          : eq(webAppStorage.appId, appId)
       const [row] = yield* database
         .execute('app.service.1127', (db) =>
           db
             .select({ valueJson: webAppStorage.valueJson })
             .from(webAppStorage)
-            .where(
-              and(eq(webAppStorage.appId, appId), eq(webAppStorage.key, key))
-            )
+            .where(and(owner, eq(webAppStorage.key, key)))
             .limit(1)
         )
         .pipe(Effect.orDie)
@@ -1235,13 +1239,18 @@ export class AppService {
   setWebAppStorage(
     appId: string,
     key: string,
-    value: JsonValue
+    value: JsonValue,
+    scope: WebAppStorageScope = 'instance'
   ): AppEffect<void> {
     const getWebAppContext = this.getWebAppContext.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      yield* getWebAppContext(appId)
+      const context = yield* getWebAppContext(appId)
+      const owner =
+        scope === 'definition'
+          ? eq(webAppStorage.definitionId, context.app.definitionId)
+          : eq(webAppStorage.appId, appId)
       const valueJson = JSON.stringify(value)
       const valueBytes = Buffer.byteLength(valueJson)
       if (valueBytes > WEB_APP_STORAGE_MAX_VALUE_BYTES) {
@@ -1259,9 +1268,7 @@ export class AppService {
           db
             .select({ valueJson: webAppStorage.valueJson })
             .from(webAppStorage)
-            .where(
-              and(eq(webAppStorage.appId, appId), ne(webAppStorage.key, key))
-            )
+            .where(and(owner, ne(webAppStorage.key, key)))
         )
         .pipe(Effect.orDie)
       const storedBytes = storedValues.reduce(
@@ -1275,7 +1282,7 @@ export class AppService {
         return yield* Effect.fail(
           new DomainError(
             'WEB_APP_STORAGE_QUOTA_EXCEEDED',
-            'Web app storage is limited to 256 values and 1 MiB per app',
+            'Web app storage is limited to 256 values and 1 MiB per scope',
             413
           )
         )
@@ -1286,9 +1293,21 @@ export class AppService {
         .execute('app.service.1195', (db) =>
           db
             .insert(webAppStorage)
-            .values({ appId, key, valueJson, updatedAt })
+            .values({
+              appId: scope === 'instance' ? appId : null,
+              definitionId:
+                scope === 'definition' ? context.app.definitionId : null,
+              key,
+              valueJson,
+              updatedAt
+            })
             .onConflictDoUpdate({
-              target: [webAppStorage.appId, webAppStorage.key],
+              target: [
+                scope === 'definition'
+                  ? webAppStorage.definitionId
+                  : webAppStorage.appId,
+                webAppStorage.key
+              ],
               set: { valueJson, updatedAt }
             })
         )
@@ -1296,19 +1315,23 @@ export class AppService {
     })
   }
 
-  deleteWebAppStorage(appId: string, key: string): AppEffect<void> {
+  deleteWebAppStorage(
+    appId: string,
+    key: string,
+    scope: WebAppStorageScope = 'instance'
+  ): AppEffect<void> {
     const getWebAppContext = this.getWebAppContext.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
-      yield* getWebAppContext(appId)
+      const context = yield* getWebAppContext(appId)
+      const owner =
+        scope === 'definition'
+          ? eq(webAppStorage.definitionId, context.app.definitionId)
+          : eq(webAppStorage.appId, appId)
       yield* database
         .execute('app.service.1213', (db) =>
-          db
-            .delete(webAppStorage)
-            .where(
-              and(eq(webAppStorage.appId, appId), eq(webAppStorage.key, key))
-            )
+          db.delete(webAppStorage).where(and(owner, eq(webAppStorage.key, key)))
         )
         .pipe(Effect.orDie)
     })

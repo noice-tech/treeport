@@ -3,7 +3,10 @@ import type { WebApp, WebAppInput, WebAppPermission } from '@treeport/app-sdk'
 import { browserUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import type { WorkspacePresence } from './presence-protocol.js'
-import { webAppPermissionSchema } from './web-app-protocol.js'
+import {
+  webAppPermissionSchema,
+  webAppStorageScopeSchema
+} from './web-app-protocol.js'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
@@ -901,13 +904,16 @@ export const webAppStorageKeySchema = Schema.String.pipe(
   Schema.maxLength(128)
 )
 export const getWebAppStorageSchema = Schema.Struct({
+  scope: Schema.optional(webAppStorageScopeSchema),
   key: webAppStorageKeySchema
 })
 export const setWebAppStorageSchema = Schema.Struct({
+  scope: Schema.optional(webAppStorageScopeSchema),
   key: webAppStorageKeySchema,
   value: jsonValueSchema
 })
 export const deleteWebAppStorageSchema = Schema.Struct({
+  scope: Schema.optional(webAppStorageScopeSchema),
   key: webAppStorageKeySchema
 })
 

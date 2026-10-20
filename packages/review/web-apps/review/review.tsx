@@ -776,7 +776,7 @@ function ReviewApp() {
         treeport.diff({ scope: 'committed' }),
         initial ? treeport.storage.get(COMMENTS_KEY) : null,
         initial ? treeport.storage.get(VIEWED_KEY) : null,
-        initial ? treeport.storage.get(DIFF_STYLE_KEY) : null
+        initial ? treeport.storage.get(DIFF_STYLE_KEY, { scope: 'definition' }) : null
       ])
       if (uncommitted.headCommit !== committed.headCommit) {
         throw new Error('HEAD changed while reading the review. Retrying…')
@@ -1518,7 +1518,7 @@ function ReviewApp() {
           onClick={() => {
             const next = diffStyle === 'unified' ? 'split' : 'unified'
             setDiffStyle(next)
-            void treeport.storage.set(DIFF_STYLE_KEY, next).catch((reason) => {
+            void treeport.storage.set(DIFF_STYLE_KEY, next, { scope: 'definition' }).catch((reason) => {
               setCommentStatus(
                 reason instanceof Error
                   ? `Could not save diff style: ${reason.message}`

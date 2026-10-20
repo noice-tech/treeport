@@ -21,6 +21,9 @@ export const appServiceSchema = Schema.Struct({
 })
 export type AppService = typeof appServiceSchema.Type
 
+export const webAppStorageScopeSchema = Schema.Literal('instance', 'definition')
+export type WebAppStorageScope = typeof webAppStorageScopeSchema.Type
+
 const appMessageSourceSchema = Schema.Literal('treeport-app-v1')
 export const appTitleMessageSchema = Schema.Struct({
   source: appMessageSourceSchema,
@@ -108,17 +111,20 @@ export const appRequestMessageSchema = Schema.Union(
   Schema.Struct({
     ...appRequestFields,
     method: Schema.Literal('storage.get'),
+    scope: Schema.optional(webAppStorageScopeSchema),
     key: Schema.String
   }),
   Schema.Struct({
     ...appRequestFields,
     method: Schema.Literal('storage.set'),
+    scope: Schema.optional(webAppStorageScopeSchema),
     key: Schema.String,
     value: jsonValueSchema
   }),
   Schema.Struct({
     ...appRequestFields,
     method: Schema.Literal('storage.delete'),
+    scope: Schema.optional(webAppStorageScopeSchema),
     key: Schema.String
   })
 )
