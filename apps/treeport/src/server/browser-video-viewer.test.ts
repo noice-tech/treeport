@@ -18,12 +18,14 @@ it.each(['answer', 'failure'] as const)(
     const pending = deferred<string>()
     const cleanup = deferred<void>()
     const old = {
+      webcodecs: null,
       negotiate: vi.fn(() => pending.promise),
       close: vi
         .fn(async (): Promise<void> => undefined)
         .mockImplementationOnce(() => cleanup.promise)
     }
     const next = {
+      webcodecs: null,
       negotiate: vi.fn(async () => 'new-answer'),
       close: vi.fn(async () => undefined)
     }
@@ -66,6 +68,7 @@ it('revokes an activation lease even when the caller reuses the same backend', a
   const send = vi.fn(() => true)
   const pending = deferred<string>()
   const source = {
+    webcodecs: null,
     negotiate: vi
       .fn(async () => 'current')
       .mockImplementationOnce(() => pending.promise),
@@ -97,14 +100,17 @@ it('coalesces rapid visibility changes and cannot revive a disposed viewer', asy
   const send = vi.fn(() => true)
   const cleanup = deferred<void>()
   const first = {
+    webcodecs: null,
     negotiate: vi.fn(async () => 'first'),
     close: vi.fn(() => cleanup.promise)
   }
   const skipped = {
+    webcodecs: null,
     negotiate: vi.fn(async () => 'skipped'),
     close: vi.fn(async () => undefined)
   }
   const last = {
+    webcodecs: null,
     negotiate: vi.fn(async () => 'last'),
     close: vi.fn(async () => undefined)
   }
@@ -129,6 +135,7 @@ it('coalesces rapid visibility changes and cannot revive a disposed viewer', asy
 it('waits for capture readiness and replaces a failed source without retaining stale answers', async () => {
   const send = vi.fn(() => true)
   const first = {
+    webcodecs: null,
     negotiate: vi.fn(async () => {
       throw new Error('capture failed')
     }),
@@ -148,6 +155,7 @@ it('waits for capture readiness and replaces a failed source without retaining s
     })
   )
   const next = {
+    webcodecs: null,
     negotiate: vi.fn(async () => 'answer'),
     close: vi.fn(async () => undefined)
   }

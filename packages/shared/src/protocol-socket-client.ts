@@ -24,6 +24,7 @@ type ProtocolAuthValue =
 const connectErrorPayloadSchema = Schema.Struct({ message: Schema.String })
 
 export interface ProtocolSocketOptions {
+  readonly binary?: (data: Uint8Array) => void
   readonly autoConnect?: boolean
   readonly webSocketConstructor?: (
     url: string,
@@ -195,9 +196,11 @@ class EffectProtocolSocket<
         yield* socket.runRaw(
           (data) => {
             if (data instanceof Uint8Array) {
-              // This transport carries control/signaling only. Browser media
-              // is delivered by WebRTC, never by binary application messages.
-              this.disconnect()
+              if (this.options.binary && this.connected) {
+                this.options.binary(data)
+              } else {
+                this.disconnect()
+              }
 
               return
             }

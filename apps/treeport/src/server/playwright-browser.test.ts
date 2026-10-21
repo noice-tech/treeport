@@ -24,9 +24,24 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
       cssVisualViewport: { scale: 2 }
     }))
   })
+  let committedUrl = currentUrl
+  let commitNavigation: () => void = () => undefined
+  const navigate = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        commitNavigation = () => {
+          currentUrl = committedUrl
+          resolve()
+        }
+      })
+  )
   const page = Object.assign(new EventEmitter(), {
     url: () => currentUrl,
-    title: async () => 'localhost',
+    title: vi.fn(async () => 'localhost'),
+    goto: navigate,
+    goBack: navigate,
+    goForward: navigate,
+    reload: navigate,
     isClosed: () => false,
     mainFrame: () => frame,
     mouse: {
@@ -58,6 +73,9 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     crashed: () => undefined
   })
   onTestFinished(() => browser.close())
+  expectTypeOf<PlaywrightBrowser>().not.toHaveProperty('webcodecs')
+  expectTypeOf<PlaywrightBrowser>().not.toHaveProperty('negotiateVideo')
+  expectTypeOf<PlaywrightBrowser>().toHaveProperty('webcodecsViewer')
   await browser.launch()
 
   const attemptedUrl = 'http://127.0.0.1:3002/auth/sign-in'
@@ -94,6 +112,13 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     ).not.toBeNull()
   }
 
+  await browser.command({ type: 'resize', width: 1537, height: 901 })
+  expect(page.setViewportSize).toHaveBeenLastCalledWith({
+    width: 1537,
+    height: 901
+  })
+  expect(browser.state.viewport).toEqual({ width: 1537, height: 901 })
+
   currentUrl = 'https://example.com/recovered'
   page.emit('load')
   await vi.waitFor(() => expect(browser.state.url).toBe(currentUrl))
@@ -103,6 +128,68 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   currentUrl = 'about:blank'
   page.emit('load')
   await vi.waitFor(() => expect(browser.state.url).toBe('about:blank'))
+
+  // Interactive navigation must wait for commit, but not a busy renderer's
+  // title read. Address publication and subsequent wheel dispatch still work;
+  // delayed metadata from older navigations must not overwrite newer results.
+  const titles: Array<() => void> = []
+  onTestFinished(() => titles.forEach((resolve) => resolve()))
+  const commands = [
+    { type: 'navigate', url: 'https://example.com/start' },
+    { type: 'back' },
+    { type: 'forward' },
+    { type: 'reload' }
+  ] as const
+  for (const [index, message] of commands.entries()) {
+    committedUrl =
+      message.type === 'back'
+        ? 'https://example.com/previous'
+        : 'https://example.com/redirected'
+    const previousUrl = browser.state.url
+    page.title.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          titles.push(() => resolve(`Navigation ${index}`))
+        })
+    )
+    let completed = false
+    const command = browser.command(message).then(() => {
+      completed = true
+    })
+    expect(navigate).toHaveBeenCalledTimes(index + 1)
+    expect(completed).toBe(false)
+    expect(browser.state.url).toBe(previousUrl)
+    expect(navigate).toHaveBeenLastCalledWith(
+      ...(message.type === 'navigate' ? [message.url] : []),
+      { waitUntil: 'commit' }
+    )
+    commitNavigation()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(completed).toBe(true)
+    await command
+    expect(browser.state.url).toBe(committedUrl)
+    expect(titles).toHaveLength(index + 1)
+    await browser.command({
+      type: 'wheel',
+      x: 20,
+      y: 40,
+      deltaX: 0,
+      deltaY: 100,
+      modifiers: 0
+    })
+    expect(cdp.send).toHaveBeenLastCalledWith('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x: 10,
+      y: 20,
+      deltaX: 0,
+      deltaY: 100,
+      modifiers: 0
+    })
+  }
+  for (const resolve of [...titles].reverse()) {
+    resolve()
+  }
+  await vi.waitFor(() => expect(browser.state.title).toBe('Navigation 3'))
 
   // Native button events reuse the correctly scaled position. Navigation,
   // other input and failed positioning invalidate it; explicit moves still run.

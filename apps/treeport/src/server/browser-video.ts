@@ -2,11 +2,6 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Page } from 'playwright'
-import {
-  BROWSER_VIDEO_CAPTURE_SOURCE,
-  DEFAULT_BROWSER_VIDEO_SETTINGS,
-  type BrowserVideoSettings
-} from '@treeport/shared/browser-host'
 
 export async function prepareBrowserVideoExtension(directory: string) {
   // A fresh public identity scopes unattended capture to this host's extension.
@@ -54,96 +49,6 @@ export async function prepareBrowserVideoExtension(directory: string) {
 }
 
 export interface BrowserCapturePage {
-  readonly page: Pick<
-    Page,
-    'goto' | 'evaluate' | 'exposeFunction' | 'once' | 'close'
-  >
+  readonly page: Pick<Page, 'goto' | 'evaluate' | 'once' | 'close'>
   readonly targetId: string
-}
-
-export class PlaywrightBrowserVideo {
-  private helper: BrowserCapturePage['page'] | null = null
-  private settings = DEFAULT_BROWSER_VIDEO_SETTINGS
-
-  constructor(
-    private readonly openCapturePage: () => Promise<BrowserCapturePage>,
-    private readonly extensionId: string,
-    private readonly failed: (message: string) => void
-  ) {}
-
-  async start(
-    width: number,
-    height: number,
-    settings: BrowserVideoSettings = this.settings
-  ): Promise<void> {
-    if (this.helper) {
-      await this.helper
-        .evaluate(
-          `globalThis.__treeportVideo.resize(${width}, ${height}, ${JSON.stringify(settings)})`
-        )
-        .catch(async (error) => {
-          await this.stop()
-          this.failed(
-            'Browser video capture could not be resized. Reconnect to restart it.'
-          )
-          throw error
-        })
-      this.settings = settings
-      return
-    }
-
-    const { page: helper, targetId } = await this.openCapturePage()
-    this.helper = helper
-    const lost = () => {
-      if (this.helper === helper) {
-        this.helper = null
-        this.failed('Browser video capture stopped. Reconnect to restart it.')
-      }
-    }
-    helper.once('crash', lost)
-    helper.once('close', lost)
-    await (async () => {
-      await helper.goto(`chrome-extension://${this.extensionId}/capture.html`)
-      await helper.exposeFunction('__treeportVideoError', (message: string) => {
-        if (this.helper === helper) {
-          this.failed(message)
-        }
-      })
-      await helper.evaluate(`(async () => {
-        const target = (await chrome.debugger.getTargets()).find(
-          target => target.id === ${JSON.stringify(targetId)}
-        );
-        if (!target?.tabId) throw new Error('The Browser capture target is unavailable.');
-        const source = () => chrome.tabCapture.getMediaStreamId({ targetTabId: target.tabId });
-        globalThis.__treeportVideo = await ${BROWSER_VIDEO_CAPTURE_SOURCE}(source, ${width}, ${height}, globalThis.__treeportVideoError, ${JSON.stringify(settings)});
-      })()`)
-    })().catch(async (error) => {
-      await this.stop()
-      throw error
-    })
-    this.settings = settings
-  }
-
-  async negotiate(peerId: string, sdp: string): Promise<string> {
-    const helper = this.helper
-    if (!helper) {
-      throw new Error('Browser video capture is unavailable.')
-    }
-
-    return helper.evaluate(
-      `globalThis.__treeportVideo.negotiate(${JSON.stringify(peerId)}, ${JSON.stringify(sdp)})`
-    )
-  }
-
-  async closePeer(peerId: string): Promise<void> {
-    await this.helper?.evaluate(
-      `globalThis.__treeportVideo?.closePeer(${JSON.stringify(peerId)})`
-    )
-  }
-
-  async stop(): Promise<void> {
-    const helper = this.helper
-    this.helper = null
-    await helper?.close().catch(() => undefined)
-  }
 }

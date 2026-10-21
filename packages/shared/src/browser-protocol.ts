@@ -239,6 +239,15 @@ export const browserClientMessageSchema = Schema.Union(
     visible: Schema.Boolean
   }),
   Schema.Struct({
+    type: Schema.Literal('webcodecsAck'),
+    epoch: Schema.Int.pipe(Schema.between(1, 0xffffffff)),
+    sequence: Schema.Int.pipe(Schema.between(0, 0xffffffff))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('webcodecsStop'),
+    message: Schema.String.pipe(Schema.maxLength(512))
+  }),
+  Schema.Struct({
     type: Schema.Literal('videoOffer'),
     requestId: browserRequestIdSchema,
     sdp: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(65_536))
@@ -378,6 +387,17 @@ export const browserServerMessageSchema = Schema.Union(
     type: Schema.Literal('fileChooserClosed'),
     requestId: browserRequestIdSchema,
     error: Schema.NullOr(Schema.String)
+  }),
+  Schema.Struct({
+    type: Schema.Literal('webcodecsReady'),
+    epoch: Schema.Int.pipe(Schema.between(1, 0xffffffff)),
+    codec: Schema.String.pipe(Schema.maxLength(64)),
+    width: Schema.Int.pipe(Schema.between(2, 3_840)),
+    height: Schema.Int.pipe(Schema.between(2, 2_160)),
+    hardwareSupported: Schema.Boolean,
+    encoderPreference: Schema.Literal('prefer-hardware', 'no-preference'),
+    processor: Schema.Literal('window'),
+    encoderBackend: Schema.Literal('unknown')
   }),
   Schema.Struct({ type: Schema.Literal('videoReady') }),
   Schema.Struct({

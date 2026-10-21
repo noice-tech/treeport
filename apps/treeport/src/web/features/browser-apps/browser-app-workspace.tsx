@@ -499,7 +499,11 @@ export function BrowserAppWorkspace({
 
   const receiveMessage = useCallback(
     (message: BrowserServerMessage) => {
-      if (message.type === 'videoReady' || message.type === 'videoAnswer') {
+      if (
+        message.type === 'videoReady' ||
+        message.type === 'videoAnswer' ||
+        message.type === 'webcodecsReady'
+      ) {
         return
       }
 
