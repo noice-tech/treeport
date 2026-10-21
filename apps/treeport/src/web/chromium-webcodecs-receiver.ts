@@ -78,8 +78,7 @@ export class ChromiumWebCodecsReceiver {
 
     this.track = new MediaStreamTrackGenerator({ kind: 'video' })
     this.writer = this.track.writable.getWriter()
-    this.video.title =
-      'Experimental Chromium WebCodecs: fixed 1280×800 surface, 60fps target / 8Mbps. Resizing fits the viewer, not the captured display.'
+    this.video.title = `Experimental Chromium WebCodecs: ${this.config.width}×${this.config.height}, 60fps target / 8Mbps.`
     this.video.srcObject = new MediaStream([this.track])
     this.decoder = new VideoDecoder({
       output: (frame) => {
@@ -115,6 +114,8 @@ export class ChromiumWebCodecsReceiver {
           this.lastFrame = now
           this.video.dataset.webcodecs = JSON.stringify({
             epoch: this.config.epoch,
+            width: this.config.width,
+            height: this.config.height,
             frames: this.frames,
             elapsedMs: now - this.start,
             maxGapMs: this.maxGap,

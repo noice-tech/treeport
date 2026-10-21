@@ -88,8 +88,7 @@ export type BrowserSessionConfig = Pick<
 >
 
 export interface BrowserSessionBrowser {
-  readonly webcodecs?: boolean
-  webcodecsViewer?(
+  webcodecsViewer(
     peerId: string
   ): ReturnType<PlaywrightBrowser['webcodecsViewer']>
   readonly state: BrowserRuntimeState
@@ -100,12 +99,8 @@ export interface BrowserSessionBrowser {
   copy(): Promise<BrowserClipboard | null>
   cursor(point: { x: number; y: number }): ReturnType<typeof browserCursor>
   agentCommand(input: BrowserAgentCommand): Promise<string>
-  setScreencasting(
-    enabled: boolean,
-    settings: BrowserVideoSettings
-  ): Promise<void>
-  negotiateVideo(peerId: string, sdp: string): Promise<string>
-  closeVideoPeer(peerId: string): Promise<void>
+  setScreencasting(enabled: boolean): Promise<void>
+  closeVideoViewer(viewerId: string): Promise<void>
   devtoolsEndpoint?(): Promise<string>
   requestClose(force: boolean): Promise<boolean>
   close(): Promise<void>
@@ -290,16 +285,10 @@ const defaultBrowserFactory: BrowserSessionBrowserFactory = (
   host,
   workspacePath,
   _title,
-  appId,
+  _appId,
   _worktreeId,
   callbacks
-) =>
-  new PlaywrightBrowser(
-    host,
-    workspacePath,
-    callbacks,
-    process.env.TREEPORT_WEBCODECS_APP_ID === appId
-  )
+) => new PlaywrightBrowser(host, workspacePath, callbacks)
 
 const DEFAULT_STATE: BrowserRuntimeState = {
   url: 'about:blank',
@@ -502,9 +491,9 @@ export class BrowserSessionManager {
 
     return {
       ...session.state,
-      videoSettings: session.browser?.webcodecs
-        ? { captureScale: 1, frameRate: 60, maxBitrate: 8_000_000 }
-        : session.videoSettings,
+      videoSettings: session.localOwner
+        ? session.videoSettings
+        : { captureScale: 1, frameRate: 60, maxBitrate: 8_000_000 },
       controlled: session.controllerId === attachmentController(attachment),
       hasController:
         session.localOwner !== null || session.controllerId !== null,
@@ -1963,11 +1952,11 @@ export class BrowserSessionManager {
     }
 
     if (
-      session.browser?.webcodecs &&
+      !session.localOwner &&
       controllerId !== attachmentController(attachment)
     ) {
       attachment.video.fail(
-        'WebCodecs PoC streams only to the controlling viewer. Take control to view this tab.'
+        'Hosted browser video streams only to the controlling viewer. Take control to view this tab.'
       )
       return
     }
@@ -1976,6 +1965,7 @@ export class BrowserSessionManager {
     const browser = session.browser
     if (session.localOwner && video) {
       attachment.video.resume({
+        webcodecs: null,
         negotiate: (sdp) =>
           video
             .send('Treeport.negotiateVideo', { peerId: attachment.id, sdp })
@@ -1987,9 +1977,9 @@ export class BrowserSessionManager {
       })
     } else if (!session.localOwner && browser) {
       attachment.video.resume({
-        webcodecs: browser.webcodecsViewer?.(attachment.id),
-        negotiate: (sdp) => browser.negotiateVideo(attachment.id, sdp),
-        close: () => browser.closeVideoPeer(attachment.id)
+        webcodecs: browser.webcodecsViewer(attachment.id),
+        negotiate: null,
+        close: () => browser.closeVideoViewer(attachment.id)
       })
     }
   }
@@ -2071,9 +2061,9 @@ export class BrowserSessionManager {
             return
           }
 
-          if (session.browser?.webcodecs) {
+          if (!session.localOwner) {
             respond(
-              'WebCodecs PoC is fixed at 1280×800 / 60fps target / 8Mbps; resize fits the viewer only.'
+              'WebCodecs currently uses full-resolution capture with a 60fps target and 8Mbps. Stream-quality settings are not configurable yet.'
             )
             return
           }
@@ -2106,7 +2096,7 @@ export class BrowserSessionManager {
     }
 
     if (message.type === 'webcodecsStop') {
-      if (session.browser?.webcodecs) {
+      if (!session.localOwner) {
         attachment.video.fail(message.message)
       }
 
@@ -2216,7 +2206,6 @@ export class BrowserSessionManager {
     if (message.type === 'takeControl') {
       const scheduler = session.scheduler
       const key = `take-control:${attachment.id}`
-      const viewport = attachment.viewport
       if (
         scheduler.accepting &&
         (scheduler.controlKey === key ||
@@ -2248,13 +2237,7 @@ export class BrowserSessionManager {
           }
 
           try {
-            if (session.localOwner || session.browser?.webcodecs) {
-              await this.updateScreencast(session, nextController)
-            } else {
-              const browser = await this.browserFor(session)
-              await this.cancelTouches(session)
-              await browser.command({ type: 'resize', ...viewport })
-            }
+            await this.updateScreencast(session, nextController)
 
             session.clipboardInput = null
             session.controllerId = nextController
@@ -2467,7 +2450,15 @@ export class BrowserSessionManager {
             }
 
             this.queueAppState(session, browser.state)
-            await this.waitForAppState(session)
+            // Metadata writes must not hold input slots. Keep the existing
+            // persistence barrier for navigation and non-input commands.
+            if (
+              !['pointer', 'wheel', 'touch', 'key', 'insertText'].includes(
+                queuedMessage.type
+              )
+            ) {
+              await this.waitForAppState(session)
+            }
           }
 
           if (queuedMessage.type === 'touch' && session.touchIds.size === 0) {
@@ -2590,7 +2581,7 @@ export class BrowserSessionManager {
     settings = session.videoSettings
   ): Promise<void> {
     // Revoke the old lane before any asynchronous control handoff.
-    if (session.browser?.webcodecs) {
+    if (!session.localOwner) {
       for (const attachment of session.attachments.values()) {
         if (controllerId !== attachmentController(attachment)) {
           attachment.video.suspend()
@@ -2695,7 +2686,7 @@ export class BrowserSessionManager {
     }
 
     await browser
-      ?.setScreencasting(visible, settings)
+      ?.setScreencasting(visible)
       .catch((cause) =>
         this.broadcastVideoUnavailable(
           session,

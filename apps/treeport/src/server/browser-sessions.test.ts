@@ -50,10 +50,35 @@ class FakeBrowser implements BrowserSessionBrowser {
   }
   commands: BrowserClientMessage[] = []
   screencasting: boolean[] = []
-  readonly negotiateVideo = vi.fn(
-    async (_peerId: string, _sdp: string) => 'answer'
+  private videoEpoch = 0
+  readonly startVideo = vi.fn(
+    (_viewerId: string, send: (message: BrowserServerMessage) => boolean) =>
+      send({
+        type: 'webcodecsReady',
+        epoch: ++this.videoEpoch,
+        codec: 'avc1.42002a',
+        width: Math.max(2, Math.round(this.state.viewport.width / 2) * 2),
+        height: Math.max(2, Math.round(this.state.viewport.height / 2) * 2),
+        hardwareSupported: false,
+        encoderPreference: 'no-preference',
+        processor: 'window',
+        encoderBackend: 'unknown'
+      })
   )
-  readonly closeVideoPeer = vi.fn(async (_peerId: string) => undefined)
+  readonly ackVideo = vi.fn(
+    (_viewerId: string, _epoch: number, _sequence: number) => undefined
+  )
+  readonly closeVideoViewer = vi.fn(
+    async (_viewerId: string): Promise<void> => undefined
+  )
+  webcodecsViewer(
+    viewerId: string
+  ): ReturnType<BrowserSessionBrowser['webcodecsViewer']> {
+    return {
+      start: (send) => this.startVideo(viewerId, send),
+      ack: (epoch, sequence) => this.ackVideo(viewerId, epoch, sequence)
+    }
+  }
   closeRequests: boolean[] = []
   closeRequiresConfirmation = false
   closes = 0
@@ -293,7 +318,7 @@ function fixture(
 beforeEach(() => browsers.splice(0))
 
 describe('Browser sessions', () => {
-  it('bounds video negotiation without blocking input and revokes hidden viewers', async () => {
+  it('uses only WebCodecs for hosted video without blocking input and revokes hidden viewers', async () => {
     const value = fixture()
     const viewer = value.transport('viewer')
     await runEffect(
@@ -304,26 +329,26 @@ describe('Browser sessions', () => {
         viewer.transport
       )
     )
-    expect(viewer.messages).toContainEqual({ type: 'videoReady' })
-    const browser = browsers[0]!
-    let answer!: (sdp: string) => void
-    browser.negotiateVideo.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          answer = resolve
-        })
+    expect(viewer.messages).toContainEqual(
+      expect.objectContaining({ type: 'webcodecsReady', epoch: 1 })
     )
+    expect(viewer.messages).not.toContainEqual({ type: 'videoReady' })
+    const browser = browsers[0]!
     value.manager.message('viewer', {
       type: 'videoOffer',
-      requestId: 'first',
+      requestId: 'unsupported',
       sdp: 'offer'
     })
+    expect(
+      viewer.messages.some((message) => message.type === 'videoAnswer')
+    ).toBe(false)
+    expect(browser.startVideo).toHaveBeenCalledOnce()
     value.manager.message('viewer', {
-      type: 'videoOffer',
-      requestId: 'duplicate',
-      sdp: 'offer'
+      type: 'webcodecsAck',
+      epoch: 1,
+      sequence: 0
     })
-    expect(browser.negotiateVideo).toHaveBeenCalledTimes(1)
+    expect(browser.ackVideo).toHaveBeenCalledWith('viewer', 1, 0)
     value.manager.message('viewer', {
       type: 'wheel',
       x: 10,
@@ -333,37 +358,24 @@ describe('Browser sessions', () => {
       modifiers: 0
     })
     await vi.waitFor(() => expect(browser.commands).toHaveLength(1))
+    let retired: () => void = () => undefined
+    browser.closeVideoViewer.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          retired = resolve
+        })
+    )
     value.manager.message('viewer', { type: 'setVisible', visible: false })
-    expect(browser.closeVideoPeer).toHaveBeenCalledWith('viewer')
-    // Return before the hidden negotiation finishes. Readiness must wait for
-    // its cleanup, otherwise the only resumed offer is silently discarded.
+    expect(browser.closeVideoViewer).toHaveBeenCalledWith('viewer')
+    // Returning before cleanup finishes must not revive the retired viewer.
     browser.screencasting.length = 0
     value.manager.message('viewer', { type: 'setVisible', visible: true })
     await vi.waitFor(() => expect(browser.screencasting).toContain(true))
-    expect(
-      viewer.messages.filter((message) => message.type === 'videoReady')
-    ).toHaveLength(1)
-    answer('stale-answer')
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(
-      viewer.messages.some((message) => message.type === 'videoAnswer')
-    ).toBe(false)
-    await vi.waitFor(() =>
-      expect(
-        viewer.messages.filter((message) => message.type === 'videoReady')
-      ).toHaveLength(2)
-    )
-    value.manager.message('viewer', {
-      type: 'videoOffer',
-      requestId: 'resumed',
-      sdp: 'offer'
-    })
-    await vi.waitFor(() =>
-      expect(viewer.messages).toContainEqual({
-        type: 'videoAnswer',
-        requestId: 'resumed',
-        sdp: 'answer'
-      })
+    expect(browser.startVideo).toHaveBeenCalledOnce()
+    retired()
+    await vi.waitFor(() => expect(browser.startVideo).toHaveBeenCalledTimes(2))
+    expect(viewer.messages).toContainEqual(
+      expect.objectContaining({ type: 'webcodecsReady', epoch: 2 })
     )
     const observer = value.transport('observer')
     await runEffect(
@@ -405,7 +417,7 @@ describe('Browser sessions', () => {
     expect(browser.state.viewport).toEqual({ width: 900, height: 600 })
 
     value.manager.close('viewer')
-    expect(browser.closeVideoPeer).toHaveBeenCalledWith('viewer')
+    expect(browser.closeVideoViewer).toHaveBeenCalledWith('viewer')
 
     // Restoring a workspace must not see its disconnected viewer as someone
     // else's controller, even if client storage was unavailable on reload.
@@ -426,7 +438,7 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
   })
 
-  it('authorizes one-use attachment tickets, shares control, and isolates video peers', async () => {
+  it('authorizes one-use attachment tickets, shares control, and isolates hosted video viewers', async () => {
     const value = fixture()
     const identity = {
       account: {
@@ -489,7 +501,11 @@ describe('Browser sessions', () => {
         identity
       )
     )
-    expect(second.messages.at(-1)).toMatchObject({
+    expect(
+      second.messages
+        .filter((message) => message.type === 'controlChanged')
+        .at(-1)
+    ).toMatchObject({
       type: 'controlChanged',
       state: {
         controlled: false,
@@ -515,22 +531,24 @@ describe('Browser sessions', () => {
       requestId: 'second-offer',
       sdp: 'offer-2'
     })
-    await vi.waitFor(() =>
-      expect(first.messages).toContainEqual({
-        type: 'videoAnswer',
-        requestId: 'first-offer',
-        sdp: 'answer'
-      })
-    )
-    expect(second.messages).toContainEqual({
-      type: 'videoAnswer',
-      requestId: 'second-offer',
-      sdp: 'answer'
+    expect(
+      first.messages.some((message) => message.type === 'videoAnswer')
+    ).toBe(false)
+    expect(
+      second.messages.some((message) => message.type === 'videoAnswer')
+    ).toBe(false)
+    expect(browser.startVideo.mock.calls.map(([id]) => id)).toEqual(['first'])
+    value.manager.message('first', {
+      type: 'webcodecsAck',
+      epoch: 1,
+      sequence: 0
     })
-    expect(browser.negotiateVideo.mock.calls).toEqual([
-      ['first', 'offer-1'],
-      ['second', 'offer-2']
-    ])
+    value.manager.message('second', {
+      type: 'webcodecsAck',
+      epoch: 1,
+      sequence: 0
+    })
+    expect(browser.ackVideo.mock.calls).toEqual([['first', 1, 0]])
 
     const lateObserver = value.transport('late-observer')
     await runEffect(
@@ -547,7 +565,15 @@ describe('Browser sessions', () => {
         otherDevice
       )
     )
-    expect(lateObserver.messages).toContainEqual({ type: 'videoReady' })
+    expect(lateObserver.messages).not.toContainEqual({ type: 'videoReady' })
+    expect(
+      lateObserver.messages.some((message) => message.type === 'webcodecsReady')
+    ).toBe(false)
+    expect(lateObserver.messages).toContainEqual({
+      type: 'videoUnavailable',
+      message:
+        'Hosted browser video streams only to the controlling viewer. Take control to view this tab.'
+    })
     expect(lateObserver.messages).toContainEqual({
       type: 'ready',
       state: expect.objectContaining({
@@ -766,7 +792,11 @@ describe('Browser sessions', () => {
 
     expect(browsers).toHaveLength(1)
     expect(first.messages.at(-1)).toMatchObject({ type: 'controlChanged' })
-    expect(second.messages.at(-1)).toMatchObject({ type: 'controlChanged' })
+    expect(
+      second.messages
+        .filter((message) => message.type === 'controlChanged')
+        .at(-1)
+    ).toMatchObject({ type: 'controlChanged' })
     await value.manager.dispose()
   })
 
@@ -1378,20 +1408,23 @@ describe('Browser sessions', () => {
       message: 'stale capture failure'
     })
     expect(reconnectedRemote.messages).toHaveLength(beforeReplacement)
+    value.manager.message('remote-reconnected', { type: 'takeControl' })
     await vi.waitFor(() =>
-      expect(reconnectedRemote.messages).toContainEqual({ type: 'videoReady' })
+      expect(reconnectedRemote.messages).toContainEqual(
+        expect.objectContaining({ type: 'webcodecsReady' })
+      )
     )
     value.manager.message('remote-reconnected', {
       type: 'videoOffer',
       requestId: 'replacement',
       sdp: 'offer'
     })
-    await vi.waitFor(() =>
-      expect(reconnectedRemote.messages).toContainEqual({
-        type: 'videoAnswer',
-        requestId: 'replacement',
-        sdp: 'answer'
-      })
+    expect(reconnectedRemote.messages).not.toContainEqual(
+      expect.objectContaining({ type: 'videoAnswer', requestId: 'replacement' })
+    )
+    expect(browsers[1]!.startVideo).toHaveBeenCalledWith(
+      'remote-reconnected',
+      expect.any(Function)
     )
 
     await value.manager.dispose()

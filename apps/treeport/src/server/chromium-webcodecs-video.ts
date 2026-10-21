@@ -5,7 +5,7 @@ import {
   parseBrowserServerMessage,
   type BrowserServerMessage
 } from '@treeport/shared'
-import { PlaywrightBrowserVideo } from './browser-video'
+import type { BrowserCapturePage } from './browser-video'
 import { captureChromiumWebCodecs } from './chromium-webcodecs-capture'
 
 export interface ChromiumWebCodecsViewer {
@@ -16,10 +16,11 @@ export interface ChromiumWebCodecsViewer {
   ack(epoch: number, sequence: number): void
 }
 
-// One explicitly selected tab, one controlling viewer, one outstanding packet.
+// One exact tab, one controlling viewer, one outstanding packet.
 // The helper authenticates on loopback; viewers use the existing ticket/identity
 // authenticated Treeport socket. Capability tokens never appear in URLs/logs.
-export class ChromiumWebCodecsVideo extends PlaywrightBrowserVideo {
+export class ChromiumWebCodecsVideo {
+  private helper: BrowserCapturePage['page'] | null = null
   private server: WebSocketServer | null = null
   private socket: WebSocket | null = null
   private viewer: {
@@ -33,17 +34,62 @@ export class ChromiumWebCodecsVideo extends PlaywrightBrowserVideo {
     first: Uint8Array | null
   } | null = null
   private epoch = 0
+  private width = 0
+  private height = 0
 
-  override async start(): Promise<void> {
+  constructor(
+    private readonly openCapturePage: () => Promise<BrowserCapturePage>,
+    private readonly extensionId: string,
+    private readonly failed: (message: string) => void
+  ) {}
+
+  async start(width: number, height: number): Promise<void> {
+    const captureWidth = Math.max(2, Math.round(width / 2) * 2)
+    const captureHeight = Math.max(2, Math.round(height / 2) * 2)
     if (this.server) {
+      if (this.width === captureWidth && this.height === captureHeight) {
+        return
+      }
+
+      // Reacquire at the new native capture size, not an upscaled old track.
+      // A fresh helper/encoder and epoch retire the old packet and decoder;
+      // the viewer waits for a new IDR and acknowledges decoder readiness.
+      const viewer = this.viewer
+      await this.stop()
+      await this.start(width, height).catch((error) => {
+        this.failed(
+          'WebCodecs capture could not be resized. Reconnect to restart video.'
+        )
+        throw error
+      })
+      if (
+        viewer &&
+        !this.viewerSource(viewer.id).start(viewer.send, viewer.frame)
+      ) {
+        this.failed('Capture helper unavailable after resizing.')
+      }
+
       return
     }
 
-    await super.start(1280, 800, {
-      captureScale: 1,
-      frameRate: 60,
-      maxBitrate: 8_000_000
-    })
+    this.width = captureWidth
+    this.height = captureHeight
+    const { page: helper, targetId } = await this.openCapturePage()
+    this.helper = helper
+    const lost = () => {
+      if (this.helper === helper) {
+        this.helper = null
+        this.failed('Browser video capture stopped. Reconnect to restart it.')
+      }
+    }
+    helper.once('crash', lost)
+    helper.once('close', lost)
+    await helper
+      .goto(`chrome-extension://${this.extensionId}/capture.html`)
+      .catch(async (error) => {
+        await this.stop()
+        throw error
+      })
     const token = crypto.randomBytes(32).toString('hex')
     const server = new WebSocketServer({
       host: '127.0.0.1',
@@ -179,10 +225,35 @@ export class ChromiumWebCodecsVideo extends PlaywrightBrowserVideo {
     })
     await Promise.all([
       connected,
-      this.helper!.evaluate(`(async () => {
-        globalThis.__treeportWebCodecs = await (${captureChromiumWebCodecs.toString()})(
-          globalThis.__treeportVideo.getTrack(), ${JSON.stringify(`ws://127.0.0.1:${address.port}`)}, ${JSON.stringify(token)}
+      helper.evaluate(`(async () => {
+        const target = (await chrome.debugger.getTargets()).find(
+          target => target.id === ${JSON.stringify(targetId)}
         );
+        if (!target?.tabId) throw new Error('The Browser capture target is unavailable.');
+        const sourceId = await chrome.tabCapture.getMediaStreamId({ targetTabId: target.tabId });
+        // Bound native acquisition, not just post-capture scaling. This helper
+        // is recreated on resize so a larger viewport never upscales an old track.
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { mandatory: {
+            chromeMediaSource: 'tab', chromeMediaSourceId: sourceId,
+            maxWidth: ${captureWidth}, maxHeight: ${captureHeight}, maxFrameRate: 60
+          } }
+        });
+        await (async () => {
+          const track = stream.getVideoTracks()[0];
+          await track.applyConstraints({
+            width: { exact: ${captureWidth} }, height: { exact: ${captureHeight} },
+            frameRate: { max: 60 }
+          });
+          track.contentHint = 'motion';
+          globalThis.__treeportWebCodecs = await (${captureChromiumWebCodecs.toString()})(
+            track, ${JSON.stringify(`ws://127.0.0.1:${address.port}`)}, ${JSON.stringify(token)}
+          );
+        })().catch(error => {
+          stream.getTracks().forEach(track => track.stop());
+          throw error;
+        });
       })()`)
     ]).catch(async (error) => {
       await this.stop()
@@ -241,7 +312,7 @@ export class ChromiumWebCodecsVideo extends PlaywrightBrowserVideo {
     }
   }
 
-  override async closePeer(id: string): Promise<void> {
+  async closeViewer(id: string): Promise<void> {
     if (this.viewer?.id !== id) {
       return
     }
@@ -250,15 +321,19 @@ export class ChromiumWebCodecsVideo extends PlaywrightBrowserVideo {
     this.socket?.send(JSON.stringify({ type: 'stop' }))
   }
 
-  override async stop(): Promise<void> {
+  async stop(): Promise<void> {
     this.viewer = null
     this.socket = null
     const server = this.server
     this.server = null
+    this.width = 0
+    this.height = 0
     for (const client of server?.clients ?? []) {
       client.terminate()
     }
     server?.close()
-    await super.stop()
+    const helper = this.helper
+    this.helper = null
+    await helper?.close().catch(() => undefined)
   }
 }

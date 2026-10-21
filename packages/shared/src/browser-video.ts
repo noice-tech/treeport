@@ -222,8 +222,6 @@ async function captureBrowserVideo(
   await resize(width, height)
   return {
     stop,
-    // Only the privileged helper may consume this exact-tab track.
-    getTrack: () => track,
     closePeer,
     resize,
     async negotiate(id: string, sdp: string): Promise<string> {

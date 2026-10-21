@@ -2,13 +2,14 @@ import type { BrowserServerMessage } from '@treeport/shared'
 import type { ChromiumWebCodecsViewer } from './chromium-webcodecs-video'
 
 interface BrowserVideoSource {
-  webcodecs?: ChromiumWebCodecsViewer | undefined
-  negotiate(sdp: string): Promise<string>
+  webcodecs: ChromiumWebCodecsViewer | null
+  negotiate: ((sdp: string) => Promise<string>) | null
   close(): Promise<void>
 }
 
-// One viewer owns one negotiation lane. The session scheduler supplies a source
-// only after capture is ready; ICE and retiring peers never occupy that scheduler.
+// Hosted Chromium uses WebCodecs; only Electron-owned tabs negotiate WebRTC.
+// The session scheduler supplies a source after capture is ready; native ICE
+// negotiation and retiring viewers never occupy that scheduler.
 export class BrowserVideoViewer {
   #source: { readonly runtime: BrowserVideoSource } | null = null
   #advertised = false
@@ -61,6 +62,7 @@ export class BrowserVideoViewer {
     if (
       !source ||
       source.runtime.webcodecs ||
+      !source.runtime.negotiate ||
       !this.#advertised ||
       this.#negotiation ||
       this.#retirement

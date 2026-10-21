@@ -18,10 +18,23 @@ export async function captureChromiumWebCodecs(
     )
   }
 
+  const { width, height } = track.getSettings()
+  if (!width || !height) {
+    throw new Error('Exact-tab capture did not report its dimensions.')
+  }
+
+  // H.264 level 4.2 covers 1080p60; larger viewports need the macroblock
+  // throughput of level 5.1 or 5.2 (up to the protocol's 3840×2160 limit).
+  const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16)
   const config: VideoEncoderConfig = {
-    codec: 'avc1.42002a',
-    width: 1280,
-    height: 800,
+    codec:
+      macroblocks <= 8704
+        ? 'avc1.42002a'
+        : macroblocks * 60 <= 983040
+          ? 'avc1.420033'
+          : 'avc1.420034',
+    width,
+    height,
     bitrate: 8_000_000,
     framerate: 60,
     latencyMode: 'realtime',
@@ -37,7 +50,7 @@ export async function captureChromiumWebCodecs(
 
   if (!(await VideoEncoder.isConfigSupported(config)).supported) {
     throw new Error(
-      'Chromium cannot encode realtime 1280×800 AVC Annex-B, even with software fallback.'
+      `Chromium cannot encode realtime ${width}×${height} AVC Annex-B, even with software fallback.`
     )
   }
 
@@ -87,6 +100,7 @@ export async function captureChromiumWebCodecs(
     latest?.close()
     latest = null
     void reader.cancel().catch(() => undefined)
+    track.stop()
     socket.close()
   }
   const fail = (message: string) => {
@@ -98,6 +112,11 @@ export async function captureChromiumWebCodecs(
 
     stop()
   }
+  track.addEventListener('ended', () => {
+    if (!stopped) {
+      fail('Exact-tab capture ended.')
+    }
+  })
   socket.onopen = () => socket.send(JSON.stringify({ token }))
   socket.onclose = stop
   socket.onerror = () => fail('Capture media socket failed.')
@@ -184,8 +203,8 @@ export async function captureChromiumWebCodecs(
                 type: 'webcodecsReady',
                 epoch,
                 codec: metadata.decoderConfig.codec,
-                width: 1280,
-                height: 800,
+                width,
+                height,
                 hardwareSupported,
                 encoderPreference: config.hardwareAcceleration,
                 processor: 'window',
@@ -231,10 +250,8 @@ export async function captureChromiumWebCodecs(
       return
     }
 
-    if (frame.displayWidth !== 1280 || frame.displayHeight !== 800) {
-      fail(
-        'Capture dimensions changed; this PoC requires a fixed 1280×800 tab.'
-      )
+    if (frame.displayWidth !== width || frame.displayHeight !== height) {
+      fail('Capture dimensions changed without restarting the video epoch.')
       return
     }
 

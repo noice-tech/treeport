@@ -27,7 +27,6 @@ import type {
   BrowserRuntimeState
 } from '@treeport/shared'
 
-import { PlaywrightBrowserVideo } from './browser-video'
 import { ChromiumWebCodecsVideo } from './chromium-webcodecs-video'
 import { PlaywrightBrowserHost } from './browser-page-host'
 import { browserRuntime } from './browser-runtime'
@@ -98,11 +97,6 @@ async function readContextLink(
   }
 }
 
-import {
-  DEFAULT_BROWSER_VIDEO_SETTINGS,
-  type BrowserVideoSettings
-} from '@treeport/shared/browser-host'
-
 const DEFAULT_VIEWPORT = { width: 1_280, height: 800 }
 
 export class PlaywrightBrowser {
@@ -110,9 +104,8 @@ export class PlaywrightBrowser {
   private context: BrowserContext | null = null
   private page: Page | null = null
   private cdp: CDPSession | null = null
-  private video: PlaywrightBrowserVideo | null = null
+  private video: ChromiumWebCodecsVideo | null = null
   private screencasting = false
-  private videoSettings = DEFAULT_BROWSER_VIDEO_SETTINGS
   private closing = false
   private dialogHandler: ((dialog: Dialog) => void) | null = null
   private readonly consoleMessages: string[] = []
@@ -141,8 +134,7 @@ export class PlaywrightBrowser {
   constructor(
     private readonly host: PlaywrightBrowserHost,
     private readonly workspacePath: string,
-    private readonly callbacks: PlaywrightBrowserCallbacks,
-    readonly webcodecs = false
+    private readonly callbacks: PlaywrightBrowserCallbacks
   ) {}
 
   static async status(cachePath: string): Promise<BrowserInstallStatus> {
@@ -245,14 +237,15 @@ export class PlaywrightBrowser {
     await cdp.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-color-scheme', value: 'dark' }]
     })
-    const Video = this.webcodecs
-      ? ChromiumWebCodecsVideo
-      : PlaywrightBrowserVideo
-    this.video = new Video(openCapturePage, extensionId, (message) => {
-      this.screencasting = false
-      void this.video?.stop()
-      this.callbacks.navigationError(message, 'video')
-    })
+    this.video = new ChromiumWebCodecsVideo(
+      openCapturePage,
+      extensionId,
+      (message) => {
+        this.screencasting = false
+        void this.video?.stop()
+        this.callbacks.navigationError(message, 'video')
+      }
+    )
     page.on('popup', (candidate) => {
       void (async () => {
         const supportedUrl = (value: string): string | null => {
@@ -472,38 +465,23 @@ export class PlaywrightBrowser {
     return this.page ? browserCursor(this.page, point) : ('default' as const)
   }
 
-  webcodecsViewer(peerId: string) {
-    return this.video instanceof ChromiumWebCodecsVideo
-      ? this.video.viewerSource(peerId)
-      : undefined
-  }
-
-  async negotiateVideo(peerId: string, sdp: string): Promise<string> {
+  webcodecsViewer(viewerId: string) {
     if (!this.video) {
       throw new Error('Browser video is unavailable.')
     }
 
-    return this.video.negotiate(peerId, sdp)
+    return this.video.viewerSource(viewerId)
   }
 
-  async closeVideoPeer(peerId: string): Promise<void> {
-    await this.video?.closePeer(peerId)
+  async closeVideoViewer(viewerId: string): Promise<void> {
+    await this.video?.closeViewer(viewerId)
   }
 
-  async setScreencasting(
-    enabled: boolean,
-    settings: BrowserVideoSettings = this.videoSettings
-  ): Promise<void> {
+  async setScreencasting(enabled: boolean): Promise<void> {
     // Commands, resize stop/start pairs and cleanup share the session consumer.
     const page = this.page
     const video = this.video
-    if (
-      !page ||
-      page.isClosed() ||
-      !video ||
-      (enabled === this.screencasting &&
-        (!enabled || settings === this.videoSettings))
-    ) {
+    if (!page || page.isClosed() || !video || enabled === this.screencasting) {
       return
     }
 
@@ -514,16 +492,11 @@ export class PlaywrightBrowser {
     }
 
     await video
-      .start(
-        this.stateValue.viewport.width,
-        this.stateValue.viewport.height,
-        settings
-      )
+      .start(this.stateValue.viewport.width, this.stateValue.viewport.height)
       .catch((error) => {
         this.screencasting = false
         throw error
       })
-    this.videoSettings = settings
   }
 
   async copy(): Promise<BrowserClipboard | null> {
@@ -753,6 +726,9 @@ export class PlaywrightBrowser {
       this.contextMenu = null
     }
 
+    // Commit and publish the address before releasing the input barrier.
+    // Renderer-dependent title/history reads must not hold subsequent input;
+    // refreshPageState's revision guard retires stale background results.
     if (message.type === 'navigate') {
       this.updateState({ loading: true })
       await browserNavigation(
@@ -764,7 +740,8 @@ export class PlaywrightBrowser {
         this.updateState({ loading: false })
         throw error
       })
-      await this.refreshPageState()
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
       return
     }
 
@@ -775,7 +752,8 @@ export class PlaywrightBrowser {
         null,
         'page'
       )
-      await this.refreshPageState()
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
       return
     }
 
@@ -786,7 +764,8 @@ export class PlaywrightBrowser {
         null,
         'page'
       )
-      await this.refreshPageState()
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
       return
     }
 
@@ -801,7 +780,8 @@ export class PlaywrightBrowser {
         this.updateState({ loading: false })
         throw error
       })
-      await this.refreshPageState()
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
       return
     }
 
@@ -812,11 +792,6 @@ export class PlaywrightBrowser {
     }
 
     if (message.type === 'resize') {
-      // Experimental video is a fixed surface; input uses the advertised viewport.
-      if (this.webcodecs) {
-        return
-      }
-
       if (
         this.state.viewport.width === message.width &&
         this.state.viewport.height === message.height
