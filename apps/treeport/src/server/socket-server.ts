@@ -305,6 +305,11 @@ export function createSocketServer({
             id: crypto.randomUUID(),
             isConnected: () => accepted.readyState === WebSocket.OPEN,
             sendMessage: (message) => send('message', message),
+            // At most one unacknowledged encoded packet can reach this queue.
+            sendFrame: (message) =>
+              accepted.readyState === WebSocket.OPEN &&
+              accepted.bufferedAmount < 2 * 1024 * 1024 &&
+              Queue.unsafeOffer(outgoing, { message, queuedAt: Date.now() }),
             disconnect: () => accepted.close(4001, 'Browser rejected')
           }
           protocolConnectionId = yield* Effect.raceFirst(

@@ -28,6 +28,7 @@ import type {
 } from '@treeport/shared'
 
 import { PlaywrightBrowserVideo } from './browser-video'
+import { ChromiumWebCodecsVideo } from './chromium-webcodecs-video'
 import { PlaywrightBrowserHost } from './browser-page-host'
 import { browserRuntime } from './browser-runtime'
 import { browserNavigation } from './browser-navigation'
@@ -140,7 +141,8 @@ export class PlaywrightBrowser {
   constructor(
     private readonly host: PlaywrightBrowserHost,
     private readonly workspacePath: string,
-    private readonly callbacks: PlaywrightBrowserCallbacks
+    private readonly callbacks: PlaywrightBrowserCallbacks,
+    readonly webcodecs = false
   ) {}
 
   static async status(cachePath: string): Promise<BrowserInstallStatus> {
@@ -243,15 +245,14 @@ export class PlaywrightBrowser {
     await cdp.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-color-scheme', value: 'dark' }]
     })
-    this.video = new PlaywrightBrowserVideo(
-      openCapturePage,
-      extensionId,
-      (message) => {
-        this.screencasting = false
-        void this.video?.stop()
-        this.callbacks.navigationError(message, 'video')
-      }
-    )
+    const Video = this.webcodecs
+      ? ChromiumWebCodecsVideo
+      : PlaywrightBrowserVideo
+    this.video = new Video(openCapturePage, extensionId, (message) => {
+      this.screencasting = false
+      void this.video?.stop()
+      this.callbacks.navigationError(message, 'video')
+    })
     page.on('popup', (candidate) => {
       void (async () => {
         const supportedUrl = (value: string): string | null => {
@@ -469,6 +470,12 @@ export class PlaywrightBrowser {
 
   async cursor(point: { x: number; y: number }) {
     return this.page ? browserCursor(this.page, point) : ('default' as const)
+  }
+
+  webcodecsViewer(peerId: string) {
+    return this.video instanceof ChromiumWebCodecsVideo
+      ? this.video.viewerSource(peerId)
+      : undefined
   }
 
   async negotiateVideo(peerId: string, sdp: string): Promise<string> {
@@ -805,6 +812,11 @@ export class PlaywrightBrowser {
     }
 
     if (message.type === 'resize') {
+      // Experimental video is a fixed surface; input uses the advertised viewport.
+      if (this.webcodecs) {
+        return
+      }
+
       if (
         this.state.viewport.width === message.width &&
         this.state.viewport.height === message.height

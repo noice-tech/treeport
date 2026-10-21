@@ -4,8 +4,10 @@ import {
   type BrowserServerMessage
 } from '@treeport/shared'
 import { presentBrowserVideo } from './browser-video-presentation'
+import { ChromiumWebCodecsReceiver } from './chromium-webcodecs-receiver'
 
 export class BrowserVideoReceiver {
+  private webcodecs: ChromiumWebCodecsReceiver | null = null
   private peer: RTCPeerConnection | null = null
   private requestId: string | null = null
   private visible = false
@@ -27,7 +29,39 @@ export class BrowserVideoReceiver {
       return
     }
 
-    if (message.type === 'videoReady') {
+    if (
+      (message.type === 'state' || message.type === 'controlChanged') &&
+      !message.state.controlled &&
+      this.webcodecs
+    ) {
+      this.stop()
+    }
+
+    if (message.type === 'webcodecsReady') {
+      if (!this.visible) {
+        return
+      }
+
+      this.stop()
+      this.statusChanged('Connecting experimental Chromium WebCodecs video…')
+      const receiver = new ChromiumWebCodecsReceiver(
+        this.video,
+        message,
+        this.send,
+        this.failed
+      )
+      this.webcodecs = receiver
+      void receiver.startDecoder().catch((error) => {
+        if (this.webcodecs === receiver) {
+          this.send({
+            type: 'webcodecsStop',
+            message: String(error).slice(0, 512)
+          })
+          this.stop()
+          this.failed(String(error))
+        }
+      })
+    } else if (message.type === 'videoReady') {
       if (!this.visible) {
         return
       }
@@ -58,6 +92,12 @@ export class BrowserVideoReceiver {
     ) {
       this.available = false
       this.stop()
+    }
+  }
+
+  frame(data: Uint8Array): void {
+    if (this.visible && !this.disposed) {
+      this.webcodecs?.frame(data)
     }
   }
 
@@ -191,6 +231,8 @@ export class BrowserVideoReceiver {
   }
 
   private stop(): void {
+    this.webcodecs?.stop()
+    this.webcodecs = null
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null

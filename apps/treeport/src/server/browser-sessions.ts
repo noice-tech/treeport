@@ -62,6 +62,7 @@ export interface BrowserTransport {
   id: string
   isConnected(): boolean
   sendMessage(message: BrowserServerMessage): boolean
+  sendFrame?(data: Uint8Array): boolean
   disconnect(): void
 }
 
@@ -87,6 +88,10 @@ export type BrowserSessionConfig = Pick<
 >
 
 export interface BrowserSessionBrowser {
+  readonly webcodecs?: boolean
+  webcodecsViewer?(
+    peerId: string
+  ): ReturnType<PlaywrightBrowser['webcodecsViewer']>
   readonly state: BrowserRuntimeState
   launch(): Promise<void>
   command(
@@ -285,10 +290,16 @@ const defaultBrowserFactory: BrowserSessionBrowserFactory = (
   host,
   workspacePath,
   _title,
-  _appId,
+  appId,
   _worktreeId,
   callbacks
-) => new PlaywrightBrowser(host, workspacePath, callbacks)
+) =>
+  new PlaywrightBrowser(
+    host,
+    workspacePath,
+    callbacks,
+    process.env.TREEPORT_WEBCODECS_APP_ID === appId
+  )
 
 const DEFAULT_STATE: BrowserRuntimeState = {
   url: 'about:blank',
@@ -491,7 +502,9 @@ export class BrowserSessionManager {
 
     return {
       ...session.state,
-      videoSettings: session.videoSettings,
+      videoSettings: session.browser?.webcodecs
+        ? { captureScale: 1, frameRate: 60, maxBitrate: 8_000_000 }
+        : session.videoSettings,
       controlled: session.controllerId === attachmentController(attachment),
       hasController:
         session.localOwner !== null || session.controllerId !== null,
@@ -1385,8 +1398,13 @@ export class BrowserSessionManager {
       transport,
       visible: ticket.visible,
       closing: false,
-      video: new BrowserVideoViewer((message) =>
-        transport.sendMessage(message)
+      video: new BrowserVideoViewer(
+        (message) => transport.sendMessage(message),
+        (data) =>
+          !attachment.closing &&
+          attachment.visible &&
+          session.controllerId === attachmentController(attachment) &&
+          (transport.sendFrame?.(data) ?? false)
       ),
       cursorPoint: null,
       cursorUpdate: null,
@@ -1932,7 +1950,8 @@ export class BrowserSessionManager {
 
   private prepareVideoViewer(
     session: BrowserSession,
-    attachment: BrowserAttachment
+    attachment: BrowserAttachment,
+    controllerId = session.controllerId
   ): void {
     if (
       session.videoError ||
@@ -1940,6 +1959,16 @@ export class BrowserSessionManager {
       !attachment.visible ||
       !attachment.transport.isConnected()
     ) {
+      return
+    }
+
+    if (
+      session.browser?.webcodecs &&
+      controllerId !== attachmentController(attachment)
+    ) {
+      attachment.video.fail(
+        'WebCodecs PoC streams only to the controlling viewer. Take control to view this tab.'
+      )
       return
     }
 
@@ -1958,6 +1987,7 @@ export class BrowserSessionManager {
       })
     } else if (!session.localOwner && browser) {
       attachment.video.resume({
+        webcodecs: browser.webcodecsViewer?.(attachment.id),
         negotiate: (sdp) => browser.negotiateVideo(attachment.id, sdp),
         close: () => browser.closeVideoPeer(attachment.id)
       })
@@ -2041,6 +2071,13 @@ export class BrowserSessionManager {
             return
           }
 
+          if (session.browser?.webcodecs) {
+            respond(
+              'WebCodecs PoC is fixed at 1280×800 / 60fps target / 8Mbps; resize fits the viewer only.'
+            )
+            return
+          }
+
           await this.updateScreencast(
             session,
             session.controllerId,
@@ -2065,6 +2102,25 @@ export class BrowserSessionManager {
             )
         }
       })
+      return
+    }
+
+    if (message.type === 'webcodecsStop') {
+      if (session.browser?.webcodecs) {
+        attachment.video.fail(message.message)
+      }
+
+      return
+    }
+
+    if (message.type === 'webcodecsAck') {
+      if (
+        attachment.visible &&
+        session.controllerId === attachmentController(attachment)
+      ) {
+        attachment.video.ack(message.epoch, message.sequence)
+      }
+
       return
     }
 
@@ -2192,7 +2248,7 @@ export class BrowserSessionManager {
           }
 
           try {
-            if (session.localOwner) {
+            if (session.localOwner || session.browser?.webcodecs) {
               await this.updateScreencast(session, nextController)
             } else {
               const browser = await this.browserFor(session)
@@ -2533,6 +2589,15 @@ export class BrowserSessionManager {
     controllerId = session.controllerId,
     settings = session.videoSettings
   ): Promise<void> {
+    // Revoke the old lane before any asynchronous control handoff.
+    if (session.browser?.webcodecs) {
+      for (const attachment of session.attachments.values()) {
+        if (controllerId !== attachmentController(attachment)) {
+          attachment.video.suspend()
+        }
+      }
+    }
+
     const touchAttachment = session.touchAttachmentId
       ? session.attachments.get(session.touchAttachmentId)
       : null
@@ -2638,7 +2703,7 @@ export class BrowserSessionManager {
         )
       )
     for (const attachment of session.attachments.values()) {
-      this.prepareVideoViewer(session, attachment)
+      this.prepareVideoViewer(session, attachment, controllerId)
     }
   }
 

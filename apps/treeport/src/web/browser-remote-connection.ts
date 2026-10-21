@@ -32,13 +32,18 @@ export function connectRemoteBrowser(
     appId,
     false,
     {
+      frame: (data) => receiver.frame(data),
       message: (message) => {
         if (message.type === 'ready') {
           handlers.statusChanged('Waiting for browser video…')
         }
 
         receiver.receive(message)
-        if (message.type !== 'videoReady' && message.type !== 'videoAnswer') {
+        if (
+          message.type !== 'videoReady' &&
+          message.type !== 'videoAnswer' &&
+          message.type !== 'webcodecsReady'
+        ) {
           handlers.message(message)
         }
       }

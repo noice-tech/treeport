@@ -1,6 +1,8 @@
 import type { BrowserServerMessage } from '@treeport/shared'
+import type { ChromiumWebCodecsViewer } from './chromium-webcodecs-video'
 
 interface BrowserVideoSource {
+  webcodecs?: ChromiumWebCodecsViewer | undefined
   negotiate(sdp: string): Promise<string>
   close(): Promise<void>
 }
@@ -15,7 +17,8 @@ export class BrowserVideoViewer {
   #disposed = false
 
   constructor(
-    private readonly send: (message: BrowserServerMessage) => boolean
+    private readonly send: (message: BrowserServerMessage) => boolean,
+    private readonly frame: (data: Uint8Array) => boolean = () => false
   ) {}
 
   resume(source: BrowserVideoSource): void {
@@ -39,12 +42,29 @@ export class BrowserVideoViewer {
       return
     }
 
-    this.#advertised = this.send({ type: 'videoReady' })
+    if (this.#source.runtime.webcodecs) {
+      this.#advertised = true
+      if (!this.#source.runtime.webcodecs.start(this.send, this.frame)) {
+        this.fail('Capture helper unavailable. Reconnect to restart video.')
+      }
+    } else {
+      this.#advertised = this.send({ type: 'videoReady' })
+    }
+  }
+
+  ack(epoch: number, sequence: number): void {
+    this.#source?.runtime.webcodecs?.ack(epoch, sequence)
   }
 
   offer(requestId: string, sdp: string): void {
     const source = this.#source
-    if (!source || !this.#advertised || this.#negotiation || this.#retirement) {
+    if (
+      !source ||
+      source.runtime.webcodecs ||
+      !this.#advertised ||
+      this.#negotiation ||
+      this.#retirement
+    ) {
       return
     }
 

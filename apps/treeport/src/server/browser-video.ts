@@ -62,13 +62,13 @@ export interface BrowserCapturePage {
 }
 
 export class PlaywrightBrowserVideo {
-  private helper: BrowserCapturePage['page'] | null = null
+  protected helper: BrowserCapturePage['page'] | null = null
   private settings = DEFAULT_BROWSER_VIDEO_SETTINGS
 
   constructor(
     private readonly openCapturePage: () => Promise<BrowserCapturePage>,
-    private readonly extensionId: string,
-    private readonly failed: (message: string) => void
+    protected readonly extensionId: string,
+    protected readonly failed: (message: string) => void
   ) {}
 
   async start(
