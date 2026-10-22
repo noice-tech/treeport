@@ -5,7 +5,7 @@ description: Open web pages beside your terminals.
 
 Browser apps let you use websites and development servers inside a tree.
 
-You can interact with the page while an agent uses it. A robot icon appears in the toolbar during an agent command.
+You and your agents share the same live page. A robot icon in the toolbar shows when an agent is using it.
 
 ## Open a page
 
@@ -16,6 +16,17 @@ You can interact with the page while an agent uses it. A robot icon appears in t
 Use **Development servers** beside the address bar to open a detected server.
 
 The app supports navigation, page search, fullscreen, pointer lock, and normal keyboard and pointer input.
+
+## Local and remote browsers
+
+Treeport picks the browser based on how you connect:
+
+- **Local browser:** When the macOS app runs on the same computer as Treeport, pages open in the app's built-in browser.
+- **Remote browser:** In the web interface, or when the macOS app connects to [another computer](/features/remote-access/), the browser runs on the host, next to your development servers and agents. Your device streams it, so agents keep working after you disconnect.
+
+Agents can use either browser.
+
+Opening a development server in your own browser through a tunnel gives you a separate session, not the page your agents use.
 
 ## Browser requirements
 
