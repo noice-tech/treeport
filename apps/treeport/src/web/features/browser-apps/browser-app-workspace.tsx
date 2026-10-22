@@ -138,6 +138,7 @@ export function BrowserAppWorkspace({
 }) {
   const sectionRef = useRef<HTMLElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasHostRef = useRef<HTMLDivElement>(null)
   const remoteConnectionRef = useRef<RemoteBrowserConnection | null>(null)
   const viewportAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -754,7 +755,10 @@ export function BrowserAppWorkspace({
       }
 
       pendingNavigationRef.current = null
-      if (message.type === 'videoSettingsResult') {
+      if (
+        message.type === 'videoSettingsResult' ||
+        message.type === 'videoChannel'
+      ) {
         return
       }
 
@@ -777,10 +781,15 @@ export function BrowserAppWorkspace({
 
     traceBrowserOpen(app.id, 'browser.hosted.attach_started')
     const video = videoRef.current
-    if (!video) {
+    const canvasHost = canvasHostRef.current
+    if (!video || !canvasHost) {
       return
     }
 
+    // A worker takes over the canvas; control of a canvas transfers only once.
+    const canvas = document.createElement('canvas')
+    canvas.className = 'block size-full object-contain'
+    canvasHost.replaceChildren(canvas)
     let firstFrame = true
     const playing = () => {
       if (firstFrame) {
@@ -793,10 +802,11 @@ export function BrowserAppWorkspace({
       setError(null)
     }
     video.addEventListener('playing', playing)
-    const connection = connectRemoteBrowser(app.id, video, {
+    const connection = connectRemoteBrowser(app.id, video, canvas, {
       message: receiveMessage,
       failed: (message) => setFailure({ message }),
-      statusChanged: setStreamStatus
+      statusChanged: setStreamStatus,
+      presented: playing
     })
     remoteConnectionRef.current = connection
     connectionRef.current = connection
@@ -827,6 +837,7 @@ export function BrowserAppWorkspace({
       }
 
       connection.dispose()
+      canvas.remove()
     }
   }, [connectionRevision, localBrowser, app.id, receiveMessage, send])
 
@@ -928,14 +939,17 @@ export function BrowserAppWorkspace({
         return
       }
 
+      // Video is captured at even dimensions. An odd viewport would make the
+      // hosted compositor rescale every captured frame, which is expensive in
+      // software compositing.
       viewport = viewportOverrideRef.current ?? {
         width: Math.max(
-          1,
-          Math.min(3_840, Math.round(entry.contentRect.width))
+          2,
+          Math.min(3_840, Math.floor(entry.contentRect.width / 2) * 2)
         ),
         height: Math.max(
-          1,
-          Math.min(2_160, Math.round(entry.contentRect.height))
+          2,
+          Math.min(2_160, Math.floor(entry.contentRect.height / 2) * 2)
         )
       }
       // Throttle rather than debounce so dragging a divider keeps resizing.
@@ -2485,6 +2499,13 @@ export function BrowserAppWorkspace({
                   ) : null}
                 </ContextMenuContent>
               </ContextMenu>
+            )}
+            {localBrowser ? null : (
+              <div
+                ref={canvasHostRef}
+                className="pointer-events-none absolute inset-0"
+                aria-hidden="true"
+              />
             )}
             {state === null || state.url === 'about:blank' ? (
               <div

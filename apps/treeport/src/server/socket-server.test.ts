@@ -443,7 +443,8 @@ describe('Effect WebSocket real network', () => {
       ),
       closeOwner: vi.fn(
         (connectionId: string) => void ownerCloses.push(connectionId)
-      )
+      ),
+      handoffMedia: vi.fn(() => false)
     } satisfies BrowserSessionController
     const value = await fixture(browserSessions)
     const browser = createProtocolSocket<
@@ -588,7 +589,8 @@ describe('Effect WebSocket real network', () => {
       close: vi.fn(),
       acceptOwner: vi.fn(() => Effect.succeed('owner')),
       ownerMessage: vi.fn(),
-      closeOwner: vi.fn()
+      closeOwner: vi.fn(),
+      handoffMedia: vi.fn(() => false)
     }
     const value = await fixture(browserSessions)
     const browser = createProtocolSocket<
@@ -622,7 +624,8 @@ describe('Effect WebSocket real network', () => {
       close: (id) => void closed.push(id),
       acceptOwner: () => Effect.succeed('owner'),
       ownerMessage: vi.fn(),
-      closeOwner: vi.fn()
+      closeOwner: vi.fn(),
+      handoffMedia: vi.fn(() => false)
     }
     const value = await fixture(browserSessions)
     const connect = () =>

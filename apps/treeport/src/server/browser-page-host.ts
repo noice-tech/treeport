@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
@@ -8,13 +9,40 @@ import {
 } from './browser-video'
 import { browserRuntime } from './browser-runtime'
 import { browserClipboard } from './browser-clipboard'
+import { startBrowserDisplay, type BrowserDisplay } from './browser-display'
+import type { BrowserRelay } from './browser-relay-client'
 
 interface PlaywrightBrowserLease {
   browser: Browser
   context: BrowserContext
   page: Page
   extensionId: string
+  // Null only for hosts that probe the browser installation.
+  relay: BrowserRelay | null
+  // The display's native pointer (see startBrowserDisplay).
+  input: string | null
   openCapturePage(): Promise<BrowserCapturePage>
+}
+
+// Playwright opens every page as the foreground tab of a shared window.
+// Chromium throttles a background tab to 1 fps once a few of its frames go
+// undrawn, and capture does not count as drawing: the captured page froze for
+// a second after each scroll. Each hosted page gets its own window, and the
+// capture helper opens behind it.
+async function createPage(
+  browser: Browser,
+  context: BrowserContext,
+  options: { newWindow?: boolean; background?: boolean }
+): Promise<Page> {
+  const url = `about:blank#treeport-${crypto.randomUUID()}`
+  const session = await browser.newBrowserCDPSession()
+  const [page] = await Promise.all([
+    context.waitForEvent('page', { predicate: (page) => page.url() === url }),
+    session
+      .send('Target.createTarget', { url, ...options })
+      .finally(() => session.detach())
+  ])
+  return page
 }
 
 export class PlaywrightBrowserHost {
@@ -25,11 +53,15 @@ export class PlaywrightBrowserHost {
   private pendingOpens = 0
   private closing = false
   private debuggingEndpoint: string | null = null
+  private display: BrowserDisplay | null = null
   private captureExtensionId = ''
   private closeOperation: Promise<void> | null = null
   private readonly closingPages = new Map<Page, Promise<void>>()
 
-  constructor(readonly profilePath: string) {}
+  constructor(
+    readonly profilePath: string,
+    private readonly relay: BrowserRelay | null
+  ) {}
 
   get started(): boolean {
     return this.context !== null
@@ -108,26 +140,60 @@ export class PlaywrightBrowserHost {
         ) {
           env.DISPLAY ||= ':0'
           env.GALLIUM_DRIVER ||= 'd3d12'
-          args.push('--enable-gpu', '--use-angle=gl')
+          // GPU compositing synchronizes every shared image (tiles, WebGL,
+          // video) across D3D12 contexts through WSL, which stalls the GPU
+          // thread while pages load. WebGL stays on the GPU; compositing and
+          // raster run on the CPU, which is several times faster here.
+          args.push(
+            '--enable-gpu',
+            '--use-angle=gl',
+            '--disable-gpu-compositing'
+          )
+        }
+
+        const display = await startBrowserDisplay(this.profilePath)
+        if (display) {
+          env.DISPLAY = display.name
+          delete env.WAYLAND_DISPLAY
+          // Keep the page-visible defaults of headless mode.
+          args.push(
+            '--ozone-platform=x11',
+            '--hide-scrollbars',
+            '--mute-audio',
+            '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4'
+          )
         }
 
         await fs.rm(path.join(this.profilePath, 'DevToolsActivePort'), {
           force: true
         })
-        context = await chromium.launchPersistentContext(this.profilePath, {
-          executablePath: runtime.executablePath,
-          chromiumSandbox: true,
-          headless: true,
-          acceptDownloads: false,
-          ignoreDefaultArgs: ['--disable-extensions'],
-          args,
-          env,
-          // Each browser page sets its own viewport in launch(). A context
-          // default also resizes the shared native window when a capture helper
-          // tab opens, changing the streamed resolution on every tree switch.
-          viewport: null
-        })
+        context = await chromium
+          .launchPersistentContext(this.profilePath, {
+            executablePath: runtime.executablePath,
+            chromiumSandbox: true,
+            headless: display === null,
+            acceptDownloads: false,
+            ignoreDefaultArgs: ['--disable-extensions'],
+            args,
+            env,
+            // Each browser page sets its own viewport in launch(). A context
+            // default also resizes the shared native window when a capture
+            // helper tab opens, changing the streamed resolution on every tree
+            // switch.
+            viewport: null
+          })
+          .catch((error) => {
+            display?.close()
+            throw error
+          })
         browser = context.browser()
+        this.display = display
+        browser?.once('disconnected', () => {
+          display?.close()
+          if (this.display === display) {
+            this.display = null
+          }
+        })
         const extensionSession = await browser!.newBrowserCDPSession()
         await extensionSession
           .send('Extensions.loadUnpacked', { path: extension.directory })
@@ -181,13 +247,48 @@ export class PlaywrightBrowserHost {
       const page =
         initialPage && !initialPage.isClosed()
           ? initialPage
-          : await context.newPage()
+          : await createPage(browser, context, { newWindow: true })
       this.pages.add(page)
+      const display = this.display
+      const input = display?.input ?? null
+      if (display && input) {
+        // Native input addresses screen pixels. A fullscreen window has no
+        // toolbar, so the viewport's corner sits at the screen's origin.
+        // Without a window manager, fullscreen keeps the window's size.
+        const cdp = await context.newCDPSession(page)
+        const { targetInfo } = await cdp
+          .send('Target.getTargetInfo')
+          .finally(() => cdp.detach())
+        const session = await browser.newBrowserCDPSession()
+        await session
+          .send('Browser.getWindowForTarget', {
+            targetId: targetInfo.targetId
+          })
+          .then(async ({ windowId }) => {
+            await session.send('Browser.setWindowBounds', {
+              windowId,
+              bounds: {
+                left: 0,
+                top: 0,
+                width: display.width,
+                height: display.height
+              }
+            })
+            await session.send('Browser.setWindowBounds', {
+              windowId,
+              bounds: { windowState: 'fullscreen' }
+            })
+          })
+          .finally(() => session.detach())
+      }
+
       return {
         browser,
         context,
         page,
         extensionId: this.captureExtensionId,
+        relay: this.relay,
+        input,
         openCapturePage: () =>
           this.schedule(async () => {
             if (
@@ -203,7 +304,7 @@ export class PlaywrightBrowserHost {
               .send('Target.getTargetInfo')
               .finally(() => cdp.detach())
             return {
-              page: await context.newPage(),
+              page: await createPage(browser, context, { background: true }),
               targetId: targetInfo.targetId
             }
           })
@@ -234,6 +335,12 @@ export class PlaywrightBrowserHost {
         }
       })
     )
+  }
+
+  // Pages render at the streamed viewer's refresh rate, so each frame is
+  // displayed exactly once instead of being dropped or repeated unevenly.
+  setRefreshRate(hz: number): void {
+    this.display?.setRefreshRate(hz)
   }
 
   getDebuggingEndpoint(): string | null {
@@ -274,6 +381,7 @@ export class PlaywrightBrowserHost {
       this.browser = null
       this.pages.clear()
       this.debuggingEndpoint = null
+      this.relay?.close()
       await context?.close().catch(() => undefined)
     })
     return this.closeOperation

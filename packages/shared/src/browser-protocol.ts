@@ -101,6 +101,16 @@ export type BrowserContextActionResult = Schema.Schema.Type<
   typeof browserContextActionResultSchema
 >
 
+const browserWheelFields = {
+  type: Schema.Literal('wheel'),
+  x: Schema.Finite.pipe(Schema.between(0, 3_840)),
+  y: Schema.Finite.pipe(Schema.between(0, 2_160)),
+  // CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
+  modifiers: Schema.Int.pipe(Schema.between(0, 15)),
+  deltaX: Schema.Finite.pipe(Schema.between(-10_000, 10_000)),
+  deltaY: Schema.Finite.pipe(Schema.between(-10_000, 10_000))
+}
+
 export const browserClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('setVideoSettings'),
@@ -203,15 +213,7 @@ export const browserClientMessageSchema = Schema.Union(
           : phase === 'end' || points.length > 0)
     )
   ),
-  Schema.Struct({
-    type: Schema.Literal('wheel'),
-    x: Schema.Finite.pipe(Schema.between(0, 3_840)),
-    y: Schema.Finite.pipe(Schema.between(0, 2_160)),
-    // CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
-    modifiers: Schema.Int.pipe(Schema.between(0, 15)),
-    deltaX: Schema.Finite.pipe(Schema.between(-10_000, 10_000)),
-    deltaY: Schema.Finite.pipe(Schema.between(-10_000, 10_000))
-  }),
+  Schema.Struct(browserWheelFields),
   Schema.Struct({
     type: Schema.Literal('key'),
     phase: Schema.Literal('down', 'up'),
@@ -238,10 +240,16 @@ export const browserClientMessageSchema = Schema.Union(
     type: Schema.Literal('setVisible'),
     visible: Schema.Boolean
   }),
+  // Marks the point in this socket's input order that wheel events sent on
+  // the media socket afterwards must not overtake.
   Schema.Struct({
-    type: Schema.Literal('webcodecsAck'),
-    epoch: Schema.Int.pipe(Schema.between(1, 0xffffffff)),
-    sequence: Schema.Int.pipe(Schema.between(0, 0xffffffff))
+    type: Schema.Literal('inputBarrier'),
+    id: Schema.Int.pipe(Schema.between(1, 0xffffffff))
+  }),
+  // The viewer display's refresh rate, which hosted pages render at.
+  Schema.Struct({
+    type: Schema.Literal('refreshRate'),
+    hz: Schema.Finite.pipe(Schema.between(24, 480))
   }),
   Schema.Struct({
     type: Schema.Literal('webcodecsStop'),
@@ -255,6 +263,28 @@ export const browserClientMessageSchema = Schema.Union(
 )
 export type BrowserClientMessage = Schema.Schema.Type<
   typeof browserClientMessageSchema
+>
+
+// The decoder worker's media socket: flow control for the video it receives,
+// and wheel input, which must not wait on the daemon's main thread.
+export const browserMediaClientMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('webcodecsAck'),
+    epoch: Schema.Int.pipe(Schema.between(1, 0xffffffff)),
+    sequence: Schema.Int.pipe(Schema.between(0, 0xffffffff))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('webcodecsKeyframe'),
+    epoch: Schema.Int.pipe(Schema.between(1, 0xffffffff))
+  }),
+  Schema.Struct({
+    ...browserWheelFields,
+    // The last inputBarrier sent on the session socket, or 0.
+    barrier: Schema.Int.pipe(Schema.between(0, 0xffffffff))
+  })
+)
+export type BrowserMediaClientMessage = Schema.Schema.Type<
+  typeof browserMediaClientMessageSchema
 >
 
 export const browserRuntimeStateSchema = Schema.Struct({
@@ -424,6 +454,12 @@ export const browserServerMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('ready'),
     state: browserSessionStateSchema
+  }),
+  // Authorizes this attachment's video socket, which a decoder worker opens
+  // so packets and ACKs never wait on the page's main thread.
+  Schema.Struct({
+    type: Schema.Literal('videoChannel'),
+    mediaToken: opaqueTokenSchema
   }),
   Schema.Struct({
     type: Schema.Literal('state'),
@@ -668,6 +704,11 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
 
 export function parseBrowserAuth(value: unknown): BrowserAuth | null {
   return decodeOrNull(browserAuthSchema, value)
+}
+export function parseBrowserMediaClientMessage(
+  value: unknown
+): BrowserMediaClientMessage | null {
+  return decodeOrNull(browserMediaClientMessageSchema, value)
 }
 export function parseBrowserOwnerAuth(value: unknown): BrowserOwnerAuth | null {
   return decodeOrNull(browserOwnerAuthSchema, value)

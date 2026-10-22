@@ -24,7 +24,6 @@ type ProtocolAuthValue =
 const connectErrorPayloadSchema = Schema.Struct({ message: Schema.String })
 
 export interface ProtocolSocketOptions {
-  readonly binary?: (data: Uint8Array) => void
   readonly autoConnect?: boolean
   readonly webSocketConstructor?: (
     url: string,
@@ -196,12 +195,7 @@ class EffectProtocolSocket<
         yield* socket.runRaw(
           (data) => {
             if (data instanceof Uint8Array) {
-              if (this.options.binary && this.connected) {
-                this.options.binary(data)
-              } else {
-                this.disconnect()
-              }
-
+              this.disconnect()
               return
             }
 

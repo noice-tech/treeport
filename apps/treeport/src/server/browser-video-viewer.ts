@@ -19,7 +19,8 @@ export class BrowserVideoViewer {
 
   constructor(
     private readonly send: (message: BrowserServerMessage) => boolean,
-    private readonly frame: (data: Uint8Array) => boolean = () => false
+    // Closes the attachment's media socket, which the browser relay owns.
+    private readonly release: () => void = () => undefined
   ) {}
 
   resume(source: BrowserVideoSource): void {
@@ -45,16 +46,12 @@ export class BrowserVideoViewer {
 
     if (this.#source.runtime.webcodecs) {
       this.#advertised = true
-      if (!this.#source.runtime.webcodecs.start(this.send, this.frame)) {
+      if (!this.#source.runtime.webcodecs.start(this.send)) {
         this.fail('Capture helper unavailable. Reconnect to restart video.')
       }
     } else {
       this.#advertised = this.send({ type: 'videoReady' })
     }
-  }
-
-  ack(epoch: number, sequence: number): void {
-    this.#source?.runtime.webcodecs?.ack(epoch, sequence)
   }
 
   offer(requestId: string, sdp: string): void {
@@ -130,5 +127,6 @@ export class BrowserVideoViewer {
   dispose(): void {
     this.#disposed = true
     this.suspend()
+    this.release()
   }
 }

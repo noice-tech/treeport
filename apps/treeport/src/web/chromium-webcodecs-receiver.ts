@@ -1,248 +1,111 @@
+import { SOCKET_PATH, type BrowserServerMessage } from '@treeport/shared'
 import type {
-  BrowserClientMessage,
-  BrowserServerMessage
-} from '@treeport/shared'
+  BrowserMediaWheel,
+  BrowserMediaWorkerCommand,
+  BrowserMediaWorkerEvent
+} from './browser-media-protocol'
 
-// Full-frame Annex-B only. Decoded VideoFrames enter the existing <video>
-// surface, never RTCPeerConnection.addTrack with pre-encoded bytes.
+// Full-frame Annex-B H.264, received, decoded and painted by a worker that
+// owns both the canvas and the attachment's video socket.
 export class ChromiumWebCodecsReceiver {
-  private decoder: VideoDecoder | null = null
-  private track:
-    | (MediaStreamTrack & { writable: WritableStream<VideoFrame> })
-    | null = null
-  private writer: WritableStreamDefaultWriter<VideoFrame> | null = null
-  private pending: { sequence: number; timestamp: number } | null = null
-  private stopped = false
-  private sequence = 0
-  private callback: number | null = null
-  private start = performance.now()
-  private bytes = 0
-  private received = 0
-  private decoded = 0
-  private captured = 0
-  private droppedRaw = 0
-  private captureElapsedMs = 0
-  private encodeTotalMs = 0
-  private encodeMaxMs = 0
-  private decodeTotalMs = 0
-  private receiveToPresentTotalMs = 0
-  private receiveToPresentMaxMs = 0
-  private receivedAt = 0
-  private frames = 0
-  private lastFrame = 0
-  private maxGap = 0
+  private readonly worker: Worker
+  private epoch: number | null = null
+  private generation = 0
+  private connected = false
 
   constructor(
-    private readonly video: HTMLVideoElement,
-    private readonly config: Extract<
-      BrowserServerMessage,
-      { type: 'webcodecsReady' }
-    >,
-    private readonly send: (message: BrowserClientMessage) => void,
-    private readonly failed: (message: string) => void
-  ) {}
-
-  async startDecoder(): Promise<void> {
-    // SAFETY: Chromium's optional track generator is not in standard DOM types.
-    const { MediaStreamTrackGenerator } = globalThis as typeof globalThis & {
-      MediaStreamTrackGenerator?: new (options: {
-        kind: 'video'
-      }) => MediaStreamTrack & { writable: WritableStream<VideoFrame> }
-    }
-    if (!globalThis.VideoDecoder || !MediaStreamTrackGenerator) {
-      throw new Error(
-        'ChromiumWebCodecs prototype needs WebCodecs and MediaStreamTrackGenerator in a secure Chromium context.'
-      )
-    }
-
-    const configuration: VideoDecoderConfig = {
-      codec: this.config.codec,
-      codedWidth: this.config.width,
-      codedHeight: this.config.height,
-      optimizeForLatency: true,
-      hardwareAcceleration: 'prefer-hardware'
-      // No description: the packet is Annex-B, with SPS/PPS on each IDR.
-    }
-    if (!(await VideoDecoder.isConfigSupported(configuration)).supported) {
-      configuration.hardwareAcceleration = 'no-preference'
-      if (!(await VideoDecoder.isConfigSupported(configuration)).supported) {
-        throw new Error(
-          `WebCodecs cannot decode ${this.config.codec}, including software fallback.`
-        )
+    canvas: HTMLCanvasElement,
+    private readonly presented: () => void,
+    private readonly fallback: (message: BrowserMediaWheel) => void
+  ) {
+    this.worker = new Worker(
+      new URL('./browser-media.worker.ts', import.meta.url),
+      { type: 'module' }
+    )
+    this.worker.onmessage = ({
+      data
+    }: MessageEvent<BrowserMediaWorkerEvent>) => {
+      if (data.type === 'media') {
+        this.connected = data.connected
+      } else if (data.type === 'wheel') {
+        this.fallback(data.message)
+      } else if (data.epoch === this.epoch) {
+        this.presented()
       }
     }
-
-    if (this.stopped) {
-      return
-    }
-
-    this.track = new MediaStreamTrackGenerator({ kind: 'video' })
-    this.writer = this.track.writable.getWriter()
-    this.video.title = `Experimental Chromium WebCodecs: ${this.config.width}×${this.config.height}, 60fps target / 8Mbps.`
-    this.video.srcObject = new MediaStream([this.track])
-    this.decoder = new VideoDecoder({
-      output: (frame) => {
-        const pending = this.pending
-        if (this.stopped || !pending || frame.timestamp !== pending.timestamp) {
-          frame.close()
-          return
-        }
-
-        this.decoded++
-        this.decodeTotalMs += performance.now() - this.receivedAt
-        const writer = this.writer!
-        // One unacknowledged frame throughout socket -> decoder -> renderer.
-        // ACK on actual video presentation, not merely websocket arrival.
-        this.callback = this.video.requestVideoFrameCallback((now) => {
-          this.callback = null
-          if (this.stopped || this.pending !== pending) {
-            return
-          }
-
-          this.pending = null
-          this.frames++
-          const receiveToPresentMs = Math.max(0, now - this.receivedAt)
-          this.receiveToPresentTotalMs += receiveToPresentMs
-          this.receiveToPresentMaxMs = Math.max(
-            this.receiveToPresentMaxMs,
-            receiveToPresentMs
-          )
-          if (this.lastFrame) {
-            this.maxGap = Math.max(this.maxGap, now - this.lastFrame)
-          }
-
-          this.lastFrame = now
-          this.video.dataset.webcodecs = JSON.stringify({
-            epoch: this.config.epoch,
-            width: this.config.width,
-            height: this.config.height,
-            frames: this.frames,
-            elapsedMs: now - this.start,
-            maxGapMs: this.maxGap,
-            encoder: this.config.encoderBackend,
-            encoderPreference: this.config.encoderPreference,
-            hardwareSupported: this.config.hardwareSupported,
-            decoderPreference: configuration.hardwareAcceleration,
-            bytes: this.bytes,
-            received: this.received,
-            decoded: this.decoded,
-            captured: this.captured,
-            droppedRaw: this.droppedRaw,
-            captureElapsedMs: this.captureElapsedMs,
-            encodeTotalMs: this.encodeTotalMs,
-            encodeMaxMs: this.encodeMaxMs,
-            decodeTotalMs: this.decodeTotalMs,
-            receiveToPresentTotalMs: this.receiveToPresentTotalMs,
-            receiveToPresentMaxMs: this.receiveToPresentMaxMs
-          })
-          this.send({
-            type: 'webcodecsAck',
-            epoch: this.config.epoch,
-            sequence: pending.sequence
-          })
-        })
-        void writer
-          .write(frame)
-          .catch((error) => this.fail(String(error)))
-          .finally(() => frame.close())
-        void this.video.play().catch((error) => this.fail(String(error)))
-      },
-      error: (error) => this.fail(error.message)
-    })
-    this.decoder.configure(configuration)
-    this.send({ type: 'webcodecsAck', epoch: this.config.epoch, sequence: 0 })
+    const offscreen = canvas.transferControlToOffscreen()
+    this.post({ type: 'canvas', canvas: offscreen }, [offscreen])
   }
 
-  frame(data: Uint8Array): void {
-    if (this.stopped) {
-      return
-    }
-
-    if (
-      !this.decoder ||
-      data.byteLength < 42 ||
-      data.byteLength > 2 * 1024 * 1024
-    ) {
-      this.fail('ChromiumWebCodecs decoder is not ready or packet is invalid.')
-      return
-    }
-
-    const header = new DataView(data.buffer, data.byteOffset, 41)
-    const epoch = header.getUint32(0)
-    if (epoch !== this.config.epoch) {
-      return
-    }
-
-    const sequence = header.getUint32(4)
-    const timestamp = Math.round(header.getFloat64(8))
-    const key = header.getUint8(16) === 1
-    if (
-      sequence !== this.sequence + 1 ||
-      this.pending ||
-      this.decoder.decodeQueueSize > 0 ||
-      (!this.sequence && !key) ||
-      !Number.isSafeInteger(timestamp)
-    ) {
-      this.fail(
-        'ChromiumWebCodecs stream continuity lost. Reconnect for a new IDR; delta frames are not discarded selectively.'
-      )
-      return
-    }
-
-    this.bytes += data.byteLength
-    this.received++
-    this.receivedAt = performance.now()
-    this.captured = header.getUint32(17)
-    this.droppedRaw = header.getUint32(21)
-    this.encodeTotalMs += header.getFloat64(25)
-    this.encodeMaxMs = Math.max(this.encodeMaxMs, header.getFloat64(25))
-    this.captureElapsedMs = header.getFloat64(33)
-    this.sequence = sequence
-    this.pending = { sequence, timestamp }
-    try {
-      this.decoder.decode(
-        new EncodedVideoChunk({
-          type: key ? 'key' : 'delta',
-          timestamp,
-          data: data.subarray(41)
-        })
-      )
-    } catch (error) {
-      this.fail(String(error))
-    }
+  static supported(canvas: HTMLCanvasElement): boolean {
+    return Boolean(globalThis.VideoDecoder && canvas.transferControlToOffscreen)
   }
 
-  private fail(message: string): void {
-    if (this.stopped) {
-      return
-    }
+  // Each attachment authorizes its own video socket.
+  connect(token: string): void {
+    const url = new URL(`${SOCKET_PATH}/browser-media`, location.href)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    this.post({ type: 'connect', url: url.href, token })
+  }
 
-    this.send({ type: 'webcodecsStop', message: message.slice(0, 512) })
+  async start(
+    config: Extract<BrowserServerMessage, { type: 'webcodecsReady' }>
+  ): Promise<void> {
     this.stop()
-    this.failed(message)
+    const generation = this.generation
+    const support = await VideoDecoder.isConfigSupported({
+      codec: config.codec,
+      codedWidth: config.width,
+      codedHeight: config.height,
+      optimizeForLatency: true
+    })
+    if (generation !== this.generation) {
+      return
+    }
+
+    if (!support.supported) {
+      throw new Error(`This browser cannot decode ${config.codec} video.`)
+    }
+
+    this.epoch = config.epoch
+    this.post({
+      type: 'configure',
+      config: {
+        epoch: config.epoch,
+        codec: config.codec,
+        width: config.width,
+        height: config.height
+      }
+    })
   }
 
+  // Wheel input rides the media socket to the browser relay, which scrolls
+  // without waiting on the daemon. Returns false when that socket is down.
+  wheel(message: BrowserMediaWheel): boolean {
+    if (!this.connected) {
+      return false
+    }
+
+    this.post({ type: 'wheel', message })
+    return true
+  }
+
+  // Discards the last painted frame on lease revocation.
   stop(): void {
-    this.stopped = true
-    if (this.callback !== null) {
-      this.video.cancelVideoFrameCallback(this.callback)
-    }
+    this.generation++
+    this.epoch = null
+    this.post({ type: 'stop' })
+  }
 
-    this.callback = null
-    this.pending = null
-    if (this.decoder?.state !== 'closed') {
-      this.decoder?.close()
-    }
+  dispose(): void {
+    this.stop()
+    this.worker.terminate()
+  }
 
-    this.decoder = null
-    void this.writer?.abort().catch(() => undefined)
-    this.writer = null
-    this.track?.stop()
-    this.track = null
-    this.video.srcObject = null
-    this.video.removeAttribute('src')
-    this.video.load() // discard the last painted frame on lease revocation
-    delete this.video.dataset.webcodecs
-    this.video.removeAttribute('title')
+  private post(
+    command: BrowserMediaWorkerCommand,
+    transfer: Transferable[] = []
+  ): void {
+    this.worker.postMessage(command, transfer)
   }
 }
