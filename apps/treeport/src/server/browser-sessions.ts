@@ -176,7 +176,6 @@ interface BrowserLocalOwner {
   controller: 'other' | 'none'
   viewport: { width: number; height: number } | null
   retainPaint: boolean
-  agentActive: boolean
   readiness: Deferred.Deferred<void>
   requests: Map<string, BrowserOwnerRequest>
 }
@@ -261,7 +260,6 @@ interface BrowserSession {
   } | null
   touchAttachmentId: string | null
   touchIds: Set<number>
-  agentActive: boolean
   retainLocalAgentPaint: boolean
   state: BrowserRuntimeState
   videoError: string | null
@@ -534,8 +532,7 @@ export class BrowserSessionManager {
               sameAccount,
               sameDevice
             }
-          : null,
-      agentActive: session.agentActive
+          : null
     }
   }
 
@@ -579,7 +576,6 @@ export class BrowserSessionManager {
       !attachment ||
       Date.now() > input.expiresAt ||
       session.closing ||
-      session.agentActive ||
       attachment.closing ||
       !attachment.visible ||
       session.attachments.get(attachment.id) !== attachment ||
@@ -653,7 +649,6 @@ export class BrowserSessionManager {
     if (
       pending &&
       (session.closing ||
-        session.agentActive ||
         session.generation !== pending.generation ||
         pending.attachment.closing ||
         !pending.attachment.visible ||
@@ -1060,7 +1055,6 @@ export class BrowserSessionManager {
       fileChooser: null,
       touchAttachmentId: null,
       touchIds: new Set(),
-      agentActive: false,
       retainLocalAgentPaint: false,
       state: {
         ...DEFAULT_STATE,
@@ -1177,7 +1171,6 @@ export class BrowserSessionManager {
               session.generation !== runtimeGeneration ||
               session.localOwner ||
               session.closing ||
-              session.agentActive ||
               !input ||
               Date.now() > input.expiresAt ||
               input.attachment.closing ||
@@ -1619,7 +1612,6 @@ export class BrowserSessionManager {
           previousOwner.controller = 'none'
           previousOwner.viewport = null
           previousOwner.retainPaint = false
-          previousOwner.agentActive = false
           previousOwner.readiness = readiness
           owner = previousOwner
         } else {
@@ -1635,7 +1627,6 @@ export class BrowserSessionManager {
             controller: 'none',
             viewport: null,
             retainPaint: false,
-            agentActive: false,
             readiness,
             requests: new Map()
           }
@@ -1883,7 +1874,6 @@ export class BrowserSessionManager {
           controller: 'other' | 'none'
           viewport: { width: number; height: number } | null
           retainPaint: boolean
-          agentActive: boolean
         }
       | { type: 'closeRequest'; force: boolean }
   ): Promise<boolean> {
@@ -1928,15 +1918,13 @@ export class BrowserSessionManager {
     owner: BrowserLocalOwner,
     controller: 'other' | 'none',
     viewport: { width: number; height: number } | null,
-    retainPaint: boolean,
-    agentActive: boolean
+    retainPaint: boolean
   ): Promise<void> {
     if (
       owner.controller === controller &&
       owner.viewport?.width === viewport?.width &&
       owner.viewport?.height === viewport?.height &&
-      owner.retainPaint === retainPaint &&
-      owner.agentActive === agentActive
+      owner.retainPaint === retainPaint
     ) {
       return
     }
@@ -1945,8 +1933,7 @@ export class BrowserSessionManager {
       type: 'runtimeControl',
       controller,
       viewport,
-      retainPaint,
-      agentActive
+      retainPaint
     })
     if (
       !accepted ||
@@ -1959,7 +1946,6 @@ export class BrowserSessionManager {
     owner.controller = controller
     owner.viewport = viewport ? { ...viewport } : null
     owner.retainPaint = retainPaint
-    owner.agentActive = agentActive
   }
 
   private prepareVideoViewer(
@@ -2083,7 +2069,6 @@ export class BrowserSessionManager {
             })
           if (
             !attachment.visible ||
-            session.agentActive ||
             session.controllerId !== attachmentController(attachment)
           ) {
             respond('Take control before changing stream settings.')
@@ -2343,8 +2328,7 @@ export class BrowserSessionManager {
               pending.id !== queuedMessage.requestId ||
               pending.attachment !== attachment ||
               !attachment.visible ||
-              pending.generation !== session.generation ||
-              session.agentActive
+              pending.generation !== session.generation
             ) {
               attachment.transport.sendMessage({
                 type: 'fileChooserClosed',
@@ -2671,8 +2655,7 @@ export class BrowserSessionManager {
           localOwner,
           controller,
           viewport,
-          retainPaint,
-          session.agentActive
+          retainPaint
         )
         await this.setLocalScreencasting(session, localOwner, true, settings)
       } else {
@@ -2682,8 +2665,7 @@ export class BrowserSessionManager {
           localOwner,
           controller,
           viewport,
-          retainPaint,
-          session.agentActive
+          retainPaint
         )
       }
 
@@ -3493,9 +3475,6 @@ export class BrowserSessionManager {
             await this.closePlaywrightRuntime(session).catch(() => undefined)
             throw error
           })
-      session.clipboardInput = null
-      session.agentActive = true
-      this.broadcastState(session)
       try {
         if (localOwner) {
           // Keep a background local page paintable for later agent commands.
@@ -3552,13 +3531,6 @@ export class BrowserSessionManager {
         }
 
         throw cause
-      } finally {
-        session.agentActive = false
-        if (localOwner && session.localOwner === localOwner) {
-          await this.updateScreencast(session).catch(() => undefined)
-        }
-
-        this.broadcastState(session)
       }
     })
     return result

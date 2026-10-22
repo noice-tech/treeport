@@ -353,8 +353,7 @@ export const browserSessionStateSchema = Schema.Struct({
   controlled: Schema.Boolean,
   hasController: Schema.Boolean,
   controller: Schema.Literal('you', 'other', 'none'),
-  controllerDetails: Schema.NullOr(browserControllerDetailsSchema),
-  agentActive: Schema.Boolean
+  controllerDetails: Schema.NullOr(browserControllerDetailsSchema)
 })
 export type BrowserSessionState = Schema.Schema.Type<
   typeof browserSessionStateSchema
@@ -661,8 +660,7 @@ export const browserOwnerServerMessageSchema = Schema.Union(
         height: Schema.Int.pipe(Schema.between(1, 2_160))
       })
     ),
-    retainPaint: Schema.Boolean,
-    agentActive: Schema.Boolean
+    retainPaint: Schema.Boolean
   }),
   Schema.Struct({
     type: Schema.Literal('closeRequest'),

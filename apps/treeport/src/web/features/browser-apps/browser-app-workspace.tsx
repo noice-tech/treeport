@@ -1651,34 +1651,6 @@ export function BrowserAppWorkspace({
             </PopoverContent>
           </Popover>
         ) : null}
-        <span
-          className={cn(
-            'pointer-events-none flex size-8 shrink-0 items-center justify-center text-cyan-300',
-            !state?.agentActive && '@max-[40rem]/browser-toolbar:hidden'
-          )}
-          role="status"
-          aria-label={state?.agentActive ? 'Agent interacting' : undefined}
-          title={state?.agentActive ? 'Agent interacting' : undefined}
-        >
-          <svg
-            viewBox="0 0 20 20"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-            className={`size-4 ${state?.agentActive ? 'opacity-100' : 'opacity-0'}`}
-          >
-            <path d="M10 2.25v2.1" />
-            <circle cx="10" cy="1.9" r=".7" fill="currentColor" stroke="none" />
-            <rect x="3.25" y="4.5" width="13.5" height="11" rx="3" />
-            <path d="M1.75 8.25v3.5M18.25 8.25v3.5M7.25 15.5v2.25M12.75 15.5v2.25" />
-            <circle cx="7.25" cy="9" r="1" fill="currentColor" stroke="none" />
-            <circle cx="12.75" cy="9" r="1" fill="currentColor" stroke="none" />
-            <path d="M7.25 12.25h5.5" />
-          </svg>
-        </span>
         <Button
           type="button"
           variant={viewportOverride ? 'secondary' : 'ghost'}
@@ -2387,12 +2359,7 @@ export function BrowserAppWorkspace({
                     }}
                     onBlur={cancelTouches}
                     onContextMenu={(event) => {
-                      if (
-                        !active ||
-                        inputBlocked ||
-                        !connectionRef.current ||
-                        stateRef.current?.agentActive
-                      ) {
+                      if (!active || inputBlocked || !connectionRef.current) {
                         event.preventDefault()
                         return
                       }
@@ -2532,7 +2499,6 @@ export function BrowserAppWorkspace({
             {fileChooser &&
             connectionRef.current &&
             state?.controlled &&
-            !state.agentActive &&
             active &&
             !inputBlocked ? (
               <BrowserFilePicker
@@ -2577,7 +2543,7 @@ export function BrowserAppWorkspace({
             videoRef={videoRef}
             receiverRef={remoteConnectionRef}
             settings={state.videoSettings}
-            canConfigure={state.controlled && !state.agentActive && !failure}
+            canConfigure={state.controlled && !failure}
             onConfigure={(settings) =>
               remoteConnectionRef.current?.configureVideo(settings) ??
               Promise.reject(new Error('Browser stream is not connected.'))

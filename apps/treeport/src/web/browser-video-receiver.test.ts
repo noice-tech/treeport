@@ -185,7 +185,6 @@ it('owns signaling and media visibility/disposal together even for immediate hos
       controller: 'you',
       controllerDetails: null,
       videoSettings: null,
-      agentActive: false,
       viewport: { width: 390, height: 844 }
     }
   }
