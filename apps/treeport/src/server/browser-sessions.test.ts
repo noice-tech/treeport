@@ -970,8 +970,7 @@ describe('Browser sessions', () => {
         expect.objectContaining({
           type: 'runtimeControl',
           controller: 'none',
-          retainPaint: true,
-          agentActive: true
+          retainPaint: true
         })
       )
     )
@@ -1032,16 +1031,14 @@ describe('Browser sessions', () => {
       expect(ownerMessages.at(-1)).toMatchObject({
         type: 'runtimeControl',
         controller: 'none',
-        retainPaint: true,
-        agentActive: false
+        retainPaint: true
       })
     )
     expect(observer.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
       state: {
         controlled: false,
-        controller: 'other',
-        agentActive: false
+        controller: 'other'
       }
     })
     expect(browsers).toHaveLength(1)
@@ -1059,9 +1056,9 @@ describe('Browser sessions', () => {
     ).toMatchObject({
       type: 'runtimeControl',
       controller: 'none',
-      retainPaint: true,
-      agentActive: false
+      retainPaint: true
     })
+    const ownerMessageCount = ownerMessages.length
     await expect(
       runEffect(
         value.manager.agentCommand('app_browser', {
@@ -1070,12 +1067,7 @@ describe('Browser sessions', () => {
         })
       )
     ).resolves.toBe('- button "Local target" [ref=e1]')
-    expect(ownerMessages.at(-1)).toMatchObject({
-      type: 'runtimeControl',
-      controller: 'none',
-      retainPaint: true,
-      agentActive: false
-    })
+    expect(ownerMessages).toHaveLength(ownerMessageCount)
     // Native cancellation releases the queue without closing the local page.
     let rejectReload: (error: Error) => void = () => undefined
     localBrowser.page.reload.mockImplementationOnce(
@@ -1945,7 +1937,7 @@ describe('Browser sessions', () => {
     expect(browsers[1]!.closes).toBe(1)
   })
 
-  it('keeps human control while it reports agent activity', async () => {
+  it('keeps human control during agent commands', async () => {
     const runAgentCli = vi
       .fn<BrowserAgentCliRunner>()
       .mockResolvedValue('snapshot')
@@ -1966,19 +1958,8 @@ describe('Browser sessions', () => {
         args: []
       })
     )
-    expect(client.messages).toContainEqual(
-      expect.objectContaining({
-        type: 'state',
-        state: expect.objectContaining({
-          controller: 'you',
-          controlled: true,
-          agentActive: true
-        })
-      })
-    )
     expect(client.messages.at(-1)).toMatchObject({
-      type: 'state',
-      state: { controller: 'you', controlled: true, agentActive: false }
+      state: { controller: 'you', controlled: true }
     })
     await expect(
       runEffect(
@@ -1989,8 +1970,7 @@ describe('Browser sessions', () => {
       )
     ).rejects.toThrow('Browser disconnected')
     expect(client.messages.at(-1)).toMatchObject({
-      type: 'state',
-      state: { controller: 'you', controlled: true, agentActive: false }
+      state: { controller: 'you', controlled: true }
     })
     await value.manager.dispose()
   })

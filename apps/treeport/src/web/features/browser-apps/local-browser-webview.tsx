@@ -88,7 +88,6 @@ export function LocalBrowserWebview({
     null
   )
   const externalControllerRef = useRef<'other' | null>(null)
-  const agentActiveRef = useRef(false)
   const retainPaintRef = useRef(false)
   const takeControlRef = useRef<() => void>(() => undefined)
   useEffect(() => {
@@ -171,8 +170,7 @@ export function LocalBrowserWebview({
       hasController: true,
       controller: externalControllerRef.current ?? 'you',
       controllerDetails: null,
-      videoSettings: null,
-      agentActive: agentActiveRef.current
+      videoSettings: null
     })
     const emitState = (
       type: 'ready' | 'state' | 'controlChanged' = 'state',
@@ -253,7 +251,6 @@ export function LocalBrowserWebview({
     }
     const clearRuntimeControl = () => {
       externalControllerRef.current = null
-      agentActiveRef.current = false
       retainPaintRef.current = false
       applyRemoteViewport(null)
       if (!disposed) {
@@ -267,8 +264,7 @@ export function LocalBrowserWebview({
     const setRuntimeControl = async (
       controller: 'other' | 'none',
       viewport: { width: number; height: number } | null,
-      retainPaint: boolean,
-      nextAgentActive: boolean
+      retainPaint: boolean
     ) => {
       const previousViewport = remoteViewport
       const previousController = externalControllerRef.current
@@ -342,7 +338,6 @@ export function LocalBrowserWebview({
       }
 
       externalControllerRef.current = locked ? 'other' : null
-      agentActiveRef.current = nextAgentActive
       retainPaintRef.current = retainPaint
       setExternalController(locked ? 'other' : null)
       if (!locked) {
@@ -557,12 +552,8 @@ export function LocalBrowserWebview({
         owner = connectionOwner
         takeControlRef.current = () => owner?.takeControl()
         // A granted claim starts unlocked; the daemon reapplies external control after ready.
-        if (
-          externalControllerRef.current !== null ||
-          retainPaintRef.current ||
-          agentActiveRef.current
-        ) {
-          if (!(await setRuntimeControl('none', null, false, false))) {
+        if (externalControllerRef.current !== null || retainPaintRef.current) {
+          if (!(await setRuntimeControl('none', null, false))) {
             throw new Error(
               'The Browser could not restore local input control.'
             )

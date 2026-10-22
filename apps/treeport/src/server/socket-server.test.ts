@@ -397,7 +397,6 @@ describe('Effect WebSocket real network', () => {
               controller: 'you',
               controllerDetails: null,
               videoSettings: null,
-              agentActive: false,
               viewport: { width: 800, height: 600 }
             }
           })

@@ -110,8 +110,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
     requestId: 'control_1',
     controller: 'other',
     viewport: { width: 375, height: 812 },
-    retainPaint: false,
-    agentActive: false
+    retainPaint: false
   } satisfies BrowserOwnerServerMessage)
   await vi.waitFor(() =>
     expect(socket.emit).toHaveBeenLastCalledWith('ownerMessage', {
@@ -124,7 +123,6 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
   expect(handlers.setRuntimeControl).toHaveBeenCalledWith(
     'other',
     { width: 375, height: 812 },
-    false,
     false
   )
   socket.connected = false
