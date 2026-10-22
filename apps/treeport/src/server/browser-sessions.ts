@@ -1,6 +1,8 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
+import type { IncomingMessage } from 'node:http'
 import path from 'node:path'
+import type { Duplex } from 'node:stream'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import * as Effect from 'effect/Effect'
@@ -52,6 +54,7 @@ import {
 import { browserNavigation } from './browser-navigation'
 import { PlaywrightBrowserHost } from './browser-page-host'
 import { BrowserVideoViewer } from './browser-video-viewer'
+import { BrowserRelay } from './browser-relay-client'
 import { browserKey, browserTouch, browserWheel } from './browser-input'
 import { browserSetupGuidance } from './browser-runtime'
 
@@ -62,7 +65,6 @@ export interface BrowserTransport {
   id: string
   isConnected(): boolean
   sendMessage(message: BrowserServerMessage): boolean
-  sendFrame?(data: Uint8Array): boolean
   disconnect(): void
 }
 
@@ -85,7 +87,10 @@ export interface BrowserSessionService {
 export type BrowserSessionConfig = Pick<
   AppConfig,
   'cacheDir' | 'dataDir' | 'runtimeDir'
->
+> & {
+  // The built browser relay entrypoint; null where pages are never streamed.
+  browserRelayEntry: string | null
+}
 
 export interface BrowserSessionBrowser {
   webcodecsViewer(
@@ -182,12 +187,14 @@ interface BrowserAttachment {
   viewerId: string
   identity: AuthenticatedViewer | null
   transport: BrowserTransport
+  mediaToken: string
   visible: boolean
   closing: boolean
   video: BrowserVideoViewer
   cursorPoint: { x: number; y: number } | null
   cursorUpdate: Promise<void> | null
   viewport: { width: number; height: number }
+  refreshRate: number | null
 }
 
 class BrowserSchedulingError extends Data.TaggedError(
@@ -302,6 +309,7 @@ const DEFAULT_STATE: BrowserRuntimeState = {
 
 export class BrowserSessionManager {
   private readonly cachePath: string
+  private readonly relay: BrowserRelay | null
   private readonly browserHost: PlaywrightBrowserHost
   private readonly sessions = new Map<string, BrowserSession>()
   private readonly sessionCreations = new Map<string, Promise<BrowserSession>>()
@@ -328,8 +336,23 @@ export class BrowserSessionManager {
     }
   ) {
     this.cachePath = path.join(config.cacheDir, 'browser')
+    this.relay = config.browserRelayEntry
+      ? new BrowserRelay(config.browserRelayEntry, {
+          wheel: (attachmentId, message) => this.message(attachmentId, message),
+          cursor: (attachmentId, point) => {
+            for (const session of this.sessions.values()) {
+              const attachment = session.attachments.get(attachmentId)
+              if (attachment) {
+                attachment.cursorPoint = point
+                this.trackCursor(session, attachment)
+              }
+            }
+          }
+        })
+      : null
     this.browserHost = new PlaywrightBrowserHost(
-      path.join(config.dataDir, 'browser-profile-chrome')
+      path.join(config.dataDir, 'browser-profile-chrome'),
+      this.relay
     )
     this.unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'app.removed') {
@@ -1385,19 +1408,17 @@ export class BrowserSessionManager {
       viewerId: ticket.viewerId,
       identity: ticket.identity,
       transport,
+      mediaToken: crypto.randomBytes(32).toString('base64url'),
       visible: ticket.visible,
       closing: false,
       video: new BrowserVideoViewer(
         (message) => transport.sendMessage(message),
-        (data) =>
-          !attachment.closing &&
-          attachment.visible &&
-          session.controllerId === attachmentController(attachment) &&
-          (transport.sendFrame?.(data) ?? false)
+        () => this.relay?.release(transport.id)
       ),
       cursorPoint: null,
       cursorUpdate: null,
-      viewport: { ...session.state.viewport }
+      viewport: { ...session.state.viewport },
+      refreshRate: null
     }
     session.attachments.set(attachment.id, attachment)
 
@@ -1444,6 +1465,10 @@ export class BrowserSessionManager {
       transport.sendMessage({
         type: 'ready',
         state: this.stateFor(session, attachment)
+      })
+      transport.sendMessage({
+        type: 'videoChannel',
+        mediaToken: attachment.mediaToken
       })
       this.broadcastState(session, 'controlChanged')
       if (session.crashMessage) {
@@ -1955,9 +1980,9 @@ export class BrowserSessionManager {
       !session.localOwner &&
       controllerId !== attachmentController(attachment)
     ) {
-      attachment.video.fail(
-        'Hosted browser video streams only to the controlling viewer. Take control to view this tab.'
-      )
+      // Not a failure: interacting with the viewport takes control, and the
+      // stream resumes for this viewer.
+      attachment.video.suspend()
       return
     }
 
@@ -1976,6 +2001,10 @@ export class BrowserSessionManager {
             .then(() => undefined)
       })
     } else if (!session.localOwner && browser) {
+      if (attachment.refreshRate) {
+        this.browserHost.setRefreshRate(attachment.refreshRate)
+      }
+
       attachment.video.resume({
         webcodecs: browser.webcodecsViewer(attachment.id),
         negotiate: null,
@@ -2103,14 +2132,25 @@ export class BrowserSessionManager {
       return
     }
 
-    if (message.type === 'webcodecsAck') {
+    if (message.type === 'refreshRate') {
+      attachment.refreshRate = message.hz
       if (
+        !session.localOwner &&
         attachment.visible &&
         session.controllerId === attachmentController(attachment)
       ) {
-        attachment.video.ack(message.epoch, message.sequence)
+        this.browserHost.setRefreshRate(message.hz)
       }
 
+      return
+    }
+
+    if (message.type === 'inputBarrier') {
+      // The scheduler runs operations in order, so every earlier click, key
+      // and control change has reached the page when this one runs.
+      void this.scheduleOperation(session, async () => {
+        this.relay?.barrier(attachment.id, message.id)
+      }).catch(() => undefined)
       return
     }
 
@@ -2470,70 +2510,7 @@ export class BrowserSessionManager {
             queuedMessage.type === 'wheel'
           ) {
             attachment.cursorPoint = { x: queuedMessage.x, y: queuedMessage.y }
-          }
-
-          if (
-            attachment.cursorPoint &&
-            !attachment.cursorUpdate &&
-            (queuedMessage.type === 'pointer' || queuedMessage.type === 'wheel')
-          ) {
-            // Cursor hit testing can force layout or wait on a busy renderer.
-            // It must never hold an input slot. Keep one best-effort lookup,
-            // sampling the latest position at roughly 30 Hz at most.
-            const generation = session.generation
-            const update = (async () => {
-              while (true) {
-                await new Promise<void>((resolve) => setTimeout(resolve, 33))
-                if (
-                  session.closing ||
-                  attachment.closing ||
-                  !attachment.visible ||
-                  session.attachments.get(attachment.id) !== attachment ||
-                  session.controllerId !== attachmentController(attachment) ||
-                  session.generation !== generation ||
-                  session.localOwner !== localOwner
-                ) {
-                  return
-                }
-
-                const point = attachment.cursorPoint
-                if (!point) {
-                  return
-                }
-
-                const cursor = await (
-                  localOwner
-                    ? browserCursor(
-                        (await this.ensureLocalAutomation(session, localOwner))
-                          .page,
-                        point
-                      )
-                    : (await this.browserFor(session)).cursor(point)
-                ).catch(() => 'default' as const)
-                if (
-                  session.closing ||
-                  attachment.closing ||
-                  !attachment.visible ||
-                  session.attachments.get(attachment.id) !== attachment ||
-                  session.controllerId !== attachmentController(attachment) ||
-                  session.generation !== generation ||
-                  session.localOwner !== localOwner
-                ) {
-                  return
-                }
-
-                if (attachment.cursorPoint === point) {
-                  attachment.transport.sendMessage({ type: 'cursor', cursor })
-                  return
-                }
-              }
-            })().catch(() => undefined)
-            attachment.cursorUpdate = update
-            void update.then(() => {
-              if (attachment.cursorUpdate === update) {
-                attachment.cursorUpdate = null
-              }
-            })
+            this.trackCursor(session, attachment)
           }
         } catch (cause) {
           const error = cause instanceof Error ? cause.message : String(cause)
@@ -2555,6 +2532,73 @@ export class BrowserSessionManager {
           message.phase === 'up') ||
         (message.type === 'touch' &&
           (message.phase === 'end' || message.phase === 'cancel'))
+    })
+  }
+
+  private trackCursor(
+    session: BrowserSession,
+    attachment: BrowserAttachment
+  ): void {
+    if (!attachment.cursorPoint || attachment.cursorUpdate) {
+      return
+    }
+
+    // Cursor hit testing can force layout or wait on a busy renderer.
+    // It must never hold an input slot. Keep one best-effort lookup,
+    // sampling the latest position at roughly 30 Hz at most.
+    const generation = session.generation
+    const localOwner = session.localOwner
+    const update = (async () => {
+      while (true) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 33))
+        if (
+          session.closing ||
+          attachment.closing ||
+          !attachment.visible ||
+          session.attachments.get(attachment.id) !== attachment ||
+          session.controllerId !== attachmentController(attachment) ||
+          session.generation !== generation ||
+          session.localOwner !== localOwner
+        ) {
+          return
+        }
+
+        const point = attachment.cursorPoint
+        if (!point) {
+          return
+        }
+
+        const cursor = await (
+          localOwner
+            ? browserCursor(
+                (await this.ensureLocalAutomation(session, localOwner)).page,
+                point
+              )
+            : (await this.browserFor(session)).cursor(point)
+        ).catch(() => 'default' as const)
+        if (
+          session.closing ||
+          attachment.closing ||
+          !attachment.visible ||
+          session.attachments.get(attachment.id) !== attachment ||
+          session.controllerId !== attachmentController(attachment) ||
+          session.generation !== generation ||
+          session.localOwner !== localOwner
+        ) {
+          return
+        }
+
+        if (attachment.cursorPoint === point) {
+          attachment.transport.sendMessage({ type: 'cursor', cursor })
+          return
+        }
+      }
+    })().catch(() => undefined)
+    attachment.cursorUpdate = update
+    void update.then(() => {
+      if (attachment.cursorUpdate === update) {
+        attachment.cursorUpdate = null
+      }
     })
   }
 
@@ -2783,6 +2827,36 @@ export class BrowserSessionManager {
         yield* Effect.promise(() => this.waitForAppState(session))
       })
     )
+  }
+
+  // Media sockets carry the attachment's video and wheel input. The daemon only
+  // authorizes the upgrade; the browser relay process owns the connection.
+  handoffMedia(
+    mediaToken: string,
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    identity: AuthenticatedViewer | null
+  ): boolean {
+    for (const session of this.sessions.values()) {
+      for (const attachment of session.attachments.values()) {
+        if (
+          attachment.mediaToken === mediaToken &&
+          !attachment.closing &&
+          (attachment.identity === null ||
+            (identity !== null &&
+              attachment.identity.account.source === identity.account.source &&
+              attachment.identity.account.login === identity.account.login &&
+              attachment.identity.deviceId === identity.deviceId))
+        ) {
+          return (
+            this.relay?.handoff(attachment.id, request, socket, head) ?? false
+          )
+        }
+      }
+    }
+
+    return false
   }
 
   close(connectionId: string): void {

@@ -38,7 +38,6 @@ export interface BrowserAppSocket {
 
 interface BrowserAppSocketOptions {
   reconnection: false
-  binary?: (data: Uint8Array) => void
   auth: {
     ticket: string
   }
@@ -63,7 +62,6 @@ export function connectBrowserApp(
   initialVisible: boolean,
   handlers: {
     message(message: BrowserServerMessage): void
-    frame?(data: Uint8Array): void
   },
   socketFactory: BrowserAppSocketFactory = defaultSocketFactory
 ): BrowserVideoConnection {
@@ -183,12 +181,7 @@ export function connectBrowserApp(
 
     const connectedSocket = socketFactory('/browsers', {
       reconnection: false,
-      auth: { ticket: result.ticket },
-      binary: (data) => {
-        if (socket === connectedSocket && !disposed && currentVisible) {
-          handlers.frame?.(data)
-        }
-      }
+      auth: { ticket: result.ticket }
     })
     socket = connectedSocket
     connecting = false
@@ -375,7 +368,8 @@ export function connectBrowserApp(
         command.type !== 'copy' &&
         command.type !== 'fileChooserResponse' &&
         command.type !== 'videoOffer' &&
-        command.type !== 'webcodecsAck' &&
+        command.type !== 'inputBarrier' &&
+        command.type !== 'refreshRate' &&
         command.type !== 'webcodecsStop' &&
         command.type !== 'setVideoSettings' &&
         pendingCommands.length < 32
@@ -383,7 +377,8 @@ export function connectBrowserApp(
         pendingCommands.push(command)
       } else if (
         command.type !== 'videoOffer' &&
-        command.type !== 'webcodecsAck' &&
+        command.type !== 'inputBarrier' &&
+        command.type !== 'refreshRate' &&
         command.type !== 'webcodecsStop'
       ) {
         handlers.message({

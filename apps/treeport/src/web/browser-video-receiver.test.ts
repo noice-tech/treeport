@@ -36,6 +36,9 @@ class FakePeer extends EventTarget {
   }
 }
 
+// SAFETY: WebRTC negotiation never touches the WebCodecs canvas.
+const canvas = {} as HTMLCanvasElement
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
@@ -59,8 +62,10 @@ it('negotiates native video only when visible and ignores superseded answers', a
   const failed = vi.fn()
   const receiver = new BrowserVideoReceiver(
     video,
+    canvas,
     (message) => messages.push(message),
     failed,
+    vi.fn(),
     vi.fn()
   )
   receiver.receive({ type: 'videoReady' })
@@ -132,6 +137,7 @@ it('negotiates native video only when visible and ignores superseded answers', a
 })
 
 it('owns signaling and media visibility/disposal together even for immediate host replies', async () => {
+  vi.stubGlobal('requestAnimationFrame', vi.fn())
   vi.stubGlobal('RTCPeerConnection', FakePeer)
   vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => null })
   vi.stubGlobal(
@@ -154,10 +160,12 @@ it('owns signaling and media visibility/disposal together even for immediate hos
   const connection = connectRemoteBrowser(
     'app-browser',
     video,
+    canvas,
     {
       message: vi.fn(),
       failed: vi.fn(),
-      statusChanged: vi.fn()
+      statusChanged: vi.fn(),
+      presented: vi.fn()
     },
     () => socket
   )
@@ -208,7 +216,14 @@ it('bounds connection retries and closes media when the signaling session is los
     play: vi.fn(async () => undefined)
   })
   const failed = vi.fn()
-  const receiver = new BrowserVideoReceiver(video, vi.fn(), failed, vi.fn())
+  const receiver = new BrowserVideoReceiver(
+    video,
+    canvas,
+    vi.fn(),
+    failed,
+    vi.fn(),
+    vi.fn()
+  )
   receiver.setVisible(true)
   receiver.receive({ type: 'videoReady' })
   await vi.advanceTimersByTimeAsync(60_000)

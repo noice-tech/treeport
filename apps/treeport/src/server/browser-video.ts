@@ -30,8 +30,25 @@ export async function prepareBrowserVideoExtension(directory: string) {
         // getTargets maps the exact CDP target to its tab. No debugger attaches
         // and no page is selected by URL, title, focus, or screen position.
         permissions: ['tabCapture', 'debugger'],
-        background: { service_worker: 'worker.js' }
+        background: { service_worker: 'worker.js' },
+        // Tab capture paints Chromium's cursor image after native pointer
+        // input. A transparent root cursor hides it wherever the page sets no
+        // cursor; reported cursors use its `auto` fallback.
+        content_scripts: [
+          {
+            matches: ['<all_urls>'],
+            css: ['cursor.css'],
+            all_frames: true,
+            match_origin_as_fallback: true,
+            run_at: 'document_start'
+          }
+        ]
       }),
+      { mode: 0o600 }
+    ),
+    fs.writeFile(
+      path.join(directory, 'cursor.css'),
+      `:where(:root) { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/%3E") 0 0, auto; }`,
       { mode: 0o600 }
     ),
     fs.writeFile(

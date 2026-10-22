@@ -65,9 +65,6 @@ class FakeBrowser implements BrowserSessionBrowser {
         encoderBackend: 'unknown'
       })
   )
-  readonly ackVideo = vi.fn(
-    (_viewerId: string, _epoch: number, _sequence: number) => undefined
-  )
   readonly closeVideoViewer = vi.fn(
     async (_viewerId: string): Promise<void> => undefined
   )
@@ -75,8 +72,7 @@ class FakeBrowser implements BrowserSessionBrowser {
     viewerId: string
   ): ReturnType<BrowserSessionBrowser['webcodecsViewer']> {
     return {
-      start: (send) => this.startVideo(viewerId, send),
-      ack: (epoch, sequence) => this.ackVideo(viewerId, epoch, sequence)
+      start: (send) => this.startVideo(viewerId, send)
     }
   }
   closeRequests: boolean[] = []
@@ -270,7 +266,8 @@ function fixture(
     dataDir: '/data',
     runtimeDir: fs.mkdtempSync(
       path.join(os.tmpdir(), 'treeport-browser-session-test-')
-    )
+    ),
+    browserRelayEntry: null
   } satisfies BrowserSessionConfig
   const manager = new BrowserSessionManager(
     service,
@@ -343,12 +340,6 @@ describe('Browser sessions', () => {
       viewer.messages.some((message) => message.type === 'videoAnswer')
     ).toBe(false)
     expect(browser.startVideo).toHaveBeenCalledOnce()
-    value.manager.message('viewer', {
-      type: 'webcodecsAck',
-      epoch: 1,
-      sequence: 0
-    })
-    expect(browser.ackVideo).toHaveBeenCalledWith('viewer', 1, 0)
     value.manager.message('viewer', {
       type: 'wheel',
       x: 10,
@@ -538,17 +529,6 @@ describe('Browser sessions', () => {
       second.messages.some((message) => message.type === 'videoAnswer')
     ).toBe(false)
     expect(browser.startVideo.mock.calls.map(([id]) => id)).toEqual(['first'])
-    value.manager.message('first', {
-      type: 'webcodecsAck',
-      epoch: 1,
-      sequence: 0
-    })
-    value.manager.message('second', {
-      type: 'webcodecsAck',
-      epoch: 1,
-      sequence: 0
-    })
-    expect(browser.ackVideo.mock.calls).toEqual([['first', 1, 0]])
 
     const lateObserver = value.transport('late-observer')
     await runEffect(
@@ -569,11 +549,11 @@ describe('Browser sessions', () => {
     expect(
       lateObserver.messages.some((message) => message.type === 'webcodecsReady')
     ).toBe(false)
-    expect(lateObserver.messages).toContainEqual({
-      type: 'videoUnavailable',
-      message:
-        'Hosted browser video streams only to the controlling viewer. Take control to view this tab.'
-    })
+    expect(
+      lateObserver.messages.some(
+        (message) => message.type === 'videoUnavailable'
+      )
+    ).toBe(false)
     expect(lateObserver.messages).toContainEqual({
       type: 'ready',
       state: expect.objectContaining({

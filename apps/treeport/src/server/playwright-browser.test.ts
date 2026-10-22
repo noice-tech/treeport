@@ -291,5 +291,9 @@ it('prepares a private exact-tab capture extension without website entry points'
   expect(manifest.permissions).toEqual(['tabCapture', 'debugger'])
   expect(manifest.externally_connectable).toBeUndefined()
   expect(manifest.web_accessible_resources).toBeUndefined()
-  expect(manifest.content_scripts).toBeUndefined()
+  expect(
+    manifest.content_scripts.flatMap(
+      (script: { js?: string[] }) => script.js ?? []
+    )
+  ).toEqual([])
 })

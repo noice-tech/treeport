@@ -153,7 +153,7 @@ export class PlaywrightBrowser {
       const statusProfile = await fs.mkdtemp(
         path.join(cachePath, '.launch-status-')
       )
-      const host = new PlaywrightBrowserHost(statusProfile)
+      const host = new PlaywrightBrowserHost(statusProfile, null)
       await host
         .openPage()
         .then((lease) => {
@@ -213,8 +213,15 @@ export class PlaywrightBrowser {
       return
     }
 
-    const { browser, context, page, extensionId, openCapturePage } =
-      await this.host.openPage()
+    const {
+      browser,
+      context,
+      page,
+      extensionId,
+      relay,
+      input,
+      openCapturePage
+    } = await this.host.openPage()
     this.context = context
     this.browser = browser
     browser.once('disconnected', () => {
@@ -237,15 +244,20 @@ export class PlaywrightBrowser {
     await cdp.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-color-scheme', value: 'dark' }]
     })
-    this.video = new ChromiumWebCodecsVideo(
-      openCapturePage,
-      extensionId,
-      (message) => {
-        this.screencasting = false
-        void this.video?.stop()
-        this.callbacks.navigationError(message, 'video')
-      }
-    )
+    this.video =
+      relay &&
+      new ChromiumWebCodecsVideo(
+        openCapturePage,
+        extensionId,
+        relay,
+        input,
+        () => this.host.getDebuggingEndpoint(),
+        (message) => {
+          this.screencasting = false
+          void this.video?.stop()
+          this.callbacks.navigationError(message, 'video')
+        }
+      )
     page.on('popup', (candidate) => {
       void (async () => {
         const supportedUrl = (value: string): string | null => {

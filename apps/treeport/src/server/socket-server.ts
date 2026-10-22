@@ -48,6 +48,9 @@ import { networkTelemetry } from './network-telemetry'
 const HANDSHAKE_TIMEOUT_MS = 10_000
 const OUTBOUND_QUEUE_CAPACITY = 512
 const CHANNELS = new Set(['terminals', 'browsers', 'browser-owners'])
+// The media socket's capability travels as its second WebSocket subprotocol,
+// so it never appears in URLs or logs.
+const MEDIA_PROTOCOL = 'treeport-media'
 const TERMINAL_EVENTS = new Set<TerminalClientEvent>([
   'input',
   'binary',
@@ -64,6 +67,13 @@ export interface BrowserSessionController {
   ): Effect.Effect<string, unknown, ApplicationServices>
   message(connectionId: string, message: BrowserClientMessage): void
   close(connectionId: string): void
+  handoffMedia(
+    mediaToken: string,
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    identity: AuthenticatedViewer | null
+  ): boolean
   acceptOwner(
     auth: BrowserOwnerAuth,
     transport: BrowserOwnerTransport
@@ -126,7 +136,8 @@ export function createSocketServer({
     attachmentManager ??
     new TerminalAttachmentManager(service, terminalMetadata, terminalHost)
   const hostedBrowsers =
-    browserSessions ?? new BrowserSessionManager(service, config)
+    browserSessions ??
+    new BrowserSessionManager(service, { ...config, browserRelayEntry: null })
   const connectionFibers = new Set<Fiber.RuntimeFiber<void, unknown>>()
   let closing = false
 
@@ -305,11 +316,6 @@ export function createSocketServer({
             id: crypto.randomUUID(),
             isConnected: () => accepted.readyState === WebSocket.OPEN,
             sendMessage: (message) => send('message', message),
-            // At most one unacknowledged encoded packet can reach this queue.
-            sendFrame: (message) =>
-              accepted.readyState === WebSocket.OPEN &&
-              accepted.bufferedAmount < 2 * 1024 * 1024 &&
-              Queue.unsafeOffer(outgoing, { message, queuedAt: Date.now() }),
             disconnect: () => accepted.close(4001, 'Browser rejected')
           }
           protocolConnectionId = yield* Effect.raceFirst(
@@ -465,34 +471,53 @@ export function createSocketServer({
     }
 
     const channel = pathname.slice(SOCKET_PATH.length + 1)
-    if (!CHANNELS.has(channel)) {
+    if (!CHANNELS.has(channel) && channel !== 'browser-media') {
       socket.destroy()
       return true
     }
 
     const security = authorizeRequest(request, { socketUpgrade: true })
-    if (!security.allowed || closing) {
-      const status = security.allowed ? 503 : security.status
+    const reject = (status: number) => {
       socket.write(
         `HTTP/1.1 ${status} ${status === 503 ? 'Service Unavailable' : 'Unauthorized'}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n`
       )
       socket.destroy()
+    }
+    if (!security.allowed || closing) {
+      reject(security.allowed ? 503 : security.status)
+      return true
+    }
+
+    const identity = security.principal
+      ? { account: security.principal, deviceId: security.deviceId }
+      : null
+    if (channel === 'browser-media') {
+      const [protocol, mediaToken] = (
+        request.headers['sec-websocket-protocol'] ?? ''
+      )
+        .split(',')
+        .map((value) => value.trim())
+      if (
+        protocol !== MEDIA_PROTOCOL ||
+        !mediaToken ||
+        !hostedBrowsers.handoffMedia(
+          mediaToken,
+          request,
+          socket,
+          head,
+          identity
+        )
+      ) {
+        reject(401)
+      }
+
       return true
     }
 
     websocketServer.handleUpgrade(request, socket, head, (accepted) => {
       websocketServer.emit('connection', accepted, request)
       const fiber = service.forkEffect(
-        runConnection(
-          channel,
-          accepted,
-          security.principal
-            ? {
-                account: security.principal,
-                deviceId: security.deviceId
-              }
-            : null
-        )
+        runConnection(channel, accepted, identity)
       )
       connectionFibers.add(fiber)
       fiber.addObserver(() => connectionFibers.delete(fiber))

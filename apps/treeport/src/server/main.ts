@@ -162,7 +162,15 @@ export async function main(
     const browserSessions = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
-          Effect.sync(() => new BrowserSessionManager(service, config)),
+          Effect.sync(
+            () =>
+              new BrowserSessionManager(service, {
+                ...config,
+                browserRelayEntry: fileURLToPath(
+                  new URL('./browser-relay.js', entrypoint)
+                )
+              })
+          ),
           (sessions) =>
             Effect.tryPromise(() => sessions.dispose()).pipe(Effect.orDie)
         ),

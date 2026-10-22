@@ -1,74 +1,52 @@
-import crypto from 'node:crypto'
-import type { AddressInfo } from 'node:net'
-import { WebSocket, WebSocketServer } from 'ws'
-import {
-  parseBrowserServerMessage,
-  type BrowserServerMessage
-} from '@treeport/shared'
+import type { BrowserServerMessage } from '@treeport/shared'
+import type { BrowserRelay, BrowserRelayStream } from './browser-relay-client'
 import type { BrowserCapturePage } from './browser-video'
 import { captureChromiumWebCodecs } from './chromium-webcodecs-capture'
 
 export interface ChromiumWebCodecsViewer {
-  start(
-    send: (message: BrowserServerMessage) => boolean,
-    frame: (data: Uint8Array) => boolean
-  ): boolean
-  ack(epoch: number, sequence: number): void
+  start(send: (message: BrowserServerMessage) => boolean): boolean
 }
 
-// One exact tab, one controlling viewer, one outstanding packet.
-// The helper authenticates on loopback; viewers use the existing ticket/identity
-// authenticated Treeport socket. Capability tokens never appear in URLs/logs.
+// One exact tab and one controlling viewer. Packets, ACKs and wheel input flow
+// through the browser relay process; this side only manages the capture helper
+// page and which viewer the stream belongs to.
 export class ChromiumWebCodecsVideo {
   private helper: BrowserCapturePage['page'] | null = null
-  private server: WebSocketServer | null = null
-  private socket: WebSocket | null = null
+  private stream: BrowserRelayStream | null = null
+  private connected = false
   private viewer: {
     id: string
     epoch: number
     send(message: BrowserServerMessage): boolean
-    frame(data: Uint8Array): boolean
-    ready: boolean
-    sequence: number
-    outstanding: boolean
-    first: Uint8Array | null
   } | null = null
   private epoch = 0
+  private restartedAt = -Infinity
   private width = 0
   private height = 0
 
   constructor(
     private readonly openCapturePage: () => Promise<BrowserCapturePage>,
     private readonly extensionId: string,
+    private readonly relay: BrowserRelay,
+    private readonly input: string | null,
+    private readonly debuggingEndpoint: () => string | null,
     private readonly failed: (message: string) => void
   ) {}
 
   async start(width: number, height: number): Promise<void> {
     const captureWidth = Math.max(2, Math.round(width / 2) * 2)
     const captureHeight = Math.max(2, Math.round(height / 2) * 2)
-    if (this.server) {
+    if (this.helper) {
       if (this.width === captureWidth && this.height === captureHeight) {
         return
       }
 
       // Reacquire at the new native capture size, not an upscaled old track.
-      // A fresh helper/encoder and epoch retire the old packet and decoder;
-      // the viewer waits for a new IDR and acknowledges decoder readiness.
-      const viewer = this.viewer
-      await this.stop()
-      await this.start(width, height).catch((error) => {
-        this.failed(
-          'WebCodecs capture could not be resized. Reconnect to restart video.'
-        )
-        throw error
-      })
-      if (
-        viewer &&
-        !this.viewerSource(viewer.id).start(viewer.send, viewer.frame)
-      ) {
-        this.failed('Capture helper unavailable after resizing.')
-      }
-
+      await this.restart(
+        width,
+        height,
+        'WebCodecs capture could not be resized. Reconnect to restart video.'
+      )
       return
     }
 
@@ -84,147 +62,69 @@ export class ChromiumWebCodecsVideo {
     }
     helper.once('crash', lost)
     helper.once('close', lost)
-    await helper
+    const endpoint = this.debuggingEndpoint()
+    const stream = await helper
       .goto(`chrome-extension://${this.extensionId}/capture.html`)
+      .then(() => {
+        if (!endpoint) {
+          throw new Error('The hosted browser debugger is not available.')
+        }
+
+        return this.relay.open(
+          {
+            extensionId: this.extensionId,
+            endpoint,
+            targetId,
+            input: this.input
+          },
+          {
+            ready: (config) => {
+              const viewer = this.viewer
+              if (
+                this.stream === stream &&
+                viewer?.epoch === config.epoch &&
+                !viewer.send(config)
+              ) {
+                this.failed('Viewer metadata queue is full.')
+              }
+            },
+            failed: (message) => {
+              if (this.stream !== stream) {
+                return
+              }
+
+              // A relay or helper loss is usually transient: recover once,
+              // but let a fault that keeps recurring reach the viewer.
+              const now = performance.now()
+              if (now - this.restartedAt < 10_000) {
+                this.failed(message)
+                return
+              }
+
+              this.restartedAt = now
+              void this.restart(this.width, this.height, message).catch(
+                () => undefined
+              )
+            }
+          }
+        )
+      })
       .catch(async (error) => {
         await this.stop()
         throw error
       })
-    const token = crypto.randomBytes(32).toString('hex')
-    const server = new WebSocketServer({
-      host: '127.0.0.1',
-      port: 0,
-      perMessageDeflate: false,
-      maxPayload: 2 * 1024 * 1024
-    })
-    this.server = server
-    await new Promise<void>((resolve, reject) => {
-      server.once('listening', resolve)
-      server.once('error', reject)
-    }).catch(async (error) => {
-      await this.stop()
-      throw error
-    })
-    // SAFETY: listening has completed on a TCP host/port, never a Unix socket.
-    const address = server.address() as AddressInfo
-    const connected = new Promise<void>((resolve, reject) => {
-      const startup = setTimeout(
-        () => reject(new Error('Capture helper authentication timed out.')),
-        5000
-      )
-      server.on('connection', (socket, request) => {
-        if (
-          this.socket ||
-          server.clients.size > 2 ||
-          request.headers.origin !== `chrome-extension://${this.extensionId}`
-        ) {
-          socket.terminate()
-          return
-        }
-
-        const timeout = setTimeout(() => socket.terminate(), 3000)
-        socket.once('message', (data, binary) => {
-          clearTimeout(timeout)
-          if (
-            binary ||
-            !Buffer.isBuffer(data) ||
-            data.byteLength > 256 ||
-            data.toString() !== JSON.stringify({ token }) ||
-            this.socket
-          ) {
-            socket.terminate()
-            return
-          }
-
-          clearTimeout(startup)
-          this.socket = socket
-          socket.on('message', (data, binary) => {
-            if (this.socket !== socket) {
-              return
-            }
-
-            const viewer = this.viewer
-            if (!binary) {
-              let value: { type?: string; message?: string } | null = null
-              try {
-                value = JSON.parse(data.toString())
-              } catch {
-                this.failed('Invalid capture helper metadata.')
-                return
-              }
-              if (value?.type === 'error') {
-                this.failed(String(value.message))
-                return
-              }
-
-              const config = parseBrowserServerMessage(value)
-              if (
-                !viewer ||
-                config?.type !== 'webcodecsReady' ||
-                config.epoch !== viewer.epoch
-              ) {
-                return
-              }
-
-              if (!viewer.send(config)) {
-                this.failed('Viewer metadata queue is full.')
-              }
-
-              return
-            }
-
-            if (!viewer) {
-              return
-            }
-
-            if (!Buffer.isBuffer(data)) {
-              this.failed('Invalid capture packet representation.')
-              return
-            }
-
-            const packet = new Uint8Array(data)
-            if (packet.byteLength < 42 || packet.byteLength > 2 * 1024 * 1024) {
-              this.failed('Invalid encoded packet.')
-              return
-            }
-
-            const header = new DataView(packet.buffer, packet.byteOffset)
-            if (header.getUint32(0) !== viewer.epoch) {
-              return
-            }
-
-            if (
-              viewer.outstanding ||
-              header.getUint32(4) !== viewer.sequence + 1
-            ) {
-              this.failed('Encoded stream continuity lost.')
-              return
-            }
-
-            viewer.sequence++
-            viewer.outstanding = true
-            if (!viewer.ready && viewer.sequence === 1) {
-              viewer.first = packet
-            } else if (!viewer.ready || !viewer.frame(packet)) {
-              this.failed('Viewer media lane was revoked or congested.')
-            }
-          })
-          socket.once('close', () => {
-            if (this.socket === socket) {
-              this.socket = null
-              this.failed(
-                'Capture helper disconnected. Reconnect to restart video.'
-              )
-            }
-          })
-          socket.on('error', () => socket.close())
-          resolve()
-        })
-        socket.once('close', () => clearTimeout(timeout))
-      })
-    })
+    this.stream = stream
+    let timeout: ReturnType<typeof setTimeout> | null = null
     await Promise.all([
-      connected,
+      Promise.race([
+        stream.connected,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('Capture helper authentication timed out.')),
+            5000
+          )
+        })
+      ]).finally(() => clearTimeout(timeout ?? undefined)),
       helper.evaluate(`(async () => {
         const target = (await chrome.debugger.getTargets()).find(
           target => target.id === ${JSON.stringify(targetId)}
@@ -237,18 +137,18 @@ export class ChromiumWebCodecsVideo {
           audio: false,
           video: { mandatory: {
             chromeMediaSource: 'tab', chromeMediaSourceId: sourceId,
-            maxWidth: ${captureWidth}, maxHeight: ${captureHeight}, maxFrameRate: 60
+            maxWidth: ${captureWidth}, maxHeight: ${captureHeight}, maxFrameRate: 120
           } }
         });
         await (async () => {
           const track = stream.getVideoTracks()[0];
           await track.applyConstraints({
             width: { exact: ${captureWidth} }, height: { exact: ${captureHeight} },
-            frameRate: { max: 60 }
+            frameRate: { max: 120 }
           });
           track.contentHint = 'motion';
           globalThis.__treeportWebCodecs = await (${captureChromiumWebCodecs.toString()})(
-            track, ${JSON.stringify(`ws://127.0.0.1:${address.port}`)}, ${JSON.stringify(token)}
+            track, ${JSON.stringify(`ws://127.0.0.1:${stream.port}`)}, ${JSON.stringify(stream.token)}
           );
         })().catch(error => {
           stream.getTracks().forEach(track => track.stop());
@@ -259,55 +159,19 @@ export class ChromiumWebCodecsVideo {
       await this.stop()
       throw error
     })
+    this.connected = this.stream === stream
   }
 
   viewerSource(id: string): ChromiumWebCodecsViewer {
     return {
-      start: (send, frame) => {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      start: (send) => {
+        if (!this.stream || !this.connected) {
           return false
         }
 
-        this.viewer = {
-          id,
-          epoch: ++this.epoch,
-          send,
-          frame,
-          ready: false,
-          sequence: 0,
-          outstanding: false,
-          first: null
-        }
-        this.socket.send(JSON.stringify({ type: 'start', epoch: this.epoch }))
+        this.viewer = { id, epoch: ++this.epoch, send }
+        this.stream.start(id, this.epoch)
         return true
-      },
-      ack: (epoch, sequence) => {
-        const viewer = this.viewer
-        if (!viewer || viewer.id !== id || viewer.epoch !== epoch) {
-          return
-        }
-
-        if (sequence === 0 && !viewer.ready) {
-          viewer.ready = true
-          if (viewer.first) {
-            const packet = viewer.first
-            viewer.first = null
-            if (!viewer.frame(packet)) {
-              this.failed('Viewer media lane was revoked or congested.')
-            }
-          }
-
-          return
-        }
-
-        if (
-          sequence === viewer.sequence &&
-          viewer.ready &&
-          viewer.outstanding
-        ) {
-          viewer.outstanding = false
-          this.socket?.send(JSON.stringify({ type: 'ack', epoch, sequence }))
-        }
       }
     }
   }
@@ -318,20 +182,34 @@ export class ChromiumWebCodecsVideo {
     }
 
     this.viewer = null
-    this.socket?.send(JSON.stringify({ type: 'stop' }))
+    this.stream?.closeViewer(id)
+  }
+
+  // A fresh helper/encoder and epoch retire the old packet and decoder; the
+  // viewer waits for a new IDR and acknowledges decoder readiness.
+  private async restart(
+    width: number,
+    height: number,
+    message: string
+  ): Promise<void> {
+    const viewer = this.viewer
+    await this.stop()
+    await this.start(width, height).catch((error) => {
+      this.failed(message)
+      throw error
+    })
+    if (viewer && !this.viewerSource(viewer.id).start(viewer.send)) {
+      this.failed('Capture helper unavailable after restarting.')
+    }
   }
 
   async stop(): Promise<void> {
     this.viewer = null
-    this.socket = null
-    const server = this.server
-    this.server = null
+    this.connected = false
+    this.stream?.close()
+    this.stream = null
     this.width = 0
     this.height = 0
-    for (const client of server?.clients ?? []) {
-      client.terminate()
-    }
-    server?.close()
     const helper = this.helper
     this.helper = null
     await helper?.close().catch(() => undefined)

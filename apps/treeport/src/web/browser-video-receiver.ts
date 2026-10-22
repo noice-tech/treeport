@@ -3,11 +3,15 @@ import {
   type BrowserClientMessage,
   type BrowserServerMessage
 } from '@treeport/shared'
+import type { BrowserMediaWheel } from './browser-media-protocol'
 import { presentBrowserVideo } from './browser-video-presentation'
 import { ChromiumWebCodecsReceiver } from './chromium-webcodecs-receiver'
 
 export class BrowserVideoReceiver {
+  // Owns the canvas for its lifetime: an OffscreenCanvas transfers only once.
   private webcodecs: ChromiumWebCodecsReceiver | null = null
+  private webcodecsEpoch: number | null = null
+  private mediaToken: string | null = null
   private peer: RTCPeerConnection | null = null
   private requestId: string | null = null
   private visible = false
@@ -19,9 +23,11 @@ export class BrowserVideoReceiver {
 
   constructor(
     private readonly video: HTMLVideoElement,
+    private readonly canvas: HTMLCanvasElement,
     private readonly send: (message: BrowserClientMessage) => void,
     private readonly failed: (message: string) => void,
-    private readonly statusChanged: (message: string) => void
+    private readonly statusChanged: (message: string) => void,
+    private readonly presented: () => void
   ) {}
 
   receive(message: BrowserServerMessage): void {
@@ -30,29 +36,61 @@ export class BrowserVideoReceiver {
     }
 
     if (
-      (message.type === 'state' || message.type === 'controlChanged') &&
-      !message.state.controlled &&
-      this.webcodecs
+      (message.type === 'ready' ||
+        message.type === 'state' ||
+        message.type === 'controlChanged') &&
+      !message.state.controlled
     ) {
-      this.stop()
+      if (this.webcodecsEpoch !== null) {
+        this.stop()
+      }
+
+      if (message.state.hasController) {
+        this.statusChanged('Paused while another window has control.')
+      }
     }
 
-    if (message.type === 'webcodecsReady') {
+    if (message.type === 'videoChannel') {
+      this.mediaToken = message.mediaToken
+      this.webcodecs?.connect(message.mediaToken)
+    } else if (message.type === 'webcodecsReady') {
       if (!this.visible) {
         return
       }
 
       this.stop()
-      this.statusChanged('Connecting experimental Chromium WebCodecs video…')
-      const receiver = new ChromiumWebCodecsReceiver(
-        this.video,
-        message,
-        this.send,
-        this.failed
-      )
-      this.webcodecs = receiver
-      void receiver.startDecoder().catch((error) => {
-        if (this.webcodecs === receiver) {
+      if (!ChromiumWebCodecsReceiver.supported(this.canvas)) {
+        const reason =
+          'This browser cannot decode hosted browser video. Use a current Chrome, Edge, Safari or Firefox.'
+        this.send({ type: 'webcodecsStop', message: reason })
+        this.failed(reason)
+        return
+      }
+
+      this.statusChanged('Connecting browser video…')
+      if (!this.webcodecs) {
+        this.webcodecs = new ChromiumWebCodecsReceiver(
+          this.canvas,
+          this.presented,
+          (wheel) =>
+            this.send({
+              type: 'wheel',
+              x: wheel.x,
+              y: wheel.y,
+              deltaX: wheel.deltaX,
+              deltaY: wheel.deltaY,
+              modifiers: wheel.modifiers
+            })
+        )
+        if (this.mediaToken) {
+          this.webcodecs.connect(this.mediaToken)
+        }
+      }
+
+      const receiver = this.webcodecs
+      this.webcodecsEpoch = message.epoch
+      void receiver.start(message).catch((error) => {
+        if (this.webcodecsEpoch === message.epoch) {
           this.send({
             type: 'webcodecsStop',
             message: String(error).slice(0, 512)
@@ -95,12 +133,6 @@ export class BrowserVideoReceiver {
     }
   }
 
-  frame(data: Uint8Array): void {
-    if (this.visible && !this.disposed) {
-      this.webcodecs?.frame(data)
-    }
-  }
-
   setVisible(visible: boolean): void {
     this.visible = visible
     if (!visible) {
@@ -124,6 +156,12 @@ export class BrowserVideoReceiver {
 
     const report = await peer.getStats().catch(() => null)
     return report && this.peer === peer ? { connectionId, report } : null
+  }
+
+  wheel(message: BrowserMediaWheel): boolean {
+    return (
+      this.webcodecsEpoch !== null && (this.webcodecs?.wheel(message) ?? false)
+    )
   }
 
   private retry(message: string): void {
@@ -231,8 +269,11 @@ export class BrowserVideoReceiver {
   }
 
   private stop(): void {
-    this.webcodecs?.stop()
-    this.webcodecs = null
+    if (this.webcodecsEpoch !== null) {
+      this.webcodecs?.stop()
+      this.webcodecsEpoch = null
+    }
+
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
@@ -250,5 +291,7 @@ export class BrowserVideoReceiver {
   dispose(): void {
     this.disposed = true
     this.stop()
+    this.webcodecs?.dispose()
+    this.webcodecs = null
   }
 }
