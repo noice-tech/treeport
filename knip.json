@@ -27,6 +27,9 @@
       ],
       "ignoreBinaries": ["iconutil", "lipo", "plutil"]
     },
+    "packages/cursor": {
+      "entry": ["bin/hook.mjs", "bin/status-worker.mjs"]
+    },
     "packages/review": {
       "entry": ["web-apps/review/review.tsx"]
     },
