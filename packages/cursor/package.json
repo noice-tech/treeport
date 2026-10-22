@@ -1,0 +1,30 @@
+{
+  "name": "@treeport/cursor",
+  "version": "0.13.0",
+  "description": "Treeport guidance, progress, and attention hooks for Cursor Agent.",
+  "type": "module",
+  "bin": {
+    "treeport-cursor": "./bin/setup.mjs"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git",
+    "directory": "packages/cursor"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

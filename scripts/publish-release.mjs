@@ -15,6 +15,7 @@ const githubRepository = 'noice-tech/treeport'
 const packageDirectories = [
   'packages/app-sdk',
   'packages/pi',
+  'packages/cursor',
   'packages/review',
   'packages/session-keeper',
   'apps/treeport'

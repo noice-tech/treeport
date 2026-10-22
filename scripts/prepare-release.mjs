@@ -53,11 +53,13 @@ const packageManifestPath = 'apps/treeport/package.json'
 const desktopManifestPath = 'apps/desktop/package.json'
 const appSdkManifestPath = 'packages/app-sdk/package.json'
 const piManifestPath = 'packages/pi/package.json'
+const cursorManifestPath = 'packages/cursor/package.json'
 const reviewManifestPath = 'packages/review/package.json'
 const keeperManifestPath = 'packages/session-keeper/package.json'
 const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
 const appSdkManifest = JSON.parse(readFileSync(appSdkManifestPath, 'utf8'))
 const piManifest = JSON.parse(readFileSync(piManifestPath, 'utf8'))
+const cursorManifest = JSON.parse(readFileSync(cursorManifestPath, 'utf8'))
 const reviewManifest = JSON.parse(readFileSync(reviewManifestPath, 'utf8'))
 const keeperManifest = JSON.parse(readFileSync(keeperManifestPath, 'utf8'))
 const currentVersion = parseVersion(packageManifest.version)
@@ -70,6 +72,7 @@ if (!currentVersion) {
 for (const manifest of [
   appSdkManifest,
   piManifest,
+  cursorManifest,
   reviewManifest,
   keeperManifest
 ]) {
@@ -150,6 +153,15 @@ if (piManifest.version !== version) {
   expectedFiles.push(piManifestPath)
   piManifest.version = version
   writeFileSync(piManifestPath, `${JSON.stringify(piManifest, null, 2)}\n`)
+}
+
+if (cursorManifest.version !== version) {
+  expectedFiles.push(cursorManifestPath)
+  cursorManifest.version = version
+  writeFileSync(
+    cursorManifestPath,
+    `${JSON.stringify(cursorManifest, null, 2)}\n`
+  )
 }
 
 if (reviewManifest.version !== version) {
