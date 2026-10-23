@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import xtermHeadless from '@xterm/headless'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
 import * as Deferred from 'effect/Deferred'
@@ -14,9 +13,9 @@ import {
   makeTerminalHostSessions,
   type TerminalHostRuntimeEvent
 } from '../terminal-runtime/sessions'
+import { GhosttyTerminal } from '../ghostty-vt/ghostty-vt'
 import { testAccess } from './test-access'
-
-const { Terminal } = xtermHeadless
+import { restoreTestSnapshot } from './test-ghostty-snapshot'
 
 class FakePty {
   readonly pid = 42
@@ -147,7 +146,7 @@ describe('TerminalHostSessionManager', () => {
         )
       )
     )
-    const writes = vi.spyOn(Terminal.prototype, 'write')
+    const writes = vi.spyOn(GhosttyTerminal.prototype, 'write')
     const chunks = Array.from(
       { length: 1024 },
       (_, index) => `${index}:` + 'x'.repeat(1000) + '\r\n'
@@ -156,13 +155,14 @@ describe('TerminalHostSessionManager', () => {
       pty.emit(chunk)
     }
     const snapshot = await run(manager.snapshot('term'))
-    // Count parser submissions, not wall-clock time: there must not be one
-    // asynchronous xterm timer per tiny PTY packet.
+    // Count parser submissions: queued PTY packets are parsed together.
     expect(writes.mock.calls.length).toBeLessThan(16)
     writes.mockRestore()
     expect(snapshot?.fence).toBe(chunks.length)
-    expect(snapshot?.data).toContain('1023:')
-    expect(snapshot?.data).not.toContain('live suffix')
+    const restored = await restoreTestSnapshot(snapshot!.data)
+    expect(restored.text()).toContain('1023:')
+    expect(restored.text()).not.toContain('live suffix')
+    restored.dispose()
     pty.emit('live suffix\r\n')
     await vi.waitFor(() => expect(output).toHaveLength(chunks.length + 1))
     expect(output).toEqual(
@@ -260,7 +260,7 @@ describe('TerminalHostSessionManager', () => {
       )
     )
     pty.emit(
-      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
+      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]7740;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
     )
     const snapshot = await run(manager.snapshot('term'))
     expect(await run(manager.runtimeState('term'))).toMatchObject({
@@ -274,18 +274,14 @@ describe('TerminalHostSessionManager', () => {
     pty.emit('after attach\r\n')
 
     expect(spawn).toHaveBeenCalledOnce()
-    expect(snapshot?.data).toContain('immediate startup output')
-    expect(snapshot?.data).toContain('before attach')
-    expect(snapshot?.synchronizedOutput).toBe(true)
-    expect(snapshot?.links).toEqual([
-      expect.objectContaining({
-        buffer: 'normal',
-        uri: 'https://example.test/issue/42'
-      })
-    ])
+    const restored = await restoreTestSnapshot(snapshot!.data)
+    expect(restored.text()).toContain('immediate startup output')
+    expect(restored.text()).toContain('before attach')
+    expect(restored.mode(2026)).toBe(true)
+    restored.dispose()
     await vi.waitFor(() => expect(firstOutput).toHaveLength(2))
     expect(firstOutput).toEqual([
-      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n',
+      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]7740;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n',
       'after attach\r\n'
     ])
     expect(secondOutput).toEqual(firstOutput)
@@ -293,53 +289,29 @@ describe('TerminalHostSessionManager', () => {
     pty.emit('normal Unicode: λ🙂\r\n')
     pty.emit('\u001b[?1049h\u001b[?1003h\u001b[?1006halternate Unicode: 雪\r\n')
     const alternateSnapshot = await run(manager.snapshot('term'))
-    const browser = new Terminal({
-      cols: alternateSnapshot!.cols,
-      rows: alternateSnapshot!.rows,
-      scrollback: 50_000,
-      allowProposedApi: true,
-      disableStdin: true
-    })
-    const historicalResponses: string[] = []
-    browser.onData((data) => historicalResponses.push(data))
-    await new Promise<void>((resolve) =>
-      browser.write(alternateSnapshot!.data, resolve)
+    const historicalResponses: Uint8Array[] = []
+    const browser = await restoreTestSnapshot(alternateSnapshot!.data, (data) =>
+      historicalResponses.push(data)
     )
-    const activeContent = Array.from(
-      { length: browser.buffer.active.length },
-      (_, index) =>
-        browser.buffer.active.getLine(index)?.translateToString(true) ?? ''
-    ).join('\n')
-    const normalContent = Array.from(
-      { length: browser.buffer.normal.length },
-      (_, index) =>
-        browser.buffer.normal.getLine(index)?.translateToString(true) ?? ''
-    ).join('\n')
-    expect(browser.modes.mouseTrackingMode).toBe('any')
-    // SAFETY: The pinned xterm exposes mouse encoding only through this internal service.
-    const browserInternals = Object(browser) as {
-      _core: { mouseStateService: { activeEncoding: string } }
-    }
-    expect(browserInternals._core.mouseStateService.activeEncoding).toBe('SGR')
-    expect(activeContent).toContain('alternate Unicode: 雪')
-    expect(normalContent).toContain('normal Unicode: λ🙂')
+    expect(browser.mode(1003)).toBe(true)
+    expect(browser.mode(1006)).toBe(true)
+    expect(browser.text()).toContain('alternate Unicode: 雪')
+    browser.write('\u001b[?1049l')
+    expect(browser.text()).toContain('normal Unicode: λ🙂')
     expect(historicalResponses).toEqual([])
-    for (const [sequence, encoding] of [
-      ['\u001b[?1016h', 'SGR_PIXELS'],
-      ['\u001b[?1016l\u001b[?1006l', 'DEFAULT']
-    ]) {
-      pty.emit(sequence!)
-      const encodingSnapshot = await run(manager.snapshot('term'))
-      browser.reset()
-      await new Promise<void>((resolve) =>
-        browser.write(encodingSnapshot!.data, resolve)
-      )
-      expect(browser.modes.mouseTrackingMode).toBe('any')
-      expect(browserInternals._core.mouseStateService.activeEncoding).toBe(
-        encoding
-      )
-    }
     browser.dispose()
+    for (const [sequence, pixels, sgr] of [
+      ['\u001b[?1016h', true, true],
+      ['\u001b[?1016l\u001b[?1006l', false, false]
+    ] as const) {
+      pty.emit(sequence)
+      const encodingSnapshot = await run(manager.snapshot('term'))
+      const restoredEncoding = await restoreTestSnapshot(encodingSnapshot!.data)
+      expect(restoredEncoding.mode(1003)).toBe(true)
+      expect(restoredEncoding.mode(1016)).toBe(pixels)
+      expect(restoredEncoding.mode(1006)).toBe(sgr)
+      restoredEncoding.dispose()
+    }
 
     pty.emit('\u001b[?1049l')
     pty.emit(
@@ -350,23 +322,10 @@ describe('TerminalHostSessionManager', () => {
     )
     await run(manager.resize('term', 40, 12))
     const reflowedSnapshot = await run(manager.snapshot('term'))
-    const reconnected = new Terminal({
-      cols: reflowedSnapshot!.cols,
-      rows: reflowedSnapshot!.rows,
-      scrollback: 50_000,
-      allowProposedApi: true,
-      disableStdin: true
-    })
-    await new Promise<void>((resolve) =>
-      reconnected.write(reflowedSnapshot!.data, resolve)
-    )
-    const reconnectedContent = Array.from(
-      { length: reconnected.buffer.active.length },
-      (_, index) =>
-        reconnected.buffer.active.getLine(index)?.translateToString(true) ?? ''
-    ).join('\n')
-    expect(reconnectedContent).toContain('history-0000-🙂')
-    expect(reconnectedContent).toContain('history-1999-🙂')
+    const reconnected = await restoreTestSnapshot(reflowedSnapshot!.data)
+    expect(reconnected.cols).toBe(40)
+    expect(reconnected.text()).toContain('history-0000-🙂')
+    expect(reconnected.text()).toContain('history-1999-🙂')
     reconnected.dispose()
 
     expect(runtimeEvents).toEqual(

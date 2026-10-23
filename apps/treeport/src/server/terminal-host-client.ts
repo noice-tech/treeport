@@ -45,11 +45,18 @@ import {
   type TerminalHostResults
 } from '../terminal-runtime/api'
 import { decodeTerminalHostDiscoveryRecord } from '../terminal-runtime/legacy-record'
+import {
+  GhosttyTerminal,
+  TERMINAL_BACKGROUND,
+  TERMINAL_FOREGROUND
+} from '../ghostty-vt/ghostty-vt'
+import { loadGhosttyVtModule } from '../ghostty-vt/node'
 import { prepareSessionKeeper } from '@treeport/session-keeper'
 import { startTerminalEngineWorker } from './terminal-engine-worker'
 
 const TERMINAL_HOST_REQUEST_TIMEOUT_MS = 30_000
 const TERMINAL_HOST_START_TIMEOUT_MS = 10_000
+const LEGACY_SNAPSHOT_SCROLLBACK_LINES = 50_000
 
 interface TerminalHostPaths {
   readonly hostKey: string
@@ -514,11 +521,44 @@ export class TerminalHostClient
           return null
         }
 
+        let data = snapshot.data
+        if (snapshot.format !== 'ghostty') {
+          // Legacy hosts serialize xterm state as VT text; replay it into
+          // Ghostty so viewers only restore one snapshot format.
+          const vt = (snapshot.synchronizedOutput ? '\x1b[?2026h' : '') + data
+          const ghosttyModule = yield* nodePromise(loadGhosttyVtModule)
+          const terminal = GhosttyTerminal.create(
+            ghosttyModule,
+            snapshot.cols,
+            snapshot.rows,
+            {
+              scrollbackLines: LEGACY_SNAPSHOT_SCROLLBACK_LINES,
+              continuationBytes: Buffer.byteLength(vt),
+              imageStorageBytes: 0,
+              foreground: TERMINAL_FOREGROUND,
+              background: TERMINAL_BACKGROUND
+            },
+            {
+              writePty: null,
+              bell: null,
+              titleChanged: null,
+              progress: null,
+              unknownOsc: null,
+              renderHold: null,
+              clipboardWrite: null
+            }
+          )
+          terminal.write(vt)
+          data = Buffer.from(terminal.snapshot()).toString('base64')
+          terminal.dispose()
+        }
+
         return {
-          ...snapshot,
-          links: snapshot.links ?? [],
-          images: snapshot.images ?? null,
-          synchronizedOutput: snapshot.synchronizedOutput ?? false,
+          data,
+          format: 'ghostty' as const,
+          fence: snapshot.fence,
+          cols: snapshot.cols,
+          rows: snapshot.rows,
           output: Stream.fromQueue(subscription).pipe(
             Stream.filter((event) => event.sequence > snapshot.fence)
           )

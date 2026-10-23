@@ -53,7 +53,8 @@ for (const name of files) {
       specifier.startsWith('node:') ||
       specifier.startsWith('effect/') ||
       specifier.startsWith('@effect/') ||
-      specifier.startsWith('@xterm/') ||
+      specifier === '../ghostty-vt/ghostty-vt' ||
+      specifier === '../ghostty-vt/node' ||
       specifier === 'node-pty' ||
       specifier === 'zod' ||
       (['session-client.ts', 'session-protocol.ts'].includes(name) &&

@@ -44,7 +44,6 @@ export function makeRender(
   dependencies: Dependencies
 ) {
   return Effect.gen(function* () {
-    let pendingTerminalWrites = 0
     const renderQueue = yield* Queue.bounded<RenderOperation>(1_024)
     const render = Effect.forever(
       Effect.gen(function* () {
@@ -69,42 +68,6 @@ export function makeRender(
     )
 
     const renderFiber = yield* Effect.forkScoped(render)
-
-    function writeTerminal(
-      data: string
-    ): Effect.Effect<void, TerminalRenderError> {
-      return Effect.async<void>((resume) => {
-        const terminal = state.terminal
-        if (!terminal) {
-          resume(Effect.void)
-          return
-        }
-
-        // Submission cannot be cancelled in xterm. Even after interruption its
-        // callback must decrement the count so a later epoch can drain safely.
-        pendingTerminalWrites += 1
-        terminal.write(data, () => {
-          pendingTerminalWrites = Math.max(0, pendingTerminalWrites - 1)
-          resume(Effect.void)
-        })
-      }).pipe(
-        Effect.timeoutFail({
-          duration: '30 seconds',
-          onTimeout: () =>
-            new TerminalRenderError({
-              message: 'xterm did not finish parsing within 30 seconds'
-            })
-        })
-      )
-    }
-
-    function drainTerminalWrites(): Effect.Effect<void, TerminalRenderError> {
-      // Empty writes preserve FIFO parse boundaries without serializing every
-      // output chunk into a separate xterm rendering cycle.
-      return Effect.suspend(() =>
-        pendingTerminalWrites === 0 ? Effect.void : writeTerminal('')
-      )
-    }
 
     function enqueueRender(
       epoch: number,
@@ -168,33 +131,26 @@ export function makeRender(
             return
           }
 
-          pendingTerminalWrites += 1
-          terminal.write(data, () => {
-            pendingTerminalWrites = Math.max(0, pendingTerminalWrites - 1)
-            if (
-              state.ready &&
-              epoch === state.renderEpoch &&
-              streamId === state.streamId
-            ) {
-              state.parsedSequences.add(sequence)
-              while (
-                state.parsedSequences.delete(state.lastParsedSequence + 1)
-              ) {
-                state.lastParsedSequence += 1
-              }
-              dependencies.send('output_ack', {
-                streamId,
-                sequence: state.lastParsedSequence
-              })
+          terminal.write(data)
+          if (
+            state.ready &&
+            epoch === state.renderEpoch &&
+            streamId === state.streamId
+          ) {
+            state.parsedSequences.add(sequence)
+            while (state.parsedSequences.delete(state.lastParsedSequence + 1)) {
+              state.lastParsedSequence += 1
             }
-          })
+            dependencies.send('output_ack', {
+              streamId,
+              sequence: state.lastParsedSequence
+            })
+          }
         })
       )
     }
 
     return {
-      writeTerminal,
-      drainTerminalWrites,
       enqueueRender,
       failRendering,
       handleOutput

@@ -2,7 +2,11 @@ import type { SessionTimer } from './timers'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
-import { type TerminalClientToServerEvents } from '@treeport/shared'
+import {
+  type TerminalClientToServerEvents,
+  type TerminalSize
+} from '@treeport/shared'
+import { setTerminalFontSize } from '../terminal-browser'
 import {
   type TerminalSessionState,
   normalizeTerminalDimensions,
@@ -12,6 +16,10 @@ import {
 
 const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
 const TERMINAL_RESIZE_SETTLE_MS = 150
+
+interface WTermMeasurement {
+  _measureGridSize(): TerminalSize | null
+}
 
 interface Dependencies {
   cancelTimer(key: SessionTimer): void
@@ -33,7 +41,6 @@ export function makeLayout(
     | 'canonicalRows'
     | 'controllerGeneration'
     | 'disposed'
-    | 'fitAddon'
     | 'fontSize'
     | 'host'
     | 'proposedDimensions'
@@ -52,6 +59,15 @@ export function makeLayout(
     let resizeIntentDirty = false
     let resizeFrame: number | null = null
 
+    function keepLiveOutputVisible(): void {
+      // A smaller host leaves wterm's scroll offset above the live screen
+      // without a scroll event; follow output unless the user scrolled away.
+      const element = state.terminal?.element
+      if (element && !state.wrapper?.classList.contains('terminal-scrolling')) {
+        element.scrollTop = element.scrollHeight
+      }
+    }
+
     function applyCanonicalDimensions(
       cols: number,
       rows: number,
@@ -62,6 +78,7 @@ export function makeLayout(
         return
       }
 
+      keepLiveOutputVisible()
       state.terminal.resize(cols, rows)
       state.appliedRevision = revision
       if (state.wrapper) {
@@ -156,25 +173,22 @@ export function makeLayout(
     function fit(queueControllerResize = false): void {
       const result = Effect.runSyncExit(
         Effect.sync(() => {
-          if (
-            state.disposed ||
-            !state.host ||
-            !state.fitAddon ||
-            !state.terminal
-          ) {
+          const terminal = state.terminal
+          if (state.disposed || !state.host || !terminal) {
             return
           }
 
+          keepLiveOutputVisible()
           if (!state.ready) {
-            state.terminal.options.fontSize = state.fontSize
-            state.fitAddon.fit()
+            setTerminalFontSize(terminal, state.fontSize)
+            terminal.fit()
             if (
-              state.terminal.cols >= TERMINAL_MIN_COLS &&
-              state.terminal.rows >= TERMINAL_MIN_ROWS
+              terminal.cols >= TERMINAL_MIN_COLS &&
+              terminal.rows >= TERMINAL_MIN_ROWS
             ) {
               state.proposedDimensions = normalizeTerminalDimensions({
-                cols: state.terminal.cols,
-                rows: state.terminal.rows
+                cols: terminal.cols,
+                rows: terminal.rows
               })
             }
 
@@ -185,8 +199,12 @@ export function makeLayout(
             return
           }
 
-          state.terminal.options.fontSize = state.fontSize
-          const proposedDimensions = state.fitAddon.proposeDimensions()
+          setTerminalFontSize(terminal, state.fontSize)
+          // SAFETY: The pinned wterm exposes measurement only through fit(),
+          // which also resizes. The server owns the grid, so only measure.
+          const proposedDimensions = (
+            Object(terminal) as WTermMeasurement
+          )._measureGridSize()
           if (
             !proposedDimensions ||
             !Number.isFinite(proposedDimensions.cols) ||
@@ -229,20 +247,23 @@ export function makeLayout(
             proposed.cols / state.canonicalCols,
             proposed.rows / state.canonicalRows
           )
-          state.terminal.options.fontSize = Math.max(
-            TERMINAL_MIN_VIEWER_FONT_SIZE,
-            Math.floor(state.fontSize * scale * 100) / 100
+          setTerminalFontSize(
+            terminal,
+            Math.max(
+              TERMINAL_MIN_VIEWER_FONT_SIZE,
+              Math.floor(state.fontSize * scale * 100) / 100
+            )
           )
           if (
-            state.terminal.cols !== state.canonicalCols ||
-            state.terminal.rows !== state.canonicalRows
+            terminal.cols !== state.canonicalCols ||
+            terminal.rows !== state.canonicalRows
           ) {
-            state.terminal.resize(state.canonicalCols, state.canonicalRows)
+            terminal.resize(state.canonicalCols, state.canonicalRows)
           }
         })
       )
       if (Exit.isFailure(result)) {
-        // Missing dimensions are represented above; actual xterm/FitAddon
+        // Missing dimensions are represented above; actual wterm measurement
         // defects close the session instead of masquerading as a hidden host.
         dependencies.failRendering(Cause.squash(result.cause))
       }

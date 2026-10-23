@@ -2,9 +2,7 @@ import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { SerializeAddon } from '@xterm/addon-serialize'
-import xtermHeadless from '@xterm/headless'
-import type { IDisposable, IPty } from 'node-pty'
+import type { IPty } from 'node-pty'
 import * as pty from 'node-pty'
 import { z } from 'zod'
 import * as Data from 'effect/Data'
@@ -19,22 +17,26 @@ import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import * as SynchronizedRef from 'effect/SynchronizedRef'
 import {
-  parseTerminalProgress,
+  GhosttyTerminal,
+  TERMINAL_BACKGROUND,
+  TERMINAL_FOREGROUND,
+  TERMINAL_IMAGE_STORAGE_BYTES
+} from '../ghostty-vt/ghostty-vt'
+import { loadGhosttyVtModule } from '../ghostty-vt/node'
+import {
+  TERMINAL_COMMAND_OSC,
   TERMINAL_PROGRESS_STALE_MS,
   type HostedTerminal,
   type TerminalCreateInput,
   type TerminalHostOutput,
   type TerminalHostRuntimeEvent,
   type TerminalHostSnapshot,
-  type TerminalImageSnapshot,
   type TerminalLaunchSpec,
   type TerminalProcess,
   type TerminalProgress,
   type TerminalSessionState,
-  type TerminalSnapshotLink,
   type TerminalTitleState
 } from './contract'
-import { TerminalImages } from './images'
 import { PersistentSession } from './session-client'
 import { decodeTerminalEngineMetadata } from './api'
 import {
@@ -44,8 +46,16 @@ import {
 
 export type { TerminalHostRuntimeEvent } from './contract'
 
-const { Terminal } = xtermHeadless
 const HOST_SCROLLBACK_LINES = 50_000
+// Bounds unfinished VT input a snapshot carries, such as a partial image upload.
+const HOST_CONTINUATION_BYTES = 64 * 1024 * 1024
+const PROGRESS_STATES = [
+  null,
+  'normal',
+  'error',
+  'indeterminate',
+  'paused'
+] as const
 const HOST_PARSER_HIGH_WATERMARK = 1024 * 1024
 const HOST_PARSER_LOW_WATERMARK = 256 * 1024
 const PROCESS_TREE_KILL_GRACE_MS = 500
@@ -55,7 +65,6 @@ const engineMarkerSchema = z.object({
   width: z.number().min(1).max(100),
   height: z.number().min(1).max(200)
 })
-type HeadlessTerminal = InstanceType<typeof Terminal>
 type TerminalHostAttachment = TerminalHostSnapshot & {
   output: Stream.Stream<TerminalHostOutput, unknown>
 }
@@ -71,19 +80,6 @@ interface SshAgentDiscovery {
 export class TerminalHostSessionError extends Data.TaggedError(
   'TerminalHostSessionError'
 )<{ readonly message: string; readonly cause?: unknown }> {}
-
-interface HeadlessTerminalInternals {
-  _core: {
-    mouseStateService: { activeEncoding: string }
-    _oscLinkService: {
-      getLinkData(id: number): { uri: string } | undefined
-    }
-  }
-}
-
-interface HeadlessCellInternals {
-  extended?: { urlId?: number }
-}
 
 type ParserCommand =
   | {
@@ -134,9 +130,10 @@ interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
   replaying: boolean
   processingSequence: number
   processingTime: number
-  readonly terminal: HeadlessTerminal
-  readonly serializer: SerializeAddon
-  readonly images: TerminalImages
+  readonly terminal: GhosttyTerminal
+  // Suppresses the host's query replies, for example while a viewer answers.
+  stdinDisabled: boolean
+  cellSize: { width: number; height: number }
   readonly scope: Scope.CloseableScope
   readonly parserCommands: Queue.Queue<ParserCommand>
   readonly runtimeCommands: Queue.Queue<RuntimeCommand>
@@ -566,14 +563,14 @@ export class TerminalHostSessions {
       }
 
       const childScope = yield* Scope.make()
-      let session: HostedTerminalSession | null = null
+      let hosted: HostedTerminalSession | null = null
       let retained = false
       return yield* Effect.gen(this, function* () {
-        session = yield* Scope.extend(
+        hosted = yield* Scope.extend(
           this.acquireSession(input, childScope, retainedOwner),
           childScope
         )
-        const ownedSession = session
+        const ownedSession = hosted
         const dataDisposable = yield* Effect.try({
           try: () =>
             ownedSession.pty.onData((data) => {
@@ -713,7 +710,7 @@ export class TerminalHostSessions {
           }
 
           ownedSession.replaying = false
-          ownedSession.terminal.options.disableStdin =
+          ownedSession.stdinDisabled =
             owner.archived || ownedSession.status !== 'running'
           owner.resume()
           yield* nodePromise(() => owner.activate())
@@ -721,7 +718,7 @@ export class TerminalHostSessions {
 
         if (ownedSession.specPath) {
           // The launcher's atomic sidecar is authoritative even while the engine
-          // is detached. Poll only until completion (or final session exit), so
+          // is detached. Poll only until completion (or final hosted exit), so
           // neither a missed notification nor journal rotation can lose it.
           const observeCommand = this.observeCommandExit(ownedSession)
           yield* observeCommand
@@ -765,7 +762,7 @@ export class TerminalHostSessions {
               ? Effect.void
               : SynchronizedRef.update(this.sessions, (current) => {
                   const value = current.get(input.terminalId)
-                  if (value !== null && value !== session) {
+                  if (value !== null && value !== hosted) {
                     return current
                   }
 
@@ -933,27 +930,100 @@ export class TerminalHostSessions {
           (entry): entry is [string, string] => entry[1] !== undefined
         )
       )
-      const terminal = new Terminal({
-        cols: size.cols,
-        rows: size.rows,
-        scrollback: HOST_SCROLLBACK_LINES,
-        allowProposedApi: true,
-        disableStdin: false
-      })
+      const ghosttyModule = yield* nodePromise(loadGhosttyVtModule)
+      // Parser callbacks run synchronously inside terminal.write, which only
+      // happens after the session below is assigned.
+      let hosted: HostedTerminalSession | null = null
+      const terminal = GhosttyTerminal.create(
+        ghosttyModule,
+        size.cols,
+        size.rows,
+        {
+          scrollbackLines: HOST_SCROLLBACK_LINES,
+          continuationBytes: HOST_CONTINUATION_BYTES,
+          imageStorageBytes: TERMINAL_IMAGE_STORAGE_BYTES,
+          foreground: TERMINAL_FOREGROUND,
+          background: TERMINAL_BACKGROUND
+        },
+        {
+          writePty: (data) => {
+            if (
+              hosted &&
+              hosted.status === 'running' &&
+              !hosted.stdinDisabled &&
+              (!hosted.replaying ||
+                (hosted.pty instanceof PersistentSession &&
+                  hosted.processingSequence > hosted.pty.processedSequence)) &&
+              hosted.queryAuthorityAttachmentId === null
+            ) {
+              hosted.pty.write(Buffer.from(data).toString())
+            }
+          },
+          bell: () => {
+            if (!hosted) {
+              return
+            }
+
+            if (hosted.replaying) {
+              hosted.bellSequence += 1
+              hosted.lastBellAt = new Date(hosted.processingTime).toISOString()
+              return
+            }
+
+            Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'Bell' })
+          },
+          titleChanged: () => {
+            if (hosted) {
+              Queue.unsafeOffer(hosted.runtimeCommands, {
+                _tag: 'Title',
+                title: terminal.title()
+              })
+            }
+          },
+          progress: (state, value) => {
+            if (!hosted) {
+              return
+            }
+
+            const progressState = PROGRESS_STATES[state] ?? null
+            Queue.unsafeOffer(hosted.runtimeCommands, {
+              _tag: 'Progress',
+              value: progressState && {
+                state: progressState,
+                value: value < 0 ? null : Math.min(100, value)
+              },
+              at: hosted.processingTime
+            })
+          },
+          unknownOsc: (content) => {
+            const prefix = `${TERMINAL_COMMAND_OSC};command;`
+            if (!hosted || !content.startsWith(prefix)) {
+              return
+            }
+
+            hosted.commandLine =
+              content
+                .slice(prefix.length)
+                .replace(/\p{Cc}/gu, '')
+                .trim()
+                .slice(0, 256) || null
+            Queue.unsafeOffer(hosted.runtimeCommands, {
+              _tag: 'TitleState',
+              value: {
+                terminalTitle: hosted.title,
+                currentCommand: hosted.pty.process || null,
+                commandLine: hosted.commandLine
+              }
+            })
+          },
+          renderHold: null,
+          clipboardWrite: null
+        }
+      )
       yield* Scope.addFinalizer(
         childScope,
         Effect.sync(() => terminal.dispose())
       )
-      const serializer = new SerializeAddon()
-      // SAFETY: @xterm/headless accepts the browser addon's shared IAddon contract at runtime.
-      terminal.loadAddon(serializer as never)
-      yield* Scope.addFinalizer(
-        childScope,
-        Effect.sync(() => serializer.dispose())
-      )
-      const images = new TerminalImages(true)
-      // SAFETY: TerminalImages implements the xterm addon lifecycle expected by loadAddon.
-      terminal.loadAddon(images as never)
 
       const child: IPty | PersistentSession =
         retainedOwner ??
@@ -1065,8 +1135,8 @@ export class TerminalHostSessions {
         processingSequence: 0,
         processingTime: Date.now(),
         terminal,
-        serializer,
-        images,
+        stdinDisabled: false,
+        cellSize: { width: 0, height: 0 },
         scope: childScope,
         parserCommands,
         runtimeCommands,
@@ -1081,74 +1151,8 @@ export class TerminalHostSessions {
         queryAuthorityGeneration: null,
         queryTransition: null
       }
+      hosted = session
 
-      const terminalDisposables: IDisposable[] = [
-        terminal.onData((data) => {
-          if (
-            session.status === 'running' &&
-            (!session.replaying ||
-              (session.pty instanceof PersistentSession &&
-                session.processingSequence > session.pty.processedSequence)) &&
-            session.queryAuthorityAttachmentId === null
-          ) {
-            session.pty.write(data)
-          }
-        }),
-        terminal.onTitleChange((title) => {
-          Queue.unsafeOffer(runtimeCommands, { _tag: 'Title', title })
-        }),
-        terminal.onBell(() => {
-          if (session.replaying) {
-            session.bellSequence += 1
-            session.lastBellAt = new Date(session.processingTime).toISOString()
-            return
-          }
-
-          Queue.unsafeOffer(runtimeCommands, { _tag: 'Bell' })
-        }),
-        terminal.parser.registerOscHandler(777, (payload) => {
-          if (!payload.startsWith('command;')) {
-            return false
-          }
-
-          session.commandLine =
-            payload
-              .slice('command;'.length)
-              .replace(/\p{Cc}/gu, '')
-              .trim()
-              .slice(0, 256) || null
-          Queue.unsafeOffer(runtimeCommands, {
-            _tag: 'TitleState',
-            value: {
-              terminalTitle: session.title,
-              currentCommand: session.pty.process || null,
-              commandLine: session.commandLine
-            }
-          })
-          return true
-        }),
-        terminal.parser.registerOscHandler(9, (payload) => {
-          const progress = parseTerminalProgress(payload)
-          if (progress === undefined) {
-            return false
-          }
-
-          Queue.unsafeOffer(runtimeCommands, {
-            _tag: 'Progress',
-            value: progress,
-            at: session.processingTime
-          })
-          return true
-        })
-      ]
-      yield* Scope.addFinalizer(
-        childScope,
-        Effect.sync(() => {
-          for (const disposable of terminalDisposables) {
-            disposable.dispose()
-          }
-        })
-      )
       yield* Scope.addFinalizer(
         childScope,
         Effect.gen(function* () {
@@ -1182,9 +1186,8 @@ export class TerminalHostSessions {
     return Effect.forever(
       Effect.gen(this, function* () {
         // A PTY can deliver image-heavy redraws in thousands of 1 KiB chunks.
-        // Awaiting xterm.write for each one pays a timer turn per chunk even
-        // when parsing takes microseconds. Drain already queued output together;
-        // never wait to fill a batch or parse across a snapshot/authority fence.
+        // Drain already queued output together; never wait to fill a batch or
+        // parse across a snapshot/authority fence.
         const commands = Array.from(
           yield* Queue.takeBetween(session.parserCommands, 1, 256)
         )
@@ -1195,16 +1198,24 @@ export class TerminalHostSessions {
           }
 
           if (command._tag === 'CellSize') {
-            session.images.setCellSize({
-              width: command.width,
-              height: command.height
-            })
+            session.cellSize = { width: command.width, height: command.height }
+            session.terminal.resize(
+              session.terminal.cols,
+              session.terminal.rows,
+              command.width,
+              command.height
+            )
             index++
             continue
           }
 
           if (command._tag === 'Resize') {
-            session.terminal.resize(command.cols, command.rows)
+            session.terminal.resize(
+              command.cols,
+              command.rows,
+              session.cellSize.width,
+              session.cellSize.height
+            )
             index++
             continue
           }
@@ -1235,33 +1246,20 @@ export class TerminalHostSessions {
             bytes += next.bytes
             index++
           }
-          yield* Effect.async<void>((resume) => {
-            if (session.replaying && session.pty instanceof PersistentSession) {
-              // Queue the whole batch in one parser turn, but advance metadata
-              // between records so replayed bells, progress, and query replies
-              // retain their original timestamps and processed-sequence fence.
-              session.processingSequence = batch[0]!.sequence
-              session.processingTime = batch[0]!.at
-              for (let index = 0; index < batch.length; index++) {
-                session.terminal.write(batch[index]!.data, () => {
-                  const next = batch[index + 1]
-                  if (next) {
-                    session.processingSequence = next.sequence
-                    session.processingTime = next.at
-                  } else {
-                    resume(Effect.void)
-                  }
-                })
-              }
-            } else {
-              session.processingSequence = batch.at(-1)!.sequence
-              session.processingTime = batch.at(-1)!.at
-              session.terminal.write(
-                batch.map((output) => output.data).join(''),
-                () => resume(Effect.void)
-              )
+          if (session.replaying && session.pty instanceof PersistentSession) {
+            // Advance metadata between records so replayed bells, progress,
+            // and query replies retain their original timestamps and
+            // processed-sequence fence.
+            for (const output of batch) {
+              session.processingSequence = output.sequence
+              session.processingTime = output.at
+              session.terminal.write(output.data)
             }
-          })
+          } else {
+            session.processingSequence = batch.at(-1)!.sequence
+            session.processingTime = batch.at(-1)!.at
+            session.terminal.write(batch.map((output) => output.data).join(''))
+          }
 
           if (
             session.pty instanceof PersistentSession &&
@@ -1578,90 +1576,13 @@ export class TerminalHostSessions {
             return null
           }
 
-          const links: TerminalSnapshotLink[] = []
-          // SAFETY: xterm's runtime object exposes the OSC link service used to serialize link metadata.
-          const terminalInternals = Object(
-            session.terminal
-          ) as HeadlessTerminalInternals
-          for (const [bufferName, buffer] of [
-            ['normal', session.terminal.buffer.normal],
-            ['alternate', session.terminal.buffer.alternate]
-          ] as const) {
-            for (let lineIndex = 0; lineIndex < buffer.length; lineIndex += 1) {
-              const line = buffer.getLine(lineIndex)
-              if (!line) {
-                continue
-              }
-
-              let activeLink: { id: number; startColumn: number } | null = null
-              for (let column = 0; column <= line.length; column += 1) {
-                const cell =
-                  column < line.length ? line.getCell(column) : undefined
-                // SAFETY: xterm cells expose extended OSC-link metadata on their internal representation.
-                const linkId = cell
-                  ? (Object(cell) as HeadlessCellInternals).extended?.urlId
-                  : undefined
-
-                if (activeLink !== null && linkId === activeLink.id) {
-                  continue
-                }
-
-                if (activeLink) {
-                  const data =
-                    terminalInternals._core._oscLinkService.getLinkData(
-                      activeLink.id
-                    )
-                  if (
-                    data?.uri &&
-                    data.uri.length <= 4_096 &&
-                    links.length < 10_000
-                  ) {
-                    links.push({
-                      buffer: bufferName,
-                      uri: data.uri,
-                      line: lineIndex,
-                      startColumn: activeLink.startColumn,
-                      endColumn: column
-                    })
-                  }
-                }
-
-                activeLink = linkId ? { id: linkId, startColumn: column } : null
-              }
-            }
-          }
-
-          // SerializeAddon restores mouse tracking, but omits its encoding.
-          // Without SGR restoration, reattached Pi fullscreen viewers send
-          // legacy mouse reports that Pi cannot use for transcript selection.
-          // SAFETY: The pinned headless xterm exposes the active encoding only
-          // through its internal mouse state service.
-          const mouseEncoding =
-            terminalInternals._core.mouseStateService.activeEncoding
-          const mouseEncodingSequence =
-            mouseEncoding === 'SGR'
-              ? '\u001b[?1006h'
-              : mouseEncoding === 'SGR_PIXELS'
-                ? '\u001b[?1016h'
-                : ''
-          const snapshot = {
-            data:
-              session.serializer.serialize({
-                scrollback: HOST_SCROLLBACK_LINES
-              }) + mouseEncodingSequence,
-            links,
-            // SerializeAddon intentionally omits this temporary mode. Preserve
-            // it out of band so a viewer attaching mid-frame can present the
-            // remaining suffix atomically.
-            synchronizedOutput: session.terminal.modes.synchronizedOutputMode,
+          return {
+            data: Buffer.from(session.terminal.snapshot()).toString('base64'),
+            format: 'ghostty' as const,
             fence: session.outputSequence,
             cols: session.terminal.cols,
             rows: session.terminal.rows
           }
-          const images: TerminalImageSnapshot | null = yield* nodePromise(() =>
-            session.images.snapshot()
-          )
-          return { ...snapshot, images }
         })
       )
     })
@@ -1824,7 +1745,7 @@ export class TerminalHostSessions {
 
         session.queryAuthorityAttachmentId = null
         session.queryAuthorityGeneration = null
-        session.terminal.options.disableStdin = false
+        session.stdinDisabled = false
         const id = crypto.randomUUID()
         session.queryTransition = { id, lease }
         retained = true
@@ -1882,11 +1803,17 @@ export class TerminalHostSessions {
           )
           yield* this.drainParser(session)
         } else {
-          session.images.setCellSize(cellSize)
+          session.cellSize = cellSize
+          session.terminal.resize(
+            session.terminal.cols,
+            session.terminal.rows,
+            cellSize.width,
+            cellSize.height
+          )
         }
       }
 
-      session.terminal.options.disableStdin = true
+      session.stdinDisabled = true
       session.queryAuthorityAttachmentId = attachmentId
       session.queryAuthorityGeneration = generation
       session.queryTransition = null
@@ -1910,7 +1837,7 @@ export class TerminalHostSessions {
       if (session.queryTransition) {
         const transition = session.queryTransition
         session.queryTransition = null
-        session.terminal.options.disableStdin = false
+        session.stdinDisabled = false
         session.queryAuthorityAttachmentId = null
         session.queryAuthorityGeneration = null
         yield* transition.lease.release
@@ -1930,7 +1857,7 @@ export class TerminalHostSessions {
             return
           }
 
-          session.terminal.options.disableStdin = false
+          session.stdinDisabled = false
           session.queryAuthorityAttachmentId = null
           session.queryAuthorityGeneration = null
         })
@@ -2061,14 +1988,10 @@ export class TerminalHostSessions {
         return null
       }
 
-      yield* Effect.async<void>((resume) =>
-        session.terminal.write('', () => resume(Effect.void))
-      )
-      const buffer = session.terminal.buffer.active
-      const content: string[] = []
-      for (let index = 0; index < buffer.length; index += 1) {
-        content.push(buffer.getLine(index)?.translateToString(true) ?? '')
-      }
+      const content = session.terminal
+        .text()
+        .split('\n')
+        .map((line) => line.trimEnd())
       while (content.length && !content.at(-1)?.trim()) {
         content.pop()
       }

@@ -7,8 +7,11 @@ import {
   it,
   vi
 } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { type JsonValue, type TerminalSize } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
+import { GhosttyTerminal } from '../ghostty-vt/ghostty-vt'
+import { GhosttyTerminalCore } from './terminal-session-client/ghostty-core'
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
@@ -21,7 +24,6 @@ import type {
 interface TerminalSessionTestAccess {
   state: {
     terminal: object
-    fitAddon: { proposeDimensions: () => TerminalSize | undefined }
     appliedRevision: number
     proposedDimensions: unknown
   }
@@ -101,6 +103,104 @@ class FakeProtocolSocket {
 
   emitServer(event: string, value: any): void {
     this.handlers.get(event)?.forEach((listener) => listener(value))
+  }
+}
+
+const ghosttyModule = new WebAssembly.Module(
+  readFileSync(new URL('../ghostty-vt/ghostty-vt.wasm', import.meta.url))
+)
+
+// The server's snapshot of a terminal that has parsed the given output.
+function ghosttySnapshot(output = '', cols = 100, rows = 30): string {
+  const terminal = GhosttyTerminal.create(
+    ghosttyModule,
+    cols,
+    rows,
+    {
+      scrollbackLines: 1_000,
+      continuationBytes: 0,
+      imageStorageBytes: 0,
+      foreground: 0,
+      background: 0
+    },
+    {
+      writePty: null,
+      bell: null,
+      titleChanged: null,
+      progress: null,
+      unknownOsc: null,
+      renderHold: null,
+      clipboardWrite: null
+    }
+  )
+  terminal.write(output)
+  const snapshot = Buffer.from(terminal.snapshot()).toString('base64')
+  terminal.dispose()
+  return snapshot
+}
+
+// The WTerm surface a session drives, over a real libghostty-vt core. Node
+// tests have no DOM, so wterm's renderer is left out.
+class GhosttyWTerm {
+  readonly bridge: GhosttyTerminalCore
+  readonly log: string[] = []
+  private readonly style = new Map<string, string>()
+  readonly element = {
+    style: {
+      setProperty: (name: string, value: string) => this.style.set(name, value),
+      getPropertyValue: (name: string) => this.style.get(name) ?? ''
+    },
+    scrollTop: 0,
+    scrollHeight: 0,
+    clientHeight: 0,
+    querySelector: () => null
+  }
+
+  measurement: TerminalSize | null = null
+  onData: ((data: string) => void) | null = null
+  readonly write = vi.fn((data: string) => {
+    this.log.push(`write ${JSON.stringify(data)}`)
+    this.bridge.writeString(data)
+    const response = this.bridge.getResponse()
+    if (response) {
+      this.onData?.(response)
+    }
+  })
+
+  readonly resize = vi.fn((cols: number, rows: number) => {
+    this.log.push(`resize ${cols}x${rows}`)
+    this.bridge.resize(cols, rows)
+    this.cols = cols
+    this.rows = rows
+  })
+
+  readonly fit = vi.fn()
+  readonly _measureGridSize = vi.fn(() => this.measurement)
+  readonly getSelectionText = vi.fn(() => '')
+  readonly clearSelection = vi.fn()
+  readonly focus = vi.fn()
+  readonly setRenderingPaused = vi.fn()
+  readonly destroy = vi.fn(() => this.bridge.dispose())
+
+  constructor(
+    public cols = 100,
+    public rows = 30
+  ) {
+    this.bridge = new GhosttyTerminalCore(ghosttyModule, 1_000)
+    this.bridge.init(cols, rows)
+  }
+
+  text(): string {
+    const core = this.bridge
+    return Array.from({ length: core.getRows() }, (_, row) =>
+      Array.from({ length: core.getCols() }, (_, col) =>
+        String.fromCodePoint(core.getCell(row, col).char || 32)
+      )
+        .join('')
+        .trimEnd()
+    )
+      .join('\n')
+      .trimEnd()
   }
 }
 
@@ -276,26 +376,15 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
 function controllerSessionFixture() {
   const socket = new FakeProtocolSocket()
   socket.connected = true
-  let proposal = { cols: 120, rows: 40 }
   const host = testAccess<HTMLElement>({})
-  const resize = vi.fn()
+  const terminal = new GhosttyWTerm()
+  terminal.measurement = { cols: 120, rows: 40 }
   const session = createTerminalSession('terminal-one')
   Object.assign(terminalSessionTestAccess(session).state, {
     socket,
     ready: true,
     host,
-    terminal: {
-      cols: 100,
-      rows: 30,
-      options: { fontSize: 14 },
-      reset: vi.fn(),
-      resize,
-      focus: vi.fn(),
-      dispose: vi.fn()
-    },
-    fitAddon: {
-      proposeDimensions: () => proposal
-    },
+    terminal,
     canonicalCols: 100,
     canonicalRows: 30,
     canonicalRevision: 1,
@@ -320,7 +409,7 @@ function controllerSessionFixture() {
     }
   })
   const measure = (dimensions: { cols: number; rows: number }) => {
-    proposal = dimensions
+    terminal.measurement = dimensions
     terminalSessionTestAccess(session).services.layout.fit(true)
   }
   const dimensions = (cols: number, rows: number, revision: number) => {
@@ -342,7 +431,16 @@ function controllerSessionFixture() {
       }
     )
   }
-  return { control, dimensions, host, measure, resize, session, socket }
+  return {
+    control,
+    dimensions,
+    host,
+    measure,
+    resize: terminal.resize,
+    session,
+    socket,
+    terminal
+  }
 }
 
 describe('terminal options', () => {
@@ -586,8 +684,7 @@ describe('TerminalSession', () => {
     terminalSessionTestAccess(session).state.terminal = {
       cols: 5_000,
       rows: 1,
-      options: { disableStdin: false },
-      dispose: vi.fn()
+      destroy: vi.fn()
     }
     terminalSessionTestAccess(session).services.connection.connect()
     expect(socketClient.create).toHaveBeenCalledWith(
@@ -664,28 +761,10 @@ describe('TerminalSession', () => {
     socketClient.create.mockImplementation(() => sockets.shift()!)
     const firstSession = createTerminalSession('terminal-one')
     const secondSession = createTerminalSession('terminal-one')
-    const content = ['', '']
-    const clearSelection = [vi.fn(), vi.fn()]
-    const selected = [true, true]
+    const terminals = [new GhosttyWTerm(80, 24), new GhosttyWTerm(80, 24)]
     for (const [index, session] of [firstSession, secondSession].entries()) {
-      terminalSessionTestAccess(session).state.terminal = {
-        reset: vi.fn(() => {
-          content[index] = ''
-        }),
-        resize: vi.fn(),
-        options: { fontSize: 14 },
-        write: (data: string, callback: () => void) => {
-          content[index] += data
-          callback()
-        },
-        focus: vi.fn(),
-        hasSelection: () => selected[index],
-        clearSelection: () => {
-          selected[index] = false
-          clearSelection[index]!()
-        },
-        dispose: vi.fn()
-      }
+      terminals[index]!.getSelectionText.mockReturnValue('selected')
+      terminalSessionTestAccess(session).state.terminal = terminals[index]!
       terminalSessionTestAccess(session).services.connection.connect()
     }
     for (const [index, socket] of [firstSocket, secondSocket].entries()) {
@@ -698,7 +777,7 @@ describe('TerminalSession', () => {
         cols: 80,
         rows: 24,
         revision: 1,
-        snapshot: 'shared history\r\n'
+        snapshot: ghosttySnapshot('shared history\r\n', 80, 24)
       })
       socket.emitServer('output', {
         streamId: 'stream',
@@ -707,15 +786,15 @@ describe('TerminalSession', () => {
       })
     }
     await vi.waitFor(() =>
-      expect(content).toEqual([
-        'shared history\r\nshared live output\r\n',
-        'shared history\r\nshared live output\r\n'
+      expect(terminals.map((terminal) => terminal.text())).toEqual([
+        'shared history\nshared live output',
+        'shared history\nshared live output'
       ])
     )
 
     firstSession.clearSelection()
-    expect(clearSelection[0]).toHaveBeenCalledOnce()
-    expect(clearSelection[1]).not.toHaveBeenCalled()
+    expect(terminals[0]!.clearSelection).toHaveBeenCalledOnce()
+    expect(terminals[1]!.clearSelection).not.toHaveBeenCalled()
     expect(firstSocket.volatile.emit).not.toHaveBeenCalledWith(
       'input',
       expect.anything()
@@ -729,17 +808,11 @@ describe('TerminalSession', () => {
   })
 
   it('answers queries only after fenced controller authority and through handoff', async () => {
-    const { Terminal: BrowserTerminal } = await import('@xterm/xterm')
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    const terminal = new BrowserTerminal({
-      cols: 80,
-      rows: 24,
-      scrollback: 50_000,
-      allowProposedApi: true
-    })
-    terminal.onData((data) => session.sendText(data, { focus: false }))
+    const terminal = new GhosttyWTerm(80, 24)
+    terminal.onData = (data) => session.sendText(data, { focus: false })
     terminalSessionTestAccess(session).state.terminal = terminal
     terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
@@ -751,16 +824,7 @@ describe('TerminalSession', () => {
       cols: 80,
       rows: 24,
       revision: 1,
-      snapshot: '\u001b[6nhistorical link',
-      snapshotLinks: [
-        {
-          buffer: 'normal',
-          uri: 'https://example.test/issue/42',
-          line: 0,
-          startColumn: 0,
-          endColumn: 15
-        }
-      ]
+      snapshot: ghosttySnapshot('historical output', 80, 24)
     })
     await vi.waitFor(() =>
       expect(socket.emit).toHaveBeenCalledWith('query_authority', {
@@ -858,23 +922,12 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
-  it('restores synchronized output after reset and before snapshot bytes', async () => {
+  it('restores synchronized output from the snapshot', async () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    const parsed: string[] = []
-    Object.assign(terminalSessionTestAccess(session).state, {
-      terminal: {
-        reset: () => parsed.push('reset'),
-        resize: vi.fn(),
-        options: { fontSize: 14 },
-        write: (data: string, callback: () => void) => {
-          parsed.push(data)
-          callback()
-        },
-        dispose: vi.fn()
-      }
-    })
+    const terminal = new GhosttyWTerm()
+    terminalSessionTestAccess(session).state.terminal = terminal
     terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
@@ -885,30 +938,20 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: 'partial frame',
-      synchronizedOutput: true
+      snapshot: ghosttySnapshot('\x1b[?2026hpartial frame')
     })
-    await vi.waitFor(() =>
-      expect(parsed).toEqual(['reset', '\x1b[?2026hpartial frame'])
-    )
+    await vi.waitFor(() => expect(session.getSnapshot().phase).toBe('ready'))
+    expect(terminal.bridge.synchronizedOutput()).toBe(true)
+    expect(terminal.text()).toBe('partial frame')
     session.dispose()
   })
 
-  it('batches contiguous output writes while ACKing only parsed data', async () => {
+  it('ACKs output only after writing it to the terminal', async () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    const writes: Array<{ data: string; callback: () => void }> = []
-    const reset = vi.fn()
-    terminalSessionTestAccess(session).state.terminal = {
-      reset,
-      resize: vi.fn(),
-      options: { fontSize: 14 },
-      write: (data: string, callback: () => void) => {
-        writes.push({ data, callback })
-      },
-      dispose: vi.fn()
-    }
+    const terminal = new GhosttyWTerm()
+    terminalSessionTestAccess(session).state.terminal = terminal
     terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
@@ -919,7 +962,7 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ''
+      snapshot: ghosttySnapshot()
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
@@ -931,24 +974,18 @@ describe('TerminalSession', () => {
       sequence: 2,
       data: ' world'
     })
-
-    await vi.waitFor(() => expect(reset).toHaveBeenCalledOnce())
-    await vi.waitFor(() => expect(writes).toHaveLength(1))
-    expect(writes[0]!.data).toBe('')
     expect(socket.emit).not.toHaveBeenCalledWith(
       'output_ack',
       expect.anything()
     )
 
-    writes[0]!.callback()
-    await vi.waitFor(() => expect(writes).toHaveLength(3))
-    expect(writes.slice(1).map(({ data }) => data)).toEqual(['hello', ' world'])
-    writes[1]!.callback()
-    writes[2]!.callback()
-    expect(socket.emit).toHaveBeenLastCalledWith('output_ack', {
-      streamId: 'stream-1',
-      sequence: 2
-    })
+    await vi.waitFor(() =>
+      expect(socket.emit).toHaveBeenLastCalledWith('output_ack', {
+        streamId: 'stream-1',
+        sequence: 2
+      })
+    )
+    expect(terminal.text()).toBe('hello world')
     expect(socket.volatile.emit).not.toHaveBeenCalledWith(
       'output_ack',
       expect.anything()
@@ -957,31 +994,23 @@ describe('TerminalSession', () => {
     socket.emitServer('output', {
       streamId: 'stream-1',
       sequence: 3,
-      data: 'later'
+      data: '!'
     })
-    await vi.waitFor(() => expect(writes).toHaveLength(4))
-    const emitCountBeforeDisconnect = socket.emit.mock.calls.length
     socket.emitServer('disconnect', 'transport close')
-    writes[3]!.callback()
-    expect(socket.emit).toHaveBeenCalledTimes(emitCountBeforeDisconnect)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(socket.emit).not.toHaveBeenCalledWith('output_ack', {
+      streamId: 'stream-1',
+      sequence: 3
+    })
     session.dispose()
   })
 
-  it('drains earlier output before resizing and admitting later output', async () => {
+  it('writes earlier output before resizing and admitting later output', async () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    const writes: Array<{ data: string; callback: () => void }> = []
-    const resize = vi.fn()
-    terminalSessionTestAccess(session).state.terminal = {
-      reset: vi.fn(),
-      resize,
-      options: { fontSize: 14 },
-      write: (data: string, callback: () => void) => {
-        writes.push({ data, callback })
-      },
-      dispose: vi.fn()
-    }
+    const terminal = new GhosttyWTerm()
+    terminalSessionTestAccess(session).state.terminal = terminal
     terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
@@ -992,7 +1021,7 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ''
+      snapshot: ghosttySnapshot()
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
@@ -1006,38 +1035,25 @@ describe('TerminalSession', () => {
       data: 'new grid'
     })
 
-    await vi.waitFor(() => expect(writes).toHaveLength(1))
-    expect(writes[0]!.data).toBe('')
-    expect(resize).toHaveBeenCalledTimes(1)
-
-    writes[0]!.callback()
-    await vi.waitFor(() => expect(writes).toHaveLength(3))
-    expect(writes.slice(1).map(({ data }) => data)).toEqual(['old grid', ''])
-    writes[1]!.callback()
-    expect(resize).toHaveBeenCalledTimes(1)
-    writes[2]!.callback()
-
-    await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
-    await vi.waitFor(() => expect(writes).toHaveLength(4))
-    expect(writes[3]!.data).toBe('new grid')
+    await vi.waitFor(() =>
+      expect(terminal.write).toHaveBeenLastCalledWith('new grid')
+    )
+    expect(terminal.log).toEqual([
+      'write ""',
+      'resize 100x30',
+      'write "old grid"',
+      'resize 120x40',
+      'write "new grid"'
+    ])
     session.dispose()
   })
 
-  it('drains stale output before a new stream reset without ACKing it', async () => {
+  it('drops stale output across a new stream reset without ACKing it', async () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    const writes: Array<{ data: string; callback: () => void }> = []
-    const reset = vi.fn()
-    terminalSessionTestAccess(session).state.terminal = {
-      reset,
-      resize: vi.fn(),
-      options: { fontSize: 14 },
-      write: (data: string, callback: () => void) => {
-        writes.push({ data, callback })
-      },
-      dispose: vi.fn()
-    }
+    const terminal = new GhosttyWTerm()
+    terminalSessionTestAccess(session).state.terminal = terminal
     terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
@@ -1048,20 +1064,13 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ''
+      snapshot: ghosttySnapshot('first stream\r\n')
     })
-    await vi.waitFor(() => expect(reset).toHaveBeenCalledOnce())
-    await vi.waitFor(() => expect(writes).toHaveLength(1))
-    expect(writes[0]!.data).toBe('')
-    writes[0]!.callback()
     socket.emitServer('output', {
       streamId: 'stream-1',
       sequence: 1,
       data: 'stale'
     })
-    await vi.waitFor(() => expect(writes).toHaveLength(2))
-    expect(writes[1]!.data).toBe('stale')
-
     socket.emitServer('ready', {
       connectionId: 'connection-2',
       streamId: 'stream-2',
@@ -1071,46 +1080,32 @@ describe('TerminalSession', () => {
       cols: 120,
       rows: 40,
       revision: 2,
-      snapshot: ''
+      snapshot: ghosttySnapshot('second stream\r\n', 120, 40)
     })
     socket.emitServer('output', {
       streamId: 'stream-2',
       sequence: 1,
       data: 'fresh'
     })
-    await vi.waitFor(() => expect(writes).toHaveLength(3))
-    expect(writes[2]!.data).toBe('')
 
-    writes[1]!.callback()
-    expect(socket.emit).not.toHaveBeenCalledWith(
-      'output_ack',
-      expect.anything()
+    await vi.waitFor(() =>
+      expect(socket.emit).toHaveBeenCalledWith('output_ack', {
+        streamId: 'stream-2',
+        sequence: 1
+      })
     )
-    expect(reset).toHaveBeenCalledOnce()
-    writes[2]!.callback()
-
-    await vi.waitFor(() => expect(reset).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(writes).toHaveLength(4))
-    expect(writes[3]!.data).toBe('')
-    writes[3]!.callback()
-    await vi.waitFor(() => expect(writes).toHaveLength(5))
-    expect(writes[4]!.data).toBe('fresh')
-    writes[4]!.callback()
-    expect(socket.emit).toHaveBeenLastCalledWith('output_ack', {
-      streamId: 'stream-2',
-      sequence: 1
-    })
+    expect(
+      socket.emit.mock.calls.filter(([event]) => event === 'output_ack')
+    ).toHaveLength(1)
+    expect(terminal.text()).toBe('second stream\nfresh')
+    expect(terminal.cols).toBe(120)
     session.dispose()
   })
 
   it('refits as a viewer when takeover dimensions arrive before control loss', async () => {
-    const { control, dimensions, resize, session, socket } =
+    const { control, dimensions, resize, session, socket, terminal } =
       controllerSessionFixture()
-    terminalSessionTestAccess(session).state.fitAddon.proposeDimensions =
-      () => ({
-        cols: 60,
-        rows: 20
-      })
+    terminal.measurement = { cols: 60, rows: 20 }
 
     dimensions(120, 40, 2)
     await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
@@ -1118,11 +1113,9 @@ describe('TerminalSession', () => {
     const fitCallback = vi.mocked(requestAnimationFrame).mock.calls.at(-1)?.[0]
     fitCallback?.(0)
 
-    expect(
-      testAccess<{ options: { fontSize: number } }>(
-        terminalSessionTestAccess(session).state.terminal
-      ).options.fontSize
-    ).toBe(7)
+    expect(terminal.element.style.getPropertyValue('--term-font-size')).toBe(
+      '7px'
+    )
     expect(resize).toHaveBeenLastCalledWith(120, 40)
     expect(socket.emit).not.toHaveBeenCalledWith('resize', expect.anything())
     session.dispose()
@@ -1132,14 +1125,11 @@ describe('TerminalSession', () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    terminalSessionTestAccess(session).state.terminal = {
-      reset: () => {
-        throw new Error('reset failed')
-      },
-      resize: vi.fn(),
-      options: { fontSize: 14 },
-      dispose: vi.fn()
-    }
+    const terminal = new GhosttyWTerm()
+    terminal.write.mockImplementation(() => {
+      throw new Error('repaint failed')
+    })
+    terminalSessionTestAccess(session).state.terminal = terminal
     terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
@@ -1150,12 +1140,12 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ''
+      snapshot: ghosttySnapshot()
     })
     await vi.waitFor(() =>
       expect(session.getSnapshot()).toMatchObject({
         phase: 'closed',
-        error: 'Terminal rendering failed: reset failed'
+        error: 'Terminal rendering failed: repaint failed'
       })
     )
     const sentinel = vi.fn()
@@ -1175,66 +1165,13 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
-  it.each(['disconnect', 'dispose', 'timeout'] as const)(
-    'fences late snapshot completion after %s',
-    async (action) => {
-      const socket = new FakeProtocolSocket()
-      socketClient.create.mockReturnValue(socket)
-      const session = createTerminalSession('terminal-one')
-      const callbacks: Array<() => void> = []
-      const dispose = vi.fn()
-      terminalSessionTestAccess(session).state.terminal = {
-        reset: vi.fn(),
-        resize: vi.fn(),
-        options: { fontSize: 14 },
-        dispose,
-        write: (_data: string, callback: () => void) => callbacks.push(callback)
-      }
-      terminalSessionTestAccess(session).services.connection.connect()
-      socket.emitServer('ready', {
-        connectionId: 'connection-1',
-        streamId: 'stream-1',
-        generation: 1,
-        controller: true,
-        reset: 'full',
-        cols: 100,
-        rows: 30,
-        revision: 1,
-        snapshot: ''
-      })
-      await vi.waitFor(() => expect(callbacks).toHaveLength(1))
-      if (action === 'disconnect') {
-        socket.disconnect()
-      } else if (action === 'dispose') {
-        session.dispose()
-      } else {
-        await vi.advanceTimersByTimeAsync(30_000)
-        expect(session.getSnapshot().error).toContain('did not finish parsing')
-      }
-
-      const snapshot = session.getSnapshot()
-      const listener = vi.fn()
-      session.subscribe(listener)
-      callbacks[0]!()
-      await vi.advanceTimersByTimeAsync(0)
-      expect(session.getSnapshot()).toBe(snapshot)
-      expect(listener).not.toHaveBeenCalled()
-      expect(socket.emit).not.toHaveBeenCalledWith(
-        'query_authority',
-        expect.anything()
-      )
-      session.dispose()
-      await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
-    }
-  )
-
   it('releases all scoped resources even if a browser disposer throws', async () => {
     const session = createTerminalSession('terminal-one')
-    const dispose = vi.fn()
+    const destroy = vi.fn()
     const remove = vi.fn()
     const disconnect = vi.fn()
     Object.assign(terminalSessionTestAccess(session).state, {
-      terminal: { dispose },
+      terminal: { destroy },
       wrapper: { remove },
       socket: { disconnect, removeAllListeners: vi.fn() },
       selectionDragCancel: () => {
@@ -1243,14 +1180,14 @@ describe('TerminalSession', () => {
     })
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     session.dispose()
-    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(destroy).toHaveBeenCalledOnce())
     expect(remove).toHaveBeenCalledOnce()
     expect(disconnect).toHaveBeenCalledOnce()
     expect(disconnect.mock.invocationCallOrder[0]).toBeLessThan(
-      dispose.mock.invocationCallOrder[0]!
+      destroy.mock.invocationCallOrder[0]!
     )
     session.dispose()
-    expect(dispose).toHaveBeenCalledOnce()
+    expect(destroy).toHaveBeenCalledOnce()
     log.mockRestore()
   })
 
@@ -1338,7 +1275,7 @@ describe('TerminalSession', () => {
   })
 
   it('continues the ordered transfer worker after an upload fails', async () => {
-    const { session } = controllerSessionFixture()
+    const { session, terminal } = controllerSessionFixture()
     terminalSessionTestAccess(session).services.protocol.handleServerEvent(
       'query_authority',
       {
@@ -1366,7 +1303,7 @@ describe('TerminalSession', () => {
       })
     vi.stubGlobal('fetch', request)
     const paste = vi.fn()
-    Object.assign(terminalSessionTestAccess(session).state.terminal, { paste })
+    terminal.onData = paste
     const files = Array.from(
       { length: 12 },
       (_, index) => new File(['two'], `${index}.txt`)
@@ -1421,7 +1358,7 @@ describe('TerminalSession', () => {
   })
 
   it('does not paste an upload after losing and reacquiring control', async () => {
-    const { session, control } = controllerSessionFixture()
+    const { session, control, terminal } = controllerSessionFixture()
     terminalSessionTestAccess(session).services.protocol.handleServerEvent(
       'query_authority',
       {
@@ -1440,7 +1377,7 @@ describe('TerminalSession', () => {
     )
     vi.stubGlobal('fetch', request)
     const paste = vi.fn()
-    Object.assign(terminalSessionTestAccess(session).state.terminal, { paste })
+    terminal.onData = paste
     session.pasteFiles([new File(['one'], 'one.txt')])
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
     control(false, 5)
@@ -1456,25 +1393,19 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
-  it('translates FitAddon exceptions through the fatal rendering boundary', () => {
+  it('translates wterm measurement exceptions through the fatal rendering boundary', () => {
     const socket = new FakeProtocolSocket()
     socket.connected = true
     const session = createTerminalSession('terminal-one')
+    const terminal = new GhosttyWTerm()
+    terminal._measureGridSize.mockImplementation(() => {
+      throw new Error('measurement failed')
+    })
     Object.assign(terminalSessionTestAccess(session).state, {
       socket,
       ready: true,
       host: {},
-      terminal: {
-        cols: 100,
-        rows: 30,
-        options: { fontSize: 14 },
-        dispose: vi.fn()
-      },
-      fitAddon: {
-        proposeDimensions: () => {
-          throw new Error('measurement failed')
-        }
-      },
+      terminal,
       canonicalRevision: 1,
       appliedRevision: 1
     })
@@ -1591,20 +1522,9 @@ describe('TerminalSession', () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
-    let completeSnapshotWrite: (() => void) | null = null
-    const focus = vi.fn()
-    terminalSessionTestAccess(session).state.terminal = {
-      cols: 80,
-      rows: 24,
-      options: { fontSize: 14 },
-      reset: vi.fn(),
-      resize: vi.fn(),
-      write: vi.fn((_data: string, callback: () => void) => {
-        completeSnapshotWrite = callback
-      }),
-      focus,
-      dispose: vi.fn()
-    }
+    const terminal = new GhosttyWTerm(80, 24)
+    terminal.measurement = { cols: 120, rows: 40 }
+    terminalSessionTestAccess(session).state.terminal = terminal
     Object.assign(terminalSessionTestAccess(session).state, {
       wrapper: {
         style: { visibility: '' },
@@ -1613,15 +1533,12 @@ describe('TerminalSession', () => {
         remove: vi.fn(),
         classList: {
           contains: () => false,
+          toggle: vi.fn(),
           add: vi.fn(),
           remove: vi.fn()
         }
       },
       host: {},
-      fitAddon: {
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 120, rows: 40 })
-      },
       focusAfterRender: true
     })
     terminalSessionTestAccess(session).services.connection.connect()
@@ -1634,16 +1551,13 @@ describe('TerminalSession', () => {
       cols: 80,
       rows: 24,
       revision: 1,
-      snapshot: 'initial output',
-      snapshotLinks: []
+      snapshot: ghosttySnapshot('initial output', 80, 24)
     })
-    await vi.waitFor(() => expect(completeSnapshotWrite).not.toBeNull())
-
     expect(session.getSnapshot().phase).toBe('connecting')
-    completeSnapshotWrite!()
     await vi.waitFor(() => expect(session.getSnapshot().phase).toBe('ready'))
+    expect(terminal.text()).toBe('initial output')
     expect(session.getSnapshot().controller).toBe(true)
-    expect(focus).toHaveBeenCalledOnce()
+    expect(terminal.focus).toHaveBeenCalledOnce()
 
     const fitController = vi
       .mocked(requestAnimationFrame)
@@ -1673,7 +1587,7 @@ describe('TerminalSession', () => {
         cols: 100,
         rows: 30,
         revision: 2,
-        snapshot: ''
+        snapshot: ghosttySnapshot()
       }
     )
     await vi.advanceTimersByTimeAsync(150)
@@ -1761,7 +1675,7 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ''
+      snapshot: ghosttySnapshot()
     })
     terminalSessionTestAccess(session).state.proposedDimensions = {
       cols: 5_000,
@@ -1802,19 +1716,10 @@ describe('TerminalSession', () => {
   it('requests control only when focus is explicitly user-initiated', () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
-    const focus = vi.fn()
     const session = createTerminalSession('terminal-one')
-    Object.assign(terminalSessionTestAccess(session).state, {
-      terminal: {
-        cols: 100,
-        rows: 30,
-        options: { fontSize: 14 },
-        focus,
-        reset: vi.fn(),
-        resize: vi.fn(),
-        dispose: vi.fn()
-      }
-    })
+    const terminal = new GhosttyWTerm()
+    const focus = terminal.focus
+    terminalSessionTestAccess(session).state.terminal = terminal
     terminalSessionTestAccess(session).services.connection.connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
@@ -1825,7 +1730,7 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ''
+      snapshot: ghosttySnapshot()
     })
 
     session.focus()

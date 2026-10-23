@@ -165,8 +165,7 @@ async function fixture(
     attach: vi.fn(() =>
       Effect.succeed({
         data: '',
-        links: [],
-        images: null,
+        format: 'ghostty' as const,
         fence: 0,
         cols: 100,
         rows: 30,

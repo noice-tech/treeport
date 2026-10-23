@@ -260,10 +260,7 @@ export function TerminalView({
     })
     const frame = requestAnimationFrame(() => {
       browserTrace('terminal.focus.observed', correlationId, {
-        focused:
-          document.activeElement?.classList.contains(
-            'xterm-helper-textarea'
-          ) === true,
+        focused: document.activeElement?.matches('.wterm textarea') === true,
         terminalId: terminal.id
       })
     })

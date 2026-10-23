@@ -45,9 +45,7 @@ class HostDouble implements TerminalAttachmentBackend {
   attach() {
     return Effect.succeed({
       data: '',
-      links: [],
-      images: null,
-      synchronizedOutput: false,
+      format: 'ghostty' as const,
       fence: 0,
       cols: 100,
       rows: 30,

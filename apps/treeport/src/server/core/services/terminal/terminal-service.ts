@@ -477,6 +477,8 @@ export class TerminalService {
         interactiveShell,
         env: {
           PI_IMAGE_PROTOCOL: 'kitty',
+          // Pi only emits OSC 8 links for terminals it recognizes.
+          PI_HYPERLINKS: '1',
           // The clipboard belongs to the attached client, not this daemon host.
           PI_CLIPBOARD_OSC52: '1',
           ...(options?.env ?? {}),

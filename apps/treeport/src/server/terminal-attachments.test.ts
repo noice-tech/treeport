@@ -58,9 +58,7 @@ class HostDouble implements TerminalAttachmentBackend {
 
       return {
         data: this.snapshotData,
-        links: [],
-        images: null,
-        synchronizedOutput: false,
+        format: 'ghostty' as const,
         fence: this.snapshotFence,
         cols: 100,
         rows: 30,

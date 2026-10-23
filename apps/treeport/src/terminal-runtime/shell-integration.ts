@@ -21,11 +21,11 @@ if [[ -n "$TREEPORT_SHELL_INTEGRATION" ]]; then
     emulate -L zsh
     local title=\${1//[[:cntrl:]]/}
     title=\${title[1,256]}
-    printf '\\033]777;command;%s\\033\\\\' "$title"
+    printf '\\033]7740;command;%s\\033\\\\' "$title"
   }
   _treeport_command_title_precmd() {
     emulate -L zsh
-    printf '\\033]777;command;\\033\\\\'
+    printf '\\033]7740;command;\\033\\\\'
   }
   add-zsh-hook -d preexec _treeport_command_title_preexec 2>/dev/null
   add-zsh-hook -d precmd _treeport_command_title_precmd 2>/dev/null
@@ -50,10 +50,10 @@ _treeport_command_title_preexec() {
   [[ -n "$title" ]] || title=$fallback
   title=$(LC_ALL=C printf '%s' "$title" | tr -d '\\000-\\037\\177')
   title="\${title:0:256}"
-  printf '\\033]777;command;%s\\033\\\\' "$title"
+  printf '\\033]7740;command;%s\\033\\\\' "$title"
 }
 _treeport_command_title_prompt() {
-  printf '\\033]777;command;\\033\\\\'
+  printf '\\033]7740;command;\\033\\\\'
   [[ -n "\${_treeport_uses_debug_trap-}" ]] && _treeport_command_ready=1
 }
 
@@ -122,11 +122,11 @@ set -e TREEPORT_SHELL_INTEGRATION
 
 function _treeport_command_title_preexec --on-event fish_preexec
   set -l title (string replace -ar '[[:cntrl:]]' '' -- "$argv[1]" | string sub -l 256)
-  printf '\\e]777;command;%s\\e\\\\' "$title"
+  printf '\\e]7740;command;%s\\e\\\\' "$title"
 end
 
 function _treeport_command_title_prompt --on-event fish_prompt
-  printf '\\e]777;command;\\e\\\\'
+  printf '\\e]7740;command;\\e\\\\'
 end
 `
 

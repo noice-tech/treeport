@@ -586,10 +586,7 @@ export class TerminalAttachmentManager {
           cols: dimensions.cols,
           rows: dimensions.rows,
           revision: dimensions.revision,
-          snapshot: initial.data,
-          synchronizedOutput: initial.synchronizedOutput,
-          snapshotImages: initial.images,
-          snapshotLinks: initial.links
+          snapshot: initial.data
         })
       ) {
         return

@@ -9,6 +9,7 @@ import {
   type TerminalServerEvent,
   type TerminalProtocolInput
 } from '@treeport/shared'
+import { pasteTerminalText } from '../terminal-browser'
 import {
   type TerminalSessionState,
   type TerminalSessionSnapshot,
@@ -131,7 +132,9 @@ export function makeConnection(
       if (state.pendingPaste) {
         const pendingPaste = state.pendingPaste
         state.pendingPaste = ''
-        state.terminal?.paste(pendingPaste)
+        if (state.terminal) {
+          pasteTerminalText(state.terminal, pendingPaste)
+        }
       }
 
       const input = inputQueue[0]

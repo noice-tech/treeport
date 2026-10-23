@@ -81,13 +81,13 @@ async function verifyCommandLifecycle(
       () => output,
       (value) =>
         value.includes(startupMarker) &&
-        value.includes('\u001b]777;command;\u001b\\')
+        value.includes('\u001b]7740;command;\u001b\\')
     )
   ).resolves.toContain(startupMarker)
 
   const command = `printf 'treeport-shell-result\\n'`
   child.write(`${command}\r`)
-  const commandSequence = `\u001b]777;command;${command}\u001b\\`
+  const commandSequence = `\u001b]7740;command;${command}\u001b\\`
   const completed = await waitForOutput(
     () => output,
     (value) => {
@@ -99,7 +99,7 @@ async function verifyCommandLifecycle(
           commandIndex + commandSequence.length
         ) >= 0 &&
         value.indexOf(
-          '\u001b]777;command;\u001b\\',
+          '\u001b]7740;command;\u001b\\',
           commandIndex + commandSequence.length
         ) >= 0
       )

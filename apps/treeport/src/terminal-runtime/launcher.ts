@@ -305,7 +305,7 @@ export function runLaunchSpec(
       ? safeDiagnostic(spec.initialTitle)
       : ''
     if (initialTitle && spec.shellIntegrationDir) {
-      stdout.write(`\u001b]777;command;${initialTitle}\u001b\\`)
+      stdout.write(`\u001b]7740;command;${initialTitle}\u001b\\`)
     }
 
     const result = yield* runChild(command.argv, {
@@ -336,7 +336,7 @@ export function runLaunchSpec(
 
     if (spec.fallbackArgv) {
       if (spec.shellIntegrationDir) {
-        stdout.write('\u001b]777;command;\u001b\\')
+        stdout.write('\u001b]7740;command;\u001b\\')
       }
 
       const fallback = integrateShellLaunch(
