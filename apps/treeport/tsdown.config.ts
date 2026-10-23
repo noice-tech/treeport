@@ -22,7 +22,6 @@ export default defineConfig({
     'node/server/main': 'src/server/main.ts',
     'node/server/daemon-log-worker': 'src/server/daemon-log-worker.ts',
     'node/server/browser-relay': 'src/server/browser-relay.ts',
-    'node/server/terminal-host-entry': 'src/terminal-runtime/entry.ts',
     'node/server/terminal-engine-worker':
       'src/terminal-runtime/engine-worker.ts',
     'node/server/terminal-host-preflight': 'src/terminal-runtime/preflight.ts',

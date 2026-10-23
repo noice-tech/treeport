@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync, spawn } from 'node:child_process'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
@@ -182,7 +182,6 @@ async function connectOrStartTerminalHost(
       Effect.onError(() => Scope.close(scope, Exit.void))
     )
   )
-  await runLegacy(client.commitStartup())
   return legacyClient(client, scope)
 }
 
@@ -491,12 +490,10 @@ child.once('exit', (code) => process.exit(code ?? 1))
       dataDir,
       runtimeDir,
       launcherPath,
-      hostEntryPath: path.join(
+      engineWorkerPath: path.join(
         repositoryRoot,
-        'apps/treeport/dist/node/server/terminal-host-entry.js'
+        'apps/treeport/dist/node/server/terminal-engine-worker.js'
       ),
-      hostExecutable: process.execPath,
-      hostArguments: [],
       sessionExecutable: path.join(
         repositoryRoot,
         `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
@@ -504,27 +501,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
       journalLimitBytes: 64 * 1024
     }
 
-    const legacy = await connectOrStartTerminalHost({
-      ...options,
-      sessionExecutable: undefined
-    })
-    clients.add(legacy)
-    hostPids.add(legacy.record.pid)
-    await legacy.createTerminal({
-      terminalId: 'legacy-terminal',
-      worktreeId: 'worktree-host',
-      name: 'Existing session',
-      createdAt: new Date().toISOString(),
-      cwd: root,
-      argv: [
-        process.execPath,
-        '-e',
-        "console.log('LEGACY_BOOT'); setInterval(() => {}, 1000)"
-      ],
-      shellCommand: null,
-      interactiveShell: false,
-      env: {}
-    })
     const firstDaemon = await connectOrStartTerminalHost(options)
     clients.add(firstDaemon)
     await expect(
@@ -633,9 +609,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(
       (await probeTerminalHostCompatibility(dataDir, runtimeDir)).compatible
     ).toBe(true)
-    expect(await firstDaemon.captureTerminal('legacy-terminal', 20)).toContain(
-      'LEGACY_BOOT'
-    )
     await firstDaemon.renameTerminal(
       'terminal-host',
       'Renamed persistent terminal',
@@ -672,13 +645,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
 
     // The new engine reconnects without replacing the owner PID or replaying
     // its command launch.
-    const restartedDaemon = await connectOrStartTerminalHost({
-      ...options,
-      sessionExecutable: path.join(
-        repositoryRoot,
-        `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
-      )
-    })
+    const restartedDaemon = await connectOrStartTerminalHost(options)
     clients.add(restartedDaemon)
     await waitFor(
       async () =>
@@ -699,12 +666,8 @@ child.once('exit', (code) => process.exit(code ?? 1))
         id: 'terminal-host',
         name: 'Renamed persistent terminal',
         status: 'running'
-      }),
-      expect.objectContaining({ id: 'legacy-terminal', status: 'running' })
+      })
     ])
-    expect(
-      await restartedDaemon.captureTerminal('legacy-terminal', 20)
-    ).toContain('LEGACY_BOOT')
     await waitFor(
       async () =>
         (await restartedDaemon.captureTerminal('terminal-host', 100))?.includes(
@@ -1210,16 +1173,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     expect(processExists(commandPid)).toBe(false)
     hostPids.delete(ownerPid)
-    expect(processExists(legacy.record.pid)).toBe(true)
-    await legacy.killTerminal('legacy-terminal')
-    await legacy.shutdownIfEmpty()
-    await legacy.dispose()
-    clients.delete(legacy)
-    await waitFor(
-      () => !processExists(legacy.record.pid),
-      'Explicit legacy close did not stop its empty host'
-    )
-    hostPids.delete(legacy.record.pid)
 
     // Exercise pnpm dev's actual descendant-group cleanup with a private
     // supervisor. Existing (not yet orphaned) detached keepers are boundaries.
@@ -1285,72 +1238,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     qualifyKeeper,
     40_000
   )
-
-  it('removes only a transaction-owned provisional host when startup fails', async () => {
-    const root = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'treeport-terminal-host-provisional-')
-    )
-    roots.push(root)
-    const dataDir = path.join(root, 'data')
-    const runtimeDir = path.join(root, 'runtime')
-    await Promise.all([
-      fs.mkdir(dataDir, { recursive: true }),
-      fs.mkdir(runtimeDir, { recursive: true })
-    ])
-    const scope = await Effect.runPromise(Scope.make())
-    const client = await runLegacy(
-      Scope.extend(
-        connectOrStartTerminalHostEffect({
-          dataDir,
-          runtimeDir,
-          launcherPath: path.join(
-            repositoryRoot,
-            'apps/treeport/dist/node/server/core/launcher.js'
-          ),
-          hostEntryPath: path.join(
-            repositoryRoot,
-            'apps/treeport/dist/node/server/terminal-host-entry.js'
-          )
-        }),
-        scope
-      )
-    )
-    const pid = client.record.pid
-    hostPids.add(pid)
-
-    await expect(
-      runLegacy(
-        client.createTerminal({
-          terminalId: 'not-committed',
-          worktreeId: 'worktree',
-          name: 'Must not launch',
-          createdAt: new Date().toISOString(),
-          cwd: root,
-          argv: ['/bin/sh'],
-          shellCommand: null,
-          interactiveShell: false,
-          env: {}
-        })
-      )
-    ).rejects.toMatchObject({ code: 'HOST_PROVISIONAL' })
-
-    await Effect.runPromise(Scope.close(scope, Exit.fail('startup failed')))
-    await waitFor(
-      () => !processExists(pid),
-      'The failed startup left its provisional terminal host running'
-    )
-    hostPids.delete(pid)
-    await expect(
-      fs
-        .readdir(runtimeDir)
-        .then((names) =>
-          names.filter(
-            (name) =>
-              name.startsWith('terminal-host-') && name.endsWith('.json')
-          )
-        )
-    ).resolves.toEqual([])
-  })
 
   it('delivers live output after a large snapshot without dropping or reordering frames', async () => {
     const root = await fs.mkdtemp(
@@ -1795,22 +1682,16 @@ child.once('exit', (code) => process.exit(code ?? 1))
       startedAt: new Date().toISOString()
     })
     await fs.writeFile(recordPath, source)
-    const spawnHost = vi.fn()
 
-    // SAFETY: This test spy replaces spawn, which this path must not invoke.
     await expect(
       connectOrStartTerminalHost({
         dataDir,
         runtimeDir,
         launcherPath: path.join(root, 'launcher.mjs'),
-        hostEntryPath: path.join(
-          repositoryRoot,
-          'apps/treeport/src/terminal-runtime/entry.ts'
-        ),
-        spawnHost: spawnHost as never
+        engineWorkerPath: path.join(root, 'missing-engine-worker.js'),
+        sessionExecutable: path.join(root, 'missing-session-keeper')
       })
     ).rejects.toMatchObject({ code: 'UNSUPPORTED_HOST' })
-    expect(spawnHost).not.toHaveBeenCalled()
     expect(processExists(process.pid)).toBe(true)
     expect(await fs.readFile(recordPath, 'utf8')).toBe(source)
   })
@@ -1846,23 +1727,17 @@ child.once('exit', (code) => process.exit(code ?? 1))
       server.once('error', reject)
       server.listen(socketPath, resolve)
     })
-    const spawnHost = vi.fn()
 
     try {
-      // SAFETY: This test spy replaces spawn, which this path must not invoke.
       await expect(
         connectOrStartTerminalHost({
           dataDir,
           runtimeDir,
           launcherPath: path.join(root, 'launcher.mjs'),
-          hostEntryPath: path.join(
-            repositoryRoot,
-            'apps/treeport/src/terminal-runtime/entry.ts'
-          ),
-          spawnHost: spawnHost as never
+          engineWorkerPath: path.join(root, 'missing-engine-worker.js'),
+          sessionExecutable: path.join(root, 'missing-session-keeper')
         })
       ).rejects.toThrow('without a valid discovery record')
-      expect(spawnHost).not.toHaveBeenCalled()
       expect(connections).toBe(0)
       await expect(fs.stat(socketPath)).resolves.toBeDefined()
     } finally {
@@ -1887,8 +1762,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
       .update(path.resolve(dataDir))
       .digest('hex')
       .slice(0, 20)
+    await fs.mkdir(path.join(runtimeDir, 'terminal-engine'))
     await fs.writeFile(
-      path.join(runtimeDir, `terminal-host-${hostKey}.json`),
+      path.join(runtimeDir, 'terminal-engine', `terminal-host-${hostKey}.json`),
       JSON.stringify({
         hostId: 'unavailable-host',
         hostKey,
@@ -1896,7 +1772,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         socketPath: path.join(
           os.tmpdir(),
           `treeport-${process.getuid?.() ?? 'user'}`,
-          `terminal-${hostKey}.sock`
+          `terminal-engine-${hostKey}.sock`
         ),
         startedAt: new Date().toISOString()
       })
@@ -1907,11 +1783,8 @@ child.once('exit', (code) => process.exit(code ?? 1))
         dataDir,
         runtimeDir,
         launcherPath: path.join(root, 'launcher.mjs'),
-        hostEntryPath: path.join(
-          repositoryRoot,
-          'apps/treeport/src/terminal-runtime/entry.ts'
-        ),
-        hostExecutable: process.execPath
+        engineWorkerPath: path.join(root, 'missing-engine-worker.js'),
+        sessionExecutable: path.join(root, 'missing-session-keeper')
       })
     ).rejects.toThrow('will not signal it')
   })

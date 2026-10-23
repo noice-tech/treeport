@@ -8,6 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, it } from 'vitest'
+import { restoreTestSnapshot } from '../apps/treeport/src/server/test-ghostty-snapshot.ts'
 import { PersistentSession } from '../apps/treeport/src/terminal-runtime/session-client.ts'
 
 const execute = promisify(execFile)
@@ -230,32 +231,18 @@ async function writeStartupTransaction(dataDir, transactionId) {
 }
 
 async function terminateFixture(value) {
-  for (const recordPath of [
-    path.join(value.runtimeDir, 'daemon.json'),
-    ...(await fs
-      .readdir(value.runtimeDir)
-      .then((names) =>
-        names
-          .filter(
-            (name) =>
-              name.startsWith('terminal-host-') && name.endsWith('.json')
-          )
-          .map((name) => path.join(value.runtimeDir, name))
-      )
-      .catch(() => []))
-  ]) {
-    const pid = await fs
-      .readFile(recordPath, 'utf8')
-      .then((source) => JSON.parse(source).pid)
-      .catch(() => null)
-    if (Number.isInteger(pid) && pid !== process.pid) {
-      try {
-        process.kill(pid, 'SIGTERM')
-      } catch {
-        // The isolated process already exited.
-      }
+  const pid = await fs
+    .readFile(path.join(value.runtimeDir, 'daemon.json'), 'utf8')
+    .then((source) => JSON.parse(source).pid)
+    .catch(() => null)
+  if (Number.isInteger(pid) && pid !== process.pid) {
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      // The isolated process already exited.
     }
   }
+
   await new Promise((resolve) => setTimeout(resolve, 300))
   const engines = await fs
     .readdir(path.join(value.runtimeDir, 'terminal-engine'))
@@ -269,7 +256,9 @@ async function terminateFixture(value) {
       name,
       'sessions'
     )
-    for (const key of await fs.readdir(sessions).catch(() => [])) {
+    for (const key of (await fs.readdir(sessions).catch(() => [])).filter(
+      (name) => /^[a-f0-9]{40}$/u.test(name)
+    )) {
       const owner = await PersistentSession.open(path.join(sessions, key))
       await owner.connect()
       await owner.terminate()
@@ -292,8 +281,22 @@ async function terminalHostSocket(dataDir, record, terminalId, history) {
         break
       }
 
-      const frame = JSON.parse(buffered.subarray(4, length + 4).toString())
+      const payload = buffered.subarray(4, length + 4)
       buffered = buffered.subarray(length + 4)
+      if (payload[0] === 0) {
+        const idLength = payload.readUInt32BE(1)
+        events.push({
+          type: 'event',
+          event: 'output',
+          data: {
+            terminalId: payload.toString('utf8', 13, 13 + idLength),
+            output: payload.toString('utf8', 13 + idLength)
+          }
+        })
+        continue
+      }
+
+      const frame = JSON.parse(payload.toString())
       if (frame.type === 'response') {
         const request = pending.get(frame.id)
         pending.delete(frame.id)
@@ -328,7 +331,9 @@ async function terminalHostSocket(dataDir, record, terminalId, history) {
   ).trim()
   await request('handshake', { token, hostKey: record.hostKey })
   const snapshot = await request('attach', { terminalId })
-  assert.match(snapshot.data, history)
+  const restored = await restoreTestSnapshot(snapshot.data)
+  assert.match(restored.text(), history)
+  restored.dispose()
   await request('resize', { terminalId, cols: 100, rows: 30 })
   const transition = await request('prepareQueryAuthority', { terminalId })
   await request('activateQueryAuthority', {

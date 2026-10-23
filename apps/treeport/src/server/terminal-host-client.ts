@@ -1,5 +1,4 @@
 import crypto from 'node:crypto'
-import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -27,6 +26,7 @@ import type {
   TerminalTraceContext
 } from './core/terminal'
 import {
+  decodeTerminalHostRecord,
   decodeTerminalHostResult,
   encodeTerminalHostFrame,
   makeTerminalHostFrameDecoder,
@@ -44,19 +44,12 @@ import {
   type TerminalHostResponseFrame,
   type TerminalHostResults
 } from '../terminal-runtime/api'
-import { decodeTerminalHostDiscoveryRecord } from '../terminal-runtime/legacy-record'
-import {
-  GhosttyTerminal,
-  TERMINAL_BACKGROUND,
-  TERMINAL_FOREGROUND
-} from '../ghostty-vt/ghostty-vt'
-import { loadGhosttyVtModule } from '../ghostty-vt/node'
+import { inspectLegacyTerminalHost } from '../terminal-runtime/legacy-host'
 import { prepareSessionKeeper } from '@treeport/session-keeper'
 import { startTerminalEngineWorker } from './terminal-engine-worker'
 
 const TERMINAL_HOST_REQUEST_TIMEOUT_MS = 30_000
-const TERMINAL_HOST_START_TIMEOUT_MS = 10_000
-const LEGACY_SNAPSHOT_SCROLLBACK_LINES = 50_000
+const LEGACY_HOST_STOP_TIMEOUT_MS = 10_000
 
 interface TerminalHostPaths {
   readonly hostKey: string
@@ -85,14 +78,10 @@ export interface TerminalHostClientOptions {
   readonly dataDir: string
   readonly runtimeDir: string
   readonly launcherPath: string
-  readonly hostEntryPath: string
-  readonly hostExecutable?: string
-  readonly hostArguments?: string[]
+  readonly engineWorkerPath: string
   readonly environment?: NodeJS.ProcessEnv
-  readonly spawnHost?: typeof spawn
-  readonly sessionExecutable?: string | undefined
+  readonly sessionExecutable: string
   readonly journalLimitBytes?: number | undefined
-  readonly embeddedEngine?: boolean
 }
 
 function connectionError(cause: unknown): TerminalHostConnectionError {
@@ -105,27 +94,24 @@ function nodePromise<A>(evaluate: () => Promise<A>) {
 
 function terminalHostPaths(
   dataDir: string,
-  runtimeDir: string,
-  embedded: boolean = false
+  runtimeDir: string
 ): TerminalHostPaths {
   const hostKey = crypto
     .createHash('sha256')
     .update(path.resolve(dataDir))
     .digest('hex')
     .slice(0, 20)
-  const ipcDirectory = path.join(
-    os.tmpdir(),
-    `treeport-${process.getuid?.() ?? 'user'}`
-  )
+  const engineDirectory = path.join(runtimeDir, 'terminal-engine')
   return {
     hostKey,
     socketPath: path.join(
-      ipcDirectory,
-      `${embedded ? 'terminal-engine' : 'terminal'}-${hostKey}.sock`
+      os.tmpdir(),
+      `treeport-${process.getuid?.() ?? 'user'}`,
+      `terminal-engine-${hostKey}.sock`
     ),
-    recordPath: path.join(runtimeDir, `terminal-host-${hostKey}.json`),
+    recordPath: path.join(engineDirectory, `terminal-host-${hostKey}.json`),
     tokenPath: path.join(dataDir, 'terminal-host.token'),
-    hostRuntimeDir: path.join(runtimeDir, `terminal-host-${hostKey}`)
+    hostRuntimeDir: path.join(engineDirectory, `terminal-host-${hostKey}`)
   }
 }
 
@@ -151,7 +137,6 @@ function readOrCreateToken(
 
 interface TerminalHostDiscovery {
   readonly record: TerminalHostRecord | null
-  readonly legacyProtocolVersion: number | null
   readonly missing: boolean
   readonly invalid: boolean
 }
@@ -166,7 +151,6 @@ function readRecord(recordPath: string): Effect.Effect<TerminalHostDiscovery> {
       const code = (source.left.cause as NodeJS.ErrnoException).code
       return {
         record: null,
-        legacyProtocolVersion: null,
         missing: code === 'ENOENT',
         invalid: code !== 'ENOENT'
       }
@@ -180,33 +164,13 @@ function readRecord(recordPath: string): Effect.Effect<TerminalHostDiscovery> {
       })
     )
     if (Either.isLeft(parsed)) {
-      return {
-        record: null,
-        legacyProtocolVersion: null,
-        missing: false,
-        invalid: true
-      }
+      return { record: null, missing: false, invalid: true }
     }
 
-    const decoded = yield* Effect.either(
-      decodeTerminalHostDiscoveryRecord(parsed.right)
-    )
-    if (Either.isLeft(decoded)) {
-      return {
-        record: null,
-        legacyProtocolVersion: null,
-        missing: false,
-        invalid: true
-      }
-    }
-
-    const { protocolVersion, ...record } = decoded.right
-    return {
-      record,
-      legacyProtocolVersion: protocolVersion ?? null,
-      missing: false,
-      invalid: false
-    }
+    const decoded = yield* Effect.either(decodeTerminalHostRecord(parsed.right))
+    return Either.isLeft(decoded)
+      ? { record: null, missing: false, invalid: true }
+      : { record: decoded.right, missing: false, invalid: false }
   })
 }
 
@@ -245,7 +209,7 @@ function isStaleSocketFailure(error: TerminalHostClientError): boolean {
   return code === 'ENOENT' || code === 'ECONNREFUSED'
 }
 
-/** Scoped daemon-side connection to one detached terminal host. */
+/** Scoped daemon-side connection to one terminal engine. */
 export class TerminalHostClient
   implements TerminalSessionBackend, TerminalAttachmentBackend
 {
@@ -258,17 +222,14 @@ export class TerminalHostClient
     private readonly outputRoutes: Map<string, OutputRoute>,
     private readonly runtimeRoutes: Map<string, RuntimeRoute>,
     private readonly routeMutex: Effect.Semaphore,
-    private readonly closed: SynchronizedRef.SynchronizedRef<boolean>,
-    private readonly startupTransactionId: string | null
+    private readonly closed: SynchronizedRef.SynchronizedRef<boolean>
   ) {}
 
   static connect(
     socketPath: string,
     token: string,
     hostKey: string,
-    expectedHostId?: string,
-    startupTransactionId?: string,
-    readOnly = false
+    expectedHostId?: string
   ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
     return Effect.gen(function* () {
       const connectionScope = yield* Scope.make()
@@ -278,9 +239,7 @@ export class TerminalHostClient
             socketPath,
             token,
             hostKey,
-            expectedHostId,
-            startupTransactionId,
-            readOnly
+            expectedHostId
           ),
           connectionScope
         )
@@ -299,9 +258,7 @@ export class TerminalHostClient
     socketPath: string,
     token: string,
     hostKey: string,
-    expectedHostId: string | undefined,
-    startupTransactionId?: string,
-    readOnly = false
+    expectedHostId: string | undefined
   ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
     return Effect.gen(function* () {
       const socket = yield* NodeSocket.makeNet({
@@ -331,8 +288,7 @@ export class TerminalHostClient
         new Map(),
         new Map(),
         routeMutex,
-        closed,
-        startupTransactionId ?? null
+        closed
       )
 
       const disconnected = new TerminalHostDisconnected({
@@ -410,19 +366,7 @@ export class TerminalHostClient
           ) as Effect.Effect<void>
       )
 
-      const handshakeInput: TerminalHostRequestInput<'handshake'> = {
-        token,
-        hostKey
-      }
-      if (startupTransactionId) {
-        Object.assign(handshakeInput, { startupTransactionId })
-      }
-
-      if (readOnly) {
-        Object.assign(handshakeInput, { readOnly: true })
-      }
-
-      const handshake = yield* client.request('handshake', handshakeInput)
+      const handshake = yield* client.request('handshake', { token, hostKey })
       if (expectedHostId && handshake.hostId !== expectedHostId) {
         return yield* Effect.fail(
           new TerminalHostRequestError({
@@ -436,23 +380,6 @@ export class TerminalHostClient
       Object.assign(client.record, handshake)
       return client
     })
-  }
-
-  // Transitional routing only for sessions already owned by the old host.
-  legacyClient: TerminalHostClient | null = null
-
-  private clientFor(
-    terminalId: string
-  ): Effect.Effect<TerminalHostClient, TerminalHostClientError> {
-    if (!this.legacyClient) {
-      return Effect.succeed(this)
-    }
-
-    return this.requestPrimary('state', { terminalId }).pipe(
-      Effect.map((state) =>
-        state.status === 'missing' ? this.legacyClient! : this
-      )
-    )
   }
 
   initialize(): Effect.Effect<boolean> {
@@ -469,14 +396,7 @@ export class TerminalHostClient
   listTerminals(
     worktreeId: string
   ): Effect.Effect<HostedTerminal[], TerminalHostClientError> {
-    const current = this.request('inventory', { worktreeId })
-    return this.legacyClient
-      ? Effect.zipWith(
-          current,
-          this.legacyClient.listTerminals(worktreeId),
-          (a, b) => [...a, ...b]
-        )
-      : current
+    return this.request('inventory', { worktreeId })
   }
 
   terminalState(
@@ -495,11 +415,6 @@ export class TerminalHostClient
   > {
     return this.routeMutex.withPermits(1)(
       Effect.gen(this, function* () {
-        const client = yield* this.clientFor(terminalId)
-        if (client !== this) {
-          return yield* client.attach(terminalId, trace)
-        }
-
         let route = this.outputRoutes.get(terminalId)
         if (!route) {
           route = {
@@ -521,41 +436,9 @@ export class TerminalHostClient
           return null
         }
 
-        let data = snapshot.data
-        if (snapshot.format !== 'ghostty') {
-          // Legacy hosts serialize xterm state as VT text; replay it into
-          // Ghostty so viewers only restore one snapshot format.
-          const vt = (snapshot.synchronizedOutput ? '\x1b[?2026h' : '') + data
-          const ghosttyModule = yield* nodePromise(loadGhosttyVtModule)
-          const terminal = GhosttyTerminal.create(
-            ghosttyModule,
-            snapshot.cols,
-            snapshot.rows,
-            {
-              scrollbackLines: LEGACY_SNAPSHOT_SCROLLBACK_LINES,
-              continuationBytes: Buffer.byteLength(vt),
-              imageStorageBytes: 0,
-              foreground: TERMINAL_FOREGROUND,
-              background: TERMINAL_BACKGROUND
-            },
-            {
-              writePty: null,
-              bell: null,
-              titleChanged: null,
-              progress: null,
-              unknownOsc: null,
-              renderHold: null,
-              clipboardWrite: null
-            }
-          )
-          terminal.write(vt)
-          data = Buffer.from(terminal.snapshot()).toString('base64')
-          terminal.dispose()
-        }
-
         return {
-          data,
-          format: 'ghostty' as const,
+          data: snapshot.data,
+          format: snapshot.format,
           fence: snapshot.fence,
           cols: snapshot.cols,
           rows: snapshot.rows,
@@ -573,11 +456,6 @@ export class TerminalHostClient
     return Stream.unwrapScoped(
       this.routeMutex.withPermits(1)(
         Effect.gen(this, function* () {
-          const client = yield* this.clientFor(terminalId)
-          if (client !== this) {
-            return client.runtimeEvents(terminalId)
-          }
-
           let route = this.runtimeRoutes.get(terminalId)
           const first = !route
           if (!route) {
@@ -642,26 +520,6 @@ export class TerminalHostClient
     return this.request('activateQueryAuthority', input).pipe(Effect.asVoid)
   }
 
-  commitStartup(): Effect.Effect<void, TerminalHostClientError> {
-    if (!this.startupTransactionId) {
-      return Effect.void
-    }
-
-    return this.request('commitStartup', {
-      startupTransactionId: this.startupTransactionId
-    }).pipe(Effect.asVoid)
-  }
-
-  abortStartup(): Effect.Effect<void, TerminalHostClientError> {
-    if (!this.startupTransactionId) {
-      return Effect.void
-    }
-
-    return this.request('abortStartup', {
-      startupTransactionId: this.startupTransactionId
-    }).pipe(Effect.asVoid)
-  }
-
   useHostQueryAuthority(terminalId: string) {
     return this.request('hostQueryAuthority', { terminalId }).pipe(
       Effect.asVoid
@@ -687,14 +545,7 @@ export class TerminalHostClient
   listProcesses(
     worktreeId: string
   ): Effect.Effect<TerminalProcess[], TerminalHostClientError> {
-    const current = this.request('processes', { worktreeId })
-    return this.legacyClient
-      ? Effect.zipWith(
-          current,
-          this.legacyClient.listProcesses(worktreeId),
-          (a, b) => [...a, ...b]
-        )
-      : current
+    return this.request('processes', { worktreeId })
   }
 
   terminalTitleState(
@@ -717,14 +568,7 @@ export class TerminalHostClient
   killWorktree(
     worktreeId: string
   ): Effect.Effect<string[], TerminalHostClientError> {
-    const current = this.request('killWorktree', { worktreeId })
-    return this.legacyClient
-      ? Effect.zipWith(
-          current,
-          this.legacyClient.killWorktree(worktreeId),
-          (a, b) => [...a, ...b]
-        )
-      : current
+    return this.request('killWorktree', { worktreeId })
   }
 
   shutdownIfEmpty() {
@@ -732,23 +576,6 @@ export class TerminalHostClient
   }
 
   private request<Method extends keyof TerminalHostResults>(
-    method: Method,
-    input: TerminalHostRequestInput<Method>,
-    trace?: TerminalTraceContext
-  ): Effect.Effect<TerminalHostResults[Method], TerminalHostClientError> {
-    // SAFETY: All per-terminal requests have a terminalId; the protocol decoder
-    // validates the actual request shape on the receiving side.
-    const terminalId = (input as { terminalId?: string }).terminalId
-    if (method === 'create' || !terminalId || !this.legacyClient) {
-      return this.requestPrimary(method, input, trace)
-    }
-
-    return this.clientFor(terminalId).pipe(
-      Effect.flatMap((client) => client.requestPrimary(method, input, trace))
-    )
-  }
-
-  private requestPrimary<Method extends keyof TerminalHostResults>(
     method: Method,
     input: TerminalHostRequestInput<Method>,
     _trace?: TerminalTraceContext
@@ -968,52 +795,71 @@ export class TerminalHostClient
   }
 }
 
-/** Acquires an existing host or safely starts and connects to a detached one. */
+/** Acquires the engine, starting its worker unless a live one is recorded. */
 export function connectOrStartTerminalHost(
   options: TerminalHostClientOptions
 ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
   return Effect.gen(function* () {
-    const paths = terminalHostPaths(
-      options.dataDir,
-      options.runtimeDir,
-      options.embeddedEngine
+    // A legacy host's PTYs cannot move to keepers. Refuse to start while it
+    // may own terminals, so they are never hidden or reported as cleaned up.
+    const legacy = yield* nodePromise(() =>
+      inspectLegacyTerminalHost(options.dataDir, options.runtimeDir)
     )
-    if (options.sessionExecutable !== undefined && !options.embeddedEngine) {
-      // Never replace the old host or migrate its live PTYs. It remains only
-      // for pre-existing sessions; all creates go to the current engine.
-      const discovery = yield* readRecord(paths.recordPath)
-      if (discovery.invalid) {
-        return yield* Effect.fail(
-          connectionError(
-            new Error('Invalid legacy terminal host discovery record')
-          )
-        )
-      }
-
-      let legacy: TerminalHostClient | null = null
-      if (discovery.record && (yield* processExists(discovery.record.pid))) {
-        legacy = yield* connectOrStartTerminalHost({
-          ...options,
-          sessionExecutable: undefined
+    if (legacy.reason !== null) {
+      return yield* Effect.fail(
+        new TerminalHostRequestError({
+          code: 'UNSUPPORTED_HOST',
+          message: `${legacy.reason} ${legacy.next ?? ''}`.trim()
         })
-      }
-
-      const engine = yield* connectOrStartTerminalHost({
-        ...options,
-        runtimeDir: path.join(options.runtimeDir, 'terminal-engine'),
-        embeddedEngine: true
-      })
-      engine.legacyClient = legacy
-      return engine
+      )
     }
 
+    if (legacy.running && legacy.record && legacy.token) {
+      const record = legacy.record
+      // The host itself refuses this shutdown if it owns any session.
+      yield* Effect.scoped(
+        TerminalHostClient.connect(
+          record.socketPath,
+          legacy.token,
+          record.hostKey,
+          record.hostId
+        ).pipe(Effect.flatMap((host) => host.shutdownIfEmpty()))
+      )
+      // It deletes the shared token file on exit; wait before reading it.
+      const deadline = Date.now() + LEGACY_HOST_STOP_TIMEOUT_MS
+      while (yield* processExists(record.pid)) {
+        if (Date.now() >= deadline) {
+          return yield* Effect.fail(
+            connectionError(
+              new Error(
+                `Idle terminal host PID ${record.pid} accepted shutdown but did not exit.`
+              )
+            )
+          )
+        }
+
+        yield* Effect.sleep(50)
+      }
+    } else if (legacy.record) {
+      yield* nodePromise(() =>
+        Promise.all([
+          fs.rm(legacy.recordPath, { force: true }),
+          fs.rm(legacy.socketPath, { force: true })
+        ])
+      )
+    }
+
+    const paths = terminalHostPaths(options.dataDir, options.runtimeDir)
     yield* Effect.all(
       [
         nodePromise(() =>
           fs.mkdir(options.dataDir, { recursive: true, mode: 0o700 })
         ),
         nodePromise(() =>
-          fs.mkdir(options.runtimeDir, { recursive: true, mode: 0o700 })
+          fs.mkdir(path.dirname(paths.recordPath), {
+            recursive: true,
+            mode: 0o700
+          })
         ),
         nodePromise(() =>
           fs.mkdir(path.dirname(paths.socketPath), {
@@ -1054,18 +900,6 @@ export function connectOrStartTerminalHost(
               'The terminal host discovery record does not identify this installation. Treeport will not replace it.'
             )
           )
-        )
-      }
-
-      if (
-        discovery.legacyProtocolVersion !== null &&
-        (yield* processExists(record.pid))
-      ) {
-        return yield* Effect.fail(
-          new TerminalHostRequestError({
-            code: 'UNSUPPORTED_HOST',
-            message: `The running terminal host uses the retired protocol ${discovery.legacyProtocolVersion}. Save your work, explicitly close its terminals, stop the old terminal host, then retry.`
-          })
         )
       }
 
@@ -1136,137 +970,34 @@ export function connectOrStartTerminalHost(
     }
 
     const hostId = crypto.randomUUID()
-    if (options.sessionExecutable !== undefined) {
-      const sessionExecutable = yield* nodePromise(() =>
-        prepareSessionKeeper(
-          options.sessionExecutable!,
-          path.join(paths.hostRuntimeDir, 'keepers')
-        )
+    const sessionExecutable = yield* nodePromise(() =>
+      prepareSessionKeeper(
+        options.sessionExecutable,
+        path.join(paths.hostRuntimeDir, 'keepers')
       )
-      // Workers die with the daemon; only raw PTY keepers detach. Keep emulator
-      // parsing and snapshots off the HTTP/browser-control event loop.
-      yield* startTerminalEngineWorker(
-        path.join(
-          path.dirname(options.hostEntryPath),
-          'terminal-engine-worker.js'
-        ),
-        {
-          runtimeDir: paths.hostRuntimeDir,
-          launcherPath: options.launcherPath,
-          sessionExecutable,
-          journalLimitBytes: options.journalLimitBytes,
-          hostId,
-          hostKey: paths.hostKey,
-          token,
-          socketPath: paths.socketPath,
-          recordPath: paths.recordPath
-        },
-        options.environment ?? process.env
-      )
-      return yield* TerminalHostClient.connect(
-        paths.socketPath,
+    )
+    // Workers die with the daemon; only raw PTY keepers detach. Keep emulator
+    // parsing and snapshots off the HTTP/browser-control event loop.
+    yield* startTerminalEngineWorker(
+      options.engineWorkerPath,
+      {
+        runtimeDir: paths.hostRuntimeDir,
+        launcherPath: options.launcherPath,
+        sessionExecutable,
+        journalLimitBytes: options.journalLimitBytes,
+        hostId,
+        hostKey: paths.hostKey,
         token,
-        paths.hostKey,
-        hostId
-      )
-    }
-
-    const startupTransactionId = crypto.randomUUID()
-    const spawnHost = options.spawnHost ?? spawn
-    const child: ChildProcess = yield* Effect.try({
-      try: () =>
-        spawnHost(
-          options.hostExecutable ?? process.execPath,
-          [...(options.hostArguments ?? []), options.hostEntryPath],
-          {
-            detached: true,
-            stdio: 'ignore',
-            env: {
-              ...(options.environment ?? process.env),
-              TREEPORT_TERMINAL_HOST_RUNTIME_DIR: paths.hostRuntimeDir,
-              TREEPORT_TERMINAL_HOST_LAUNCHER: options.launcherPath,
-              TREEPORT_TERMINAL_HOST_ID: hostId,
-              TREEPORT_TERMINAL_HOST_KEY: paths.hostKey,
-              TREEPORT_TERMINAL_HOST_TOKEN: token,
-              TREEPORT_TERMINAL_HOST_TOKEN_PATH: paths.tokenPath,
-              TREEPORT_TERMINAL_HOST_SOCKET: paths.socketPath,
-              TREEPORT_TERMINAL_HOST_RECORD: paths.recordPath,
-              TREEPORT_TERMINAL_HOST_STARTUP_TRANSACTION: startupTransactionId
-            }
-          }
-        ),
-      catch: connectionError
-    })
-    child.unref()
-
-    const childExit = yield* Deferred.make<never, TerminalHostClientError>()
-    return yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const onError = (cause: Error) =>
-          Deferred.unsafeDone(childExit, Effect.fail(connectionError(cause)))
-        const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
-          Deferred.unsafeDone(
-            childExit,
-            Effect.fail(
-              connectionError(
-                new Error(
-                  `Terminal host exited before startup (code ${
-                    code ?? 'null'
-                  }, signal ${signal ?? 'null'})`
-                )
-              )
-            )
-          )
-        child.once('error', onError)
-        child.once('exit', onExit)
-        return { onError, onExit }
-      }),
-      () => {
-        const connect = Effect.gen(function* () {
-          const deadline = Date.now() + TERMINAL_HOST_START_TIMEOUT_MS
-          let lastError: TerminalHostClientError = connectionError(
-            new Error('The terminal host socket is unavailable')
-          )
-          while (Date.now() < deadline) {
-            const connected = yield* Effect.either(
-              TerminalHostClient.connect(
-                paths.socketPath,
-                token,
-                paths.hostKey,
-                hostId,
-                startupTransactionId
-              )
-            )
-            if (Either.isRight(connected)) {
-              return connected.right
-            }
-
-            lastError = connected.left
-            if (isDefinitiveConnectionFailure(lastError)) {
-              return yield* Effect.fail(lastError)
-            }
-
-            yield* Effect.sleep(50)
-          }
-          return yield* Effect.fail(
-            connectionError(
-              new Error(
-                `Terminal host did not start: ${
-                  lastError instanceof Error
-                    ? lastError.message
-                    : String(lastError)
-                }`
-              )
-            )
-          )
-        })
-        return Effect.raceFirst(connect, Deferred.await(childExit))
+        socketPath: paths.socketPath,
+        recordPath: paths.recordPath
       },
-      ({ onError, onExit }) =>
-        Effect.sync(() => {
-          child.off('error', onError)
-          child.off('exit', onExit)
-        })
+      options.environment ?? process.env
+    )
+    return yield* TerminalHostClient.connect(
+      paths.socketPath,
+      token,
+      paths.hostKey,
+      hostId
     )
   })
 }

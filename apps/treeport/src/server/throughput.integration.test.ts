@@ -98,11 +98,7 @@ it.skipIf(process.env.MEASURE_TREEPORT_THROUGHPUT !== '1')(
               Scope.extend(
                 Effect.gen(function* () {
                   const sessions = yield* makeTerminalHostSessions(options)
-                  yield* makeTerminalHostServer({
-                    ...options,
-                    sessions,
-                    embedded: true
-                  })
+                  yield* makeTerminalHostServer({ ...options, sessions })
                 }),
                 scope
               )

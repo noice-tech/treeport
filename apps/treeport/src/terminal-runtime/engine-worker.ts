@@ -32,7 +32,6 @@ await Effect.runPromise(
       yield* makeTerminalHostServer({
         ...options,
         sessions,
-        embedded: true,
         binaryOutput: true
       })
       // Install shutdown before advertising readiness, including startup cancellation.

@@ -96,7 +96,7 @@ for (const required of [
   'api.ts',
   'sessions.ts',
   'server.ts',
-  'entry.ts',
+  'engine-worker.ts',
   'launcher.ts',
   'session-journal.ts',
   'session-protocol.ts',

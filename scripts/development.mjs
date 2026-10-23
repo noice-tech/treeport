@@ -328,10 +328,7 @@ export function sendSignalToChild(child, signal, ownedProcessGroups) {
         // command subtrees or add either group to the escalation set. Match the
         // reserved prefix, not a particular terminal's display title.
         const keeper =
-          processGroupId === pid &&
-          (command.startsWith('treeport-session') ||
-            command.startsWith('treeport-terminal-host') ||
-            /\bterminal-(?:session|host)-entry\.[cm]?js\b/u.test(command))
+          processGroupId === pid && command.startsWith('treeport-session')
         if (!keeper && descendants.has(parentPid) && !descendants.has(pid)) {
           descendants.add(pid)
           foundDescendant = true

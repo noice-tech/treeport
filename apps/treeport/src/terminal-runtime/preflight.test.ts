@@ -45,7 +45,7 @@ async function paths() {
 }
 
 describe('staged terminal host compatibility probe', () => {
-  it('proves the baseline API with an authenticated side-effect-free connection', async () => {
+  it('refuses a legacy host that owns sessions after a side-effect-free probe', async () => {
     const value = await paths()
     const restoreHostQueryAuthority = vi.fn(() => Effect.void)
     const createTerminal = vi.fn(() => Effect.void)
@@ -78,9 +78,11 @@ describe('staged terminal host compatibility probe', () => {
             probeTerminalHostCompatibility(value.dataDir, value.runtimeDir)
           )
           expect(result).toMatchObject({
-            compatible: true,
+            compatible: false,
             running: true,
-            record: { hostId: host.record.hostId, hostKey: value.hostKey }
+            record: { hostId: host.record.hostId, hostKey: value.hostKey },
+            reason: expect.stringContaining('owns 2 terminal session(s)'),
+            next: expect.stringContaining('explicitly close terminals')
           })
           expect(
             yield* Effect.promise(() => fs.readFile(value.recordPath, 'utf8'))

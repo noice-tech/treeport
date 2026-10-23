@@ -106,19 +106,19 @@ describe('stable terminal host API', () => {
       Effect.runPromise(
         decodeTerminalHostResult('attach', {
           data: 'history',
+          format: 'ghostty',
           fence: 0,
           cols: 80,
           rows: 24,
-          synchronizedOutput: true,
           futureSnapshotField: 'ignored'
         })
       )
     ).resolves.toEqual({
       data: 'history',
+      format: 'ghostty',
       fence: 0,
       cols: 80,
-      rows: 24,
-      synchronizedOutput: true
+      rows: 24
     })
 
     const invalid = await Effect.runPromise(
