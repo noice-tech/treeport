@@ -71,7 +71,6 @@ async function checkPackage(
         'bin/treeport.mjs',
         'dist/node/cli/index.js',
         'dist/node/server/index.js',
-        'dist/node/server/terminal-host-entry.js',
         'dist/node/server/terminal-engine-worker.js',
         'dist/node/server/daemon-log-worker.js',
         'dist/node/server/browser-relay.js',

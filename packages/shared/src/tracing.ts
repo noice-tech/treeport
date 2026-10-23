@@ -10,10 +10,8 @@ import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Layer from 'effect/Layer'
-import * as ManagedRuntime from 'effect/ManagedRuntime'
 import * as Option from 'effect/Option'
 import * as Runtime from 'effect/Runtime'
-import * as Tracer from 'effect/Tracer'
 
 export interface TreeportTraceContext {
   readonly traceId: string
@@ -29,10 +27,7 @@ interface TraceDestination {
 }
 
 interface TracingOptions {
-  readonly serviceName:
-    | 'treeport'
-    | 'treeport-terminal-host'
-    | 'treeport-desktop'
+  readonly serviceName: 'treeport' | 'treeport-desktop'
   readonly serviceVersion: string
   readonly destination: TraceDestination | null
 }
@@ -318,47 +313,3 @@ export const currentPromiseSpan = Effect.gen(function* () {
   }
   return run
 })
-
-export function makeHostTraceRuntime(serviceVersion: string) {
-  if (!tracingEnabled()) {
-    return null
-  }
-
-  const runtime = ManagedRuntime.make(
-    tracingLayerFromEnvironment('treeport-terminal-host', serviceVersion)
-  )
-  return {
-    async run<A>(
-      name: string,
-      parent: TreeportTraceContext,
-      attributes: TreeportSpanAttributes,
-      evaluate: () => Promise<A>
-    ): Promise<A> {
-      const exit = await runtime.runPromiseExit(
-        Effect.tryPromise({ try: evaluate, catch: (cause) => cause }).pipe(
-          Effect.withSpan(name, {
-            parent: Tracer.externalSpan({
-              traceId: parent.traceId,
-              spanId: parent.spanId,
-              sampled: parent.sampled
-            }),
-            attributes
-          })
-        )
-      )
-      if (Exit.isSuccess(exit)) {
-        return exit.value
-      }
-
-      const failure = Cause.failureOption(exit.cause)
-      if (Option.isSome(failure)) {
-        throw failure.value
-      }
-
-      throw Cause.squash(exit.cause)
-    },
-    dispose(): Promise<void> {
-      return runtime.dispose()
-    }
-  }
-}

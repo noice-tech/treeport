@@ -103,8 +103,8 @@ export async function main(
           dataDir: config.dataDir,
           runtimeDir: config.runtimeDir,
           launcherPath,
-          hostEntryPath: fileURLToPath(
-            new URL('./terminal-host-entry.js', entrypoint)
+          engineWorkerPath: fileURLToPath(
+            new URL('./terminal-engine-worker.js', entrypoint)
           ),
           sessionExecutable: getSessionKeeperPayload(),
           journalLimitBytes,
@@ -515,11 +515,10 @@ export async function main(
         ? startupDescriptor.data
         : null
 
-    // Ordinary starts commit after all daemon subsystems and the listener are
-    // ready. An updater-owned start keeps a newly created host provisional
-    // until its separate health verification commits the transaction below.
+    // Ordinary starts activate after all daemon subsystems and the listener
+    // are ready. An updater-owned start waits until its separate health
+    // verification commits the transaction below.
     if (!externallyVerifiedStartup) {
-      await Effect.runPromise(terminalHost.commitStartup())
       await service.runEffect(service.activateStartup())
     }
 
@@ -543,7 +542,6 @@ export async function main(
                   Effect.catchAll(() => Effect.succeed(false))
                 )
                 if (commitRequested) {
-                  yield* terminalHost.commitStartup()
                   yield* Effect.tryPromise(() =>
                     service.runEffect(service.activateStartup())
                   ).pipe(Effect.orDie)
@@ -577,7 +575,6 @@ export async function main(
                     )
                 ).pipe(Effect.catchAll(() => Effect.succeed(false)))
                 if (!transactionStillOwned) {
-                  yield* terminalHost.abortStartup()
                   yield* Effect.sync(() =>
                     shutdown('startup_transaction_aborted')
                   )
@@ -604,11 +601,6 @@ export async function main(
     console.log(`database: ${config.databasePath}`)
     console.log(`git: ${prerequisites.gitVersion}`)
     console.log(`terminal engine: ${terminalHost.record.pid}`)
-    if (terminalHost.legacyClient) {
-      console.log(
-        `legacy terminal host: ${terminalHost.legacyClient.record.pid}`
-      )
-    }
   } catch (error) {
     diagnostics.failed(inspect(error, { depth: 8, colors: false }), 'startup')
     await Effect.runPromise(Scope.close(resourceScope, Exit.fail(error))).catch(

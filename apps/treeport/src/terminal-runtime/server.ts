@@ -36,16 +36,12 @@ export interface TerminalHostServerOptions {
   readonly hostId: string
   readonly hostKey: string
   readonly token: string
-  readonly tokenPath?: string | undefined
   readonly socketPath: string
   readonly recordPath: string
   readonly sessions: TerminalHostSessions
   readonly pid?: number
   readonly startedAt?: string
   readonly launcherPath?: string
-  readonly startupTransactionId?: string | undefined
-  readonly startupTimeoutMs?: number | undefined
-  readonly embedded?: boolean
   readonly binaryOutput?: boolean
 }
 
@@ -72,8 +68,6 @@ interface OutboundFrame {
 interface HostConnection {
   readonly socket: Socket
   authenticated: boolean
-  readOnly: boolean
-  ownsStartupTransaction: boolean
   queryAuthorityTouched: boolean
   readonly outputScopes: Map<string, Scope.CloseableScope>
   readonly runtimeScopes: Map<string, Scope.CloseableScope>
@@ -107,7 +101,7 @@ function tokensMatch(actual: string, expected: string): boolean {
   )
 }
 
-/** Acquires the detached host listener and owns it for the caller's scope. */
+/** Acquires the engine listener and owns it for the caller's scope. */
 export function makeTerminalHostServer(
   options: TerminalHostServerOptions
 ): Effect.Effect<
@@ -128,13 +122,7 @@ export function makeTerminalHostServer(
       Object.assign(record, { launcherPath: options.launcherPath })
     }
 
-    if (options.startupTransactionId) {
-      Object.assign(record, { provisional: true })
-    }
-
     const shuttingDown = yield* Ref.make(false)
-    const provisional = yield* Ref.make(Boolean(options.startupTransactionId))
-    const cleanupOwnedState = yield* Ref.make(false)
     const shutdown = yield* Deferred.make<void>()
     const temporaryRecordPath = `${options.recordPath}.${process.pid}.tmp`
 
@@ -149,22 +137,6 @@ export function makeTerminalHostServer(
     )
     yield* nodePromise(() => fs.rename(temporaryRecordPath, options.recordPath))
 
-    if (options.startupTransactionId) {
-      yield* Effect.forkScoped(
-        Effect.sleep(options.startupTimeoutMs ?? 60_000).pipe(
-          Effect.zipRight(Ref.get(provisional)),
-          Effect.flatMap((stillProvisional) =>
-            stillProvisional
-              ? Ref.set(cleanupOwnedState, true).pipe(
-                  Effect.zipRight(Deferred.succeed(shutdown, undefined))
-                )
-              : Effect.void
-          ),
-          Effect.asVoid
-        )
-      )
-    }
-
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const ownsRecord = yield* nodePromise<unknown>(async () => {
@@ -175,17 +147,9 @@ export function makeTerminalHostServer(
           Effect.map((current) => current.hostId === options.hostId),
           Effect.catchAll(() => Effect.succeed(false))
         )
-        if (
-          ownsRecord &&
-          (options.embedded || (yield* Ref.get(cleanupOwnedState)))
-        ) {
-          const ownedPaths = [options.recordPath, options.socketPath]
-          if (options.tokenPath && !options.embedded) {
-            ownedPaths.push(options.tokenPath)
-          }
-
+        if (ownsRecord) {
           yield* Effect.forEach(
-            ownedPaths,
+            [options.recordPath, options.socketPath],
             (ownedPath) => nodePromise(() => fs.rm(ownedPath, { force: true })),
             { discard: true }
           ).pipe(Effect.catchAll(() => Effect.void))
@@ -215,8 +179,6 @@ export function makeTerminalHostServer(
           const connection: HostConnection = {
             socket: netSocket,
             authenticated: false,
-            readOnly: false,
-            ownsStartupTransaction: false,
             queryAuthorityTouched: false,
             outputScopes: new Map(),
             runtimeScopes: new Map(),
@@ -262,14 +224,6 @@ export function makeTerminalHostServer(
                       )
                     )
                   )
-              }
-
-              if (
-                connection.ownsStartupTransaction &&
-                (yield* Ref.get(provisional))
-              ) {
-                yield* Ref.set(cleanupOwnedState, true)
-                yield* Deferred.succeed(shutdown, undefined)
               }
 
               netSocket.destroy()
@@ -461,24 +415,7 @@ export function makeTerminalHostServer(
                   return
                 }
 
-                if (yield* Ref.get(provisional)) {
-                  if (
-                    !options.startupTransactionId ||
-                    input.startupTransactionId !== options.startupTransactionId
-                  ) {
-                    yield* fail(
-                      frame.id,
-                      'HOST_PROVISIONAL',
-                      'The terminal host belongs to an uncommitted daemon startup'
-                    )
-                    return
-                  }
-
-                  connection.ownsStartupTransaction = true
-                }
-
                 connection.authenticated = true
-                connection.readOnly = input.readOnly ?? false
                 yield* respond<'handshake'>(frame.id, {
                   hostId: record.hostId,
                   hostKey: record.hostKey,
@@ -499,33 +436,11 @@ export function makeTerminalHostServer(
                 return
               }
 
-              if (connection.readOnly) {
-                yield* fail(
-                  frame.id,
-                  'READ_ONLY_CONNECTION',
-                  'The compatibility probe cannot perform terminal operations'
-                )
-                return
-              }
-
               if (yield* Ref.get(shuttingDown)) {
                 yield* fail(
                   frame.id,
                   'HOST_SHUTTING_DOWN',
                   'The terminal host is shutting down'
-                )
-                return
-              }
-
-              if (
-                (yield* Ref.get(provisional)) &&
-                frame.method !== 'commitStartup' &&
-                frame.method !== 'abortStartup'
-              ) {
-                yield* fail(
-                  frame.id,
-                  'HOST_PROVISIONAL',
-                  'The terminal host cannot own terminals before daemon startup commits'
                 )
                 return
               }
@@ -538,60 +453,6 @@ export function makeTerminalHostServer(
                     'Handshake is complete'
                   )
                   return
-                case 'commitStartup': {
-                  const input = yield* decodeTerminalHostInput(
-                    'commitStartup',
-                    frame.input
-                  )
-                  if (
-                    !connection.ownsStartupTransaction ||
-                    input.startupTransactionId !== options.startupTransactionId
-                  ) {
-                    yield* fail(
-                      frame.id,
-                      'STARTUP_TRANSACTION_MISMATCH',
-                      'The daemon does not own this provisional terminal host'
-                    )
-                    return
-                  }
-
-                  yield* Ref.set(provisional, false)
-                  Object.assign(record, { provisional: false })
-                  yield* nodePromise(() =>
-                    fs.writeFile(
-                      temporaryRecordPath,
-                      `${JSON.stringify(record)}\n`,
-                      { mode: 0o600 }
-                    )
-                  )
-                  yield* nodePromise(() =>
-                    fs.rename(temporaryRecordPath, options.recordPath)
-                  )
-                  yield* respond<'commitStartup'>(frame.id, null)
-                  return
-                }
-                case 'abortStartup': {
-                  const input = yield* decodeTerminalHostInput(
-                    'abortStartup',
-                    frame.input
-                  )
-                  if (
-                    !connection.ownsStartupTransaction ||
-                    input.startupTransactionId !== options.startupTransactionId
-                  ) {
-                    yield* fail(
-                      frame.id,
-                      'STARTUP_TRANSACTION_MISMATCH',
-                      'The daemon does not own this provisional terminal host'
-                    )
-                    return
-                  }
-
-                  yield* respond<'abortStartup'>(frame.id, null)
-                  yield* Ref.set(cleanupOwnedState, true)
-                  yield* Deferred.succeed(shutdown, undefined)
-                  return
-                }
                 case 'create': {
                   const input = yield* decodeTerminalHostInput(
                     'create',
@@ -900,7 +761,6 @@ export function makeTerminalHostServer(
 
                   yield* options.sessions.shutdown()
                   yield* respond<'shutdown'>(frame.id, null)
-                  yield* Ref.set(cleanupOwnedState, true)
                   yield* Deferred.succeed(shutdown, undefined)
                 }
               }

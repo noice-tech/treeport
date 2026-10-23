@@ -74,8 +74,7 @@ const terminalHostRecordFields = {
   pid: positiveInteger,
   socketPath: nonEmptyString,
   startedAt: nonEmptyString,
-  launcherPath: Schema.optional(nonEmptyString),
-  provisional: Schema.optional(Schema.Boolean)
+  launcherPath: Schema.optional(nonEmptyString)
 }
 const terminalHostRecordSchema = Schema.Struct(terminalHostRecordFields)
 
@@ -120,12 +119,8 @@ export type TerminalHostCreateInput = typeof createSchema.Type & {
 const terminalHostInputSchemas = {
   handshake: Schema.Struct({
     token: Schema.String,
-    hostKey: Schema.String,
-    startupTransactionId: Schema.optional(Schema.String),
-    readOnly: Schema.optional(Schema.Boolean)
+    hostKey: Schema.String
   }),
-  commitStartup: Schema.Struct({ startupTransactionId: nonEmptyString }),
-  abortStartup: Schema.Struct({ startupTransactionId: nonEmptyString }),
   create: createSchema,
   inventory: worktreeIdSchema,
   state: terminalIdSchema,
@@ -186,8 +181,6 @@ const terminalHostInputSchemas = {
 
 const TERMINAL_HOST_REQUEST_METHODS = [
   'handshake',
-  'commitStartup',
-  'abortStartup',
   'create',
   'inventory',
   'state',
@@ -264,16 +257,13 @@ export interface TerminalHostResults {
   handshake: TerminalHostRecord & {
     liveSessionCount: number
   }
-  commitStartup: null
-  abortStartup: null
   create: null
   inventory: HostedTerminal[]
   state: TerminalSessionState
   attach: {
-    /** Base64 Ghostty snapshot, or VT text from legacy hosts without format. */
+    /** Base64 libghostty-vt snapshot. */
     data: string
-    format?: 'ghostty' | undefined
-    synchronizedOutput?: boolean | undefined
+    format: 'ghostty'
     fence: number
     cols: number
     rows: number
@@ -366,8 +356,6 @@ const terminalHostResultSchemas = {
     ...terminalHostRecordFields,
     liveSessionCount: Schema.NonNegativeInt
   }),
-  commitStartup: nullResultSchema,
-  abortStartup: nullResultSchema,
   create: nullResultSchema,
   inventory: Schema.Array(hostedTerminalSchema),
   state: Schema.Struct({
@@ -380,8 +368,7 @@ const terminalHostResultSchemas = {
   attach: Schema.NullOr(
     Schema.Struct({
       data: Schema.String,
-      format: Schema.optional(Schema.Literal('ghostty')),
-      synchronizedOutput: Schema.optional(Schema.Boolean),
+      format: Schema.Literal('ghostty'),
       fence: Schema.NonNegativeInt,
       cols: positiveInteger,
       rows: positiveInteger
@@ -544,8 +531,8 @@ export function encodeTerminalHostFrame(
       ) {
         const id = Buffer.from(validated.data.terminalId, 'utf8')
         const data = Buffer.from(validated.data.output, 'utf8')
-        // Private daemon-worker output frame. Control/snapshot messages and
-        // independently running legacy hosts retain the JSON wire format.
+        // Private daemon-worker output frame. Control/snapshot messages
+        // retain the JSON wire format.
         payload = Buffer.allocUnsafe(13 + id.length + data.length)
         payload[0] = 0
         payload.writeUInt32BE(id.length, 1)
