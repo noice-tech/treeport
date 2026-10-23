@@ -1,5 +1,6 @@
 import {
   TERMINAL_FONT_SIZE,
+  pasteTerminalText,
   terminalInputWithModifiers,
   type TerminalInputModifiers
 } from './terminal-browser'
@@ -24,7 +25,7 @@ import {
   normalizeTerminalDimensions
 } from './terminal-session-client/state'
 
-// The synchronous React/xterm adapter composes session-owned Effect services.
+// The synchronous React/wterm adapter composes session-owned Effect services.
 // Unmount detaches a host; only dispose closes the scope and stops rendering.
 export class TerminalSession {
   private readonly state: TerminalSessionState
@@ -44,7 +45,6 @@ export class TerminalSession {
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               state.terminal = null
-              state.fitAddon = null
               state.wrapper = null
               state.host = null
               state.socket = null
@@ -78,18 +78,19 @@ export class TerminalSession {
             send: (...args) => connection.send(...args)
           })
           // Finalizers run in reverse: detach the host and disconnect the
-          // socket before disposing xterm, then interrupt the async workers.
+          // socket before disposing wterm, then interrupt the async workers.
           const browser = yield* makeBrowser(state, {
             copyText: (text) => this.copyText(text),
-            hasTimer: timers.hasTimer,
             canInput: (...args) => connection.canInput(...args),
-            cancelTimer: timers.cancelTimer,
             clearSelection: (...args) => this.clearSelection(...args),
+            failRendering: render.failRendering,
             handleBell: (...args) => this.handleBell(...args),
             pasteFiles: (...args) => this.pasteFiles(...args),
             pasteResolvedFilePaths: transfers.pasteResolvedFilePaths,
+            reconnectImmediately: (...args) =>
+              connection.reconnectImmediately(...args),
             requestControl: (...args) => this.requestControl(...args),
-            scheduleTimer: timers.scheduleTimer,
+            scheduleFit: layout.scheduleFit,
             send: (...args) => connection.send(...args),
             update: (...args) => this.update(...args),
             updateSelectionState: (...args) =>
@@ -128,7 +129,6 @@ export class TerminalSession {
             acknowledgeInput: connection.acknowledgeInput,
             cancelInput: connection.cancelInput,
             flushInput: connection.flushInput,
-            drainTerminalWrites: render.drainTerminalWrites,
             enqueueRender: render.enqueueRender,
             failProtocol: connection.failProtocol,
             flushControllerResize: layout.flushControllerResize,
@@ -140,7 +140,7 @@ export class TerminalSession {
             setTerminalScrolling: browser.setTerminalScrolling,
             stopWithError: connection.stopWithError,
             update: (...args) => this.update(...args),
-            writeTerminal: render.writeTerminal
+            restoreTerminal: browser.restoreTerminal
           })
           return {
             timers,
@@ -197,17 +197,15 @@ export class TerminalSession {
   }
 
   zoomIfFocused(action: TerminalFontZoom): boolean {
-    if (
-      !this.state.terminal?.textarea ||
-      this.state.terminal.textarea !== document.activeElement
-    ) {
+    const input = this.state.terminal?.element.querySelector('textarea')
+    if (!input || input !== document.activeElement) {
       return false
     }
 
     return this.zoom(action)
   }
 
-  // Mobile controls resize text without focusing xterm or opening the keyboard.
+  // Mobile controls resize text without focusing wterm or opening the keyboard.
   zoom(action: TerminalFontZoom): boolean {
     if (this.state.disposed || !this.state.host || !this.state.terminal) {
       return false
@@ -323,8 +321,8 @@ export class TerminalSession {
     this.update({ inputError: null })
     this.requestControl()
     this.clearSelection()
-    if (this.services.connection.canInput()) {
-      this.state.terminal?.paste(data)
+    if (this.services.connection.canInput() && this.state.terminal) {
+      pasteTerminalText(this.state.terminal, data)
     } else {
       this.state.pendingPaste += data
     }
@@ -351,7 +349,7 @@ export class TerminalSession {
     options: { focus?: boolean } = {}
   ): void {
     const final = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
-    const prefix = this.state.terminal?.modes.applicationCursorKeysMode
+    const prefix = this.state.terminal?.bridge?.cursorKeysApp()
       ? '\u001bO'
       : '\u001b['
     this.sendText(
@@ -361,7 +359,7 @@ export class TerminalSession {
   }
 
   async copyText(
-    text = this.state.terminal?.getSelection() ?? ''
+    text = this.state.terminal?.getSelectionText() ?? ''
   ): Promise<void> {
     if (!text) {
       return
@@ -397,7 +395,7 @@ export class TerminalSession {
   }
 
   clearSelection(): void {
-    if (!this.state.terminal?.hasSelection?.()) {
+    if (!this.state.terminal?.getSelectionText()) {
       return
     }
 
@@ -449,7 +447,7 @@ export class TerminalSession {
 
   private updateSelectionState(): void {
     this.update({
-      hasSelection: Boolean(this.state.terminal?.hasSelection())
+      hasSelection: Boolean(this.state.terminal?.getSelectionText())
     })
   }
 

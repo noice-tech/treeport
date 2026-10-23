@@ -179,9 +179,9 @@ describe('terminal launcher setup pipeline', () => {
       ['/bin/zsh', '-l']
     ])
     expect(output.value()).toContain(
-      '\u001b]777;command;--Review; Title\u001b\\'
+      '\u001b]7740;command;--Review; Title\u001b\\'
     )
-    expect(output.value()).toContain('\u001b]777;command;\u001b\\')
+    expect(output.value()).toContain('\u001b]7740;command;\u001b\\')
     expect(calls[0]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
     expect(calls[1]?.env).toMatchObject({
       TREEPORT_SHELL_INTEGRATION: '1',

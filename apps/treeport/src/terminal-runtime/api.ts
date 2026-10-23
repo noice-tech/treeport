@@ -4,11 +4,9 @@ import * as Schema from 'effect/Schema'
 import type {
   HostedTerminal,
   TerminalHostRuntimeEvent,
-  TerminalImageSnapshot,
   TerminalLaunchSpec,
   TerminalProgress,
   TerminalSessionState,
-  TerminalSnapshotLink,
   TerminalTitleState,
   TerminalTraceContext
 } from './contract'
@@ -272,9 +270,9 @@ export interface TerminalHostResults {
   inventory: HostedTerminal[]
   state: TerminalSessionState
   attach: {
+    /** Base64 Ghostty snapshot, or VT text from legacy hosts without format. */
     data: string
-    links?: TerminalSnapshotLink[] | undefined
-    images?: TerminalImageSnapshot | null | undefined
+    format?: 'ghostty' | undefined
     synchronizedOutput?: boolean | undefined
     fence: number
     cols: number
@@ -339,61 +337,6 @@ const terminalProgressSchema = Schema.Struct({
   state: Schema.Literal('normal', 'error', 'indeterminate', 'paused'),
   value: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100)))
 })
-const terminalSnapshotLinkSchema = Schema.Struct({
-  buffer: Schema.Literal('normal', 'alternate'),
-  uri: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4_096)),
-  line: Schema.NonNegativeInt,
-  startColumn: Schema.NonNegativeInt,
-  endColumn: positiveInteger
-})
-const imageNumber = Schema.Number.pipe(Schema.finite())
-const terminalImageCommandSchema = Schema.Struct({
-  columns: Schema.optional(imageNumber),
-  rows: Schema.optional(imageNumber),
-  x: Schema.optional(imageNumber),
-  y: Schema.optional(imageNumber),
-  sourceWidth: Schema.optional(imageNumber),
-  sourceHeight: Schema.optional(imageNumber),
-  xOffset: Schema.optional(imageNumber),
-  yOffset: Schema.optional(imageNumber),
-  zIndex: Schema.optional(imageNumber),
-  cursorMovement: Schema.optional(imageNumber),
-  placementId: Schema.optional(imageNumber)
-})
-const terminalImageSnapshotSchema = Schema.Struct({
-  nextImageId: positiveInteger,
-  images: Schema.Array(
-    Schema.Struct({
-      id: Schema.NonNegativeInt,
-      data: Schema.String.pipe(Schema.maxLength(24 * 1024 * 1024)),
-      width: Schema.NonNegativeInt,
-      height: Schema.NonNegativeInt,
-      format: Schema.Number,
-      compression: Schema.String.pipe(Schema.maxLength(1))
-    })
-  ).pipe(Schema.maxItems(256)),
-  placements: Schema.Array(
-    Schema.Struct({
-      imageId: Schema.NonNegativeInt,
-      command: terminalImageCommandSchema,
-      cellSize: Schema.Struct({
-        width: Schema.Number.pipe(Schema.between(1, 100)),
-        height: Schema.Number.pipe(Schema.between(1, 200))
-      }),
-      buffer: Schema.Literal('normal', 'alternate'),
-      tiles: Schema.Array(
-        Schema.Tuple(
-          Schema.NonNegativeInt,
-          Schema.NonNegativeInt,
-          Schema.NonNegativeInt,
-          positiveInteger
-        )
-      ).pipe(Schema.maxItems(1_000_000))
-    })
-  ).pipe(Schema.maxItems(2_048)),
-  pending: Schema.String.pipe(Schema.maxLength(24 * 1024 * 1024))
-})
-
 const terminalStatusSchema = Schema.Literal('running', 'exited', 'unavailable')
 const terminalTitleStateSchema = Schema.Struct({
   terminalTitle: Schema.NullOr(Schema.String),
@@ -437,8 +380,7 @@ const terminalHostResultSchemas = {
   attach: Schema.NullOr(
     Schema.Struct({
       data: Schema.String,
-      links: Schema.optional(Schema.Array(terminalSnapshotLinkSchema)),
-      images: Schema.optional(Schema.NullOr(terminalImageSnapshotSchema)),
+      format: Schema.optional(Schema.Literal('ghostty')),
       synchronizedOutput: Schema.optional(Schema.Boolean),
       fence: Schema.NonNegativeInt,
       cols: positiveInteger,

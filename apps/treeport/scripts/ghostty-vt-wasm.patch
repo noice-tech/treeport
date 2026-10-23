@@ -1,0 +1,39 @@
+Enables Kitty graphics in the wasm32-freestanding libghostty-vt build.
+Upstream disables it for timestamps this commit no longer reads; file and
+shared-memory media stay unavailable, and PNG uses the bundled wuffs decoder.
+
+--- a/src/terminal/build_options.zig
++++ b/src/terminal/build_options.zig
+@@ -272,7 +272,7 @@
+     /// targets, so it is always disabled there regardless of the
+     /// feature setting.
+     pub fn kittyGraphics(self: Options, target: std.Target) bool {
+-        if (target.os.tag == .freestanding) return false;
++        _ = target;
+         return self.features.kitty_graphics;
+     }
+ 
+--- a/src/terminal/kitty/graphics_image.zig
++++ b/src/terminal/kitty/graphics_image.zig
+@@ -152,6 +152,9 @@
+             return result;
+         }
+ 
++        // Freestanding targets have no filesystem or shared memory.
++        if (comptime builtin.target.os.tag == .freestanding) return error.UnsupportedMedium;
++
+         // Verify our capabilities and limits allow this.
+         {
+             // Special case if we don't support decoding PNGs and the format
+--- a/src/terminal/sys.zig
++++ b/src/terminal/sys.zig
+@@ -16,7 +16,8 @@
+ /// and the exact semantics are up to callers. For example, the Kitty Graphics
+ /// Protocol will work but cannot accept PNG images.
+ pub var decode_png: ?DecodePngFn = png: {
+-    if (build_options.artifact == .lib) break :png null;
++    // WebAssembly embedders have no synchronous PNG decoder of their own.
++    if (build_options.artifact == .lib and !@import("builtin").target.cpu.arch.isWasm()) break :png null;
+     break :png &decodePngWuffs;
+ };
+ 

@@ -1,5 +1,5 @@
 @import '@treeport/theme/styles.css';
-@import '@xterm/xterm/css/xterm.css';
+@import '@wterm/dom/css';
 @source './';
 
 .app-frame {
@@ -17,7 +17,7 @@
 }
 
 /* Preserve each inner scroller's bounce without scrolling the app behind it. */
-:is(.overflow-y-auto, .overflow-auto, .overflow-x-auto, .xterm-viewport) {
+:is(.overflow-y-auto, .overflow-auto, .overflow-x-auto, .wterm) {
   overscroll-behavior: contain;
 }
 
@@ -79,32 +79,51 @@
   bottom: 50%;
 }
 
-.xterm-host .xterm {
+/* Font size and row height are set per terminal for zoom and viewer scaling.
+   Keep --term-fg/--term-bg in sync with terminalOptions() for OSC 10/11. */
+.xterm-host .wterm {
+  --term-font-family:
+    'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
+  --term-fg: #e4e4e7;
+  --term-bg: #09090b;
+  --term-cursor: #67e8f9;
+  --term-selection-bg: rgb(244 244 245 / 35%);
+  --term-color-0: #18181b;
+  --term-color-1: #fb7185;
+  --term-color-2: #86efac;
+  --term-color-3: #fde047;
+  --term-color-4: #7dd3fc;
+  --term-color-5: #d8b4fe;
+  --term-color-6: #67e8f9;
+  --term-color-7: #f4f4f5;
+  --term-color-8: #555753;
+  --term-color-9: #ef2929;
+  --term-color-10: #8ae234;
+  --term-color-11: #fce94f;
+  --term-color-12: #729fcf;
+  --term-color-13: #ad7fa8;
+  --term-color-14: #34e2e2;
+  --term-color-15: #eeeeec;
+
   height: 100%;
-  touch-action: pan-x pinch-zoom;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+  touch-action: pan-y pinch-zoom;
+  scrollbar-color: var(--color-zinc-700) transparent;
+  scrollbar-width: thin;
 }
 
-.xterm-host .xterm-viewport {
-  background-color: var(--color-zinc-950);
-}
-
-.xterm-host .xterm-scrollable-element > .scrollbar.vertical,
-.xterm-host .xterm-scrollable-element > .scrollbar.vertical > .slider {
-  width: 10px !important;
-}
-
-/* Keep the terminal and its focused input visible; only the scrollbar waits
-   for the synchronized frame to commit. Do not change the grid's dimensions. */
-.xterm-host .terminal-synchronized-output .xterm-scrollbar {
-  visibility: hidden !important;
-  pointer-events: none;
+.xterm-host .wterm ::selection {
+  background: #f4f4f5;
+  color: #09090b;
 }
 
 .terminal-session-host {
   position: relative;
 }
 
-.terminal-session-host.terminal-scrolling .xterm-helper-textarea {
+.terminal-session-host.terminal-scrolling .wterm textarea {
   cursor: default;
 }
 

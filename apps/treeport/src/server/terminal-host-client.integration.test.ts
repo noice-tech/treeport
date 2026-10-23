@@ -29,6 +29,7 @@ import type { TerminalHostSessions } from '../terminal-runtime/sessions'
 import { probeTerminalHostCompatibility } from '../terminal-runtime/preflight'
 import { sessionStatusSchema } from '../terminal-runtime/session-protocol'
 import { PersistentSession } from '../terminal-runtime/session-client'
+import { hasKittyImage, restoreTestSnapshot } from './test-ghostty-snapshot'
 
 async function runLegacy<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   const exit = await Effect.runPromise(Effect.exit(effect))
@@ -55,8 +56,7 @@ type LegacyClient = Omit<
     listener: (data: string, sequence: number) => void
   ): Promise<{
     data: string
-    links: readonly unknown[]
-    images: unknown
+    format: 'ghostty'
     fence: number
     cols: number
     rows: number
@@ -396,8 +396,7 @@ describe('detached terminal host lifecycle', () => {
               : frame.method === 'attach'
                 ? {
                     data: '',
-                    links: [],
-                    images: null,
+                    format: 'ghostty' as const,
                     fence: 0,
                     cols: 80,
                     rows: 24
@@ -547,7 +546,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       argv: [
         process.execPath,
         '-e',
-        `process.stdin.setRawMode(true); process.stdin.setEncoding('utf8'); process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); process.stdout.write('NORMAL_UNICODE λ🙂\\r\\n\\x1b[?1049h\\x1b[?1003h\\x1b[?1006h'); console.log('HOST_BOOT'); let replies = 0; process.stdin.on('data', data => { if (/\\x1b\\[\\d+;\\d+R/.test(data)) console.log('QUERY_REPLY_' + ++replies); else if (data.includes('SEND_IMAGE')) process.stdout.write('\\x1b[20;1H\\x1b_Ga=T,f=100,i=42,c=4,r=2,C=1,q=2;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=\\x1b\\\\\\x1b[30;1H'); else process.stdout.write('ECHO:' + data) }); setTimeout(() => process.stdout.write('\\x1b[6n'), 100); let offline = false; setInterval(() => { console.log('DETACHED_OUTPUT'); if (!offline && require('node:fs').existsSync('offline-query')) { offline = true; process.stdout.write('\\x1b[?100'); setTimeout(() => process.stdout.write('6h\\x1b[6n'), 10) } }, 250)`
+        `process.stdin.setRawMode(true); process.stdin.setEncoding('utf8'); process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); process.stdout.write('NORMAL_UNICODE λ🙂\\r\\n\\x1b[?1049h\\x1b[?1003h\\x1b[?1006h'); console.log('HOST_BOOT'); let replies = 0; process.stdin.on('data', data => { if (/\\x1b\\[\\d+;\\d+R/.test(data)) console.log('QUERY_REPLY_' + ++replies); else if (data.includes('SEND_IMAGE')) process.stdout.write('\\x1b[20;1H\\x1b_Ga=T,f=100,i=42,c=4,r=2,C=1,q=2;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=\\x1b\\\\\\x1b[30;1H'); else process.stdout.write('ECHO:' + data) }); setTimeout(() => process.stdout.write('\\x1b[6n'), 100); let offline = false; setInterval(() => { console.log('DETACHED_OUTPUT'); if (!offline && require('node:fs').existsSync('offline-query')) { offline = true; process.stdout.write('\\x1b[?100'); setTimeout(() => process.stdout.write('6h\\x1b[6n'), 10) } }, 250)`
       ],
       shellCommand: null,
       interactiveShell: false,
@@ -724,13 +723,16 @@ child.once('exit', (code) => process.exit(code ?? 1))
         liveOutput += output
       }
     )
-    expect(attachment?.data).toContain('HOST_BOOT')
-    expect(attachment?.data).toContain('DETACHED_OUTPUT')
-    expect(attachment?.data).toContain('QUERY_REPLY_2')
-    expect(attachment?.data).not.toContain('QUERY_REPLY_3')
-    expect(attachment?.data).toContain('\u001b[?1006h')
-    expect(attachment?.data).toContain('NORMAL_UNICODE λ🙂')
-    expect(attachment?.data).toContain('\u001b[?1049h')
+    const restored = await restoreTestSnapshot(attachment!.data)
+    expect(restored.text()).toContain('HOST_BOOT')
+    expect(restored.text()).toContain('DETACHED_OUTPUT')
+    expect(restored.text()).toContain('QUERY_REPLY_2')
+    expect(restored.text()).not.toContain('QUERY_REPLY_3')
+    expect(restored.mode(1006)).toBe(true)
+    expect(restored.mode(1049)).toBe(true)
+    restored.write('\u001b[?1049l')
+    expect(restored.text()).toContain('NORMAL_UNICODE λ🙂')
+    restored.dispose()
     expect(attachment).toMatchObject({ cols: 93, rows: 27 })
     const transition =
       await restartedDaemon.prepareQueryAuthority('terminal-host')
@@ -765,11 +767,14 @@ child.once('exit', (code) => process.exit(code ?? 1))
         () => undefined
       )
       imageAttachment?.unsubscribe()
-      const images = imageAttachment?.images as {
-        images: unknown[]
-        placements: unknown[]
-      } | null
-      return (images?.placements.length ?? 0) > 0
+      if (!imageAttachment) {
+        return false
+      }
+
+      const imageSnapshot = await restoreTestSnapshot(imageAttachment.data)
+      const uploaded = hasKittyImage(imageSnapshot, 42)
+      imageSnapshot.dispose()
+      return uploaded
     }, 'The live engine did not retain the image upload')
     attachment?.unsubscribe()
 
@@ -887,18 +892,15 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'terminal-host',
       () => undefined
     )
-    expect(recoveredAttachment?.data).toContain('\u001b[?1006h')
-    expect(recoveredAttachment?.data).toContain('NORMAL_UNICODE λ🙂')
-    expect(recoveredAttachment?.images).toMatchObject({
-      images: [expect.objectContaining({ id: 42 })],
-      placements: [
-        expect.objectContaining({
-          imageId: 42,
-          buffer: 'alternate',
-          cellSize: { width: 9, height: 18 }
-        })
-      ]
-    })
+    const recovered = await restoreTestSnapshot(recoveredAttachment!.data)
+    expect(recovered.mode(1006)).toBe(true)
+    expect(hasKittyImage(recovered, 42)).toBe(true)
+    expect(
+      recovered.data('WIDTH_PX', (view, ptr) => view.getUint32(ptr, true))
+    ).toBe(recovered.cols * 9)
+    recovered.write('\u001b[?1049l')
+    expect(recovered.text()).toContain('NORMAL_UNICODE λ🙂')
+    recovered.dispose()
     recoveredAttachment?.unsubscribe()
     await recoveredDaemon.killTerminal('quota-terminal')
     await waitFor(
@@ -1376,7 +1378,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         setImmediate(() => outputSubscription.listener?.('after-snapshot', 1))
         return {
           data: 'x'.repeat(5 * 1024 * 1024),
-          links: [],
+          format: 'ghostty',
           fence: 0,
           cols: 80,
           rows: 24
@@ -1439,8 +1441,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       subscribeOutput: () => () => undefined,
       snapshot: async () => ({
         data: 'x'.repeat(5 * 1024 * 1024),
-        links: [],
-        images: null,
+        format: 'ghostty',
         fence: 0,
         cols: 80,
         rows: 24
@@ -1529,8 +1530,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       },
       snapshot: async () => ({
         data: '',
-        links: [],
-        images: null,
+        format: 'ghostty',
         fence: 0,
         cols: 80,
         rows: 24
@@ -1612,8 +1612,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       pauseOutput: () => null,
       snapshot: async () => ({
         data: '',
-        links: [],
-        images: null,
+        format: 'ghostty',
         fence: 0,
         cols: 80,
         rows: 24

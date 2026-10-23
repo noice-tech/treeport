@@ -1,53 +1,32 @@
-import type { SessionTimer } from './timers'
 import * as Effect from 'effect/Effect'
-import { FitAddon } from '@xterm/addon-fit'
-import { TerminalImages } from '../../terminal-runtime/images'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { Terminal } from '@xterm/xterm'
+import { WTerm } from '@wterm/dom'
 import { toast } from 'sonner'
 import { type TerminalClientToServerEvents } from '@treeport/shared'
 import {
+  setTerminalFontSize,
   terminalKeyboardInput,
   terminalInputWithModifiers,
   terminalOptions,
   trackTerminalScrolling,
   trackTerminalSelection
 } from '../terminal-browser'
+import { GhosttyTerminalCore, loadGhosttyVtModule } from './ghostty-core'
 import {
   type TerminalSessionState,
   type TerminalSessionSnapshot
 } from './state'
 
-const TERMINAL_CURSOR_RESTORE_DELAY_MS = 50
-const TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS = 250
-// Image-bearing frames can outlast xterm's one-second synchronized-output
-// timeout. Keep the previous frame visible, but still release a stalled frame.
-const TERMINAL_SYNCHRONIZED_OUTPUT_MAX_DELAY_MS = 5_000
-
-interface SynchronizedOutputInternals {
-  _core: {
-    coreService: { decPrivateModes: { synchronizedOutput: boolean } }
-    _inputHandler: { _dirtyRowTracker: { start: number; end: number } }
-    _renderService: {
-      _syncOutputHandler: {
-        _timeout: number | undefined
-        bufferRows(start: number, end: number): void
-      }
-    }
-  }
-}
-
 interface Dependencies {
   copyText(text: string): Promise<void>
-  hasTimer(key: SessionTimer): boolean
   canInput(): boolean
-  cancelTimer(key: SessionTimer): void
   clearSelection(): void
+  failRendering(cause: unknown): void
   handleBell(): void
   pasteFiles(files: File[]): void
   pasteResolvedFilePaths(paths: string[], controlError?: string): void
+  reconnectImmediately(): void
   requestControl(): void
-  scheduleTimer(key: SessionTimer, callback: () => void, delay: number): void
+  scheduleFit(): void
   send<E extends keyof TerminalClientToServerEvents>(
     event: E,
     payload: Parameters<TerminalClientToServerEvents[E]>[0]
@@ -60,10 +39,9 @@ export function makeBrowser(
   state: Pick<
     TerminalSessionState,
     | 'controllerGeneration'
-    | 'fitAddon'
+    | 'disposed'
     | 'fontSize'
     | 'inputModifiers'
-    | 'images'
     | 'opened'
     | 'selectionDragCancel'
     | 'snapshotValue'
@@ -75,159 +53,192 @@ export function makeBrowser(
 ) {
   return Effect.gen(function* () {
     let desktopLocalFilePasteCleanup: (() => void) | null = null
-    let cursorRestoreStartedAt: number | null = null
+    let selectionChangeCleanup: (() => void) | null = null
+    let inputObserver: ResizeObserver | null = null
+    let core: GhosttyTerminalCore | null = null
+    let loading = false
+
     function openTerminal(): void {
-      if (!state.wrapper || state.opened) {
+      if (!state.wrapper || state.opened || loading) {
         return
       }
 
-      const options = terminalOptions(state.terminalId, (hoveredLink) =>
-        dependencies.update({ hoveredLink })
-      )
-      const terminal = new Terminal({ ...options, fontSize: state.fontSize })
-      // Own xterm before loading addons so partial initialization is disposable.
-      state.terminal = terminal
-      const fitAddon = new FitAddon()
-      terminal.loadAddon(fitAddon)
-      state.images = new TerminalImages()
-      terminal.loadAddon(state.images)
-      terminal.loadAddon(
-        new WebLinksAddon(options.linkHandler.activate, {
-          hover: options.linkHandler.hover,
-          leave: options.linkHandler.leave
-        })
-      )
-      terminal.open(state.wrapper)
-      // SAFETY: The pinned xterm has no public synchronized-output timeout
-      // option. Extend only its existing timer; xterm still owns buffering,
-      // frame completion and disposal. Never hide the terminal or its input.
-      const { _core: core } = Object(terminal) as SynchronizedOutputInternals
-      const sync = core._renderService._syncOutputHandler
-      const bufferRows = sync.bufferRows.bind(sync)
-      sync.bufferRows = (start, end) => {
-        const pending = sync._timeout !== undefined
-        bufferRows(start, end)
-        terminal.element?.classList.add('terminal-synchronized-output')
-        if (!pending) {
-          window.clearTimeout(sync._timeout)
-          sync._timeout = window.setTimeout(() => {
-            sync._timeout = undefined
-            core.coreService.decPrivateModes.synchronizedOutput = false
-            terminal.refresh(0, terminal.rows - 1)
-          }, TERMINAL_SYNCHRONIZED_OUTPUT_MAX_DELAY_MS)
-        }
-      }
-      terminal.parser.registerCsiHandler(
-        { prefix: '?', final: 'l' },
-        (params) => {
-          if (params.length !== 1 || params[0] !== 2026) {
-            return false
+      const options = terminalOptions(state.terminalId)
+      if (!core) {
+        // Ghostty compiles its WASM asynchronously. The session only connects
+        // once the terminal is open, so no output can arrive before it exists.
+        loading = true
+        void loadGhosttyVtModule().then((module) => {
+          loading = false
+          if (state.disposed) {
+            return
           }
 
-          // SAFETY: The pinned xterm ends synchronized output with a full-screen
-          // refresh, even for a one-cell update. Use its current parser dirty range;
-          // RenderService merges buffered ranges from earlier writes and clears the
-          // timer. Flush here, not at parse completion: a following image handler
-          // can pause parsing. Leave combined mode resets to xterm's default handler.
-          core.coreService.decPrivateModes.synchronizedOutput = false
-          const buffer = terminal.buffer.active
-          const offset = buffer.baseY - buffer.viewportY
-          const dirty = core._inputHandler._dirtyRowTracker
-          // Clamp offscreen ranges too, so scrollback cannot leave a frame buffered.
-          terminal.refresh(
-            Math.min(dirty.start + offset, terminal.rows - 1),
-            Math.min(dirty.end + offset, terminal.rows - 1)
-          )
-          return true
-        }
-      )
-      terminal.parser.registerOscHandler(52, (payload) => {
-        // OSC 52 is write-only. Never expose the clipboard to a remote process,
-        // or let viewers, background sessions or snapshot restoration change it.
-        if (
-          !dependencies.canInput() ||
-          state.snapshotValue.phase !== 'ready' ||
-          state.wrapper?.style.visibility === 'hidden' ||
-          !document.hasFocus() ||
-          !state.wrapper?.contains(document.activeElement)
-        ) {
-          return true
-        }
+          core = new GhosttyTerminalCore(module, options.scrollbackLines)
+          openTerminal()
+        }, dependencies.failRendering)
+        return
+      }
 
-        const separator = payload.indexOf(';')
-        if (separator < 0) {
-          return true
-        }
+      const wrapper = state.wrapper
+      const element = document.createElement('div')
+      element.className = 'terminal-wterm'
+      wrapper.appendChild(element)
+      const terminal = new WTerm(element, {
+        core,
+        // Treeport owns the grid size: controllers propose it and the server
+        // decides, so wterm must never resize the core on its own.
+        autoResize: false,
+        onData: (data) => {
+          if (!dependencies.canInput()) {
+            return
+          }
 
-        const selection = payload.slice(0, separator)
-        const encoded = payload.slice(separator + 1)
-        if (
-          (selection !== '' && !/^c+$/.test(selection)) ||
-          !encoded ||
-          encoded === '?' ||
-          encoded.length > 1_048_576
-        ) {
-          return true
-        }
+          const modifiers = state.inputModifiers
+          if (modifiers) {
+            state.inputModifiers = null
 
-        let text: string
-        try {
-          text = new TextDecoder('utf-8', { fatal: true }).decode(
-            Uint8Array.from(atob(encoded), (character) =>
-              character.charCodeAt(0)
-            )
-          )
-        } catch {
-          // Malformed application output must not interrupt terminal parsing.
-          return true
-        }
+            data = terminalInputWithModifiers(data, modifiers)
+            modifiers.onConsumed()
+          }
 
-        // Do not block the output parser on browser clipboard permissions.
-        void dependencies.copyText(text).catch(() => {
-          toast.error('Couldn’t copy terminal text', {
-            action: {
-              label: 'Copy',
-              onClick: () => {
-                // Some browsers require a fresh user gesture for clipboard writes.
-                void dependencies
-                  .copyText(text)
-                  .catch(() => toast.error('Couldn’t copy text'))
-              }
-            }
+          dependencies.send('input', {
+            generation: state.controllerGeneration,
+            data
           })
+        },
+        onBinary: (data) => {
+          if (dependencies.canInput()) {
+            dependencies.send('binary', {
+              generation: state.controllerGeneration,
+              data: String.fromCharCode(...data)
+            })
+          }
+        },
+        onTitle: (title) =>
+          dependencies.update({ title: title.trim().slice(0, 256) }),
+        onBell: () => dependencies.handleBell(),
+        onClipboardWrite: (text) => {
+          // OSC 52 is write-only. Never let viewers, background sessions or
+          // snapshot restoration change the clipboard.
+          if (
+            !dependencies.canInput() ||
+            state.snapshotValue.phase !== 'ready' ||
+            wrapper.style.visibility === 'hidden' ||
+            !document.hasFocus() ||
+            !wrapper.contains(document.activeElement) ||
+            !text
+          ) {
+            return
+          }
+
+          // Do not block the output parser on browser clipboard permissions.
+          void dependencies.copyText(text).catch(() => {
+            toast.error('Couldn’t copy terminal text', {
+              action: {
+                label: 'Copy',
+                onClick: () => {
+                  // Some browsers require a fresh user gesture for clipboard writes.
+                  void dependencies
+                    .copyText(text)
+                    .catch(() => toast.error('Couldn’t copy text'))
+                }
+              }
+            })
+          })
+        }
+      })
+      setTerminalFontSize(terminal, state.fontSize)
+      // wterm focuses its input during initialization; keep focus where it was.
+      const focused = document.activeElement
+      // With a supplied core, initialization completes synchronously.
+      void terminal.init().catch(dependencies.failRendering)
+      if (focused instanceof HTMLElement && focused !== document.body) {
+        focused.focus({ preventScroll: true })
+      } else {
+        element.querySelector('textarea')?.blur()
+      }
+
+      // A fixed grid makes wterm lock its height; let it fill the host instead.
+      element.style.height = ''
+      state.terminal = terminal
+      // wterm moves its hidden input to the cursor only on focus, keys and
+      // composition. Left below history that shrank (clear, Pi redraws, the
+      // alternate screen) it keeps the scroll area tall, so following output
+      // scrolls the viewport past every row.
+      const grid = element.querySelector<HTMLElement>('.term-grid')
+      const input = element.querySelector<HTMLElement>('textarea')
+      if (grid && input) {
+        inputObserver = new ResizeObserver(() => {
+          const row = grid.querySelector<HTMLElement>(
+            '.term-row:not(.term-scrollback-row)'
+          )
+          const cursor = terminal.bridge?.getCursor()
+          if (row && cursor) {
+            input.style.top = `${grid.offsetTop + row.offsetTop + cursor.row * row.offsetHeight}px`
+          }
         })
-        return true
-      })
-      terminal.onSelectionChange(() => dependencies.updateSelectionState())
-      terminal.onRender(() => {
-        if (!terminal.modes.synchronizedOutputMode) {
-          terminal.element?.classList.remove('terminal-synchronized-output')
+        inputObserver.observe(grid)
+      }
+
+      let hoveredLink: string | null = null
+      const hoverLink = (event: MouseEvent) => {
+        const link =
+          event.target instanceof Element
+            ? event.target.closest<HTMLAnchorElement>('a.term-link')
+            : null
+        const href = link?.href ?? null
+        if (href === hoveredLink) {
+          return
         }
 
-        // xterm puts the block cursor and glyph on one span. Remove only the
-        // cursor class so ANSI foreground colors remain unchanged.
-        if (state.wrapper?.classList.contains('terminal-scrolling')) {
-          hideTerminalCursor()
-        }
-      })
-      terminal.onWriteParsed(() => {
-        if (terminal.modes.synchronizedOutputMode) {
-          terminal.element?.classList.add('terminal-synchronized-output')
-        }
+        hoveredLink = href
+        dependencies.update({ hoveredLink: href })
+      }
+      wrapper.addEventListener('mouseover', hoverLink)
+      wrapper.addEventListener('mouseleave', hoverLink)
+      wrapper.addEventListener(
+        'click',
+        (event) => {
+          const link =
+            event.target instanceof Element
+              ? event.target.closest<HTMLAnchorElement>('a.term-link')
+              : null
+          if (!link) {
+            return
+          }
 
-        if (dependencies.hasTimer('cursorRestore')) {
-          scheduleTerminalCursorRestore()
-        }
-      })
-      state.selectionDragCancel = trackTerminalSelection(state.wrapper, {
+          // Treeport opens links itself instead of navigating the app window.
+          event.preventDefault()
+          options.linkHandler.activate(event, link.href)
+          if (window.getSelection()?.isCollapsed !== false) {
+            terminal.focus()
+          }
+        },
+        true
+      )
+
+      const updateSelection = () => dependencies.updateSelectionState()
+      document.addEventListener('selectionchange', updateSelection)
+      selectionChangeCleanup = () =>
+        document.removeEventListener('selectionchange', updateSelection)
+      element.addEventListener(
+        'scroll',
+        () =>
+          setTerminalScrolling(
+            element.scrollHeight - element.scrollTop - element.clientHeight >= 5
+          ),
+        { passive: true }
+      )
+      state.selectionDragCancel = trackTerminalSelection(wrapper, {
         requestControl: () => dependencies.requestControl()
       })
-      state.wrapper.addEventListener(
+      wrapper.addEventListener(
         'click',
         () => dependencies.requestControl(),
         true
       )
-      state.wrapper.addEventListener(
+      wrapper.addEventListener(
         'keydown',
         (event) => {
           const key = event.key.toLowerCase()
@@ -240,7 +251,7 @@ export function makeBrowser(
           ].includes(key)
           const mappedInput = terminalKeyboardInput(
             event,
-            terminal.modes.applicationCursorKeysMode
+            terminal.bridge?.cursorKeysApp() ?? false
           )
           const browserOwnedMetaShortcut = event.metaKey && mappedInput === null
           const copyOrPasteShortcut =
@@ -253,13 +264,19 @@ export function makeBrowser(
             dependencies.clearSelection()
             dependencies.requestControl()
           }
+
+          if (mappedInput !== null) {
+            // Capture runs before wterm's input, which would encode it differently.
+            event.preventDefault()
+            event.stopPropagation()
+            terminal.onData?.(mappedInput)
+          }
         },
         true
       )
       trackTerminalScrolling(
-        state.wrapper,
+        wrapper,
         terminal,
-        () => undefined,
         () => {
           dependencies.requestControl()
           dependencies.clearSelection()
@@ -271,7 +288,6 @@ export function makeBrowser(
           })
         }
       )
-      const wrapper = state.wrapper
       desktopLocalFilePasteCleanup =
         window.treeportDesktop?.onLocalFilePaste?.((paths) => {
           if (!state.wrapper?.contains(document.activeElement)) {
@@ -340,129 +356,58 @@ export function makeBrowser(
         },
         true
       )
-      state.fitAddon = fitAddon
       state.opened = true
-      terminal.attachCustomKeyEventHandler((event) => {
-        const input = terminalKeyboardInput(
-          event,
-          terminal.modes.applicationCursorKeysMode
-        )
-        if (input === null) {
-          return true
-        }
-
-        event.preventDefault()
-        event.stopPropagation()
-        terminal.input(input, true)
-        return false
-      })
-      terminal.onData((data) => {
-        if (dependencies.canInput()) {
-          const modifiers = state.inputModifiers
-          if (modifiers) {
-            state.inputModifiers = null
-
-            data = terminalInputWithModifiers(data, modifiers)
-            modifiers.onConsumed()
-          }
-
-          dependencies.send('input', {
-            generation: state.controllerGeneration,
-            data
-          })
-        }
-      })
-      terminal.onBinary((data) => {
-        if (dependencies.canInput()) {
-          dependencies.send('binary', {
-            generation: state.controllerGeneration,
-            data
-          })
-        }
-      })
-      terminal.onTitleChange((title) =>
-        dependencies.update({ title: title.trim().slice(0, 256) })
-      )
-      terminal.onScroll(() =>
-        setTerminalScrolling(
-          terminal.buffer.active.viewportY < terminal.buffer.active.baseY
-        )
-      )
-      terminal.onBell(() => dependencies.handleBell())
+      dependencies.scheduleFit()
+      dependencies.reconnectImmediately()
     }
 
-    function hideTerminalCursor(): void {
-      state.terminal?.element
-        ?.querySelector('.xterm-cursor')
-        ?.classList.remove('xterm-cursor')
-    }
+    // Replace all terminal state with the server's libghostty-vt snapshot.
+    function restoreTerminal(snapshot: string): void {
+      const terminal = state.terminal
+      const terminalCore = terminal?.bridge
+      if (!terminal || !(terminalCore instanceof GhosttyTerminalCore)) {
+        return
+      }
 
-    function scheduleTerminalCursorRestore(): void {
-      // Wait for terminal writes to settle before restoring the live cursor.
-      dependencies.cancelTimer('cursorRestore')
+      // Snapshots with styled history reach tens of megabytes, where a mapping
+      // callback per byte blocks the page for most of a second.
+      const binary = atob(snapshot)
+      const bytes = new Uint8Array(binary.length)
+      for (let index = 0; index < binary.length; index++) {
+        bytes[index] = binary.charCodeAt(index)
+      }
 
-      cursorRestoreStartedAt ??= Date.now()
-      const remainingDelay = Math.max(
-        0,
-        TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS -
-          (Date.now() - cursorRestoreStartedAt)
-      )
-      dependencies.scheduleTimer(
-        'cursorRestore',
-        () => {
-          cursorRestoreStartedAt = null
-          if (
-            !state.wrapper ||
-            (state.terminal &&
-              state.terminal.buffer.active.viewportY <
-                state.terminal.buffer.active.baseY)
-          ) {
-            return
-          }
-
-          state.wrapper.classList.remove('terminal-scrolling')
-          state.terminal?.refresh(0, state.terminal.rows - 1)
-        },
-        Math.min(TERMINAL_CURSOR_RESTORE_DELAY_MS, remainingDelay)
-      )
+      terminalCore.restore(bytes)
+      // An empty write makes wterm repaint the restored grid and history.
+      terminal.write('')
     }
 
     function setTerminalScrolling(scrolling: boolean): void {
-      if (!state.wrapper) {
-        return
-      }
-
-      if (scrolling) {
-        dependencies.cancelTimer('cursorRestore')
-
-        cursorRestoreStartedAt = null
-
-        state.wrapper.classList.add('terminal-scrolling')
-        hideTerminalCursor()
-        return
-      }
-
-      if (state.wrapper.classList.contains('terminal-scrolling')) {
-        scheduleTerminalCursorRestore()
-      }
+      state.wrapper?.classList.toggle('terminal-scrolling', scrolling)
     }
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        state.terminal?.dispose()
+        state.terminal?.destroy()
+        core?.dispose()
+        core = null
       })
     )
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        const cleanup = desktopLocalFilePasteCleanup
+        const cleanups = [desktopLocalFilePasteCleanup, selectionChangeCleanup]
         desktopLocalFilePasteCleanup = null
-        cleanup?.()
+        selectionChangeCleanup = null
+        cleanups.forEach((cleanup) => cleanup?.())
+        inputObserver?.disconnect()
+        inputObserver = null
       })
     )
 
     return {
       openTerminal,
+      restoreTerminal,
       setTerminalScrolling
     }
   })

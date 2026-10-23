@@ -77,6 +77,7 @@ async function checkPackage(
         'dist/node/server/browser-relay.js',
         'dist/node/server/terminal-host-preflight.js',
         'dist/node/server/core/launcher.js',
+        'dist/ghostty-vt.wasm',
         'dist/session-journal.js',
         'dist/session-protocol.js',
         'dist/web/index.html',

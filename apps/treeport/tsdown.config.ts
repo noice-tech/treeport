@@ -38,6 +38,7 @@ export default defineConfig({
   clean: false,
   sourcemap: false,
   dts: false,
+  copy: 'src/ghostty-vt/ghostty-vt.wasm',
   onSuccess(resolvedConfig, signal) {
     if (!resolvedConfig.watch) {
       return

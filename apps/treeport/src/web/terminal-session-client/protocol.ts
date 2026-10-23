@@ -1,4 +1,4 @@
-import { TerminalRenderError } from './render'
+import type { TerminalRenderError } from './render'
 import * as Effect from 'effect/Effect'
 import {
   parseTerminalServerEvent,
@@ -6,7 +6,7 @@ import {
   type TerminalServerEvent,
   type TerminalProtocolInput
 } from '@treeport/shared'
-import { restoreTerminalSnapshotLinks } from '../terminal-browser'
+import { terminalCellSize } from '../terminal-browser'
 import {
   type TerminalSessionState,
   type TerminalSessionSnapshot
@@ -24,7 +24,6 @@ interface Dependencies {
   acknowledgeInput(generation: number): void
   cancelInput(): void
   flushInput(): void
-  drainTerminalWrites(): Effect.Effect<void, TerminalRenderError>
   enqueueRender(
     epoch: number,
     effect: Effect.Effect<void, TerminalRenderError>
@@ -42,7 +41,7 @@ interface Dependencies {
   setTerminalScrolling(scrolling: boolean): void
   stopWithError(message: string): void
   update(patch: Partial<TerminalSessionSnapshot>): void
-  writeTerminal(data: string): Effect.Effect<void, TerminalRenderError>
+  restoreTerminal(snapshot: string): void
 }
 
 export function makeProtocol(
@@ -58,7 +57,6 @@ export function makeProtocol(
     | 'expectedSequence'
     | 'focusAfterRender'
     | 'host'
-    | 'images'
     | 'lastParsedSequence'
     | 'parsedSequences'
     | 'queryAuthorityActive'
@@ -87,7 +85,7 @@ export function makeProtocol(
       dependencies.send('query_authority', {
         generation,
         transitionId,
-        cellSize: state.terminal?.dimensions?.css.cell ?? null
+        cellSize: state.terminal ? terminalCellSize(state.terminal) : null
       })
     }
 
@@ -150,60 +148,19 @@ export function makeProtocol(
 
         dependencies.enqueueRender(
           epoch,
-          Effect.gen(function* () {
-            yield* dependencies.drainTerminalWrites()
+          Effect.sync(() => {
             if (state.disposed || epoch !== state.renderEpoch) {
               return
             }
 
-            state.terminal?.reset()
+            dependencies.restoreTerminal(message.snapshot)
             dependencies.applyCanonicalDimensions(
               dimensions.cols,
               dimensions.rows,
               revision,
               true
             )
-            if (state.terminal) {
-              // Restore the temporary mode omitted by SerializeAddon before
-              // any snapshot bytes, including an unfinished image upload.
-              yield* dependencies.writeTerminal(
-                (message.synchronizedOutput ? '\x1b[?2026h' : '') +
-                  message.snapshot
-              )
-              if (state.disposed || epoch !== state.renderEpoch) {
-                return
-              }
-
-              restoreTerminalSnapshotLinks(
-                state.terminal,
-                message.snapshotLinks
-              )
-              if (message.snapshotImages && state.images) {
-                yield* Effect.promise(() =>
-                  state.images!.restore(message.snapshotImages!)
-                ).pipe(
-                  Effect.timeoutFail({
-                    duration: '30 seconds',
-                    onTimeout: () =>
-                      new TerminalRenderError({
-                        message:
-                          'Images did not finish decoding within 30 seconds'
-                      })
-                  })
-                )
-                if (state.disposed || epoch !== state.renderEpoch) {
-                  return
-                }
-
-                if (message.snapshotImages.pending) {
-                  yield* dependencies.writeTerminal(
-                    message.snapshotImages.pending
-                  )
-                }
-              }
-            }
-
-            if (state.wrapper && epoch === state.renderEpoch) {
+            if (state.wrapper) {
               state.wrapper.style.visibility = ''
               if (state.focusAfterRender && state.host) {
                 dependencies.focus()
@@ -213,7 +170,7 @@ export function makeProtocol(
             dependencies.clearDegraded()
             dependencies.update({
               phase: 'ready',
-              // A control event can supersede ready while xterm parses its snapshot.
+              // A control event can supersede ready while the snapshot restores.
               controller:
                 state.controllerGeneration === message.generation
                   ? message.controller
@@ -254,8 +211,7 @@ export function makeProtocol(
         const epoch = state.renderEpoch
         dependencies.enqueueRender(
           epoch,
-          Effect.gen(function* () {
-            yield* dependencies.drainTerminalWrites()
+          Effect.sync(() => {
             if (state.disposed || epoch !== state.renderEpoch) {
               return
             }
@@ -346,8 +302,7 @@ export function makeProtocol(
             const epoch = state.renderEpoch
             dependencies.enqueueRender(
               epoch,
-              Effect.gen(function* () {
-                yield* dependencies.drainTerminalWrites()
+              Effect.sync(() => {
                 if (
                   !state.disposed &&
                   epoch === state.renderEpoch &&
@@ -395,8 +350,7 @@ export function makeProtocol(
           const epoch = state.renderEpoch
           dependencies.enqueueRender(
             epoch,
-            Effect.gen(function* () {
-              yield* dependencies.drainTerminalWrites()
+            Effect.sync(() => {
               if (
                 !state.disposed &&
                 epoch === state.renderEpoch &&
@@ -434,7 +388,7 @@ export function makeProtocol(
       }
 
       state.reconnectAllowed = message.retryable
-      state.terminal?.writeln(`\r\n\x1b[31m${message.message}\x1b[0m`)
+      state.terminal?.write(`\r\n\x1b[31m${message.message}\x1b[0m\r\n`)
       if (message.retryable) {
         state.controlRequestGeneration = null
         dependencies.update({ controlPending: false, error: message.message })

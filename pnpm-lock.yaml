@@ -436,15 +436,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: 'catalog:'
         version: 5.2.0(supports-color@10.2.2)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
-      '@xterm/addon-image':
-        specifier: 0.10.0-beta.301
-        version: 0.10.0-beta.301(@xterm/xterm@6.1.0-beta.304)
-      '@xterm/addon-serialize':
-        specifier: 0.15.0-beta.301
-        version: 0.15.0-beta.301(@xterm/xterm@6.1.0-beta.304)
-      '@xterm/headless':
-        specifier: 6.1.0-beta.303
-        version: 6.1.0-beta.303
       cmdk:
         specifier: ^1.1.1
         version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -536,15 +527,12 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
-      '@xterm/addon-fit':
-        specifier: 0.12.0-beta.301
-        version: 0.12.0-beta.301(@xterm/xterm@6.1.0-beta.304)
-      '@xterm/addon-web-links':
-        specifier: 0.13.0-beta.301
-        version: 0.13.0-beta.301(@xterm/xterm@6.1.0-beta.304)
-      '@xterm/xterm':
-        specifier: 6.1.0-beta.304
-        version: 6.1.0-beta.304
+      '@wterm/core':
+        specifier: 0.5.5
+        version: 0.5.5
+      '@wterm/dom':
+        specifier: 0.5.5
+        version: 0.5.5
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -577,6 +565,8 @@ importers:
         version: 0.22.14(@volar/typescript@2.4.28(typescript@7.0.2))(oxc-resolver@11.24.2)(tsx@4.23.1)(typescript@7.0.2)
 
   packages/app-sdk: {}
+
+  packages/cursor: {}
 
   packages/desktop-bridge: {}
 
@@ -4695,36 +4685,16 @@ packages:
   '@webassemblyjs/wast-printer@1.14.1':
     resolution: {integrity: sha512-kPSSXE6De1XOR820C90RIo2ogvZG+c3KiHzqUoO/F34Y2shGzesfqv7o57xrxovZJH/MetF5UjroJ/R/3isoiw==}
 
+  '@wterm/core@0.5.5':
+    resolution: {integrity: sha512-0dvlZuXMDFvaGr1B0wPqXx8qw5UVfE3gc/BkhpLd0t9zsYdmiIRJPEFmEJkFxzIQlffPbnEP5sQ6iT+XyjT1pg==}
+
+  '@wterm/dom@0.5.5':
+    resolution: {integrity: sha512-eUSgc4a0/8WxYLpjp/4UgLUI9K/Ret5O8LKljx4swT0B1bcQpZtyxgt/LZ/Sp7DFxEB2eesgy4OSB0TQsmSS1A==}
+
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
     deprecated: this version has critical issues, please update to the latest version
-
-  '@xterm/addon-fit@0.12.0-beta.301':
-    resolution: {integrity: sha512-MukRyJLAFQrW/++aM209jBZ8G9J/Ioe4SGS6c3ba87v+zYuX/I66JrDB7sVfykQ9t7DlT+c1MWl1jTlX2kyx1w==}
-    peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.304
-
-  '@xterm/addon-image@0.10.0-beta.301':
-    resolution: {integrity: sha512-PJZL4GlQ1ReIgbffFMaOAFxc3wOit21/G2UEM82RpH3hNHjn6MH8ilz3ToDeBjYuOqU7ienBaeIuMbNktX4/HA==}
-    peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.304
-
-  '@xterm/addon-serialize@0.15.0-beta.301':
-    resolution: {integrity: sha512-zWT0Sy5GCSTnarAXRiicu3XYHgam8DPtpkWfSLPME+A3s7U1A6Jy+ZATt8vMkatyeVOPI0GICYRuQJLZVgnVow==}
-    peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.304
-
-  '@xterm/addon-web-links@0.13.0-beta.301':
-    resolution: {integrity: sha512-BpY297K+FGLsTQemnA6uOg6hk85DwVuUvWCqE9rIAcDxOOC7fP9GKAZTIfaEos/EZk2Ei23vD6w0P5Br6+RU7Q==}
-    peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.304
-
-  '@xterm/headless@6.1.0-beta.303':
-    resolution: {integrity: sha512-FjPRg5OF0UdloypPRZcUdtpxaxYKk7FdNArgpOaedoj7UWzinB+THZyEY7t6QHRR5bjcbz7B7s4vX0Zo5LT6aw==}
-
-  '@xterm/xterm@6.1.0-beta.304':
-    resolution: {integrity: sha512-Wq9d4qFYslYQBIan+riXotdyurtREc6v+HWdAwV6Y2JSDI9eJ1dkWm/fzYb2rCGgGnM3baiYuSK4Z6OLNKLzDw==}
 
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
@@ -12700,27 +12670,13 @@ snapshots:
       '@webassemblyjs/ast': 1.14.1
       '@xtuc/long': 4.2.2
 
+  '@wterm/core@0.5.5': {}
+
+  '@wterm/dom@0.5.5':
+    dependencies:
+      '@wterm/core': 0.5.5
+
   '@xmldom/xmldom@0.9.10': {}
-
-  '@xterm/addon-fit@0.12.0-beta.301(@xterm/xterm@6.1.0-beta.304)':
-    dependencies:
-      '@xterm/xterm': 6.1.0-beta.304
-
-  '@xterm/addon-image@0.10.0-beta.301(@xterm/xterm@6.1.0-beta.304)':
-    dependencies:
-      '@xterm/xterm': 6.1.0-beta.304
-
-  '@xterm/addon-serialize@0.15.0-beta.301(@xterm/xterm@6.1.0-beta.304)':
-    dependencies:
-      '@xterm/xterm': 6.1.0-beta.304
-
-  '@xterm/addon-web-links@0.13.0-beta.301(@xterm/xterm@6.1.0-beta.304)':
-    dependencies:
-      '@xterm/xterm': 6.1.0-beta.304
-
-  '@xterm/headless@6.1.0-beta.303': {}
-
-  '@xterm/xterm@6.1.0-beta.304': {}
 
   '@xtuc/ieee754@1.2.0': {}
 

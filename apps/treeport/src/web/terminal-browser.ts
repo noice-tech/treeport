@@ -1,5 +1,5 @@
-import type { Terminal } from '@xterm/xterm'
-import type { TerminalProgress, TerminalSnapshotLink } from '@treeport/shared'
+import type { WTerm } from '@wterm/dom'
+import type { TerminalProgress } from '@treeport/shared'
 
 import {
   browserTrace,
@@ -8,35 +8,50 @@ import {
 } from './agent-tracing'
 
 export const TERMINAL_FONT_SIZE = 14
+const TERMINAL_LINE_HEIGHT = 1.15
 
 const TERMINAL_TOUCH_SELECTION_DELAY_MS = 450
 const TERMINAL_TOUCH_PASTE_DELAY_MS = 550
 const TERMINAL_TOUCH_SELECTION_SLOP = 10
+const TERMINAL_TOUCH_MOMENTUM_DECAY = 0.95
+const TERMINAL_TOUCH_MOMENTUM_MIN_ROWS_PER_FRAME = 0.05
+// Matches wterm's tolerance for treating the viewport as following live output.
+const TERMINAL_SCROLLBACK_BOTTOM_TOLERANCE = 5
 
-interface XtermCellInternals {
-  bg: number
-  extended?: { urlId: number }
+interface WTermMetrics {
+  _charWidth: number
+  _rowHeight: number
 }
 
-interface XtermTerminalInternals {
-  _core: {
-    _oscLinkService: {
-      registerLink(data: { uri: string }): number
-      addLineToLink(id: number, line: number): void
-    }
-    _bufferService: {
-      buffers: Record<
-        'normal' | 'alt',
-        {
-          lines: {
-            get(line: number): {
-              setCell(column: number, cell: XtermCellInternals): void
-            }
-          }
-        }
-      >
-    }
-  }
+export function setTerminalFontSize(terminal: WTerm, fontSize: number): void {
+  // wterm sizes rows from --term-row-height and measures the cell width from
+  // the font, so both follow the font size without rebuilding the grid.
+  terminal.element.style.setProperty('--term-font-size', `${fontSize}px`)
+  terminal.element.style.setProperty(
+    '--term-row-height',
+    `${Math.ceil(fontSize * TERMINAL_LINE_HEIGHT)}px`
+  )
+}
+
+export function terminalCellSize(
+  terminal: WTerm
+): { width: number; height: number } | null {
+  // SAFETY: The pinned wterm keeps its measured cell metrics private and
+  // refreshes them whenever it measures the font.
+  const { _charWidth: width, _rowHeight: height } = Object(
+    terminal
+  ) as WTermMetrics
+  return width > 0 && height > 0 ? { width, height } : null
+}
+
+export function pasteTerminalText(terminal: WTerm, text: string): void {
+  const normalized = text.replace(/\r?\n/g, '\r')
+  // Strip ESC so pasted text cannot end bracketed paste and inject commands.
+  terminal.onData?.(
+    terminal.bridge?.bracketedPaste()
+      ? `\u001b[200~${normalized.replaceAll('\u001b', '')}\u001b[201~`
+      : normalized
+  )
 }
 
 export function terminalProgressLabel(progress: TerminalProgress): string {
@@ -170,51 +185,6 @@ function usesMacKeyboard(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? '')
 }
 
-export function restoreTerminalSnapshotLinks(
-  terminal: Terminal,
-  links: ReadonlyArray<TerminalSnapshotLink>
-): void {
-  // SerializeAddon drops OSC 8 targets. Both Treeport xterms use the same
-  // pinned xterm version, so restore the canonical URL IDs at this explicit
-  // internal boundary after the serialized cells have been replayed.
-  // SAFETY: Treeport pins the browser xterm version and verifies this internal
-  // hyperlink restoration boundary in the reconnect E2E test.
-  const internals = Object(terminal) as XtermTerminalInternals
-  for (const link of links) {
-    const buffer = terminal.buffer[link.buffer]
-    const line = buffer.getLine(link.line)
-    if (!line || link.endColumn > line.length) {
-      continue
-    }
-
-    const linkId = internals._core._oscLinkService.registerLink({
-      uri: link.uri
-    })
-    internals._core._oscLinkService.addLineToLink(linkId, link.line)
-    for (let column = link.startColumn; column < link.endColumn; column += 1) {
-      const cell = line.getCell(column)
-      if (cell) {
-        // SAFETY: The pinned xterm cell implementation carries the mutable
-        // extended attributes copied back into its internal buffer below.
-        const internalCell = Object(cell) as XtermCellInternals
-        if (!internalCell.extended) {
-          continue
-        }
-
-        internalCell.extended.urlId = linkId
-        // xterm stores the presence of extended attributes in this bg flag.
-        internalCell.bg |= 1 << 28
-        // The public buffer API calls this "alternate"; BufferSet uses "alt".
-        internals._core._bufferService.buffers[
-          link.buffer === 'alternate' ? 'alt' : 'normal'
-        ].lines
-          .get(link.line)
-          .setCell(column, internalCell)
-      }
-    }
-  }
-}
-
 function activateTerminalLink(
   event: MouseEvent,
   url: string,
@@ -286,9 +256,9 @@ export function trackTerminalSelection(
 ): () => void {
   const handleMouseDown = () => {
     options.requestControl()
-    // Let xterm route plain clicks and drags to mouse-aware applications such
-    // as Pi fullscreen, which owns transcript selection. Its platform modifier
-    // still lets the user explicitly choose local terminal selection.
+    // Let wterm route plain clicks and drags to mouse-aware applications such
+    // as Pi fullscreen, which owns transcript selection. Shift still lets the
+    // user explicitly choose local terminal selection.
   }
 
   wrapper.addEventListener('mousedown', handleMouseDown, true)
@@ -297,42 +267,44 @@ export function trackTerminalSelection(
 
 export function trackTerminalScrolling(
   wrapper: HTMLElement,
-  terminal: Terminal,
-  onScroll: (event: WheelEvent) => void,
+  terminal: WTerm,
   onResumeInput: () => void,
   onPasteRequest: () => void
 ): void {
-  let suppressNativeTouchScroll = false
   let touchStart: { x: number; y: number } | null = null
+  let touchScroll: { x: number; y: number; time: number } | null = null
+  let touchScrollVelocity = 0
+  let touchMomentumFrame: number | null = null
+  let wheelRows = 0
+  let wheelAxis: 'x' | 'y' = 'y'
   let touchSelectionTimer: number | null = null
-  let touchSelectionAnchor: { column: number; row: number } | null = null
+  let touchSelectionActive = false
   let touchPasteTimer: number | null = null
   let touchPasteStart: Array<{ identifier: number; x: number; y: number }> = []
 
   const terminalCellAt = (clientX: number, clientY: number) => {
-    const element = terminal.element
-    if (!element) {
+    const cell = terminalCellSize(terminal)
+    if (!cell || !terminal.bridge) {
       return null
     }
 
+    // Rows count from the oldest retained history row, matching wterm's
+    // scroll content where every retained row has the same height.
+    const element = terminal.element
     const bounds = element.getBoundingClientRect()
+    const style = getComputedStyle(element)
+    const x = clientX - bounds.left - (parseFloat(style.paddingLeft) || 0)
+    const y =
+      clientY -
+      bounds.top -
+      (parseFloat(style.paddingTop) || 0) +
+      element.scrollTop
     return {
-      column: Math.min(
-        terminal.cols - 1,
-        Math.max(
-          0,
-          Math.floor(((clientX - bounds.left) / bounds.width) * terminal.cols)
-        )
-      ),
-      row:
-        terminal.buffer.active.viewportY +
-        Math.min(
-          terminal.rows - 1,
-          Math.max(
-            0,
-            Math.floor(((clientY - bounds.top) / bounds.height) * terminal.rows)
-          )
-        )
+      col: Math.min(terminal.cols - 1, Math.max(0, Math.floor(x / cell.width))),
+      row: Math.min(
+        terminal.bridge.getScrollbackCount() + terminal.rows - 1,
+        Math.max(0, Math.floor(y / cell.height))
+      )
     }
   }
 
@@ -350,12 +322,68 @@ export function trackTerminalScrolling(
 
     touchPasteStart = []
   }
+  const stopTouchMomentum = () => {
+    if (touchMomentumFrame !== null) {
+      window.cancelAnimationFrame(touchMomentumFrame)
+      touchMomentumFrame = null
+    }
+  }
+
+  const reportsWheel = () => {
+    // wterm reports wheels to mouse-aware applications such as Pi fullscreen
+    // unless the user has scrolled back into local history.
+    const element = terminal.element
+    return (
+      Boolean(terminal.bridge?.mouseTracking?.()) &&
+      element.scrollHeight - element.clientHeight - element.scrollTop <=
+        TERMINAL_SCROLLBACK_BOTTOM_TOLERANCE
+    )
+  }
+  // wterm sends one report per wheel event whatever its delta, so trackpads
+  // and touch would scroll applications far too fast. Pace reports to one per
+  // row of travel through untrusted events that wterm encodes as usual.
+  const reportWheelRows = (
+    rows: number,
+    axis: 'x' | 'y',
+    source: {
+      clientX: number
+      clientY: number
+      altKey: boolean
+      ctrlKey: boolean
+    }
+  ) => {
+    if (terminal.bridge?.synchronizedOutput?.()) {
+      wheelRows = 0
+      return
+    }
+
+    if (axis !== wheelAxis || Math.sign(rows) !== Math.sign(wheelRows)) {
+      wheelRows = 0
+      wheelAxis = axis
+    }
+
+    wheelRows += rows
+    const count = Math.trunc(wheelRows)
+    wheelRows -= count
+    for (let index = 0; index < Math.abs(count); index += 1) {
+      terminal.element.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          clientX: source.clientX,
+          clientY: source.clientY,
+          altKey: source.altKey,
+          ctrlKey: source.ctrlKey,
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          deltaX: axis === 'x' ? Math.sign(count) : 0,
+          deltaY: axis === 'y' ? Math.sign(count) : 0
+        })
+      )
+    }
+  }
 
   const suppressSynchronizedScroll = (event: Event) => {
-    if (
-      !terminal.modes.synchronizedOutputMode &&
-      !terminal.element?.classList.contains('terminal-synchronized-output')
-    ) {
+    if (!terminal.bridge?.synchronizedOutput?.()) {
       return false
     }
 
@@ -366,45 +394,53 @@ export function trackTerminalScrolling(
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
     touchStart = null
-    touchSelectionAnchor = null
+    touchSelectionActive = false
     return true
   }
 
   wrapper.addEventListener(
     'wheel',
     (event) => {
-      if (!suppressSynchronizedScroll(event)) {
-        onScroll(event)
+      if (
+        !event.isTrusted ||
+        suppressSynchronizedScroll(event) ||
+        event.shiftKey ||
+        !reportsWheel()
+      ) {
+        return
       }
+
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      const delta = horizontal ? event.deltaX : event.deltaY
+      const rows =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? delta
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? delta * terminal.rows
+            : delta / (terminalCellSize(terminal)?.height ?? 16)
+      reportWheelRows(rows, horizontal ? 'x' : 'y', event)
     },
     { capture: true, passive: false }
   )
-  // xterm owns touch distance, mouse reports, alternate-buffer keys and inertia.
-  // Its gesture events also cover inertia after touchend, so intercept them
-  // only while Treeport owns a selection/paste gesture or freezes output.
-  wrapper.addEventListener(
-    '-xterm-gesturechange',
-    (event) => {
-      if (!suppressSynchronizedScroll(event) && suppressNativeTouchScroll) {
-        event.preventDefault()
-        event.stopImmediatePropagation()
-      }
-    },
-    true
-  )
+  // wterm scrolls history natively; Treeport intercepts touches while it owns
+  // a selection/paste gesture, output is frozen, or an application receives
+  // wheel reports.
   wrapper.addEventListener(
     'touchstart',
     (event) => {
+      stopTouchMomentum()
+      touchScroll = null
       if (suppressSynchronizedScroll(event)) {
         return
       }
 
-      suppressNativeTouchScroll = event.touches.length !== 1
       if (event.touches.length === 2) {
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
         touchStart = null
-        touchSelectionAnchor = null
+        touchSelectionActive = false
         touchPasteStart = Array.from(event.touches, (touch) => ({
           identifier: touch.identifier,
           x: touch.clientX,
@@ -423,14 +459,18 @@ export function trackTerminalScrolling(
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
         touchStart = null
-        touchSelectionAnchor = null
+        touchSelectionActive = false
         return
       }
 
       clearTouchPasteTimer()
       const touch = event.touches[0]!
       touchStart = { x: touch.clientX, y: touch.clientY }
-      touchSelectionAnchor = null
+      touchScroll = reportsWheel()
+        ? { x: touch.clientX, y: touch.clientY, time: event.timeStamp }
+        : null
+      touchScrollVelocity = 0
+      touchSelectionActive = false
       clearTouchSelectionTimer()
       touchSelectionTimer = window.setTimeout(() => {
         touchSelectionTimer = null
@@ -438,14 +478,9 @@ export function trackTerminalScrolling(
           return
         }
 
-        touchSelectionAnchor = terminalCellAt(touchStart.x, touchStart.y)
-        if (touchSelectionAnchor) {
-          suppressNativeTouchScroll = true
-          terminal.select(
-            touchSelectionAnchor.column,
-            touchSelectionAnchor.row,
-            1
-          )
+        const anchor = terminalCellAt(touchStart.x, touchStart.y)
+        if (anchor && terminal.selectWord(anchor)) {
+          touchSelectionActive = true
           navigator.vibrate?.(10)
         }
       }, TERMINAL_TOUCH_SELECTION_DELAY_MS)
@@ -483,27 +518,25 @@ export function trackTerminalScrolling(
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
         touchStart = null
-        touchSelectionAnchor = null
+        touchScroll = null
+        touchSelectionActive = false
         return
       }
 
       const touch = event.touches[0]!
-      if (touchSelectionAnchor) {
+      if (touchSelectionActive) {
         event.preventDefault()
-        const end = terminalCellAt(touch.clientX, touch.clientY)
-        if (!end) {
-          return
+        // wterm selections are native DOM ranges, so dragging moves their focus.
+        const end = document.caretRangeFromPoint(touch.clientX, touch.clientY)
+        const selection = window.getSelection()
+        if (
+          end &&
+          selection?.rangeCount &&
+          wrapper.contains(end.startContainer)
+        ) {
+          selection.extend(end.startContainer, end.startOffset)
         }
 
-        const anchorOffset =
-          touchSelectionAnchor.row * terminal.cols + touchSelectionAnchor.column
-        const endOffset = end.row * terminal.cols + end.column
-        const startOffset = Math.min(anchorOffset, endOffset)
-        terminal.select(
-          startOffset % terminal.cols,
-          Math.floor(startOffset / terminal.cols),
-          Math.abs(endOffset - anchorOffset) + 1
-        )
         return
       }
 
@@ -515,39 +548,80 @@ export function trackTerminalScrolling(
         clearTouchSelectionTimer()
         touchStart = null
       }
+
+      const cell = terminalCellSize(terminal)
+      if (touchScroll && cell) {
+        event.preventDefault()
+        // Content follows the finger, so dragging up scrolls toward newer rows.
+        const rows = (touchScroll.y - touch.clientY) / cell.height
+        const elapsed = event.timeStamp - touchScroll.time
+        if (elapsed > 0) {
+          touchScrollVelocity = rows / elapsed
+        }
+
+        touchScroll = {
+          x: touch.clientX,
+          y: touch.clientY,
+          time: event.timeStamp
+        }
+        reportWheelRows(rows, 'y', {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          altKey: false,
+          ctrlKey: false
+        })
+      }
     },
     { capture: true, passive: false }
   )
   const resetTouchScroll = (event: TouchEvent) => {
     if (suppressSynchronizedScroll(event)) {
+      touchScroll = null
       return
     }
 
-    if (touchSelectionAnchor) {
+    if (touchSelectionActive) {
       event.preventDefault()
-    } else if (event.type === 'touchend' && touchStart) {
-      event.preventDefault()
-      const screen =
-        terminal.element?.querySelector<HTMLElement>('.xterm-screen')
-      if (screen) {
-        for (const type of ['mousemove', 'mousedown', 'mouseup'] as const) {
-          screen.dispatchEvent(
-            new MouseEvent(type, {
-              bubbles: true,
-              cancelable: true,
-              clientX: touchStart.x,
-              clientY: touchStart.y,
-              buttons: type === 'mousedown' ? 1 : 0
-            })
-          )
+    }
+
+    const momentum = touchScroll
+    if (
+      event.type === 'touchend' &&
+      momentum &&
+      !touchSelectionActive &&
+      event.timeStamp - momentum.time < 100
+    ) {
+      let previous = performance.now()
+      const glide = (now: number) => {
+        const elapsed = now - previous
+        previous = now
+        const rows = touchScrollVelocity * elapsed
+        touchScrollVelocity *= TERMINAL_TOUCH_MOMENTUM_DECAY ** (elapsed / 16)
+        if (
+          Math.abs(touchScrollVelocity * 16) <
+            TERMINAL_TOUCH_MOMENTUM_MIN_ROWS_PER_FRAME ||
+          !reportsWheel()
+        ) {
+          touchMomentumFrame = null
+          return
         }
+
+        reportWheelRows(rows, 'y', {
+          clientX: momentum.x,
+          clientY: momentum.y,
+          altKey: false,
+          ctrlKey: false
+        })
+        touchMomentumFrame = window.requestAnimationFrame(glide)
       }
+      touchMomentumFrame = window.requestAnimationFrame(glide)
     }
 
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
     touchStart = null
-    touchSelectionAnchor = null
+    touchScroll = null
+    touchSelectionActive = false
   }
   wrapper.addEventListener('touchend', resetTouchScroll, {
     capture: true,
@@ -560,49 +634,12 @@ export function trackTerminalScrolling(
   wrapper.addEventListener('paste', onResumeInput, true)
 }
 
-export function terminalOptions(
-  terminalId?: string,
-  onLinkHover?: (url: string | null) => void
-) {
+export function terminalOptions(terminalId?: string) {
   return {
-    cursorBlink: true,
-    convertEol: false,
-    fontFamily:
-      '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
-    fontSize: TERMINAL_FONT_SIZE,
-    lineHeight: 1.15,
-    scrollback: 50_000,
-    // FitAddon reserves the configured scrollbar width from the terminal grid.
-    // Keep that reservation negligible and expand the absolute scrollbar with
-    // CSS so it overlays the terminal instead.
-    overviewRuler: { width: 1 },
-    allowProposedApi: false,
-    macOptionClickForcesSelection: true,
+    scrollbackLines: 50_000,
     linkHandler: {
       activate: (event: MouseEvent, url: string) =>
-        activateTerminalLink(event, url, terminalId),
-      hover: (_event: MouseEvent, url: string) => onLinkHover?.(url),
-      leave: () => onLinkHover?.(null),
-      allowNonHttpProtocols: true
-    },
-    theme: {
-      background: '#09090b',
-      foreground: '#e4e4e7',
-      cursor: '#67e8f9',
-      selectionBackground: '#f4f4f5',
-      selectionForeground: '#09090b',
-      scrollbarSliderBackground: '#3f3f46',
-      scrollbarSliderHoverBackground: '#52525b',
-      scrollbarSliderActiveBackground: '#71717a',
-      overviewRulerBorder: '#00000000',
-      black: '#18181b',
-      red: '#fb7185',
-      green: '#86efac',
-      yellow: '#fde047',
-      blue: '#7dd3fc',
-      magenta: '#d8b4fe',
-      cyan: '#67e8f9',
-      white: '#f4f4f5'
+        activateTerminalLink(event, url, terminalId)
     }
   } as const
 }

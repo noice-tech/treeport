@@ -12,6 +12,7 @@ import {
   TERMINAL_MAX_UPLOAD_BYTES
 } from '@treeport/shared'
 import { errorMessage } from '../error-message'
+import { pasteTerminalText } from '../terminal-browser'
 import {
   type TerminalSessionState,
   type TerminalSessionSnapshot
@@ -327,7 +328,11 @@ export function makeTransfers(
       }
 
       dependencies.clearSelection()
-      state.terminal?.paste(input)
+
+      if (state.terminal) {
+        pasteTerminalText(state.terminal, input)
+      }
+
       dependencies.focus()
       dependencies.update({ fileTransfer: null })
     }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import type { BrowserContext, Page, WebSocketRoute } from '@playwright/test'
 import type {
   JsonValue,
@@ -8,6 +9,38 @@ import type {
   ProjectEventsItem,
   NetworkProductEvent
 } from '@treeport/shared'
+import { GhosttyTerminal } from '../../src/ghostty-vt/ghostty-vt'
+
+const ghosttyModule = new WebAssembly.Module(
+  readFileSync(new URL('../../src/ghostty-vt/ghostty-vt.wasm', import.meta.url))
+)
+
+function emptySnapshot(cols: number, rows: number): string {
+  const terminal = GhosttyTerminal.create(
+    ghosttyModule,
+    cols,
+    rows,
+    {
+      scrollbackLines: 0,
+      continuationBytes: 0,
+      imageStorageBytes: 0,
+      foreground: 0,
+      background: 0
+    },
+    {
+      writePty: null,
+      bell: null,
+      titleChanged: null,
+      progress: null,
+      unknownOsc: null,
+      renderHold: null,
+      clipboardWrite: null
+    }
+  )
+  const snapshot = Buffer.from(terminal.snapshot()).toString('base64')
+  terminal.dispose()
+  return snapshot
+}
 
 interface TerminalState {
   terminalId: string
@@ -237,10 +270,7 @@ export async function installMockSockets(
           cols: state.cols,
           rows: state.rows,
           revision: state.revision,
-          snapshot: '',
-          synchronizedOutput: false,
-          snapshotImages: null,
-          snapshotLinks: []
+          snapshot: emptySnapshot(state.cols, state.rows)
         })
         connection.receive('output', {
           streamId: connection.streamId,

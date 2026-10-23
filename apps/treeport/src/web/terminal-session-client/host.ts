@@ -27,11 +27,16 @@ export function makeHost(
     | 'opened'
     | 'selectionDragCancel'
     | 'socket'
+    | 'terminal'
     | 'wrapper'
   >,
   dependencies: Dependencies
 ) {
   return Effect.gen(function* () {
+    // A detached wrapper lays out at zero height and loses its scroll offset.
+    // wterm keeps parsing output meanwhile, so painting must pause and the
+    // offset must be restored before wterm next derives its follow-output state.
+    let detachedScroll: { top: number; following: boolean } | null = null
     let wakeListenersAttached = false
     let resizeObserver: ResizeObserver | null = null
     let keyboardViewportCleanup: (() => void) | null = null
@@ -54,6 +59,18 @@ export function makeHost(
       }
 
       host.appendChild(state.wrapper)
+      const terminal = state.terminal
+      if (terminal && detachedScroll) {
+        const element = terminal.element
+        element.scrollTop = detachedScroll.following
+          ? element.scrollHeight
+          : detachedScroll.top
+        detachedScroll = null
+        terminal.setRenderingPaused(false)
+        // An empty write makes wterm re-read follow-output from the restored offset.
+        terminal.write('')
+      }
+
       state.socket?.manager.reconnection(true)
       if (!state.opened) {
         const opened = Effect.runSyncExit(
@@ -84,9 +101,10 @@ export function makeHost(
 
           viewportFrame = window.requestAnimationFrame(() => {
             viewportFrame = null
-            const textarea = state.wrapper?.querySelector<HTMLTextAreaElement>(
-              '.xterm-helper-textarea'
-            )
+            const textarea =
+              state.wrapper?.querySelector<HTMLTextAreaElement>(
+                '.wterm textarea'
+              )
             const keyboardOpen =
               document.activeElement === textarea &&
               viewport.height < document.documentElement.clientHeight - 100
@@ -165,6 +183,16 @@ export function makeHost(
       keyboardViewportCleanup = null
       dependencies.cancelControllerResizeIntent(false)
       state.selectionDragCancel?.()
+      const element = state.terminal?.element
+      if (element) {
+        detachedScroll = {
+          top: element.scrollTop,
+          following:
+            element.scrollHeight - element.scrollTop - element.clientHeight < 5
+        }
+        state.terminal?.setRenderingPaused(true)
+      }
+
       state.wrapper?.remove()
       state.host = null
       dependencies.update({ hoveredLink: null })

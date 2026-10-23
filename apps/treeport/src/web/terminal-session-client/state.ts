@@ -2,9 +2,7 @@ import {
   TERMINAL_FONT_SIZE,
   type TerminalInputModifiers
 } from '../terminal-browser'
-import type { FitAddon } from '@xterm/addon-fit'
-import type { Terminal } from '@xterm/xterm'
-import type { TerminalImages } from '../../terminal-runtime/images'
+import type { WTerm } from '@wterm/dom'
 import {
   type ProtocolSocket,
   type ProtocolSocketOptions,
@@ -91,10 +89,8 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
 export class TerminalSessionState {
   readonly listeners = new Set<() => void>()
   snapshotValue: TerminalSessionSnapshot = DEFAULT_SNAPSHOT
-  terminal: Terminal | null = null
-  fitAddon: FitAddon | null = null
+  terminal: WTerm | null = null
   fontSize = TERMINAL_FONT_SIZE
-  images: TerminalImages | null = null
   wrapper: HTMLDivElement | null = null
   host: HTMLElement | null = null
   socket: ProtocolSocket<

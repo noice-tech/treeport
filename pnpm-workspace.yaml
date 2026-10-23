@@ -54,3 +54,5 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - miniflare@4.20260722.1
   - wrangler@4.115.0
+  - '@wterm/core@0.5.5'
+  - '@wterm/dom@0.5.5'

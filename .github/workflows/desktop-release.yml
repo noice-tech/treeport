@@ -80,6 +80,9 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @treeport/treeport exec playwright install chromium
 
+      - name: Verify the pinned libghostty-vt build
+        run: pnpm --filter @treeport/treeport check:ghostty-vt
+
       - name: Run repository checks
         run: pnpm check
 
