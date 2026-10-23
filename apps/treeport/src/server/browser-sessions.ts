@@ -97,6 +97,9 @@ export interface BrowserSessionBrowser {
     peerId: string
   ): ReturnType<PlaywrightBrowser['webcodecsViewer']>
   readonly state: BrowserRuntimeState
+  readonly frozen: boolean
+  readonly idle: boolean
+  setFrozen(frozen: boolean): Promise<void>
   launch(): Promise<void>
   command(
     message: BrowserClientMessage
@@ -204,6 +207,7 @@ class BrowserSchedulingError extends Data.TaggedError(
 }> {}
 
 interface BrowserScheduledOperation {
+  wake: boolean
   coalesceKey: string | null
   message: BrowserClientMessage | null
   execute(message: BrowserClientMessage | null): Promise<void>
@@ -214,7 +218,7 @@ interface BrowserScheduledOperation {
 
 type BrowserScheduledInput = Omit<
   BrowserScheduledOperation,
-  'completion' | 'result'
+  'completion' | 'result' | 'wake'
 >
 
 interface BrowserScheduler {
@@ -241,6 +245,7 @@ interface BrowserSession {
   agentDirectory: string
   title: string
   browser: BrowserSessionBrowser | null
+  idleTimer: ReturnType<typeof setTimeout> | null
   launch: Promise<BrowserSessionBrowser> | null
   localOwner: BrowserLocalOwner | null
   localAutomation: BrowserLocalAutomation | null
@@ -277,6 +282,8 @@ interface BrowserSession {
   closeReason: string
 }
 
+// Match the browser reconnect/ticket window; brief handoffs must not freeze pages.
+const BROWSER_IDLE_GRACE_MS = 30_000
 const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
 const LOCAL_BROWSER_OWNER_CONTROLLER = 'local-owner'
@@ -668,7 +675,8 @@ export class BrowserSessionManager {
 
   private enqueueOperation(
     session: BrowserSession,
-    input: BrowserScheduledInput
+    input: BrowserScheduledInput,
+    wake = true
   ): BrowserScheduledOperation | null {
     const scheduler = session.scheduler
     if (!scheduler.accepting) {
@@ -718,6 +726,7 @@ export class BrowserSessionManager {
 
     const operation: BrowserScheduledOperation = {
       ...input,
+      wake,
       completion: Effect.runSync(Deferred.make<void, BrowserSchedulingError>()),
       result: null
     }
@@ -747,14 +756,18 @@ export class BrowserSessionManager {
   private scheduleOperation(
     session: BrowserSession,
     execute: () => Promise<void>,
-    options: { required?: boolean } = {}
+    options: { required?: boolean; wake?: boolean } = {}
   ): Promise<void> {
-    const operation = this.enqueueOperation(session, {
-      coalesceKey: null,
-      message: null,
-      execute,
-      required: options.required ?? false
-    })
+    const operation = this.enqueueOperation(
+      session,
+      {
+        coalesceKey: null,
+        message: null,
+        execute,
+        required: options.required ?? false
+      },
+      options.wake ?? true
+    )
     if (!operation) {
       return Promise.reject(
         new BrowserSchedulingError({
@@ -842,7 +855,13 @@ export class BrowserSessionManager {
             Effect.gen(this, function* () {
               const result = yield* Effect.exit(
                 Effect.tryPromise({
-                  try: () => operation.execute(operation.message),
+                  try: async () => {
+                    if (operation.wake) {
+                      await session.browser?.setFrozen(false)
+                    }
+
+                    await operation.execute(operation.message)
+                  },
                   catch: (cause) =>
                     new BrowserSchedulingError({
                       reason: 'operation',
@@ -853,6 +872,7 @@ export class BrowserSessionManager {
               )
               yield* Deferred.done(operation.completion, result)
               scheduler.active.delete(operation)
+              this.scheduleIdleFreeze(session)
               if (Exit.isFailure(result) && !operation.result) {
                 this.broadcastNavigationError(session, String(result.cause))
               }
@@ -875,7 +895,81 @@ export class BrowserSessionManager {
     ).pipe(Effect.ensuring(Effect.promise(() => Promise.all(wheelFlights))))
   }
 
+  private scheduleIdleFreeze(session: BrowserSession): void {
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer)
+      session.idleTimer = null
+    }
+
+    if (
+      session.closing ||
+      !session.scheduler.accepting ||
+      session.localOwner ||
+      !session.browser ||
+      session.browser.frozen ||
+      session.scheduler.pending.size > 0 ||
+      session.scheduler.active.size > 0 ||
+      [...session.attachments.values()].some(
+        (attachment) =>
+          !attachment.closing &&
+          attachment.visible &&
+          attachment.transport.isConnected()
+      )
+    ) {
+      return
+    }
+
+    session.idleTimer = setTimeout(() => {
+      session.idleTimer = null
+      // Use the same lane as input, navigation, capture and agent commands.
+      // Recheck at execution time: viewers and work can arrive during the grace.
+      void this.scheduleOperation(
+        session,
+        async () => {
+          // The CLI's persistent Playwright connection also retains focus
+          // emulation. There is no agent work in this lane now; detach it before
+          // deciding whether the hosted page can really enter Chromium's freeze.
+          if (!session.localOwner) {
+            if (!(await this.detachAgent(session))) {
+              return
+            }
+          }
+
+          const browser = session.browser
+          if (
+            !session.closing &&
+            !session.localOwner &&
+            browser &&
+            browser.idle &&
+            !session.state.loading &&
+            !session.fileChooser &&
+            !session.touchAttachmentId &&
+            !session.agentProcess &&
+            session.scheduler.pending.size === 0 &&
+            session.scheduler.active.size === 1 &&
+            ![...session.attachments.values()].some(
+              (attachment) =>
+                attachment.cursorUpdate ||
+                (!attachment.closing &&
+                  attachment.visible &&
+                  attachment.transport.isConnected())
+            )
+          ) {
+            await browser.setFrozen(true)
+          }
+        },
+        { wake: false }
+      ).catch(() => undefined)
+    }, BROWSER_IDLE_GRACE_MS)
+    session.idleTimer.unref()
+  }
+
   private stopScheduler(session: BrowserSession, reason: string): void {
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer)
+      session.idleTimer = null
+    }
+
     const scheduler = session.scheduler
     scheduler.accepting = false
     const error = new BrowserSchedulingError({
@@ -1043,6 +1137,7 @@ export class BrowserSessionManager {
       agentDirectory,
       title: `Treeport ${authorized.app.title}`,
       browser: null,
+      idleTimer: null,
       launch: null,
       localOwner: null,
       localAutomation: null,
@@ -2724,17 +2819,25 @@ export class BrowserSessionManager {
     }
   }
 
-  private async detachAgent(session: BrowserSession): Promise<void> {
+  private async detachAgent(session: BrowserSession): Promise<boolean> {
     const name = session.agentSessionName
     if (!session.agentAttached || !name) {
-      return
+      return true
     }
 
-    session.agentAttached = false
-    session.agentSessionName = null
-    await this.executeAgentCli(session, [`-s=${name}`, 'detach']).catch(
-      () => undefined
+    const detached = await this.executeAgentCli(session, [
+      `-s=${name}`,
+      'detach'
+    ]).then(
+      () => true,
+      () => false
     )
+    if (detached) {
+      session.agentAttached = false
+      session.agentSessionName = null
+    }
+
+    return detached
   }
 
   private async closePlaywrightRuntime(session: BrowserSession): Promise<void> {
@@ -2800,7 +2903,7 @@ export class BrowserSessionManager {
           Effect.promise(() =>
             session.launch || session.browser
               ? this.closePlaywrightRuntime(session)
-              : this.detachAgent(session)
+              : this.detachAgent(session).then(() => undefined)
           )
         )
         yield* Effect.addFinalizer(() =>
