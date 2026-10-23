@@ -37,6 +37,11 @@ export default defineConfig({
     emptyOutDir: true
   },
   server: {
-    allowedHosts: ['.ts.net']
+    allowedHosts: ['.ts.net'],
+    watch: {
+      // Development data includes browser profiles whose generated HTML would
+      // otherwise trigger full page reloads.
+      ignored: ['**/.treeport-dev/**', '**/.treeport-dev-dist/**']
+    }
   }
 })
