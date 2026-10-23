@@ -7,7 +7,8 @@ import type {
   CDPSession,
   Dialog,
   FileChooser,
-  Page
+  Page,
+  Request
 } from 'playwright'
 import {
   browserObservedUrlSchema,
@@ -106,6 +107,12 @@ export class PlaywrightBrowser {
   private cdp: CDPSession | null = null
   private video: ChromiumWebCodecsVideo | null = null
   private screencasting = false
+  private frozenValue = false
+  private freezingSupported = true
+  private readonly pendingRequests = new Set<Request>()
+  private readonly pressedInputs = new Set<string>()
+  private networkActivityAt = Date.now()
+  private metadataUpdate: Promise<void> | null = null
   private closing = false
   private dialogHandler: ((dialog: Dialog) => void) | null = null
   private readonly consoleMessages: string[] = []
@@ -239,7 +246,7 @@ export class PlaywrightBrowser {
     const cdp = await context.newCDPSession(page)
     this.cdp = cdp
     // Streamed tabs retain DOM focus even when a different hosted tab is active.
-    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    await this.host.setPageFocus(page, true)
     // Match Treeport's dark chrome, including sites that switch favicon URLs in JS.
     await cdp.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-color-scheme', value: 'dark' }]
@@ -308,7 +315,25 @@ export class PlaywrightBrowser {
         this.consoleMessages.shift()
       }
     })
+    page.on('websocket', (socket) => {
+      this.networkActivityAt = Date.now()
+      socket.on('framesent', () => {
+        this.networkActivityAt = Date.now()
+      })
+      socket.on('framereceived', () => {
+        this.networkActivityAt = Date.now()
+      })
+      socket.on('close', () => {
+        this.networkActivityAt = Date.now()
+      })
+    })
+    page.on('requestfinished', (request) => {
+      this.pendingRequests.delete(request)
+      this.networkActivityAt = Date.now()
+    })
     page.on('request', (request) => {
+      this.pendingRequests.add(request)
+      this.networkActivityAt = Date.now()
       this.requests.push(`${request.method()} ${request.url()}`)
       if (this.requests.length > 2_000) {
         this.requests.shift()
@@ -328,6 +353,8 @@ export class PlaywrightBrowser {
       }
     })
     page.on('requestfailed', (request) => {
+      this.pendingRequests.delete(request)
+      this.networkActivityAt = Date.now()
       if (
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
@@ -369,7 +396,12 @@ export class PlaywrightBrowser {
     })
     await this.cdp.send('Page.enable')
     this.titleTimer = setInterval(() => {
-      void page
+      // Do not enqueue renderer evaluations while frozen (or overlap slow reads).
+      if (this.frozenValue || this.metadataUpdate) {
+        return
+      }
+
+      this.metadataUpdate = page
         .evaluate(readBrowserPageMetadata)
         .then(async ({ title, faviconUrl }) => {
           if (normalizeBrowserTitle(title) !== this.stateValue.title) {
@@ -414,6 +446,9 @@ export class PlaywrightBrowser {
           }
         })
         .catch(() => undefined)
+        .finally(() => {
+          this.metadataUpdate = null
+        })
     }, 500)
     this.titleTimer.unref()
     await this.refreshPageState()
@@ -473,6 +508,65 @@ export class PlaywrightBrowser {
     })
   }
 
+  get frozen(): boolean {
+    return this.frozenValue
+  }
+
+  get idle(): boolean {
+    // Long-running fetches/streams and active WebSockets must not be suspended.
+    return (
+      this.freezingSupported &&
+      !this.stateValue.loading &&
+      this.pendingRequests.size === 0 &&
+      this.pressedInputs.size === 0 &&
+      Date.now() - this.networkActivityAt >= 30_000
+    )
+  }
+
+  async setFrozen(frozen: boolean): Promise<void> {
+    const cdp = this.cdp
+    const page = this.page
+    if (
+      !cdp ||
+      !page ||
+      this.frozenValue === frozen ||
+      (frozen && !this.idle)
+    ) {
+      return
+    }
+
+    if (frozen) {
+      // Pause polling before draining its last read, then recheck network/load.
+      this.frozenValue = true
+      await this.metadataUpdate
+      if (!this.idle) {
+        this.frozenValue = false
+        return
+      }
+
+      await this.host.setPageFocus(page, false)
+      if (!this.idle) {
+        await this.host.setPageFocus(page, true)
+        this.frozenValue = false
+        return
+      }
+
+      await cdp
+        .send('Page.setWebLifecycleState', { state: 'frozen' })
+        .catch(async () => {
+          // Unsupported Chromium versions keep the page alive; never close it.
+          this.freezingSupported = false
+          this.frozenValue = false
+          await this.host.setPageFocus(page, true)
+        })
+    } else {
+      // A failed thaw must fail the operation rather than run against a frozen page.
+      await cdp.send('Page.setWebLifecycleState', { state: 'active' })
+      await this.host.setPageFocus(page, true)
+      this.frozenValue = false
+    }
+  }
+
   async cursor(point: { x: number; y: number }) {
     return this.page ? browserCursor(this.page, point) : ('default' as const)
   }
@@ -525,6 +619,18 @@ export class PlaywrightBrowser {
     const page = this.page
     if (!page || page.isClosed()) {
       throw new Error('The hosted browser page is unavailable.')
+    }
+
+    if (message.type === 'key' || message.type === 'pointer') {
+      const input =
+        message.type === 'key'
+          ? `key:${message.key}`
+          : `pointer:${message.button ?? 'left'}`
+      if (message.phase === 'down') {
+        this.pressedInputs.add(input)
+      } else if (message.phase === 'up') {
+        this.pressedInputs.delete(input)
+      }
     }
 
     if (message.type !== 'pointer' && message.type !== 'wheel') {

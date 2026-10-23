@@ -898,12 +898,20 @@ export function BrowserAppWorkspace({
     []
   )
 
-  // Stream visibility follows the workspace, not interaction eligibility.
-  // Overlays block input without hiding the page or restarting its media peer.
+  // Stream visibility follows both workspace and document visibility, not input
+  // eligibility: overlays do not hide the page or restart its media peer.
   useEffect(() => {
-    if (!localBrowser) {
-      connectionRef.current?.setVisible(active)
+    if (localBrowser) {
+      return
     }
+
+    const updateVisibility = () => {
+      connectionRef.current?.setVisible(active && !document.hidden)
+    }
+    updateVisibility()
+    document.addEventListener('visibilitychange', updateVisibility)
+    return () =>
+      document.removeEventListener('visibilitychange', updateVisibility)
   }, [active, connectionRevision, localBrowser])
 
   useEffect(() => {

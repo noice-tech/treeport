@@ -88,6 +88,11 @@ class FakeBrowser implements BrowserSessionBrowser {
   ) {
     browsers.push(this)
   }
+  frozen = false
+  idle = true
+  async setFrozen(frozen: boolean) {
+    this.frozen = frozen
+  }
   async launch() {}
   async copy() {
     return null
@@ -394,6 +399,13 @@ describe('Browser sessions', () => {
       })
     )
     expect(browser.state.viewport).toEqual({ width: 600, height: 900 })
+    vi.useFakeTimers()
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+    // A second visible viewer keeps the page awake even when the first hides.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(browser.frozen).toBe(false)
 
     value.manager.message('viewer', { type: 'setVisible', visible: true })
     // Disconnect handoff must restore the original size without a new resize
@@ -407,8 +419,50 @@ describe('Browser sessions', () => {
     )
     expect(browser.state.viewport).toEqual({ width: 900, height: 600 })
 
+    value.manager.message('viewer', { type: 'setVisible', visible: false })
+    await vi.waitFor(() => expect(browser.screencasting.at(-1)).toBe(false))
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(browser.frozen).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await vi.waitFor(() => expect(browser.frozen).toBe(true))
+    let finishAgent: () => void = () => undefined
+    const agentWork = new Promise<void>((resolve) => {
+      finishAgent = resolve
+    })
+    const agentCommand = vi
+      .spyOn(browser, 'agentCommand')
+      .mockImplementation(async () => {
+        expect(browser.frozen).toBe(false)
+        await agentWork
+        return 'snapshot'
+      })
+    const snapshot = runEffect(
+      value.manager.agentCommand('app_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    )
+    await vi.waitFor(() => expect(agentCommand).toHaveBeenCalledOnce())
+    // An unobserved page remains active for the entire automation operation.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(browser.frozen).toBe(false)
+    finishAgent()
+    await snapshot
+    browser.idle = false
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(browser.frozen).toBe(false)
+    browser.idle = true
+    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.waitFor(() => expect(browser.frozen).toBe(true))
+    value.manager.message('viewer', { type: 'setVisible', visible: true })
+    await vi.waitFor(() => expect(browser.screencasting.at(-1)).toBe(true))
+    expect(browser.frozen).toBe(false)
+
     value.manager.close('viewer')
     expect(browser.closeVideoViewer).toHaveBeenCalledWith('viewer')
+    await vi.waitFor(() => expect(browser.screencasting.at(-1)).toBe(false))
+    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.waitFor(() => expect(browser.frozen).toBe(true))
 
     // Restoring a workspace must not see its disconnected viewer as someone
     // else's controller, even if client storage was unavailable on reload.
@@ -426,6 +480,7 @@ describe('Browser sessions', () => {
       state: expect.objectContaining({ controlled: true, controller: 'you' })
     })
     expect(browsers).toHaveLength(1)
+    expect(browser.frozen).toBe(false)
     await value.manager.dispose()
   })
 

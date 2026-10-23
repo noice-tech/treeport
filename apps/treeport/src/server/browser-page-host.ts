@@ -314,6 +314,38 @@ export class PlaywrightBrowserHost {
     })
   }
 
+  setPageFocus(page: Page, enabled: boolean): Promise<void> {
+    // Playwright's pinned in-process driver enables focus emulation on its own
+    // CDP session. That owns a Chromium capturer handle which prevents freezing;
+    // disabling emulation on a second CDP session cannot release that handle.
+    // Keep this private-driver boundary here rather than reaching into sessions
+    // from the idle scheduler. This must be revisited when upgrading Playwright.
+    // SAFETY: Hosted pages come from our pinned Playwright in-process Chromium
+    // driver, whose Page connection maps directly to this server-side CDP client.
+    const clientPage = page as Page & {
+      _connection: {
+        toImpl(page: Page): {
+          delegate: {
+            _mainFrameSession: {
+              _client: {
+                send(
+                  method: string,
+                  params: { enabled: boolean }
+                ): Promise<void>
+              }
+            }
+          }
+        }
+      }
+    }
+    return clientPage._connection
+      .toImpl(page)
+      .delegate._mainFrameSession._client.send(
+        'Emulation.setFocusEmulationEnabled',
+        { enabled }
+      )
+  }
+
   copy(page: Page): ReturnType<typeof browserClipboard> {
     return this.schedule(() =>
       browserClipboard(page, async (read) => {

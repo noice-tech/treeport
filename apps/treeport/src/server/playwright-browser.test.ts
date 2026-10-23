@@ -60,6 +60,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
       context: { newCDPSession: async () => cdp },
       page
     }),
+    setPageFocus: vi.fn(async () => undefined),
     closePage: vi.fn(async () => undefined)
   })
   const states: BrowserRuntimeState[] = []
@@ -245,6 +246,7 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
       context: { newCDPSession: async () => cdp },
       page
     }),
+    setPageFocus: vi.fn(async () => undefined),
     closePage: vi.fn(async () => undefined)
   })
   const browser = new PlaywrightBrowser(host, '/unused', {
