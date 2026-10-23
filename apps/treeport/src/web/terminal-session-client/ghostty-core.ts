@@ -496,7 +496,13 @@ export class GhosttyTerminalCore implements TerminalCore {
           cell.chars = chars
         }
       } else if (tag === layout.tagBgPalette) {
-        cell.bg = bits(content, 0, layout.bgPalette)
+        const index = bits(content, 0, layout.bgPalette)
+        const bgRgb = index < 16 ? null : this.paletteColor(index)
+        if (bgRgb === null) {
+          cell.bg = index
+        } else {
+          cell.bgRgb = bgRgb
+        }
       } else if (tag === layout.tagBgRgb) {
         cell.bgRgb =
           (bits(content, 0, layout.bgR) << 16) |
@@ -525,7 +531,11 @@ export class GhosttyTerminalCore implements TerminalCore {
             cell.bg = style.bg
           }
 
-          if (style.bgRgb !== null && tag !== layout.tagBgRgb) {
+          if (
+            style.bgRgb !== null &&
+            tag !== layout.tagBgRgb &&
+            tag !== layout.tagBgPalette
+          ) {
             cell.bgRgb = style.bgRgb
           }
 
@@ -564,13 +574,21 @@ export class GhosttyTerminalCore implements TerminalCore {
     const field = (name: string) => ptr + vt.offset('GhosttyStyle', name)
     const flag = (name: string, value: number) =>
       view.getUint8(field(name)) ? value : 0
+    // wterm themes the 16 ANSI colors but builds indices 16-255 from a
+    // 51-step cube instead of xterm's, so those resolve through Ghostty's palette.
     const color = (name: string) => {
       const base = field(name)
       const tag = view.getInt32(base, true)
       const value = base + layout.colorValue
+      const palette = tag === layout.colorPalette ? view.getUint8(value) : null
       return {
-        palette: tag === layout.colorPalette ? view.getUint8(value) : null,
-        rgb: tag === layout.colorRgb ? rgb(view, value) : null
+        palette: palette !== null && palette < 16 ? palette : null,
+        rgb:
+          tag === layout.colorRgb
+            ? rgb(view, value)
+            : palette === null || palette < 16
+              ? null
+              : this.paletteColor(palette)
       }
     }
     const underline =
