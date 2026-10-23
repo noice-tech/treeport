@@ -2207,7 +2207,7 @@ export function BrowserAppWorkspace({
                       }
 
                       touchesRef.current.set(event.pointerId, {
-                        id: event.pointerId,
+                        id: touchesRef.current.get(event.pointerId)!.id,
                         ...point(event)
                       })
                       send({
@@ -2261,8 +2261,20 @@ export function BrowserAppWorkspace({
                           send({ type: 'takeControl' })
                         }
 
+                        // iOS pointer IDs can be negative or exceed int32, so
+                        // send each contact as its lowest free slot instead.
+                        const ids = new Set(
+                          [...touchesRef.current.values()].map(
+                            (touch) => touch.id
+                          )
+                        )
+                        let id = 0
+                        while (ids.has(id)) {
+                          id++
+                        }
+
                         touchesRef.current.set(event.pointerId, {
-                          id: event.pointerId,
+                          id,
                           ...point(event)
                         })
                         send({
@@ -2283,11 +2295,13 @@ export function BrowserAppWorkspace({
                       }
 
                       if (event.pointerType === 'touch') {
-                        if (touchesRef.current.delete(event.pointerId)) {
+                        const touch = touchesRef.current.get(event.pointerId)
+                        if (touch) {
+                          touchesRef.current.delete(event.pointerId)
                           send({
                             type: 'touch',
                             phase: 'end',
-                            points: [{ id: event.pointerId, ...point(event) }]
+                            points: [{ id: touch.id, ...point(event) }]
                           })
                         }
 
