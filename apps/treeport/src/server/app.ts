@@ -830,10 +830,10 @@ export function createApp({
                 continue
               }
 
+              // A read done or error outcome needs nothing more from the user.
               if (
                 runtime.attention?.unread ||
-                runtime.activity.state === 'blocked' ||
-                runtime.activity.state === 'error'
+                runtime.activity.state === 'blocked'
               ) {
                 needsAttention += 1
               } else if (runtime.activity.state === 'working') {

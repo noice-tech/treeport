@@ -158,6 +158,10 @@ export class GhosttyTerminalCore implements TerminalCore {
         this.titleChanged = true
       },
       progress: null,
+      // The daemon keeps program status; this only lets the browser answer
+      // OSC 7501 support queries while it holds query authority.
+      programStatus: () => {},
+      reset: null,
       unknownOsc: null,
       renderHold: () => {
         this.synchronizedGeneration += 1

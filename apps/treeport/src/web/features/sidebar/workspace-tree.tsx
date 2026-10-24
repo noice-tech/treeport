@@ -31,7 +31,10 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem
 } from '../../components/ui/sidebar'
-import { TerminalStatusIcon } from '../../components/terminal-status-icon'
+import {
+  TerminalStatusIcon,
+  terminalAttentionColor
+} from '../../components/terminal-status-icon'
 import { cn } from '../../lib/utils'
 import {
   terminalActivityLabel,
@@ -469,9 +472,9 @@ export function WorkspaceTree({
                             runtimeTitles.get(terminal.id),
                             terminal.name
                           )
-                          const needsAttention = terminalAttention.has(
-                            terminal.id
-                          )
+                          const attention =
+                            terminalAttention.get(terminal.id) ?? null
+                          const needsAttention = attention !== null
                           const activity = terminalActivity.get(terminal.id)
                           const working =
                             activity?.state === 'working' && !needsAttention
@@ -553,7 +556,7 @@ export function WorkspaceTree({
                                           null
                                         }
                                         activity={activity ?? null}
-                                        attention={needsAttention}
+                                        attention={attention}
                                         exited={terminal.status === 'exited'}
                                         className="size-4! min-[701px]:size-3.5!"
                                       />
@@ -561,7 +564,8 @@ export function WorkspaceTree({
                                         className={cn(
                                           'truncate',
                                           working && 'text-accent-300',
-                                          needsAttention && 'text-amber-200'
+                                          attention &&
+                                            terminalAttentionColor(attention)
                                         )}
                                         aria-hidden="true"
                                       >

@@ -393,12 +393,17 @@ export function ProjectSwitcher({
                 const terminals = project.worktrees.flatMap(
                   (worktree) => worktree.terminals
                 )
-                const needsAttention = terminals.some((terminal) =>
-                  terminalAttention.has(terminal.id)
-                )
+                const attention =
+                  terminals
+                    .map((terminal) => terminalAttention.get(terminal.id))
+                    .find((reason) => reason !== undefined) ?? null
+                // Read outcomes look idle, as in the terminal list.
                 const activity = terminals
                   .map((terminal) => terminalActivity.get(terminal.id))
-                  .find((item) => item !== undefined)
+                  .find(
+                    (item) =>
+                      item?.state === 'working' || item?.state === 'blocked'
+                  )
 
                 return (
                   <li
@@ -434,23 +439,23 @@ export function ProjectSwitcher({
                           <CheckIcon className="shrink-0 fill-zinc-400" />
                         ) : null}
                       </span>
-                      {activity || needsAttention ? (
+                      {activity || attention ? (
                         <span className="ml-auto flex shrink-0 items-center gap-1.5 min-[701px]:group-hover/project-option:opacity-0 min-[701px]:group-focus-within/project-option:opacity-0">
                           {activity ? (
                             <TerminalStatusIcon
                               program={null}
                               activity={activity}
-                              attention={false}
+                              attention={null}
                               exited={false}
                               className="size-4"
                               title={terminalActivityLabel(activity)}
                             />
                           ) : null}
-                          {needsAttention ? (
+                          {attention ? (
                             <TerminalStatusIcon
                               program={null}
                               activity={null}
-                              attention
+                              attention={attention}
                               exited={false}
                               className="size-4"
                               title="Terminal needs attention"

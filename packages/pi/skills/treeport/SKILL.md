@@ -107,7 +107,7 @@ treeport terminal inspect <terminal-id>
 treeport terminal inspect <terminal-id> --json
 ```
 
-Runtime metadata includes the title, the current activity (`idle`, `working`, `blocked`, `done`, or `error`, with optional progress, kind, and message) and when it began, and the latest attention event with its reason (currently a real BEL). Attention also reports unread state shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed attention sequence. `.` resolves to the exact `TREEPORT_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
+Runtime metadata includes the title, the current activity (`idle`, `working`, `blocked`, `done`, or `error`, with optional progress, kind, and message) and when it began, and the latest attention event with its reason: a real BEL, or the activity becoming `done`, `blocked`, or `error`. Attention also reports unread state shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed attention sequence. `.` resolves to the exact `TREEPORT_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
 
 Read recent terminal contents with:
 
@@ -134,7 +134,7 @@ treeport terminal wait <terminal-id> --until exit
 - `exit` means the retained terminal process has exited.
 - Waits have no default timeout. Use a positive `ms`, `s`, `m`, or `h` duration when a deadline is required; Ctrl+C cancels.
 
-Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no activity has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. An `idle` activity is not proof that every application supports progress reporting.
+Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no activity has been observed, and then wait for `idle`. Activity depends on the child application reporting it, with OSC `7501` program status or OSC `9;4` progress; once an application sends OSC `7501`, Treeport ignores its OSC `9;4` until a full terminal reset. For Pi, `terminal.showTerminalProgress` must be enabled for OSC `9;4`. Applications using OSC `9;4` should clear progress or refresh active progress more frequently than the five-minute lease. An `idle` activity is not proof that every application supports progress reporting.
 
 ## Register and run launchers
 

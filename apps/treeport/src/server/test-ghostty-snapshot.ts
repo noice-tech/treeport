@@ -23,6 +23,8 @@ export async function restoreTestSnapshot(
       bell: null,
       titleChanged: null,
       progress: null,
+      programStatus: null,
+      reset: null,
       unknownOsc: null,
       renderHold: null,
       clipboardWrite: null

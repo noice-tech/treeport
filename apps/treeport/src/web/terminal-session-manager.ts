@@ -1,5 +1,6 @@
 import type {
   TerminalActivity,
+  TerminalAttentionReason,
   TerminalProgram,
   TerminalSize
 } from '@treeport/shared'
@@ -48,7 +49,7 @@ export class TerminalSessionManager {
     listener: (event: TerminalAttentionEvent) => void
   ): (() => void) => this.runtimeMetadata.subscribeAttentionEvents(listener)
 
-  getAttentionSnapshot = (): ReadonlySet<string> =>
+  getAttentionSnapshot = (): ReadonlyMap<string, TerminalAttentionReason> =>
     this.runtimeMetadata.getAttentionSnapshot()
   getAttentionMetadataSnapshot = (): ReadonlyMap<
     string,

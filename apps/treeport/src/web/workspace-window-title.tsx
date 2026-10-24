@@ -24,11 +24,7 @@ export function WorkspaceWindowTitle({
         }
 
         const state = activity.get(terminal.id)?.state
-        if (
-          attention.has(terminal.id) ||
-          state === 'blocked' ||
-          state === 'error'
-        ) {
+        if (attention.has(terminal.id) || state === 'blocked') {
           needsAttention += 1
         } else if (state === 'working') {
           working += 1
