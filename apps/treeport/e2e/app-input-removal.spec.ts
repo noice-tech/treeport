@@ -220,7 +220,10 @@ test.describe('desktop terminal input and removal', () => {
     await page.mouse.move(bounds!.x + 120, bounds!.y + 10, { steps: 5 })
     await page.mouse.up()
     await page.keyboard.up('Alt')
-    await expect(page.getByLabel('Terminal text selection')).toHaveCount(1)
+    await expect
+      .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ''))
+      .not.toBe('')
+    await expect(page.getByLabel('Terminal text selection')).toHaveCount(0)
     expect(
       mocked.terminal.messages.filter((message) => message.type === 'input')
     ).toEqual([])

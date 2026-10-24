@@ -314,7 +314,6 @@ export function makeConnection(
               : 'closed',
           controller: false,
           controlPending: false,
-          hasSelection: false,
           degraded: state.reconnectAllowed
             ? state.snapshotValue.degraded
             : false,
