@@ -79,7 +79,7 @@ export default defineConfig({
               slug: 'features/web-apps'
             },
             { label: 'Packages', slug: 'features/packages' },
-            { label: 'Terminal presets', slug: 'features/terminal-presets' },
+            { label: 'Launchers', slug: 'features/launchers' },
             { label: 'Remote access', slug: 'features/remote-access' },
             {
               label: 'Service supervision',

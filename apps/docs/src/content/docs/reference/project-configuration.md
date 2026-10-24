@@ -1,15 +1,15 @@
 ---
 title: Project configuration
-description: Set commands, terminal presets, and project settings.
+description: Set commands, launchers, and project settings.
 ---
 
 `.treeport/settings.json`:
 
-| Section                                                    | Function                                                  | File location           |
-| ---------------------------------------------------------- | --------------------------------------------------------- | ----------------------- |
-| [`setup`](#setup)                                          | [Tree setup and cleanup](/features/worktree-setup-hooks/) | Main tree               |
-| [`terminalPresets`](#terminal-presets)                     | [Shared terminal presets](/features/terminal-presets/)    | Current tree            |
-| [`packages` and `treeContext`](#packages-and-tree-context) | Project packages and tree context fields                  | Registered project root |
+| Section                   | Function                                                  | File location           |
+| ------------------------- | --------------------------------------------------------- | ----------------------- |
+| [`setup`](#setup)         | [Tree setup and cleanup](/features/worktree-setup-hooks/) | Main tree               |
+| [`launchers`](#launchers) | [Shared launchers](/features/launchers/)                  | Current tree            |
+| [`packages`](#packages)   | [Project packages](/features/packages/)                   | Registered project root |
 
 ```jsonc
 // Comments explain this example; omit them from settings.json.
@@ -25,21 +25,26 @@ description: Set commands, terminal presets, and project settings.
     ],
     "cleanup": []
   },
-  // Shared commands for New app, read from the current tree.
-  "terminalPresets": {
+  // Shared launchers, read from the current tree.
+  "launchers": {
     "dev": {
       "name": "Development server",
       "executable": "pnpm",
-      "args": ["dev"],
-      "closeOnSuccess": false
+      "args": ["dev"]
+    },
+    "claude": {
+      "name": "Claude",
+      "executable": "claude",
+      // ${task} is asked for when the launcher starts.
+      "args": ["${task}"],
+      "treeTitle": {
+        "executable": "claude",
+        "args": ["-p", "Reply with a 3-5 word title for: ${task}"]
+      }
     }
   },
   // Project package sources, read from the registered project root.
-  "packages": [],
-  // Tree context field definitions, read from the registered project root.
-  "treeContext": {
-    "fields": [{ "id": "task", "label": "Task", "input": "textarea" }]
-  }
+  "packages": []
 }
 ```
 
@@ -80,16 +85,17 @@ If `setup` is absent, Treeport can use compatible Zed `create_worktree` tasks fo
 
 These commands run with your user permissions. Use them only in repositories that you trust.
 
-## Terminal presets
+## Launchers
 
-- Use a preset ID as the key for each command definition. IDs start with a lowercase letter or number and contain lowercase letters, numbers, dots, underscores, or hyphens.
+- Use a launcher ID as the key for each launcher definition. IDs start with a lowercase letter or number and contain lowercase letters, numbers, dots, underscores, or hyphens.
 - Include `name`, `executable`, and `args` in each definition. If there are no arguments, use `[]` for `args`.
+- Write `${name}` inside an argument to ask for an [input](/features/launchers/#inputs) at launch. Input names start with a lowercase letter and contain lowercase letters, numbers, or underscores.
 - Set `closeOnSuccess` to `true` to close the terminal after a successful command. The default is `false`. Terminals stay open after a command fails.
+- Set `treeTitle` to an object with `executable` and `args` to title new trees started with this launcher. Its first output line becomes the tree title. It can use the same inputs.
 
-## Packages and tree context
+## Packages
 
 - `packages` is a list of npm or local [packages](/features/packages/). To add a package, use `treeport install -l <source>`. To remove a package, use `treeport remove -l <source>`.
-- `treeContext.fields` defines the fields for tree context. Each field has a unique `id`, a non-empty `label`, and an `input` of `text` or `textarea`. Context values for each tree are managed through Treeport.
 - `npmCommand` is an optional array with the npm executable and its arguments. For example, use `["npm"]`.
 
-Treeport reads global packages and tree context fields from `settings.json` in its data directory. If a project field and a global field have the same ID, Treeport uses the project field definition.
+Treeport reads global packages from `settings.json` in its data directory.

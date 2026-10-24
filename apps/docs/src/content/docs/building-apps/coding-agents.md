@@ -5,7 +5,7 @@ description: Run coding agents alongside browsers, development servers, and proj
 
 Run a coding agent in a [persistent terminal](/features/persistent-terminals/) and keep its tools in the same tree. The agent keeps running when you disconnect, as long as the host stays running.
 
-Treeport currently supports integration with Pi. Other terminal programs can run in Treeport without that integration.
+Treeport currently supports integration with Pi. Other agent CLIs, such as Claude Code or Codex, run in Treeport without that integration. To start them with a prompt, add them as [launchers](/features/launchers/#add-any-agent-cli).
 
 ## Work with Pi
 
@@ -23,7 +23,7 @@ Long-running processes use their own terminals. Browser tabs stay visible so you
 
 Use a separate tree for each independent change. Each tree keeps its agent, server, [browser](/features/browser-app/), and [custom apps](/features/web-apps/) together when you switch tasks.
 
-Tree context can hold a task description or other project-defined fields. Run `treeport context` inside a managed terminal to see the current project, tree, terminal, and tree context.
+A [launcher](/features/launchers/#start-in-a-new-tree) can start an agent with its task in a new tree and give the tree a title. Run `treeport context` inside a managed terminal to see the current project, tree, and terminal.
 
 ## Attention and progress
 
