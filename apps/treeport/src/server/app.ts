@@ -72,7 +72,7 @@ import {
   searchTreeFilesSchema,
   setWebAppStorageSchema,
   storageValueResponseSchema,
-  terminalBellAcknowledgementSchema,
+  terminalAttentionAcknowledgementSchema,
   terminalCaptureQuerySchema,
   terminalCaptureResponseSchema,
   terminalObservationResponseSchema,
@@ -831,12 +831,12 @@ export function createApp({
               }
 
               if (
-                runtime.bell?.unread ||
-                runtime.progress?.state === 'paused' ||
-                runtime.progress?.state === 'error'
+                runtime.attention?.unread ||
+                runtime.activity.state === 'blocked' ||
+                runtime.activity.state === 'error'
               ) {
                 needsAttention += 1
-              } else if (runtime.progress) {
+              } else if (runtime.activity.state === 'working') {
                 working += 1
               }
             }
@@ -1794,21 +1794,25 @@ export function createApp({
     ),
     route(
       'POST',
-      '/api/terminals/:terminalId/bell/acknowledge',
+      '/api/terminals/:terminalId/attention/acknowledge',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(terminalBellAcknowledgementSchema)
+        const body = yield* requestBody(terminalAttentionAcknowledgementSchema)
         yield* Effect.annotateCurrentSpan({
           'treeport.terminal.id': params.terminalId!
         })
         yield* operation(() =>
           service.terminals.getKnownTerminal(params.terminalId!)
-        ).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.lookup'))
+        ).pipe(
+          Effect.withSpan('treeport.terminal.attention.acknowledge.lookup')
+        )
         yield* operation(() =>
-          metadata.acknowledgeBell(params.terminalId!, body.sequence)
+          metadata.acknowledgeAttention(params.terminalId!, body.sequence)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
-      }).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.request'))
+      }).pipe(
+        Effect.withSpan('treeport.terminal.attention.acknowledge.request')
+      )
     ),
     ...(['/api/files', '/api/terminals/:terminalId/files'] as const).map(
       (routePath) =>

@@ -721,7 +721,7 @@ export const rpc = {
             undefined,
             options?.init
           ),
-        bell: {
+        attention: {
           acknowledge: {
             $post: ({
               param,
@@ -729,7 +729,7 @@ export const rpc = {
             }: RequestInput<{ terminalId: string }, unknown>) =>
               endpoint<{ ok: true }>(
                 'POST',
-                `/api/terminals/${id(param.terminalId)}/bell/acknowledge`,
+                `/api/terminals/${id(param.terminalId)}/attention/acknowledge`,
                 okResponseSchema,
                 { json }
               )

@@ -268,7 +268,6 @@ export function makeConnection(
       socket.on('output', (value) => receive('output', value))
       socket.on('input_ack', (value) => receive('input_ack', value))
       socket.on('title', (value) => receive('title', value))
-      socket.on('progress', (value) => receive('progress', value))
       socket.on('control', (value) => receive('control', value))
       socket.on('query_authority', (value) => receive('query_authority', value))
       socket.on('exit', (value) => receive('exit', value))

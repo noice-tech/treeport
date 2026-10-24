@@ -34,8 +34,8 @@ import {
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { cn } from '../../lib/utils'
 import {
-  terminalDisplayTitle,
-  terminalProgressLabel
+  terminalActivityLabel,
+  terminalDisplayTitle
 } from '../../terminal-session'
 import { ReorderableItems } from '../../use-reorderable-items'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
@@ -199,10 +199,10 @@ export function WorkspaceTree({
     null
   )
   const {
-    attention: bellAttention,
+    attention: terminalAttention,
     titles: runtimeTitles,
     programs: terminalPrograms,
-    progress: terminalProgress
+    activity: terminalActivity
   } = useTerminalNavigationMetadata()
   const desktopBridge = window.treeportDesktop
   const newWorktreeShortcut = desktopBridge?.onCommand
@@ -469,18 +469,17 @@ export function WorkspaceTree({
                             runtimeTitles.get(terminal.id),
                             terminal.name
                           )
-                          const needsAttention = bellAttention.has(terminal.id)
-                          const progress = terminalProgress.get(terminal.id)
+                          const needsAttention = terminalAttention.has(
+                            terminal.id
+                          )
+                          const activity = terminalActivity.get(terminal.id)
                           const working =
-                            !!progress &&
-                            !needsAttention &&
-                            progress.state !== 'paused' &&
-                            progress.state !== 'error'
+                            activity?.state === 'working' && !needsAttention
                           const status = [
-                            progress
-                              ? terminalProgressLabel(progress)
+                            activity
+                              ? terminalActivityLabel(activity)
                               : terminal.status,
-                            needsAttention ? 'bell' : null
+                            needsAttention ? 'needs attention' : null
                           ]
                             .filter(Boolean)
                             .join(', ')
@@ -553,7 +552,7 @@ export function WorkspaceTree({
                                           terminalPrograms.get(terminal.id) ??
                                           null
                                         }
-                                        progress={progress ?? null}
+                                        activity={activity ?? null}
                                         attention={needsAttention}
                                         exited={terminal.status === 'exited'}
                                         className="size-4! min-[701px]:size-3.5!"

@@ -8,7 +8,11 @@ import {
   vi
 } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { type JsonValue, type TerminalSize } from '@treeport/shared'
+import {
+  type JsonValue,
+  type TerminalActivity,
+  type TerminalSize
+} from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import { GhosttyTerminal } from '../ghostty-vt/ghostty-vt'
 import { GhosttyTerminalCore } from './terminal-session-client/ghostty-core'
@@ -17,9 +21,23 @@ import type {
   terminalOptions as createTerminalOptions,
   TerminalSession as TerminalSessionInstance,
   TerminalSessionManager as TerminalSessionManagerInstance,
+  TerminalAttentionEvent,
   TerminalSessionSnapshot,
   TerminalSocketFactory
 } from './terminal-session'
+
+const IDLE: TerminalActivity = {
+  state: 'idle',
+  kind: null,
+  progress: null,
+  app: null,
+  message: null,
+  since: null
+}
+
+function working(progress: number | null): TerminalActivity {
+  return { ...IDLE, state: 'working', progress }
+}
 
 interface TerminalSessionTestAccess {
   state: {
@@ -213,7 +231,7 @@ type TerminalSessionManagerConstructor = new (
   maxSessions?: number,
   idleMs?: number,
   createSession?: (terminalId: string) => TerminalSessionInstance,
-  acknowledgeBell?: (terminalId: string, sequence: number) => Promise<void>
+  acknowledgeAttention?: (terminalId: string, sequence: number) => Promise<void>
 ) => TerminalSessionManagerInstance
 
 let TerminalSession: TerminalSessionConstructor
@@ -356,7 +374,7 @@ afterEach(() => {
 
 function fixture(maxSessions = 3, idleMs = 1_000) {
   const sessions = new Map<string, FakeSession>()
-  const acknowledgeBell = vi.fn<
+  const acknowledgeAttention = vi.fn<
     (terminalId: string, sequence: number) => Promise<void>
   >(async () => undefined)
   const manager = new TerminalSessionManager(
@@ -367,9 +385,9 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
       sessions.set(terminalId, session)
       return testAccess<TerminalSessionInstance>(session)
     },
-    acknowledgeBell
+    acknowledgeAttention
   )
-  return { acknowledgeBell, manager, sessions }
+  return { acknowledgeAttention, manager, sessions }
 }
 
 function controllerSessionFixture() {
@@ -1788,10 +1806,8 @@ describe('TerminalSessionManager', () => {
     manager.applyRuntimeMetadata({
       terminalId: 'one',
       title: 'Pi',
-      progress: { state: 'normal', value: 25 },
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: null,
-      bell: null
+      activity: working(25),
+      attention: null
     })
     const first = manager.acquire('one')
     const second = manager.acquire('one')
@@ -1800,28 +1816,22 @@ describe('TerminalSessionManager', () => {
     await vi.advanceTimersByTimeAsync(1_000)
     expect(first).toBe(second)
     expect(sessions.get('one')?.disposed).toBe(false)
-    expect(manager.getProgressSnapshot().get('one')).toEqual({
-      state: 'normal',
-      value: 25
-    })
+    expect(manager.getActivitySnapshot().get('one')).toEqual(working(25))
 
     manager.release('one')
     await vi.advanceTimersByTimeAsync(1_000)
     expect(sessions.get('one')?.disposed).toBe(true)
-    expect(manager.getProgressSnapshot().get('one')).toEqual({
-      state: 'normal',
-      value: 25
-    })
+    expect(manager.getActivitySnapshot().get('one')).toEqual(working(25))
   })
 
   it('does not derive durable attention from browser-observed BEL output', () => {
-    const { acknowledgeBell, manager, sessions } = fixture()
+    const { acknowledgeAttention, manager, sessions } = fixture()
     manager.acquire('one')
     manager.release('one')
     sessions.get('one')?.ring()
 
     expect(manager.getAttentionSnapshot().has('one')).toBe(false)
-    expect(acknowledgeBell).not.toHaveBeenCalled()
+    expect(acknowledgeAttention).not.toHaveBeenCalled()
   })
 
   it('publishes one runtime title snapshot and retains it across LRU eviction', () => {
@@ -1854,70 +1864,64 @@ describe('TerminalSessionManager', () => {
       title: 'pi · /repo',
       program: 'pi',
       hasForegroundProcess: true,
-      progress: { state: 'normal', value: 42 },
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: null,
-      bell: null
+      activity: working(42),
+      attention: null
     })
 
     expect(manager.getTitleSnapshot().get('background')).toBe('pi · /repo')
     expect(manager.getProgramSnapshot().get('background')).toBe('pi')
     expect(manager.getForegroundProcessSnapshot().has('background')).toBe(true)
-    expect(manager.getProgressSnapshot().get('background')).toEqual({
-      state: 'normal',
-      value: 42
-    })
+    expect(manager.getActivitySnapshot().get('background')).toEqual(working(42))
 
     manager.replaceRuntimeMetadata([
       {
         terminalId: 'other',
         title: 'shell',
         program: null,
-        progress: null,
-        progressStartedAt: null,
-        progressClearedAt: null,
-        bell: null
+        activity: IDLE,
+        attention: null
       }
     ])
     expect(manager.getTitleSnapshot().has('background')).toBe(false)
     expect(manager.getProgramSnapshot().has('background')).toBe(false)
     expect(manager.getForegroundProcessSnapshot().has('background')).toBe(false)
-    expect(manager.getProgressSnapshot().has('background')).toBe(false)
+    expect(manager.getActivitySnapshot().has('background')).toBe(false)
     expect(manager.getTitleSnapshot().get('other')).toBe('shell')
   })
 
-  it('publishes each runtime update once with complete snapshots before its BEL event', () => {
+  it('publishes each runtime update once with complete snapshots before its attention event', () => {
     const { manager, sessions } = fixture()
     const order: string[] = []
     const observed: Array<{
       title: string | undefined
       foreground: boolean
-      progress: { state: string; value: number | null } | undefined
+      activity: TerminalActivity | undefined
       attention: boolean
-      bell: { sequence: number; unread: boolean } | undefined
+      entry: { sequence: number; unread: boolean } | undefined
     }> = []
     manager.subscribe(() => {
       order.push('store')
       observed.push({
         title: manager.getTitleSnapshot().get('background'),
         foreground: manager.getForegroundProcessSnapshot().has('background'),
-        progress: manager.getProgressSnapshot().get('background'),
+        activity: manager.getActivitySnapshot().get('background'),
         attention: manager.getAttentionSnapshot().has('background'),
-        bell: manager.getBellSnapshot().get('background')
+        entry: manager.getAttentionMetadataSnapshot().get('background')
       })
     })
-    manager.subscribeBellEvents(() => {
-      order.push('bell')
+    manager.subscribeAttentionEvents(() => {
+      order.push('attention')
       expect(manager.getTitleSnapshot().get('background')).toBe('Pi build')
       expect(manager.getAttentionSnapshot().has('background')).toBe(true)
       expect(manager.getForegroundProcessSnapshot().has('background')).toBe(
         true
       )
-      expect(manager.getProgressSnapshot().get('background')).toEqual({
-        state: 'normal',
-        value: 61
-      })
-      expect(manager.getBellSnapshot().get('background')).toMatchObject({
+      expect(manager.getActivitySnapshot().get('background')).toEqual(
+        working(61)
+      )
+      expect(
+        manager.getAttentionMetadataSnapshot().get('background')
+      ).toMatchObject({
         sequence: 1,
         unread: true
       })
@@ -1927,68 +1931,73 @@ describe('TerminalSessionManager', () => {
       terminalId: 'background',
       title: 'Pi build',
       hasForegroundProcess: true,
-      progress: { state: 'normal', value: 61 },
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: null,
-      bell: {
+      activity: working(61),
+      attention: {
         sequence: 1,
         at: '2026-01-01T00:01:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     })
 
-    expect(order).toEqual(['store', 'bell'])
+    expect(order).toEqual(['store', 'attention'])
     expect(observed).toEqual([
       {
         title: 'Pi build',
         foreground: true,
-        progress: { state: 'normal', value: 61 },
+        activity: working(61),
         attention: true,
-        bell: { sequence: 1, at: '2026-01-01T00:01:00.000Z', unread: true }
+        entry: {
+          sequence: 1,
+          at: '2026-01-01T00:01:00.000Z',
+          unread: true,
+          reason: 'bell'
+        }
       }
     ])
 
     manager.acquire('background')
     sessions.get('background')?.setTitle('live session title')
-    expect(order).toEqual(['store', 'bell', 'store'])
+    expect(order).toEqual(['store', 'attention', 'store'])
     expect(observed.at(-1)?.title).toBe('live session title')
   })
 
-  it('emits only newer incremental BELs and keeps snapshots presentation-silent', () => {
+  it('emits only newer incremental attention events and keeps snapshots presentation-silent', () => {
     const { manager } = fixture()
-    const events: Array<{ terminalId: string; sequence: number; at: string }> =
-      []
-    manager.subscribeBellEvents((event) => events.push(event))
+    const events: TerminalAttentionEvent[] = []
+    manager.subscribeAttentionEvents((event) => events.push(event))
     const metadata = {
       terminalId: 'background',
       title: 'Pi',
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: IDLE,
+      attention: {
         sequence: 2,
         at: '2026-01-01T00:02:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     } as const
 
     manager.replaceRuntimeMetadata([metadata])
     expect(events).toEqual([])
-    expect(manager.getBellSnapshot().get('background')).toEqual(metadata.bell)
+    expect(manager.getAttentionMetadataSnapshot().get('background')).toEqual(
+      metadata.attention
+    )
 
     manager.applyRuntimeMetadata(metadata)
     manager.applyRuntimeMetadata({
       ...metadata,
-      bell: { ...metadata.bell, unread: false }
+      attention: { ...metadata.attention, unread: false }
     })
     expect(events).toEqual([])
 
     const next = {
       ...metadata,
-      bell: {
+      attention: {
         sequence: 3,
         at: '2026-01-01T00:03:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     } as const
     manager.applyRuntimeMetadata(next)
@@ -1996,24 +2005,26 @@ describe('TerminalSessionManager', () => {
       {
         terminalId: 'background',
         sequence: 3,
-        at: '2026-01-01T00:03:00.000Z'
+        at: '2026-01-01T00:03:00.000Z',
+        reason: 'bell'
       }
     ])
-    expect(manager.getBellSnapshot().get('background')).toEqual(next.bell)
+    expect(manager.getAttentionMetadataSnapshot().get('background')).toEqual(
+      next.attention
+    )
   })
 
   it('restores daemon attention and clears it only from authoritative metadata', async () => {
-    const { acknowledgeBell, manager } = fixture()
+    const { acknowledgeAttention, manager } = fixture()
     const metadata = {
       terminalId: 'background',
       title: 'Pi',
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: IDLE,
+      attention: {
         sequence: 1,
         at: '2026-01-01T00:00:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     } as const
 
@@ -2021,28 +2032,29 @@ describe('TerminalSessionManager', () => {
     expect(manager.getAttentionSnapshot().has('background')).toBe(true)
 
     manager.acquire('background')
-    expect(acknowledgeBell).not.toHaveBeenCalled()
-    await manager.acknowledgeBell('background', 1)
-    expect(acknowledgeBell).toHaveBeenCalledWith('background', 1)
+    expect(acknowledgeAttention).not.toHaveBeenCalled()
+    await manager.acknowledgeAttention('background', 1)
+    expect(acknowledgeAttention).toHaveBeenCalledWith('background', 1)
     expect(manager.getAttentionSnapshot().has('background')).toBe(true)
 
     manager.applyRuntimeMetadata({
       ...metadata,
-      bell: { ...metadata.bell, unread: false }
+      attention: { ...metadata.attention, unread: false }
     })
     expect(manager.getAttentionSnapshot().has('background')).toBe(false)
 
     manager.release('background')
     manager.applyRuntimeMetadata({
       ...metadata,
-      bell: {
+      attention: {
         sequence: 2,
         at: '2026-01-01T00:01:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     })
     expect(manager.getAttentionSnapshot().has('background')).toBe(true)
-    expect(acknowledgeBell).toHaveBeenCalledTimes(1)
+    expect(acknowledgeAttention).toHaveBeenCalledTimes(1)
 
     manager.forget('background')
     expect(manager.getAttentionSnapshot().has('background')).toBe(false)
@@ -2053,41 +2065,39 @@ describe('TerminalSessionManager', () => {
   })
 
   it('acknowledges an equal sequence again after a daemon snapshot', async () => {
-    const { acknowledgeBell, manager } = fixture()
+    const { acknowledgeAttention, manager } = fixture()
     const metadata = {
       terminalId: 'active',
       title: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: IDLE,
+      attention: {
         sequence: 4,
         at: '2026-01-01T00:00:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     } as const
 
     manager.acquire('active')
     manager.applyRuntimeMetadata(metadata)
-    await manager.acknowledgeBell('active', 4)
-    expect(acknowledgeBell).toHaveBeenNthCalledWith(1, 'active', 4)
+    await manager.acknowledgeAttention('active', 4)
+    expect(acknowledgeAttention).toHaveBeenNthCalledWith(1, 'active', 4)
     manager.replaceRuntimeMetadata([metadata])
-    await manager.acknowledgeBell('active', 4)
-    expect(acknowledgeBell).toHaveBeenNthCalledWith(2, 'active', 4)
+    await manager.acknowledgeAttention('active', 4)
+    expect(acknowledgeAttention).toHaveBeenNthCalledWith(2, 'active', 4)
   })
 
-  it('ignores stale incremental bells but lets snapshots reset the sequence', () => {
+  it('ignores stale incremental attention but lets snapshots reset the sequence', () => {
     const { manager } = fixture()
     const metadata = {
       terminalId: 'background',
       title: 'first',
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: IDLE,
+      attention: {
         sequence: 2,
         at: '2026-01-01T00:01:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     } as const
 
@@ -2095,23 +2105,21 @@ describe('TerminalSessionManager', () => {
     manager.applyRuntimeMetadata({
       ...metadata,
       title: 'updated',
-      progress: { state: 'normal', value: 50 },
-      bell: {
+      activity: working(50),
+      attention: {
         sequence: 1,
         at: '2026-01-01T00:00:00.000Z',
-        unread: false
+        unread: false,
+        reason: 'bell'
       }
     })
     expect(manager.getAttentionSnapshot().has('background')).toBe(true)
     expect(manager.getTitleSnapshot().get('background')).toBe('updated')
-    expect(manager.getProgressSnapshot().get('background')).toEqual({
-      state: 'normal',
-      value: 50
-    })
+    expect(manager.getActivitySnapshot().get('background')).toEqual(working(50))
 
     manager.applyRuntimeMetadata({
       ...metadata,
-      bell: { ...metadata.bell, unread: false }
+      attention: { ...metadata.attention, unread: false }
     })
     manager.applyRuntimeMetadata(metadata)
     expect(manager.getAttentionSnapshot().has('background')).toBe(false)
@@ -2119,10 +2127,11 @@ describe('TerminalSessionManager', () => {
     manager.replaceRuntimeMetadata([
       {
         ...metadata,
-        bell: {
+        attention: {
           sequence: 1,
           at: '2026-01-01T00:02:00.000Z',
-          unread: true
+          unread: true,
+          reason: 'bell'
         }
       }
     ])
@@ -2134,39 +2143,41 @@ describe('TerminalSessionManager', () => {
     const first = new Promise<void>((resolve) => {
       releaseFirst = resolve
     })
-    const { acknowledgeBell, manager } = fixture()
-    acknowledgeBell.mockImplementationOnce(() => first)
+    const { acknowledgeAttention, manager } = fixture()
+    acknowledgeAttention.mockImplementationOnce(() => first)
     const metadata = {
       terminalId: 'active',
       title: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: IDLE,
+      attention: {
         sequence: 1,
         at: '2026-01-01T00:00:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     } as const
 
     manager.acquire('active')
     manager.applyRuntimeMetadata(metadata)
-    void manager.acknowledgeBell('active', 1)
-    await vi.waitFor(() => expect(acknowledgeBell).toHaveBeenCalledTimes(1))
+    void manager.acknowledgeAttention('active', 1)
+    await vi.waitFor(() =>
+      expect(acknowledgeAttention).toHaveBeenCalledTimes(1)
+    )
     manager.applyRuntimeMetadata({
       ...metadata,
-      bell: {
+      attention: {
         sequence: 2,
         at: '2026-01-01T00:01:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     })
-    void manager.acknowledgeBell('active', 2)
-    expect(acknowledgeBell).toHaveBeenCalledTimes(1)
+    void manager.acknowledgeAttention('active', 2)
+    expect(acknowledgeAttention).toHaveBeenCalledTimes(1)
 
     releaseFirst()
     await vi.waitFor(() =>
-      expect(acknowledgeBell).toHaveBeenNthCalledWith(2, 'active', 2)
+      expect(acknowledgeAttention).toHaveBeenNthCalledWith(2, 'active', 2)
     )
     expect(manager.getAttentionSnapshot().has('active')).toBe(true)
   })
@@ -2176,120 +2187,117 @@ describe('TerminalSessionManager', () => {
     const first = new Promise<void>((resolve) => {
       releaseFirst = resolve
     })
-    const { acknowledgeBell, manager } = fixture()
-    acknowledgeBell.mockImplementationOnce(() => first)
+    const { acknowledgeAttention, manager } = fixture()
+    acknowledgeAttention.mockImplementationOnce(() => first)
     const metadata = {
       terminalId: 'active',
       title: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: IDLE,
+      attention: {
         sequence: 1,
         at: '2026-01-01T00:00:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     } as const
 
     manager.acquire('active')
     manager.applyRuntimeMetadata(metadata)
-    void manager.acknowledgeBell('active', 1)
-    await vi.waitFor(() => expect(acknowledgeBell).toHaveBeenCalledTimes(1))
+    void manager.acknowledgeAttention('active', 1)
+    await vi.waitFor(() =>
+      expect(acknowledgeAttention).toHaveBeenCalledTimes(1)
+    )
     manager.applyRuntimeMetadata({
       ...metadata,
-      bell: {
+      attention: {
         sequence: 2,
         at: '2026-01-01T00:01:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     })
-    void manager.acknowledgeBell('active', 2)
+    void manager.acknowledgeAttention('active', 2)
     manager.replaceRuntimeMetadata([
       {
         ...metadata,
-        bell: {
+        attention: {
           sequence: 2,
           at: '2026-01-01T00:01:00.000Z',
-          unread: true
+          unread: true,
+          reason: 'bell'
         }
       }
     ])
 
     releaseFirst()
     await vi.advanceTimersByTimeAsync(0)
-    expect(acknowledgeBell).toHaveBeenCalledTimes(1)
+    expect(acknowledgeAttention).toHaveBeenCalledTimes(1)
   })
 
   it('allows an exact acknowledgement to be retried after failure', async () => {
-    const { acknowledgeBell, manager } = fixture()
-    acknowledgeBell.mockRejectedValueOnce(new Error('offline'))
+    const { acknowledgeAttention, manager } = fixture()
+    acknowledgeAttention.mockRejectedValueOnce(new Error('offline'))
     manager.applyRuntimeMetadata({
       terminalId: 'active',
       title: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: IDLE,
+      attention: {
         sequence: 8,
         at: '2026-01-01T00:08:00.000Z',
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
     })
 
-    await expect(manager.acknowledgeBell('active', 8)).rejects.toThrow(
+    await expect(manager.acknowledgeAttention('active', 8)).rejects.toThrow(
       'offline'
     )
-    await manager.acknowledgeBell('active', 8)
-    expect(acknowledgeBell).toHaveBeenCalledTimes(2)
+    await manager.acknowledgeAttention('active', 8)
+    expect(acknowledgeAttention).toHaveBeenCalledTimes(2)
   })
 
-  it('retains daemon progress across LRU eviction and clears it when metadata is removed', () => {
+  it('retains daemon activity across LRU eviction and clears it when metadata is removed', () => {
     const { manager, sessions } = fixture(1)
     manager.applyRuntimeMetadata({
       terminalId: 'one',
       title: null,
-      progress: { state: 'indeterminate', value: null },
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: null,
-      bell: null
+      activity: working(null),
+      attention: null
     })
     manager.acquire('one')
     manager.release('one')
     manager.acquire('two')
     expect(sessions.get('one')?.disposed).toBe(true)
-    expect(manager.getProgressSnapshot().has('one')).toBe(true)
+    expect(manager.getActivitySnapshot().has('one')).toBe(true)
 
     manager.reconcile([{ id: 'two' }])
-    expect(manager.getProgressSnapshot().has('one')).toBe(false)
+    expect(manager.getActivitySnapshot().has('one')).toBe(false)
   })
 
-  it('does not let session churn resurrect progress after a daemon clear', () => {
+  it('does not let session churn resurrect activity after a daemon clear', () => {
     const { manager, sessions } = fixture(1)
     const active = {
       terminalId: 'one',
       title: null,
-      progress: { state: 'indeterminate', value: null },
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: null,
-      bell: null
+      activity: working(null),
+      attention: null
     } as const
     manager.applyRuntimeMetadata(active)
     manager.acquire('one')
     manager.release('one')
     manager.applyRuntimeMetadata({
       ...active,
-      progress: null,
-      progressClearedAt: '2026-01-01T00:00:01.000Z'
+      activity: IDLE
     })
 
     sessions.get('one')?.setTitle('late terminal title')
     manager.acquire('two')
     manager.acquire('one')
-    expect(manager.getProgressSnapshot().has('one')).toBe(false)
+    expect(manager.getActivitySnapshot().has('one')).toBe(false)
 
     manager.applyRuntimeMetadata(active)
-    expect(manager.getProgressSnapshot().get('one')).toEqual(active.progress)
+    expect(manager.getActivitySnapshot().get('one')).toEqual(active.activity)
     manager.forget('one')
-    expect(manager.getProgressSnapshot().has('one')).toBe(false)
+    expect(manager.getActivitySnapshot().has('one')).toBe(false)
   })
 })

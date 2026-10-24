@@ -3,12 +3,13 @@ import type * as Scope from 'effect/Scope'
 import type * as Stream from 'effect/Stream'
 import {
   type HostedTerminal,
+  type TerminalActivity,
+  type TerminalAttention,
   type TerminalCreateInput,
   type TerminalHostOutput,
   type TerminalHostRuntimeEvent,
   type TerminalHostSnapshot,
   type TerminalProcess,
-  type TerminalProgress,
   type TerminalSessionState,
   type TerminalTitleState,
   type TerminalTraceContext
@@ -46,8 +47,8 @@ export interface TerminalAttachmentBackend {
     {
       title: string | null
       status: HostedTerminal['status']
-      progress: TerminalProgress | null
-      bell: { sequence: number; at: string } | null
+      activity: TerminalActivity
+      attention: TerminalAttention | null
     } | null,
     unknown
   >

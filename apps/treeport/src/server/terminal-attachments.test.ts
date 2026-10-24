@@ -94,8 +94,15 @@ class HostDouble implements TerminalAttachmentBackend {
     return Effect.succeed({
       title: null,
       status: this.status,
-      progress: null,
-      bell: null
+      activity: {
+        state: 'idle' as const,
+        kind: null,
+        progress: null,
+        app: null,
+        message: null,
+        since: null
+      },
+      attention: null
     })
   }
 
@@ -229,10 +236,15 @@ function fixture() {
     terminalId: 'terminal',
     title: null,
     program: null,
-    progress: null,
-    progressStartedAt: null,
-    progressClearedAt: null,
-    bell: null
+    activity: {
+      state: 'idle',
+      kind: null,
+      progress: null,
+      app: null,
+      message: null,
+      since: null
+    },
+    attention: null
   }
   // SAFETY: This fixture supplies the metadata methods exercised by attachments.
   const metadata = testAccess<TerminalMetadataManager>({

@@ -1,10 +1,10 @@
-export type { TerminalProgress } from '@treeport/shared'
+export type { TerminalActivity } from '@treeport/shared'
 export {
   terminalKeyboardInput,
   terminalInputWithModifiers,
   terminalDisplayTitle,
   terminalOptions,
-  terminalProgressLabel
+  terminalActivityLabel
 } from './terminal-browser'
 export * from './terminal-session-client'
 export * from './terminal-session-manager'

@@ -145,10 +145,8 @@ export function useProjectEventsBridge(
           title: event.data.title,
           program: event.data.program,
           hasForegroundProcess: event.data.hasForegroundProcess,
-          progress: event.data.progress,
-          progressStartedAt: event.data.progressStartedAt,
-          progressClearedAt: event.data.progressClearedAt,
-          bell: event.data.bell
+          activity: event.data.activity,
+          attention: event.data.attention
         })
         return
       }

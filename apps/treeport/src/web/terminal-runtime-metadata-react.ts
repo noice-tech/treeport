@@ -1,53 +1,59 @@
 import { useSyncExternalStore } from 'react'
-import type { TerminalProgram, TerminalProgress } from '@treeport/shared'
+import type { TerminalActivity, TerminalProgram } from '@treeport/shared'
 import { terminalSessions } from './terminal-session'
-import type { TerminalBellMetadata } from './terminal-session-manager'
+import type { TerminalAttentionMetadata } from './terminal-session-manager'
 
 const EMPTY_ATTENTION: ReadonlySet<string> = new Set()
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_PROGRAMS: ReadonlyMap<string, TerminalProgram> = new Map()
-const EMPTY_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
-const EMPTY_BELLS: ReadonlyMap<string, TerminalBellMetadata> = new Map()
+const EMPTY_ACTIVITY: ReadonlyMap<string, TerminalActivity> = new Map()
+const EMPTY_ATTENTION_METADATA_MAP: ReadonlyMap<
+  string,
+  TerminalAttentionMetadata
+> = new Map()
 
 const EMPTY_NAVIGATION_METADATA = {
   attention: EMPTY_ATTENTION,
   titles: EMPTY_TITLES,
   programs: EMPTY_PROGRAMS,
-  progress: EMPTY_PROGRESS
+  activity: EMPTY_ACTIVITY
 }
-const EMPTY_BELL_METADATA = {
-  bells: EMPTY_BELLS,
+const EMPTY_ATTENTION_METADATA = {
+  attention: EMPTY_ATTENTION_METADATA_MAP,
   titles: EMPTY_TITLES
 }
 
 let navigationMetadata = EMPTY_NAVIGATION_METADATA
-let bellMetadata = EMPTY_BELL_METADATA
+let attentionMetadata = EMPTY_ATTENTION_METADATA
 
 function getNavigationMetadata() {
   const attention = terminalSessions.getAttentionSnapshot()
   const titles = terminalSessions.getTitleSnapshot()
   const programs = terminalSessions.getProgramSnapshot()
-  const progress = terminalSessions.getProgressSnapshot()
+  const activity = terminalSessions.getActivitySnapshot()
   if (
     navigationMetadata.attention !== attention ||
     navigationMetadata.titles !== titles ||
     navigationMetadata.programs !== programs ||
-    navigationMetadata.progress !== progress
+    navigationMetadata.activity !== activity
   ) {
-    navigationMetadata = { attention, titles, programs, progress }
+    navigationMetadata = { attention, titles, programs, activity }
   }
 
   return navigationMetadata
 }
 
-function getBellMetadata() {
-  const bells = terminalSessions.getBellSnapshot()
+function getAttentionMetadata() {
+  const attention = terminalSessions.getAttentionMetadataSnapshot()
   const titles = terminalSessions.getTitleSnapshot()
-  if (bellMetadata.bells !== bells || bellMetadata.titles !== titles) {
-    bellMetadata = { bells, titles }
+  if (
+    attentionMetadata.attention !== attention ||
+    attentionMetadata.titles !== titles
+  ) {
+    attentionMetadata = { attention, titles }
   }
 
-  return bellMetadata
+  return attentionMetadata
 }
 
 export function useTerminalNavigationMetadata() {
@@ -58,10 +64,10 @@ export function useTerminalNavigationMetadata() {
   )
 }
 
-export function useTerminalBellMetadata() {
+export function useTerminalAttentionMetadata() {
   return useSyncExternalStore(
     terminalSessions.subscribe,
-    getBellMetadata,
-    () => EMPTY_BELL_METADATA
+    getAttentionMetadata,
+    () => EMPTY_ATTENTION_METADATA
   )
 }

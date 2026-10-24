@@ -1,13 +1,17 @@
-import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
+import type {
+  TerminalActivity,
+  TerminalRecord,
+  WorktreeRecord
+} from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Stream from 'effect/Stream'
 import { describe, expect, it, vi } from 'vitest'
 import { ProductEventBus } from './core/events'
 import type { TreeportService } from './core/index'
 import type {
-  TerminalBellState,
-  TerminalBellStateStore
-} from './core/terminal-bell-state-store'
+  TerminalAttentionState,
+  TerminalAttentionStateStore
+} from './core/terminal-attention-state-store'
 import type {
   TerminalAttachmentBackend,
   TerminalHostRuntimeEvent
@@ -15,14 +19,24 @@ import type {
 import { TerminalMetadataManager } from './terminal-metadata'
 import { testAccess } from './test-access'
 
+const IDLE: TerminalActivity = {
+  state: 'idle',
+  kind: null,
+  progress: null,
+  app: null,
+  message: null,
+  since: null
+}
+
 type HostRuntimeState = {
   title: string | null
   status: 'running' | 'exited'
-  progress: {
-    state: 'normal' | 'error' | 'indeterminate' | 'paused'
-    value: number | null
+  activity: TerminalActivity
+  attention: {
+    sequence: number
+    at: string
+    reason: 'bell' | 'done' | 'blocked' | 'error'
   } | null
-  bell: { sequence: number; at: string } | null
 }
 
 class HostDouble implements TerminalAttachmentBackend {
@@ -38,8 +52,8 @@ class HostDouble implements TerminalAttachmentBackend {
   state: HostRuntimeState = {
     title: null,
     status: 'running',
-    progress: null,
-    bell: null
+    activity: IDLE,
+    attention: null
   }
 
   attach() {
@@ -101,9 +115,9 @@ class HostDouble implements TerminalAttachmentBackend {
   }
 }
 
-class BellStoreDouble implements TerminalBellStateStore {
-  readonly states = new Map<string, TerminalBellState>()
-  readonly upsert = vi.fn((state: TerminalBellState) =>
+class AttentionStoreDouble implements TerminalAttentionStateStore {
+  readonly states = new Map<string, TerminalAttentionState>()
+  readonly upsert = vi.fn((state: TerminalAttentionState) =>
     Effect.sync(() => {
       this.states.set(state.terminalId, state)
     })
@@ -139,12 +153,12 @@ const terminal: TerminalRecord = {
   updatedAt: '2026-01-01T00:00:00.000Z'
 }
 
-function fixture(states: TerminalBellState[] = []) {
+function fixture(states: TerminalAttentionState[] = []) {
   const events = new ProductEventBus()
   const host = new HostDouble()
-  const bells = new BellStoreDouble()
+  const attention = new AttentionStoreDouble()
   for (const state of states) {
-    bells.states.set(state.terminalId, state)
+    attention.states.set(state.terminalId, state)
   }
   const listProjects = vi.fn(() => Effect.succeed([]))
   const getTerminal = vi.fn(() => Effect.succeed(terminal))
@@ -177,19 +191,19 @@ function fixture(states: TerminalBellState[] = []) {
     terminalMetadataMutation: vi.fn((_terminalId, effect) => effect),
     drainTerminalMetadataMutations: vi.fn(() => Effect.void)
   })
-  const manager = new TerminalMetadataManager(service, host, bells)
-  return { bells, events, host, manager, refreshTerminalStatus, service }
+  const manager = new TerminalMetadataManager(service, host, attention)
+  return { attention, events, host, manager, refreshTerminalStatus, service }
 }
 
 describe('TerminalMetadataManager', () => {
-  it('projects host title, command, progress, BEL, and exit events', async () => {
-    const { bells, events, host, manager, refreshTerminalStatus, service } =
+  it('projects host title, command, activity, attention, and exit events', async () => {
+    const { attention, events, host, manager, refreshTerminalStatus, service } =
       fixture()
     const published: string[] = []
     events.subscribe((event) => {
       if (event.type === 'terminal.metadata') {
         published.push(
-          `${event.data.title}:${event.data.program}:${event.data.progress?.value ?? 'none'}`
+          `${event.data.title}:${event.data.program}:${event.data.activity.progress ?? 'none'}`
         )
       }
     })
@@ -209,13 +223,13 @@ describe('TerminalMetadataManager', () => {
       }
     })
     host.emit('terminal', {
-      progress: { state: 'normal', value: 42 }
+      activity: { ...IDLE, state: 'working', progress: 42 }
     })
     host.emit('terminal', {
-      bell: { sequence: 1, at: '2026-01-01T00:01:00.000Z' }
+      attention: { sequence: 1, at: '2026-01-01T00:01:00.000Z', reason: 'bell' }
     })
     await vi.waitFor(() =>
-      expect(manager.get('terminal').bell?.sequence).toBe(1)
+      expect(manager.get('terminal').attention?.sequence).toBe(1)
     )
     await service.runEffect(manager.drain())
 
@@ -223,10 +237,10 @@ describe('TerminalMetadataManager', () => {
       title: 'pi --mode rpc',
       program: 'pi',
       hasForegroundProcess: true,
-      progress: { state: 'normal', value: 42 },
-      bell: { sequence: 1, unread: true }
+      activity: { state: 'working', progress: 42 },
+      attention: { sequence: 1, unread: true, reason: 'bell' }
     })
-    expect(bells.upsert).toHaveBeenCalledOnce()
+    expect(attention.upsert).toHaveBeenCalledOnce()
     expect(published).toContain('pi --mode rpc:pi:42')
 
     host.emit('terminal', { commandExitCode: 7 })
@@ -237,9 +251,9 @@ describe('TerminalMetadataManager', () => {
       )
     )
     expect(host.listeners.get('terminal')?.size).toBe(1)
-    expect(manager.get('terminal').progress).toEqual({
-      state: 'normal',
-      value: 42
+    expect(manager.get('terminal').activity).toMatchObject({
+      state: 'working',
+      progress: 42
     })
     refreshTerminalStatus.mockClear()
 
@@ -264,7 +278,7 @@ describe('TerminalMetadataManager', () => {
       )
     )
     expect(manager.get('terminal').hasForegroundProcess).toBe(false)
-    const restored = new TerminalMetadataManager(service, host, bells)
+    const restored = new TerminalMetadataManager(service, host, attention)
     await service.runEffect(
       restored.trackTerminal(
         {
@@ -300,24 +314,26 @@ describe('TerminalMetadataManager', () => {
     })
     expect(manager.get('terminal')).toMatchObject({
       hasForegroundProcess: false,
-      progress: null
+      activity: { state: 'idle', progress: null }
     })
     manager.dispose()
   })
 
-  it('restores progress and exactly one detached BEL from host state', async () => {
-    const existing: TerminalBellState = {
+  it('restores activity and exactly one detached attention event from host state', async () => {
+    const existing: TerminalAttentionState = {
       terminalId: 'terminal',
       worktreeId: 'worktree',
       sequence: 3,
       occurredAt: '2026-01-01T00:00:00.000Z',
+      reason: 'bell',
       unread: true
     }
-    const { bells, host, manager, service } = fixture([existing])
-    host.state.progress = { state: 'normal', value: 71 }
-    host.state.bell = {
+    const { attention, host, manager, service } = fixture([existing])
+    host.state.activity = { ...IDLE, state: 'working', progress: 71 }
+    host.state.attention = {
       sequence: 4,
-      at: '2026-01-01T00:01:00.000Z'
+      at: '2026-01-01T00:01:00.000Z',
+      reason: 'bell'
     }
     await service.runEffect(manager.initialize())
     await service.runEffect(
@@ -326,42 +342,42 @@ describe('TerminalMetadataManager', () => {
     await service.runEffect(manager.drain())
 
     expect(manager.get('terminal')).toMatchObject({
-      progress: { state: 'normal', value: 71 },
-      bell: { sequence: 4, unread: true }
+      activity: { state: 'working', progress: 71 },
+      attention: { sequence: 4, unread: true }
     })
-    expect(bells.upsert).toHaveBeenCalledTimes(1)
+    expect(attention.upsert).toHaveBeenCalledTimes(1)
 
     host.emit('terminal', {
-      bell: { sequence: 4, at: '2026-01-01T00:01:00.000Z' }
+      attention: { sequence: 4, at: '2026-01-01T00:01:00.000Z', reason: 'bell' }
     })
     await service.runEffect(manager.drain())
-    expect(bells.upsert).toHaveBeenCalledTimes(1)
+    expect(attention.upsert).toHaveBeenCalledTimes(1)
 
-    await service.runEffect(manager.acknowledgeBell('terminal', 4))
-    expect(bells.markRead).toHaveBeenCalledWith('terminal', 4)
-    expect(manager.get('terminal').bell).toMatchObject({
+    await service.runEffect(manager.acknowledgeAttention('terminal', 4))
+    expect(attention.markRead).toHaveBeenCalledWith('terminal', 4)
+    expect(manager.get('terminal').attention).toMatchObject({
       sequence: 4,
       unread: false
     })
     manager.dispose()
   })
 
-  it('removes runtime subscriptions and persisted BEL state with a terminal', async () => {
-    const { bells, host, manager, service } = fixture()
+  it('removes runtime subscriptions and persisted attention state with a terminal', async () => {
+    const { attention, host, manager, service } = fixture()
     await service.runEffect(manager.initialize())
     await service.runEffect(
       manager.trackTerminal(terminal, testAccess({ id: 'worktree' }))
     )
     host.emit('terminal', {
-      bell: { sequence: 1, at: '2026-01-01T00:01:00.000Z' }
+      attention: { sequence: 1, at: '2026-01-01T00:01:00.000Z', reason: 'bell' }
     })
     await service.runEffect(manager.drain())
 
     manager.removeTerminal('terminal')
     await service.runEffect(manager.drain())
     expect(host.listeners.get('terminal')?.size ?? 0).toBe(0)
-    expect(bells.delete).toHaveBeenCalledWith('terminal')
-    expect(manager.get('terminal').bell).toBeNull()
+    expect(attention.delete).toHaveBeenCalledWith('terminal')
+    expect(manager.get('terminal').attention).toBeNull()
     manager.dispose()
   })
 })

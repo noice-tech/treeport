@@ -52,10 +52,15 @@ async function fixture() {
       terminalId: 'term',
       title: null,
       program: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: null
+      activity: {
+        state: 'idle',
+        kind: null,
+        progress: null,
+        app: null,
+        message: null,
+        since: null
+      },
+      attention: null
     }
   }
   const inspect = vi.fn(async () => observation)
@@ -310,15 +315,16 @@ describe('terminal wait CLI observations and event races', () => {
     expect((await pending).code).toBe(0)
   })
 
-  it('does not treat title, idle progress, or bells as command completion', async () => {
+  it('does not treat title, idle activity, or attention as command completion', async () => {
     const value = await fixture()
     const pending = value.wait('exit', '200ms')
     await vi.waitFor(() => expect(value.inspect).toHaveBeenCalledTimes(2))
     value.observation.metadata.title = 'finished'
-    value.observation.metadata.bell = {
+    value.observation.metadata.attention = {
       sequence: 1,
       at: new Date().toISOString(),
-      unread: true
+      unread: true,
+      reason: 'bell'
     }
     value.metadata()
     const result = await pending
@@ -326,26 +332,31 @@ describe('terminal wait CLI observations and event races', () => {
     expect(JSON.parse(result.stderr).error.code).toBe('WAIT_TIMEOUT')
   })
 
-  it.each(['idle', 'working', 'bell'])(
+  it.each(['idle', 'working', 'attention'])(
     'preserves %s wait semantics after command completion',
     async (condition) => {
       const value = await fixture()
       value.observation.terminal.commandExitCode = 7
-      value.observation.metadata.progress =
-        condition === 'idle' ? { state: 'normal', value: 1 } : null
-      value.observation.metadata.bell = {
+      const idle = value.observation.metadata.activity
+      value.observation.metadata.activity =
+        condition === 'idle' ? { ...idle, state: 'working', progress: 1 } : idle
+      value.observation.metadata.attention = {
         sequence: 3,
         at: new Date().toISOString(),
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
       const pending = value.wait(condition)
       await vi.waitFor(() => expect(value.inspect).toHaveBeenCalledTimes(2))
-      value.observation.metadata.progress =
-        condition === 'working' ? { state: 'normal', value: 2 } : null
-      value.observation.metadata.bell = {
+      value.observation.metadata.activity =
+        condition === 'working'
+          ? { ...idle, state: 'working', progress: 2 }
+          : idle
+      value.observation.metadata.attention = {
         sequence: 4,
         at: new Date().toISOString(),
-        unread: true
+        unread: true,
+        reason: 'bell'
       }
       value.metadata()
       const result = await pending

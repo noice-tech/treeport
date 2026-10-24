@@ -1,6 +1,6 @@
 import type {
+  TerminalActivity,
   TerminalProgram,
-  TerminalProgress,
   TerminalSize
 } from '@treeport/shared'
 import { TerminalSession } from './terminal-session-client'
@@ -8,12 +8,12 @@ import { TerminalSessionPool } from './terminal-session-pool'
 import type { TerminalFontZoom } from './terminal-session-client/state'
 import {
   TerminalRuntimeMetadataStore,
-  type TerminalBellEvent,
-  type TerminalBellMetadata,
+  type TerminalAttentionEvent,
+  type TerminalAttentionMetadata,
   type TerminalRuntimeMetadataInput
 } from './terminal-runtime-metadata'
 
-export type { TerminalBellEvent, TerminalBellMetadata }
+export type { TerminalAttentionEvent, TerminalAttentionMetadata }
 
 export class TerminalSessionManager {
   private readonly pool: TerminalSessionPool
@@ -24,13 +24,13 @@ export class TerminalSessionManager {
     idleMs = 5 * 60_000,
     createSession: (terminalId: string) => TerminalSession = (terminalId) =>
       new TerminalSession(terminalId),
-    sendBellAcknowledgement?: (
+    sendAttentionAcknowledgement?: (
       terminalId: string,
       sequence: number
     ) => Promise<void>
   ) {
     this.runtimeMetadata = new TerminalRuntimeMetadataStore(
-      sendBellAcknowledgement
+      sendAttentionAcknowledgement
     )
     this.pool = new TerminalSessionPool(
       maxSessions,
@@ -44,22 +44,24 @@ export class TerminalSessionManager {
   subscribe = (listener: () => void): (() => void) =>
     this.runtimeMetadata.subscribe(listener)
 
-  subscribeBellEvents = (
-    listener: (event: TerminalBellEvent) => void
-  ): (() => void) => this.runtimeMetadata.subscribeBellEvents(listener)
+  subscribeAttentionEvents = (
+    listener: (event: TerminalAttentionEvent) => void
+  ): (() => void) => this.runtimeMetadata.subscribeAttentionEvents(listener)
 
   getAttentionSnapshot = (): ReadonlySet<string> =>
     this.runtimeMetadata.getAttentionSnapshot()
-  getBellSnapshot = (): ReadonlyMap<string, TerminalBellMetadata> =>
-    this.runtimeMetadata.getBellSnapshot()
+  getAttentionMetadataSnapshot = (): ReadonlyMap<
+    string,
+    TerminalAttentionMetadata
+  > => this.runtimeMetadata.getAttentionMetadataSnapshot()
   getTitleSnapshot = (): ReadonlyMap<string, string> =>
     this.runtimeMetadata.getTitleSnapshot()
   getProgramSnapshot = (): ReadonlyMap<string, TerminalProgram> =>
     this.runtimeMetadata.getProgramSnapshot()
   getForegroundProcessSnapshot = (): ReadonlySet<string> =>
     this.runtimeMetadata.getForegroundProcessSnapshot()
-  getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> =>
-    this.runtimeMetadata.getProgressSnapshot()
+  getActivitySnapshot = (): ReadonlyMap<string, TerminalActivity> =>
+    this.runtimeMetadata.getActivitySnapshot()
 
   getInitialSize(terminalId: string): TerminalSize | null {
     return this.pool.getInitialSize(terminalId)
@@ -102,7 +104,7 @@ export class TerminalSessionManager {
     this.runtimeMetadata.reconcile(terminalIds)
   }
 
-  acknowledgeBell(terminalId: string, sequence: number): Promise<void> {
-    return this.runtimeMetadata.acknowledgeBell(terminalId, sequence)
+  acknowledgeAttention(terminalId: string, sequence: number): Promise<void> {
+    return this.runtimeMetadata.acknowledgeAttention(terminalId, sequence)
   }
 }
