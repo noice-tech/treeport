@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { refreshVisibleFiles } from './refresh-visible-files'
 
-it('refreshes only mutable visible expanded patches and bounds parallel reads', async () => {
+it('loads visible headers, refreshes mutable expanded patches, and bounds parallel reads', async () => {
   const files = [
     ...Array.from({ length: 12 }, (_, index) => ({
       id: `local-${index}`,
@@ -22,7 +22,7 @@ it('refreshes only mutable visible expanded patches and bounds parallel reads', 
   await refreshVisibleFiles(
     files,
     visible,
-    new Set(['collapsed']),
+    new Set(['collapsed', 'new-head']),
     async (id, reload) => {
       active++
       peak = Math.max(peak, active)
