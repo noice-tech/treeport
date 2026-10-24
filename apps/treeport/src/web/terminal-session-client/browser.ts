@@ -32,7 +32,6 @@ interface Dependencies {
     payload: Parameters<TerminalClientToServerEvents[E]>[0]
   ): void
   update(patch: Partial<TerminalSessionSnapshot>): void
-  updateSelectionState(): void
 }
 
 export function makeBrowser(
@@ -53,7 +52,6 @@ export function makeBrowser(
 ) {
   return Effect.gen(function* () {
     let desktopLocalFilePasteCleanup: (() => void) | null = null
-    let selectionChangeCleanup: (() => void) | null = null
     let inputObserver: ResizeObserver | null = null
     let core: GhosttyTerminalCore | null = null
     let loading = false
@@ -218,10 +216,6 @@ export function makeBrowser(
         true
       )
 
-      const updateSelection = () => dependencies.updateSelectionState()
-      document.addEventListener('selectionchange', updateSelection)
-      selectionChangeCleanup = () =>
-        document.removeEventListener('selectionchange', updateSelection)
       element.addEventListener(
         'scroll',
         () =>
@@ -396,10 +390,8 @@ export function makeBrowser(
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        const cleanups = [desktopLocalFilePasteCleanup, selectionChangeCleanup]
+        desktopLocalFilePasteCleanup?.()
         desktopLocalFilePasteCleanup = null
-        selectionChangeCleanup = null
-        cleanups.forEach((cleanup) => cleanup?.())
         inputObserver?.disconnect()
         inputObserver = null
       })

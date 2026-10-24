@@ -176,7 +176,6 @@ export function makeProtocol(
                   ? message.controller
                   : state.snapshotValue.controller,
               controlPending: false,
-              hasSelection: false,
               error: null
             })
             if (

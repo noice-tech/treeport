@@ -58,7 +58,6 @@ export interface TerminalSessionSnapshot {
   bellSerial: number
   exitSerial: number
   fileTransfer: TerminalFileTransfer | null
-  hasSelection: boolean
   hoveredLink: string | null
   pasteRequestSerial: number
   fontZoomPercent: number | null
@@ -76,7 +75,6 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   bellSerial: 0,
   exitSerial: 0,
   fileTransfer: null,
-  hasSelection: false,
   hoveredLink: null,
   pasteRequestSerial: 0,
   fontZoomPercent: null,

@@ -92,9 +92,7 @@ export class TerminalSession {
             requestControl: (...args) => this.requestControl(...args),
             scheduleFit: layout.scheduleFit,
             send: (...args) => connection.send(...args),
-            update: (...args) => this.update(...args),
-            updateSelectionState: (...args) =>
-              this.updateSelectionState(...args)
+            update: (...args) => this.update(...args)
           })
           const connection: Effect.Effect.Success<
             ReturnType<typeof makeConnection>
@@ -400,7 +398,6 @@ export class TerminalSession {
     }
 
     this.state.terminal.clearSelection()
-    this.updateSelectionState()
   }
 
   dispose(): void {
@@ -443,12 +440,6 @@ export class TerminalSession {
       },
       180
     )
-  }
-
-  private updateSelectionState(): void {
-    this.update({
-      hasSelection: Boolean(this.state.terminal?.getSelectionText())
-    })
   }
 
   private update(patch: Partial<TerminalSessionSnapshot>): void {

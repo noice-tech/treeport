@@ -70,7 +70,6 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   bellSerial: 0,
   exitSerial: 0,
   fileTransfer: null,
-  hasSelection: false,
   hoveredLink: null,
   pasteRequestSerial: 0,
   fontZoomPercent: null,
@@ -542,31 +541,6 @@ export function TerminalView({
                 {pasteControls}
               </div>
             ))}
-          {snapshot.hasSelection && !pasteOpen && (
-            <div
-              className="terminal-selection-actions absolute right-3 bottom-3 z-10 overflow-hidden rounded-md bg-zinc-800 shadow-lg ring-1 ring-white/15 max-[700px]:bottom-2"
-              aria-label="Terminal text selection"
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="rounded-none border-r border-white/10 px-3 text-zinc-100"
-                onClick={() => copyText()}
-              >
-                Copy
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="rounded-none px-3 text-zinc-300"
-                onClick={() => activeSession?.clearSelection()}
-              >
-                Clear
-              </Button>
-            </div>
-          )}
           {(snapshot.degraded || snapshot.fileTransfer) && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
               {snapshot.degraded && (

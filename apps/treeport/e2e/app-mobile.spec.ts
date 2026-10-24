@@ -207,9 +207,6 @@ test.describe('mobile terminal UI', () => {
 
     // This spec runs only in the mobile-chromium project.
     {
-      await page
-        .context()
-        .grantPermissions(['clipboard-read', 'clipboard-write'])
       const selectionX = bounds!.x + bounds!.width / 100
       const selectionY = bounds!.y + row!.height / 2
       await client.send('Input.dispatchTouchEvent', {
@@ -225,15 +222,13 @@ test.describe('mobile terminal UI', () => {
         type: 'touchEnd',
         touchPoints: []
       })
-      const selectionActions = page.getByLabel('Terminal text selection')
-      await expect(selectionActions).toBeVisible()
-      await selectionActions.getByRole('button', { name: 'Copy' }).click()
-      await expect(selectionActions).toBeVisible()
       await expect
-        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .poll(() =>
+          page.evaluate(() => window.getSelection()?.toString() ?? '')
+        )
         .not.toBe('')
-      await selectionActions.getByRole('button', { name: 'Clear' }).click()
-      await expect(selectionActions).toHaveCount(0)
+      await expect(page.getByLabel('Terminal text selection')).toHaveCount(0)
+      await page.evaluate(() => window.getSelection()?.removeAllRanges())
     }
 
     const firstRow = page.locator('.xterm-rows > div').first()
