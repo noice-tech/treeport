@@ -18,6 +18,7 @@ import * as Stream from 'effect/Stream'
 import * as SynchronizedRef from 'effect/SynchronizedRef'
 import {
   GhosttyTerminal,
+  type GhosttyProgramStatus,
   TERMINAL_BACKGROUND,
   TERMINAL_FOREGROUND,
   TERMINAL_IMAGE_STORAGE_BYTES
@@ -58,6 +59,10 @@ const IDLE_ACTIVITY: TerminalActivity = {
   message: null,
   since: null
 }
+// The OSC 7501 specification requires at least 64 records per terminal.
+const PROGRAM_STATUS_RECORDS = 64
+// Most important first, when several records are reported at once.
+const PROGRAM_STATUS_RANK = ['blocked', 'error', 'working', 'done', 'idle']
 const HOST_PARSER_HIGH_WATERMARK = 1024 * 1024
 const HOST_PARSER_LOW_WATERMARK = 256 * 1024
 const PROCESS_TREE_KILL_GRACE_MS = 500
@@ -113,8 +118,24 @@ type RuntimeCommand =
       readonly progress: number | null
       readonly at: number
     }
-  | { readonly _tag: 'Bell' }
+  | { readonly _tag: 'Bell'; readonly at: number; readonly batch: number }
+  | {
+      readonly _tag: 'ProgramStatus'
+      readonly report: GhosttyProgramStatus
+      readonly at: number
+      readonly batch: number
+      readonly replaying: boolean
+    }
+  | {
+      readonly _tag: 'Prompt'
+      readonly at: number
+      readonly batch: number
+      readonly replaying: boolean
+    }
+  | { readonly _tag: 'Reset' }
   | { readonly _tag: 'Exit'; readonly exitCode: number; readonly at: number }
+
+type ProgramStatusRecord = Omit<TerminalActivity, 'since'>
 
 interface PauseLease {
   readonly release: Effect.Effect<void>
@@ -128,7 +149,12 @@ interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
   commandLine: string | null
   activity: TerminalActivity
   progressFiber: Fiber.RuntimeFiber<void, never> | null
+  // OSC 7501 records by id, least recently updated first. Once a program
+  // reports, OSC 9;4 is ignored until a full reset.
+  statusRecords: Map<string, ProgramStatusRecord> | null
   attention: TerminalAttention | null
+  // Parser batch that raised the latest attention.
+  attentionBatch: number
   readonly pty: IPty | PersistentSession
   replaying: boolean
   processingSequence: number
@@ -166,6 +192,32 @@ export interface TerminalHostSessionsOptions {
   readonly sshAgentDiscovery?: SshAgentDiscovery
   readonly sessionExecutable?: string | undefined
   readonly journalLimitBytes?: number | undefined
+}
+
+// A BEL and a status change written together are one attention event, with
+// the status as its more specific reason.
+function raiseAttention(
+  session: HostedTerminalSession,
+  reason: TerminalAttention['reason'],
+  at: number,
+  batch: number
+): boolean {
+  if (session.attention && session.attentionBatch === batch) {
+    if (session.attention.reason !== 'bell' || reason === 'bell') {
+      return false
+    }
+
+    session.attention = { ...session.attention, reason }
+    return true
+  }
+
+  session.attentionBatch = batch
+  session.attention = {
+    sequence: (session.attention?.sequence ?? 0) + 1,
+    at: new Date(at).toISOString(),
+    reason
+  }
+  return true
 }
 
 function effectError(cause: unknown): TerminalHostSessionError {
@@ -969,15 +1021,20 @@ export class TerminalHostSessions {
             }
 
             if (hosted.replaying) {
-              hosted.attention = {
-                sequence: (hosted.attention?.sequence ?? 0) + 1,
-                at: new Date(hosted.processingTime).toISOString(),
-                reason: 'bell'
-              }
+              raiseAttention(
+                hosted,
+                'bell',
+                hosted.processingTime,
+                hosted.processingSequence
+              )
               return
             }
 
-            Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'Bell' })
+            Queue.unsafeOffer(hosted.runtimeCommands, {
+              _tag: 'Bell',
+              at: hosted.processingTime,
+              batch: hosted.processingSequence
+            })
           },
           titleChanged: () => {
             if (hosted) {
@@ -1007,6 +1064,22 @@ export class TerminalHostSessions {
               at: hosted.processingTime
             })
           },
+          programStatus: (report) => {
+            if (hosted) {
+              Queue.unsafeOffer(hosted.runtimeCommands, {
+                _tag: 'ProgramStatus',
+                report,
+                at: hosted.processingTime,
+                batch: hosted.processingSequence,
+                replaying: hosted.replaying
+              })
+            }
+          },
+          reset: () => {
+            if (hosted) {
+              Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'Reset' })
+            }
+          },
           unknownOsc: (content) => {
             const prefix = `${TERMINAL_COMMAND_OSC};command;`
             if (!hosted || !content.startsWith(prefix)) {
@@ -1027,6 +1100,14 @@ export class TerminalHostSessions {
                 commandLine: hosted.commandLine
               }
             })
+            if (hosted.commandLine === null) {
+              Queue.unsafeOffer(hosted.runtimeCommands, {
+                _tag: 'Prompt',
+                at: hosted.processingTime,
+                batch: hosted.processingSequence,
+                replaying: hosted.replaying
+              })
+            }
           },
           renderHold: null,
           clipboardWrite: null
@@ -1140,7 +1221,9 @@ export class TerminalHostSessions {
         commandLine: input.initialTitle ?? null,
         activity: IDLE_ACTIVITY,
         progressFiber: null,
+        statusRecords: null,
         attention: null,
+        attentionBatch: -1,
         pty: child,
         replaying: child instanceof PersistentSession,
         processingSequence: 0,
@@ -1363,16 +1446,74 @@ export class TerminalHostSessions {
             })
             return
           case 'Bell':
-            session.attention = {
-              sequence: (session.attention?.sequence ?? 0) + 1,
-              at: new Date().toISOString(),
-              reason: 'bell'
+            if (raiseAttention(session, 'bell', command.at, command.batch)) {
+              yield* PubSub.publish(session.runtime, {
+                attention: session.attention!
+              })
             }
-            yield* PubSub.publish(session.runtime, {
-              attention: session.attention
-            })
+
+            return
+          case 'ProgramStatus': {
+            if (session.progressFiber) {
+              yield* Fiber.interrupt(session.progressFiber)
+              session.progressFiber = null
+            }
+
+            const records =
+              session.statusRecords ?? new Map<string, ProgramStatusRecord>()
+            session.statusRecords = records
+            const { report } = command
+            if (report.state === 'clear') {
+              for (const id of records.keys()) {
+                if (
+                  report.id === '' ||
+                  id === report.id ||
+                  id.startsWith(`${report.id}/`)
+                ) {
+                  records.delete(id)
+                }
+              }
+            } else {
+              records.delete(report.id)
+              records.set(report.id, {
+                state: report.state,
+                kind: report.kind,
+                progress: report.progress,
+                app: report.app || null,
+                // Untrusted text shown outside the terminal: drop invisible
+                // formatting such as direction overrides.
+                message:
+                  report.message.replace(/\p{Cf}/gu, '').slice(0, 2048) || null
+              })
+              if (records.size > PROGRAM_STATUS_RECORDS) {
+                records.delete(records.keys().next().value!)
+              }
+            }
+
+            yield* this.applyProgramStatus(session, command)
+            return
+          }
+          case 'Prompt':
+            // A new prompt ends work the program left reported as ongoing.
+            if (session.statusRecords) {
+              for (const [id, record] of session.statusRecords) {
+                if (record.state === 'working' || record.state === 'blocked') {
+                  session.statusRecords.delete(id)
+                }
+              }
+              yield* this.applyProgramStatus(session, command)
+            }
+
+            return
+          case 'Reset':
+            // Ghostty already cleared the records before reporting the reset.
+            session.statusRecords = null
             return
           case 'Progress': {
+            if (session.statusRecords) {
+              return
+            }
+
             if (session.progressFiber) {
               yield* Fiber.interrupt(session.progressFiber)
               session.progressFiber = null
@@ -1464,6 +1605,67 @@ export class TerminalHostSessions {
         }
       })
     )
+  }
+
+  // The terminal shows only its most important record; a record without an
+  // app takes it from its nearest ancestor.
+  private applyProgramStatus(
+    session: HostedTerminalSession,
+    source: { at: number; batch: number; replaying: boolean }
+  ): Effect.Effect<void> {
+    return Effect.gen(function* () {
+      const records =
+        session.statusRecords ?? new Map<string, ProgramStatusRecord>()
+      let top: [string, ProgramStatusRecord] | null = null
+      for (const entry of records) {
+        if (
+          !top ||
+          PROGRAM_STATUS_RANK.indexOf(entry[1].state) <=
+            PROGRAM_STATUS_RANK.indexOf(top[1].state)
+        ) {
+          top = entry
+        }
+      }
+
+      let app = top?.[1].app ?? null
+      for (let id = top?.[0] ?? ''; app === null && id !== '';) {
+        id = id.includes('/') ? id.slice(0, id.lastIndexOf('/')) : ''
+        app = records.get(id)?.app ?? null
+      }
+
+      const previous = session.activity
+      const next = top ? { ...top[1], app } : IDLE_ACTIVITY
+      session.activity = {
+        ...next,
+        since:
+          next.state === previous.state
+            ? previous.since
+            : new Date(source.at).toISOString()
+      }
+      if (
+        session.activity.state !== previous.state ||
+        session.activity.kind !== previous.kind ||
+        session.activity.progress !== previous.progress ||
+        session.activity.app !== previous.app ||
+        session.activity.message !== previous.message
+      ) {
+        yield* PubSub.publish(session.runtime, { activity: session.activity })
+      }
+
+      const { state } = session.activity
+      if (
+        (state === 'done' || state === 'blocked' || state === 'error') &&
+        (state !== previous.state ||
+          session.activity.kind !== previous.kind ||
+          session.activity.message !== previous.message) &&
+        raiseAttention(session, state, source.at, source.batch) &&
+        !source.replaying
+      ) {
+        yield* PubSub.publish(session.runtime, {
+          attention: session.attention!
+        })
+      }
+    })
   }
 
   private session(

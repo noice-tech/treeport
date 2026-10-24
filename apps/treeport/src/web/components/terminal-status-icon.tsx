@@ -35,11 +35,13 @@ export function TerminalStatusIcon({
       ? 'text-rose-300'
       : state === 'blocked'
         ? 'text-amber-300'
-        : exited && state === 'idle'
-          ? 'text-rose-300'
-          : working
-            ? 'text-accent-400'
-            : 'text-zinc-500'
+        : state === 'done'
+          ? 'text-emerald-300'
+          : exited && state === 'idle'
+            ? 'text-rose-300'
+            : working
+              ? 'text-accent-400'
+              : 'text-zinc-500'
 
   return (
     <span

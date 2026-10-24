@@ -594,9 +594,13 @@ export class TerminalMetadataManager {
     return this.service.terminalMetadataMutation(
       entry.terminalId,
       Effect.gen(this, function* () {
+        // The host may restate its latest attention with a more specific
+        // reason; that is not a new event.
+        const restated = observed.sequence === entry.attention?.sequence
         if (
           this.entries.get(entry.terminalId) !== entry ||
-          observed.sequence <= (entry.attention?.sequence ?? 0)
+          observed.sequence < (entry.attention?.sequence ?? 0) ||
+          (restated && observed.reason === entry.attention?.reason)
         ) {
           return
         }
@@ -610,7 +614,7 @@ export class TerminalMetadataManager {
         const attention = {
           sequence: observed.sequence,
           at: observed.at,
-          unread: true,
+          unread: restated ? entry.attention!.unread : true,
           reason: observed.reason
         }
         const state = {
@@ -619,7 +623,7 @@ export class TerminalMetadataManager {
           sequence: attention.sequence,
           occurredAt: attention.at,
           reason: attention.reason,
-          unread: true
+          unread: attention.unread
         }
         yield* this.attentionStateStore.upsert(state).pipe(Effect.orDie)
         yield* Effect.sync(() => {
@@ -627,7 +631,7 @@ export class TerminalMetadataManager {
           if (this.entries.get(entry.terminalId) === entry) {
             entry.attention = attention
             this.publish(entry)
-            if (live) {
+            if (live && !restated) {
               const metadata = this.metadata(entry)
               this.attentionListeners.forEach((listener) => listener(metadata))
             }

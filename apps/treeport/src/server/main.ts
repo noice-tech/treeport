@@ -229,9 +229,20 @@ export async function main(
             // bursts, but never hide a received push in the worker (iOS revokes it).
             yield* Effect.sleep('750 millis')
             const current = terminalMetadata.get(terminalId)
-            if (!current.attention?.unread || !push.hasSubscriptions) {
+            const { attention } = current
+            if (!attention?.unread || !push.hasSubscriptions) {
               return
             }
+
+            const status =
+              attention.reason === 'bell'
+                ? 'Terminal needs attention'
+                : (current.activity.message ??
+                  {
+                    done: 'Finished',
+                    blocked: 'Needs your input',
+                    error: 'Failed'
+                  }[attention.reason])
 
             const terminal = yield* service.terminals.getTerminal(terminalId)
             const worktree = yield* service.projects.getWorktree(
@@ -241,7 +252,8 @@ export async function main(
               push.notify(
                 {
                   title: current.title ?? terminal.name,
-                  body: `Terminal needs attention · ${worktree.name}`,
+                  // Name the worktree: status text comes from the program.
+                  body: `${status} · ${worktree.name}`,
                   url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
                   tag: `treeport-attention:${terminalId}`
                 },
