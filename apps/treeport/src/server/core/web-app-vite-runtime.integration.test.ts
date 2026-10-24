@@ -255,6 +255,12 @@ describe('WebAppViteRuntime', () => {
         ])
       )
       await expect(response.text()).resolves.toContain('@vite/client')
+      const clientResponse = await fetch(new URL('@vite/client', response.url))
+      expect(clientResponse.status).toBe(200)
+      const clientCode = await clientResponse.text()
+      const base = new URL('.', response.url).pathname
+      expect(clientCode).toContain(`${base}@vite-hmr`)
+      expect(clientCode).not.toContain(`${base}${base.slice(1)}@vite-hmr`)
       const moduleResponse = await fetch(new URL('app.tsx', response.url))
       expect(moduleResponse.status).toBe(200)
       expect(moduleResponse.headers.get('cache-control')).toBe('no-cache')

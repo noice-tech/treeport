@@ -14,8 +14,8 @@ export async function refreshVisibleFiles(
   const pending = files.filter(
     (file) =>
       visible.has(file.id) &&
-      !collapsed.has(file.id) &&
-      (file.scope === 'uncommitted' || file.loadState === 'idle')
+      (file.loadState === 'idle' ||
+        (!collapsed.has(file.id) && file.scope === 'uncommitted'))
   )
   let next = 0
   await Promise.all(

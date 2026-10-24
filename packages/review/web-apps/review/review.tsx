@@ -1,4 +1,3 @@
-import { Dialog as Sheet } from '@base-ui/react/dialog'
 import {
   ChevronDownIcon,
   ChevronUpIcon,
@@ -7,7 +6,11 @@ import {
   ViewColumnsIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import { parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs'
+import {
+  parseDiffFromFile,
+  parsePatchFiles,
+  type FileDiffMetadata
+} from '@pierre/diffs'
 import {
   FileDiff,
   type DiffLineAnnotation,
@@ -270,8 +273,30 @@ function ChangedFileTree({
       status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
     }> = []
     for (const entry of entries) {
+      // A replacement can contain both a leaf and descendants of that leaf.
+      // Reserve real files AND directories before choosing display-only names.
+      const occupied = new Set<string>()
+      const parents = new Set<string>()
       for (const file of entry.files) {
-        const path = file.path
+        occupied.add(file.path)
+        const segments = file.path.split('/')
+        for (let depth = 1; depth < segments.length; depth += 1) {
+          const parent = segments.slice(0, depth).join('/')
+          parents.add(parent)
+          occupied.add(parent)
+        }
+      }
+      for (const file of entry.files) {
+        let path = file.path
+        if (parents.has(path)) {
+          let suffix = 1
+          do {
+            path = `${file.path} (file change${suffix === 1 ? '' : ` ${suffix}`})`
+            suffix += 1
+          } while (occupied.has(path))
+          occupied.add(path)
+        }
+
         const syntheticPath = `${entry.group}/${path}`
         actualPaths.set(syntheticPath, file.id)
         gitStatus.push({ path: syntheticPath, status: file.status })
@@ -621,7 +646,9 @@ function ReviewApp() {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [diffStyle, setDiffStyle] = useState<'unified' | 'split'>('unified')
-  const [fileTreeOpen, setFileTreeOpen] = useState(false)
+  const [fileTreeOpen, setFileTreeOpen] = useState(true)
+  const [fileTreeWidth, setFileTreeWidth] = useState(30)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [activeFindMatch, setActiveFindMatch] = useState(-1)
@@ -974,8 +1001,37 @@ function ReviewApp() {
             (patch) => patch.files
           )
         : []
-      const fileDiff =
-        parsed.find((candidate) => candidate.name === filePath) ?? parsed[0]
+      // A pathspec may also return descendants during directory replacement.
+      // Git emits separate delete/add patches for a regular-file/symlink change.
+      const matching = parsed.filter((candidate) => candidate.name === filePath)
+      let fileDiff = matching[0]
+      const deleted = matching.find((candidate) => candidate.type === 'deleted')
+      const added = matching.find((candidate) => candidate.type === 'new')
+      if (deleted && added) {
+        fileDiff = {
+          ...parseDiffFromFile(
+            { name: filePath, contents: deleted.deletionLines.join('') },
+            { name: filePath, contents: added.additionLines.join('') }
+          ),
+          cacheKey: crypto.randomUUID()
+        }
+        if (deleted.mode) {
+          fileDiff.prevMode = deleted.mode
+        }
+
+        if (added.mode) {
+          fileDiff.mode = added.mode
+        }
+
+        if (deleted.prevObjectId) {
+          fileDiff.prevObjectId = deleted.prevObjectId
+        }
+
+        if (added.newObjectId) {
+          fileDiff.newObjectId = added.newObjectId
+        }
+      }
+
       if (!fileDiff) {
         throw new Error('The file diff did not contain a patch')
       }
@@ -1013,10 +1069,13 @@ function ReviewApp() {
 
           if (entry.isIntersecting) {
             visibleFiles.current.add(id)
-            if (!collapsedFilesRef.current.has(id)) {
-              const file = loadedRef.current?.files.find((file) => file.id === id)
-              void loadFile(id, file?.scope === 'uncommitted')
-            }
+            const file = loadedRef.current?.files.find((file) => file.id === id)
+            // Collapsed files still need their metadata for the real diff header.
+            // Load once, without polling already-loaded collapsed patches.
+            void loadFile(
+              id,
+              file?.scope === 'uncommitted' && !collapsedFilesRef.current.has(id)
+            )
           } else {
             visibleFiles.current.delete(id)
           }
@@ -1089,12 +1148,12 @@ function ReviewApp() {
   )
 
   const selectFile = useCallback((file: string) => {
-    setFileTreeOpen(false)
+    setCollapsed(file, false)
     setSelectedFile(file)
     requestAnimationFrame(() => {
       sectionRefs.current.get(file)?.scrollIntoView({ block: 'start' })
     })
-  }, [])
+  }, [setCollapsed])
 
   const createMatchRange = useCallback((match: FindMatch | undefined) => {
     if (!match) {
@@ -1224,7 +1283,6 @@ function ReviewApp() {
   }, [createMatchRange, findMatches, setCollapsed])
 
   const openFind = useCallback(() => {
-    setFileTreeOpen(false)
     if (!findOpen) {
       findReturnFocus.current =
         document.activeElement instanceof HTMLElement
@@ -1263,7 +1321,6 @@ function ReviewApp() {
 
   const navigateToComment = useCallback(
     (comment: ReviewComment) => {
-      setFileTreeOpen(false)
       setCollapsed(comment.fileId, false)
       setImageSources((current) => new Set(current).add(comment.fileId))
       setActiveCommentId(comment.id)
@@ -1421,7 +1478,7 @@ function ReviewApp() {
   )
 
   return (
-    <Sheet.Root open={fileTreeOpen} onOpenChange={setFileTreeOpen}>
+    <>
       <header className="review-toolbar" aria-label="Review toolbar">
         <p id="summary" className="sr-only">
           {loaded?.summary ??
@@ -1530,16 +1587,19 @@ function ReviewApp() {
           <ViewColumnsIcon aria-hidden="true" />
           <span className="touch-target" aria-hidden="true" />
         </button>
-        <Sheet.Trigger
+        <button
           id="file-tree-toggle"
           className="toolbar-icon-button"
           type="button"
-          aria-label={`Show changed files (${files.length})`}
-          title={`Show changed files (${files.length})`}
+          aria-controls="changed-files"
+          aria-expanded={fileTreeOpen}
+          aria-label={`${fileTreeOpen ? 'Hide' : 'Show'} changed files (${files.length})`}
+          title={`${fileTreeOpen ? 'Hide' : 'Show'} changed files (${files.length})`}
+          onClick={() => setFileTreeOpen((open) => !open)}
         >
           <FolderIcon aria-hidden="true" />
           <span className="touch-target" aria-hidden="true" />
-        </Sheet.Trigger>
+        </button>
         <p id="comment-status" role="status">
           {commentStatus}
         </p>
@@ -1609,7 +1669,15 @@ function ReviewApp() {
           </button>
         </div>
       </header>
-      <div className="workspace">
+      <div
+        className="workspace"
+        ref={workspaceRef}
+        style={{
+          gridTemplateColumns: fileTreeOpen
+            ? `minmax(0, 1fr) 6px ${fileTreeWidth}%`
+            : 'minmax(0, 1fr)'
+        }}
+      >
         <main id="review" aria-live="polite">
           {!loading && !error && outdatedComments.length > 0 && (
             <section
@@ -1681,6 +1749,7 @@ function ReviewApp() {
                 </h2>
                 {group.files.map((file) => {
                   const fileDiff = file.diff
+                  const collapsed = collapsedFiles.has(file.id)
                   if (!fileDiff) {
                     const label =
                       file.loadState === 'oversized'
@@ -1689,7 +1758,7 @@ function ReviewApp() {
                           ? 'Could not load patch'
                           : file.loadState === 'loading'
                             ? 'Loading patch…'
-                            : 'Patch loads when visible'
+                            : 'Waiting to load patch…'
                     const isImage =
                       /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
                         file.path
@@ -1708,6 +1777,19 @@ function ReviewApp() {
                         className={`file-diff file-diff-placeholder${selectedFile === file.id ? ' selected' : ''}`}
                       >
                         <div className="file-placeholder-header">
+                          <button
+                            className="file-collapse"
+                            type="button"
+                            aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${file.path}`}
+                            aria-expanded={!collapsed}
+                            onClick={() => setCollapsed(file.id, !collapsed)}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path
+                                d={collapsed ? 'm6 3 5 5-5 5' : 'm3 6 5 5 5-5'}
+                              />
+                            </svg>
+                          </button>
                           <strong>{file.path}</strong>
                           <span>{label}</span>
                         </div>
@@ -1752,7 +1834,6 @@ function ReviewApp() {
                       lineNumber: comment.lineNumber,
                       metadata: comment
                     }))
-                  const collapsed = collapsedFiles.has(file.id)
                   const isImage =
                     /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
                       fileDiff.name
@@ -1932,26 +2013,78 @@ function ReviewApp() {
             ))
           )}
         </main>
-      </div>
-      <Sheet.Portal keepMounted>
-        <Sheet.Backdrop className="file-sheet-backdrop" />
-        <Sheet.Popup id="changed-files" className="file-sheet">
-          <div className="file-sheet-header">
-            <Sheet.Title>Changed files ({files.length})</Sheet.Title>
-            <Sheet.Close aria-label="Close changed files">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M6 6l12 12M18 6 6 18" />
-              </svg>
-            </Sheet.Close>
+        <div
+          className="file-panel-divider"
+          hidden={!fileTreeOpen}
+          role="separator"
+          tabIndex={0}
+          aria-label="Resize changed files panel"
+          aria-controls="changed-files"
+          aria-orientation="vertical"
+          aria-valuemin={20}
+          aria-valuemax={60}
+          aria-valuenow={Math.round(fileTreeWidth)}
+          aria-valuetext={`${Math.round(fileTreeWidth)} percent`}
+          onDoubleClick={() => setFileTreeWidth(30)}
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              return
+            }
+
+            event.preventDefault()
+            event.currentTarget.focus()
+            event.currentTarget.setPointerCapture(event.pointerId)
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+              return
+            }
+
+            const bounds = workspaceRef.current?.getBoundingClientRect()
+            if (bounds?.width) {
+              setFileTreeWidth(
+                Math.max(20, Math.min(60, (bounds.right - event.clientX) / bounds.width * 100))
+              )
+            }
+          }}
+          onPointerUp={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId)
+            }
+          }}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+              return
+            }
+
+            event.preventDefault()
+            const key = event.key
+            setFileTreeWidth((width) =>
+              key === 'Home'
+                ? 20
+                : key === 'End'
+                  ? 60
+                  : Math.max(20, Math.min(60, width + (key === 'ArrowLeft' ? 2 : -2)))
+            )
+          }}
+        />
+        <aside
+          id="changed-files"
+          className="file-panel"
+          hidden={!fileTreeOpen}
+          aria-labelledby="changed-files-heading"
+        >
+          <div className="file-panel-header">
+            <h2 id="changed-files-heading">Changed files ({files.length})</h2>
           </div>
           <div id="file-tree">
             {files.length > 0 && (
               <ChangedFileTree files={files} onSelect={selectFile} />
             )}
           </div>
-        </Sheet.Popup>
-      </Sheet.Portal>
-    </Sheet.Root>
+        </aside>
+      </div>
+    </>
   )
 }
 
