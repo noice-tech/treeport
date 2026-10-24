@@ -1,9 +1,13 @@
 import { useSyncExternalStore } from 'react'
-import type { TerminalActivity, TerminalProgram } from '@treeport/shared'
+import type {
+  TerminalActivity,
+  TerminalAttentionReason,
+  TerminalProgram
+} from '@treeport/shared'
 import { terminalSessions } from './terminal-session'
 import type { TerminalAttentionMetadata } from './terminal-session-manager'
 
-const EMPTY_ATTENTION: ReadonlySet<string> = new Set()
+const EMPTY_ATTENTION: ReadonlyMap<string, TerminalAttentionReason> = new Map()
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_PROGRAMS: ReadonlyMap<string, TerminalProgram> = new Map()
 const EMPTY_ACTIVITY: ReadonlyMap<string, TerminalActivity> = new Map()

@@ -46,7 +46,9 @@ export class TerminalRuntimeMetadataStore {
   private readonly attentionEventListeners = new Set<
     (event: TerminalAttentionEvent) => void
   >()
-  private attentionSnapshot: ReadonlySet<string> = new Set()
+  // Unread attention by terminal.
+  private attentionSnapshot: ReadonlyMap<string, TerminalAttentionReason> =
+    new Map()
   private titleSnapshot: ReadonlyMap<string, string> = new Map()
   private programSnapshot: ReadonlyMap<string, TerminalProgram> = new Map()
   private foregroundProcessSnapshot: ReadonlySet<string> = new Set()
@@ -85,7 +87,8 @@ export class TerminalRuntimeMetadataStore {
     return () => this.attentionEventListeners.delete(listener)
   }
 
-  getAttentionSnapshot = (): ReadonlySet<string> => this.attentionSnapshot
+  getAttentionSnapshot = (): ReadonlyMap<string, TerminalAttentionReason> =>
+    this.attentionSnapshot
   getAttentionMetadataSnapshot = (): ReadonlyMap<
     string,
     TerminalAttentionMetadata
@@ -139,9 +142,12 @@ export class TerminalRuntimeMetadataStore {
         this.emit()
       }
 
-      this.setAttention(metadata.terminalId, incomingAttention.unread)
+      this.setAttention(
+        metadata.terminalId,
+        incomingAttention.unread ? incomingAttention.reason : null
+      )
     } else if (!currentAttention && incomingAttention === null) {
-      this.setAttention(metadata.terminalId, false)
+      this.setAttention(metadata.terminalId, null)
     }
 
     this.setRuntimeTitle(metadata.terminalId, metadata.title)
@@ -172,7 +178,7 @@ export class TerminalRuntimeMetadataStore {
     const foregroundProcesses = new Set<string>()
     const activities = new Map<string, TerminalActivity>()
     const attentionMetadata = new Map<string, TerminalAttentionMetadata>()
-    const attention = new Set<string>()
+    const attention = new Map<string, TerminalAttentionReason>()
     for (const item of metadata) {
       const title = item.title?.trim().slice(0, 256)
       if (title) {
@@ -205,7 +211,7 @@ export class TerminalRuntimeMetadataStore {
           reason: item.attention.reason
         })
         if (item.attention.unread) {
-          attention.add(item.terminalId)
+          attention.set(item.terminalId, item.attention.reason)
         }
       }
     }
@@ -234,7 +240,8 @@ export class TerminalRuntimeMetadataStore {
     const attentionChanged =
       attention.size !== this.attentionSnapshot.size ||
       [...attention].some(
-        (terminalId) => !this.attentionSnapshot.has(terminalId)
+        ([terminalId, reason]) =>
+          this.attentionSnapshot.get(terminalId) !== reason
       )
     const attentionMetadataChanged =
       attentionMetadata.size !== this.attentionMetadata.size ||
@@ -321,12 +328,12 @@ export class TerminalRuntimeMetadataStore {
   reconcile(terminalIds: Iterable<string>): void {
     const valid = new Set(terminalIds)
     let changed = false
-    const attention = new Set(this.attentionSnapshot)
+    const attention = new Map(this.attentionSnapshot)
     const titles = new Map(this.titleSnapshot)
     const programs = new Map(this.programSnapshot)
     const foregroundProcesses = new Set(this.foregroundProcessSnapshot)
     const activities = new Map(this.activitySnapshot)
-    for (const terminalId of attention) {
+    for (const terminalId of attention.keys()) {
       if (!valid.has(terminalId)) {
         attention.delete(terminalId)
         changed = true
@@ -432,7 +439,7 @@ export class TerminalRuntimeMetadataStore {
       return
     }
 
-    const next = new Set(this.attentionSnapshot)
+    const next = new Map(this.attentionSnapshot)
     next.delete(terminalId)
     this.attentionSnapshot = next
     this.emit()
@@ -489,18 +496,21 @@ export class TerminalRuntimeMetadataStore {
     this.emit()
   }
 
-  private setAttention(terminalId: string, unread: boolean): void {
+  private setAttention(
+    terminalId: string,
+    unread: TerminalAttentionReason | null
+  ): void {
     if (!unread) {
       this.attentionAcknowledgementTargets.delete(terminalId)
     }
 
-    if (this.attentionSnapshot.has(terminalId) === unread) {
+    if ((this.attentionSnapshot.get(terminalId) ?? null) === unread) {
       return
     }
 
-    const next = new Set(this.attentionSnapshot)
+    const next = new Map(this.attentionSnapshot)
     if (unread) {
-      next.add(terminalId)
+      next.set(terminalId, unread)
     } else {
       next.delete(terminalId)
     }
