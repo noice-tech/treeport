@@ -1,5 +1,5 @@
 import type { WTerm } from '@wterm/dom'
-import type { TerminalProgress } from '@treeport/shared'
+import type { TerminalActivity } from '@treeport/shared'
 
 import {
   browserTrace,
@@ -54,18 +54,22 @@ export function pasteTerminalText(terminal: WTerm, text: string): void {
   )
 }
 
-export function terminalProgressLabel(progress: TerminalProgress): string {
-  const percentage =
-    progress.value === null ? '' : `, ${progress.value}% complete`
-  if (progress.state === 'error') {
-    return `progress error${percentage}`
-  }
-
-  if (progress.state === 'paused') {
-    return `progress paused${percentage}`
-  }
-
-  return progress.value === null ? 'working' : `${progress.value}% complete`
+export function terminalActivityLabel(activity: TerminalActivity): string {
+  const label =
+    activity.state === 'working'
+      ? activity.progress === null
+        ? 'working'
+        : `${activity.progress}% complete`
+      : activity.state === 'blocked'
+        ? activity.kind === 'permission'
+          ? 'needs approval'
+          : activity.kind === 'question'
+            ? 'needs an answer'
+            : activity.kind === 'auth'
+              ? 'needs sign-in'
+              : 'needs attention'
+        : activity.state
+  return activity.message ? `${label}: ${activity.message}` : label
 }
 
 // Shells default their title to `user@host:cwd`; the user and host repeat on

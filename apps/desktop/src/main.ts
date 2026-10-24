@@ -304,7 +304,7 @@ function releaseTerminalSelection(): void {
   }
 }
 
-function stopBellAttention(): void {
+function stopWindowAttention(): void {
   if (dockBounceId !== null) {
     app.dock?.cancelBounce(dockBounceId)
     dockBounceId = null
@@ -316,7 +316,7 @@ function stopBellAttention(): void {
   }
 }
 
-function requestBellAttention(): void {
+function requestWindowAttention(): void {
   const window = mainWindow
   if (!window || window.isFocused()) {
     return
@@ -1012,12 +1012,12 @@ function createWindow(url?: string): BrowserWindow {
     shell.webContents.send('fullscreen-change', false)
     broadcastState()
   })
-  window.on('focus', stopBellAttention)
+  window.on('focus', stopWindowAttention)
   window.on('close', () => {
     persistWindowState(window)
   })
   window.on('closed', () => {
-    stopBellAttention()
+    stopWindowAttention()
     if (mainWindow === window) {
       mainWindow = null
       hostSessions = null
@@ -1760,9 +1760,9 @@ function registerIpc(): void {
       releaseTerminalSelection()
     }
   })
-  ipcMain.on('bell-attention:request', (event) => {
+  ipcMain.on('attention:request', (event) => {
     if (isTrustedRendererEvent(event)) {
-      requestBellAttention()
+      requestWindowAttention()
     }
   })
   ipcMain.on('desktop:set-theme', (event, value) => {

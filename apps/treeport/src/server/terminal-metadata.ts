@@ -2,6 +2,8 @@ import path from 'node:path'
 import {
   formatCommandLine,
   type ProductEvent,
+  type TerminalActivity,
+  type TerminalAttentionReason,
   type TerminalProgram,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
@@ -16,10 +18,10 @@ import { DomainError } from './core/index'
 import { DatabasePort } from './core/database'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
 import {
-  DatabaseTerminalBellStateStore,
-  type TerminalBellState,
-  type TerminalBellStateStore
-} from './core/terminal-bell-state-store'
+  DatabaseTerminalAttentionStateStore,
+  type TerminalAttentionState,
+  type TerminalAttentionStateStore
+} from './core/terminal-attention-state-store'
 import type { TerminalTitleState } from './core/terminal'
 import type { TerminalAttachmentBackend } from './core/terminal'
 
@@ -28,6 +30,15 @@ const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
   ['claude', 'claude'],
   ['codex', 'codex']
 ])
+
+const IDLE_ACTIVITY: TerminalActivity = {
+  state: 'idle',
+  kind: null,
+  progress: null,
+  app: null,
+  message: null,
+  since: null
+}
 
 type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 
@@ -42,18 +53,18 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   interactiveShellCommand: string | null
   launchProgram: TerminalProgram | null
   runtimeScope: Scope.CloseableScope | null
-  acknowledgedBellSequence: number
+  acknowledgedAttentionSequence: number
 }
 
 /**
  * Projects terminal-host runtime events into the product metadata contract.
  * The terminal host remains the only parser and process owner; this manager
- * only persists BEL state and publishes title/progress changes.
+ * only persists attention and publishes title/activity changes.
  */
 export function acquireTerminalMetadataManager(
   service: TreeportService,
   terminalHost: TerminalAttachmentBackend,
-  bellStateStore?: TerminalBellStateStore
+  attentionStateStore?: TerminalAttentionStateStore
 ): Effect.Effect<
   TerminalMetadataManager,
   never,
@@ -61,7 +72,8 @@ export function acquireTerminalMetadataManager(
 > {
   return Effect.gen(function* () {
     const store =
-      bellStateStore ?? new DatabaseTerminalBellStateStore(yield* DatabasePort)
+      attentionStateStore ??
+      new DatabaseTerminalAttentionStateStore(yield* DatabasePort)
     const manager = new TerminalMetadataManager(service, terminalHost, store)
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => manager.dispose()).pipe(
@@ -76,12 +88,15 @@ export function acquireTerminalMetadataManager(
 export class TerminalMetadataManager {
   private readonly entries = new Map<string, TerminalMetadataEntry>()
   private readonly listeners = new Map<string, Set<MetadataListener>>()
-  private readonly bellListeners = new Set<
+  private readonly attentionListeners = new Set<
     (metadata: TerminalRuntimeMetadata) => void
   >()
-  private readonly bellDeletionVersions = new Map<string, number>()
-  private readonly persistedBells = new Map<string, TerminalBellState>()
-  private readonly bellStateStore: TerminalBellStateStore
+  private readonly attentionDeletionVersions = new Map<string, number>()
+  private readonly persistedAttention = new Map<
+    string,
+    TerminalAttentionState
+  >()
+  private readonly attentionStateStore: TerminalAttentionStateStore
   private initialized = false
   private unsubscribeEvents: (() => void) | null = null
   private disposed = false
@@ -89,9 +104,9 @@ export class TerminalMetadataManager {
   constructor(
     private readonly service: TreeportService,
     private readonly terminalHost: TerminalAttachmentBackend,
-    bellStateStore: TerminalBellStateStore
+    attentionStateStore: TerminalAttentionStateStore
   ) {
-    this.bellStateStore = bellStateStore
+    this.attentionStateStore = attentionStateStore
   }
 
   initialize(): Effect.Effect<void, unknown, ApplicationServices> {
@@ -101,9 +116,9 @@ export class TerminalMetadataManager {
       }
 
       this.initialized = true
-      const states = yield* this.bellStateStore.load().pipe(Effect.orDie)
+      const states = yield* this.attentionStateStore.load().pipe(Effect.orDie)
       for (const state of states) {
-        this.persistedBells.set(state.terminalId, state)
+        this.persistedAttention.set(state.terminalId, state)
       }
 
       this.unsubscribeEvents = this.service.events.subscribe((event) =>
@@ -137,10 +152,8 @@ export class TerminalMetadataManager {
           terminalId,
           title: null,
           program: null,
-          progress: null,
-          progressStartedAt: null,
-          progressClearedAt: null,
-          bell: null
+          activity: IDLE_ACTIVITY,
+          attention: null
         }
   }
 
@@ -161,12 +174,12 @@ export class TerminalMetadataManager {
     }
   }
 
-  subscribeLiveBells(
+  subscribeLiveAttention(
     listener: (metadata: TerminalRuntimeMetadata) => void
   ): () => void {
-    this.bellListeners.add(listener)
+    this.attentionListeners.add(listener)
     return () => {
-      this.bellListeners.delete(listener)
+      this.attentionListeners.delete(listener)
     }
   }
 
@@ -198,18 +211,19 @@ export class TerminalMetadataManager {
             )
               .trim()
               .slice(0, 256) || null
-        const persistedBell = this.persistedBells.get(terminal.id)
-        const bell =
-          persistedBell?.worktreeId === terminal.worktreeId
+        const persisted = this.persistedAttention.get(terminal.id)
+        const attention =
+          persisted?.worktreeId === terminal.worktreeId
             ? {
-                sequence: persistedBell.sequence,
-                at: persistedBell.occurredAt,
-                unread: persistedBell.unread
+                sequence: persisted.sequence,
+                at: persisted.occurredAt,
+                unread: persisted.unread,
+                reason: persisted.reason
               }
             : null
-        this.bellDeletionVersions.set(
+        this.attentionDeletionVersions.set(
           terminal.id,
-          (this.bellDeletionVersions.get(terminal.id) ?? 0) + 1
+          (this.attentionDeletionVersions.get(terminal.id) ?? 0) + 1
         )
         entry = {
           terminalId: terminal.id,
@@ -219,10 +233,8 @@ export class TerminalMetadataManager {
           title: launchCommandLine,
           program: launchProgram,
           hasForegroundProcess: terminal.status === 'running' ? null : false,
-          progress: null,
-          progressStartedAt: null,
-          progressClearedAt: null,
-          bell,
+          activity: IDLE_ACTIVITY,
+          attention,
           terminalTitle: null,
           currentCommand: null,
           commandLine: null,
@@ -232,10 +244,10 @@ export class TerminalMetadataManager {
             : null,
           launchProgram,
           runtimeScope: null,
-          acknowledgedBellSequence: bell
-            ? bell.unread
-              ? bell.sequence - 1
-              : bell.sequence
+          acknowledgedAttentionSequence: attention
+            ? attention.unread
+              ? attention.sequence - 1
+              : attention.sequence
             : 0
         }
         this.entries.set(terminal.id, entry)
@@ -258,7 +270,7 @@ export class TerminalMetadataManager {
     })
   }
 
-  acknowledgeBell(
+  acknowledgeAttention(
     terminalId: string,
     sequence: number
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
@@ -276,48 +288,54 @@ export class TerminalMetadataManager {
           )
         }
 
-        const latestSequence = entry.bell?.sequence ?? 0
+        const latestSequence = entry.attention?.sequence ?? 0
         if (sequence > latestSequence) {
           return yield* Effect.fail(
             new DomainError(
-              'BELL_SEQUENCE_AHEAD',
-              'Bell acknowledgement is ahead of the latest observed bell',
+              'ATTENTION_SEQUENCE_AHEAD',
+              'Attention acknowledgement is ahead of the latest observed attention',
               409
             )
           )
         }
 
-        if (sequence <= entry.acknowledgedBellSequence) {
+        if (sequence <= entry.acknowledgedAttentionSequence) {
           return
         }
 
-        if (entry.bell && sequence === latestSequence && entry.bell.unread) {
-          yield* this.bellStateStore
+        if (
+          entry.attention &&
+          sequence === latestSequence &&
+          entry.attention.unread
+        ) {
+          yield* this.attentionStateStore
             .markRead(terminalId, sequence)
             .pipe(
               Effect.orDie,
-              Effect.withSpan('treeport.terminal.bell.acknowledge.persist')
+              Effect.withSpan('treeport.terminal.attention.acknowledge.persist')
             )
           yield* Effect.sync(() => {
-            const persisted = this.persistedBells.get(terminalId)
+            const persisted = this.persistedAttention.get(terminalId)
             if (persisted?.sequence === sequence) {
-              this.persistedBells.set(terminalId, {
+              this.persistedAttention.set(terminalId, {
                 ...persisted,
                 unread: false
               })
             }
 
             if (this.entries.get(terminalId) === entry) {
-              entry.bell = { ...entry.bell!, unread: false }
-              entry.acknowledgedBellSequence = sequence
+              entry.attention = { ...entry.attention!, unread: false }
+              entry.acknowledgedAttentionSequence = sequence
               this.publish(entry)
             }
-          }).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.publish'))
+          }).pipe(
+            Effect.withSpan('treeport.terminal.attention.acknowledge.publish')
+          )
           return
         }
 
         yield* Effect.sync(() => {
-          entry.acknowledgedBellSequence = sequence
+          entry.acknowledgedAttentionSequence = sequence
         })
       })
     )
@@ -325,7 +343,7 @@ export class TerminalMetadataManager {
 
   removeTerminal(terminalId: string): void {
     const entry = this.entries.get(terminalId)
-    if (!entry && !this.persistedBells.has(terminalId)) {
+    if (!entry && !this.persistedAttention.has(terminalId)) {
       return
     }
 
@@ -334,27 +352,32 @@ export class TerminalMetadataManager {
       this.stopRuntime(entry)
     }
 
-    const deletionVersion = (this.bellDeletionVersions.get(terminalId) ?? 0) + 1
-    this.bellDeletionVersions.set(terminalId, deletionVersion)
+    const deletionVersion =
+      (this.attentionDeletionVersions.get(terminalId) ?? 0) + 1
+    this.attentionDeletionVersions.set(terminalId, deletionVersion)
     this.service.forkApplicationEffect(
       this.service
         .terminalMetadataMutation(
           terminalId,
           Effect.gen(this, function* () {
-            if (this.bellDeletionVersions.get(terminalId) !== deletionVersion) {
+            if (
+              this.attentionDeletionVersions.get(terminalId) !== deletionVersion
+            ) {
               return
             }
 
-            yield* this.bellStateStore.delete(terminalId).pipe(Effect.orDie)
+            yield* this.attentionStateStore
+              .delete(terminalId)
+              .pipe(Effect.orDie)
             yield* Effect.sync(() => {
-              this.persistedBells.delete(terminalId)
+              this.persistedAttention.delete(terminalId)
             })
           })
         )
         .pipe(
           Effect.catchAll((error) =>
             Effect.logError(
-              `Failed to delete terminal bell state for ${terminalId}`
+              `Failed to delete terminal attention state for ${terminalId}`
             ).pipe(Effect.annotateLogs({ cause: String(error) }))
           )
         )
@@ -365,10 +388,8 @@ export class TerminalMetadataManager {
         terminalId,
         title: null,
         program: null,
-        progress: null,
-        progressStartedAt: null,
-        progressClearedAt: null,
-        bell: null
+        activity: IDLE_ACTIVITY,
+        attention: null
       } satisfies TerminalRuntimeMetadata
       this.listeners.get(terminalId)?.forEach((listener) => listener(cleared))
     }
@@ -387,7 +408,7 @@ export class TerminalMetadataManager {
     }
     this.entries.clear()
     this.listeners.clear()
-    this.bellListeners.clear()
+    this.attentionListeners.clear()
   }
 
   drain(): Effect.Effect<void, never, ApplicationServices> {
@@ -475,12 +496,12 @@ export class TerminalMetadataManager {
                 this.update(entry, { title: event.title })
               }
 
-              if (event.progress !== undefined) {
-                this.setProgress(entry, event.progress)
+              if (event.activity) {
+                this.update(entry, { activity: event.activity })
               }
 
-              if (event.bell) {
-                yield* this.recordBell(entry, event.bell, true)
+              if (event.attention) {
+                yield* this.recordAttention(entry, event.attention, true)
               }
 
               if ('exitCode' in event || event.commandExitCode != null) {
@@ -532,9 +553,9 @@ export class TerminalMetadataManager {
       }
 
       if (state) {
-        this.setProgress(entry, state.progress)
-        if (state.bell) {
-          yield* this.recordBell(entry, state.bell)
+        this.update(entry, { activity: state.activity })
+        if (state.attention) {
+          yield* this.recordAttention(entry, state.attention)
         }
       }
 
@@ -557,60 +578,62 @@ export class TerminalMetadataManager {
     }
 
     this.update(entry, {
-      progress: null,
+      activity:
+        entry.activity.state === 'idle'
+          ? entry.activity
+          : { ...IDLE_ACTIVITY, since: new Date().toISOString() },
       hasForegroundProcess: entry.status === 'running' ? null : false
     })
   }
 
-  private setProgress(
+  private recordAttention(
     entry: TerminalMetadataEntry,
-    progress: TerminalRuntimeMetadata['progress']
-  ): void {
-    this.update(entry, { progress })
-  }
-
-  private recordBell(
-    entry: TerminalMetadataEntry,
-    observed: { sequence: number; at: string },
+    observed: { sequence: number; at: string; reason: TerminalAttentionReason },
     live = false
   ): Effect.Effect<void, unknown, ApplicationServices> {
     return this.service.terminalMetadataMutation(
       entry.terminalId,
       Effect.gen(this, function* () {
+        // The host may restate its latest attention with a more specific
+        // reason; that is not a new event.
+        const restated = observed.sequence === entry.attention?.sequence
         if (
           this.entries.get(entry.terminalId) !== entry ||
-          observed.sequence <= (entry.bell?.sequence ?? 0)
+          observed.sequence < (entry.attention?.sequence ?? 0) ||
+          (restated && observed.reason === entry.attention?.reason)
         ) {
           return
         }
 
         yield* Effect.sync(() => {
-          this.bellDeletionVersions.set(
+          this.attentionDeletionVersions.set(
             entry.terminalId,
-            (this.bellDeletionVersions.get(entry.terminalId) ?? 0) + 1
+            (this.attentionDeletionVersions.get(entry.terminalId) ?? 0) + 1
           )
         })
-        const bell = {
+        const attention = {
           sequence: observed.sequence,
           at: observed.at,
-          unread: true
+          unread: restated ? entry.attention!.unread : true,
+          reason: observed.reason
         }
         const state = {
           terminalId: entry.terminalId,
           worktreeId: entry.worktreeId,
-          sequence: bell.sequence,
-          occurredAt: bell.at,
-          unread: true
+          sequence: attention.sequence,
+          occurredAt: attention.at,
+          reason: attention.reason,
+          unread: attention.unread
         }
-        yield* this.bellStateStore.upsert(state).pipe(Effect.orDie)
+        yield* this.attentionStateStore.upsert(state).pipe(Effect.orDie)
         yield* Effect.sync(() => {
-          this.persistedBells.set(entry.terminalId, state)
+          this.persistedAttention.set(entry.terminalId, state)
           if (this.entries.get(entry.terminalId) === entry) {
-            entry.bell = bell
+            entry.attention = attention
             this.publish(entry)
-            if (live) {
+            if (live && !restated) {
               const metadata = this.metadata(entry)
-              this.bellListeners.forEach((listener) => listener(metadata))
+              this.attentionListeners.forEach((listener) => listener(metadata))
             }
           }
         })
@@ -669,7 +692,7 @@ export class TerminalMetadataManager {
     patch: Partial<
       Pick<
         TerminalRuntimeMetadata,
-        'title' | 'program' | 'progress' | 'hasForegroundProcess'
+        'title' | 'program' | 'activity' | 'hasForegroundProcess'
       >
     >
   ): void {
@@ -682,36 +705,28 @@ export class TerminalMetadataManager {
         ? entry.title
         : patch.title?.trim().slice(0, 256) || null
     const program = patch.program === undefined ? entry.program : patch.program
-    const progress =
-      patch.progress === undefined ? entry.progress : patch.progress
+    const activity = patch.activity ?? entry.activity
     const hasForegroundProcess =
       patch.hasForegroundProcess === undefined
         ? entry.hasForegroundProcess
         : patch.hasForegroundProcess
-    const progressChanged =
-      progress?.state !== entry.progress?.state ||
-      progress?.value !== entry.progress?.value
     if (
       title === entry.title &&
       program === entry.program &&
-      !progressChanged &&
+      activity.state === entry.activity.state &&
+      activity.kind === entry.activity.kind &&
+      activity.progress === entry.activity.progress &&
+      activity.app === entry.activity.app &&
+      activity.message === entry.activity.message &&
+      activity.since === entry.activity.since &&
       hasForegroundProcess === entry.hasForegroundProcess
     ) {
       return
     }
 
-    if (progressChanged) {
-      const now = new Date().toISOString()
-      if (entry.progress === null && progress !== null) {
-        entry.progressStartedAt = now
-      } else if (entry.progress !== null && progress === null) {
-        entry.progressClearedAt = now
-      }
-    }
-
     entry.title = title
     entry.program = program
-    entry.progress = progress
+    entry.activity = activity
     entry.hasForegroundProcess = hasForegroundProcess
     this.publish(entry)
   }
@@ -722,10 +737,8 @@ export class TerminalMetadataManager {
       title: entry.title,
       program: entry.program,
       hasForegroundProcess: entry.hasForegroundProcess,
-      progress: entry.progress,
-      progressStartedAt: entry.progressStartedAt,
-      progressClearedAt: entry.progressClearedAt,
-      bell: entry.bell
+      activity: entry.activity,
+      attention: entry.attention
     }
   }
 

@@ -545,10 +545,15 @@ function fixture(webDist = '/missing') {
     terminalId: 'term',
     title: 'pi · /repo',
     program: 'pi',
-    progress: null,
-    progressStartedAt: null,
-    progressClearedAt: null,
-    bell: null
+    activity: {
+      state: 'idle',
+      kind: null,
+      progress: null,
+      app: null,
+      message: null,
+      since: null
+    },
+    attention: null
   }
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [])
   const metadataGet = vi.fn((terminalId: string) => ({
@@ -556,13 +561,13 @@ function fixture(webDist = '/missing') {
     terminalId
   }))
   const metadataTrack = vi.fn(() => Effect.void)
-  const metadataAcknowledgeBell = vi.fn(() => Effect.void)
+  const metadataAcknowledgeAttention = vi.fn(() => Effect.void)
   // SAFETY: The test fixture provides the asserted contract used here.
   const terminalMetadata = testAccess<TerminalMetadataManager>({
     snapshot: metadataSnapshot,
     get: metadataGet,
     trackTerminal: metadataTrack,
-    acknowledgeBell: metadataAcknowledgeBell
+    acknowledgeAttention: metadataAcknowledgeAttention
   })
   const captureTerminal = vi.fn(
     async (_terminalId: string, _lines: number): Promise<string | null> =>
@@ -620,7 +625,7 @@ function fixture(webDist = '/missing') {
     browserRequestAppClose,
     captureTerminal,
     config,
-    metadataAcknowledgeBell,
+    metadataAcknowledgeAttention,
     metadataGet,
     metadataSnapshot,
     metadataTrack,
@@ -2046,13 +2051,17 @@ describe('HTTP API validation', () => {
     }
   })
 
-  it('acknowledges an exact bell sequence without refreshing projects', async () => {
-    const { app, metadataAcknowledgeBell, metadataTrack, service } = fixture()
-    const response = await app.request('/api/terminals/term/bell/acknowledge', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sequence: 4 })
-    })
+  it('acknowledges an exact attention sequence without refreshing projects', async () => {
+    const { app, metadataAcknowledgeAttention, metadataTrack, service } =
+      fixture()
+    const response = await app.request(
+      '/api/terminals/term/attention/acknowledge',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sequence: 4 })
+      }
+    )
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true })
@@ -2060,13 +2069,16 @@ describe('HTTP API validation', () => {
     expect(service.getTerminal).not.toHaveBeenCalled()
     expect(service.listProjects).not.toHaveBeenCalled()
     expect(metadataTrack).not.toHaveBeenCalled()
-    expect(metadataAcknowledgeBell).toHaveBeenCalledWith('term', 4)
+    expect(metadataAcknowledgeAttention).toHaveBeenCalledWith('term', 4)
 
-    const invalid = await app.request('/api/terminals/term/bell/acknowledge', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sequence: 0 })
-    })
+    const invalid = await app.request(
+      '/api/terminals/term/attention/acknowledge',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sequence: 0 })
+      }
+    )
     expect(invalid.status).toBe(400)
   })
 
@@ -2074,14 +2086,14 @@ describe('HTTP API validation', () => {
     { code: 'TERMINAL_NOT_FOUND', status: 404 },
     { code: 'PROJECT_CLOSED', status: 409 }
   ])(
-    'does not acknowledge a bell when lookup fails with $code',
+    'does not acknowledge attention when lookup fails with $code',
     async ({ code, status }) => {
-      const { app, metadataAcknowledgeBell, service } = fixture()
+      const { app, metadataAcknowledgeAttention, service } = fixture()
       service.getKnownTerminal.mockRejectedValueOnce(
         new DomainError(code, 'Terminal is unavailable', status)
       )
       const response = await app.request(
-        '/api/terminals/term/bell/acknowledge',
+        '/api/terminals/term/attention/acknowledge',
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -2091,7 +2103,7 @@ describe('HTTP API validation', () => {
 
       expect(response.status).toBe(status)
       expect(await response.json()).toMatchObject({ error: { code } })
-      expect(metadataAcknowledgeBell).not.toHaveBeenCalled()
+      expect(metadataAcknowledgeAttention).not.toHaveBeenCalled()
     }
   )
 

@@ -30,7 +30,7 @@ import {
   recentProjectsQueryKey,
   recentProjectsQueryOptions
 } from '../../project-metadata'
-import { terminalProgressLabel } from '../../terminal-session'
+import { terminalActivityLabel } from '../../terminal-session'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
 import { notifyError } from '../notifications/error-notifications'
 import { SidebarAction } from './sidebar-action'
@@ -170,7 +170,7 @@ export function ProjectSwitcher({
   const { isMobile } = useSidebar()
   const projectSwitcher = useProjectSwitcher()
   const queryClient = useQueryClient()
-  const { attention: bellAttention, progress: terminalProgress } =
+  const { attention: terminalAttention, activity: terminalActivity } =
     useTerminalNavigationMetadata()
   const [projectSearch, setProjectSearch] = useState('')
   const [highlightedProjectId, setHighlightedProjectId] = useState<
@@ -393,12 +393,17 @@ export function ProjectSwitcher({
                 const terminals = project.worktrees.flatMap(
                   (worktree) => worktree.terminals
                 )
-                const needsAttention = terminals.some((terminal) =>
-                  bellAttention.has(terminal.id)
-                )
-                const progress = terminals
-                  .map((terminal) => terminalProgress.get(terminal.id))
-                  .find((item) => item !== undefined)
+                const attention =
+                  terminals
+                    .map((terminal) => terminalAttention.get(terminal.id))
+                    .find((reason) => reason !== undefined) ?? null
+                // Read outcomes look idle, as in the terminal list.
+                const activity = terminals
+                  .map((terminal) => terminalActivity.get(terminal.id))
+                  .find(
+                    (item) =>
+                      item?.state === 'working' || item?.state === 'blocked'
+                  )
 
                 return (
                   <li
@@ -434,23 +439,23 @@ export function ProjectSwitcher({
                           <CheckIcon className="shrink-0 fill-zinc-400" />
                         ) : null}
                       </span>
-                      {progress || needsAttention ? (
+                      {activity || attention ? (
                         <span className="ml-auto flex shrink-0 items-center gap-1.5 min-[701px]:group-hover/project-option:opacity-0 min-[701px]:group-focus-within/project-option:opacity-0">
-                          {progress ? (
+                          {activity ? (
                             <TerminalStatusIcon
                               program={null}
-                              progress={progress}
-                              attention={false}
+                              activity={activity}
+                              attention={null}
                               exited={false}
                               className="size-4"
-                              title={terminalProgressLabel(progress)}
+                              title={terminalActivityLabel(activity)}
                             />
                           ) : null}
-                          {needsAttention ? (
+                          {attention ? (
                             <TerminalStatusIcon
                               program={null}
-                              progress={null}
-                              attention
+                              activity={null}
+                              attention={attention}
                               exited={false}
                               className="size-4"
                               title="Terminal needs attention"

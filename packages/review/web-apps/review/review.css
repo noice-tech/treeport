@@ -163,7 +163,8 @@ body {
   grid-column: 4;
   grid-row: 1;
 }
-.review-toolbar #split-diff-toggle[aria-pressed='true'] {
+.review-toolbar #split-diff-toggle[aria-pressed='true'],
+.review-toolbar #file-tree-toggle[aria-expanded='true'] {
   background: #3f3f46;
   border-color: #52525b;
   color: #fafafa;
@@ -326,11 +327,16 @@ button:focus-visible {
 }
 .file-placeholder-header {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 1rem;
 }
 .file-placeholder-header strong {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+.file-placeholder-header .file-collapse {
+  flex-shrink: 0;
 }
 .file-placeholder-header span,
 .file-diff-placeholder p {
@@ -425,39 +431,30 @@ button:focus-visible {
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
-.file-sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 3;
-  background: rgb(0 0 0 / 50%);
-  transition: opacity 180ms ease-out;
-}
-.file-sheet-backdrop[data-starting-style],
-.file-sheet-backdrop[data-ending-style] {
-  opacity: 0;
-}
-.file-sheet {
-  position: fixed;
-  inset: 0 0 0 auto;
-  z-index: 3;
+.file-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(24rem, 90vw);
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   background: #18181b;
-  border-left: 1px solid #3f3f46;
-  box-shadow: -0.75rem 0 2rem rgb(0 0 0 / 25%);
-  transition: transform 180ms ease-out;
 }
-.file-sheet[data-starting-style],
-.file-sheet[data-ending-style] {
-  transform: translateX(100%);
+.file-panel-divider {
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  background: #27272a;
 }
-.file-sheet[hidden],
-.file-sheet-backdrop[hidden] {
+.file-panel-divider:hover,
+.file-panel-divider:focus-visible {
+  background: #71717a;
+  outline: none;
+}
+.file-panel[hidden],
+.file-panel-divider[hidden] {
   display: none;
 }
-.file-sheet-header {
+.file-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -465,31 +462,9 @@ button:focus-visible {
   padding: 0.75rem;
   border-bottom: 1px solid #3f3f46;
 }
-.file-sheet-header h2 {
+.file-panel-header h2 {
   margin: 0;
   font-size: 1rem;
-}
-.file-sheet-header button {
-  display: grid;
-  width: 2rem;
-  height: 2rem;
-  flex-shrink: 0;
-  place-items: center;
-  padding: 0;
-}
-.file-sheet-header svg {
-  width: 1rem;
-  height: 1rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-@media (prefers-reduced-motion: reduce) {
-  .file-sheet,
-  .file-sheet-backdrop {
-    transition: none;
-  }
 }
 #file-tree {
   min-height: 0;

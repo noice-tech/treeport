@@ -30,7 +30,7 @@ import {
   traceWebAppOpen
 } from './web-app-open-tracing'
 import { NotificationCenter } from './features/notifications/notification-center'
-import { TerminalBellAttention } from './features/notifications/terminal-bell-attention'
+import { TerminalAttention } from './features/notifications/terminal-attention'
 import { CloseAppDialog } from './features/apps/close-app-dialog'
 import { parseResponse, rpc } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
@@ -1727,7 +1727,7 @@ function WorkspaceApp() {
         selectedWorktree={selectedWorktree}
         disconnected={eventsDisconnected || projectsQuery.isRefetchError}
       />
-      <TerminalBellAttention
+      <TerminalAttention
         projects={projects}
         selectedTerminalId={selectedTerminalId}
       />

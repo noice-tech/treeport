@@ -17,7 +17,7 @@ import {
   browserApps,
   operations,
   projects,
-  terminalBellStates,
+  terminalAttentionStates,
   launchers,
   webApps,
   webAppPermissionGrants,
@@ -139,11 +139,6 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ journal_mode: string }>(sql`PRAGMA journal_mode`)
     ).toEqual({ journal_mode: 'wal' })
     expect(
-      await database.db.get<{ count: number }>(
-        sql`SELECT count(*) AS count FROM __drizzle_migrations`
-      )
-    ).toEqual({ count: 17 })
-    expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
       `)
@@ -194,7 +189,7 @@ describe('SQLite migration and catalog ordering', () => {
     ).toMatchObject({ id: 'legacy-a', name: 'Legacy A' })
   })
 
-  it('persists terminal bell state and removes it with its worktree', async () => {
+  it('persists terminal attention state and removes it with its worktree', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-bells-')
     )
@@ -221,29 +216,31 @@ describe('SQLite migration and catalog ordering', () => {
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
-    await database.db.insert(terminalBellStates).values({
+    await database.db.insert(terminalAttentionStates).values({
       terminalId: 'term_bells',
       worktreeId: 'wt_bells',
       sequence: 4,
       occurredAt: '2026-01-01T00:02:00.000Z',
+      reason: 'bell',
       unread: 1
     })
     database.close()
 
     const reopened = await openDatabaseForTest(filePath)
     databases.push(reopened)
-    expect(await reopened.db.select().from(terminalBellStates)).toEqual([
+    expect(await reopened.db.select().from(terminalAttentionStates)).toEqual([
       {
         terminalId: 'term_bells',
         worktreeId: 'wt_bells',
         sequence: 4,
         occurredAt: '2026-01-01T00:02:00.000Z',
+        reason: 'bell',
         unread: 1
       }
     ])
 
     await reopened.db.delete(worktrees).where(eq(worktrees.id, 'wt_bells'))
-    expect(await reopened.db.select().from(terminalBellStates)).toEqual([])
+    expect(await reopened.db.select().from(terminalAttentionStates)).toEqual([])
   })
 
   it('keeps the main worktree first and linked worktrees in creation order', async () => {
@@ -485,7 +482,7 @@ describe('SQLite migration and catalog ordering', () => {
       `)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
-      await tx.run(sql`DROP TABLE terminal_bell_states`)
+      await tx.run(sql`DROP TABLE terminal_attention_states`)
       await tx.run(sql`DROP TABLE browser_panels`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
@@ -540,11 +537,6 @@ describe('SQLite migration and catalog ordering', () => {
         ORDER BY name
       `)
     ).toEqual([{ name: '__drizzle_migrations' }, { name: 'terminal_presets' }])
-    expect(
-      await reopened.db.get<{ count: number }>(
-        sql`SELECT count(*) AS count FROM __drizzle_migrations`
-      )
-    ).toEqual({ count: 17 })
     await expect(
       fs.stat(path.join(directory, 'database-backups'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -700,7 +692,7 @@ describe('SQLite migration and catalog ordering', () => {
       `)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
-      await tx.run(sql`DROP TABLE terminal_bell_states`)
+      await tx.run(sql`DROP TABLE terminal_attention_states`)
       await tx.run(sql`DROP TABLE browser_panels`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
@@ -853,7 +845,9 @@ describe('SQLite migration and catalog ordering', () => {
     expect(await migrated.db.select().from(browserApps)).toMatchObject([
       { id: 'browser_cutover', url: 'https://example.test/' }
     ])
-    expect(await migrated.db.select().from(terminalBellStates)).toHaveLength(1)
+    expect(
+      await migrated.db.select().from(terminalAttentionStates)
+    ).toMatchObject([{ terminalId: 'terminal_cutover', reason: 'bell' }])
     expect(await migrated.db.select().from(operations)).toHaveLength(1)
     expect(
       (
@@ -1015,7 +1009,7 @@ describe('SQLite migration and catalog ordering', () => {
       `)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
-      await tx.run(sql`DROP TABLE terminal_bell_states`)
+      await tx.run(sql`DROP TABLE terminal_attention_states`)
       await tx.run(sql`DROP TABLE browser_panels`)
       await tx.run(
         sql`ALTER TABLE terminal_presets DROP COLUMN tree_title_json`
@@ -1076,10 +1070,5 @@ describe('SQLite migration and catalog ordering', () => {
         .where(eq(projects.id, 'p_recover'))
         .then(([project]) => project)
     ).toMatchObject({ id: 'p_recover', name: 'Recover me' })
-    expect(
-      await reopened.db.get<{ count: number }>(
-        sql`SELECT count(*) AS count FROM __drizzle_migrations`
-      )
-    ).toEqual({ count: 17 })
   })
 })

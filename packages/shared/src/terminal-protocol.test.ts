@@ -4,18 +4,25 @@ import {
   parseProductEvent,
   parseTerminalAuth,
   parseTerminalClientEvent,
-  parseTerminalProgress,
   parseTerminalRuntimeMetadata,
   parseTerminalServerEvent,
-  terminalBellAcknowledgementSchema as terminalBellAcknowledgementEffectSchema,
+  terminalAttentionAcknowledgementSchema as terminalAttentionAcknowledgementEffectSchema,
   terminalSizeSchema as terminalSizeEffectSchema
 } from './index.js'
 import { testSchema } from './schema.test-support.js'
 
-const terminalBellAcknowledgementSchema = testSchema(
-  terminalBellAcknowledgementEffectSchema
+const terminalAttentionAcknowledgementSchema = testSchema(
+  terminalAttentionAcknowledgementEffectSchema
 )
 const terminalSizeSchema = testSchema(terminalSizeEffectSchema)
+const IDLE = {
+  state: 'idle',
+  kind: null,
+  progress: null,
+  app: null,
+  message: null,
+  since: null
+}
 
 describe('WebSocket contracts', () => {
   it('strictly validates terminal auth and controller generations', () => {
@@ -172,7 +179,9 @@ describe('WebSocket contracts', () => {
       parseEventsSnapshot({
         presence: [],
         at: '2026-01-01T00:00:00.000Z',
-        terminalMetadata: [{ terminalId: 'term', title: null, progress: null }],
+        terminalMetadata: [
+          { terminalId: 'term', title: null, activity: IDLE, attention: null }
+        ],
         webApps: [
           {
             id: 'app',
@@ -340,24 +349,24 @@ describe('WebSocket contracts', () => {
 })
 
 describe('terminal runtime metadata', () => {
-  it('validates metadata snapshots and daemon BEL sequences', () => {
+  it('validates metadata snapshots and daemon attention sequences', () => {
+    const working = { ...IDLE, state: 'working', progress: 42 }
     expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: 'pi · /repo',
         program: 'pi',
         hasForegroundProcess: true,
-        progress: { state: 'normal', value: 42 }
+        activity: working,
+        attention: null
       })
     ).toEqual({
       terminalId: 'term',
       title: 'pi · /repo',
       program: 'pi',
       hasForegroundProcess: true,
-      progress: { state: 'normal', value: 42 },
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: null
+      activity: working,
+      attention: null
     })
     expect(
       ['pi', 'claude', 'codex'].map(
@@ -366,7 +375,8 @@ describe('terminal runtime metadata', () => {
             terminalId: 'term',
             title: null,
             program,
-            progress: null
+            activity: IDLE,
+            attention: null
           })?.program
       )
     ).toEqual(['pi', 'claude', 'codex'])
@@ -374,21 +384,21 @@ describe('terminal runtime metadata', () => {
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: null,
-        progress: null,
-        progressStartedAt: '2026-01-01T00:00:00.000Z',
-        progressClearedAt: '2026-01-01T00:01:00.000Z',
-        bell: {
+        activity: { ...IDLE, since: '2026-01-01T00:01:00.000Z' },
+        attention: {
           sequence: 2,
           at: '2026-01-01T00:02:00.000Z',
-          unread: true
+          unread: true,
+          reason: 'bell'
         }
       })
-    ).toMatchObject({ bell: { sequence: 2, unread: true } })
+    ).toMatchObject({ attention: { sequence: 2, unread: true } })
     expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: null,
-        progress: null,
+        activity: IDLE,
+        attention: null,
         extra: true
       })
     ).toBeNull()
@@ -396,34 +406,20 @@ describe('terminal runtime metadata', () => {
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: null,
-        progress: null,
-        bell: {
+        activity: IDLE,
+        attention: {
           sequence: 0,
           at: '2026-01-01T00:02:00.000Z',
-          unread: true
+          unread: true,
+          reason: 'bell'
         }
       })
     ).toBeNull()
     expect(
-      terminalBellAcknowledgementSchema.safeParse({ sequence: 2 }).success
+      terminalAttentionAcknowledgementSchema.safeParse({ sequence: 2 }).success
     ).toBe(true)
     expect(
-      terminalBellAcknowledgementSchema.safeParse({ sequence: 0 }).success
+      terminalAttentionAcknowledgementSchema.safeParse({ sequence: 0 }).success
     ).toBe(false)
-  })
-
-  it('parses OSC 9;4 payloads', () => {
-    expect(parseTerminalProgress('4;3')).toEqual({
-      state: 'indeterminate',
-      value: null
-    })
-    expect(parseTerminalProgress('4;1;42')).toEqual({
-      state: 'normal',
-      value: 42
-    })
-    expect(parseTerminalProgress('4;0')).toBeNull()
-    expect(parseTerminalProgress('4;1;101')).toBeUndefined()
-    expect(parseTerminalProgress('4;1;1e2')).toBeUndefined()
-    expect(parseTerminalProgress('1;notice')).toBeUndefined()
   })
 })

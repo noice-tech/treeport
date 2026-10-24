@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react'
 import type { ProjectRecord } from '@treeport/shared'
 import {
   terminalSessions,
-  type TerminalBellEvent
+  type TerminalAttentionEvent
 } from '../../terminal-session'
-import { useTerminalBellMetadata } from '../../terminal-runtime-metadata-react'
+import { useTerminalAttentionMetadata } from '../../terminal-runtime-metadata-react'
 import { notifyError } from './error-notifications'
 
 type Presence = {
@@ -31,14 +31,14 @@ function terminalTitle(
   return null
 }
 
-export function TerminalBellAttention({
+export function TerminalAttention({
   projects,
   selectedTerminalId
 }: {
   projects: ProjectRecord[]
   selectedTerminalId: string | null
 }) {
-  const { bells, titles } = useTerminalBellMetadata()
+  const { attention, titles } = useTerminalAttentionMetadata()
   const latest = useRef({
     projects,
     selectedTerminalId,
@@ -60,14 +60,16 @@ export function TerminalBellAttention({
       return
     }
 
-    const bell = terminalSessions.getBellSnapshot().get(terminalId)
-    if (!bell?.unread) {
+    const attention = terminalSessions
+      .getAttentionMetadataSnapshot()
+      .get(terminalId)
+    if (!attention?.unread) {
       return
     }
 
     const title = terminalTitle(current.projects, current.titles, terminalId)
     void terminalSessions
-      .acknowledgeBell(terminalId, bell.sequence)
+      .acknowledgeAttention(terminalId, attention.sequence)
       .catch((error) => {
         notifyError(error, {
           operation: title
@@ -96,14 +98,14 @@ export function TerminalBellAttention({
     }
   }, [])
 
-  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Route and external bell-store changes are not child-owned UI events. */
+  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Route and external attention-store changes are not child-owned UI events. */
   useEffect(() => {
     acknowledgeSelectedTerminal()
-  }, [bells, selectedTerminalId])
+  }, [attention, selectedTerminalId])
   /* eslint-enable react-you-might-not-need-an-effect/no-event-handler */
 
   useEffect(() => {
-    const handleBell = (event: TerminalBellEvent) => {
+    const handleAttention = (event: TerminalAttentionEvent) => {
       const current = latest.current
       const activelyViewed =
         current.selectedTerminalId === event.terminalId &&
@@ -116,7 +118,7 @@ export function TerminalBellAttention({
           event.terminalId
         )
         void terminalSessions
-          .acknowledgeBell(event.terminalId, event.sequence)
+          .acknowledgeAttention(event.terminalId, event.sequence)
           .catch((error) => {
             notifyError(error, {
               operation: title
@@ -130,7 +132,7 @@ export function TerminalBellAttention({
       void window.treeportDesktop?.requestAttention?.()
     }
 
-    return terminalSessions.subscribeBellEvents(handleBell)
+    return terminalSessions.subscribeAttentionEvents(handleAttention)
   }, [])
 
   return null

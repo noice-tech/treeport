@@ -135,7 +135,8 @@ export class WebAppViteRuntime {
       }
     }
     if (options.server) {
-      server.hmr = { server: options.server, path: `${base}@vite-hmr` }
+      // Vite prepends base to the HMR path itself.
+      server.hmr = { server: options.server, path: '/@vite-hmr' }
     }
 
     const viteBuild: NonNullable<InlineConfig['build']> = {

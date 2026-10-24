@@ -425,10 +425,15 @@ test.describe('desktop worktree and terminal workflows', () => {
         title: null,
         program: null,
         hasForegroundProcess: true,
-        progress: null,
-        progressStartedAt: null,
-        progressClearedAt: null,
-        bell: null
+        activity: {
+          state: 'idle',
+          kind: null,
+          progress: null,
+          app: null,
+          message: null,
+          since: null
+        },
+        attention: null
       }
     ])
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()

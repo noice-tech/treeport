@@ -50,6 +50,16 @@ export const TERMINAL_BACKGROUND = 0x09090b
 export const TERMINAL_IMAGE_STORAGE_BYTES = 32 * 1024 * 1024
 const SCRATCH_BYTES = 1024
 
+// OSC 7501. Text the program did not send is empty.
+export interface GhosttyProgramStatus {
+  readonly state: 'idle' | 'working' | 'done' | 'blocked' | 'error' | 'clear'
+  readonly kind: 'permission' | 'question' | 'auth' | null
+  readonly progress: number | null
+  readonly id: string
+  readonly app: string
+  readonly message: string
+}
+
 export interface GhosttyTerminalCallbacks {
   // Query and mode reports the terminal writes back to the application.
   writePty: ((data: Uint8Array) => void) | null
@@ -57,6 +67,10 @@ export interface GhosttyTerminalCallbacks {
   titleChanged: (() => void) | null
   // OSC 9;4. State follows GhosttyTerminalProgressState.
   progress: ((state: number, value: number) => void) | null
+  // OSC 7501. Setting it also makes the terminal answer the support query.
+  programStatus: ((report: GhosttyProgramStatus) => void) | null
+  // Full reset (RIS), after any program status clear it causes.
+  reset: (() => void) | null
   // OSC sequences libghostty-vt does not implement, without the terminator.
   unknownOsc: ((content: string) => void) | null
   // Synchronized output (mode 2026) began or ended.
@@ -385,6 +399,64 @@ export class GhosttyTerminal {
           3,
           false
         )
+      )
+    }
+
+    if (callbacks.programStatus) {
+      const programStatus = callbacks.programStatus
+      const field = (name: string) =>
+        vt.offset('GhosttyTerminalProgramStatus', name)
+      const names = <T extends string>(type: string, values: readonly T[]) =>
+        new Map(
+          values.map((name) => [vt.value(type, name.toUpperCase()), name])
+        )
+      const states = names<GhosttyProgramStatus['state']>(
+        'GhosttyProgramStatusState',
+        ['idle', 'working', 'done', 'blocked', 'error', 'clear']
+      )
+      const kinds = names<NonNullable<GhosttyProgramStatus['kind']>>(
+        'GhosttyProgramStatusKind',
+        ['permission', 'question', 'auth']
+      )
+      this.set(
+        option('PROGRAM_STATUS'),
+        vt.callback(
+          (_terminal, _user, report) => {
+            const view = vt.view()
+            const string = (name: string) =>
+              vt.string(
+                view.getUint32(report + field(name), true),
+                view.getUint32(report + field(name) + 4, true)
+              )
+            const state = states.get(
+              view.getInt32(report + field('state'), true)
+            )
+            if (!state) {
+              return
+            }
+
+            const progress = view.getInt8(report + field('progress'))
+            programStatus({
+              state,
+              kind:
+                kinds.get(view.getInt32(report + field('kind'), true)) ?? null,
+              progress: progress < 0 ? null : progress,
+              id: string('id'),
+              app: string('app'),
+              message: string('message')
+            })
+          },
+          3,
+          false
+        )
+      )
+    }
+
+    if (callbacks.reset) {
+      const reset = callbacks.reset
+      this.set(
+        option('RESET'),
+        vt.callback(() => reset(), 2, false)
       )
     }
 

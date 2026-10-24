@@ -3,9 +3,10 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import type {
   HostedTerminal,
+  TerminalActivity,
+  TerminalAttention,
   TerminalHostRuntimeEvent,
   TerminalLaunchSpec,
-  TerminalProgress,
   TerminalSessionState,
   TerminalTitleState,
   TerminalTraceContext
@@ -274,8 +275,8 @@ export interface TerminalHostResults {
   runtimeState: {
     title: string | null
     status: HostedTerminal['status']
-    progress: TerminalProgress | null
-    bell: { sequence: number; at: string } | null
+    activity: TerminalActivity
+    attention: TerminalAttention | null
   } | null
   write: null
   prepareQueryAuthority: { transitionId: string; fence: number }
@@ -299,19 +300,23 @@ const traceSchema = Schema.Struct({
   spanId: Schema.String.pipe(Schema.pattern(/^[0-9a-f]{16}$/)),
   sampled: Schema.Boolean
 })
+const terminalActivitySchema = Schema.Struct({
+  state: Schema.Literal('idle', 'working', 'blocked', 'done', 'error'),
+  kind: Schema.NullOr(Schema.Literal('permission', 'question', 'auth')),
+  progress: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100))),
+  app: Schema.NullOr(Schema.String),
+  message: Schema.NullOr(Schema.String),
+  since: Schema.NullOr(Schema.String)
+})
+const terminalAttentionSchema = Schema.Struct({
+  sequence: positiveInteger,
+  at: Schema.String,
+  reason: Schema.Literal('bell', 'done', 'blocked', 'error')
+})
 const runtimeEventSchema = Schema.Struct({
   title: Schema.optional(Schema.String),
-  progress: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        state: Schema.Literal('normal', 'error', 'indeterminate', 'paused'),
-        value: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100)))
-      })
-    )
-  ),
-  bell: Schema.optional(
-    Schema.Struct({ sequence: positiveInteger, at: Schema.String })
-  ),
+  activity: Schema.optional(terminalActivitySchema),
+  attention: Schema.optional(terminalAttentionSchema),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   exitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   titleState: Schema.optional(
@@ -323,10 +328,6 @@ const runtimeEventSchema = Schema.Struct({
   )
 })
 
-const terminalProgressSchema = Schema.Struct({
-  state: Schema.Literal('normal', 'error', 'indeterminate', 'paused'),
-  value: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100)))
-})
 const terminalStatusSchema = Schema.Literal('running', 'exited', 'unavailable')
 const terminalTitleStateSchema = Schema.Struct({
   terminalTitle: Schema.NullOr(Schema.String),
@@ -381,10 +382,8 @@ const terminalHostResultSchemas = {
     Schema.Struct({
       title: Schema.NullOr(Schema.String),
       status: terminalStatusSchema,
-      progress: Schema.NullOr(terminalProgressSchema),
-      bell: Schema.NullOr(
-        Schema.Struct({ sequence: positiveInteger, at: Schema.String })
-      )
+      activity: terminalActivitySchema,
+      attention: Schema.NullOr(terminalAttentionSchema)
     })
   ),
   write: nullResultSchema,

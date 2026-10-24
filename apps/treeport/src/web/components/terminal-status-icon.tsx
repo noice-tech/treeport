@@ -1,4 +1,8 @@
-import type { TerminalProgram, TerminalProgress } from '@treeport/shared'
+import type {
+  TerminalActivity,
+  TerminalAttentionReason,
+  TerminalProgram
+} from '@treeport/shared'
 import { cn } from '../lib/utils'
 
 // Cache the original stroke at 120 frames/second instead of repainting it on
@@ -12,37 +16,43 @@ const COMET_MASK = `url("data:image/svg+xml,${encodeURIComponent(
   ).join('')}</svg>`
 )}")`
 
+export function terminalAttentionColor(reason: TerminalAttentionReason) {
+  return reason === 'done'
+    ? 'text-emerald-300'
+    : reason === 'error'
+      ? 'text-rose-300'
+      : 'text-amber-300'
+}
+
 export function TerminalStatusIcon({
   program,
-  progress,
+  activity,
   attention,
   exited,
   className,
   title
 }: {
   program: TerminalProgram | null
-  progress: TerminalProgress | null
-  attention: boolean
+  activity: TerminalActivity | null
+  // Unread attention, if any.
+  attention: TerminalAttentionReason | null
   exited: boolean
   className?: string
   title?: string
 }) {
-  const working =
-    progress !== null &&
-    !attention &&
-    progress.state !== 'paused' &&
-    progress.state !== 'error'
+  const state = activity?.state ?? 'idle'
+  const working = state === 'working' && !attention
+  // Done and error are outcomes to notice once; after they are read the
+  // terminal looks idle. Blocked lasts until the program moves on.
   const iconColor = attention
-    ? 'text-amber-300'
-    : progress?.state === 'error'
-      ? 'text-rose-300'
-      : progress?.state === 'paused'
-        ? 'text-amber-300'
-        : exited && !progress
-          ? 'text-rose-300'
-          : working
-            ? 'text-accent-400'
-            : 'text-zinc-500'
+    ? terminalAttentionColor(attention)
+    : state === 'blocked'
+      ? 'text-amber-300'
+      : exited && state === 'idle'
+        ? 'text-rose-300'
+        : working
+          ? 'text-accent-400'
+          : 'text-zinc-500'
 
   return (
     <span

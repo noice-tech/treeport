@@ -39,11 +39,26 @@ const dateTimeString = Schema.String.pipe(
 export const terminalSizeSchema = Schema.Struct(dimensions)
 export type TerminalSize = Schema.Schema.Type<typeof terminalSizeSchema>
 
-export const terminalProgressSchema = Schema.Struct({
-  state: Schema.Literal('normal', 'error', 'indeterminate', 'paused'),
-  value: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100)))
+export const terminalActivitySchema = Schema.Struct({
+  state: Schema.Literal('idle', 'working', 'blocked', 'done', 'error'),
+  // What a blocked terminal needs from the user.
+  kind: Schema.NullOr(Schema.Literal('permission', 'question', 'auth')),
+  progress: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100))),
+  app: Schema.NullOr(Schema.String.pipe(Schema.maxLength(32))),
+  message: Schema.NullOr(Schema.String.pipe(Schema.maxLength(2048))),
+  since: Schema.NullOr(dateTimeString)
 })
-export type TerminalProgress = Schema.Schema.Type<typeof terminalProgressSchema>
+export type TerminalActivity = Schema.Schema.Type<typeof terminalActivitySchema>
+
+export const terminalAttentionReasonSchema = Schema.Literal(
+  'bell',
+  'done',
+  'blocked',
+  'error'
+)
+export type TerminalAttentionReason = Schema.Schema.Type<
+  typeof terminalAttentionReasonSchema
+>
 
 export const terminalProgramSchema = Schema.Literal('pi', 'claude', 'codex')
 export type TerminalProgram = Schema.Schema.Type<typeof terminalProgramSchema>
@@ -55,22 +70,14 @@ export const terminalRuntimeMetadataFields = {
     default: () => null
   }),
   hasForegroundProcess: Schema.optional(Schema.NullOr(Schema.Boolean)),
-  progress: Schema.NullOr(terminalProgressSchema),
-  progressStartedAt: Schema.optionalWith(Schema.NullOr(dateTimeString), {
-    default: () => null
-  }),
-  progressClearedAt: Schema.optionalWith(Schema.NullOr(dateTimeString), {
-    default: () => null
-  }),
-  bell: Schema.optionalWith(
-    Schema.NullOr(
-      Schema.Struct({
-        sequence: positiveInt,
-        at: dateTimeString,
-        unread: Schema.Boolean
-      })
-    ),
-    { default: () => null }
+  activity: terminalActivitySchema,
+  attention: Schema.NullOr(
+    Schema.Struct({
+      sequence: positiveInt,
+      at: dateTimeString,
+      unread: Schema.Boolean,
+      reason: terminalAttentionReasonSchema
+    })
   )
 } as const
 
@@ -78,11 +85,11 @@ export const terminalRuntimeMetadataSchema = Schema.mutable(
   Schema.Struct(terminalRuntimeMetadataFields)
 )
 
-export const terminalBellAcknowledgementSchema = Schema.Struct({
+export const terminalAttentionAcknowledgementSchema = Schema.Struct({
   sequence: positiveInt
 })
-export type TerminalBellAcknowledgement = Schema.Schema.Type<
-  typeof terminalBellAcknowledgementSchema
+export type TerminalAttentionAcknowledgement = Schema.Schema.Type<
+  typeof terminalAttentionAcknowledgementSchema
 >
 export type TerminalRuntimeMetadata = Schema.Schema.Type<
   typeof terminalRuntimeMetadataSchema
@@ -102,43 +109,6 @@ export function parseTerminalRuntimeMetadata(
   value: TerminalProtocolInput
 ): TerminalRuntimeMetadata | null {
   return decodeOrNull(terminalRuntimeMetadataSchema, value)
-}
-
-export function parseTerminalProgress(
-  data: string
-): TerminalProgress | null | undefined {
-  const [command, rawState, rawValue, ...extra] = data.split(';')
-  if (command !== '4' || extra.length > 0 || !/^[0-4]$/.test(rawState ?? '')) {
-    return undefined
-  }
-
-  const state = Number(rawState)
-  if (state === 0) {
-    return null
-  }
-
-  if (
-    rawValue !== undefined &&
-    rawValue !== '' &&
-    !/^\d{1,3}$/.test(rawValue)
-  ) {
-    return undefined
-  }
-
-  const value =
-    rawValue === undefined || rawValue === '' ? null : Number(rawValue)
-  if (value !== null && value > 100) {
-    return undefined
-  }
-
-  const states = [
-    undefined,
-    'normal',
-    'error',
-    'indeterminate',
-    'paused'
-  ] as const
-  return { state: states[state]!, value }
 }
 
 export const terminalAuthSchema = Schema.Struct({
@@ -206,9 +176,6 @@ export const terminalOutputSchema = Schema.Struct({
 export const terminalTitleSchema = Schema.Struct({
   title: Schema.String.pipe(Schema.maxLength(256))
 })
-export const terminalProgressEventSchema = Schema.Struct({
-  progress: Schema.NullOr(terminalProgressSchema)
-})
 export const terminalControlSchema = Schema.Struct({
   generation,
   controller: Schema.Boolean
@@ -251,9 +218,6 @@ export type TerminalDimensions = Schema.Schema.Type<
 >
 export type TerminalOutput = Schema.Schema.Type<typeof terminalOutputSchema>
 export type TerminalTitle = Schema.Schema.Type<typeof terminalTitleSchema>
-export type TerminalProgressEvent = Schema.Schema.Type<
-  typeof terminalProgressEventSchema
->
 export type TerminalControl = Schema.Schema.Type<typeof terminalControlSchema>
 export type TerminalExit = Schema.Schema.Type<typeof terminalExitSchema>
 export type TerminalQueryAuthority = Schema.Schema.Type<
@@ -281,7 +245,6 @@ export interface TerminalServerEventPayloads {
   dimensions: TerminalDimensions
   output: TerminalOutput
   title: TerminalTitle
-  progress: TerminalProgressEvent
   control: TerminalControl
   exit: TerminalExit
   query_authority: TerminalQueryAuthority
@@ -336,7 +299,6 @@ export function parseTerminalServerEvent<E extends TerminalServerEvent>(
     dimensions: terminalDimensionsSchema,
     output: terminalOutputSchema,
     title: terminalTitleSchema,
-    progress: terminalProgressEventSchema,
     control: terminalControlSchema,
     exit: terminalExitSchema,
     query_authority: terminalQueryAuthoritySchema,

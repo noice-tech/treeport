@@ -264,13 +264,17 @@ describe('TerminalHostSessionManager', () => {
     )
     const snapshot = await run(manager.snapshot('term'))
     expect(await run(manager.runtimeState('term'))).toMatchObject({
-      progress: { state: 'normal', value: 50 },
-      bell: { sequence: 1 }
+      activity: { state: 'working', progress: 50 },
+      attention: { sequence: 1, reason: 'bell' }
     })
     await vi.waitFor(async () =>
-      expect((await run(manager.runtimeState('term')))?.progress).toBeNull()
+      expect((await run(manager.runtimeState('term')))?.activity.state).toBe(
+        'idle'
+      )
     )
-    expect(runtimeEvents).toContainEqual({ progress: null })
+    expect(runtimeEvents).toContainEqual({
+      activity: expect.objectContaining({ state: 'idle', progress: null })
+    })
     pty.emit('after attach\r\n')
 
     expect(spawn).toHaveBeenCalledOnce()
@@ -334,11 +338,14 @@ describe('TerminalHostSessionManager', () => {
         expect.objectContaining({
           titleState: expect.objectContaining({ commandLine: 'pnpm test' })
         }),
-        { progress: { state: 'normal', value: 50 } },
         {
-          bell: expect.objectContaining({
+          activity: expect.objectContaining({ state: 'working', progress: 50 })
+        },
+        {
+          attention: expect.objectContaining({
             sequence: 1,
-            at: expect.any(String)
+            at: expect.any(String),
+            reason: 'bell'
           })
         }
       ])

@@ -107,7 +107,7 @@ treeport terminal inspect <terminal-id>
 treeport terminal inspect <terminal-id> --json
 ```
 
-Runtime metadata includes the title, current OSC `9;4` progress, last progress start and clear timestamps, and latest daemon-observed real BEL. BEL metadata also reports daemon-lifetime unread attention shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed BEL sequence. `.` resolves to the exact `TREEPORT_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
+Runtime metadata includes the title, the current activity (`idle`, `working`, `blocked`, `done`, or `error`, with optional progress, kind, and message) and when it began, and the latest attention event with its reason: a real BEL, or the activity becoming `done`, `blocked`, or `error`. Attention also reports unread state shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed attention sequence. `.` resolves to the exact `TREEPORT_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
 
 Read recent terminal contents with:
 
@@ -124,17 +124,17 @@ Wait for raw terminal conditions without polling or scraping output:
 ```sh
 treeport terminal wait <terminal-id> --until working
 treeport terminal wait <terminal-id> --until idle --timeout 30m
-treeport terminal wait <terminal-id> --until bell
+treeport terminal wait <terminal-id> --until attention
 treeport terminal wait <terminal-id> --until exit
 ```
 
-- `idle` means no daemon-owned OSC progress is currently observed and can return immediately.
-- `working` means daemon-owned OSC progress is currently present and can return immediately. Every valid active progress frame renews a five-minute inactivity lease; an explicit clear or terminal/observer shutdown clears immediately.
-- `bell` means the next real BEL after the event subscription is established.
+- `idle` means the terminal's activity is not `working` and can return immediately.
+- `working` means the terminal's activity is `working` and can return immediately. Activity from OSC `9;4` progress expires after five minutes without a new progress frame; an explicit clear or terminal/observer shutdown clears immediately.
+- `attention` means the next attention event after the event subscription is established.
 - `exit` means the retained terminal process has exited.
 - Waits have no default timeout. Use a positive `ms`, `s`, `m`, or `h` duration when a deadline is required; Ctrl+C cancels.
 
-Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
+Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no activity has been observed, and then wait for `idle`. Activity depends on the child application reporting it, with OSC `7501` program status or OSC `9;4` progress; once an application sends OSC `7501`, Treeport ignores its OSC `9;4` until a full terminal reset. For Pi, `terminal.showTerminalProgress` must be enabled for OSC `9;4`. Applications using OSC `9;4` should clear progress or refresh active progress more frequently than the five-minute lease. An `idle` activity is not proof that every application supports progress reporting.
 
 ## Register and run launchers
 

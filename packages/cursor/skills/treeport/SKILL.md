@@ -36,11 +36,11 @@ Wait for runtime conditions instead of polling or sleeping:
 ```sh
 treeport terminal wait <terminal-id> --until working --timeout 30s
 treeport terminal wait <terminal-id> --until idle --timeout 10m
-treeport terminal wait <terminal-id> --until bell --timeout 10m
+treeport terminal wait <terminal-id> --until attention --timeout 10m
 treeport terminal wait <terminal-id> --until exit --timeout 10m
 ```
 
-`idle` means no active progress signal, not proof that every application has completed. `bell` waits for the next attention event, not an already-unread notification. Inspect first when the process may already have finished. Terminal creation success does not prove its command succeeded; inspect output and exit status.
+`idle` means no `working` activity, not proof that every application has completed. `attention` waits for the next attention event, not an already-unread notification. Inspect first when the process may already have finished. Terminal creation success does not prove its command succeeded; inspect output and exit status.
 
 Never delete a terminal unless the user explicitly asks to stop or close it. Never delete your own Cursor terminal.
 
