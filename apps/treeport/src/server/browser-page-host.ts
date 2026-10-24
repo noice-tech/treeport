@@ -116,7 +116,10 @@ export class PlaywrightBrowserHost {
           '--enable-unsafe-extension-debugging',
           `--allowlisted-extension-id=${extension.id}`,
           '--remote-debugging-address=127.0.0.1',
-          '--remote-debugging-port=0'
+          '--remote-debugging-port=0',
+          // Remote debugging sets navigator.webdriver, and Google sign-in
+          // rejects such browsers as insecure.
+          '--disable-blink-features=AutomationControlled'
         ]
         // WSLg exposes Windows GPUs through Mesa's D3D12 OpenGL driver, not
         // native Linux Vulkan. Daemons often lack DISPLAY, and headless Chrome
