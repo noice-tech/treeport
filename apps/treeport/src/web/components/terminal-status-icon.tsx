@@ -18,10 +18,10 @@ const COMET_MASK = `url("data:image/svg+xml,${encodeURIComponent(
 
 export function terminalAttentionColor(reason: TerminalAttentionReason) {
   return reason === 'done'
-    ? 'text-emerald-300'
+    ? 'text-status-done'
     : reason === 'error'
-      ? 'text-rose-300'
-      : 'text-amber-300'
+      ? 'text-status-error'
+      : 'text-status-attention'
 }
 
 export function TerminalStatusIcon({
@@ -47,9 +47,9 @@ export function TerminalStatusIcon({
   const iconColor = attention
     ? terminalAttentionColor(attention)
     : state === 'blocked'
-      ? 'text-amber-300'
+      ? 'text-status-attention'
       : exited && state === 'idle'
-        ? 'text-rose-300'
+        ? 'text-status-error'
         : working
           ? 'text-accent-400'
           : 'text-zinc-500'

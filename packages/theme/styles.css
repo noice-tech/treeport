@@ -50,6 +50,12 @@
   --color-accent-900: oklch(from var(--accent-color) 37% calc(c * 0.78) h);
   --color-accent-950: oklch(from var(--accent-color) 25% calc(c * 0.52) h);
 
+  /* Terminal statuses sit at the accent's lightness so they carry the same
+     weight as the working state. */
+  --color-status-done: oklch(81% 0.13 162);
+  --color-status-error: oklch(76% 0.13 18);
+  --color-status-attention: oklch(85% 0.13 85);
+
   @keyframes comet {
     to {
       transform: translateX(-100%);
@@ -135,6 +141,10 @@
   --color-accent-800: oklch(from var(--accent-color) 85% calc(c * 0.7) h);
   --color-accent-900: oklch(from var(--accent-color) 91% calc(c * 0.43) h);
   --color-accent-950: oklch(from var(--accent-color) 97.5% calc(c * 0.17) h);
+
+  --color-status-done: oklch(54% 0.12 162);
+  --color-status-error: oklch(56% 0.18 22);
+  --color-status-attention: oklch(62% 0.15 65);
 
   --color-white: oklch(20% 0.02 260);
   /* Scrims are written as black/70; translucency keeps them light here. */

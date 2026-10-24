@@ -181,7 +181,7 @@
 
 .terminal-bell {
   box-shadow: inset 0 0 0 2px
-    color-mix(in oklab, var(--color-amber-300) 75%, transparent);
+    color-mix(in oklab, var(--color-status-attention) 75%, transparent);
 }
 
 .facts {
