@@ -130,7 +130,7 @@ export function NotificationCenter({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="flex max-h-[min(26rem,calc(100dvh-1rem))] w-[min(22rem,calc(100vw-1rem))] touch-manipulation flex-col overflow-hidden p-0 select-none"
+        className="flex max-h-[min(26rem,calc(100dvh-1rem))] w-[min(22rem,calc(100vw-1rem))] animate-none! touch-manipulation flex-col overflow-hidden p-0 select-none"
         aria-label="Notifications"
       >
         <div className="shrink-0 px-3 pt-3 pb-2">
