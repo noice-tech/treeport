@@ -1,28 +1,49 @@
+import { useSyncExternalStore } from 'react'
 import { UsersIcon } from 'lucide-react'
-import type {
-  ViewerIdentity,
-  WorkspacePresence,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { WorkspacePresence, WorktreeRecord } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger
 } from '../../components/ui/popover'
+import type { WorkspacePresenceStore } from './use-workspace-presence'
 
 export function WorkspaceViewers({
   worktree,
-  identity,
-  viewers
+  focusedAppId,
+  presence
 }: {
   worktree: WorktreeRecord | null
-  identity: ViewerIdentity | null
-  viewers: readonly WorkspacePresence[]
+  focusedAppId: string | null
+  presence: WorkspacePresenceStore
 }) {
+  const { identity, viewers } = useSyncExternalStore(
+    presence.subscribe,
+    presence.getSnapshot
+  )
+  // Display-only fixture: never sent to the daemon or used as our identity.
+  const mockViewer: WorkspacePresence | null =
+    import.meta.env.DEV &&
+    import.meta.env.VITE_TREEPORT_MOCK_PRESENCE === '1' &&
+    worktree
+      ? {
+          sessionId: '00000000-0000-4000-8000-000000000001',
+          worktreeId: worktree.id,
+          focusedAppId,
+          visible: true,
+          focused: true,
+          identity: {
+            source: 'tailscale',
+            login: 'bob@treeport.invalid',
+            name: 'Bob (demo)',
+            profilePicture: null
+          }
+        }
+      : null
   const people = new Map<string, WorkspacePresence[]>()
   if (worktree && identity) {
-    for (const viewer of viewers) {
+    for (const viewer of mockViewer ? [...viewers, mockViewer] : viewers) {
       if (
         viewer.worktreeId !== worktree.id ||
         // Local sessions have no person identity and may be our own desktop

@@ -6,12 +6,56 @@ import {
 } from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
 
+interface PresenceSnapshot {
+  identity: ViewerIdentity | null
+  viewers: readonly WorkspacePresence[]
+}
+
+export interface WorkspacePresenceStore {
+  subscribe(listener: () => void): () => void
+  getSnapshot(): PresenceSnapshot
+  setViewers(viewers: readonly WorkspacePresence[]): void
+}
+
+// Presence changes on every navigation and heartbeat but only the viewers
+// indicator displays it, so it lives outside the workspace's React state.
 export function useWorkspacePresence(
   worktreeId: string | null,
   focusedAppId: string | null
-) {
-  const [identity, setIdentity] = useState<ViewerIdentity | null>(null)
-  const [viewers, setViewers] = useState<readonly WorkspacePresence[]>([])
+): WorkspacePresenceStore {
+  const [store] = useState(() => {
+    const listeners = new Set<() => void>()
+    let snapshot: PresenceSnapshot = { identity: null, viewers: [] }
+    const update = (patch: Partial<PresenceSnapshot>) => {
+      snapshot = { ...snapshot, ...patch }
+      listeners.forEach((listener) => listener())
+    }
+    return {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      getSnapshot: () => snapshot,
+      setViewers: (viewers: readonly WorkspacePresence[]) =>
+        update({ viewers }),
+      setIdentity: (identity: ViewerIdentity | null) => {
+        const current = snapshot.identity
+        if (
+          current === identity ||
+          (current &&
+            identity &&
+            current.source === identity.source &&
+            current.login === identity.login &&
+            current.name === identity.name &&
+            current.profilePicture === identity.profilePicture)
+        ) {
+          return
+        }
+
+        update({ identity })
+      }
+    }
+  })
   const latest = useRef({ worktreeId, focusedAppId })
   latest.current = { worktreeId, focusedAppId }
   const publish = useRef(() => {})
@@ -50,12 +94,12 @@ export function useWorkspacePresence(
         .then(
           (response) => {
             if (!disposed) {
-              setIdentity(response.identity)
+              store.setIdentity(response.identity)
             }
           },
           () => {
             if (!disposed) {
-              setIdentity(null)
+              store.setIdentity(null)
             }
           }
         )
@@ -92,36 +136,12 @@ export function useWorkspacePresence(
       window.removeEventListener('pageshow', pageShow)
       send()
     }
-  }, [])
+  }, [store])
 
   // Navigation and workspace surface focus are external to this hook.
   useEffect(() => {
     publish.current()
   }, [worktreeId, focusedAppId])
 
-  // Display-only fixture: never sent to the daemon or used as our identity.
-  const mockViewer: WorkspacePresence | null =
-    import.meta.env.DEV &&
-    import.meta.env.VITE_TREEPORT_MOCK_PRESENCE === '1' &&
-    worktreeId
-      ? {
-          sessionId: '00000000-0000-4000-8000-000000000001',
-          worktreeId,
-          focusedAppId,
-          visible: true,
-          focused: true,
-          identity: {
-            source: 'tailscale',
-            login: 'bob@treeport.invalid',
-            name: 'Bob (demo)',
-            profilePicture: null
-          }
-        }
-      : null
-
-  return {
-    identity,
-    viewers: mockViewer ? [...viewers, mockViewer] : viewers,
-    setViewers
-  }
+  return store
 }

@@ -1082,8 +1082,7 @@ function WorkspaceApp() {
     },
     [navigateToWorkspace, queryClient, selectedTerminalId]
   )
-  const presence = useWorkspacePresence(
-    selectedWorktree?.id ?? null,
+  const presenceFocusedAppId =
     dialog !== null
       ? null
       : appsPanelOpen && focusedSurface === 'tool'
@@ -1092,6 +1091,9 @@ function WorkspaceApp() {
             (app) =>
               app.kind === 'terminal' && app.terminalId === selectedTerminalId
           )?.id ?? null)
+  const presence = useWorkspacePresence(
+    selectedWorktree?.id ?? null,
+    presenceFocusedAppId
   )
   const eventsDisconnected = useProjectEventsBridge(
     projectsQuery.data,
@@ -1810,8 +1812,8 @@ function WorkspaceApp() {
         presence={
           <WorkspaceViewers
             worktree={selectedWorktree}
-            identity={presence.identity}
-            viewers={presence.viewers}
+            focusedAppId={presenceFocusedAppId}
+            presence={presence}
           />
         }
       >
