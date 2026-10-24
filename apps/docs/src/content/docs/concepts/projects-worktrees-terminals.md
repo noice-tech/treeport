@@ -25,7 +25,7 @@ Treeport finds existing Git worktrees. You can also create trees in Treeport to 
 
 For a feature, keep a coding agent and a development server in separate [terminals](/features/persistent-terminals/). Open the running app in a [browser](/features/browser-app/), then use a [custom web app](/features/web-apps/) to review changes or work with project data.
 
-Use **New app** to add tools to the current tree. [Terminal presets](/features/terminal-presets/) and [packages](/features/packages/) make your usual tools available across tasks.
+Use **New app** to add tools to the current tree. [Launchers](/features/launchers/) and [packages](/features/packages/) make your usual tools available across tasks.
 
 Some web apps use [app services](/features/web-apps/#app-services) for their backend. Several trees can share the same service process.
 

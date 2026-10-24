@@ -43,6 +43,6 @@ Put project apps in `.treeport/web-apps/`, or install them through [packages](/f
 
 Treeport supports HTML, TypeScript, React, and CSS app sources. It handles development serving and builds.
 
-The app SDK gives apps access to tree context, diffs, and saved app data. Apps can also access files with your permission.
+The app SDK gives apps access to project and tree details, diffs, and saved app data. Apps can also access files with your permission.
 
 Use only trusted apps. Review package permissions before granting access to Treeport or project files.
