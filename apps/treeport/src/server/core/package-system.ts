@@ -89,6 +89,20 @@ interface ResolvedLauncher {
   enabled: boolean
 }
 
+interface PackageWorker {
+  name: string
+  executable: string
+  args: string[]
+}
+
+/** A package background process; null project IDs mean every project. */
+export interface PackageWorkerDeclaration extends PackageWorker {
+  id: string
+  packageId: string
+  root: string
+  projectIds: string[] | null
+}
+
 interface ResolvedPackage {
   source: string
   identity: string
@@ -99,6 +113,7 @@ interface ResolvedPackage {
   installedPath: string
   webApps: ResolvedWebApp[]
   launchers: ResolvedLauncher[]
+  workers: PackageWorker[]
   diagnostics: PackageResourceDiagnostic[]
 }
 
@@ -132,11 +147,19 @@ interface WebAppManifestEntry {
 interface PackageManifest {
   webApps: WebAppManifestEntry[]
   launchers: string[]
+  workers: PackageWorker[]
 }
 
 const packageManifestInputSchema = z.unknown()
 type PackageManifestInput = z.input<typeof packageManifestInputSchema>
 const manifestPatternsSchema = z.array(z.string())
+const workersManifestSchema = z.record(
+  z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/u),
+  z.strictObject({
+    executable: z.string().min(1),
+    args: z.array(z.string()).default([])
+  })
+)
 const webAppManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
@@ -1179,7 +1202,8 @@ export class PackageSystem {
         const parsedTreeport = z
           .looseObject({
             webApps: z.unknown().optional(),
-            launchers: z.unknown().optional()
+            launchers: z.unknown().optional(),
+            workers: z.unknown().optional()
           })
           .safeParse(parsedPackageJson.data.treeport)
         if (!parsedTreeport.success) {
@@ -1197,7 +1221,22 @@ export class PackageSystem {
             parsedTreeport.data.launchers ?? [],
             'launchers',
             packageJsonPath
-          )
+          ),
+          workers: (() => {
+            const workers = workersManifestSchema.safeParse(
+              parsedTreeport.data.workers ?? {}
+            )
+            if (!workers.success) {
+              throw new Error(
+                `${packageJsonPath} treeport.workers must map lowercase names to { executable, args }`
+              )
+            }
+
+            return Object.entries(workers.data).map(([name, worker]) => ({
+              name,
+              ...worker
+            }))
+          })()
         }
       }
     }
@@ -1391,6 +1430,7 @@ export class PackageSystem {
       installedPath: root,
       webApps,
       launchers: filteredLaunchers,
+      workers: manifest?.workers ?? [],
       diagnostics: candidates.diagnostics
     }
   }
@@ -1412,6 +1452,10 @@ export class PackageSystem {
           args: [...resource.definition.args],
           source: { ...resource.definition.source }
         }
+      })),
+      workers: pkg.workers.map((worker) => ({
+        ...worker,
+        args: [...worker.args]
       })),
       diagnostics: [...pkg.diagnostics]
     }
@@ -1494,6 +1538,7 @@ export class PackageSystem {
             : this.npmPackagePath(parsed, scope, projectId),
         webApps: [],
         launchers: [],
+        workers: [],
         diagnostics: [
           diagnostic(
             scope,
@@ -1862,6 +1907,53 @@ export class PackageSystem {
       }
 
       return state
+    })
+  }
+
+  /** Workers of packages configured globally or by a registered project. */
+  workers(): Effect.Effect<
+    PackageWorkerDeclaration[],
+    never,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.reconcileGlobal()
+      yield* Effect.all(
+        [...this.projectContexts.keys()].map((projectId) =>
+          this.reconcileProject(projectId)
+        ),
+        { concurrency: 'unbounded', discard: true }
+      )
+      const declarations = new Map<string, PackageWorkerDeclaration>()
+      const add = (pkg: ResolvedPackage, projectId: string | null) => {
+        for (const worker of pkg.workers) {
+          const id = `${pkg.packageId}:${worker.name}`
+          const existing = declarations.get(id)
+          if (!existing) {
+            declarations.set(id, {
+              ...worker,
+              args: [...worker.args],
+              id,
+              packageId: pkg.packageId,
+              root: pkg.root,
+              projectIds: projectId === null ? null : [projectId]
+            })
+          } else if (existing.projectIds && projectId === null) {
+            existing.projectIds = null
+          } else if (existing.projectIds && projectId !== null) {
+            existing.projectIds.push(projectId)
+          }
+        }
+      }
+      for (const pkg of this.globalState.packages.values()) {
+        add(pkg, null)
+      }
+      for (const [projectId, state] of this.projectStates) {
+        for (const pkg of state.ownPackages.values()) {
+          add(pkg, projectId)
+        }
+      }
+      return [...declarations.values()]
     })
   }
 

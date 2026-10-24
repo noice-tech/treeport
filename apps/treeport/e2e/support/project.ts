@@ -27,15 +27,7 @@ export const project: ProjectRecord = {
       kind: 'main',
       managedWrapperPath: null,
       title: null,
-      pr: {
-        state: 'no_pr',
-        number: null,
-        url: null,
-        baseBranch: null,
-        headBranch: null,
-        mergedAt: null,
-        refreshedAt: null
-      },
+      badges: [],
       dirty: {
         dirty: false,
         staged: 0,
@@ -76,15 +68,7 @@ export const project: ProjectRecord = {
       kind: 'linked',
       managedWrapperPath: null,
       title: null,
-      pr: {
-        state: 'merged',
-        number: 12,
-        url: 'https://example.test/pr/12',
-        baseBranch: 'trunk',
-        headBranch: 'feature/topic',
-        mergedAt: '2026-01-02',
-        refreshedAt: '2026-01-02'
-      },
+      badges: [],
       dirty: {
         dirty: false,
         staged: 0,

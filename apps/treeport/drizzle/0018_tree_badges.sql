@@ -1,0 +1,1 @@
+ALTER TABLE `worktrees` ADD `badges` text DEFAULT '{}' NOT NULL;

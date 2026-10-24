@@ -311,11 +311,6 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
       return
     }
 
-    if (pathname.endsWith('/pr/refresh')) {
-      await route.fulfill({ json: { pr: state.worktrees[1]!.pr } })
-      return
-    }
-
     await route.fallback()
   })
 

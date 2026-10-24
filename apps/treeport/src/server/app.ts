@@ -59,7 +59,6 @@ import {
   packageReloadSchema,
   packageRemoveSchema,
   packageUpdateSchema,
-  prResponseSchema,
   projectResponseSchema,
   projectsResponseSchema,
   readTreeFileSchema,
@@ -90,6 +89,9 @@ import {
   uploadedFileResponseSchema,
   updateProjectSchema,
   updateWorktreeTitleSchema,
+  setTreeBadgeSchema,
+  packageWorkerSelfResponseSchema,
+  TREE_BADGE_KEY_PATTERN,
   updateLauncherSchema,
   updateTerminalSchema,
   updateWebAppPermissionGrantSchema,
@@ -140,6 +142,7 @@ import type { WorkspacePresenceManager } from './workspace-presence'
 import type { WebPushManager } from './web-push'
 import { findProjectIcon } from './project-icon'
 import type { AppServices } from './app-services'
+import type { PackageWorkers } from './package-workers'
 import { networkTelemetry } from './network-telemetry'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
@@ -214,6 +217,7 @@ interface AppDependencies {
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata: TerminalMetadataManager
   appServices?: AppServices
+  packageWorkers?: PackageWorkers
   browserSessions?: BrowserSessionManager
   presence: WorkspacePresenceManager
   push?: WebPushManager
@@ -387,6 +391,7 @@ export function createApp({
   terminalMetadata: metadata,
   browserSessions,
   appServices,
+  packageWorkers,
   presence,
   push,
   rpcHttpApp,
@@ -1306,9 +1311,6 @@ export function createApp({
       '/api/worktrees/:worktreeId',
       Effect.gen(function* () {
         const params = yield* routeParams
-        yield* operation(() =>
-          service.worktrees.refreshPr(params.worktreeId!, false)
-        )
         return jsonContractResponse(worktreeResponseSchema, {
           worktree: yield* operation(() =>
             service.projects.getWorktreeSnapshot(params.worktreeId!)
@@ -1331,6 +1333,93 @@ export function createApp({
           )
         })
       })
+    ),
+    route(
+      'GET',
+      '/api/package-workers/self',
+      Effect.gen(function* () {
+        const request = yield* serverRequest
+        const token = /^Bearer (\S+)$/u.exec(
+          request.headers.authorization ?? ''
+        )?.[1]
+        const access = token ? (packageWorkers?.access(token) ?? null) : null
+        if (!access) {
+          return yield* Effect.fail(
+            new DomainError(
+              'INVALID_PACKAGE_TOKEN',
+              'The package token is invalid or its worker stopped',
+              401
+            )
+          )
+        }
+
+        return jsonContractResponse(packageWorkerSelfResponseSchema, access)
+      })
+    ),
+    ...(['PUT', 'DELETE'] as const).map((method) =>
+      route(
+        method,
+        '/api/worktrees/:worktreeId/badges/:badgeKey',
+        Effect.gen(function* () {
+          const params = yield* routeParams
+          if (!TREE_BADGE_KEY_PATTERN.test(params.badgeKey!)) {
+            return yield* Effect.fail(
+              new DomainError(
+                'INVALID_BADGE_KEY',
+                'A badge key uses lowercase letters, digits, dots, dashes, and underscores',
+                400
+              )
+            )
+          }
+
+          // A package worker's token makes its package the badge owner.
+          const request = yield* serverRequest
+          const token = /^Bearer (\S+)$/u.exec(
+            request.headers.authorization ?? ''
+          )?.[1]
+          const access = token ? (packageWorkers?.access(token) ?? null) : null
+          if (token && !access) {
+            return yield* Effect.fail(
+              new DomainError(
+                'INVALID_PACKAGE_TOKEN',
+                'The package token is invalid or its worker stopped',
+                401
+              )
+            )
+          }
+
+          if (access?.projectIds) {
+            const worktree = yield* operation(() =>
+              service.projects.getWorktree(params.worktreeId!)
+            )
+            if (!access.projectIds.includes(worktree.projectId)) {
+              return yield* Effect.fail(
+                new DomainError(
+                  'PACKAGE_NOT_IN_PROJECT',
+                  `${access.packageId} is not configured for this project`,
+                  403
+                )
+              )
+            }
+          }
+
+          const badge =
+            method === 'PUT' ? yield* requestBody(setTreeBadgeSchema) : null
+          yield* operation(() =>
+            service.projects.updateWorktreeBadge(
+              params.worktreeId!,
+              params.badgeKey!,
+              badge,
+              access?.packageId ?? null
+            )
+          )
+          return jsonContractResponse(worktreeResponseSchema, {
+            worktree: yield* operation(() =>
+              service.projects.getWorktreeSnapshot(params.worktreeId!)
+            )
+          })
+        })
+      )
     ),
     route(
       'POST',
@@ -1729,18 +1818,6 @@ export function createApp({
           },
           202
         )
-      })
-    ),
-    route(
-      'POST',
-      '/api/worktrees/:worktreeId/pr/refresh',
-      Effect.gen(function* () {
-        const params = yield* routeParams
-        return jsonContractResponse(prResponseSchema, {
-          pr: yield* operation(() =>
-            service.worktrees.refreshPr(params.worktreeId!, true)
-          )
-        })
       })
     ),
     route(

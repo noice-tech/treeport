@@ -1,7 +1,6 @@
 import type {
   CreateOperationRequest,
   OperationRecord,
-  PrInfo,
   RemovePreview,
   TerminalSize
 } from '@treeport/shared'
@@ -97,13 +96,6 @@ export class WorktreeService {
       sourceWorktreeId,
       treeTitleCommand
     )
-  }
-
-  refreshPr(
-    worktreeId: string,
-    force = false
-  ): Effect.Effect<PrInfo, DomainError<unknown>, ApplicationServices> {
-    return this.removal.refreshPr(worktreeId, force)
   }
 
   removePreview(

@@ -72,13 +72,8 @@ export const worktrees = sqliteTable(
     kind: text().notNull(),
     managedWrapperPath: text('managed_wrapper_path'),
     title: text(),
-    prState: text('pr_state').notNull().default('unknown'),
-    prNumber: integer('pr_number'),
-    prUrl: text('pr_url'),
-    prBaseBranch: text('pr_base_branch'),
-    prHeadBranch: text('pr_head_branch'),
-    prMergedAt: text('pr_merged_at'),
-    prRefreshedAt: text('pr_refreshed_at'),
+    // Badges keyed by badge key, in insertion order.
+    badges: text().notNull().default('{}'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },

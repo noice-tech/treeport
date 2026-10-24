@@ -37,6 +37,8 @@ import { connectOrStartTerminalHost } from './terminal-host-client'
 import { observeDaemonEventLoop } from './network-telemetry'
 import { WebPushManager } from './web-push'
 import { AppServices } from './app-services'
+import { PackageWorkers } from './package-workers'
+import { PackageSystemPort } from './core/services/infrastructure/ports'
 
 const updateStartupTransactionSchema = z.looseObject({
   schemaVersion: z.literal(1),
@@ -189,6 +191,34 @@ export async function main(
       )
     )
 
+    const packageWorkers = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(
+            () =>
+              new PackageWorkers({
+                apiUrl: config.apiUrl,
+                dataDir: config.dataDir,
+                declarations: () =>
+                  service.runEffect(
+                    Effect.flatMap(PackageSystemPort, (packages) =>
+                      packages.workers()
+                    )
+                  ),
+                pruneBadgeSources: (sources) =>
+                  service.runEffect(
+                    service.projects.pruneBadgeSources(sources)
+                  ),
+                log: (message) => console.warn(message)
+              })
+          ),
+          (workers) =>
+            Effect.tryPromise(() => workers.dispose()).pipe(Effect.orDie)
+        ),
+        resourceScope
+      )
+    )
+
     const presence = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
@@ -293,6 +323,7 @@ export async function main(
       terminalMetadata,
       browserSessions,
       appServices,
+      packageWorkers,
       presence,
       push,
       rpcHttpApp
@@ -610,6 +641,7 @@ export async function main(
       )
     )
 
+    packageWorkers.start()
     diagnostics.event('ready', { apiUrl: config.apiUrl })
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)

@@ -122,14 +122,21 @@ const workspaceItemSchema = Schema.Union(
   browserAppSchema
 )
 
-export const prInfoSchema = Schema.Struct({
-  state: Schema.Literal('no_pr', 'open', 'merged', 'closed', 'unknown'),
-  number: Schema.NullOr(Schema.Int),
+const treeBadgeSchema = Schema.Struct({
+  key: Schema.String,
+  text: Schema.String,
+  tone: Schema.Literal(
+    'neutral',
+    'info',
+    'success',
+    'warning',
+    'danger',
+    'done'
+  ),
   url: nullableStringSchema,
-  baseBranch: nullableStringSchema,
-  headBranch: nullableStringSchema,
-  mergedAt: nullableStringSchema,
-  refreshedAt: nullableStringSchema
+  tooltip: nullableStringSchema,
+  source: nullableStringSchema,
+  updatedAt: Schema.String
 })
 const dirtyStateSchema = Schema.Struct({
   dirty: Schema.Boolean,
@@ -153,7 +160,7 @@ export const worktreeRecordSchema = Schema.Struct({
   prunable: Schema.Boolean,
   kind: Schema.Literal('main', 'linked', 'folder'),
   managedWrapperPath: nullableStringSchema,
-  pr: prInfoSchema,
+  badges: Schema.Array(treeBadgeSchema),
   dirty: Schema.NullOr(dirtyStateSchema),
   terminals: Schema.Array(terminalRecordSchema),
   workspaceItems: Schema.Array(workspaceItemSchema),
@@ -642,6 +649,11 @@ export const packageReloadResponseSchema = Schema.Struct({
 export const packageProjectResponseSchema = Schema.Struct({
   project: projectRecordSchema
 })
+export const packageWorkerSelfResponseSchema = Schema.Struct({
+  packageId: Schema.String,
+  /** Null when the package is configured globally. */
+  projectIds: Schema.NullOr(Schema.Array(Schema.String))
+})
 export const projectsResponseSchema = Schema.Struct({
   projects: Schema.Array(projectRecordSchema)
 })
@@ -714,7 +726,6 @@ export const webAppResponseSchema = Schema.Struct({ app: webAppSchema })
 export const webAppDefinitionResponseSchema = Schema.Struct({
   definition: webAppDefinitionSchema
 })
-export const prResponseSchema = Schema.Struct({ pr: prInfoSchema })
 export const terminatedTerminalsResponseSchema = Schema.Struct({
   terminated: Schema.NonNegativeInt
 })

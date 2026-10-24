@@ -46,7 +46,6 @@ function fixture(webDist = '/missing') {
     runtimeDir: path.join('/tmp', `treeport-test-${crypto.randomUUID()}`),
     shell: '/bin/zsh',
     gitPath: 'git',
-    ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
     daemonLifecycle: 'treeport',

@@ -127,6 +127,20 @@
       "when": 1792870851824,
       "tag": "0017_terminal_attention_states",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792876804416,
+      "tag": "0018_tree_badges",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792876805416,
+      "tag": "0019_drop_pr_status",
+      "breakpoints": true
     }
   ]
 }

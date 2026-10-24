@@ -1,6 +1,7 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
+  ArrowTopRightOnSquareIcon,
   DocumentDuplicateIcon,
   FolderIcon,
   LinkSlashIcon,
@@ -12,8 +13,11 @@ import {
 import type {
   ProjectRecord,
   TerminalRecord,
+  TreeBadge,
+  TreeBadgeTone,
   WorktreeRecord
 } from '@treeport/shared'
+import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import {
   ContextMenu,
@@ -78,11 +82,23 @@ function copyText(text: string) {
   }
 }
 
+// Status scales invert in light mode, so one set of tones serves both themes.
+const treeBadgeToneClasses = {
+  neutral: 'bg-zinc-800 text-zinc-300 inset-ring inset-ring-white/5',
+  info: 'bg-blue-400/10 text-blue-300 inset-ring inset-ring-blue-400/20',
+  success:
+    'bg-emerald-400/10 text-emerald-300 inset-ring inset-ring-emerald-400/20',
+  warning: 'bg-amber-400/10 text-amber-300 inset-ring inset-ring-amber-400/20',
+  danger: 'bg-rose-400/10 text-rose-300 inset-ring inset-ring-rose-400/20',
+  done: 'bg-violet-400/10 text-violet-300 inset-ring inset-ring-violet-400/20'
+} satisfies Record<TreeBadgeTone, string>
+
 function WorktreeShell({
   name,
   title,
   icon,
   status,
+  badges = [],
   selected = false,
   pending = false,
   busy = false,
@@ -95,6 +111,7 @@ function WorktreeShell({
   title: string
   icon: ReactNode
   status?: ReactNode
+  badges?: TreeBadge[]
   selected?: boolean
   pending?: boolean
   busy?: boolean
@@ -118,10 +135,23 @@ function WorktreeShell({
   const content = (
     <>
       {icon}
-      <span className="flex min-w-0 flex-col">
+      <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate">{name}</span>
         {status}
       </span>
+      {badges.length ? (
+        <span className="flex shrink-0 items-center gap-1">
+          {badges.map((badge) => (
+            <Badge
+              key={badge.key}
+              className={cn('max-w-28', treeBadgeToneClasses[badge.tone])}
+              title={badge.tooltip ?? undefined}
+            >
+              <span className="min-w-0 truncate">{badge.text}</span>
+            </Badge>
+          ))}
+        </span>
+      ) : null}
     </>
   )
 
@@ -335,6 +365,7 @@ export function WorkspaceTree({
                                         )}`
                                   }`
                             }
+                            badges={worktree.badges}
                             selected={selectedWorktree?.id === worktree.id}
                             className={cn(
                               selectedWorktree?.id === worktree.id &&
@@ -414,6 +445,30 @@ export function WorkspaceTree({
                             Copy tree ID
                           </ContextMenuItem>
                         </ContextMenuGroup>
+                        {worktree.badges.some((badge) => badge.url) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuGroup>
+                              {worktree.badges.map((badge) =>
+                                badge.url ? (
+                                  <ContextMenuItem
+                                    key={badge.key}
+                                    onSelect={() =>
+                                      window.open(
+                                        badge.url!,
+                                        '_blank',
+                                        'noopener,noreferrer'
+                                      )
+                                    }
+                                  >
+                                    <ArrowTopRightOnSquareIcon />
+                                    Open {badge.text}
+                                  </ContextMenuItem>
+                                ) : null
+                              )}
+                            </ContextMenuGroup>
+                          </>
+                        ) : null}
                         {worktree.kind === 'linked' ? (
                           <>
                             <ContextMenuSeparator />

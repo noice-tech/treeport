@@ -20,10 +20,10 @@ import type {
   OperationRecord,
   RemoveOperationRequest,
   RemoveOperationResult,
-  PrInfo,
   ProjectRecord,
   Launcher,
   LauncherCommand,
+  TreeBadge,
   WorktreeRecord
 } from '@treeport/shared'
 import * as schema from './database-schema'
@@ -566,16 +566,10 @@ export function mapWorktree(
     kind: row.kind as WorktreeRecord['kind'],
     managedWrapperPath: row.managedWrapperPath,
     title: row.title,
-    pr: {
-      // SAFETY: The query selects the columns required by this database row contract.
-      state: row.prState as PrInfo['state'],
-      number: row.prNumber,
-      url: row.prUrl,
-      baseBranch: row.prBaseBranch,
-      headBranch: row.prHeadBranch,
-      mergedAt: row.prMergedAt,
-      refreshedAt: row.prRefreshedAt
-    },
+    badges: Object.entries(
+      // SAFETY: Badge writes store values validated by the badge schema.
+      JSON.parse(row.badges) as Record<string, Omit<TreeBadge, 'key'>>
+    ).map(([key, badge]) => ({ key, ...badge, source: badge.source ?? null })),
     dirty: null,
     terminals: [],
     workspaceItems: [],

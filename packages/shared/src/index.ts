@@ -90,7 +90,6 @@ export function formatCommandLine(argv: readonly string[]): string {
 export type ProjectKind = 'repository' | 'folder'
 export type WorktreeKind = 'main' | 'linked' | 'folder'
 export type TerminalStatus = 'running' | 'exited' | 'missing' | 'unavailable'
-export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type OperationKind =
   | 'create'
@@ -100,14 +99,27 @@ export type OperationKind =
   | 'remove'
   | 'external_remove'
 
-export interface PrInfo {
-  state: PrState
-  number: number | null
+export const TREE_BADGE_TONES = [
+  'neutral',
+  'info',
+  'success',
+  'warning',
+  'danger',
+  'done'
+] as const
+
+export type TreeBadgeTone = (typeof TREE_BADGE_TONES)[number]
+
+/** A compact status published for a tree by a script, hook, or package. */
+export interface TreeBadge {
+  key: string
+  text: string
+  tone: TreeBadgeTone
   url: string | null
-  baseBranch: string | null
-  headBranch: string | null
-  mergedAt: string | null
-  refreshedAt: string | null
+  tooltip: string | null
+  /** ID of the package that owns this badge, or null when set directly. */
+  source: string | null
+  updatedAt: string
 }
 
 export interface TerminalRecord {
@@ -302,7 +314,7 @@ export interface WorktreeRecord {
   prunable: boolean
   kind: WorktreeKind
   managedWrapperPath: string | null
-  pr: PrInfo
+  badges: TreeBadge[]
   dirty: DirtyState | null
   terminals: TerminalRecord[]
   workspaceItems: WorkspaceItem[]
@@ -872,6 +884,36 @@ export const updateWorktreeTitleSchema = Schema.Struct({
       Schema.minLength(1),
       Schema.maxLength(WORKTREE_TITLE_MAX_LENGTH)
     )
+  )
+})
+
+export const TREE_BADGE_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/
+export const TREE_BADGE_TEXT_MAX_LENGTH = 32
+export const setTreeBadgeSchema = Schema.Struct({
+  text: Schema.Trim.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(TREE_BADGE_TEXT_MAX_LENGTH)
+  ),
+  tone: Schema.optionalWith(Schema.Literal(...TREE_BADGE_TONES), {
+    default: () => 'neutral' as const
+  }),
+  url: Schema.optionalWith(
+    Schema.NullOr(
+      Schema.String.pipe(
+        Schema.maxLength(2_048),
+        Schema.filter(
+          (url) =>
+            URL.canParse(url) &&
+            ['http:', 'https:'].includes(new URL(url).protocol),
+          { message: () => 'A badge URL must use http or https' }
+        )
+      )
+    ),
+    { default: () => null }
+  ),
+  tooltip: Schema.optionalWith(
+    Schema.NullOr(Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(200))),
+    { default: () => null }
   )
 })
 

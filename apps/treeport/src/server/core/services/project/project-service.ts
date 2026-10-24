@@ -6,6 +6,7 @@ import type {
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
+  TreeBadge,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, eq, sql } from 'drizzle-orm'
@@ -234,6 +235,120 @@ export class ProjectService {
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('project.updated', { projectId: worktree.projectId })
+      })
+    })
+  }
+
+  /**
+   * Set or clear one badge; unchanged values skip the write and event. A
+   * package may change only its own badges; a direct caller may clear any.
+   */
+  updateWorktreeBadge(
+    worktreeId: string,
+    key: string,
+    badge: Omit<TreeBadge, 'key' | 'source' | 'updatedAt'> | null,
+    source: string | null
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const projectStore = yield* ProjectStore
+      const worktree = yield* projectStore.getWorktree(worktreeId)
+      yield* projectStore.requireOpenProject(worktree.projectId)
+      const current = worktree.badges.find((entry) => entry.key === key)
+      if (current && current.source !== source && (badge || source !== null)) {
+        return yield* Effect.fail(
+          new DomainError(
+            'BADGE_OWNED',
+            `Badge ${key} belongs to ${current.source ?? 'a direct caller'}`,
+            409
+          )
+        )
+      }
+
+      if (
+        badge
+          ? current?.text === badge.text &&
+            current.tone === badge.tone &&
+            current.url === badge.url &&
+            current.tooltip === badge.tooltip
+          : !current
+      ) {
+        return
+      }
+
+      // The key pattern excludes quotes, so it is safe inside a JSON path.
+      const jsonPath = `$."${key}"`
+      yield* database
+        .execute('project.service.worktree-badge', (db) =>
+          db.run(
+            badge
+              ? sql`
+                UPDATE worktrees
+                SET badges = json_set(badges, ${jsonPath}, json(${JSON.stringify(
+                  { ...badge, source, updatedAt: now() }
+                )}))
+                WHERE id = ${worktreeId}
+              `
+              : sql`
+                UPDATE worktrees SET badges = json_remove(badges, ${jsonPath})
+                WHERE id = ${worktreeId}
+              `
+          )
+        )
+        .pipe(Effect.orDie)
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('project.updated', { projectId: worktree.projectId })
+      })
+    })
+  }
+
+  /** Remove badges owned by packages that are no longer configured. */
+  pruneBadgeSources(
+    activeSources: string[]
+  ): Effect.Effect<void, never, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const active = JSON.stringify(activeSources)
+      const stale = sql`
+        SELECT 1 FROM json_each(worktrees.badges) AS badge
+        WHERE json_extract(badge.value, '$.source') IS NOT NULL
+          AND json_extract(badge.value, '$.source')
+            NOT IN (SELECT value FROM json_each(${active}))
+      `
+      const updated = yield* database
+        .execute('project.service.prune-badges', (db) =>
+          db.all<{ projectId: string }>(sql`
+            UPDATE worktrees
+            SET badges = COALESCE((
+              SELECT json_group_object(badge.key, json(badge.value))
+              FROM json_each(worktrees.badges) AS badge
+              WHERE json_extract(badge.value, '$.source') IS NULL
+                OR json_extract(badge.value, '$.source')
+                  IN (SELECT value FROM json_each(${active}))
+            ), '{}')
+            WHERE EXISTS (${stale})
+            RETURNING project_id AS projectId
+          `)
+        )
+        .pipe(Effect.orDie)
+      if (!updated.length) {
+        return
+      }
+
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        for (const projectId of new Set(updated.map((row) => row.projectId))) {
+          events.publish('project.updated', { projectId })
+        }
       })
     })
   }

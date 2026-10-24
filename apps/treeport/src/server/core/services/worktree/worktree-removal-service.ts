@@ -3,7 +3,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
   OperationRecord,
-  PrInfo,
   RemovalCheckoutIdentity,
   RemovePreview,
   WorktreeRecord
@@ -34,7 +33,6 @@ import {
   TerminalHostPort
 } from '../infrastructure/ports'
 import { DatabasePort } from '../../database'
-import { GitHubPort } from '../../gh'
 import { GitPort } from '../../git'
 import { ProjectStore } from '../project/project-store'
 import { TerminalState } from '../terminal/terminal-state'
@@ -312,72 +310,6 @@ export class WorktreeRemovalService {
       }
 
       return { removed: true, error: null }
-    })
-  }
-
-  refreshPr(
-    worktreeId: string,
-    force = false
-  ): Effect.Effect<PrInfo, DomainError<unknown>, ApplicationServices> {
-    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
-    const invalidateProjectsSnapshot =
-      this.invalidateProjectsSnapshot.bind(this)
-
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-      const events = yield* EventBusPort
-      const gh = yield* GitHubPort
-      const locks = yield* MutationLocks
-      const projectStore = yield* ProjectStore
-      const worktree = yield* requireAvailableWorktree(worktreeId)
-      const branch = worktree.branch
-      if (worktree.kind === 'main' || !branch) {
-        return worktree.pr
-      }
-
-      const age = worktree.pr.refreshedAt
-        ? Date.now() - Date.parse(worktree.pr.refreshedAt)
-        : Number.POSITIVE_INFINITY
-      if (!force && age < 60_000) {
-        return worktree.pr
-      }
-
-      yield* projectStore.requireOpenProject(worktree.projectId)
-      const pr = yield* gh.pullRequest(worktree.path, branch)
-      const current = yield* projectStore.storedWorktree(worktreeId)
-      if (!current) {
-        return yield* Effect.fail(
-          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-        )
-      }
-
-      if (yield* locks.isWorktreeLocked(worktreeId)) {
-        return yield* Effect.fail(
-          new DomainError(
-            'WORKTREE_UNAVAILABLE',
-            'Cannot refresh a pull request while the tree is being removed',
-            409
-          )
-        )
-      }
-
-      yield* database
-        .execute('worktree.removal.service.370', (db) =>
-          db.run(sql`
-          UPDATE worktrees
-          SET pr_state=${pr.state},pr_number=${pr.number},pr_url=${pr.url},
-              pr_base_branch=${pr.baseBranch},pr_head_branch=${pr.headBranch},
-              pr_merged_at=${pr.mergedAt},pr_refreshed_at=${pr.refreshedAt},
-              updated_at=${now()}
-          WHERE id=${worktreeId}
-        `)
-        )
-        .pipe(Effect.orDie)
-      yield* invalidateProjectsSnapshot()
-      yield* Effect.sync(() => {
-        events.publish('worktree.updated', { worktreeId })
-      })
-      return pr
     })
   }
 

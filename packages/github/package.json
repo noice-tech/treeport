@@ -1,0 +1,39 @@
+{
+  "name": "@treeport/github",
+  "version": "0.13.0",
+  "description": "GitHub pull request status on Treeport trees.",
+  "type": "module",
+  "files": [
+    "worker.mjs",
+    "LICENSE"
+  ],
+  "keywords": [
+    "treeport-package"
+  ],
+  "treeport": {
+    "workers": {
+      "pull-requests": {
+        "executable": "node",
+        "args": [
+          "${packageRoot}/worker.mjs"
+        ]
+      }
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git",
+    "directory": "packages/github"
+  },
+  "bugs": {
+    "url": "https://github.com/noice-tech/treeport/issues"
+  },
+  "homepage": "https://treeport.app",
+  "publishConfig": {
+    "access": "public"
+  }
+}
