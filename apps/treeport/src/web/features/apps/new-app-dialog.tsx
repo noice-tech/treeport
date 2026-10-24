@@ -13,7 +13,6 @@ import {
   type WebAppDefinition
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
-import { Textarea } from '../../components/ui/textarea'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,6 +35,7 @@ import {
   launcherInputLabel,
   launcherProvenance
 } from '../../launcher-definition'
+import { LauncherInputTextarea } from '../launchers/launcher-input-textarea'
 import { WebAppIcon } from '../web-apps/web-app-icon'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
 import { describeWebAppPermissions } from '../web-apps/web-app-permissions'
@@ -83,6 +83,7 @@ export function NewAppDialog({
     null
   )
   const [inputs, setInputs] = useState<Record<string, string>>({})
+  const [uploads, setUploads] = useState(0)
   const inputNames = inputLauncher ? launcherInputNames(inputLauncher.args) : []
   const launch = (
     launcher: LauncherDefinition,
@@ -190,7 +191,7 @@ export function NewAppDialog({
             autoComplete="off"
             onSubmit={(event) => {
               event.preventDefault()
-              if (!launchDisabled) {
+              if (!launchDisabled && uploads === 0) {
                 launch(inputLauncher, inputs)
               }
             }}
@@ -223,18 +224,19 @@ export function NewAppDialog({
                   >
                     {launcherInputLabel(inputName)}
                   </label>
-                  <Textarea
+                  <LauncherInputTextarea
                     id={id}
-                    name={id}
-                    rows={4}
-                    className="max-h-60 field-sizing-content resize-none"
                     value={inputs[inputName] ?? ''}
                     autoFocus={index === 0}
-                    onChange={(event) =>
+                    disabled={false}
+                    onValueChange={(value) =>
                       setInputs((current) => ({
                         ...current,
-                        [inputName]: event.target.value
+                        [inputName]: value
                       }))
+                    }
+                    onUploadingChange={(uploading) =>
+                      setUploads((current) => current + (uploading ? 1 : -1))
                     }
                   />
                 </div>
@@ -248,7 +250,7 @@ export function NewAppDialog({
               >
                 Back
               </Button>
-              <Button type="submit" disabled={launchDisabled}>
+              <Button type="submit" disabled={launchDisabled || uploads > 0}>
                 Start
               </Button>
             </div>

@@ -12,11 +12,11 @@ import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
-import { Textarea } from '../../components/ui/textarea'
 import {
   launcherDisambiguator,
   launcherInputLabel
 } from '../../launcher-definition'
+import { LauncherInputTextarea } from '../launchers/launcher-input-textarea'
 
 const INITIAL_LAUNCHER_STORAGE_KEY = 'treeport-initial-launcher'
 
@@ -55,6 +55,7 @@ export function WorktreeForm({
   const [name, setName] = useState('')
   const [baseValue, setBaseValue] = useState('default')
   const [inputs, setInputs] = useState<Record<string, string>>({})
+  const [uploads, setUploads] = useState(0)
   const initialTerminalStorageKey = `${INITIAL_LAUNCHER_STORAGE_KEY}:${project.id}`
   const [initialLauncherId, setInitialLauncherId] = useState(() => {
     const stored = localStorage.getItem(initialTerminalStorageKey)
@@ -123,7 +124,7 @@ export function WorktreeForm({
       }}
       onSubmit={(event) => {
         event.preventDefault()
-        if (busy) {
+        if (busy || uploads > 0) {
           return
         }
 
@@ -163,19 +164,16 @@ export function WorktreeForm({
         return (
           <FormField key={inputName}>
             <Label htmlFor={id}>{launcherInputLabel(inputName)}</Label>
-            <Textarea
+            <LauncherInputTextarea
               id={id}
-              name={id}
-              rows={4}
-              className="max-h-60 field-sizing-content resize-none"
               value={inputs[inputName] ?? ''}
               autoFocus={index === 0}
               disabled={busy}
-              onChange={(event) =>
-                setInputs((current) => ({
-                  ...current,
-                  [inputName]: event.target.value
-                }))
+              onValueChange={(value) =>
+                setInputs((current) => ({ ...current, [inputName]: value }))
+              }
+              onUploadingChange={(uploading) =>
+                setUploads((current) => current + (uploading ? 1 : -1))
               }
             />
           </FormField>
@@ -286,7 +284,7 @@ export function WorktreeForm({
           ref={submitButtonRef}
           type="submit"
           aria-keyshortcuts={usesMacKeyboard ? 'Meta+Enter' : 'Control+Enter'}
-          disabled={busy || waitingForInitialLauncher}
+          disabled={busy || waitingForInitialLauncher || uploads > 0}
         >
           {busy ? 'Creating…' : 'Create tree'}
           <kbd

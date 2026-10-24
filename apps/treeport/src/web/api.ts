@@ -298,6 +298,22 @@ export const rpc = {
           init
         )
     },
+    files: {
+      $post: (options: {
+        readonly init: RequestInit & { readonly body: File }
+        readonly onProgress: (bytes: number) => void
+      }): TypedResponse<{ file: { path: string } }> => ({
+        request: uploadRequest(
+          new URL(
+            '/api/files',
+            globalThis.location?.href ?? 'http://localhost'
+          ),
+          options.init,
+          options.onProgress
+        ),
+        schema: uploadedFileResponseSchema
+      })
+    },
     browser: {
       install: {
         $post: () =>

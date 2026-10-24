@@ -1782,140 +1782,161 @@ export function createApp({
         return jsonContractResponse(okResponseSchema, { ok: true })
       }).pipe(Effect.withSpan('treeport.terminal.bell.acknowledge.request'))
     ),
-    route(
-      'POST',
-      '/api/terminals/:terminalId/files',
-      Effect.gen(function* () {
-        const params = yield* routeParams
-        const request = yield* serverRequest
-        yield* operation(() =>
-          service.terminals.getTerminal(params.terminalId!)
-        )
-        const contentLength = request.headers['content-length']
-        if (contentLength) {
-          const declaredBytes = Number(contentLength)
-          if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
-            return yield* Effect.fail(
-              new DomainError('VALIDATION_ERROR', 'File size is invalid', 400)
-            )
-          }
-
-          if (declaredBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-            return yield* Effect.fail(
-              new DomainError(
-                'FILE_TOO_LARGE',
-                'Uploaded files are limited to 50 GiB each',
-                413
+    ...(['/api/files', '/api/terminals/:terminalId/files'] as const).map(
+      (routePath) =>
+        route(
+          'POST',
+          routePath,
+          Effect.gen(function* () {
+            const params = yield* routeParams
+            const request = yield* serverRequest
+            if (params.terminalId) {
+              yield* operation(() =>
+                service.terminals.getTerminal(params.terminalId!)
               )
-            )
-          }
-        }
+            }
 
-        const requestedExtension =
-          request.headers['x-treeport-file-extension']?.toLowerCase()
-        if (
-          requestedExtension &&
-          !/^[a-z0-9]{1,16}$/.test(requestedExtension)
-        ) {
-          return yield* Effect.fail(
-            new DomainError(
-              'VALIDATION_ERROR',
-              'File extension is invalid',
-              400
-            )
-          )
-        }
-
-        const requestContentType =
-          request.headers['content-type']?.split(';', 1)[0]?.toLowerCase() ?? ''
-        const extension =
-          requestedExtension ||
-          UPLOAD_MIME_EXTENSIONS.get(requestContentType) ||
-          ''
-        const uploadDirectory = path.join(config.runtimeDir, 'uploads')
-        const uploaded = yield* Effect.acquireUseRelease(
-          operation(() =>
-            service.terminalUploadMutation(
-              Effect.gen(function* () {
-                yield* Effect.promise(() =>
-                  fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
-                )
-                yield* Effect.promise(() => fs.chmod(uploadDirectory, 0o700))
-                yield* Effect.promise(() =>
-                  pruneTerminalUploads(uploadDirectory, activeUploadPaths)
-                )
-                const filePath = path.join(
-                  uploadDirectory,
-                  `treeport-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
-                )
-                const file = yield* Effect.promise(() =>
-                  fs.open(filePath, 'wx', 0o600)
-                )
-                activeUploadPaths.add(filePath)
-                return { filePath, file }
-              })
-            )
-          ),
-          ({ filePath, file }) =>
-            operation(() =>
-              Effect.gen(function* () {
-                let receivedBytes = 0
-                // Only directory mutations are serialized. File streams run in
-                // parallel, and pruning must never remove an active upload.
-                yield* Stream.runForEach(
-                  request.stream.pipe(
-                    Stream.timeoutFail(
-                      () =>
-                        new DomainError(
-                          'UPLOAD_STALLED',
-                          'Upload stalled for 2 minutes',
-                          408
-                        ),
-                      '2 minutes'
-                    )
-                  ),
-                  (value) => {
-                    receivedBytes += value.byteLength
-                    if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-                      return Effect.fail(
-                        new DomainError(
-                          'FILE_TOO_LARGE',
-                          'Uploaded files are limited to 50 GiB each',
-                          413
-                        )
-                      )
-                    }
-
-                    return Effect.promise(() => file.writeFile(value)).pipe(
-                      Effect.asVoid
-                    )
-                  }
-                )
-                return { file: { path: filePath } }
-              })
-            ),
-          ({ filePath, file }, exit) =>
-            Effect.gen(function* () {
-              yield* Effect.promise(() =>
-                file.close().finally(() => {
-                  activeUploadPaths.delete(filePath)
-                  return Exit.isFailure(exit)
-                    ? fs.rm(filePath, { force: true })
-                    : undefined
-                })
-              )
-              yield* service.terminalUploadMutation(
-                Effect.promise(() =>
-                  pruneTerminalUploads(
-                    uploadDirectory,
-                    new Set([...activeUploadPaths, filePath])
+            const contentLength = request.headers['content-length']
+            if (contentLength) {
+              const declaredBytes = Number(contentLength)
+              if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
+                return yield* Effect.fail(
+                  new DomainError(
+                    'VALIDATION_ERROR',
+                    'File size is invalid',
+                    400
                   )
                 )
+              }
+
+              if (declaredBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+                return yield* Effect.fail(
+                  new DomainError(
+                    'FILE_TOO_LARGE',
+                    'Uploaded files are limited to 50 GiB each',
+                    413
+                  )
+                )
+              }
+            }
+
+            const requestedExtension =
+              request.headers['x-treeport-file-extension']?.toLowerCase()
+            if (
+              requestedExtension &&
+              !/^[a-z0-9]{1,16}$/.test(requestedExtension)
+            ) {
+              return yield* Effect.fail(
+                new DomainError(
+                  'VALIDATION_ERROR',
+                  'File extension is invalid',
+                  400
+                )
               )
-            })
+            }
+
+            const requestContentType =
+              request.headers['content-type']
+                ?.split(';', 1)[0]
+                ?.toLowerCase() ?? ''
+            const extension =
+              requestedExtension ||
+              UPLOAD_MIME_EXTENSIONS.get(requestContentType) ||
+              ''
+            const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+            const uploaded = yield* Effect.acquireUseRelease(
+              operation(() =>
+                service.terminalUploadMutation(
+                  Effect.gen(function* () {
+                    yield* Effect.promise(() =>
+                      fs.mkdir(uploadDirectory, {
+                        recursive: true,
+                        mode: 0o700
+                      })
+                    )
+                    yield* Effect.promise(() =>
+                      fs.chmod(uploadDirectory, 0o700)
+                    )
+                    yield* Effect.promise(() =>
+                      pruneTerminalUploads(uploadDirectory, activeUploadPaths)
+                    )
+                    const filePath = path.join(
+                      uploadDirectory,
+                      `treeport-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
+                    )
+                    const file = yield* Effect.promise(() =>
+                      fs.open(filePath, 'wx', 0o600)
+                    )
+                    activeUploadPaths.add(filePath)
+                    return { filePath, file }
+                  })
+                )
+              ),
+              ({ filePath, file }) =>
+                operation(() =>
+                  Effect.gen(function* () {
+                    let receivedBytes = 0
+                    // Only directory mutations are serialized. File streams run in
+                    // parallel, and pruning must never remove an active upload.
+                    yield* Stream.runForEach(
+                      request.stream.pipe(
+                        Stream.timeoutFail(
+                          () =>
+                            new DomainError(
+                              'UPLOAD_STALLED',
+                              'Upload stalled for 2 minutes',
+                              408
+                            ),
+                          '2 minutes'
+                        )
+                      ),
+                      (value) => {
+                        receivedBytes += value.byteLength
+                        if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+                          return Effect.fail(
+                            new DomainError(
+                              'FILE_TOO_LARGE',
+                              'Uploaded files are limited to 50 GiB each',
+                              413
+                            )
+                          )
+                        }
+
+                        return Effect.promise(() => file.writeFile(value)).pipe(
+                          Effect.asVoid
+                        )
+                      }
+                    )
+                    return { file: { path: filePath } }
+                  })
+                ),
+              ({ filePath, file }, exit) =>
+                Effect.gen(function* () {
+                  yield* Effect.promise(() =>
+                    file.close().finally(() => {
+                      activeUploadPaths.delete(filePath)
+                      return Exit.isFailure(exit)
+                        ? fs.rm(filePath, { force: true })
+                        : undefined
+                    })
+                  )
+                  yield* service.terminalUploadMutation(
+                    Effect.promise(() =>
+                      pruneTerminalUploads(
+                        uploadDirectory,
+                        new Set([...activeUploadPaths, filePath])
+                      )
+                    )
+                  )
+                })
+            )
+            return jsonContractResponse(
+              uploadedFileResponseSchema,
+              uploaded,
+              201
+            )
+          })
         )
-        return jsonContractResponse(uploadedFileResponseSchema, uploaded, 201)
-      })
     ),
     route(
       'PATCH',
