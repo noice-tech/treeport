@@ -552,17 +552,7 @@ export function WorkspaceTree({
                                       >
                                         {title}
                                       </span>
-                                      {focusedSurface === 'terminal' &&
-                                      shortcutIndex ? (
-                                        <kbd
-                                          className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
-                                          aria-hidden="true"
-                                        >
-                                          ⌘{shortcutIndex}
-                                        </kbd>
-                                      ) : (
-                                        <span aria-hidden="true" />
-                                      )}
+                                      <span aria-hidden="true" />
                                     </Button>
                                   </SidebarMenuSubButton>
                                 </ContextMenuTrigger>
