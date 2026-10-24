@@ -1,4 +1,4 @@
-import type { TerminalProgram, TerminalProgress } from '@treeport/shared'
+import type { TerminalActivity, TerminalProgram } from '@treeport/shared'
 import { cn } from '../lib/utils'
 
 // Cache the original stroke at 120 frames/second instead of repainting it on
@@ -14,31 +14,28 @@ const COMET_MASK = `url("data:image/svg+xml,${encodeURIComponent(
 
 export function TerminalStatusIcon({
   program,
-  progress,
+  activity,
   attention,
   exited,
   className,
   title
 }: {
   program: TerminalProgram | null
-  progress: TerminalProgress | null
+  activity: TerminalActivity | null
   attention: boolean
   exited: boolean
   className?: string
   title?: string
 }) {
-  const working =
-    progress !== null &&
-    !attention &&
-    progress.state !== 'paused' &&
-    progress.state !== 'error'
+  const state = activity?.state ?? 'idle'
+  const working = state === 'working' && !attention
   const iconColor = attention
     ? 'text-amber-300'
-    : progress?.state === 'error'
+    : state === 'error'
       ? 'text-rose-300'
-      : progress?.state === 'paused'
+      : state === 'blocked'
         ? 'text-amber-300'
-        : exited && !progress
+        : exited && state === 'idle'
           ? 'text-rose-300'
           : working
             ? 'text-accent-400'

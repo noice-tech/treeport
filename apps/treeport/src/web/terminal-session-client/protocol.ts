@@ -252,15 +252,6 @@ export function makeProtocol(
         return
       }
 
-      if (event === 'progress') {
-        if (!parseTerminalServerEvent('progress', value)) {
-          dependencies.failProtocol('The terminal server sent invalid progress')
-        }
-
-        // Product-event metadata remains the web progress authority.
-        return
-      }
-
       if (event === 'control') {
         const message = parseTerminalServerEvent('control', value)
         if (!message) {

@@ -185,8 +185,15 @@ async function fixture(
       Effect.succeed({
         title: null,
         status: 'running' as const,
-        progress: null,
-        bell: null
+        activity: {
+          state: 'idle',
+          kind: null,
+          progress: null,
+          app: null,
+          message: null,
+          since: null
+        },
+        attention: null
       })
     ),
     write: vi.fn((_terminalId, data) => Effect.sync(() => child.write(data))),
@@ -201,10 +208,15 @@ async function fixture(
     terminalId: 'term',
     title: 'shell',
     program: null,
-    progress: null,
-    progressStartedAt: null,
-    progressClearedAt: null,
-    bell: null
+    activity: {
+      state: 'idle',
+      kind: null,
+      progress: null,
+      app: null,
+      message: null,
+      since: null
+    },
+    attention: null
   }
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [
     currentMetadata

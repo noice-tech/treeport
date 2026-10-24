@@ -27,7 +27,8 @@ self.addEventListener('push', (event) => {
             : 'A terminal needs attention.',
         icon: '/icon-192.png',
         badge: '/icon-192.png',
-        tag: typeof payload.tag === 'string' ? payload.tag : 'treeport-bell',
+        tag:
+          typeof payload.tag === 'string' ? payload.tag : 'treeport-attention',
         data: { url: typeof payload.url === 'string' ? payload.url : '/' }
       }
     )

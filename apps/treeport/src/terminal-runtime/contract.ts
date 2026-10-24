@@ -16,9 +16,19 @@ interface TerminalSize {
   rows: number
 }
 
-export interface TerminalProgress {
-  state: 'normal' | 'error' | 'indeterminate' | 'paused'
-  value: number | null
+export interface TerminalActivity {
+  state: 'idle' | 'working' | 'blocked' | 'done' | 'error'
+  kind: 'permission' | 'question' | 'auth' | null
+  progress: number | null
+  app: string | null
+  message: string | null
+  since: string | null
+}
+
+export interface TerminalAttention {
+  sequence: number
+  at: string
+  reason: 'bell' | 'done' | 'blocked' | 'error'
 }
 
 interface TerminalSetupTask {
@@ -106,8 +116,8 @@ export interface TerminalTraceContext {
 
 export interface TerminalHostRuntimeEvent {
   title?: string | undefined
-  progress?: TerminalProgress | null | undefined
-  bell?: { sequence: number; at: string } | undefined
+  activity?: TerminalActivity | undefined
+  attention?: TerminalAttention | undefined
   commandExitCode?: number | null | undefined
   exitCode?: number | null | undefined
   titleState?: TerminalTitleState | undefined

@@ -47,10 +47,15 @@ async function fixture(): Promise<RpcFixture> {
     terminalId: 'term',
     title: 'shell',
     program: null,
-    progress: null,
-    progressStartedAt: null,
-    progressClearedAt: null,
-    bell: null
+    activity: {
+      state: 'idle',
+      kind: null,
+      progress: null,
+      app: null,
+      message: null,
+      since: null
+    },
+    attention: null
   }
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [
     metadata
@@ -134,20 +139,30 @@ describe('Effect RPC project event stream', () => {
         terminalId: 'term',
         title: 'represented-by-snapshot',
         program: null,
-        progress: null,
-        progressStartedAt: null,
-        progressClearedAt: null,
-        bell: null
+        activity: {
+          state: 'idle',
+          kind: null,
+          progress: null,
+          app: null,
+          message: null,
+          since: null
+        },
+        attention: null
       })
       setTimeout(() => {
         value.events.publish('terminal.metadata', {
           terminalId: 'term',
           title: 'incremental',
           program: null,
-          progress: null,
-          progressStartedAt: null,
-          progressClearedAt: null,
-          bell: null
+          activity: {
+            state: 'idle',
+            kind: null,
+            progress: null,
+            app: null,
+            message: null,
+            since: null
+          },
+          attention: null
         })
       }, 0)
       return [
@@ -155,10 +170,15 @@ describe('Effect RPC project event stream', () => {
           terminalId: 'term',
           title: 'represented-by-snapshot',
           program: null,
-          progress: null,
-          progressStartedAt: null,
-          progressClearedAt: null,
-          bell: null
+          activity: {
+            state: 'idle',
+            kind: null,
+            progress: null,
+            app: null,
+            message: null,
+            since: null
+          },
+          attention: null
         }
       ]
     })
@@ -181,10 +201,15 @@ describe('Effect RPC project event stream', () => {
           terminalId: 'term',
           title: `queued-${sequence}`,
           program: null,
-          progress: null,
-          progressStartedAt: null,
-          progressClearedAt: null,
-          bell: null
+          activity: {
+            state: 'idle',
+            kind: null,
+            progress: null,
+            app: null,
+            message: null,
+            since: null
+          },
+          attention: null
         })
       }
       return []
@@ -193,7 +218,7 @@ describe('Effect RPC project event stream', () => {
     await expect(collect(value.url, 2)).rejects.toThrow(/could not keep up/i)
   })
 
-  it('isolates clients while streaming durable apps and bell acknowledgements to both', async () => {
+  it('isolates clients while streaming durable apps and attention acknowledgements to both', async () => {
     const value = await fixture()
     value.listWebApps.mockReturnValue(
       Effect.succeed([
@@ -246,13 +271,19 @@ describe('Effect RPC project event stream', () => {
       terminalId: 'term',
       title: 'shell',
       program: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: {
+      activity: {
+        state: 'idle',
+        kind: null,
+        progress: null,
+        app: null,
+        message: null,
+        since: null
+      },
+      attention: {
         sequence: 1,
         at: '2026-01-01T00:02:00.000Z',
-        unread: false
+        unread: false,
+        reason: 'bell'
       }
     })
 
@@ -274,7 +305,7 @@ describe('Effect RPC project event stream', () => {
         _tag: 'ProductEvent',
         event: {
           type: 'terminal.metadata',
-          data: { bell: { sequence: 1, unread: false } }
+          data: { attention: { sequence: 1, unread: false } }
         }
       })
       expect(received[2]).toMatchObject({

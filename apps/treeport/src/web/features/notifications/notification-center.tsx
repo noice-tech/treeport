@@ -10,7 +10,7 @@ import {
   PopoverTrigger
 } from '../../components/ui/popover'
 import { terminalSessions } from '../../terminal-session'
-import { useTerminalBellMetadata } from '../../terminal-runtime-metadata-react'
+import { useTerminalAttentionMetadata } from '../../terminal-runtime-metadata-react'
 import {
   targetForTerminal,
   type WorkspaceTarget
@@ -48,7 +48,7 @@ export function NotificationCenter({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { bells, titles } = useTerminalBellMetadata()
+  const { attention, titles } = useTerminalAttentionMetadata()
   const [pending, setPending] = useState<Set<string>>(() => new Set())
   const notifications = useMemo(
     () =>
@@ -56,14 +56,14 @@ export function NotificationCenter({
         .flatMap((project) =>
           project.worktrees.flatMap((worktree) =>
             worktree.terminals.flatMap((terminal) => {
-              const bell = bells.get(terminal.id)
+              const entry = attention.get(terminal.id)
               const target = targetForTerminal(projects, terminal)
-              return bell?.unread && target
+              return entry?.unread && target
                 ? [
                     {
                       terminalId: terminal.id,
-                      sequence: bell.sequence,
-                      occurredAt: bell.at,
+                      sequence: entry.sequence,
+                      occurredAt: entry.at,
                       title: titles.get(terminal.id) ?? terminal.name,
                       context: `${project.name} · ${worktree.name}`,
                       target
@@ -78,7 +78,7 @@ export function NotificationCenter({
             right.occurredAt.localeCompare(left.occurredAt) ||
             left.terminalId.localeCompare(right.terminalId)
         ),
-    [bells, projects, titles]
+    [attention, projects, titles]
   )
   const count = notifications.length
   const label =
@@ -93,7 +93,7 @@ export function NotificationCenter({
   ): Promise<void> => {
     setPending((current) => new Set(current).add(terminalId))
     await terminalSessions
-      .acknowledgeBell(terminalId, sequence)
+      .acknowledgeAttention(terminalId, sequence)
       .catch((error) => {
         notifyError(error, {
           operation: `mark notification for terminal “${title}” as read`

@@ -662,7 +662,7 @@ function appUrl(worktree: WorktreeRecord, appId: string): string {
   return target.href
 }
 
-type WaitCondition = 'idle' | 'working' | 'bell' | 'exit'
+type WaitCondition = 'idle' | 'working' | 'attention' | 'exit'
 
 interface TerminalObservation {
   terminal: TerminalRecord
@@ -740,21 +740,23 @@ async function waitForTerminal(
   timeoutMs?: number
 ): Promise<TerminalWaitResult> {
   let observation: TerminalObservation | null = null
-  let bellBaseline: number | null = null
+  let attentionBaseline: number | null = null
   const matched = (observedAt: string): TerminalWaitResult | null => {
     if (!observation) {
       return null
     }
 
     const matches =
-      (condition === 'idle' && observation.metadata.progress === null) ||
-      (condition === 'working' && observation.metadata.progress !== null) ||
+      (condition === 'idle' &&
+        observation.metadata.activity.state !== 'working') ||
+      (condition === 'working' &&
+        observation.metadata.activity.state === 'working') ||
       (condition === 'exit' &&
         (observation.terminal.commandExitCode != null ||
           observation.terminal.status === 'exited')) ||
-      (condition === 'bell' &&
-        bellBaseline !== null &&
-        (observation.metadata.bell?.sequence ?? 0) > bellBaseline)
+      (condition === 'attention' &&
+        attentionBaseline !== null &&
+        (observation.metadata.attention?.sequence ?? 0) > attentionBaseline)
     if (!matches) {
       return null
     }
@@ -762,8 +764,8 @@ async function waitForTerminal(
     return {
       condition,
       observedAt:
-        condition === 'bell'
-          ? (observation.metadata.bell?.at ?? observedAt)
+        condition === 'attention'
+          ? (observation.metadata.attention?.at ?? observedAt)
           : observedAt,
       ...observation
     }
@@ -788,8 +790,8 @@ async function waitForTerminal(
 
   try {
     observation = await inspectTerminal(terminalId, controller.signal)
-    if (condition === 'bell') {
-      bellBaseline = observation.metadata.bell?.sequence ?? 0
+    if (condition === 'attention') {
+      attentionBaseline = observation.metadata.attention?.sequence ?? 0
     }
 
     const immediate = matched(new Date().toISOString())
@@ -2604,9 +2606,12 @@ async function main(args: string[]): Promise<void> {
     const observation = await inspectTerminal(resolveTerminalId(identifier))
     print(observation, () => {
       const { terminal, metadata } = observation
-      const progress = metadata.progress
-        ? `working (${metadata.progress.state}${metadata.progress.value === null ? '' : ` ${metadata.progress.value}%`})`
-        : 'idle'
+      const { activity, attention } = metadata
+      const details = [
+        activity.kind,
+        activity.progress === null ? null : `${activity.progress}%`,
+        activity.message
+      ].filter(Boolean)
       const status =
         terminal.status === 'exited'
           ? `exited${terminal.exitCode === null ? '' : ` (${terminal.exitCode})`}`
@@ -2615,7 +2620,7 @@ async function main(args: string[]): Promise<void> {
         terminal.commandExitCode == null
           ? ''
           : `\nCommand:  exited (${terminal.commandExitCode})`
-      return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}${command}\nTitle:    ${metadata.title ?? '—'}\nProgress: ${progress}\nStarted:  ${metadata.progressStartedAt ?? '—'}\nCleared:  ${metadata.progressClearedAt ?? '—'}\nBell:     ${metadata.bell ? `${metadata.bell.at} (#${metadata.bell.sequence})` : '—'}`
+      return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}${command}\nTitle:    ${metadata.title ?? '—'}\nActivity: ${activity.state}${details.length ? ` (${details.join(', ')})` : ''}\nSince:    ${activity.since ?? '—'}\nAttention: ${attention ? `${attention.reason} at ${attention.at} (#${attention.sequence}${attention.unread ? ', unread' : ''})` : '—'}`
     })
   })
 
@@ -2654,7 +2659,7 @@ async function main(args: string[]): Promise<void> {
     .description('Wait for a terminal runtime condition')
     .argument('<terminal-id-or-dot>', 'terminal to observe')
     .requiredOption(
-      '--until <idle|working|bell|exit>',
+      '--until <idle|working|attention|exit>',
       'condition to wait for (exit: initial launched process or terminal session)'
     )
     .option('--timeout <duration>', 'maximum wait, such as 30s or 5m')
@@ -2664,9 +2669,9 @@ async function main(args: string[]): Promise<void> {
       until: string
       timeout?: string
     }>()
-    if (!['idle', 'working', 'bell', 'exit'].includes(options.until)) {
+    if (!['idle', 'working', 'attention', 'exit'].includes(options.until)) {
       throw new CliError(
-        '--until must be one of idle, working, bell, or exit',
+        '--until must be one of idle, working, attention, or exit',
         2
       )
     }

@@ -647,10 +647,7 @@ export class TerminalAttachmentManager {
     connection: ClientConnection,
     metadata: TerminalRuntimeMetadata
   ): boolean {
-    return (
-      this.send(connection, 'title', { title: metadata.title ?? '' }) &&
-      this.send(connection, 'progress', { progress: metadata.progress })
-    )
+    return this.send(connection, 'title', { title: metadata.title ?? '' })
   }
 
   private sendOutput(connection: ClientConnection, data: string): void {

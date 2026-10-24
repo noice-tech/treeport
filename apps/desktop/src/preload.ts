@@ -339,7 +339,7 @@ const desktopBridge = Object.freeze({
       ipcRenderer.removeListener('native-browser:unavailable', receive)
   },
   requestAttention() {
-    ipcRenderer.send('bell-attention:request')
+    ipcRenderer.send('attention:request')
   },
   setTheme(theme: TreeportTheme) {
     ipcRenderer.send('desktop:set-theme', theme)

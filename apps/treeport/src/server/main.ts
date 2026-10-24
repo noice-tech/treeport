@@ -210,55 +210,57 @@ export async function main(
         resourceScope
       )
     )
-    const pendingBells = new Set<string>()
-    const unsubscribePush = terminalMetadata.subscribeLiveBells((metadata) => {
-      const terminalId = metadata.terminalId
-      if (
-        !push.hasSubscriptions ||
-        pendingBells.has(terminalId) ||
-        pendingBells.size >= 256
-      ) {
-        return
-      }
+    const pendingAttention = new Set<string>()
+    const unsubscribePush = terminalMetadata.subscribeLiveAttention(
+      (metadata) => {
+        const terminalId = metadata.terminalId
+        if (
+          !push.hasSubscriptions ||
+          pendingAttention.has(terminalId) ||
+          pendingAttention.size >= 256
+        ) {
+          return
+        }
 
-      pendingBells.add(terminalId)
-      service.forkApplicationEffect(
-        Effect.gen(function* () {
-          // Let focused clients acknowledge the BEL before sending. Coalesce
-          // bursts, but never hide a received push in the worker (iOS revokes it).
-          yield* Effect.sleep('750 millis')
-          const current = terminalMetadata.get(terminalId)
-          if (!current.bell?.unread || !push.hasSubscriptions) {
-            return
-          }
+        pendingAttention.add(terminalId)
+        service.forkApplicationEffect(
+          Effect.gen(function* () {
+            // Let focused clients acknowledge attention before sending. Coalesce
+            // bursts, but never hide a received push in the worker (iOS revokes it).
+            yield* Effect.sleep('750 millis')
+            const current = terminalMetadata.get(terminalId)
+            if (!current.attention?.unread || !push.hasSubscriptions) {
+              return
+            }
 
-          const terminal = yield* service.terminals.getTerminal(terminalId)
-          const worktree = yield* service.projects.getWorktree(
-            terminal.worktreeId
-          )
-          yield* Effect.tryPromise(() =>
-            push.notify(
-              {
-                title: current.title ?? terminal.name,
-                body: `Terminal needs attention · ${worktree.name}`,
-                url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
-                tag: `treeport-bell:${terminalId}`
-              },
-              presence.snapshot()
+            const terminal = yield* service.terminals.getTerminal(terminalId)
+            const worktree = yield* service.projects.getWorktree(
+              terminal.worktreeId
+            )
+            yield* Effect.tryPromise(() =>
+              push.notify(
+                {
+                  title: current.title ?? terminal.name,
+                  body: `Terminal needs attention · ${worktree.name}`,
+                  url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
+                  tag: `treeport-attention:${terminalId}`
+                },
+                presence.snapshot()
+              )
+            )
+          }).pipe(
+            Effect.catchAll(() =>
+              Effect.logWarning('Terminal Web Push notification failed')
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                pendingAttention.delete(terminalId)
+              })
             )
           )
-        }).pipe(
-          Effect.catchAll(() =>
-            Effect.logWarning('Terminal Web Push notification failed')
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              pendingBells.delete(terminalId)
-            })
-          )
         )
-      )
-    })
+      }
+    )
     await Effect.runPromise(
       Scope.extend(
         Effect.addFinalizer(() => Effect.sync(unsubscribePush)),

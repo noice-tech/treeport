@@ -13,7 +13,7 @@ export function WorkspaceWindowTitle({
   selectedWorktree: WorktreeRecord | null
   disconnected: boolean
 }) {
-  const { attention, programs, progress } = useTerminalNavigationMetadata()
+  const { attention, programs, activity } = useTerminalNavigationMetadata()
   let working = 0
   let needsAttention = 0
   for (const project of projects) {
@@ -23,14 +23,14 @@ export function WorkspaceWindowTitle({
           continue
         }
 
-        const terminalProgress = progress.get(terminal.id)
+        const state = activity.get(terminal.id)?.state
         if (
           attention.has(terminal.id) ||
-          terminalProgress?.state === 'paused' ||
-          terminalProgress?.state === 'error'
+          state === 'blocked' ||
+          state === 'error'
         ) {
           needsAttention += 1
-        } else if (terminalProgress) {
+        } else if (state === 'working') {
           working += 1
         }
       }

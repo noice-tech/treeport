@@ -202,7 +202,7 @@ export function registerTreeportTools(
   )
   register(
     ['terminal', 'inspect'],
-    'Read terminal status, launched-command exit status, and progress metadata. A running shell can have a completed command.',
+    'Read terminal status, launched-command exit status, activity, and attention. A running shell can have a completed command.',
     Type.Object({ terminal: identifier }),
     Type.Object(
       { terminal: object, metadata: object },
@@ -225,11 +225,13 @@ export function registerTreeportTools(
   )
   register(
     ['terminal', 'wait'],
-    'Wait for idle, working, bell, or exit. Exit includes completion of the initial command even if its shell stays open. Timeout is an error, not success.',
+    'Wait for idle, working, attention, or exit. Exit includes completion of the initial command even if its shell stays open. Timeout is an error, not success.',
     Type.Object({
       terminal: identifier,
       until: Type.Union(
-        ['idle', 'working', 'bell', 'exit'].map((value) => Type.Literal(value))
+        ['idle', 'working', 'attention', 'exit'].map((value) =>
+          Type.Literal(value)
+        )
       ),
       timeoutSeconds: Type.Optional(
         Type.Integer({

@@ -31,9 +31,10 @@ import {
   type TerminalHostOutput,
   type TerminalHostRuntimeEvent,
   type TerminalHostSnapshot,
+  type TerminalActivity,
+  type TerminalAttention,
   type TerminalLaunchSpec,
   type TerminalProcess,
-  type TerminalProgress,
   type TerminalSessionState,
   type TerminalTitleState
 } from './contract'
@@ -49,13 +50,14 @@ export type { TerminalHostRuntimeEvent } from './contract'
 const HOST_SCROLLBACK_LINES = 50_000
 // Bounds unfinished VT input a snapshot carries, such as a partial image upload.
 const HOST_CONTINUATION_BYTES = 64 * 1024 * 1024
-const PROGRESS_STATES = [
-  null,
-  'normal',
-  'error',
-  'indeterminate',
-  'paused'
-] as const
+const IDLE_ACTIVITY: TerminalActivity = {
+  state: 'idle',
+  kind: null,
+  progress: null,
+  app: null,
+  message: null,
+  since: null
+}
 const HOST_PARSER_HIGH_WATERMARK = 1024 * 1024
 const HOST_PARSER_LOW_WATERMARK = 256 * 1024
 const PROCESS_TREE_KILL_GRACE_MS = 500
@@ -104,9 +106,11 @@ type ParserCommand =
 type RuntimeCommand =
   | { readonly _tag: 'Title'; readonly title: string }
   | { readonly _tag: 'TitleState'; readonly value: TerminalTitleState }
+  // OSC 9;4 says only busy, a percentage, or error.
   | {
       readonly _tag: 'Progress'
-      readonly value: TerminalProgress | null
+      readonly state: 'idle' | 'working' | 'error'
+      readonly progress: number | null
       readonly at: number
     }
   | { readonly _tag: 'Bell' }
@@ -122,10 +126,9 @@ interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
   readonly specPath: string | null
   title: string | null
   commandLine: string | null
-  progress: TerminalProgress | null
+  activity: TerminalActivity
   progressFiber: Fiber.RuntimeFiber<void, never> | null
-  bellSequence: number
-  lastBellAt: string | null
+  attention: TerminalAttention | null
   readonly pty: IPty | PersistentSession
   replaying: boolean
   processingSequence: number
@@ -699,7 +702,8 @@ export class TerminalHostSessions {
             ownedSession.exitCode = owner.exitCode
             Queue.unsafeOffer(ownedSession.runtimeCommands, {
               _tag: 'Progress',
-              value: null,
+              state: 'idle',
+              progress: null,
               at: Date.now()
             })
             yield* Effect.logWarning(
@@ -965,8 +969,11 @@ export class TerminalHostSessions {
             }
 
             if (hosted.replaying) {
-              hosted.bellSequence += 1
-              hosted.lastBellAt = new Date(hosted.processingTime).toISOString()
+              hosted.attention = {
+                sequence: (hosted.attention?.sequence ?? 0) + 1,
+                at: new Date(hosted.processingTime).toISOString(),
+                reason: 'bell'
+              }
               return
             }
 
@@ -985,13 +992,18 @@ export class TerminalHostSessions {
               return
             }
 
-            const progressState = PROGRESS_STATES[state] ?? null
+            // Paused progress is still unfinished work, not a wait on the user.
+            const progressState =
+              (['idle', 'working', 'error', 'working', 'working'] as const)[
+                state
+              ] ?? 'idle'
             Queue.unsafeOffer(hosted.runtimeCommands, {
               _tag: 'Progress',
-              value: progressState && {
-                state: progressState,
-                value: value < 0 ? null : Math.min(100, value)
-              },
+              state: progressState,
+              progress:
+                progressState === 'working' && value >= 0
+                  ? Math.min(100, value)
+                  : null,
               at: hosted.processingTime
             })
           },
@@ -1126,10 +1138,9 @@ export class TerminalHostSessions {
         specPath,
         title: input.initialTitle ?? null,
         commandLine: input.initialTitle ?? null,
-        progress: null,
+        activity: IDLE_ACTIVITY,
         progressFiber: null,
-        bellSequence: 0,
-        lastBellAt: null,
+        attention: null,
         pty: child,
         replaying: child instanceof PersistentSession,
         processingSequence: 0,
@@ -1352,10 +1363,13 @@ export class TerminalHostSessions {
             })
             return
           case 'Bell':
-            session.bellSequence += 1
-            session.lastBellAt = new Date().toISOString()
+            session.attention = {
+              sequence: (session.attention?.sequence ?? 0) + 1,
+              at: new Date().toISOString(),
+              reason: 'bell'
+            }
             yield* PubSub.publish(session.runtime, {
-              bell: { sequence: session.bellSequence, at: session.lastBellAt }
+              attention: session.attention
             })
             return
           case 'Progress': {
@@ -1369,20 +1383,36 @@ export class TerminalHostSessions {
               this.options.progressStaleMs -
                 Math.max(0, Date.now() - command.at)
             )
-            session.progress = remainingMs > 0 ? command.value : null
+            const state = remainingMs > 0 ? command.state : 'idle'
+            session.activity = {
+              ...IDLE_ACTIVITY,
+              state,
+              progress: remainingMs > 0 ? command.progress : null,
+              since:
+                state === session.activity.state
+                  ? session.activity.since
+                  : new Date(command.at).toISOString()
+            }
             yield* PubSub.publish(session.runtime, {
-              progress: session.progress
+              activity: session.activity
             })
-            if (session.progress !== null) {
+            if (state !== 'idle') {
               session.progressFiber = yield* Effect.forkIn(
                 Effect.sleep(remainingMs).pipe(
                   Effect.zipRight(
                     Effect.sync(() => {
-                      session.progress = null
+                      session.activity = {
+                        ...IDLE_ACTIVITY,
+                        since: new Date().toISOString()
+                      }
                     })
                   ),
                   Effect.zipRight(
-                    PubSub.publish(session.runtime, { progress: null })
+                    Effect.suspend(() =>
+                      PubSub.publish(session.runtime, {
+                        activity: session.activity
+                      })
+                    )
                   ),
                   Effect.asVoid
                 ),
@@ -1403,7 +1433,13 @@ export class TerminalHostSessions {
               session.progressFiber = null
             }
 
-            session.progress = null
+            if (session.activity.state !== 'idle') {
+              session.activity = {
+                ...IDLE_ACTIVITY,
+                since: new Date(command.at).toISOString()
+              }
+            }
+
             session.status = 'exited'
             session.exitCode = command.exitCode
             session.updatedAt = new Date(command.at).toISOString()
@@ -1532,8 +1568,8 @@ export class TerminalHostSessions {
   runtimeState(terminalId: string): Effect.Effect<{
     title: string | null
     status: HostedTerminal['status']
-    progress: TerminalProgress | null
-    bell: { sequence: number; at: string } | null
+    activity: TerminalActivity
+    attention: TerminalAttention | null
   } | null> {
     return this.session(terminalId).pipe(
       Effect.map((session) =>
@@ -1541,14 +1577,8 @@ export class TerminalHostSessions {
           ? {
               title: session.title,
               status: session.status,
-              progress: session.progress,
-              bell:
-                session.lastBellAt === null
-                  ? null
-                  : {
-                      sequence: session.bellSequence,
-                      at: session.lastBellAt
-                    }
+              activity: session.activity,
+              attention: session.attention
             }
           : null
       )
