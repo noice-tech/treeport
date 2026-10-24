@@ -1,5 +1,11 @@
 import * as Schema from 'effect/Schema'
 import type { WebApp, WebAppInput, WebAppPermission } from '@treeport/app-sdk'
+import type {
+  TreeBadge,
+  TreeBadgeTone,
+  WorkerProject,
+  WorkerTree
+} from '@treeport/app-sdk/worker'
 import { browserUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import type { WorkspacePresence } from './presence-protocol.js'
@@ -37,6 +43,14 @@ export type {
   WorktreeListener,
   WorktreeListenerDiscovery
 } from '@treeport/app-sdk'
+export type {
+  PackageWorker,
+  TreeBadge,
+  TreeBadgeInput,
+  TreeBadgeTone,
+  WorkerProject,
+  WorkerTree
+} from '@treeport/app-sdk/worker'
 export * from './browser-protocol.js'
 export * from './browser-clipboard.js'
 export * from './browser-page-metadata.js'
@@ -106,21 +120,7 @@ export const TREE_BADGE_TONES = [
   'warning',
   'danger',
   'done'
-] as const
-
-export type TreeBadgeTone = (typeof TREE_BADGE_TONES)[number]
-
-/** A compact status published for a tree by a script, hook, or package. */
-export interface TreeBadge {
-  key: string
-  text: string
-  tone: TreeBadgeTone
-  url: string | null
-  tooltip: string | null
-  /** ID of the package that owns this badge, or null when set directly. */
-  source: string | null
-  updatedAt: string
-}
+] as const satisfies readonly TreeBadgeTone[]
 
 export interface TerminalRecord {
   id: string
@@ -300,7 +300,8 @@ export interface OpenBrowserAppResult {
   app: BrowserApp
 }
 
-export interface WorktreeRecord {
+// Workers read trees and projects through the SDK's narrower views.
+export interface WorktreeRecord extends WorkerTree {
   id: string
   projectId: string
   name: string
@@ -335,10 +336,12 @@ export const PROJECT_COLORS = [
 
 export type ProjectColor = (typeof PROJECT_COLORS)[number]
 
-export interface ProjectRecord {
+export interface ProjectRecord extends WorkerProject {
   id: string
   name: string
   kind: ProjectKind
+  /** Fetch URL of the repository's origin remote, when it has one. */
+  originUrl: string | null
   /** Canonical root folder for this project. */
   rootPath: string
   /**

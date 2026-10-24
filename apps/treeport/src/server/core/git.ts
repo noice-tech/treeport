@@ -606,6 +606,16 @@ class PromiseGitAdapter {
     return match?.[1] ?? null
   }
 
+  async originUrl(cwd: string): Promise<string | null> {
+    const result = await this.runner.run({
+      executable: this.executable,
+      args: ['config', '--get', 'remote.origin.url'],
+      cwd,
+      timeoutMs: 10_000
+    })
+    return result.exitCode === 0 ? result.stdout.trim() || null : null
+  }
+
   async defaultBranch(cwd: string): Promise<string> {
     const remote = await this.remoteDefaultBranch(cwd)
     if (remote) {
@@ -1448,6 +1458,10 @@ export class GitAdapter {
     return this.operation('remoteDefaultBranch', () =>
       this.implementation.remoteDefaultBranch(cwd)
     )
+  }
+
+  originUrl(cwd: string): GitEffect<string | null> {
+    return this.operation('originUrl', () => this.implementation.originUrl(cwd))
   }
 
   defaultBranch(cwd: string): GitEffect<string> {

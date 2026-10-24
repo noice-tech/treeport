@@ -7,7 +7,7 @@ import type {
   WebAppPermission,
   WorktreeRecord
 } from '@treeport/shared'
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
@@ -26,6 +26,7 @@ import {
   TerminalOperations
 } from '../domain-services'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
+import { EventBusPort } from '../infrastructure/ports'
 import { DatabasePort } from '../../database'
 import { GitPort } from '../../git'
 import { ProjectStore } from './project-store'
@@ -268,6 +269,24 @@ export class ProjectSnapshotService {
           task.project.repositoryPath,
           task.project.mainWorktreePath
         )
+        // Remotes change rarely; checking here keeps existing projects current.
+        const originUrl = yield* git
+          .originUrl(task.project.repositoryPath)
+          .pipe(Effect.orElseSucceed(() => task.project.originUrl))
+        if (originUrl !== task.project.originUrl) {
+          const database = yield* DatabasePort
+          const events = yield* EventBusPort
+          yield* database
+            .execute('project.snapshot.service.origin-url', (db) =>
+              db.run(sql`
+                UPDATE projects SET origin_url = ${originUrl}
+                WHERE id = ${task.project.id}
+              `)
+            )
+            .pipe(Effect.orDie)
+          this.invalidate()
+          events.publish('project.updated', { projectId: task.project.id })
+        }
       }
     })
   }

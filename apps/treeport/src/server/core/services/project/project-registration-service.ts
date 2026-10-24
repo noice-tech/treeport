@@ -275,6 +275,9 @@ export class ProjectRegistrationService {
         const defaultBranch = yield* git
           .defaultBranch(repositoryPath)
           .pipe(Effect.orDie)
+        const originUrl = yield* git
+          .originUrl(repositoryPath)
+          .pipe(Effect.orElseSucceed(() => null))
         const requested = requestedName?.trim() || null
         const existingMetadataRows = existing
           ? yield* database
@@ -351,10 +354,11 @@ export class ProjectRegistrationService {
             db.run(sql`
             INSERT INTO projects(
               id,name,project_kind,repository_path,main_worktree_path,default_branch,
-              repository_identity,repository_device,repository_inode,name_is_custom,
-              is_open,show_in_recents,last_opened_at,created_at,updated_at
+              origin_url,repository_identity,repository_device,repository_inode,
+              name_is_custom,is_open,show_in_recents,last_opened_at,created_at,updated_at
             ) VALUES(
               ${projectId},${name},'repository',${repositoryPath},${mainPath},${defaultBranch},
+              ${originUrl},
               ${repositoryIdentity},${repositoryDevice},${repositoryInode},
               ${nameIsCustom ? 1 : 0},1,0,${timestamp},
               ${existing?.createdAt ?? timestamp},${timestamp}
@@ -365,6 +369,7 @@ export class ProjectRegistrationService {
               repository_path=excluded.repository_path,
               main_worktree_path=excluded.main_worktree_path,
               default_branch=excluded.default_branch,
+              origin_url=excluded.origin_url,
               repository_identity=excluded.repository_identity,
               repository_device=excluded.repository_device,
               repository_inode=excluded.repository_inode,
@@ -637,6 +642,7 @@ export class ProjectRegistrationService {
                 repository_path=excluded.repository_path,
                 main_worktree_path=excluded.main_worktree_path,
                 default_branch='',
+                origin_url=NULL,
                 repository_identity=NULL,
                 repository_device=excluded.repository_device,
                 repository_inode=excluded.repository_inode,

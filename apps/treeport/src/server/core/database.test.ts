@@ -55,6 +55,7 @@ async function restoreVersion7WorktreeSchema(
     CREATE UNIQUE INDEX worktrees_tmux_socket_name_unique
     ON worktrees(tmux_socket_name)
   `)
+  await database.db.run(sql`ALTER TABLE projects DROP COLUMN origin_url`)
   // These fixtures emulate the historical schema before the app rename.
   await database.db.run(sql`ALTER TABLE web_apps RENAME TO web_panels`)
   await database.db.run(sql`ALTER TABLE browser_apps RENAME TO browser_panels`)

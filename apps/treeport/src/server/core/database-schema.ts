@@ -19,6 +19,7 @@ export const projects = sqliteTable(
     repositoryPath: text('repository_path').notNull().unique(),
     mainWorktreePath: text('main_worktree_path').notNull(),
     defaultBranch: text('default_branch').notNull(),
+    originUrl: text('origin_url'),
     color: text(),
     repositoryIdentity: text('repository_identity'),
     repositoryDevice: text('repository_device').notNull(),

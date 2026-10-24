@@ -531,6 +531,7 @@ export function mapProject(
     repositoryPath: row.repositoryPath,
     mainWorktreePath: row.mainWorktreePath,
     defaultBranch: row.defaultBranch,
+    originUrl: row.originUrl,
     // SAFETY: The query selects the columns required by this database row contract.
     color: row.color as ProjectRecord['color'],
     availability: { state: 'available', message: null },

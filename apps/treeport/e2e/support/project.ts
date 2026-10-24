@@ -8,6 +8,7 @@ export const project: ProjectRecord = {
   repositoryPath: '/repo',
   mainWorktreePath: '/repo',
   defaultBranch: 'trunk',
+  originUrl: null,
   color: null,
   availability: { state: 'available' as const, message: null },
   createdAt: '2026-01-01',

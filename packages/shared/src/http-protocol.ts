@@ -175,6 +175,7 @@ export const projectRecordSchema = Schema.Struct({
   repositoryPath: Schema.String,
   mainWorktreePath: Schema.String,
   defaultBranch: Schema.String,
+  originUrl: nullableStringSchema,
   color: Schema.NullOr(projectColorSchema),
   availability: Schema.Struct({
     state: Schema.Literal('available', 'unavailable'),

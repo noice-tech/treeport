@@ -570,6 +570,22 @@ importers:
 
   packages/desktop-bridge: {}
 
+  packages/github:
+    dependencies:
+      '@treeport/app-sdk':
+        specifier: workspace:*
+        version: link:../app-sdk
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.9
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/pi:
     devDependencies:
       '@earendil-works/pi-coding-agent':
@@ -2404,6 +2420,7 @@ packages:
   '@opentelemetry/sdk-trace-web@2.11.0':
     resolution: {integrity: sha512-8hgLI437x8VRKzgUr+WRcHFp9AeaHmveKRsPIMNele9tethgCKprakRRqZCWyt41ilALHATfspUMl1An0OTMUQ==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
 

@@ -59,6 +59,7 @@ function fixture(webDist = '/missing') {
     repositoryPath: '/repo',
     mainWorktreePath: '/repo',
     defaultBranch: '',
+    originUrl: null,
     color: null,
     availability: { state: 'available' as const, message: null },
     worktrees: [],

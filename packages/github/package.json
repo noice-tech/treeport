@@ -4,7 +4,7 @@
   "description": "GitHub pull request status on Treeport trees.",
   "type": "module",
   "files": [
-    "worker.mjs",
+    "dist",
     "LICENSE"
   ],
   "keywords": [
@@ -15,7 +15,7 @@
       "pull-requests": {
         "executable": "node",
         "args": [
-          "${packageRoot}/worker.mjs"
+          "${packageRoot}/dist/worker.js"
         ]
       }
     }
@@ -35,5 +35,18 @@
   "homepage": "https://treeport.app",
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "pnpm clean && tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
+  },
+  "dependencies": {
+    "@treeport/app-sdk": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.9",
+    "typescript": "catalog:"
   }
 }

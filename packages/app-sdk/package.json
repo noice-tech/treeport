@@ -9,11 +9,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "default": "./dist/worker.js"
     }
   },
   "files": [
     "dist/index.js",
     "dist/index.d.ts",
+    "dist/worker.js",
+    "dist/worker.d.ts",
     "LICENSE",
     "README.md"
   ],
