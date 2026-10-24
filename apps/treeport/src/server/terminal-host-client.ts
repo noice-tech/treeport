@@ -67,6 +67,12 @@ interface OutputRoute {
 interface RuntimeRoute {
   readonly pubsub: PubSub.PubSub<TerminalHostRuntimeEvent>
   references: number
+  subscribed: boolean
+}
+
+interface RouteLock {
+  readonly semaphore: Effect.Semaphore
+  users: number
 }
 
 type PendingRequest = Deferred.Deferred<
@@ -213,6 +219,8 @@ function isStaleSocketFailure(error: TerminalHostClientError): boolean {
 export class TerminalHostClient
   implements TerminalSessionBackend, TerminalAttachmentBackend
 {
+  private readonly routeLocks = new Map<string, RouteLock>()
+
   private constructor(
     readonly record: TerminalHostRecord,
     private readonly outgoing: Queue.Queue<Buffer>,
@@ -221,7 +229,6 @@ export class TerminalHostClient
     >,
     private readonly outputRoutes: Map<string, OutputRoute>,
     private readonly runtimeRoutes: Map<string, RuntimeRoute>,
-    private readonly routeMutex: Effect.Semaphore,
     private readonly closed: SynchronizedRef.SynchronizedRef<boolean>
   ) {}
 
@@ -273,7 +280,6 @@ export class TerminalHostClient
         ReadonlyMap<string, PendingRequest>
       >(new Map())
       const closed = yield* SynchronizedRef.make(false)
-      const routeMutex = yield* Effect.makeSemaphore(1)
       const provisionalRecord: TerminalHostRecord = {
         hostId: '',
         hostKey,
@@ -287,7 +293,6 @@ export class TerminalHostClient
         pending,
         new Map(),
         new Map(),
-        routeMutex,
         closed
       )
 
@@ -413,72 +418,89 @@ export class TerminalHostClient
     TerminalHostClientError,
     Scope.Scope
   > {
-    return this.routeMutex.withPermits(1)(
-      Effect.gen(this, function* () {
-        let route = this.outputRoutes.get(terminalId)
-        if (!route) {
-          route = {
-            pubsub: yield* PubSub.unbounded<TerminalHostOutput>(),
-            references: 0
+    return Effect.gen(this, function* () {
+      // Releases take the route lock, and a scope that is already closed runs
+      // a new finalizer immediately. Register releases outside the lock.
+      const route = yield* Effect.acquireRelease(
+        this.withRouteLock(
+          terminalId,
+          Effect.gen(this, function* () {
+            let route = this.outputRoutes.get(terminalId)
+            if (!route) {
+              route = {
+                pubsub: yield* PubSub.unbounded<TerminalHostOutput>(),
+                references: 0
+              }
+              this.outputRoutes.set(terminalId, route)
+            }
+
+            route.references += 1
+            return route
+          })
+        ),
+        (route) => this.releaseOutputRoute(terminalId, route)
+      )
+      return yield* this.withRouteLock(
+        terminalId,
+        Effect.gen(this, function* () {
+          const subscription = yield* PubSub.subscribe(route.pubsub)
+          const snapshot = yield* this.request('attach', { terminalId }, trace)
+          if (!snapshot) {
+            return null
           }
-          this.outputRoutes.set(terminalId, route)
-        }
 
-        route.references += 1
-
-        const ownedRoute = route
-        yield* Effect.addFinalizer(() =>
-          this.releaseOutputRoute(terminalId, ownedRoute)
-        )
-        const subscription = yield* PubSub.subscribe(route.pubsub)
-        const snapshot = yield* this.request('attach', { terminalId }, trace)
-        if (!snapshot) {
-          return null
-        }
-
-        return {
-          data: snapshot.data,
-          format: snapshot.format,
-          fence: snapshot.fence,
-          cols: snapshot.cols,
-          rows: snapshot.rows,
-          output: Stream.fromQueue(subscription).pipe(
-            Stream.filter((event) => event.sequence > snapshot.fence)
-          )
-        }
-      })
-    )
+          return {
+            data: snapshot.data,
+            format: snapshot.format,
+            fence: snapshot.fence,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            output: Stream.fromQueue(subscription).pipe(
+              Stream.filter((event) => event.sequence > snapshot.fence)
+            )
+          }
+        })
+      )
+    })
   }
 
   runtimeEvents(
     terminalId: string
   ): Stream.Stream<TerminalHostRuntimeEvent, TerminalHostClientError> {
     return Stream.unwrapScoped(
-      this.routeMutex.withPermits(1)(
-        Effect.gen(this, function* () {
-          let route = this.runtimeRoutes.get(terminalId)
-          const first = !route
-          if (!route) {
-            route = {
-              pubsub: yield* PubSub.unbounded<TerminalHostRuntimeEvent>(),
-              references: 0
+      Effect.gen(this, function* () {
+        const route = yield* Effect.acquireRelease(
+          this.withRouteLock(
+            terminalId,
+            Effect.gen(this, function* () {
+              let route = this.runtimeRoutes.get(terminalId)
+              if (!route) {
+                route = {
+                  pubsub: yield* PubSub.unbounded<TerminalHostRuntimeEvent>(),
+                  references: 0,
+                  subscribed: false
+                }
+                this.runtimeRoutes.set(terminalId, route)
+              }
+
+              route.references += 1
+              return route
+            })
+          ),
+          (route) => this.releaseRuntimeRoute(terminalId, route)
+        )
+        const subscription = yield* PubSub.subscribe(route.pubsub)
+        yield* this.withRouteLock(
+          terminalId,
+          Effect.gen(this, function* () {
+            if (!route.subscribed) {
+              yield* this.request('subscribeRuntime', { terminalId })
+              route.subscribed = true
             }
-            this.runtimeRoutes.set(terminalId, route)
-          }
-
-          route.references += 1
-          const ownedRoute = route
-          yield* Effect.addFinalizer(() =>
-            this.releaseRuntimeRoute(terminalId, ownedRoute)
-          )
-          if (first) {
-            yield* this.request('subscribeRuntime', { terminalId })
-          }
-
-          const subscription = yield* PubSub.subscribe(route.pubsub)
-          return Stream.fromQueue(subscription)
-        })
-      )
+          })
+        )
+        return Stream.fromQueue(subscription)
+      })
     )
   }
 
@@ -706,11 +728,39 @@ export class TerminalHostClient
       : Effect.void
   }
 
+  // Route changes and their subscription requests are ordered per terminal,
+  // so one slow terminal cannot stall attachments to every other terminal.
+  private withRouteLock<A, E, R>(
+    terminalId: string,
+    effect: Effect.Effect<A, E, R>
+  ): Effect.Effect<A, E, R> {
+    return Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const lock = this.routeLocks.get(terminalId) ?? {
+          semaphore: Effect.unsafeMakeSemaphore(1),
+          users: 0
+        }
+        lock.users += 1
+        this.routeLocks.set(terminalId, lock)
+        return lock
+      }),
+      (lock) => lock.semaphore.withPermits(1)(effect),
+      (lock) =>
+        Effect.sync(() => {
+          lock.users -= 1
+          if (lock.users === 0) {
+            this.routeLocks.delete(terminalId)
+          }
+        })
+    )
+  }
+
   private releaseOutputRoute(
     terminalId: string,
     route: OutputRoute
   ): Effect.Effect<void> {
-    return this.routeMutex.withPermits(1)(
+    return this.withRouteLock(
+      terminalId,
       Effect.gen(this, function* () {
         if (this.outputRoutes.get(terminalId) !== route) {
           return
@@ -740,7 +790,8 @@ export class TerminalHostClient
     terminalId: string,
     route: RuntimeRoute
   ): Effect.Effect<void> {
-    return this.routeMutex.withPermits(1)(
+    return this.withRouteLock(
+      terminalId,
       Effect.gen(this, function* () {
         if (this.runtimeRoutes.get(terminalId) !== route) {
           return
