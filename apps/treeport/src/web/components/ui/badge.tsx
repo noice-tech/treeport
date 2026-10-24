@@ -8,9 +8,7 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        // A mid-tone accent in both modes keeps small white numerals readable.
-        default:
-          'bg-[oklch(from_var(--accent-color)_58%_calc(c*1.2)_h)] text-[oklch(99%_0_0)]',
+        default: 'bg-accent-solid text-on-accent',
         secondary: 'bg-zinc-800 text-zinc-200',
         outline: 'text-zinc-200 ring-1 ring-white/12'
       },

@@ -16,7 +16,7 @@ function Toaster(props: ToasterProps) {
           title: 'text-zinc-100!',
           description: 'text-zinc-400!',
           actionButton:
-            'bg-accent-400! text-accent-950! hover:bg-accent-300! active:bg-accent-400!',
+            'bg-accent-solid! text-on-accent! hover:bg-accent-solid-hover! active:bg-accent-solid!',
           cancelButton:
             'bg-zinc-800! text-zinc-200! hover:bg-zinc-700! active:bg-zinc-800!'
         }
