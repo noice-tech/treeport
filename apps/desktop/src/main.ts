@@ -36,7 +36,8 @@ import { HostSession, HostSessions } from './host-session'
 import { ComputerStore } from './computer-store'
 import type {
   DesktopBrowserToolbarCommand,
-  DesktopCommand
+  DesktopCommand,
+  TreeportTheme
 } from '@treeport/desktop-bridge'
 import type {
   ComputerMutationResult,
@@ -65,8 +66,16 @@ const WINDOW_STATE_FILE = 'window-state.json'
 const RENDERER_PARTITION = 'persist:treeport-desktop-renderer'
 const PRIVATE_RENDERER_URL = 'treeport-app://application/'
 
+const themeSchema = z.enum(['tide', 'moss']) satisfies z.ZodType<TreeportTheme>
+// Hex copies of each theme's zinc-200/zinc-900 from @treeport/theme.
+const windowChrome = {
+  tide: { background: '#151920', symbol: '#dfe4eb' },
+  moss: { background: '#151a17', symbol: '#e0e5e1' }
+} satisfies Record<TreeportTheme, { background: string; symbol: string }>
+
 const windowStateSchema = z.object({
   version: z.literal(1),
+  theme: themeSchema.catch('tide'),
   bounds: z.object({
     x: z.number().int(),
     y: z.number().int(),
@@ -125,6 +134,7 @@ let hostSessions: HostSessions | null = null
 let shellView: WebContentsView | null = null
 let shellOverlayOpen = false
 let windowState: WindowState | null = null
+let theme: TreeportTheme = 'tide'
 let store: ComputerStore | null = null
 const desktopRuntime = new DesktopRuntime()
 let windowRuntime: DesktopRuntime | null = null
@@ -195,7 +205,8 @@ function shellState(): DesktopShellState {
     updateError,
     computers: store?.summaries() ?? [],
     connection: hostSessions?.active?.connection ?? { status: 'empty' },
-    navigation: navigationState()
+    navigation: navigationState(),
+    theme
   }
   if (store?.selectedComputer) {
     state.selectedComputerId = store.selectedComputer.id
@@ -907,6 +918,7 @@ function restoredWindowBounds(): WindowState['bounds'] | null {
 function persistWindowState(window: BrowserWindow): void {
   windowState = {
     version: 1,
+    theme,
     bounds: window.getNormalBounds(),
     maximized: window.isMaximized()
   }
@@ -931,13 +943,13 @@ function createWindow(url?: string): BrowserWindow {
     height: restoredBounds?.height ?? DEFAULT_WINDOW_HEIGHT,
     minWidth: MINIMUM_WINDOW_WIDTH,
     minHeight: MINIMUM_WINDOW_HEIGHT,
-    backgroundColor: '#09090b',
+    backgroundColor: windowChrome[theme].background,
     autoHideMenuBar: true,
     frame: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#09090b',
-      symbolColor: '#f4f4f5',
+      color: windowChrome[theme].background,
+      symbolColor: windowChrome[theme].symbol,
       height: TITLEBAR_HEIGHT
     },
     webPreferences: { ...rendererWindowPreferences(), webviewTag: false }
@@ -1727,6 +1739,29 @@ function registerIpc(): void {
       requestBellAttention()
     }
   })
+  ipcMain.on('desktop:set-theme', (event, value) => {
+    const parsed = themeSchema.safeParse(value)
+    if (!isTrustedRendererEvent(event) || !parsed.success) {
+      return
+    }
+
+    theme = parsed.data
+    const chrome = windowChrome[theme]
+    mainWindow?.setBackgroundColor(chrome.background)
+    // macOS draws native traffic lights without an overlay color.
+    if (process.platform !== 'darwin') {
+      mainWindow?.setTitleBarOverlay({
+        color: chrome.background,
+        symbolColor: chrome.symbol
+      })
+    }
+
+    for (const host of hostSessions?.visited.values() ?? []) {
+      host.view.setBackgroundColor(chrome.background)
+    }
+
+    broadcastState()
+  })
 }
 
 function openWorkspaceTarget(target: WorkspaceTarget) {
@@ -1829,6 +1864,7 @@ if (!hasSingleInstanceLock) {
 
       yield* installRendererRequestRouting
       windowState = yield* loadWindowState
+      theme = windowState?.theme ?? 'tide'
       store = yield* ComputerStore.load(
         path.join(app.getPath('userData'), 'computers.json'),
         seedComputerUrl,

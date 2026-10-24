@@ -2,6 +2,7 @@ export type { TerminalProgress } from '@treeport/shared'
 export {
   terminalKeyboardInput,
   terminalInputWithModifiers,
+  terminalDisplayTitle,
   terminalOptions,
   terminalProgressLabel
 } from './terminal-browser'

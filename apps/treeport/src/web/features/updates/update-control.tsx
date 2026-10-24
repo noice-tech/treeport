@@ -132,7 +132,7 @@ export function UpdateControl() {
                 : null
 
   if (!visible) {
-    return <div className="size-9 shrink-0" aria-hidden />
+    return null
   }
 
   return (
@@ -146,7 +146,7 @@ export function UpdateControl() {
             className={
               failed
                 ? 'icon-button text-amber-300 hover:bg-white/5 hover:text-amber-100'
-                : 'icon-button text-cyan-300 hover:bg-white/5 hover:text-cyan-100'
+                : 'icon-button text-accent-300 hover:bg-white/5 hover:text-accent-100'
             }
             aria-label={
               failed

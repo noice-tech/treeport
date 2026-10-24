@@ -270,7 +270,7 @@ export function LaunchersManager({
                     key={launcher.id}
                     type="button"
                     className={cn(
-                      'flex min-w-0 flex-col rounded-md px-3 py-1 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring',
+                      'flex min-w-0 flex-col rounded-md px-3 py-1 text-left outline-none hover:bg-sidebar-accent active:bg-white/10 focus-visible:ring-2 focus-visible:ring-sidebar-ring',
                       draft?.editingId === launcher.id && 'bg-sidebar-accent'
                     )}
                     aria-current={
@@ -500,7 +500,7 @@ export function LaunchersManager({
                         {inputNames.map((inputName) => (
                           <span
                             key={inputName}
-                            className="mr-1 inline-flex rounded-md bg-cyan-400/10 px-1.5 font-mono text-cyan-200 ring-1 ring-cyan-400/25"
+                            className="mr-1 inline-flex rounded-md bg-accent-400/10 px-1.5 font-mono text-accent-200 ring-1 ring-accent-400/25"
                           >
                             {inputName}
                           </span>
@@ -645,7 +645,7 @@ export function LaunchersManager({
                     type="checkbox"
                     id="launcher-close-on-success"
                     name="launcher-close-on-success"
-                    className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-white/20 bg-zinc-950 checked:border-cyan-400 checked:bg-cyan-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:opacity-50 forced-colors:appearance-auto"
+                    className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-white/20 bg-zinc-950 checked:border-accent-400 checked:bg-accent-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 disabled:opacity-50 forced-colors:appearance-auto"
                     checked={draft.values.closeOnSuccess}
                     disabled={busy}
                     onChange={(event) => {

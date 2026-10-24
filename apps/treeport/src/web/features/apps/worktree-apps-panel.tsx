@@ -382,7 +382,7 @@ function AppsPanelResizeRail({
 
   return (
     <div
-      className="absolute inset-y-0 left-0 z-30 hidden w-3 -translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-white/8 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-700 hover:before:w-0.5 hover:before:bg-cyan-400/60 hover:after:bg-cyan-400 focus-visible:before:w-0.5 focus-visible:before:bg-cyan-400 focus-visible:after:bg-cyan-400 min-[701px]:block"
+      className="absolute inset-y-0 left-0 z-30 hidden w-3 -translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-white/8 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-700 hover:before:w-0.5 hover:before:bg-accent-400/60 hover:after:bg-accent-400 focus-visible:before:w-0.5 focus-visible:before:bg-accent-400 focus-visible:after:bg-accent-400 min-[701px]:block"
       role="separator"
       aria-label="Resize apps panel"
       aria-orientation="vertical"
@@ -640,15 +640,15 @@ export function WorktreeAppsPanel({
                     className={cn(
                       'group/tool relative flex min-w-28 max-w-56 shrink-0 items-center rounded-md',
                       active
-                        ? 'bg-white/8 hover:bg-white/10'
-                        : 'hover:bg-white/6'
+                        ? 'bg-white/8 hover:bg-white/10 has-[button:active]:bg-white/14'
+                        : 'hover:bg-white/6 has-[button:active]:bg-white/10'
                     )}
                   >
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="min-w-0 flex-1 justify-start pr-8 hover:bg-transparent hover:text-zinc-400"
+                      className="min-w-0 flex-1 justify-start pr-8 hover:bg-transparent hover:text-zinc-400 active:bg-transparent"
                       role="tab"
                       aria-selected={active}
                       aria-keyshortcuts={[

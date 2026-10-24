@@ -257,7 +257,7 @@ export function ProjectForm({
               <button
                 key={entry.path}
                 type="button"
-                className="flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-base text-zinc-200 outline-none hover:bg-white/6 focus-visible:bg-white/6 focus-visible:outline-2 focus-visible:outline-cyan-400 min-[701px]:px-2 min-[701px]:py-1.5 min-[701px]:text-sm"
+                className="flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-base text-zinc-200 outline-none hover:bg-white/6 active:bg-white/10 focus-visible:bg-white/6 focus-visible:outline-2 focus-visible:outline-accent-400 min-[701px]:px-2 min-[701px]:py-1.5 min-[701px]:text-sm"
                 title={entry.path}
                 onClick={() => navigate(entry.path)}
                 onKeyDown={(event) => {
@@ -291,7 +291,7 @@ export function ProjectForm({
                 }}
                 disabled={busy}
               >
-                <FolderIcon className="size-4 shrink-0 fill-cyan-500/80" />
+                <FolderIcon className="size-4 shrink-0 fill-accent-500/80" />
                 <span className="truncate">{entry.name}</span>
               </button>
             ))}

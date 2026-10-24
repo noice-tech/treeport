@@ -14,13 +14,16 @@ export function cn(...values: Array<string | undefined | false>): string {
 
 const buttonVariants = {
   default:
-    'bg-cyan-600 text-white ring-1 ring-cyan-600 hover:bg-cyan-500 hover:ring-cyan-500',
-  secondary: 'bg-zinc-800 text-zinc-100 ring-1 ring-white/8 hover:bg-zinc-700',
+    'bg-accent-400 text-accent-950 ring-1 ring-accent-400 hover:bg-accent-300 hover:ring-accent-300 active:scale-[0.97] active:bg-accent-400 active:ring-accent-400',
+  secondary:
+    'bg-zinc-800 text-zinc-100 ring-1 ring-white/8 hover:bg-zinc-700 active:scale-[0.97] active:bg-zinc-800',
   destructive:
-    'bg-rose-600 text-white ring-1 ring-rose-600 hover:bg-rose-500 hover:ring-rose-500',
-  outline: 'bg-transparent text-zinc-200 ring-1 ring-white/12 hover:bg-white/6',
-  ghost: 'bg-transparent text-zinc-400 hover:bg-white/6 hover:text-zinc-100',
-  link: 'h-auto rounded-none p-0 text-zinc-400 hover:text-zinc-100'
+    'bg-rose-600 text-white ring-1 ring-rose-600 hover:bg-rose-500 hover:ring-rose-500 active:scale-[0.97] active:bg-rose-600 active:ring-rose-600',
+  outline:
+    'bg-transparent text-zinc-200 ring-1 ring-white/12 hover:bg-white/6 active:scale-[0.97] active:bg-white/10',
+  ghost:
+    'bg-transparent text-zinc-400 hover:bg-white/6 hover:text-zinc-100 active:bg-white/10',
+  link: 'h-auto rounded-none p-0 text-zinc-400 hover:text-zinc-100 active:text-zinc-300'
 } as const
 
 const buttonSizes = {
@@ -51,7 +54,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         type={type}
         className={cn(
-          'relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap outline-none disabled:pointer-events-none disabled:cursor-default disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+          'relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap outline-none transition-[opacity,transform] duration-100 ease-out disabled:pointer-events-none disabled:cursor-default disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
           buttonVariants[variant],
           size ? buttonSizes[size] : undefined,
           className
@@ -78,7 +81,7 @@ export const Input = forwardRef<
   <input
     ref={ref}
     className={cn(
-      'h-9 w-full rounded-md bg-zinc-950/70 px-3 py-2 text-sm text-zinc-100 ring-1 ring-white/12 outline-none placeholder:text-zinc-600 focus-visible:ring-2 focus-visible:ring-cyan-400 disabled:cursor-not-allowed disabled:opacity-50',
+      'h-9 w-full rounded-md bg-zinc-950/70 px-3 py-2 text-sm text-zinc-100 ring-1 ring-white/12 outline-none placeholder:text-zinc-600 focus-visible:ring-2 focus-visible:ring-accent-400 disabled:cursor-not-allowed disabled:opacity-50',
       className
     )}
     {...props}

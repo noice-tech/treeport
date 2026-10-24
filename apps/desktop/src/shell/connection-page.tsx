@@ -25,7 +25,7 @@ function ConnectionHeading({
 
 function Origin({ children }: { children: string }) {
   return (
-    <p className="break-all font-mono text-sm text-pretty text-cyan-200 tabular-nums">
+    <p className="break-all font-mono text-sm text-pretty text-accent-200 tabular-nums">
       {children}
     </p>
   )
@@ -102,7 +102,7 @@ export function ConnectionPage({
           {computer?.loopback ? (
             <>
               <div className="flex w-full items-center justify-between gap-3 rounded-lg bg-zinc-900 py-1 pr-1 pl-3 ring-1 ring-white/10">
-                <code className="min-w-0 truncate font-mono text-sm text-cyan-200">
+                <code className="min-w-0 truncate font-mono text-sm text-accent-200">
                   treeport start
                 </code>
                 <Button

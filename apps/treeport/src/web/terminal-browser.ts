@@ -68,6 +68,19 @@ export function terminalProgressLabel(progress: TerminalProgress): string {
   return progress.value === null ? 'working' : `${progress.value}% complete`
 }
 
+// Shells default their title to `user@host:cwd`; the user and host repeat on
+// every row, so show only the reported directory.
+export function terminalDisplayTitle(
+  runtimeTitle: string | undefined,
+  name: string
+): string {
+  return (
+    /^[^\s@]+@[^\s:]+:\s*(\S.*)$/.exec(runtimeTitle ?? '')?.[1] ||
+    runtimeTitle ||
+    name
+  )
+}
+
 export interface TerminalInputModifiers {
   ctrl: boolean
   alt: boolean

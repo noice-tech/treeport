@@ -10,6 +10,17 @@
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
+/* Glow from the bottom so it never seams against the desktop titlebar. */
+@media (min-width: 702px) {
+  .app-frame {
+    background-image: radial-gradient(
+      90% 45% at 0% 100%,
+      color-mix(in oklab, var(--color-accent-400) 9%, transparent),
+      transparent
+    );
+  }
+}
+
 /* The drawer is portalled outside the padded app frame. */
 [data-sidebar='sidebar'][data-mobile='true'] {
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
@@ -80,15 +91,20 @@
 }
 
 /* Font size and row height are set per terminal for zoom and viewer scaling.
-   Keep --term-fg/--term-bg in sync with terminalOptions() for OSC 10/11. */
+   OSC 10/11 replies report TERMINAL_FOREGROUND/TERMINAL_BACKGROUND regardless
+   of theme, so every theme must keep a near-black background. */
 .xterm-host .wterm {
   --term-font-family:
     'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
-  --term-fg: #e4e4e7;
-  --term-bg: #09090b;
-  --term-cursor: #67e8f9;
-  --term-selection-bg: rgb(244 244 245 / 35%);
-  --term-color-0: #18181b;
+  --term-fg: var(--color-zinc-200);
+  --term-bg: var(--color-zinc-950);
+  --term-cursor: var(--color-accent-300);
+  --term-selection-bg: color-mix(
+    in oklab,
+    var(--color-accent-400) 28%,
+    transparent
+  );
+  --term-color-0: var(--color-zinc-900);
   --term-color-1: #fb7185;
   --term-color-2: #86efac;
   --term-color-3: #fde047;
@@ -115,8 +131,8 @@
 }
 
 .xterm-host .wterm ::selection {
-  background: #f4f4f5;
-  color: #09090b;
+  background: var(--color-accent-200);
+  color: var(--color-zinc-950);
 }
 
 .terminal-session-host {
@@ -134,10 +150,10 @@
   place-items: center;
   content: 'Drop files to paste their paths';
   inset: 0.25rem;
-  border: 1px dashed var(--color-cyan-400);
+  border: 1px dashed var(--color-accent-400);
   border-radius: 0.25rem;
   background: color-mix(in oklab, var(--color-zinc-950) 88%, transparent);
-  color: var(--color-cyan-100);
+  color: var(--color-accent-100);
   font-size: 0.875rem;
   line-height: 1.25rem;
   pointer-events: none;
@@ -239,7 +255,7 @@
 }
 
 .worktree-progress-icon {
-  --worktree-progress-glow: var(--color-cyan-400);
+  --worktree-progress-glow: var(--color-accent-400);
 
   transform-origin: center;
   animation: worktree-branch-breathe 1.8s ease-in-out infinite;

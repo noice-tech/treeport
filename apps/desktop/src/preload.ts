@@ -17,7 +17,8 @@ import type {
   DesktopBrowserToolbarCommand,
   DesktopBrowserUnavailable,
   DesktopCommand,
-  DesktopFileActionResult
+  DesktopFileActionResult,
+  TreeportTheme
 } from '@treeport/desktop-bridge'
 import type {
   ComputerActivity,
@@ -339,6 +340,9 @@ const desktopBridge = Object.freeze({
   },
   requestAttention() {
     ipcRenderer.send('bell-attention:request')
+  },
+  setTheme(theme: TreeportTheme) {
+    ipcRenderer.send('desktop:set-theme', theme)
   }
 } satisfies Required<DesktopBridge>)
 

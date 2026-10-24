@@ -115,7 +115,7 @@ export function ComputerSelector({
                 status === 'Needs attention'
                   ? 'stroke-amber-300'
                   : status === 'Working'
-                    ? 'stroke-cyan-400'
+                    ? 'stroke-accent-400'
                     : 'stroke-zinc-400'
               )
               return (
@@ -151,7 +151,7 @@ export function ComputerSelector({
                     </div>
                   </div>
                   <DropdownMenu.ItemIndicator>
-                    <CheckIcon className="size-4 shrink-0 stroke-cyan-300" />
+                    <CheckIcon className="size-4 shrink-0 stroke-accent-300" />
                   </DropdownMenu.ItemIndicator>
                 </DropdownMenu.RadioItem>
               )

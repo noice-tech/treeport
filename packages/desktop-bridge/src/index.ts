@@ -17,6 +17,8 @@ export type DesktopCommand =
 
 export type DesktopFileActionResult = 'opened' | 'rejected'
 
+export type TreeportTheme = 'tide' | 'moss'
+
 export interface DesktopBrowserPopup {
   appId: string
   url: string
@@ -114,5 +116,6 @@ export type DesktopBridge = Readonly<
       listener: (failure: DesktopBrowserUnavailable) => void
     ) => () => void
     requestAttention: () => void
+    setTheme: (theme: TreeportTheme) => void
   }>
 >

@@ -120,7 +120,7 @@ export function NotificationCenter({
           {count > 0 ? (
             <Badge
               size="counter"
-              className="pointer-events-none absolute -top-0.5 -right-0.5"
+              className="pointer-events-none absolute -top-0.5 -right-0.5 motion-safe:animate-badge-in"
               aria-hidden
             >
               {count > 99 ? '99+' : count}
@@ -148,7 +148,7 @@ export function NotificationCenter({
                 <li key={notification.terminalId} className="min-w-0">
                   <button
                     type="button"
-                    className="w-full min-w-0 cursor-default rounded-md px-2 py-2 text-left outline-none hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-2 focus-visible:outline-cyan-400 disabled:opacity-45"
+                    className="w-full min-w-0 cursor-default rounded-md px-2 py-2 text-left outline-none hover:bg-white/5 active:bg-white/10 focus-visible:bg-white/5 focus-visible:outline-2 focus-visible:outline-accent-400 disabled:opacity-45"
                     disabled={pending.has(notification.terminalId)}
                     aria-label={`Open ${notification.title}`}
                     onClick={() => {

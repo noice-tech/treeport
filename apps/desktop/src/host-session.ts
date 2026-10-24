@@ -46,7 +46,7 @@ export class HostSession {
   ) {
     this.runtime = new DesktopRuntime(options.runtime)
     this.view = new WebContentsView({ webPreferences: options.preferences })
-    this.view.setBackgroundColor('#09090b')
+    this.view.setBackgroundColor(options.window.getBackgroundColor())
     this.view.setVisible(false)
     this.connection = { status: 'connecting', computerId: computer.id }
     this.lastUrl = computer.origin

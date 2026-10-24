@@ -356,7 +356,7 @@ export function TerminalView({
         rows={2}
         value={pasteValue}
         placeholder="Touch and hold here, then choose Paste"
-        className="min-h-16 resize-none rounded-md border border-white/10 bg-zinc-950 px-3 py-2 text-base text-zinc-100 outline-none focus:border-cyan-500"
+        className="min-h-16 resize-none rounded-md border border-white/10 bg-zinc-950 px-3 py-2 text-base text-zinc-100 outline-none focus:border-accent-500"
         onChange={(event) =>
           setPaste({
             terminalId: terminal?.id ?? null,
@@ -486,7 +486,7 @@ export function TerminalView({
           {snapshot.fontZoomPercent !== null && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
               <span
-                className="rounded-md bg-zinc-800/95 px-3 py-1.5 text-xs font-medium text-zinc-100 tabular-nums shadow-lg ring-1 ring-white/10 backdrop-blur"
+                className="rounded-md bg-zinc-800/95 px-3 py-1.5 text-xs font-medium text-zinc-100 tabular-nums shadow-lg ring-1 ring-white/10"
                 role="status"
                 aria-atomic="true"
               >
@@ -544,7 +544,7 @@ export function TerminalView({
           {(snapshot.degraded || snapshot.fileTransfer) && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
               {snapshot.degraded && (
-                <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
+                <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20">
                   {snapshot.error
                     ? `${snapshot.error} Retrying…`
                     : snapshot.phase === 'connecting'
@@ -555,10 +555,10 @@ export function TerminalView({
               {snapshot.fileTransfer && (
                 <span
                   className={cn(
-                    'pointer-events-auto flex max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-center gap-2 rounded-xl bg-zinc-900/90 px-3 py-1 text-xs shadow ring-1 backdrop-blur',
+                    'pointer-events-auto flex max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-center gap-2 rounded-xl bg-zinc-900/90 px-3 py-1 text-xs shadow ring-1',
                     snapshot.fileTransfer.state === 'error'
                       ? 'text-rose-100 ring-rose-400/30'
-                      : 'text-cyan-100 ring-cyan-400/20'
+                      : 'text-accent-100 ring-accent-400/20'
                   )}
                   role={
                     snapshot.fileTransfer.state === 'error' ? 'alert' : 'status'
@@ -586,13 +586,13 @@ export function TerminalView({
           )}
           {snapshot.phase === 'closed' && snapshot.error && (
             <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
-              <div className="flex items-center gap-2 rounded-full bg-rose-950/95 px-3 py-1 text-xs text-rose-100 shadow ring-1 ring-rose-400/30 backdrop-blur">
+              <div className="flex items-center gap-2 rounded-full bg-rose-950/95 px-3 py-1 text-xs text-rose-100 shadow ring-1 ring-rose-400/30">
                 <span>{snapshot.error}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-2 text-xs text-rose-100 hover:bg-rose-900"
+                  className="h-6 px-2 text-xs text-rose-100 hover:bg-rose-900 active:bg-rose-800"
                   onClick={() => activeSession?.retry()}
                 >
                   Retry
@@ -657,7 +657,7 @@ export function TerminalView({
               <Button
                 variant="ghost"
                 type="button"
-                className="aria-pressed:bg-cyan-400/15 aria-pressed:text-cyan-100 aria-pressed:inset-ring aria-pressed:inset-ring-cyan-400/30"
+                className="aria-pressed:bg-accent-400/15 aria-pressed:text-accent-100 aria-pressed:inset-ring aria-pressed:inset-ring-accent-400/30"
                 aria-pressed={ctrl}
                 title="Apply Control to the next key"
                 onClick={() => setCtrl((value) => !value)}
@@ -667,7 +667,7 @@ export function TerminalView({
               <Button
                 variant="ghost"
                 type="button"
-                className="aria-pressed:bg-cyan-400/15 aria-pressed:text-cyan-100 aria-pressed:inset-ring aria-pressed:inset-ring-cyan-400/30"
+                className="aria-pressed:bg-accent-400/15 aria-pressed:text-accent-100 aria-pressed:inset-ring aria-pressed:inset-ring-accent-400/30"
                 aria-pressed={alt}
                 title="Apply Alt to the next key"
                 onClick={() => setAlt((value) => !value)}
@@ -677,7 +677,7 @@ export function TerminalView({
               <Button
                 variant="ghost"
                 type="button"
-                className="aria-pressed:bg-cyan-400/15 aria-pressed:text-cyan-100 aria-pressed:inset-ring aria-pressed:inset-ring-cyan-400/30"
+                className="aria-pressed:bg-accent-400/15 aria-pressed:text-accent-100 aria-pressed:inset-ring aria-pressed:inset-ring-accent-400/30"
                 aria-pressed={shift}
                 title="Apply Shift to the next key"
                 onClick={() => setShift((value) => !value)}

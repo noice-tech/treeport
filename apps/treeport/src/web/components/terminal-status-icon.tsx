@@ -41,7 +41,7 @@ export function TerminalStatusIcon({
         : exited && !progress
           ? 'text-rose-300'
           : working
-            ? 'text-cyan-400'
+            ? 'text-accent-400'
             : 'text-zinc-500'
 
   return (
@@ -105,7 +105,7 @@ export function TerminalStatusIcon({
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className="text-cyan-400"
+          className="text-accent-400"
         >
           <rect
             x="3"
@@ -123,7 +123,7 @@ export function TerminalStatusIcon({
       <span
         aria-hidden="true"
         className={cn(
-          'pointer-events-none absolute inset-0 overflow-hidden text-cyan-400 opacity-0 transition-opacity duration-500',
+          'pointer-events-none absolute inset-0 overflow-hidden text-accent-400 opacity-0 transition-opacity duration-500',
           working && 'opacity-100'
         )}
       >
