@@ -22,8 +22,8 @@
   --animate-tooltip-in: fade-in 125ms var(--ease-out);
   --animate-badge-in: badge-in 200ms var(--ease-out);
 
-  /* Tide is the default theme; [data-theme] swaps these neutrals and accent.
-     Desktop window chrome keeps hex copies of each theme's zinc-900. */
+  /* Dark is the default; [data-theme='light'] swaps these neutrals. Desktop
+     window chrome keeps hex copies of each mode's zinc-200/zinc-900. */
   --color-zinc-50: oklch(98.4% 0.003 250);
   --color-zinc-100: oklch(96.6% 0.006 250);
   --color-zinc-200: oklch(91.8% 0.01 252);
@@ -36,17 +36,19 @@
   --color-zinc-900: oklch(21.2% 0.016 261);
   --color-zinc-950: oklch(15.2% 0.013 262);
 
-  --color-accent-50: oklch(97.6% 0.02 230);
-  --color-accent-100: oklch(94.8% 0.04 230);
-  --color-accent-200: oklch(90.6% 0.07 230);
-  --color-accent-300: oklch(86% 0.1 230);
-  --color-accent-400: oklch(81% 0.115 232);
-  --color-accent-500: oklch(72% 0.13 236);
-  --color-accent-600: oklch(62% 0.14 240);
-  --color-accent-700: oklch(52% 0.13 244);
-  --color-accent-800: oklch(44% 0.11 246);
-  --color-accent-900: oklch(37% 0.09 248);
-  --color-accent-950: oklch(25% 0.06 250);
+  /* The accent scale keeps the chosen color's hue and relative chroma at fixed
+     lightness, so any choice keeps the contrast the components expect. */
+  --color-accent-50: oklch(from var(--accent-color) 97.6% calc(c * 0.17) h);
+  --color-accent-100: oklch(from var(--accent-color) 94.8% calc(c * 0.35) h);
+  --color-accent-200: oklch(from var(--accent-color) 90.6% calc(c * 0.61) h);
+  --color-accent-300: oklch(from var(--accent-color) 86% calc(c * 0.87) h);
+  --color-accent-400: oklch(from var(--accent-color) 81% calc(c * 1) h);
+  --color-accent-500: oklch(from var(--accent-color) 72% calc(c * 1.13) h);
+  --color-accent-600: oklch(from var(--accent-color) 62% calc(c * 1.22) h);
+  --color-accent-700: oklch(from var(--accent-color) 52% calc(c * 1.13) h);
+  --color-accent-800: oklch(from var(--accent-color) 44% calc(c * 0.96) h);
+  --color-accent-900: oklch(from var(--accent-color) 37% calc(c * 0.78) h);
+  --color-accent-950: oklch(from var(--accent-color) 25% calc(c * 0.52) h);
 
   @keyframes comet {
     to {
@@ -105,30 +107,127 @@
   }
 }
 
-:root[data-theme='moss'] {
-  --color-zinc-50: oklch(98.4% 0.003 150);
-  --color-zinc-100: oklch(96.6% 0.005 150);
-  --color-zinc-200: oklch(91.8% 0.008 150);
-  --color-zinc-300: oklch(86.8% 0.011 152);
-  --color-zinc-400: oklch(70.4% 0.016 155);
-  --color-zinc-500: oklch(55.2% 0.017 157);
-  --color-zinc-600: oklch(44.4% 0.016 158);
-  --color-zinc-700: oklch(36.8% 0.014 160);
-  --color-zinc-800: oklch(27.6% 0.011 162);
-  --color-zinc-900: oklch(21.2% 0.01 163);
-  --color-zinc-950: oklch(15.2% 0.008 165);
+/* The components are written for dark surfaces, so light mode inverts the
+   neutral, accent, and status scales, and flips white overlays to dark. */
+:root[data-theme='light'] {
+  color-scheme: light;
 
-  --color-accent-50: oklch(97.8% 0.028 152);
-  --color-accent-100: oklch(95.2% 0.055 152);
-  --color-accent-200: oklch(91.4% 0.09 152);
-  --color-accent-300: oklch(87.6% 0.12 152);
-  --color-accent-400: oklch(84% 0.13 152);
-  --color-accent-500: oklch(74% 0.14 153);
-  --color-accent-600: oklch(63% 0.13 154);
-  --color-accent-700: oklch(53% 0.11 155);
-  --color-accent-800: oklch(44% 0.088 156);
-  --color-accent-900: oklch(37% 0.07 157);
-  --color-accent-950: oklch(25% 0.048 158);
+  --color-zinc-50: oklch(17% 0.012 262);
+  --color-zinc-100: oklch(21% 0.014 261);
+  --color-zinc-200: oklch(26% 0.016 260);
+  --color-zinc-300: oklch(34% 0.018 259);
+  --color-zinc-400: oklch(46% 0.02 258);
+  --color-zinc-500: oklch(55% 0.02 257);
+  --color-zinc-600: oklch(66% 0.018 256);
+  --color-zinc-700: oklch(78% 0.014 255);
+  --color-zinc-800: oklch(88% 0.01 254);
+  --color-zinc-900: oklch(95.5% 0.006 253);
+  --color-zinc-950: oklch(99% 0.003 250);
+
+  --color-accent-50: oklch(from var(--accent-color) 30% calc(c * 0.61) h);
+  --color-accent-100: oklch(from var(--accent-color) 36% calc(c * 0.78) h);
+  --color-accent-200: oklch(from var(--accent-color) 42% calc(c * 0.96) h);
+  --color-accent-300: oklch(from var(--accent-color) 48% calc(c * 1.13) h);
+  --color-accent-400: oklch(from var(--accent-color) 54% calc(c * 1.22) h);
+  --color-accent-500: oklch(from var(--accent-color) 62% calc(c * 1.22) h);
+  --color-accent-600: oklch(from var(--accent-color) 70% calc(c * 1.13) h);
+  --color-accent-700: oklch(from var(--accent-color) 78% calc(c * 0.96) h);
+  --color-accent-800: oklch(from var(--accent-color) 85% calc(c * 0.7) h);
+  --color-accent-900: oklch(from var(--accent-color) 91% calc(c * 0.43) h);
+  --color-accent-950: oklch(from var(--accent-color) 97.5% calc(c * 0.17) h);
+
+  --color-white: oklch(20% 0.02 260);
+  /* Scrims are written as black/70; translucency keeps them light here. */
+  --color-black: oklch(30% 0.02 260 / 55%);
+
+  /* Tailwind's status and project colors, with 50-950 reversed. */
+  --color-rose-50: oklch(27.1% 0.105 12.094);
+  --color-rose-100: oklch(41% 0.159 10.272);
+  --color-rose-200: oklch(45.5% 0.188 13.697);
+  --color-rose-300: oklch(51.4% 0.222 16.935);
+  --color-rose-400: oklch(58.6% 0.253 17.585);
+  --color-rose-600: oklch(71.2% 0.194 13.428);
+  --color-rose-700: oklch(81% 0.117 11.638);
+  --color-rose-800: oklch(89.2% 0.058 10.001);
+  --color-rose-900: oklch(94.1% 0.03 12.58);
+  --color-rose-950: oklch(96.9% 0.015 12.422);
+
+  --color-amber-50: oklch(27.9% 0.077 45.635);
+  --color-amber-100: oklch(41.4% 0.112 45.904);
+  --color-amber-200: oklch(47.3% 0.137 46.201);
+  --color-amber-300: oklch(55.5% 0.163 48.998);
+  --color-amber-400: oklch(66.6% 0.179 58.318);
+  --color-amber-600: oklch(82.8% 0.189 84.429);
+  --color-amber-700: oklch(87.9% 0.169 91.605);
+  --color-amber-800: oklch(92.4% 0.12 95.746);
+  --color-amber-900: oklch(96.2% 0.059 95.617);
+  --color-amber-950: oklch(98.7% 0.022 95.277);
+
+  --color-emerald-50: oklch(26.2% 0.051 172.552);
+  --color-emerald-100: oklch(37.8% 0.077 168.94);
+  --color-emerald-200: oklch(43.2% 0.095 166.913);
+  --color-emerald-300: oklch(50.8% 0.118 165.612);
+  --color-emerald-400: oklch(59.6% 0.145 163.225);
+  --color-emerald-600: oklch(76.5% 0.177 163.223);
+  --color-emerald-700: oklch(84.5% 0.143 164.978);
+  --color-emerald-800: oklch(90.5% 0.093 164.15);
+  --color-emerald-900: oklch(95% 0.052 163.051);
+  --color-emerald-950: oklch(97.9% 0.021 166.113);
+
+  --color-orange-50: oklch(26.6% 0.079 36.259);
+  --color-orange-100: oklch(40.8% 0.123 38.172);
+  --color-orange-200: oklch(47% 0.157 37.304);
+  --color-orange-300: oklch(55.3% 0.195 38.402);
+  --color-orange-400: oklch(64.6% 0.222 41.116);
+  --color-orange-600: oklch(75% 0.183 55.934);
+  --color-orange-700: oklch(83.7% 0.128 66.29);
+  --color-orange-800: oklch(90.1% 0.076 70.697);
+  --color-orange-900: oklch(95.4% 0.038 75.164);
+  --color-orange-950: oklch(98% 0.016 73.684);
+
+  --color-cyan-50: oklch(30.2% 0.056 229.695);
+  --color-cyan-100: oklch(39.8% 0.07 227.392);
+  --color-cyan-200: oklch(45% 0.085 224.283);
+  --color-cyan-300: oklch(52% 0.105 223.128);
+  --color-cyan-400: oklch(60.9% 0.126 221.723);
+  --color-cyan-600: oklch(78.9% 0.154 211.53);
+  --color-cyan-700: oklch(86.5% 0.127 207.078);
+  --color-cyan-800: oklch(91.7% 0.08 205.041);
+  --color-cyan-900: oklch(95.6% 0.045 203.388);
+  --color-cyan-950: oklch(98.4% 0.019 200.873);
+
+  --color-blue-50: oklch(28.2% 0.091 267.935);
+  --color-blue-100: oklch(37.9% 0.146 265.522);
+  --color-blue-200: oklch(42.4% 0.199 265.638);
+  --color-blue-300: oklch(48.8% 0.243 264.376);
+  --color-blue-400: oklch(54.6% 0.245 262.881);
+  --color-blue-600: oklch(70.7% 0.165 254.624);
+  --color-blue-700: oklch(80.9% 0.105 251.813);
+  --color-blue-800: oklch(88.2% 0.059 254.128);
+  --color-blue-900: oklch(93.2% 0.032 255.585);
+  --color-blue-950: oklch(97% 0.014 254.604);
+
+  --color-violet-50: oklch(28.3% 0.141 291.089);
+  --color-violet-100: oklch(38% 0.189 293.745);
+  --color-violet-200: oklch(43.2% 0.232 292.759);
+  --color-violet-300: oklch(49.1% 0.27 292.581);
+  --color-violet-400: oklch(54.1% 0.281 293.009);
+  --color-violet-600: oklch(70.2% 0.183 293.541);
+  --color-violet-700: oklch(81.1% 0.111 293.571);
+  --color-violet-800: oklch(89.4% 0.057 293.283);
+  --color-violet-900: oklch(94.3% 0.029 294.588);
+  --color-violet-950: oklch(96.9% 0.016 293.756);
+
+  --color-pink-50: oklch(28.4% 0.109 3.907);
+  --color-pink-100: oklch(40.8% 0.153 2.432);
+  --color-pink-200: oklch(45.9% 0.187 3.815);
+  --color-pink-300: oklch(52.5% 0.223 3.958);
+  --color-pink-400: oklch(59.2% 0.249 0.584);
+  --color-pink-600: oklch(71.8% 0.202 349.761);
+  --color-pink-700: oklch(82.3% 0.12 346.018);
+  --color-pink-800: oklch(89.9% 0.061 343.231);
+  --color-pink-900: oklch(94.8% 0.028 342.258);
+  --color-pink-950: oklch(97.1% 0.014 343.198);
 }
 
 @custom-variant dark (&:is(.dark *));
@@ -143,6 +242,8 @@
 }
 
 :root {
+  /* Tide; the app sets the chosen accent inline on the root element. */
+  --accent-color: #6ccefe;
   color-scheme: dark;
   font-family: var(--font-sans);
   font-synthesis: none;
@@ -152,9 +253,9 @@
   --sidebar-foreground: var(--color-zinc-200);
   --sidebar-primary: var(--color-accent-400);
   --sidebar-primary-foreground: var(--color-accent-950);
-  --sidebar-accent: color-mix(in oklab, white 6%, transparent);
+  --sidebar-accent: color-mix(in oklab, var(--color-white) 6%, transparent);
   --sidebar-accent-foreground: var(--color-zinc-100);
-  --sidebar-border: color-mix(in oklab, white 8%, transparent);
+  --sidebar-border: color-mix(in oklab, var(--color-white) 8%, transparent);
   --sidebar-ring: var(--color-accent-400);
 }
 

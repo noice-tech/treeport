@@ -14,7 +14,20 @@ export function ShellStateProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const receive = (next: DesktopShellState) => {
-      document.documentElement.dataset.theme = next.theme
+      const root = document.documentElement
+      // Main broadcasts again when the system appearance changes.
+      root.dataset.theme =
+        next.theme.mode === 'auto'
+          ? window.matchMedia('(prefers-color-scheme: light)').matches
+            ? 'light'
+            : 'dark'
+          : next.theme.mode
+      if (next.theme.accent) {
+        root.style.setProperty('--accent-color', next.theme.accent)
+      } else {
+        root.style.removeProperty('--accent-color')
+      }
+
       setState(next)
     }
     const unsubscribe = window.treeportShell.onState(receive)

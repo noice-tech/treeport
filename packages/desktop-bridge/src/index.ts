@@ -17,7 +17,12 @@ export type DesktopCommand =
 
 export type DesktopFileActionResult = 'opened' | 'rejected'
 
-export type TreeportTheme = 'tide' | 'moss'
+export interface TreeportTheme {
+  // auto follows the operating system appearance.
+  mode: 'auto' | 'dark' | 'light'
+  // A #rrggbb color; null keeps the default accent.
+  accent: string | null
+}
 
 export interface DesktopBrowserPopup {
   appId: string

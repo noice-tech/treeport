@@ -66,16 +66,23 @@ const WINDOW_STATE_FILE = 'window-state.json'
 const RENDERER_PARTITION = 'persist:treeport-desktop-renderer'
 const PRIVATE_RENDERER_URL = 'treeport-app://application/'
 
-const themeSchema = z.enum(['tide', 'moss']) satisfies z.ZodType<TreeportTheme>
-// Hex copies of each theme's zinc-200/zinc-900 from @treeport/theme.
+const themeSchema = z.object({
+  mode: z.enum(['auto', 'dark', 'light']),
+  accent: z
+    .string()
+    .regex(/^#[0-9a-f]{6}$/)
+    .nullable()
+}) satisfies z.ZodType<TreeportTheme>
+const defaultTheme: TreeportTheme = { mode: 'dark', accent: null }
+// Hex copies of each mode's zinc-200/zinc-900 from @treeport/theme.
 const windowChrome = {
-  tide: { background: '#151920', symbol: '#dfe4eb' },
-  moss: { background: '#151a17', symbol: '#e0e5e1' }
-} satisfies Record<TreeportTheme, { background: string; symbol: string }>
+  dark: { background: '#151920', symbol: '#dfe4eb' },
+  light: { background: '#edf0f4', symbol: '#20242c' }
+}
 
 const windowStateSchema = z.object({
   version: z.literal(1),
-  theme: themeSchema.catch('tide'),
+  theme: themeSchema.catch(defaultTheme),
   bounds: z.object({
     x: z.number().int(),
     y: z.number().int(),
@@ -121,8 +128,6 @@ if (!app.isPackaged) {
   app.setPath('userData', userData)
 }
 
-nativeTheme.themeSource = 'dark'
-
 const defaultComputerUrl = app.isPackaged
   ? 'http://127.0.0.1:8733'
   : 'http://127.0.0.1:5173'
@@ -134,7 +139,7 @@ let hostSessions: HostSessions | null = null
 let shellView: WebContentsView | null = null
 let shellOverlayOpen = false
 let windowState: WindowState | null = null
-let theme: TreeportTheme = 'tide'
+let theme = defaultTheme
 let store: ComputerStore | null = null
 const desktopRuntime = new DesktopRuntime()
 let windowRuntime: DesktopRuntime | null = null
@@ -937,19 +942,21 @@ function persistWindowState(window: BrowserWindow): void {
 
 function createWindow(url?: string): BrowserWindow {
   const restoredBounds = restoredWindowBounds()
+  const chrome =
+    windowChrome[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
   const options: BrowserWindowConstructorOptions = {
     show: !desktopE2e,
     width: restoredBounds?.width ?? DEFAULT_WINDOW_WIDTH,
     height: restoredBounds?.height ?? DEFAULT_WINDOW_HEIGHT,
     minWidth: MINIMUM_WINDOW_WIDTH,
     minHeight: MINIMUM_WINDOW_HEIGHT,
-    backgroundColor: windowChrome[theme].background,
+    backgroundColor: chrome.background,
     autoHideMenuBar: true,
     frame: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: windowChrome[theme].background,
-      symbolColor: windowChrome[theme].symbol,
+      color: chrome.background,
+      symbolColor: chrome.symbol,
       height: TITLEBAR_HEIGHT
     },
     webPreferences: { ...rendererWindowPreferences(), webviewTag: false }
@@ -1045,6 +1052,25 @@ function mutationError(cause: unknown): ComputerMutationResult {
     error:
       cause instanceof Error ? cause.message : 'Could not save the computer.'
   }
+}
+
+function applyWindowChrome(): void {
+  const chrome =
+    windowChrome[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
+  mainWindow?.setBackgroundColor(chrome.background)
+  // macOS draws native traffic lights without an overlay color.
+  if (process.platform !== 'darwin') {
+    mainWindow?.setTitleBarOverlay({
+      color: chrome.background,
+      symbolColor: chrome.symbol
+    })
+  }
+
+  for (const host of hostSessions?.visited.values() ?? []) {
+    host.view.setBackgroundColor(chrome.background)
+  }
+
+  broadcastState()
 }
 
 function registerIpc(): void {
@@ -1746,20 +1772,8 @@ function registerIpc(): void {
     }
 
     theme = parsed.data
-    const chrome = windowChrome[theme]
-    mainWindow?.setBackgroundColor(chrome.background)
-    // macOS draws native traffic lights without an overlay color.
-    if (process.platform !== 'darwin') {
-      mainWindow?.setTitleBarOverlay({
-        color: chrome.background,
-        symbolColor: chrome.symbol
-      })
-    }
-
-    for (const host of hostSessions?.visited.values() ?? []) {
-      host.view.setBackgroundColor(chrome.background)
-    }
-
+    nativeTheme.themeSource = theme.mode === 'auto' ? 'system' : theme.mode
+    applyWindowChrome()
     broadcastState()
   })
 }
@@ -1864,7 +1878,9 @@ if (!hasSingleInstanceLock) {
 
       yield* installRendererRequestRouting
       windowState = yield* loadWindowState
-      theme = windowState?.theme ?? 'tide'
+      theme = windowState?.theme ?? defaultTheme
+      nativeTheme.themeSource = theme.mode === 'auto' ? 'system' : theme.mode
+      nativeTheme.on('updated', applyWindowChrome)
       store = yield* ComputerStore.load(
         path.join(app.getPath('userData'), 'computers.json'),
         seedComputerUrl,
