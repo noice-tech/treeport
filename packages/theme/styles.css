@@ -50,6 +50,14 @@
   --color-accent-900: oklch(from var(--accent-color) 37% calc(c * 0.78) h);
   --color-accent-950: oklch(from var(--accent-color) 25% calc(c * 0.52) h);
 
+  /* Solid accent fills stay mid-tone in both modes so near-white labels on
+     them stay readable for any accent choice. */
+  --color-accent-solid: oklch(from var(--accent-color) 58% calc(c * 1.2) h);
+  --color-accent-solid-hover: oklch(
+    from var(--accent-color) 52% calc(c * 1.2) h
+  );
+  --color-on-accent: oklch(99% 0 0);
+
   /* Terminal statuses sit at the accent's lightness so they carry the same
      weight as the working state. */
   --color-status-done: oklch(81% 0.13 162);

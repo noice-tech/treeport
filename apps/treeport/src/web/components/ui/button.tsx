@@ -10,7 +10,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          'bg-accent-400 text-accent-950 ring-1 ring-accent-400 hover:bg-accent-300 hover:ring-accent-300 active:scale-[0.97] active:bg-accent-400 active:ring-accent-400',
+          'bg-accent-solid text-on-accent ring-1 ring-accent-solid hover:bg-accent-solid-hover hover:ring-accent-solid-hover active:scale-[0.97] active:bg-accent-solid active:ring-accent-solid',
         secondary:
           'bg-zinc-800 text-zinc-100 ring-1 ring-white/8 hover:bg-zinc-700 active:scale-[0.97] active:bg-zinc-800',
         destructive:
