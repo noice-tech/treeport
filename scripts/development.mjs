@@ -486,7 +486,13 @@ export async function main() {
   const ownedProcessGroups = new Set()
   const stop = (signal) => {
     if (requestedSignal) {
-      sendSignalToChild(child, 'SIGKILL', ownedProcessGroups)
+      // Terminal teardown signals every session member, so pnpm forwards a
+      // copy of a signal this process already received. Only a repeated
+      // interrupt asks to force-stop; the timer below covers hung shutdowns.
+      if (signal === 'SIGINT') {
+        sendSignalToChild(child, 'SIGKILL', ownedProcessGroups)
+      }
+
       return
     }
 

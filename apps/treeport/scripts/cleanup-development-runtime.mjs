@@ -213,11 +213,15 @@ function hostPaths(dataDir, runtimeDir) {
     .slice(0, 20)
   return {
     hostKey,
-    recordPath: path.join(runtimeDir, `terminal-host-${hostKey}.json`),
+    recordPath: path.join(
+      runtimeDir,
+      'terminal-engine',
+      `terminal-host-${hostKey}.json`
+    ),
     socketPath: path.join(
       os.tmpdir(),
       `treeport-${process.getuid?.() ?? 'user'}`,
-      `terminal-${hostKey}.sock`
+      `terminal-engine-${hostKey}.sock`
     ),
     tokenPath: path.join(dataDir, 'terminal-host.token')
   }

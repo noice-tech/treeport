@@ -120,13 +120,18 @@ async function startTerminalHost(
   const socketPath = path.join(
     os.tmpdir(),
     `treeport-${process.getuid?.() ?? 'user'}`,
-    `terminal-${hostKey}.sock`
+    `terminal-engine-${hostKey}.sock`
   )
-  const recordPath = path.join(runtimeDir, `terminal-host-${hostKey}.json`)
+  const recordPath = path.join(
+    runtimeDir,
+    'terminal-engine',
+    `terminal-host-${hostKey}.json`
+  )
   const terminalPidPath = path.join(fixtureDirectory, 'terminal.pid')
   sockets.push(socketPath)
   await Promise.all([
     fs.mkdir(fixtureDirectory, { recursive: true }),
+    fs.mkdir(path.dirname(recordPath), { recursive: true }),
     fs.mkdir(path.dirname(socketPath), { recursive: true }),
     fs.writeFile(path.join(dataDir, 'terminal-host.token'), `${token}\n`),
     fs.rm(socketPath, { force: true })

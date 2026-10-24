@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import * as EffectSocket from '@effect/platform/Socket'
@@ -996,25 +997,50 @@ export function connectOrStartTerminalHost(
         )
       }
     } else if (discovery.missing) {
-      const socketExists = yield* nodePromise(() =>
+      const socketStats = yield* nodePromise(() =>
         fs.lstat(paths.socketPath)
       ).pipe(
-        Effect.as(true),
         Effect.catchAll((failure) =>
           // SAFETY: Node filesystem failures expose their standard code on ErrnoException.
           (failure.cause as NodeJS.ErrnoException).code === 'ENOENT'
-            ? Effect.succeed(false)
+            ? Effect.succeed(null)
             : Effect.fail(failure)
         )
       )
-      if (socketExists) {
-        return yield* Effect.fail(
-          connectionError(
-            new Error(
-              'A terminal host socket exists without a valid discovery record. Treeport will not connect to, unlink, or replace it.'
+      if (socketStats) {
+        // A missing record is no evidence that the socket is unowned, but a
+        // refused connection is: a listening host always accepts. This daemon
+        // holds the data directory lock that the host key derives from, so no
+        // other host can bind this path between the probe and the unlink.
+        const refused =
+          socketStats.isSocket() &&
+          (yield* Effect.async<boolean>((resume) => {
+            const socket = net.createConnection(paths.socketPath)
+            socket.once('connect', () => {
+              socket.destroy()
+              resume(Effect.succeed(false))
+            })
+            socket.once('error', (cause: NodeJS.ErrnoException) => {
+              socket.destroy()
+              resume(
+                Effect.succeed(
+                  cause.code === 'ECONNREFUSED' || cause.code === 'ENOENT'
+                )
+              )
+            })
+            return Effect.sync(() => socket.destroy())
+          }))
+        if (!refused) {
+          return yield* Effect.fail(
+            connectionError(
+              new Error(
+                'A terminal host socket exists without a valid discovery record. Treeport will not connect to, unlink, or replace it.'
+              )
             )
           )
-        )
+        }
+
+        yield* nodePromise(() => fs.rm(paths.socketPath, { force: true }))
       }
 
       token = yield* readOrCreateToken(paths.tokenPath)

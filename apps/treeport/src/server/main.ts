@@ -504,8 +504,12 @@ export async function main(
       }, 5_000).unref()
     }
 
-    process.once('SIGINT', () => shutdown('SIGINT'))
-    process.once('SIGTERM', () => shutdown('SIGTERM'))
+    // Keep handlers installed while shutting down: supervisors and terminal
+    // teardown often deliver the same signal twice, and the default action
+    // would kill the daemon before the terminal engine releases its socket.
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+      process.on(signal, () => shutdown(signal))
+    }
 
     const startupDescriptorPath = path.join(
       config.dataDir,
