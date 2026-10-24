@@ -80,7 +80,11 @@ export function ProjectForm({
       : null
   const busy = openProject.isPending
 
-  const navigate = (nextPath: string) => {
+  const navigate = (directoryPath: string) => {
+    // End with a separator so typing continues into the folder's children.
+    const nextPath = /[\\/]$/u.test(directoryPath)
+      ? directoryPath
+      : `${directoryPath}${directoryPath.includes('/') ? '/' : '\\'}`
     setPathValue(nextPath)
     setDebouncedPath(nextPath)
     window.requestAnimationFrame(() => {
@@ -135,7 +139,8 @@ export function ProjectForm({
             if (
               event.key === 'Escape' &&
               data &&
-              pathValue.trim() !== data.directory.path
+              pathValue.trim().replace(/(?<=.)[\\/]+$/u, '') !==
+                data.directory.path
             ) {
               event.preventDefault()
               event.stopPropagation()
