@@ -1,14 +1,17 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { decodeUnknownOrNull, treeContextValuesSchema } from '@treeport/shared'
+import {
+  WORKTREE_TITLE_MAX_LENGTH,
+  availableTreeName,
+  normalizeWorktreeName
+} from '@treeport/shared'
 import type {
   CreateOperationRequest,
   OperationRecord,
   ProjectRecord,
   TerminalRecord,
   TerminalSize,
-  TreeContextValues,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
@@ -16,11 +19,12 @@ import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
+import { runCheckedEffect } from '../../command'
 import { mapOperation, mapWorktree, serializeOperation } from '../../database'
 import { operations, projects, worktrees } from '../../database-schema'
 import { DomainError } from '../../domain'
 import { Setup, type WorktreeSetupTask } from '../../setup'
-import { normalizeWorktreeName, Zed } from '../../zed'
+import { Zed } from '../../zed'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations,
@@ -166,11 +170,11 @@ export class WorktreeCreationService {
 
   beginCreateWorktree(
     projectId: string,
-    inputName: string,
+    inputName: string | undefined,
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: readonly string[]
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     const executeCreateOperation = this.executeCreateOperation.bind(this)
 
@@ -194,7 +198,12 @@ export class WorktreeCreationService {
       }
 
       const name = yield* Effect.try({
-        try: () => normalizeWorktreeName(inputName),
+        try: () =>
+          inputName === undefined
+            ? availableTreeName(
+                project.worktrees.map((worktree) => worktree.name)
+              )
+            : normalizeWorktreeName(inputName),
         catch: (error) =>
           new DomainError(
             'INVALID_WORKTREE_NAME',
@@ -226,8 +235,8 @@ export class WorktreeCreationService {
         request.sourceWorktreeId = sourceWorktreeId
       }
 
-      if (treeContext && Object.keys(treeContext).length > 0) {
-        request.context = treeContext
+      if (treeTitleCommand) {
+        request.treeTitleCommand = [...treeTitleCommand]
       }
 
       yield* database
@@ -258,7 +267,7 @@ export class WorktreeCreationService {
             base,
             initialTerminal,
             sourceWorktreeId,
-            treeContext
+            treeTitleCommand
           )
         )
         .pipe(
@@ -280,7 +289,7 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: readonly string[]
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     const executeCreateWorktree = this.executeCreateWorktree.bind(this)
 
@@ -302,7 +311,7 @@ export class WorktreeCreationService {
         base,
         initialTerminal,
         sourceWorktreeId,
-        treeContext
+        treeTitleCommand
       )
       yield* Effect.matchCauseEffect(creation, {
         onSuccess: (result) =>
@@ -386,17 +395,17 @@ export class WorktreeCreationService {
       request.base,
       initialTerminal,
       request.sourceWorktreeId,
-      request.context
+      request.treeTitleCommand
     )
   }
 
   createWorktree(
     projectId: string,
-    inputName: string,
+    inputName: string | undefined,
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: readonly string[]
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -436,11 +445,14 @@ export class WorktreeCreationService {
         projectId,
         executeCreateWorktree(
           projectId,
-          inputName,
+          inputName ??
+            availableTreeName(
+              project.worktrees.map((worktree) => worktree.name)
+            ),
           base,
           initialTerminal,
           sourceWorktreeId,
-          treeContext
+          treeTitleCommand
         )
       )
     })
@@ -452,7 +464,7 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: readonly string[]
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -475,17 +487,6 @@ export class WorktreeCreationService {
         const runner = yield* CommandPort
         const setupService = yield* Setup
         const zed = yield* Zed
-        const contextValues = yield* Effect.sync(() => {
-          const parsed = decodeUnknownOrNull(
-            treeContextValuesSchema,
-            treeContext ?? {}
-          )
-          if (!parsed) {
-            throw new Error('Tree context is invalid')
-          }
-
-          return parsed
-        })
         // Acceptance requires an open project; accepted work survives closure.
         const { project, worktree } = yield* Effect.acquireUseRelease(
           locks
@@ -656,8 +657,7 @@ export class WorktreeCreationService {
                 .execute('worktree.creation.service.629', (db) =>
                   db.run(sql`
               UPDATE worktrees
-              SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null},
-                  tree_context_json=${JSON.stringify(contextValues)}
+              SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null}
               WHERE path=${worktreePath}
             `)
                 )
@@ -720,6 +720,55 @@ export class WorktreeCreationService {
           () => locks.release({ projectId })
         )
 
+        const [titleExecutable, ...titleArgs] = treeTitleCommand ?? []
+        if (titleExecutable) {
+          yield* Effect.forkDaemon(
+            runCheckedEffect(runner, {
+              executable: titleExecutable,
+              args: titleArgs,
+              cwd: worktree.path,
+              timeoutMs: 120_000,
+              maxStdoutBytes: 64 * 1024
+            }).pipe(
+              Effect.flatMap((result) => {
+                const title = result.stdout
+                  .split('\n')
+                  .map((line) => line.trim())
+                  .find(Boolean)
+                  ?.slice(0, WORKTREE_TITLE_MAX_LENGTH)
+                if (!title) {
+                  return Effect.void
+                }
+
+                // A title set while the command ran wins over its output.
+                return database
+                  .execute('worktree.creation.service.title', (db) =>
+                    db.run(sql`
+                    UPDATE worktrees SET title=${title},updated_at=${now()}
+                    WHERE id=${worktree.id} AND title IS NULL
+                  `)
+                  )
+                  .pipe(
+                    Effect.orDie,
+                    Effect.zipRight(invalidateProjectsSnapshot()),
+                    Effect.zipRight(
+                      Effect.sync(() =>
+                        events.publish('project.updated', {
+                          projectId: worktree.projectId
+                        })
+                      )
+                    )
+                  )
+              }),
+              Effect.catchAllCause((cause) =>
+                Effect.logWarning(
+                  `Tree title command failed for ${worktree.id}: ${Cause.pretty(cause)}`
+                )
+              )
+            )
+          )
+        }
+
         let terminal: TerminalRecord | null = null
         let terminalError: string | null = null
         let setupError: string | null = null
@@ -769,7 +818,7 @@ export class WorktreeCreationService {
 
           if (!terminal) {
             const fallback = yield* Effect.exit(
-              executeCreateTerminal(worktree.id, 'Shell')
+              executeCreateTerminal(worktree.id, 'Terminal')
             )
             if (
               Exit.isFailure(fallback) &&
@@ -886,7 +935,7 @@ export class WorktreeCreationService {
 
         if (!terminal) {
           const fallback = yield* Effect.exit(
-            executeCreateTerminal(worktree.id, 'Shell')
+            executeCreateTerminal(worktree.id, 'Terminal')
           )
           if (
             Exit.isFailure(fallback) &&

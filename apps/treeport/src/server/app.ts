@@ -29,12 +29,12 @@ import {
   browserTicketRequestSchema,
   browserTicketResponseSchema,
   createBrowserAppSchema,
-  createTerminalPresetSchema,
+  createLauncherSchema,
   createTerminalSchema,
   createWorktreeSchema,
   createWebAppSchema,
   deleteAppQuerySchema,
-  deleteTerminalPresetSchema,
+  deleteLauncherSchema,
   deleteWebAppStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
   directoryBrowseResponseSchema,
@@ -76,23 +76,21 @@ import {
   terminalCaptureQuerySchema,
   terminalCaptureResponseSchema,
   terminalObservationResponseSchema,
-  terminalPresetDefinitionListingSchema,
-  terminalPresetDefinitionsQuerySchema,
-  terminalPresetResponseSchema,
-  terminalPresetsResponseSchema,
+  launcherDefinitionListingSchema,
+  launcherDefinitionsQuerySchema,
+  launcherResponseSchema,
+  launchersResponseSchema,
   terminalResponseSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
   terminatedTerminalsResponseSchema,
-  treeContextFieldListingSchema,
-  treeContextFieldsQuerySchema,
-  treeContextResponseSchema,
   treeFileListingSchema,
   treeFileSchema,
   treeFileSearchResultSchema,
   treeFileWriteResultSchema,
   uploadedFileResponseSchema,
   updateProjectSchema,
-  updateTerminalPresetSchema,
+  updateWorktreeTitleSchema,
+  updateLauncherSchema,
   updateTerminalSchema,
   updateWebAppPermissionGrantSchema,
   webAppContextResponseSchema,
@@ -925,49 +923,36 @@ export function createApp({
     ),
     route(
       'GET',
-      '/api/terminal-presets',
-      operation(() => service.terminalPresets.listTerminalPresets()).pipe(
-        Effect.map((presets) =>
-          jsonContractResponse(terminalPresetsResponseSchema, { presets })
+      '/api/launchers',
+      operation(() => service.launchers.listLaunchers()).pipe(
+        Effect.map((launchers) =>
+          jsonContractResponse(launchersResponseSchema, { launchers })
         )
       )
     ),
     route(
       'GET',
-      '/api/tree-context-fields',
+      '/api/launcher-definitions',
       Effect.gen(function* () {
-        const query = yield* requestQuery(treeContextFieldsQuerySchema)
+        const query = yield* requestQuery(launcherDefinitionsQuerySchema)
         return jsonContractResponse(
-          treeContextFieldListingSchema,
+          launcherDefinitionListingSchema,
           yield* operation(() =>
-            service.projects.listTreeContextFields(query.projectId)
-          )
-        )
-      })
-    ),
-    route(
-      'GET',
-      '/api/terminal-preset-definitions',
-      Effect.gen(function* () {
-        const query = yield* requestQuery(terminalPresetDefinitionsQuerySchema)
-        return jsonContractResponse(
-          terminalPresetDefinitionListingSchema,
-          yield* operation(() =>
-            service.terminalPresets.listTerminalPresetDefinitions(query)
+            service.launchers.listLauncherDefinitions(query)
           )
         )
       })
     ),
     route(
       'POST',
-      '/api/terminal-presets',
+      '/api/launchers',
       Effect.gen(function* () {
-        const body = yield* requestBody(createTerminalPresetSchema)
+        const body = yield* requestBody(createLauncherSchema)
         return jsonContractResponse(
-          terminalPresetResponseSchema,
+          launcherResponseSchema,
           {
-            preset: yield* operation(() =>
-              service.terminalPresets.createTerminalPreset({
+            launcher: yield* operation(() =>
+              service.launchers.createLauncher({
                 ...body,
                 args: [...body.args]
               })
@@ -979,15 +964,15 @@ export function createApp({
     ),
     route(
       'PATCH',
-      '/api/terminal-presets/:presetId',
+      '/api/launchers/:launcherId',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(updateTerminalPresetSchema)
+        const body = yield* requestBody(updateLauncherSchema)
         const { expectedUpdatedAt, ...input } = body
-        return jsonContractResponse(terminalPresetResponseSchema, {
-          preset: yield* operation(() =>
-            service.terminalPresets.updateTerminalPreset(
-              params.presetId!,
+        return jsonContractResponse(launcherResponseSchema, {
+          launcher: yield* operation(() =>
+            service.launchers.updateLauncher(
+              params.launcherId!,
               { ...input, args: [...input.args] },
               expectedUpdatedAt
             )
@@ -997,13 +982,13 @@ export function createApp({
     ),
     route(
       'DELETE',
-      '/api/terminal-presets/:presetId',
+      '/api/launchers/:launcherId',
       Effect.gen(function* () {
         const params = yield* routeParams
-        const body = yield* requestBody(deleteTerminalPresetSchema)
+        const body = yield* requestBody(deleteLauncherSchema)
         yield* operation(() =>
-          service.terminalPresets.deleteTerminalPreset(
-            params.presetId!,
+          service.launchers.deleteLauncher(
+            params.launcherId!,
             body.expectedUpdatedAt
           )
         )
@@ -1277,7 +1262,7 @@ export function createApp({
             body.base,
             initialTerminal,
             body.sourceWorktreeId,
-            body.context ? { ...body.context } : undefined
+            body.treeTitleCommand
           )
         )
         return jsonContractResponse(
@@ -1304,13 +1289,17 @@ export function createApp({
       })
     ),
     route(
-      'GET',
-      '/api/worktrees/:worktreeId/context',
+      'PATCH',
+      '/api/worktrees/:worktreeId',
       Effect.gen(function* () {
         const params = yield* routeParams
-        return jsonContractResponse(treeContextResponseSchema, {
-          context: yield* operation(() =>
-            service.projects.getWorktreeContext(params.worktreeId!)
+        const body = yield* requestBody(updateWorktreeTitleSchema)
+        yield* operation(() =>
+          service.projects.updateWorktreeTitle(params.worktreeId!, body.title)
+        )
+        return jsonContractResponse(worktreeResponseSchema, {
+          worktree: yield* operation(() =>
+            service.projects.getWorktreeSnapshot(params.worktreeId!)
           )
         })
       })

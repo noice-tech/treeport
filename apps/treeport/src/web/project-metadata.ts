@@ -4,7 +4,7 @@ import { METADATA_STALE_TIME_MS } from './metadata-sync'
 
 export const projectsQueryKey = ['projects'] as const
 export const recentProjectsQueryKey = ['recent-projects'] as const
-export const terminalPresetsQueryKey = ['terminal-presets'] as const
+export const launchersQueryKey = ['launchers'] as const
 
 export const projectsQueryOptions = queryOptions({
   queryKey: projectsQueryKey,
@@ -21,48 +21,32 @@ export const recentProjectsQueryOptions = queryOptions({
     (await parseResponse(rpc.api.projects.recent.$get())).projects
 })
 
-export const terminalPresetsQueryOptions = queryOptions({
-  queryKey: terminalPresetsQueryKey,
+export const launchersQueryOptions = queryOptions({
+  queryKey: launchersQueryKey,
   queryFn: async () =>
-    (await parseResponse(rpc.api['terminal-presets'].$get())).presets,
+    (await parseResponse(rpc.api['launchers'].$get())).launchers,
   staleTime: 0,
   refetchInterval: 5_000,
   refetchOnReconnect: true,
   refetchOnWindowFocus: true
 })
 
-export const treeContextFieldsQueryOptions = (projectId: string | null) =>
-  queryOptions({
-    queryKey: ['tree-context-fields', projectId ?? 'none'] as const,
-    queryFn: async () =>
-      await parseResponse(
-        rpc.api['tree-context-fields'].$get({
-          query: { projectId: projectId! }
-        })
-      ),
-    enabled: projectId !== null,
-    staleTime: 0,
-    refetchInterval: 5_000,
-    refetchOnReconnect: true,
-    refetchOnWindowFocus: true
-  })
-
-interface TerminalPresetDefinitionsQuery {
+interface LauncherDefinitionsQuery {
   projectId?: string
   worktreeId?: string
 }
 
-export const terminalPresetDefinitionsQueryOptions = (context?: {
+export const launcherDefinitionsQueryOptions = (context?: {
   projectId?: string
   worktreeId?: string
 }) =>
   queryOptions({
     queryKey: [
-      'terminal-preset-definitions',
+      'launcher-definitions',
       context?.worktreeId ?? context?.projectId ?? 'global'
     ] as const,
     queryFn: async () => {
-      const query: TerminalPresetDefinitionsQuery = {}
+      const query: LauncherDefinitionsQuery = {}
       if (context?.projectId) {
         query.projectId = context.projectId
       }
@@ -72,7 +56,7 @@ export const terminalPresetDefinitionsQueryOptions = (context?: {
       }
 
       return await parseResponse(
-        rpc.api['terminal-preset-definitions'].$get({ query })
+        rpc.api['launcher-definitions'].$get({ query })
       )
     },
     staleTime: 0,

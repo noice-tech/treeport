@@ -1,9 +1,10 @@
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
   DocumentDuplicateIcon,
   FolderIcon,
   LinkSlashIcon,
+  PencilIcon,
   PlusIcon,
   TrashIcon,
   XMarkIcon
@@ -47,6 +48,7 @@ import type {
   PendingWorktreeCreation,
   RemovalStage
 } from '../worktrees/worktree-workflows'
+import { WorktreeTitleDialog } from '../worktrees/worktree-title-dialog'
 import { SidebarAction } from './sidebar-action'
 
 function copyText(text: string) {
@@ -190,6 +192,9 @@ export function WorkspaceTree({
     terminalWorkspaceLayouts.getSnapshot
   )
   const { focusedSurface } = useWorkspaceSurfaceFocus()
+  const [titleWorktree, setTitleWorktree] = useState<WorktreeRecord | null>(
+    null
+  )
   const {
     attention: bellAttention,
     titles: runtimeTitles,
@@ -311,11 +316,11 @@ export function WorkspaceTree({
                         >
                           <WorktreeShell
                             id={`worktree-${worktree.id}`}
-                            name={worktree.name}
+                            name={worktree.title ?? worktree.name}
                             title={
                               worktree.kind === 'folder'
                                 ? worktree.path
-                                : `${worktree.path}${
+                                : `${worktree.title ? `${worktree.name} · ` : ''}${worktree.path}${
                                     worktree.branch
                                       ? ` · ${worktree.branch}`
                                       : ` · detached at ${worktree.head.slice(
@@ -390,6 +395,12 @@ export function WorkspaceTree({
                       </ContextMenuTrigger>
                       <ContextMenuContent>
                         <ContextMenuGroup>
+                          <ContextMenuItem
+                            onSelect={() => setTitleWorktree(worktree)}
+                          >
+                            <PencilIcon />
+                            Edit title…
+                          </ContextMenuItem>
                           <ContextMenuItem
                             onSelect={() => copyText(worktree.id)}
                           >
@@ -708,6 +719,12 @@ export function WorkspaceTree({
             </div>
           ))}
       </div>
+      {titleWorktree ? (
+        <WorktreeTitleDialog
+          worktree={titleWorktree}
+          onClose={() => setTitleWorktree(null)}
+        />
+      ) : null}
     </nav>
   )
 }

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import type { TerminalPreset } from '@treeport/shared'
+import type { Launcher } from '@treeport/shared'
 import {
   Dialog,
   DialogContent,
@@ -8,17 +8,17 @@ import {
 } from '../../components/ui/dialog'
 import { LoadingFallback } from '../../loading-fallback'
 
-const TerminalPresetsManager = lazy(() =>
-  import('./presets-manager').then((module) => ({
-    default: module.TerminalPresetsManager
+const LaunchersManager = lazy(() =>
+  import('./launchers-manager').then((module) => ({
+    default: module.LaunchersManager
   }))
 )
 
-export function TerminalPresetsDialog({
+export function LaunchersDialog({
   open,
   onOpenChange,
   restoreFocusTo,
-  presets,
+  launchers,
   loading,
   loadError,
   onRetry
@@ -26,7 +26,7 @@ export function TerminalPresetsDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
-  presets: TerminalPreset[]
+  launchers: Launcher[]
   loading: boolean
   loadError: boolean
   onRetry: () => void
@@ -46,7 +46,7 @@ export function TerminalPresetsDialog({
           >
             <DialogHeader>
               <DialogTitle className="text-base sm:text-lg">
-                Terminal presets
+                Launchers
               </DialogTitle>
             </DialogHeader>
             <LoadingFallback />
@@ -54,8 +54,8 @@ export function TerminalPresetsDialog({
         </Dialog>
       }
     >
-      <TerminalPresetsManager
-        presets={presets}
+      <LaunchersManager
+        launchers={launchers}
         loading={loading}
         loadError={loadError}
         onRetry={onRetry}

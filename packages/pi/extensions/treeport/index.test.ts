@@ -20,8 +20,7 @@ const managed = {
     id: 'tree-1',
     projectId: 'project-1',
     name: 'pi-extension',
-    path: '/repo/pi-extension',
-    context: { task: 'Do the assigned work' }
+    path: '/repo/pi-extension'
   },
   terminal: { id: 'terminal-parent', worktreeId: 'tree-1', name: 'agent' }
 }

@@ -658,7 +658,7 @@ export function TerminalView({
             </h1>
             <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
               {worktree
-                ? 'Use New app in the sidebar to start a login shell, preset, or web app.'
+                ? 'Use New app in the sidebar to start a terminal, launcher, or web app.'
                 : 'Select a tree from the sidebar to view its terminals.'}
             </p>
           </div>

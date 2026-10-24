@@ -2,12 +2,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
+import { normalizeWorktreeName } from '@treeport/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   inferWorktreeName,
   loadCreateWorktreeTasks,
-  loadZedTerminalPresetDefinitions,
-  normalizeWorktreeName,
+  loadZedLauncherDefinitions,
   resolveZedCreateWorktreeSetupTasks,
   resolveZedWorktreePath
 } from './zed'
@@ -185,7 +185,7 @@ describe('Zed worktree compatibility', () => {
     )
 
     const listing = await Effect.runPromise(
-      loadZedTerminalPresetDefinitions({
+      loadZedLauncherDefinitions({
         projectId: 'project_1',
         shell: '/bin/zsh',
         mainWorktreePath: main,
@@ -207,6 +207,7 @@ describe('Zed worktree compatibility', () => {
             ZED_MAIN_GIT_WORKTREE: main
           },
           closeOnSuccess: false,
+          treeTitle: null,
           source: { type: 'repository', format: 'zed' }
         },
         {
@@ -221,6 +222,7 @@ describe('Zed worktree compatibility', () => {
             ZED_MAIN_GIT_WORKTREE: main
           },
           closeOnSuccess: false,
+          treeTitle: null,
           source: { type: 'repository', format: 'zed' }
         },
         {
@@ -235,6 +237,7 @@ describe('Zed worktree compatibility', () => {
             ZED_MAIN_GIT_WORKTREE: main
           },
           closeOnSuccess: false,
+          treeTitle: null,
           source: { type: 'repository', format: 'zed' }
         }
       ],
@@ -265,7 +268,7 @@ describe('Zed worktree compatibility', () => {
     )
 
     const listing = await Effect.runPromise(
-      loadZedTerminalPresetDefinitions({
+      loadZedLauncherDefinitions({
         projectId: 'first',
         shell: '/bin/zsh',
         mainWorktreePath: first.main,
@@ -291,7 +294,7 @@ describe('Zed worktree compatibility', () => {
     ])
     expect(
       await Effect.runPromise(
-        loadZedTerminalPresetDefinitions({
+        loadZedLauncherDefinitions({
           projectId: 'second',
           shell: '/bin/zsh',
           mainWorktreePath: second.main,
@@ -306,7 +309,7 @@ describe('Zed worktree compatibility', () => {
     )
     await expect(
       Effect.runPromise(
-        loadZedTerminalPresetDefinitions({
+        loadZedLauncherDefinitions({
           projectId: 'first',
           shell: '/bin/zsh',
           mainWorktreePath: first.main,
@@ -323,7 +326,7 @@ describe('Zed worktree compatibility', () => {
     await fs.writeFile(path.join(first.main, '.zed', 'tasks.json'), '{ bad')
     await expect(
       Effect.runPromise(
-        loadZedTerminalPresetDefinitions({
+        loadZedLauncherDefinitions({
           projectId: 'first',
           shell: '/bin/zsh',
           mainWorktreePath: first.main,

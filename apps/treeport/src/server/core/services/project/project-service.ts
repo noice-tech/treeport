@@ -1,21 +1,17 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { decodeUnknownOrNull, treeContextValuesSchema } from '@treeport/shared'
 import type {
   DirectoryBrowseResponse,
   OperationRecord,
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
-  TreeContextFieldListing,
-  TreeContextValues,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import { projects, worktrees } from '../../database-schema'
+import { projects } from '../../database-schema'
 import { DomainError } from '../../domain'
-import { loadTreeContextFields } from '../../tree-context'
 import {
   ProjectObservationOperations,
   ProjectRegistrationOperations,
@@ -29,7 +25,6 @@ import {
 } from '../infrastructure/application-runtime'
 import { MutationLocks } from '../infrastructure/mutation-locks'
 import {
-  ConfigPort,
   EventBusPort,
   PackageSystemPort,
   TerminalHostPort
@@ -215,23 +210,32 @@ export class ProjectService {
     })
   }
 
-  listTreeContextFields(
-    projectId: string
-  ): Effect.Effect<
-    TreeContextFieldListing,
-    DomainError<unknown>,
-    ApplicationServices
-  > {
+  updateWorktreeTitle(
+    worktreeId: string,
+    title: string | null
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
     return Effect.gen(function* () {
-      const config = yield* ConfigPort
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
       const projectStore = yield* ProjectStore
-      const project = yield* projectStore.getProject(projectId)
-      return yield* Effect.tryPromise(() =>
-        loadTreeContextFields({
-          dataDir: config.dataDir,
-          projectRoot: project.rootPath
-        })
-      ).pipe(Effect.orDie)
+      const worktree = yield* projectStore.getWorktree(worktreeId)
+      yield* projectStore.requireOpenProject(worktree.projectId)
+
+      yield* database
+        .execute('project.service.worktree-title', (db) =>
+          db.run(sql`
+          UPDATE worktrees SET title = ${title}, updated_at = ${now()}
+          WHERE id = ${worktreeId}
+        `)
+        )
+        .pipe(Effect.orDie)
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('project.updated', { projectId: worktree.projectId })
+      })
     })
   }
 
@@ -241,42 +245,6 @@ export class ProjectService {
     return Effect.flatMap(ProjectStore, (store) =>
       store.getWorktree(worktreeId)
     )
-  }
-
-  getWorktreeContext(
-    worktreeId: string
-  ): Effect.Effect<
-    TreeContextValues,
-    DomainError<unknown>,
-    ApplicationServices
-  > {
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-      const [row] = yield* database
-        .execute('project.service.266', (db) =>
-          db
-            .select({ treeContextJson: worktrees.treeContextJson })
-            .from(worktrees)
-            .where(eq(worktrees.id, worktreeId))
-            .limit(1)
-        )
-        .pipe(Effect.orDie)
-      if (!row) {
-        return yield* Effect.fail(
-          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-        )
-      }
-
-      const context = decodeUnknownOrNull(
-        treeContextValuesSchema,
-        JSON.parse(row.treeContextJson)
-      )
-      if (!context) {
-        throw new Error(`Tree ${worktreeId} has invalid stored context`)
-      }
-
-      return context
-    })
   }
 
   requestWorkspaceOpen(

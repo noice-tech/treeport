@@ -40,7 +40,7 @@ Run:
 treeport context
 ```
 
-Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, tree context values, and daemon URL. User-supplied context can contain an issue identifier, a task description, or other information for the tree. Use these values as task input when the caller asks you to work from the tree context. It reports whether Treeport, the OS service, or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
+Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, and daemon URL. It reports whether Treeport, the OS service, or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
 
 Outside Treeport it reports that the terminal is not managed and exits successfully. `TREEPORT_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
 
@@ -135,6 +135,33 @@ treeport terminal wait <terminal-id> --until exit
 - Waits have no default timeout. Use a positive `ms`, `s`, `m`, or `h` duration when a deadline is required; Ctrl+C cancels.
 
 Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
+
+## Register and run launchers
+
+Launchers are saved programs that the Treeport UI and `treeport launch` start in a tree. A lowercase `${name}` inside an argument is an input that the caller fills in when launching. Treeport passes input values through without interpreting them.
+
+To register an agent CLI, check its `--help` for how it accepts an initial prompt, then save it:
+
+```sh
+treeport launcher add --name Claude -- claude '${prompt}'
+```
+
+Quote `${...}` inputs so the shell does not expand them. Add `--repo` to save the launcher in the current tree's `.treeport/settings.json` instead of for every project. Use `treeport launcher list` to see available launcher IDs and inputs.
+
+Start a launcher in the current tree, or in a new tree:
+
+```sh
+treeport launch claude --input prompt="Fix the login redirect loop"
+treeport launch claude --new-tree --tree-name login-redirect --input prompt="Fix the login redirect loop"
+```
+
+Without `--tree-name`, the new tree is named `tree`, `tree-2`, and so on.
+
+A tree's folder name is fixed, but its title can change. A launcher can title its new trees with `--tree-title '["claude","-p","Reply with a 3-5 word title for: ${task}"]'`: after the tree starts, the command's first output line becomes the title. To title the current tree yourself, run:
+
+```sh
+treeport worktree title "Fix the login redirect loop"
+```
 
 ## Inspect the worktree application in a browser tab
 

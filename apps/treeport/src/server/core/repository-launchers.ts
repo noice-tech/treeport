@@ -4,22 +4,22 @@ import * as Either from 'effect/Either'
 import * as ParseResult from 'effect/ParseResult'
 import * as Schema from 'effect/Schema'
 import type {
-  TerminalPresetDefinition,
-  TerminalPresetDefinitionDiagnostic
+  LauncherDefinition,
+  LauncherDefinitionDiagnostic
 } from '@treeport/shared'
 import {
-  repositoryTerminalPresetSchema,
-  repositoryTerminalPresetsSettingsSchema
+  repositoryLauncherSchema,
+  repositoryLaunchersSettingsSchema
 } from '@treeport/shared'
 
 const CONFIG_PATH = path.join('.treeport', 'settings.json')
 
-export async function loadRepositoryTerminalPresets(
+export async function loadRepositoryLaunchers(
   projectId: string,
   worktreePath: string
 ): Promise<{
-  definitions: TerminalPresetDefinition[]
-  diagnostics: TerminalPresetDefinitionDiagnostic[]
+  definitions: LauncherDefinition[]
+  diagnostics: LauncherDefinitionDiagnostic[]
 }> {
   const configPath = path.join(worktreePath, CONFIG_PATH)
   const content = await fs.readFile(configPath, 'utf8').catch((error) => {
@@ -40,7 +40,7 @@ export async function loadRepositoryTerminalPresets(
         {
           path: CONFIG_PATH,
           itemId: null,
-          message: `Could not read repository terminal presets: ${content.message}`
+          message: `Could not read repository launchers: ${content.message}`
         }
       ]
     }
@@ -56,15 +56,15 @@ export async function loadRepositoryTerminalPresets(
         {
           path: CONFIG_PATH,
           itemId: null,
-          message: `Could not parse repository terminal presets: ${error instanceof Error ? error.message : String(error)}`
+          message: `Could not parse repository launchers: ${error instanceof Error ? error.message : String(error)}`
         }
       ]
     }
   }
 
-  const file = Schema.decodeUnknownEither(
-    repositoryTerminalPresetsSettingsSchema
-  )(value)
+  const file = Schema.decodeUnknownEither(repositoryLaunchersSettingsSchema)(
+    value
+  )
   if (Either.isLeft(file)) {
     return {
       definitions: [],
@@ -72,36 +72,37 @@ export async function loadRepositoryTerminalPresets(
         {
           path: CONFIG_PATH,
           itemId: null,
-          message: `Invalid repository terminal presets: ${ParseResult.TreeFormatter.formatErrorSync(file.left)}`
+          message: `Invalid repository launchers: ${ParseResult.TreeFormatter.formatErrorSync(file.left)}`
         }
       ]
     }
   }
 
-  const definitions: TerminalPresetDefinition[] = []
-  const diagnostics: TerminalPresetDefinitionDiagnostic[] = []
-  for (const presetId of Object.keys(file.right.terminalPresets).sort()) {
-    const preset = Schema.decodeUnknownEither(repositoryTerminalPresetSchema)(
-      file.right.terminalPresets[presetId]
+  const definitions: LauncherDefinition[] = []
+  const diagnostics: LauncherDefinitionDiagnostic[] = []
+  for (const launcherId of Object.keys(file.right.launchers).sort()) {
+    const launcher = Schema.decodeUnknownEither(repositoryLauncherSchema)(
+      file.right.launchers[launcherId]
     )
-    if (Either.isLeft(preset)) {
+    if (Either.isLeft(launcher)) {
       diagnostics.push({
         path: CONFIG_PATH,
-        itemId: presetId,
-        message: `Invalid repository terminal preset ${presetId}: ${ParseResult.TreeFormatter.formatErrorSync(preset.left)}`
+        itemId: launcherId,
+        message: `Invalid repository launcher ${launcherId}: ${ParseResult.TreeFormatter.formatErrorSync(launcher.left)}`
       })
       continue
     }
 
     definitions.push({
-      id: `repository:${projectId}:terminal-preset:${presetId}`,
-      name: preset.right.name,
-      executable: preset.right.executable,
-      args: [...preset.right.args],
+      id: `repository:${projectId}:launcher:${launcherId}`,
+      name: launcher.right.name,
+      executable: launcher.right.executable,
+      args: [...launcher.right.args],
       shellCommand: null,
       cwd: null,
       env: {},
-      closeOnSuccess: preset.right.closeOnSuccess,
+      closeOnSuccess: launcher.right.closeOnSuccess,
+      treeTitle: launcher.right.treeTitle,
       source: { type: 'repository', format: 'treeport' }
     })
   }

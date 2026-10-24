@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { loadRepositoryTerminalPresets } from './repository-terminal-presets'
+import { loadRepositoryLaunchers } from './repository-launchers'
 
 const temporary: string[] = []
 afterEach(async () => {
@@ -13,8 +13,8 @@ afterEach(async () => {
   )
 })
 
-it('reads presets from the current tree settings alongside other sections', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-presets-'))
+it('reads launchers from the current tree settings alongside other sections', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-launchers-'))
   temporary.push(root)
   for (const tree of ['main', 'topic']) {
     await fs.mkdir(path.join(root, tree, '.treeport'), { recursive: true })
@@ -23,8 +23,7 @@ it('reads presets from the current tree settings alongside other sections', asyn
       JSON.stringify({
         setup: { commands: [] },
         packages: [],
-        treeContext: { fields: [] },
-        terminalPresets: {
+        launchers: {
           shell: {
             name: tree,
             executable: 'bash',
@@ -35,14 +34,14 @@ it('reads presets from the current tree settings alongside other sections', asyn
       })
     )
   }
-  const result = await loadRepositoryTerminalPresets(
+  const result = await loadRepositoryLaunchers(
     'project',
     path.join(root, 'topic')
   )
   expect(result.diagnostics).toEqual([])
   expect(result.definitions).toEqual([
     {
-      id: 'repository:project:terminal-preset:shell',
+      id: 'repository:project:launcher:shell',
       name: 'topic',
       executable: 'bash',
       args: ['-l'],
@@ -50,27 +49,28 @@ it('reads presets from the current tree settings alongside other sections', asyn
       cwd: null,
       env: {},
       closeOnSuccess: true,
+      treeTitle: null,
       source: { type: 'repository', format: 'treeport' }
     }
   ])
 })
 
-it('allows absent presets and diagnoses invalid settings and individual presets', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-presets-'))
+it('allows absent launchers and diagnoses invalid settings and individual launchers', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-launchers-'))
   temporary.push(root)
   await fs.mkdir(path.join(root, '.treeport'))
   const file = path.join(root, '.treeport', 'settings.json')
-  expect(await loadRepositoryTerminalPresets('project', root)).toEqual({
+  expect(await loadRepositoryLaunchers('project', root)).toEqual({
     definitions: [],
     diagnostics: []
   })
   for (const settings of [
     {},
     { setup: { commands: [] }, packages: [] },
-    { terminalPresets: {} }
+    { launchers: {} }
   ]) {
     await fs.writeFile(file, JSON.stringify(settings))
-    expect(await loadRepositoryTerminalPresets('project', root)).toEqual({
+    expect(await loadRepositoryLaunchers('project', root)).toEqual({
       definitions: [],
       diagnostics: []
     })
@@ -78,13 +78,13 @@ it('allows absent presets and diagnoses invalid settings and individual presets'
   for (const content of [
     'null',
     '[]',
-    '{"terminalPresets":[]}',
-    '{"terminalPresets":null}',
+    '{"launchers":[]}',
+    '{"launchers":null}',
     '{ /* comment */ }',
-    '{ "terminalPresets": {}, }'
+    '{ "launchers": {}, }'
   ]) {
     await fs.writeFile(file, content)
-    const result = await loadRepositoryTerminalPresets('project', root)
+    const result = await loadRepositoryLaunchers('project', root)
     expect(result.definitions).toEqual([])
     expect(result.diagnostics, content).toEqual([
       expect.objectContaining({
@@ -96,13 +96,13 @@ it('allows absent presets and diagnoses invalid settings and individual presets'
   await fs.writeFile(
     file,
     JSON.stringify({
-      terminalPresets: {
+      launchers: {
         invalid: { name: 'Invalid', executable: '', args: [] },
         valid: { name: 'Valid', executable: 'bash', args: [] }
       }
     })
   )
-  const result = await loadRepositoryTerminalPresets('project', root)
+  const result = await loadRepositoryLaunchers('project', root)
   expect(result.definitions).toEqual([
     expect.objectContaining({
       name: 'Valid',

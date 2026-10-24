@@ -5,7 +5,7 @@ import path from 'node:path'
 import { z } from 'zod'
 import * as Effect from 'effect/Effect'
 import {
-  createTerminalPresetSchema,
+  createLauncherSchema,
   decodeUnknownOrNull,
   isSchemaValue,
   type PackageListing,
@@ -14,7 +14,7 @@ import {
   type PackageScope,
   type PackageSource,
   type ProjectRecord,
-  type TerminalPresetDefinition,
+  type LauncherDefinition,
   type WebAppDefinition,
   type WebAppPermission,
   webAppPermissionSchema
@@ -83,8 +83,8 @@ export interface ResolvedWebApp {
   enabled: boolean
 }
 
-interface ResolvedTerminalPreset {
-  definition: TerminalPresetDefinition
+interface ResolvedLauncher {
+  definition: LauncherDefinition
   relativePath: string
   enabled: boolean
 }
@@ -98,7 +98,7 @@ interface ResolvedPackage {
   root: string
   installedPath: string
   webApps: ResolvedWebApp[]
-  terminalPresets: ResolvedTerminalPreset[]
+  launchers: ResolvedLauncher[]
   diagnostics: PackageResourceDiagnostic[]
 }
 
@@ -118,7 +118,7 @@ interface ProjectPackageState {
 
 interface ResourceCandidates {
   webApps: Array<{ root: string; relativePath: string }>
-  terminalPresets: Array<{ path: string; relativePath: string }>
+  launchers: Array<{ path: string; relativePath: string }>
   diagnostics: PackageResourceDiagnostic[]
 }
 
@@ -131,7 +131,7 @@ interface WebAppManifestEntry {
 
 interface PackageManifest {
   webApps: WebAppManifestEntry[]
-  terminalPresets: string[]
+  launchers: string[]
 }
 
 const packageManifestInputSchema = z.unknown()
@@ -189,7 +189,7 @@ function packageFilter(source: PackageSource): PackageSourceObject | undefined {
       source: z.string(),
       autoload: z.boolean().optional(),
       webApps: z.array(z.string()).optional(),
-      terminalPresets: z.array(z.string()).optional()
+      launchers: z.array(z.string()).optional()
     })
     .parse(source)
   const result: PackageSourceObject = { source: data.source }
@@ -201,8 +201,8 @@ function packageFilter(source: PackageSource): PackageSourceObject | undefined {
     result.webApps = data.webApps
   }
 
-  if (data.terminalPresets !== undefined) {
-    result.terminalPresets = data.terminalPresets
+  if (data.launchers !== undefined) {
+    result.launchers = data.launchers
   }
 
   return result
@@ -245,7 +245,7 @@ function diagnostic(
     severity?: 'warning' | 'error' | undefined
     source?: string | undefined
     projectId?: string | undefined
-    resourceType?: 'web-app' | 'terminal-preset' | undefined
+    resourceType?: 'web-app' | 'launcher' | undefined
     path?: string | undefined
   } = {}
 ): PackageResourceDiagnostic {
@@ -529,7 +529,7 @@ export class PackageSystem {
       source: z.unknown().optional(),
       autoload: z.unknown().optional(),
       webApps: z.unknown().optional(),
-      terminalPresets: z.unknown().optional()
+      launchers: z.unknown().optional()
     })
     const packages: PackageSource[] = []
     for (const [index, entry] of parsedPackageEntries.data.entries()) {
@@ -575,16 +575,12 @@ export class PackageSystem {
       const parsedWebApps = z
         .array(z.string())
         .safeParse(parsedEntry.data.webApps)
-      const parsedTerminalPresets = z
+      const parsedLaunchers = z
         .array(z.string())
-        .safeParse(parsedEntry.data.terminalPresets)
+        .safeParse(parsedEntry.data.launchers)
       for (const [key, original, parsed] of [
         ['webApps', parsedEntry.data.webApps, parsedWebApps],
-        [
-          'terminalPresets',
-          parsedEntry.data.terminalPresets,
-          parsedTerminalPresets
-        ]
+        ['launchers', parsedEntry.data.launchers, parsedLaunchers]
       ] as const) {
         if (original !== undefined && !parsed.success) {
           return {
@@ -606,8 +602,8 @@ export class PackageSystem {
         configured.webApps = parsedWebApps.data
       }
 
-      if (parsedTerminalPresets.success) {
-        configured.terminalPresets = parsedTerminalPresets.data
+      if (parsedLaunchers.success) {
+        configured.launchers = parsedLaunchers.data
       }
 
       packages.push(configured)
@@ -1003,7 +999,7 @@ export class PackageSystem {
   ): Promise<ResourceCandidates> {
     const canonicalRoot = await fs.realpath(root)
     const webApps: ResourceCandidates['webApps'] = []
-    const terminalPresets: ResourceCandidates['terminalPresets'] = []
+    const launchers: ResourceCandidates['launchers'] = []
     const diagnostics: PackageResourceDiagnostic[] = []
     const visited = new Set<string>()
 
@@ -1099,21 +1095,17 @@ export class PackageSystem {
         const realFile = await fs.realpath(candidate).catch(() => null)
         if (!realFile || !isWithin(realFile, canonicalRoot)) {
           diagnostics.push(
-            diagnostic(
-              scope,
-              'Terminal preset resource escapes the package root',
-              {
-                source,
-                projectId: projectId ?? undefined,
-                resourceType: 'terminal-preset',
-                path: candidate
-              }
-            )
+            diagnostic(scope, 'Launcher resource escapes the package root', {
+              source,
+              projectId: projectId ?? undefined,
+              resourceType: 'launcher',
+              path: candidate
+            })
           )
           continue
         }
 
-        terminalPresets.push({
+        launchers.push({
           path: candidate,
           relativePath: toPosix(path.relative(root, candidate))
         })
@@ -1121,13 +1113,13 @@ export class PackageSystem {
     }
 
     await walk(root)
-    return { webApps, terminalPresets, diagnostics }
+    return { webApps, launchers, diagnostics }
   }
 
   private manifestAllows(
     relativePath: string,
     patterns: string[],
-    resourceType: 'web-app' | 'terminal-preset'
+    resourceType: 'web-app' | 'launcher'
   ): boolean {
     const positives = patterns.filter((pattern) => !pattern.startsWith('!'))
     const exclusions = patterns
@@ -1187,7 +1179,7 @@ export class PackageSystem {
         const parsedTreeport = z
           .looseObject({
             webApps: z.unknown().optional(),
-            terminalPresets: z.unknown().optional()
+            launchers: z.unknown().optional()
           })
           .safeParse(parsedPackageJson.data.treeport)
         if (!parsedTreeport.success) {
@@ -1201,9 +1193,9 @@ export class PackageSystem {
             parsedTreeport.data.webApps ?? [],
             packageJsonPath
           ),
-          terminalPresets: this.validateManifestPatterns(
-            parsedTreeport.data.terminalPresets ?? [],
-            'terminalPresets',
+          launchers: this.validateManifestPatterns(
+            parsedTreeport.data.launchers ?? [],
+            'launchers',
             packageJsonPath
           )
         }
@@ -1226,14 +1218,14 @@ export class PackageSystem {
         : candidate.relativePath.startsWith('web-apps/') &&
           candidate.relativePath.split('/').length === 2
     )
-    const presetCandidates = candidates.terminalPresets.filter((candidate) =>
+    const launcherCandidates = candidates.launchers.filter((candidate) =>
       manifest
         ? this.manifestAllows(
             candidate.relativePath,
-            manifest.terminalPresets,
-            'terminal-preset'
+            manifest.launchers,
+            'launcher'
           )
-        : candidate.relativePath.startsWith('terminal-presets/') &&
+        : candidate.relativePath.startsWith('launchers/') &&
           candidate.relativePath.split('/').length === 2
     )
     const filter = packageFilter(configured)
@@ -1307,8 +1299,8 @@ export class PackageSystem {
       filter?.webApps,
       autoload
     )
-    const terminalPresets: ResolvedTerminalPreset[] = []
-    for (const candidate of presetCandidates) {
+    const launchers: ResolvedLauncher[] = []
+    for (const candidate of launcherCandidates) {
       let value: unknown
       try {
         value = JSON.parse(await fs.readFile(candidate.path, 'utf8'))
@@ -1316,45 +1308,42 @@ export class PackageSystem {
         candidates.diagnostics.push(
           diagnostic(
             scope,
-            `Could not parse terminal preset: ${
+            `Could not parse launcher: ${
               error instanceof Error ? error.message : String(error)
             }`,
             {
               source,
               projectId: projectId ?? undefined,
-              resourceType: 'terminal-preset',
+              resourceType: 'launcher',
               path: candidate.path
             }
           )
         )
         continue
       }
-      const result = decodeUnknownOrNull(createTerminalPresetSchema, value)
+      const result = decodeUnknownOrNull(createLauncherSchema, value)
       if (!result) {
         candidates.diagnostics.push(
-          diagnostic(
-            scope,
-            'Invalid terminal preset: Request validation failed',
-            {
-              source,
-              projectId: projectId ?? undefined,
-              resourceType: 'terminal-preset',
-              path: candidate.path
-            }
-          )
+          diagnostic(scope, 'Invalid launcher: Request validation failed', {
+            source,
+            projectId: projectId ?? undefined,
+            resourceType: 'launcher',
+            path: candidate.path
+          })
         )
         continue
       }
 
       const resourceName = path.posix.basename(candidate.relativePath, '.json')
-      terminalPresets.push({
+      launchers.push({
         definition: {
-          id: `package:${parsed.packageId}:terminal-preset:${encodeURIComponent(
+          id: `package:${parsed.packageId}:launcher:${encodeURIComponent(
             resourceName
           )}`,
           name: result.name,
           executable: result.executable,
           args: [...result.args],
+          treeTitle: result.treeTitle,
           shellCommand: null,
           cwd: null,
           env: {},
@@ -1366,13 +1355,13 @@ export class PackageSystem {
       })
     }
 
-    const filteredPresets = applyNormalFilter(
-      terminalPresets,
-      filter?.terminalPresets,
+    const filteredLaunchers = applyNormalFilter(
+      launchers,
+      filter?.launchers,
       autoload
     )
     const duplicateIds = new Set<string>()
-    for (const resource of [...webApps, ...filteredPresets]) {
+    for (const resource of [...webApps, ...filteredLaunchers]) {
       const resourceId = resource.definition.id
       if (duplicateIds.has(resourceId)) {
         candidates.diagnostics.push(
@@ -1401,7 +1390,7 @@ export class PackageSystem {
       root,
       installedPath: root,
       webApps,
-      terminalPresets: filteredPresets,
+      launchers: filteredLaunchers,
       diagnostics: candidates.diagnostics
     }
   }
@@ -1416,7 +1405,7 @@ export class PackageSystem {
           source: { ...resource.definition.source }
         }
       })),
-      terminalPresets: pkg.terminalPresets.map((resource) => ({
+      launchers: pkg.launchers.map((resource) => ({
         ...resource,
         definition: {
           ...resource.definition,
@@ -1438,11 +1427,8 @@ export class PackageSystem {
     result.scope = 'project'
     result.projectId = projectId
     result.webApps = applyDelta(result.webApps, configured.webApps)
-    result.terminalPresets = applyDelta(
-      result.terminalPresets,
-      configured.terminalPresets
-    )
-    for (const resource of [...result.webApps, ...result.terminalPresets]) {
+    result.launchers = applyDelta(result.launchers, configured.launchers)
+    for (const resource of [...result.webApps, ...result.launchers]) {
       resource.definition.source = {
         type: 'package',
         packageId: result.packageId,
@@ -1507,7 +1493,7 @@ export class PackageSystem {
             ? parsed.path
             : this.npmPackagePath(parsed, scope, projectId),
         webApps: [],
-        terminalPresets: [],
+        launchers: [],
         diagnostics: [
           diagnostic(
             scope,
@@ -1776,12 +1762,10 @@ export class PackageSystem {
                           ...resource,
                           enabled: false
                         })),
-                        terminalPresets: resolved.terminalPresets.map(
-                          (resource) => ({
-                            ...resource,
-                            enabled: false
-                          })
-                        )
+                        launchers: resolved.launchers.map((resource) => ({
+                          ...resource,
+                          enabled: false
+                        }))
                       },
                       filter,
                       projectId
@@ -1897,10 +1881,10 @@ export class PackageSystem {
     )
   }
 
-  terminalPresetDefinitions(
+  launcherDefinitions(
     projectId?: string
   ): Effect.Effect<
-    TerminalPresetDefinition[],
+    LauncherDefinition[],
     DomainError<unknown>,
     ApplicationServices
   > {
@@ -1910,7 +1894,7 @@ export class PackageSystem {
         ? (yield* this.ensureProject(projectId)).effectivePackages
         : this.globalState.packages
       return [...packages.values()].flatMap((pkg) =>
-        pkg.terminalPresets
+        pkg.launchers
           .filter((resource) => resource.enabled)
           .map((resource) => resource.definition)
       )
@@ -1944,9 +1928,8 @@ export class PackageSystem {
           installedPath: pkg.installedPath,
           resources: {
             webApps: pkg.webApps.filter((resource) => resource.enabled).length,
-            terminalPresets: pkg.terminalPresets.filter(
-              (resource) => resource.enabled
-            ).length
+            launchers: pkg.launchers.filter((resource) => resource.enabled)
+              .length
           },
           diagnostics: [...pkg.diagnostics]
         })
@@ -1963,9 +1946,8 @@ export class PackageSystem {
             resources: {
               webApps: pkg.webApps.filter((resource) => resource.enabled)
                 .length,
-              terminalPresets: pkg.terminalPresets.filter(
-                (resource) => resource.enabled
-              ).length
+              launchers: pkg.launchers.filter((resource) => resource.enabled)
+                .length
             },
             diagnostics: [...pkg.diagnostics]
           })

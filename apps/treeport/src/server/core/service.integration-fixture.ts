@@ -46,7 +46,7 @@ export const services: TreeportService[] = []
 type ApplicationApis = TreeportService['projects'] &
   TreeportService['worktrees'] &
   TreeportService['terminals'] &
-  TreeportService['terminalPresets'] &
+  TreeportService['launchers'] &
   TreeportService['apps'] &
   TreeportService['treeFiles'] &
   TreeportService['packageManagement']
@@ -101,9 +101,6 @@ export function integrationService(
     getWorktree: run(
       application.projects.getWorktree.bind(application.projects)
     ),
-    getWorktreeContext: run(
-      application.projects.getWorktreeContext.bind(application.projects)
-    ),
     getWorktreeSnapshot: run(
       application.projects.getWorktreeSnapshot.bind(application.projects)
     ),
@@ -112,9 +109,6 @@ export function integrationService(
     ),
     listRecentProjects: run(
       application.projects.listRecentProjects.bind(application.projects)
-    ),
-    listTreeContextFields: run(
-      application.projects.listTreeContextFields.bind(application.projects)
     ),
     openProject: run(
       application.projects.openProject.bind(application.projects)
@@ -140,6 +134,9 @@ export function integrationService(
     ),
     updateProjectColor: run(
       application.projects.updateProjectColor.bind(application.projects)
+    ),
+    updateWorktreeTitle: run(
+      application.projects.updateWorktreeTitle.bind(application.projects)
     ),
 
     beginCreateWorktree: run(
@@ -184,30 +181,20 @@ export function integrationService(
       application.terminals.terminateAllTerminals.bind(application.terminals)
     ),
 
-    createTerminalPreset: run(
-      application.terminalPresets.createTerminalPreset.bind(
-        application.terminalPresets
-      )
+    createLauncher: run(
+      application.launchers.createLauncher.bind(application.launchers)
     ),
-    deleteTerminalPreset: run(
-      application.terminalPresets.deleteTerminalPreset.bind(
-        application.terminalPresets
-      )
+    deleteLauncher: run(
+      application.launchers.deleteLauncher.bind(application.launchers)
     ),
-    listTerminalPresetDefinitions: run(
-      application.terminalPresets.listTerminalPresetDefinitions.bind(
-        application.terminalPresets
-      )
+    listLauncherDefinitions: run(
+      application.launchers.listLauncherDefinitions.bind(application.launchers)
     ),
-    listTerminalPresets: run(
-      application.terminalPresets.listTerminalPresets.bind(
-        application.terminalPresets
-      )
+    listLaunchers: run(
+      application.launchers.listLaunchers.bind(application.launchers)
     ),
-    updateTerminalPreset: run(
-      application.terminalPresets.updateTerminalPreset.bind(
-        application.terminalPresets
-      )
+    updateLauncher: run(
+      application.launchers.updateLauncher.bind(application.launchers)
     ),
 
     authorizeBrowserApp: run(

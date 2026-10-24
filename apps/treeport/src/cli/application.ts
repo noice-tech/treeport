@@ -5,11 +5,18 @@ import { Command, CommanderError } from 'commander'
 import { RpcClient } from '@effect/rpc'
 import {
   apiErrorBodySchema,
+  availableTreeName,
   browserAgentResponseSchema,
   browserInstallResponseSchema,
   browserInstallStatusSchema,
   decodeUnknownOrNull,
   EVENT_PROTOCOL_VERSION,
+  launcherDefinitionListingSchema,
+  launcherInputNames,
+  launcherResponseSchema,
+  launchersResponseSchema,
+  repositoryLauncherSchema,
+  resolveLauncherArgs,
   TreeportRpcs,
   treeportRpcClientLayer,
   okResponseSchema,
@@ -30,10 +37,10 @@ import {
   terminalObservationResponseSchema,
   terminalResponseSchema,
   terminatedTerminalsResponseSchema,
-  treeContextResponseSchema,
   WEB_APP_INPUT_MAX_BYTES,
   webAppDefinitionsResponseSchema,
   webAppInputSchema,
+  worktreeResponseSchema,
   type ApiErrorBody,
   type BrowserApp,
   type CreateOperationRequest,
@@ -49,7 +56,7 @@ import {
 } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
-import type * as Schema from 'effect/Schema'
+import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import { parseDurationMs } from '../duration.js'
 import { extractJsonOutput } from './args.js'
@@ -122,8 +129,13 @@ interface PackageMutationBody {
 
 interface TerminalCreateBody {
   name: string
+  initialTitle?: string
   argv?: string[]
+  shellCommand?: string
+  cwd?: string
+  env?: Record<string, string>
   returnToShell?: boolean
+  closeOnSuccess?: boolean
   closeOnExit?: boolean
 }
 
@@ -979,7 +991,9 @@ function print<Value>(value: Value, human?: () => string): void {
 
 async function main(args: string[]): Promise<void> {
   const argv =
-    args[0] === 'spawn' || (args[0] === 'terminal' && args[1] === 'create')
+    args[0] === 'spawn' ||
+    (args[0] === 'terminal' && args[1] === 'create') ||
+    (args[0] === 'launcher' && args[1] === 'add')
       ? commandArgv(args)
       : undefined
   let parserError = ''
@@ -1696,12 +1710,6 @@ async function main(args: string[]): Promise<void> {
       )
     }
 
-    const treeContext = (
-      await request(
-        `/api/worktrees/${encodeURIComponent(worktree.id)}/context`,
-        treeContextResponseSchema
-      )
-    ).context
     const context: TreeportContext = {
       managed: true,
       apiUrl,
@@ -1724,8 +1732,7 @@ async function main(args: string[]): Promise<void> {
         head: worktree.head,
         branch: worktree.branch,
         detached: worktree.detached,
-        kind: worktree.kind,
-        context: treeContext
+        kind: worktree.kind
       },
       terminal: {
         id: terminal.id,
@@ -1735,27 +1742,8 @@ async function main(args: string[]): Promise<void> {
         exitCode: terminal.exitCode
       }
     }
-    print(context, () => {
-      const entries = Object.entries(context.worktree.context)
-      const treeContextText =
-        entries.length === 0
-          ? '—'
-          : entries
-              .map(([key, value]) => {
-                const safeValue = [...value]
-                  .map((character) => {
-                    const code = character.charCodeAt(0)
-                    return code !== 10 &&
-                      (code <= 31 || (code >= 127 && code <= 159))
-                      ? `\\u${code.toString(16).padStart(4, '0')}`
-                      : character
-                  })
-                  .join('')
-                const [first = '', ...rest] = safeValue.split('\n')
-                return `  ${key}: ${first}${rest.length > 0 ? `\n${rest.map((line) => `    ${line}`).join('\n')}` : ''}`
-              })
-              .join('\n')
-      return output.blocks(
+    print(context, () =>
+      output.blocks(
         output.heading('Treeport context'),
         output.rows([
           ['Project', `${context.project.name} (${context.project.id})`],
@@ -1766,8 +1754,6 @@ async function main(args: string[]): Promise<void> {
             `${context.terminal.name} (${context.terminal.id}) — ${stateName(context.terminal.status)}`
           ]
         ]),
-        entries.length > 0 &&
-          `${output.heading('Tree context')}\n${treeContextText}`,
         output.detail(
           output.rows([
             ['API', context.apiUrl],
@@ -1782,7 +1768,7 @@ async function main(args: string[]): Promise<void> {
           ])
         )
       )
-    })
+    )
   })
 
   const browserCommand = program
@@ -2071,7 +2057,7 @@ async function main(args: string[]): Promise<void> {
           pkg.scope === 'global'
             ? 'global'
             : `project:${pkg.projectName ?? pkg.projectId}`
-        return `${scope}\t${pkg.source}\t${pkg.resources.webApps} web apps, ${pkg.resources.terminalPresets} terminal presets`
+        return `${scope}\t${pkg.source}\t${pkg.resources.webApps} web apps, ${pkg.resources.launchers} launchers`
       })
       lines.push(
         ...result.diagnostics.map(
@@ -2322,6 +2308,38 @@ async function main(args: string[]): Promise<void> {
       result,
       () =>
         `Created tree ${result.worktree.name} (${result.worktree.id})\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
+    )
+  })
+
+  const worktreeTitleCommand = worktreeCommand
+    .command('title')
+    .description('Set the title shown for a tree; its folder name stays')
+    .argument('[title]', 'title to show')
+    .option('--worktree <id-or-path-or-dot>', 'tree to title', '.')
+    .option('--clear', 'remove the title and show the tree name again')
+    .option('--json', 'emit machine-readable JSON')
+  worktreeTitleCommand.action(async (title: string | undefined) => {
+    const options = worktreeTitleCommand.opts<{
+      worktree: string
+      clear?: boolean
+    }>()
+    if (!options.clear && !title?.trim()) {
+      throw new CliError('Expected a title, or --clear', 2)
+    }
+
+    const worktree = await resolveWorktree(options.worktree)
+    const result = await request(
+      `/api/worktrees/${encodeURIComponent(worktree.id)}`,
+      worktreeResponseSchema,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ title: options.clear ? null : title })
+      }
+    )
+    print(result.worktree, () =>
+      result.worktree.title
+        ? `Titled ${result.worktree.name}: ${result.worktree.title}`
+        : `Cleared the title of ${result.worktree.name}`
     )
   })
 
@@ -2723,6 +2741,355 @@ async function main(args: string[]): Promise<void> {
       result,
       () =>
         `Created tree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
+    )
+  })
+
+  const launcherCommand = program
+    .command('launcher')
+    .description('List, add, and remove launchers')
+  launcherCommand.action(() => {
+    throw new CliError(launcherCommand.helpInformation(), 2)
+  })
+
+  const launcherListCommand = launcherCommand
+    .command('list')
+    .description('List launchers and the inputs they accept')
+    .option(
+      '--worktree <id-or-path-or-dot>',
+      'include repository and package launchers of a tree (default: current tree)'
+    )
+    .option('--json', 'emit machine-readable JSON')
+  launcherListCommand.action(async () => {
+    const { worktree: identifier } = launcherListCommand.opts<{
+      worktree?: string
+    }>()
+    const worktree =
+      identifier === undefined
+        ? await resolveWorktree('.').catch(() => null)
+        : await resolveWorktree(identifier)
+    const listing = await request(
+      `/api/launcher-definitions${worktree ? `?worktreeId=${encodeURIComponent(worktree.id)}` : ''}`,
+      launcherDefinitionListingSchema
+    )
+    print(listing, () =>
+      [
+        ...listing.definitions.map((launcher) => {
+          const inputs = launcherInputNames([
+            ...launcher.args,
+            ...(launcher.treeTitle?.args ?? [])
+          ])
+          return `${launcher.id}\t${launcher.name}\t${launcher.shellCommand ?? JSON.stringify([launcher.executable, ...launcher.args])}${inputs.length ? `\tinputs: ${inputs.join(', ')}` : ''}${launcher.treeTitle ? `\ttree title: ${JSON.stringify([launcher.treeTitle.executable, ...launcher.treeTitle.args])}` : ''}`
+        }),
+        ...listing.diagnostics.map(
+          (diagnostic) => `warning\t${diagnostic.path}\t${diagnostic.message}`
+        )
+      ].join('\n')
+    )
+  })
+
+  const launcherAddCommand = launcherCommand
+    .command('add')
+    .description('Save a launcher for all projects, or for this repository')
+    .usage('[options] -- <command> args...')
+    .requiredOption('--name <name>', 'launcher name')
+    .option('--repo', 'save in the current tree’s .treeport/settings.json')
+    .option(
+      '--tree-title <json-argv>',
+      'command whose first output line titles new trees, as a JSON array'
+    )
+    .option(
+      '--close-on-success',
+      'close the terminal when its command succeeds'
+    )
+    .option('--json', 'emit machine-readable JSON')
+    .addHelpText(
+      'after',
+      '\nWrite ${name} inside an argument to accept an input. An argument that is\nexactly one input is omitted when that input is empty. The tree title\ncommand runs after a new tree starts and can use the same inputs.\n\n  treeport launcher add --name Pi -- pi \'${prompt}\'\n  treeport launcher add --name Claude \\\n    --tree-title \'["claude","-p","Reply with a 3-5 word title for: ${task}"]\' \\\n    -- claude \'${task}\'\n'
+    )
+  launcherAddCommand.action(async () => {
+    const options = launcherAddCommand.opts<{
+      name: string
+      repo?: boolean
+      closeOnSuccess?: boolean
+      treeTitle?: string
+    }>()
+    if (!argv) {
+      throw new CliError('Expected a command after --', 2)
+    }
+
+    const treeTitleArgv =
+      options.treeTitle === undefined
+        ? null
+        : decodeUnknownOrNull(
+            Schema.parseJson(
+              Schema.Array(Schema.String).pipe(Schema.minItems(1))
+            ),
+            options.treeTitle
+          )
+    if (options.treeTitle !== undefined && !treeTitleArgv) {
+      throw new CliError(
+        '--tree-title must be a JSON array such as ["claude","-p","Title for: ${task}"]',
+        2
+      )
+    }
+
+    const [executable = '', ...args] = argv
+    const [treeTitleExecutable = '', ...treeTitleArgs] = treeTitleArgv ?? []
+    const launcher = decodeUnknownOrNull(repositoryLauncherSchema, {
+      name: options.name,
+      executable,
+      args,
+      closeOnSuccess: Boolean(options.closeOnSuccess),
+      treeTitle: treeTitleArgv
+        ? { executable: treeTitleExecutable, args: treeTitleArgs }
+        : null
+    })
+    if (!launcher) {
+      throw new CliError('Invalid launcher name or command', 2)
+    }
+
+    if (!options.repo) {
+      const result = await request('/api/launchers', launcherResponseSchema, {
+        method: 'POST',
+        body: JSON.stringify(launcher)
+      })
+      print(
+        result.launcher,
+        () => `Saved ${result.launcher.name} (${result.launcher.id})`
+      )
+      return
+    }
+
+    const worktree = await resolveWorktree('.')
+    const settingsPath = path.join(worktree.path, '.treeport', 'settings.json')
+    const content = await fs
+      .readFile(settingsPath, 'utf8')
+      .catch((error: NodeJS.ErrnoException) =>
+        error.code === 'ENOENT' ? '{}' : Promise.reject(error)
+      )
+    const jsonObjectSchema = Schema.Record({
+      key: Schema.String,
+      value: Schema.Unknown
+    })
+    const settings = decodeUnknownOrNull(
+      Schema.parseJson(jsonObjectSchema),
+      content
+    )
+    if (!settings) {
+      throw new CliError(`${settingsPath} must contain a JSON object`, 5)
+    }
+
+    const id =
+      launcher.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'launcher'
+    await fs.mkdir(path.dirname(settingsPath), { recursive: true })
+    await fs.writeFile(
+      settingsPath,
+      `${JSON.stringify(
+        {
+          ...settings,
+          launchers: {
+            ...decodeUnknownOrNull(jsonObjectSchema, settings.launchers),
+            [id]: launcher
+          }
+        },
+        null,
+        2
+      )}\n`
+    )
+    print(
+      { id, path: settingsPath, launcher },
+      () => `Saved ${launcher.name} as ${id} in ${settingsPath}`
+    )
+  })
+
+  const launcherRemoveCommand = launcherCommand
+    .command('remove')
+    .description('Remove a launcher saved with `treeport launcher add`')
+    .argument('<launcher-id>', 'saved launcher to remove')
+    .option('--json', 'emit machine-readable JSON')
+  launcherRemoveCommand.action(async (launcherId: string) => {
+    const saved = (
+      await request('/api/launchers', launchersResponseSchema)
+    ).launchers.find((launcher) => launcher.id === launcherId)
+    if (!saved) {
+      throw new CliError(
+        `No saved launcher ${launcherId}. Repository launchers live in .treeport/settings.json.`,
+        5
+      )
+    }
+
+    await request(
+      `/api/launchers/${encodeURIComponent(saved.id)}`,
+      okResponseSchema,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ expectedUpdatedAt: saved.updatedAt })
+      }
+    )
+    print({ ok: true, launcherId }, () => `Removed ${saved.name}`)
+  })
+
+  const launchCommand = program
+    .command('launch')
+    .description('Start a launcher in a tree, optionally with inputs')
+    .argument('<launcher>', 'launcher ID or name')
+    .option(
+      '--input <name=value>',
+      'set an input (repeatable)',
+      (value: string, previous: string[]) => [...previous, value],
+      []
+    )
+    .option('--worktree <id-or-path-or-dot>', 'tree to start in', '.')
+    .option('--new-tree', 'create a tree and start the launcher there')
+    .option(
+      '--tree-name <name>',
+      'name for the new tree (default: tree, tree-2, …)'
+    )
+    .option('--from-current', 'base the new tree on the current tree')
+    .option(
+      '--project <id-or-path-or-dot>',
+      'project for the new tree (default: current folder)'
+    )
+    .option('--json', 'emit machine-readable JSON')
+  launchCommand.action(async (identifier: string) => {
+    const options = launchCommand.opts<{
+      input: string[]
+      worktree: string
+      newTree?: boolean
+      treeName?: string
+      fromCurrent?: boolean
+      project?: string
+    }>()
+    const inputs: Record<string, string> = {}
+    for (const entry of options.input) {
+      const separator = entry.indexOf('=')
+      if (separator < 1) {
+        throw new CliError(`--input must look like name=value: ${entry}`, 2)
+      }
+
+      inputs[entry.slice(0, separator)] = entry.slice(separator + 1)
+    }
+
+    const project = options.newTree
+      ? await resolveProject(options.project)
+      : null
+    const worktree = project ? null : await resolveWorktree(options.worktree)
+    const listing = await request(
+      `/api/launcher-definitions?${project ? `projectId=${encodeURIComponent(project.id)}` : `worktreeId=${encodeURIComponent(worktree!.id)}`}`,
+      launcherDefinitionListingSchema
+    )
+    const matches = listing.definitions.filter(
+      (launcher) =>
+        launcher.id.endsWith(`:launcher:${identifier}`) ||
+        launcher.name.toLowerCase() === identifier.toLowerCase()
+    )
+    const launcher =
+      listing.definitions.find((candidate) => candidate.id === identifier) ??
+      (matches.length === 1 ? matches[0] : undefined)
+    if (!launcher) {
+      throw new CliError(
+        matches.length > 1
+          ? `Launcher ${identifier} is ambiguous: ${matches.map((match) => match.id).join(', ')}`
+          : `No launcher matches ${identifier}. Run \`treeport launcher list\`.`,
+        5
+      )
+    }
+
+    const treeTitle = project ? launcher.treeTitle : null
+    const accepted = launcherInputNames([
+      ...launcher.args,
+      ...(treeTitle?.args ?? [])
+    ])
+    const unknown = Object.keys(inputs).filter(
+      (name) => !accepted.includes(name)
+    )
+    if (unknown.length > 0) {
+      throw new CliError(
+        `${launcher.name} does not accept ${unknown.join(', ')}${accepted.length ? `; it accepts ${accepted.join(', ')}` : ''}`,
+        2
+      )
+    }
+
+    const launchArgv = launcher.executable
+      ? [launcher.executable, ...resolveLauncherArgs(launcher.args, inputs)]
+      : null
+    if (project) {
+      if (!launchArgv || launcher.closeOnSuccess) {
+        throw new CliError(
+          `${launcher.name} cannot start a new tree; start it in an existing tree instead`,
+          2
+        )
+      }
+
+      const createRequest: CreateOperationRequest = {
+        name:
+          options.treeName ??
+          availableTreeName(
+            project.worktrees.map((candidate) => candidate.name)
+          ),
+        base: options.fromCurrent ? 'current' : 'default',
+        initialTerminal: {
+          name: launcher.name,
+          initialTitle: launcher.name,
+          argv: launchArgv,
+          returnToShell: true
+        }
+      }
+      if (options.fromCurrent) {
+        createRequest.sourceWorktreeId = (await resolveWorktree('.')).id
+      }
+
+      if (treeTitle) {
+        createRequest.treeTitleCommand = [
+          treeTitle.executable,
+          ...resolveLauncherArgs(treeTitle.args, inputs)
+        ]
+      }
+
+      const result = await createWorktree(project.id, createRequest)
+      print(
+        result,
+        () =>
+          `Created tree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
+      )
+      return
+    }
+
+    const body: TerminalCreateBody = {
+      name: launcher.name,
+      initialTitle: launcher.name
+    }
+    if (launcher.shellCommand !== null) {
+      body.shellCommand = launcher.shellCommand
+    } else if (launchArgv) {
+      body.argv = launchArgv
+    }
+
+    if (launcher.cwd) {
+      body.cwd = launcher.cwd
+    }
+
+    if (Object.keys(launcher.env).length > 0) {
+      body.env = launcher.env
+    }
+
+    if (launcher.closeOnSuccess) {
+      body.closeOnSuccess = true
+    } else {
+      body.returnToShell = true
+    }
+
+    const result = await request(
+      `/api/worktrees/${worktree!.id}/terminals`,
+      terminalResponseSchema,
+      { method: 'POST', body: JSON.stringify(body) }
+    )
+    print(
+      result.terminal,
+      () => `Started ${result.terminal.name} (${result.terminal.id})`
     )
   })
 

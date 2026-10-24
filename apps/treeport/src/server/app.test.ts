@@ -186,13 +186,9 @@ function fixture(webDist = '/missing') {
       id,
       color
     })),
-    listTreeContextFields: vi.fn(() => ({
-      fields: [{ id: 'issue', label: 'Issue', input: 'text' as const }],
-      diagnostics: []
-    })),
-    listTerminalPresets: vi.fn(() => [
+    listLaunchers: vi.fn(() => [
       {
-        id: 'preset_existing',
+        id: 'launcher_existing',
         name: 'Existing',
         executable: 'pi',
         args: [],
@@ -201,10 +197,10 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
     ]),
-    listTerminalPresetDefinitions: vi.fn(() => ({
+    listLauncherDefinitions: vi.fn(() => ({
       definitions: [
         {
-          id: 'package:npm:@acme/tools:terminal-preset:dev',
+          id: 'package:npm:@acme/tools:launcher:dev',
           name: 'Package dev',
           executable: 'pnpm',
           args: ['dev'],
@@ -244,20 +240,20 @@ function fixture(webDist = '/missing') {
     })),
     updatePackages: vi.fn(() => []),
     reloadPackages: vi.fn(() => ({ results: [], diagnostics: [] })),
-    createTerminalPreset: vi.fn(
+    createLauncher: vi.fn(
       (input: {
         name: string
         executable: string
         args: string[]
         closeOnSuccess: boolean
       }) => ({
-        id: 'preset_new',
+        id: 'launcher_new',
         ...input,
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       })
     ),
-    updateTerminalPreset: vi.fn(
+    updateLauncher: vi.fn(
       (
         id: string,
         input: {
@@ -274,7 +270,7 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-02T00:00:00.000Z'
       })
     ),
-    deleteTerminalPreset: vi.fn(),
+    deleteLauncher: vi.fn(),
     getProjectSnapshot: vi.fn(async (id: string) => ({
       ...projectRecord,
       id
@@ -295,7 +291,6 @@ function fixture(webDist = '/missing') {
       return { id, workspaceItems: [{ id: `${id}_app` }] }
     }),
     getWorktree: vi.fn(() => ({ id: 'wt_1' })),
-    getWorktreeContext: vi.fn(() => ({ issue: 'TREE-123' })),
     requestWorkspaceOpen: vi.fn(async () => undefined),
     listWebAppDefinitions: vi.fn(async () => [
       {
@@ -541,7 +536,7 @@ function fixture(webDist = '/missing') {
     projects: serviceMethods,
     worktrees: serviceMethods,
     terminals: serviceMethods,
-    terminalPresets: serviceMethods,
+    launchers: serviceMethods,
     apps: serviceMethods,
     treeFiles: serviceMethods,
     packageManagement: serviceMethods
@@ -1916,10 +1911,6 @@ describe('HTTP API validation', () => {
         name: 'topic',
         base: 'current',
         sourceWorktreeId: 'wt_main',
-        context: {
-          issue: 'TREE-123',
-          brief: 'Review the cache behavior.'
-        },
         initialTerminal: {
           name: 'Terminal',
           initialTitle: 'Review changes',
@@ -1945,10 +1936,7 @@ describe('HTTP API validation', () => {
         initialSize: { cols: 144, rows: 48 }
       },
       'wt_main',
-      {
-        issue: 'TREE-123',
-        brief: 'Review the cache behavior.'
-      }
+      undefined
     )
     const active = await app.request('/api/operations?projectId=p&kind=create')
     expect(await active.json()).toMatchObject({

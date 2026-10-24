@@ -32,7 +32,7 @@ import { ProjectRegistrationService } from './services/project/project-registrat
 import { ProjectSnapshotService } from './services/project/project-snapshot-service'
 import { ProjectService } from './services/project/project-service'
 import { AppService } from './services/app/app-service'
-import { TerminalPresetService } from './services/terminal/terminal-preset-service'
+import { LauncherService } from './services/launcher/launcher-service'
 import { TerminalService } from './services/terminal/terminal-service'
 import { TreeFileService } from './services/tree-file/tree-file-service'
 import { WorktreeService } from './services/worktree/worktree-service'
@@ -55,11 +55,9 @@ type ProjectApi = Pick<
   | 'getProject'
   | 'getProjectSnapshot'
   | 'getWorktree'
-  | 'getWorktreeContext'
   | 'getWorktreeSnapshot'
   | 'listProjects'
   | 'listRecentProjects'
-  | 'listTreeContextFields'
   | 'openProject'
   | 'refreshProject'
   | 'reconcile'
@@ -69,6 +67,7 @@ type ProjectApi = Pick<
   | 'resolveProject'
   | 'resolveWorktree'
   | 'updateProjectColor'
+  | 'updateWorktreeTitle'
 >
 type WorktreeApi = Pick<
   WorktreeService,
@@ -90,13 +89,13 @@ type TerminalApi = Pick<
   | 'reorderTerminals'
   | 'terminateAllTerminals'
 >
-type TerminalPresetApi = Pick<
-  TerminalPresetService,
-  | 'createTerminalPreset'
-  | 'deleteTerminalPreset'
-  | 'listTerminalPresetDefinitions'
-  | 'listTerminalPresets'
-  | 'updateTerminalPreset'
+type LauncherApi = Pick<
+  LauncherService,
+  | 'createLauncher'
+  | 'deleteLauncher'
+  | 'listLauncherDefinitions'
+  | 'listLaunchers'
+  | 'updateLauncher'
 >
 type AppApi = Pick<
   AppService,
@@ -154,7 +153,7 @@ export class TreeportService {
   private readonly projectService: ProjectService
   private readonly appService: AppService
   private readonly terminalService: TerminalService
-  private readonly terminalPresetService: TerminalPresetService
+  private readonly launcherService: LauncherService
   private readonly treeFileService: TreeFileService
   private readonly worktreeService: WorktreeService
   private readonly worktreeReconciler: WorktreeReconciler
@@ -166,7 +165,7 @@ export class TreeportService {
     this.events = deps.events ?? new ProductEventBus()
     this.packages = new PackageSystem(deps.config, deps.runner)
     this.terminalService = new TerminalService()
-    this.terminalPresetService = new TerminalPresetService()
+    this.launcherService = new LauncherService()
     this.appService = new AppService()
     this.packageService = new PackageService()
     this.treeFileService = new TreeFileService()
@@ -301,8 +300,8 @@ export class TreeportService {
     return this.terminalService
   }
 
-  get terminalPresets(): TerminalPresetApi {
-    return this.terminalPresetService
+  get launchers(): LauncherApi {
+    return this.launcherService
   }
 
   get apps(): AppApi {

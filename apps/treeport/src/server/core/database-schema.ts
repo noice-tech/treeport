@@ -71,7 +71,7 @@ export const worktrees = sqliteTable(
     prunable: integer().notNull().default(0),
     kind: text().notNull(),
     managedWrapperPath: text('managed_wrapper_path'),
-    treeContextJson: text('tree_context_json').notNull().default('{}'),
+    title: text(),
     prState: text('pr_state').notNull().default('unknown'),
     prNumber: integer('pr_number'),
     prUrl: text('pr_url'),
@@ -256,7 +256,7 @@ export const operations = sqliteTable(
   ]
 )
 
-export const terminalPresets = sqliteTable(
+export const launchers = sqliteTable(
   'terminal_presets',
   {
     id: text().primaryKey(),
@@ -264,6 +264,7 @@ export const terminalPresets = sqliteTable(
     executable: text().notNull(),
     argsJson: text('args_json').notNull(),
     closeOnSuccess: integer('close_on_success').notNull().default(0),
+    treeTitleJson: text('tree_title_json'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },

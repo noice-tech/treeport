@@ -8,7 +8,11 @@ import {
   CheckIcon
 } from '@heroicons/react/16/solid'
 import { QuestionMarkCircleIcon } from '@heroicons/react/24/outline'
-import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
+import {
+  TERMINAL_NAME_MAX_LENGTH,
+  launcherInputNames,
+  type Launcher
+} from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
 import {
@@ -39,26 +43,31 @@ import {
   TooltipTrigger
 } from '../../components/ui/tooltip'
 import { cn } from '../../lib/utils'
-import { terminalPresetsQueryKey } from '../../project-metadata'
+import { launchersQueryKey } from '../../project-metadata'
 import { notifyError } from '../notifications/error-notifications'
 
-type PresetValues = { name: string; command: string; closeOnSuccess: boolean }
+type LauncherValues = {
+  name: string
+  command: string
+  treeTitle: string
+  closeOnSuccess: boolean
+}
 type Draft = {
   editingId: string | null
   loadedUpdatedAt: string | null
-  values: PresetValues
-  savedValues: PresetValues
+  values: LauncherValues
+  savedValues: LauncherValues
 }
 
-export function TerminalPresetsManager({
-  presets,
+export function LaunchersManager({
+  launchers,
   loading,
   loadError,
   onRetry,
   onClose,
   restoreFocusTo
 }: {
-  presets: TerminalPreset[]
+  launchers: Launcher[]
   loading: boolean
   loadError: boolean
   onRetry: () => void
@@ -69,32 +78,57 @@ export function TerminalPresetsManager({
   const nameInput = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [commandError, setCommandError] = useState<string | null>(null)
+  const [treeTitleError, setTreeTitleError] = useState<string | null>(null)
+  const [newInputName, setNewInputName] = useState<string | null>(null)
+  const normalizedNewInputName = (newInputName ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<TerminalPreset | null>(null)
-  const selected = presets.find((preset) => preset.id === draft?.editingId)
+  const [deleteTarget, setDeleteTarget] = useState<Launcher | null>(null)
+  const selected = launchers.find(
+    (launcher) => launcher.id === draft?.editingId
+  )
   const dirty =
     draft !== null &&
     (draft.values.name !== draft.savedValues.name ||
       draft.values.command !== draft.savedValues.command ||
+      draft.values.treeTitle !== draft.savedValues.treeTitle ||
       draft.values.closeOnSuccess !== draft.savedValues.closeOnSuccess)
   const stale =
     draft?.editingId != null && selected?.updatedAt !== draft.loadedUpdatedAt
+  const commandArgv = draft ? parseCommandLine(draft.values.command).argv : null
+  const treeTitleArgv = draft
+    ? parseCommandLine(draft.values.treeTitle).argv
+    : null
+  const inputNames = launcherInputNames([
+    ...(commandArgv?.slice(1) ?? []),
+    ...(treeTitleArgv?.slice(1) ?? [])
+  ])
 
-  const loadPreset = (preset: TerminalPreset | null) => {
+  const loadLauncher = (launcher: Launcher | null) => {
     const values = {
-      name: preset?.name ?? '',
-      command: preset
-        ? formatCommandLine([preset.executable, ...preset.args])
+      name: launcher?.name ?? '',
+      command: launcher
+        ? formatCommandLine([launcher.executable, ...launcher.args])
         : '',
-      closeOnSuccess: preset?.closeOnSuccess ?? false
+      treeTitle: launcher?.treeTitle
+        ? formatCommandLine([
+            launcher.treeTitle.executable,
+            ...launcher.treeTitle.args
+          ])
+        : '',
+      closeOnSuccess: launcher?.closeOnSuccess ?? false
     }
     setDraft({
-      editingId: preset?.id ?? null,
-      loadedUpdatedAt: preset?.updatedAt ?? null,
+      editingId: launcher?.id ?? null,
+      loadedUpdatedAt: launcher?.updatedAt ?? null,
       values,
       savedValues: values
     })
     setCommandError(null)
+    setTreeTitleError(null)
+    setNewInputName(null)
   }
 
   const requestAction = (action: () => void) => {
@@ -109,89 +143,86 @@ export function TerminalPresetsManager({
     }
   }
 
-  const savePreset = useMutation({
+  const saveLauncher = useMutation({
     mutationFn: ({
-      presetId,
+      launcherId,
       input,
       expectedUpdatedAt
     }: {
-      presetId: string | null
+      launcherId: string | null
       input: Pick<
-        TerminalPreset,
-        'name' | 'executable' | 'args' | 'closeOnSuccess'
+        Launcher,
+        'name' | 'executable' | 'args' | 'closeOnSuccess' | 'treeTitle'
       >
       expectedUpdatedAt: string | null
     }) =>
-      presetId
+      launcherId
         ? parseResponse(
-            rpc.api['terminal-presets'][':presetId'].$patch({
-              param: { presetId },
+            rpc.api['launchers'][':launcherId'].$patch({
+              param: { launcherId },
               json: { ...input, expectedUpdatedAt: expectedUpdatedAt! }
             })
-          ).then((result) => result.preset)
-        : parseResponse(
-            rpc.api['terminal-presets'].$post({ json: input })
-          ).then((result) => result.preset),
-    onSuccess: (preset, variables) => {
-      queryClient.setQueryData<TerminalPreset[]>(
-        terminalPresetsQueryKey,
-        (current) =>
-          variables.presetId
-            ? current?.map((candidate) =>
-                candidate.id === preset.id ? preset : candidate
-              )
-            : [...(current ?? []), preset]
+          ).then((result) => result.launcher)
+        : parseResponse(rpc.api['launchers'].$post({ json: input })).then(
+            (result) => result.launcher
+          ),
+    onSuccess: (launcher, variables) => {
+      queryClient.setQueryData<Launcher[]>(launchersQueryKey, (current) =>
+        variables.launcherId
+          ? current?.map((candidate) =>
+              candidate.id === launcher.id ? launcher : candidate
+            )
+          : [...(current ?? []), launcher]
       )
-      loadPreset(preset)
+      loadLauncher(launcher)
     },
-    onError: (mutationError, { presetId, input }) => {
-      void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+    onError: (mutationError, { launcherId, input }) => {
+      void queryClient.invalidateQueries({ queryKey: launchersQueryKey })
       notifyError(mutationError, {
-        operation: `${presetId ? 'update' : 'create'} terminal preset “${input.name}”`
+        operation: `${launcherId ? 'update' : 'create'} launcher “${input.name}”`
       })
     },
     onSettled: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: launchersQueryKey }),
         queryClient.invalidateQueries({
-          queryKey: ['terminal-preset-definitions']
+          queryKey: ['launcher-definitions']
         })
       ])
     }
   })
 
-  const deletePreset = useMutation({
-    mutationFn: (preset: TerminalPreset) =>
+  const deleteLauncher = useMutation({
+    mutationFn: (launcher: Launcher) =>
       parseResponse(
-        rpc.api['terminal-presets'][':presetId'].$delete({
-          param: { presetId: preset.id },
-          json: { expectedUpdatedAt: preset.updatedAt }
+        rpc.api['launchers'][':launcherId'].$delete({
+          param: { launcherId: launcher.id },
+          json: { expectedUpdatedAt: launcher.updatedAt }
         })
       ),
-    onSuccess: (_, deletedPreset) => {
-      queryClient.setQueryData<TerminalPreset[]>(
-        terminalPresetsQueryKey,
-        (current) => current?.filter((preset) => preset.id !== deletedPreset.id)
+    onSuccess: (_, deletedLauncher) => {
+      queryClient.setQueryData<Launcher[]>(launchersQueryKey, (current) =>
+        current?.filter((launcher) => launcher.id !== deletedLauncher.id)
       )
       setDraft(null)
     },
-    onError: (mutationError, preset) => {
-      void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+    onError: (mutationError, launcher) => {
+      void queryClient.invalidateQueries({ queryKey: launchersQueryKey })
       notifyError(mutationError, {
-        operation: `delete terminal preset “${preset.name}”`
+        operation: `delete launcher “${launcher.name}”`
       })
     },
     onSettled: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: launchersQueryKey }),
         queryClient.invalidateQueries({
-          queryKey: ['terminal-preset-definitions']
+          queryKey: ['launcher-definitions']
         })
       ])
     }
   })
 
-  const busy = savePreset.isPending || deletePreset.isPending
+  const busy = saveLauncher.isPending || deleteLauncher.isPending
 
   return (
     <Dialog
@@ -207,11 +238,18 @@ export function TerminalPresetsManager({
         restoreFocusTo={restoreFocusTo}
       >
         <DialogHeader>
-          <DialogTitle className="text-base sm:text-lg">
-            Terminal presets
-          </DialogTitle>
-          <DialogDescription className="sr-only">
-            Manage commands available in every repository.
+          <DialogTitle className="text-base sm:text-lg">Launchers</DialogTitle>
+          <DialogDescription className="text-base text-pretty sm:text-sm">
+            Launchers saved here are available in every project. To share one
+            with a repository, add it to <code>.treeport/settings.json</code>.{' '}
+            <a
+              className="underline underline-offset-2 hover:text-foreground"
+              href="https://treeport.app/features/terminal-presets/#repository-presets"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Learn more
+            </a>
           </DialogDescription>
         </DialogHeader>
         <div className="grid min-h-0 gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
@@ -220,36 +258,39 @@ export function TerminalPresetsManager({
               'flex min-w-0 flex-col md:pt-7',
               draft && 'max-md:hidden'
             )}
-            aria-label="Saved presets"
+            aria-label="Saved launchers"
           >
             <div
               className="flex max-h-72 flex-col gap-0.5 overflow-y-auto md:max-h-96"
               aria-busy={loading}
             >
               <div className="flex flex-col gap-0.5">
-                {presets.map((preset) => (
+                {launchers.map((launcher) => (
                   <button
-                    key={preset.id}
+                    key={launcher.id}
                     type="button"
                     className={cn(
                       'flex min-w-0 flex-col rounded-md px-3 py-1 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring',
-                      draft?.editingId === preset.id && 'bg-sidebar-accent'
+                      draft?.editingId === launcher.id && 'bg-sidebar-accent'
                     )}
                     aria-current={
-                      draft?.editingId === preset.id ? 'true' : undefined
+                      draft?.editingId === launcher.id ? 'true' : undefined
                     }
                     disabled={busy}
                     onClick={() => {
-                      if (draft?.editingId !== preset.id) {
-                        requestAction(() => loadPreset(preset))
+                      if (draft?.editingId !== launcher.id) {
+                        requestAction(() => loadLauncher(launcher))
                       }
                     }}
                   >
                     <p className="w-full truncate text-base font-medium sm:text-sm">
-                      {preset.name}
+                      {launcher.name}
                     </p>
                     <p className="w-full truncate font-mono text-base text-sidebar-foreground/60 sm:text-sm">
-                      {formatCommandLine([preset.executable, ...preset.args])}
+                      {formatCommandLine([
+                        launcher.executable,
+                        ...launcher.args
+                      ])}
                     </p>
                   </button>
                 ))}
@@ -264,7 +305,7 @@ export function TerminalPresetsManager({
               ) : loadError ? (
                 <Empty>
                   <EmptyTitle className="text-base sm:text-sm">
-                    Could not load presets
+                    Could not load launchers
                   </EmptyTitle>
                   <Button
                     type="button"
@@ -276,10 +317,10 @@ export function TerminalPresetsManager({
                   </Button>
                 </Empty>
               ) : (
-                presets.length === 0 && (
+                launchers.length === 0 && (
                   <Empty>
                     <EmptyTitle className="text-base sm:text-sm">
-                      No presets yet
+                      No launchers yet
                     </EmptyTitle>
                   </Empty>
                 )
@@ -291,12 +332,12 @@ export function TerminalPresetsManager({
                 disabled={busy || loading || loadError}
                 onClick={() =>
                   requestAction(() => {
-                    loadPreset(null)
+                    loadLauncher(null)
                     nameInput.current?.focus()
                   })
                 }
               >
-                <PlusIcon data-icon="inline-start" /> New preset
+                <PlusIcon data-icon="inline-start" /> New launcher
               </Button>
             </div>
           </section>
@@ -315,14 +356,27 @@ export function TerminalPresetsManager({
                   return
                 }
 
+                const treeTitle = draft.values.treeTitle.trim()
+                  ? parseCommandLine(draft.values.treeTitle)
+                  : null
+                if (treeTitle && treeTitle.argv === null) {
+                  setTreeTitleError(treeTitle.error)
+                  return
+                }
+
                 const [executable, ...args] = parsed.argv
-                savePreset.mutate({
-                  presetId: draft.editingId,
+                const [treeTitleExecutable, ...treeTitleArgs] =
+                  treeTitle?.argv ?? []
+                saveLauncher.mutate({
+                  launcherId: draft.editingId,
                   input: {
                     name: draft.values.name.trim(),
                     executable: executable!,
                     args,
-                    closeOnSuccess: draft.values.closeOnSuccess
+                    closeOnSuccess: draft.values.closeOnSuccess,
+                    treeTitle: treeTitleExecutable
+                      ? { executable: treeTitleExecutable, args: treeTitleArgs }
+                      : null
                   },
                   expectedUpdatedAt: draft.loadedUpdatedAt
                 })
@@ -336,7 +390,7 @@ export function TerminalPresetsManager({
                 disabled={busy}
                 onClick={() => requestAction(() => setDraft(null))}
               >
-                <ArrowLeftIcon data-icon="inline-start" /> All presets
+                <ArrowLeftIcon data-icon="inline-start" /> All launchers
               </Button>
               {stale && (
                 <div
@@ -354,7 +408,9 @@ export function TerminalPresetsManager({
                       variant="secondary"
                       size="sm"
                       className="self-start"
-                      onClick={() => requestAction(() => loadPreset(selected))}
+                      onClick={() =>
+                        requestAction(() => loadLauncher(selected))
+                      }
                     >
                       Reload
                     </Button>
@@ -362,11 +418,11 @@ export function TerminalPresetsManager({
                 </div>
               )}
               <FormField>
-                <Label htmlFor="preset-name">Name</Label>
+                <Label htmlFor="launcher-name">Name</Label>
                 <Input
                   ref={nameInput}
-                  id="preset-name"
-                  name="preset-name"
+                  id="launcher-name"
+                  name="launcher-name"
                   autoComplete="off"
                   className="max-[700px]:h-9"
                   value={draft.values.name}
@@ -385,7 +441,7 @@ export function TerminalPresetsManager({
               </FormField>
               <FormField>
                 <div className="flex items-center gap-1.5">
-                  <Label htmlFor="preset-command">Command</Label>
+                  <Label htmlFor="launcher-command">Command</Label>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -412,8 +468,8 @@ export function TerminalPresetsManager({
                   </Tooltip>
                 </div>
                 <Input
-                  id="preset-command"
-                  name="preset-command"
+                  id="launcher-command"
+                  name="launcher-command"
                   className="font-mono max-[700px]:h-9"
                   value={draft.values.command}
                   disabled={busy}
@@ -421,7 +477,9 @@ export function TerminalPresetsManager({
                   placeholder="pnpm dev"
                   aria-invalid={commandError ? true : undefined}
                   aria-describedby={
-                    commandError ? 'preset-command-error' : undefined
+                    commandError
+                      ? 'launcher-command-inputs launcher-command-error'
+                      : 'launcher-command-inputs'
                   }
                   onChange={(event) => {
                     setDraft({
@@ -431,9 +489,106 @@ export function TerminalPresetsManager({
                     setCommandError(null)
                   }}
                 />
+                <div className="flex items-start justify-between gap-3">
+                  <p
+                    id="launcher-command-inputs"
+                    className="text-base text-pretty text-sidebar-foreground/60 sm:text-sm"
+                  >
+                    {inputNames.length ? (
+                      <>
+                        Asks for{' '}
+                        {inputNames.map((inputName) => (
+                          <span
+                            key={inputName}
+                            className="mr-1 inline-flex rounded-md bg-cyan-400/10 px-1.5 font-mono text-cyan-200 ring-1 ring-cyan-400/25"
+                          >
+                            {inputName}
+                          </span>
+                        ))}
+                        when launched.
+                      </>
+                    ) : (
+                      <>
+                        Write <code className="font-mono">{'${name}'}</code> in
+                        an argument to ask for it when launched.
+                      </>
+                    )}
+                  </p>
+                  {newInputName === null ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      aria-label="Add input"
+                      disabled={busy || !commandArgv}
+                      onClick={() => setNewInputName('')}
+                    >
+                      <PlusIcon data-icon="inline-start" /> Input
+                    </Button>
+                  ) : null}
+                </div>
+                {newInputName !== null && (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="launcher-new-input"
+                      name="launcher-new-input"
+                      aria-label="Input name"
+                      autoComplete="off"
+                      autoFocus
+                      className="font-mono max-[700px]:h-9"
+                      placeholder="prompt"
+                      value={newInputName}
+                      disabled={busy}
+                      onChange={(event) => setNewInputName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          event.currentTarget.parentElement
+                            ?.querySelector<HTMLButtonElement>(
+                              '[data-add-input]'
+                            )
+                            ?.click()
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="max-[700px]:h-9"
+                      data-add-input
+                      disabled={
+                        busy ||
+                        !/^[a-z][a-z0-9_]*$/.test(normalizedNewInputName) ||
+                        inputNames.includes(normalizedNewInputName)
+                      }
+                      onClick={() => {
+                        setDraft({
+                          ...draft,
+                          values: {
+                            ...draft.values,
+                            command: `${draft.values.command.trimEnd()} \${${normalizedNewInputName}}`
+                          }
+                        })
+                        setNewInputName(null)
+                        setCommandError(null)
+                      }}
+                    >
+                      Add
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="max-[700px]:h-9"
+                      onClick={() => setNewInputName(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                )}
                 {commandError && (
                   <p
-                    id="preset-command-error"
+                    id="launcher-command-error"
                     className="text-base text-pretty text-rose-300 sm:text-sm"
                     role="alert"
                   >
@@ -441,15 +596,55 @@ export function TerminalPresetsManager({
                   </p>
                 )}
               </FormField>
+              <FormField>
+                <Label htmlFor="launcher-tree-title">Tree title command</Label>
+                <Input
+                  id="launcher-tree-title"
+                  name="launcher-tree-title"
+                  className="font-mono max-[700px]:h-9"
+                  value={draft.values.treeTitle}
+                  disabled={busy}
+                  placeholder="Optional"
+                  aria-invalid={treeTitleError ? true : undefined}
+                  aria-describedby={
+                    treeTitleError
+                      ? 'launcher-tree-title-hint launcher-tree-title-error'
+                      : 'launcher-tree-title-hint'
+                  }
+                  onChange={(event) => {
+                    setDraft({
+                      ...draft,
+                      values: { ...draft.values, treeTitle: event.target.value }
+                    })
+                    setTreeTitleError(null)
+                  }}
+                />
+                <p
+                  id="launcher-tree-title-hint"
+                  className="text-base text-pretty text-sidebar-foreground/60 sm:text-sm"
+                >
+                  Runs after a new tree starts. Its first output line becomes
+                  the tree title. It can use the same inputs.
+                </p>
+                {treeTitleError && (
+                  <p
+                    id="launcher-tree-title-error"
+                    className="text-base text-pretty text-rose-300 sm:text-sm"
+                    role="alert"
+                  >
+                    {treeTitleError}
+                  </p>
+                )}
+              </FormField>
               <label
-                htmlFor="preset-close-on-success"
+                htmlFor="launcher-close-on-success"
                 className="flex items-center gap-2.5 text-base sm:text-sm"
               >
                 <span className="group inline-grid size-5 shrink-0 grid-cols-1 sm:size-4">
                   <input
                     type="checkbox"
-                    id="preset-close-on-success"
-                    name="preset-close-on-success"
+                    id="launcher-close-on-success"
+                    name="launcher-close-on-success"
                     className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-white/20 bg-zinc-950 checked:border-cyan-400 checked:bg-cyan-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:opacity-50 forced-colors:appearance-auto"
                     checked={draft.values.closeOnSuccess}
                     disabled={busy}
@@ -495,6 +690,7 @@ export function TerminalPresetsManager({
                                 savedValues: {
                                   name: '',
                                   command: '',
+                                  treeTitle: '',
                                   closeOnSuccess: false
                                 }
                               })
@@ -558,7 +754,7 @@ export function TerminalPresetsManager({
                       (!!draft.editingId && !dirty)
                     }
                   >
-                    {savePreset.isPending
+                    {saveLauncher.isPending
                       ? 'Saving…'
                       : draft.editingId
                         ? 'Save'
@@ -570,7 +766,7 @@ export function TerminalPresetsManager({
           ) : (
             <Empty className="min-h-64 max-md:hidden md:border-l md:border-sidebar-border">
               <EmptyTitle className="text-base text-balance text-sidebar-foreground/60 sm:text-sm">
-                {presets.length ? 'Select a preset' : 'Create a preset'}
+                {launchers.length ? 'Select a launcher' : 'Create a launcher'}
               </EmptyTitle>
             </Empty>
           )}
@@ -622,16 +818,16 @@ export function TerminalPresetsManager({
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Keep preset</AlertDialogCancel>
+              <AlertDialogCancel>Keep launcher</AlertDialogCancel>
               <AlertDialogAction
                 className={buttonVariants({ variant: 'destructive' })}
                 onClick={() => {
                   if (deleteTarget) {
-                    deletePreset.mutate(deleteTarget)
+                    deleteLauncher.mutate(deleteTarget)
                   }
                 }}
               >
-                Delete preset
+                Delete launcher
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
