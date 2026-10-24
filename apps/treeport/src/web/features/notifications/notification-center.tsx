@@ -65,7 +65,7 @@ export function NotificationCenter({
                       sequence: entry.sequence,
                       occurredAt: entry.at,
                       title: titles.get(terminal.id) ?? terminal.name,
-                      context: `${project.name} · ${worktree.name}`,
+                      context: project.name,
                       target
                     }
                   ]
