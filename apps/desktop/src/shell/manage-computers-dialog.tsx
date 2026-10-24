@@ -263,7 +263,7 @@ export function ManageComputersDialog({
                       {computer.name}
                     </h2>
                     {computer.selected ? (
-                      <p className="shrink-0 text-base text-cyan-300 sm:text-sm">
+                      <p className="shrink-0 text-base text-accent-300 sm:text-sm">
                         Current
                       </p>
                     ) : null}

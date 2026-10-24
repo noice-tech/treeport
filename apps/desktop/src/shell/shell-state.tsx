@@ -13,8 +13,12 @@ export function ShellStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<DesktopShellState | null>(null)
 
   useEffect(() => {
-    const unsubscribe = window.treeportShell.onState(setState)
-    void window.treeportShell.getState().then(setState)
+    const receive = (next: DesktopShellState) => {
+      document.documentElement.dataset.theme = next.theme
+      setState(next)
+    }
+    const unsubscribe = window.treeportShell.onState(receive)
+    void window.treeportShell.getState().then(receive)
     return unsubscribe
   }, [])
 

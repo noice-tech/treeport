@@ -7,7 +7,6 @@ import type {
 } from '@treeport/shared'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
-import * as Either from 'effect/Either'
 import * as Exit from 'effect/Exit'
 import { and, asc, eq } from 'drizzle-orm'
 import { workspaceItemOrders } from '../../database-schema'
@@ -116,7 +115,6 @@ export class TerminalService {
       if (!(yield* locks.isWorktreeLocked(worktree.id))) {
         for (const terminal of sessions) {
           if (
-            sessions.length <= 1 ||
             terminal.status !== 'exited' ||
             !(
               terminal.closeOnExit ||
@@ -372,69 +370,6 @@ export class TerminalService {
 
       return yield* Effect.fail(
         new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
-      )
-    })
-  }
-
-  ensureProjectTerminals(projectId: string): TerminalEffect<void> {
-    const ensureWorktreeTerminal = this.ensureWorktreeTerminal.bind(this)
-
-    return Effect.gen(function* () {
-      const projectStore = yield* ProjectStore
-      const project = yield* projectStore.getProject(projectId)
-      if ((yield* projectStore.projectOpenState(projectId)) !== true) {
-        return
-      }
-
-      yield* Effect.all(
-        project.worktrees.map((worktree) =>
-          ensureWorktreeTerminal(worktree.id)
-        ),
-        { concurrency: 'unbounded', discard: true }
-      )
-    })
-  }
-
-  ensureWorktreeTerminal(
-    worktreeId: string
-  ): TerminalEffect<TerminalRecord | null> {
-    const createTerminalSession = this.createTerminalSession.bind(this)
-    const listWorktreeTerminals = this.listWorktreeTerminals.bind(this)
-
-    return Effect.gen(function* () {
-      const locks = yield* MutationLocks
-      const projectStore = yield* ProjectStore
-      const terminalMutations = yield* TerminalMutations
-      if (yield* terminalMutations.isBusy(worktreeId)) {
-        return null
-      }
-
-      return yield* terminalMutations.enqueue(
-        worktreeId,
-        Effect.gen(function* () {
-          const worktree = yield* projectStore.storedWorktree(worktreeId)
-          if (
-            !worktree ||
-            (yield* projectStore.projectOpenState(worktree.projectId)) !==
-              true ||
-            worktree.prunable ||
-            !(yield* locks.tryAcquire({
-              worktreeIds: [worktreeId],
-              checkProjectIds: [worktree.projectId]
-            }))
-          ) {
-            return null
-          }
-
-          return yield* Effect.gen(function* () {
-            const terminals = yield* listWorktreeTerminals(worktree)
-            if (terminals.length > 0) {
-              return terminals[0]!
-            }
-
-            return yield* createTerminalSession(worktree, 'Shell')
-          }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktreeId] })))
-        })
       )
     })
   }
@@ -832,15 +767,7 @@ export class TerminalService {
         (closePolicy === 'exit' ||
           (closePolicy === 'success' && state.exitCode === 0))
       ) {
-        const deletion = yield* Effect.either(deleteTerminal(terminalId))
-        if (Either.isLeft(deletion) && deletion.left.code === 'LAST_TERMINAL') {
-          return refreshed
-        }
-
-        if (Either.isLeft(deletion)) {
-          return yield* Effect.fail(deletion.left)
-        }
-
+        yield* deleteTerminal(terminalId)
         return yield* Effect.fail(
           new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
         )

@@ -6,7 +6,7 @@ import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import { projects, worktrees } from '../../database-schema'
 import { DomainError } from '../../domain'
-import { TerminalOperations, WorktreeReconciliation } from '../domain-services'
+import { WorktreeReconciliation } from '../domain-services'
 import {
   type ApplicationServices,
   ProjectObservations,
@@ -366,25 +366,8 @@ export class ProjectObservationService {
 
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
-      const terminals = yield* TerminalOperations
-      const availableProjects = new Set<string>()
       for (const project of yield* projectStore.storedProjects(true)) {
-        const observation = yield* Effect.either(
-          observeAvailableProject(project)
-        )
-        if (observation._tag === 'Right') {
-          availableProjects.add(project.id)
-        }
-      }
-
-      for (const project of yield* projectStore.storedProjects(true)) {
-        if (!availableProjects.has(project.id)) {
-          continue
-        }
-
-        yield* terminals
-          .ensureProjectTerminals(project.id)
-          .pipe(Effect.catchAll(() => Effect.void))
+        yield* Effect.either(observeAvailableProject(project))
       }
     })
   }

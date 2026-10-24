@@ -188,7 +188,7 @@ export function registerTreeportTools(
       closeOnExit: Type.Optional(
         Type.Boolean({
           description:
-            'Remove the terminal when its command exits, including on failure. Output is not retained after removal. A tree always keeps its last terminal.'
+            'Remove the terminal when its command exits, including on failure. Output is not retained after removal.'
         })
       )
     }),

@@ -138,6 +138,7 @@ import type { BrowserSessionManager } from './browser-sessions'
 import { authenticatedViewers, isLoopbackAddress } from './request-security'
 import type { WorkspacePresenceManager } from './workspace-presence'
 import type { WebPushManager } from './web-push'
+import { findProjectIcon } from './project-icon'
 import type { AppServices } from './app-services'
 import { networkTelemetry } from './network-telemetry'
 
@@ -337,6 +338,7 @@ function contentType(filePath: string): string {
     ['.css', 'text/css; charset=utf-8'],
     ['.gif', 'image/gif'],
     ['.html', 'text/html; charset=utf-8'],
+    ['.ico', 'image/x-icon'],
     ['.jpeg', 'image/jpeg'],
     ['.jpg', 'image/jpeg'],
     ['.js', 'text/javascript; charset=utf-8'],
@@ -1167,6 +1169,32 @@ export function createApp({
               query.freshGitWorktreeId
             )
           )
+        })
+      })
+    ),
+    route(
+      'GET',
+      '/api/projects/:projectId/icon',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const project = yield* operation(() =>
+          service.projects.getProject(params.projectId!)
+        )
+        const iconPath = yield* operation(() =>
+          findProjectIcon(project.mainWorktreePath)
+        )
+        const headers = { 'cache-control': 'private, max-age=300' }
+        if (!iconPath) {
+          return HttpServerResponse.empty({ status: 204, headers })
+        }
+
+        return yield* fileResponse(iconPath, {
+          ...headers,
+          // Icons come from repository content; keep SVG scripts inert when
+          // the URL is opened directly.
+          'content-security-policy':
+            "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          'x-content-type-options': 'nosniff'
         })
       })
     ),

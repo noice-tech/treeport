@@ -136,7 +136,7 @@ function ResizeRail({
     >
       <span
         className={cn(
-          'absolute bg-white/10 group-hover/split:bg-cyan-400/70 group-focus-visible/split:bg-cyan-400/70',
+          'absolute bg-white/10 group-hover/split:bg-accent-400/70 group-focus-visible/split:bg-accent-400/70',
           orientation === 'vertical'
             ? 'inset-y-0 left-1/2 w-px -translate-x-1/2 group-hover/split:w-0.5 group-focus-visible/split:w-0.5'
             : 'inset-x-0 top-1/2 h-px -translate-y-1/2 group-hover/split:h-0.5 group-focus-visible/split:h-0.5'
@@ -370,11 +370,11 @@ export function TerminalSplitWorkspace({
     >
       {dropOverlayStyle && dropTarget ? (
         <div
-          className="pointer-events-none absolute z-40 grid place-items-center bg-cyan-400/10 p-3 ring-2 ring-inset ring-cyan-400"
+          className="pointer-events-none absolute z-40 grid place-items-center bg-accent-400/10 p-3 ring-2 ring-inset ring-accent-400"
           style={dropOverlayStyle}
           aria-hidden="true"
         >
-          <span className="rounded-md bg-zinc-950/90 px-2 py-1 text-xs font-medium text-cyan-100 shadow">
+          <span className="rounded-md bg-zinc-950/90 px-2 py-1 text-xs font-medium text-accent-100 shadow">
             Split {dropTarget.direction}
           </span>
         </div>

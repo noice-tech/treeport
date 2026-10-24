@@ -175,9 +175,9 @@ export function NewAppDialog({
       }}
     >
       <DialogContent
-        className="max-w-xl gap-0 overflow-hidden rounded-xl bg-zinc-800/95 p-0 shadow-2xl ring-white/15 backdrop-blur-2xl max-[700px]:p-0 max-[700px]:pb-0 [&>button.absolute]:hidden"
+        className="max-w-xl gap-0 overflow-hidden rounded-xl bg-zinc-800/95 p-0 shadow-2xl ring-white/15 max-[700px]:p-0 max-[700px]:pb-0 [&>button.absolute]:hidden"
         mobilePresentation="dialog"
-        overlayClassName="bg-transparent backdrop-blur-[1px]"
+        overlayClassName="bg-transparent"
         restoreFocusTo={restoreFocusTo}
       >
         <DialogTitle className="sr-only">New app</DialogTitle>

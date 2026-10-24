@@ -54,26 +54,6 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               ] as const
             }
 
-            // In-flight closes no longer count toward the last-terminal guard.
-            const hasRemainingTerminal = [
-              ...(current.terminalIdsByWorktree.get(worktreeId) ?? [])
-            ].some(
-              (id) =>
-                id !== terminalId &&
-                !current.removingTerminalIds.has(id) &&
-                !current.terminalClosePolicies.has(id)
-            )
-            if (!hasRemainingTerminal) {
-              return [
-                new DomainError(
-                  'LAST_TERMINAL',
-                  'Every open tree must keep at least one terminal',
-                  409
-                ),
-                current
-              ] as const
-            }
-
             const removingTerminalIds = new Map(current.removingTerminalIds)
             removingTerminalIds.set(terminalId, worktreeId)
             return [null, { ...current, removingTerminalIds }] as const

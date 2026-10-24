@@ -31,7 +31,7 @@ const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
-    className={cn('fixed inset-0 z-50 bg-black/70 backdrop-blur-sm', className)}
+    className={cn('fixed inset-0 z-50 bg-black/70', className)}
     {...props}
   />
 ))
@@ -101,7 +101,7 @@ const DialogContent = React.forwardRef<
           {...props}
         >
           {children}
-          <DialogPrimitive.Close className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-md text-zinc-500 outline-none hover:bg-white/5 hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:pointer-events-none max-[700px]:top-2 max-[700px]:right-2 max-[700px]:size-8 [&_svg]:size-4">
+          <DialogPrimitive.Close className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-md text-zinc-500 outline-none transition-[opacity,transform] duration-100 ease-out hover:bg-white/5 hover:text-zinc-100 active:scale-[0.92] active:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 disabled:pointer-events-none max-[700px]:top-2 max-[700px]:right-2 max-[700px]:size-8 [&_svg]:size-4">
             <XIcon />
             <span className="touch-target" aria-hidden="true" />
             <span className="sr-only">Close</span>

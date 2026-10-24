@@ -33,7 +33,10 @@ import {
 } from '../../components/ui/sidebar'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { cn } from '../../lib/utils'
-import { terminalProgressLabel } from '../../terminal-session'
+import {
+  terminalDisplayTitle,
+  terminalProgressLabel
+} from '../../terminal-session'
 import { ReorderableItems } from '../../use-reorderable-items'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
 import { terminalLayoutDrag } from '../terminals/terminal-layout-drag'
@@ -102,9 +105,9 @@ function WorktreeShell({
     pending
       ? 'text-zinc-300'
       : selected
-        ? 'selected text-zinc-50 max-[700px]:bg-transparent! min-[701px]:bg-white/8!'
-        : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50',
-    'max-[700px]:flex-1 max-[700px]:hover:bg-transparent',
+        ? 'selected text-zinc-50 [&>svg]:text-accent-400 max-[700px]:bg-transparent! min-[701px]:bg-white/7! min-[701px]:active:bg-white/10!'
+        : 'text-zinc-200 hover:bg-white/5 hover:text-zinc-50',
+    'max-[700px]:flex-1 max-[700px]:hover:bg-transparent max-[700px]:active:bg-transparent',
     (pending || busy) && 'motion-safe:animate-pulse',
     pending && 'pointer-events-none',
     className
@@ -309,7 +312,7 @@ export function WorkspaceTree({
                       <ContextMenuTrigger asChild>
                         <div
                           className={cn(
-                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:[@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 max-[700px]:has-[button:active]:bg-white/5 max-[700px]:select-none',
+                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:[@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 max-[700px]:has-[button:active]:bg-white/10 max-[700px]:select-none',
                             selectedWorktree?.id === worktree.id &&
                               'max-[700px]:bg-white/8'
                           )}
@@ -351,17 +354,17 @@ export function WorkspaceTree({
                                 />
                               ) : worktree.kind === 'folder' ? (
                                 <FolderIcon
-                                  className="size-4 shrink-0 fill-zinc-600 min-[701px]:size-3.5!"
+                                  className="size-4 shrink-0 text-zinc-600 min-[701px]:size-3.5!"
                                   aria-hidden="true"
                                 />
                               ) : worktree.kind === 'main' ? (
                                 <CrownIcon
-                                  className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
+                                  className="size-4 shrink-0 stroke-[1.5] text-zinc-600 min-[701px]:size-3.5!"
                                   aria-hidden="true"
                                 />
                               ) : (
                                 <GitBranchIcon
-                                  className="shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
+                                  className="shrink-0 stroke-[1.5] text-zinc-600 min-[701px]:size-3.5!"
                                   aria-hidden="true"
                                 />
                               )
@@ -382,7 +385,7 @@ export function WorkspaceTree({
                                           : 'Control+Shift+T'
                                     }
                                   : {})}
-                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 max-[700px]:text-zinc-300 min-[701px]:size-6"
+                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 active:bg-transparent max-[700px]:text-zinc-300 min-[701px]:size-6"
                                 onClick={(trigger) =>
                                   onOpenAppDialog(project, worktree, trigger)
                                 }
@@ -462,8 +465,10 @@ export function WorkspaceTree({
                         onDragCancel={() => terminalLayoutDrag.cancel()}
                       >
                         {(terminal, itemProps, handleProps, index) => {
-                          const title =
-                            runtimeTitles.get(terminal.id) || terminal.name
+                          const title = terminalDisplayTitle(
+                            runtimeTitles.get(terminal.id),
+                            terminal.name
+                          )
                           const needsAttention = bellAttention.has(terminal.id)
                           const progress = terminalProgress.get(terminal.id)
                           const working =
@@ -513,8 +518,8 @@ export function WorkspaceTree({
                                       className={cn(
                                         'terminal-row grid h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_2rem] gap-1 rounded-md px-2 py-1 text-left text-xs/4 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
                                         selectedTerminalId === terminal.id
-                                          ? 'selected bg-cyan-400/8! text-cyan-50'
-                                          : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
+                                          ? 'selected bg-accent-400/8! text-accent-50 active:bg-accent-400/14!'
+                                          : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
                                       )}
                                       onClick={() => selectTerminal(terminal)}
                                       onMouseDown={(event) => {
@@ -556,7 +561,7 @@ export function WorkspaceTree({
                                       <span
                                         className={cn(
                                           'truncate',
-                                          working && 'text-cyan-300',
+                                          working && 'text-accent-300',
                                           needsAttention && 'text-amber-200'
                                         )}
                                         aria-hidden="true"
@@ -571,13 +576,8 @@ export function WorkspaceTree({
                                   <SidebarAction
                                     label={`Close ${title}`}
                                     tooltipSide="right"
-                                    tooltip={
-                                      worktree.terminals.length === 1
-                                        ? 'Every tree keeps at least one terminal'
-                                        : 'Close terminal'
-                                    }
-                                    disabled={worktree.terminals.length === 1}
-                                    className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
+                                    tooltip="Close terminal"
+                                    className="text-zinc-500 hover:bg-transparent hover:text-zinc-200 active:bg-transparent"
                                     onClick={() => closeTerminal(terminal)}
                                   >
                                     <XMarkIcon />
@@ -616,7 +616,6 @@ export function WorkspaceTree({
                                   <ContextMenuGroup>
                                     <ContextMenuItem
                                       variant="destructive"
-                                      disabled={worktree.terminals.length === 1}
                                       onSelect={() => closeTerminal(terminal)}
                                     >
                                       <XMarkIcon />
@@ -660,7 +659,7 @@ export function WorkspaceTree({
                         pending
                         icon={
                           <GitBranchIcon
-                            className="worktree-progress-icon size-4 shrink-0 stroke-cyan-400 stroke-[1.5] min-[701px]:size-3.5!"
+                            className="worktree-progress-icon size-4 shrink-0 stroke-accent-400 stroke-[1.5] min-[701px]:size-3.5!"
                             aria-hidden="true"
                           />
                         }

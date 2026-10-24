@@ -95,7 +95,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       >
         <SidebarProvider
           className={cn(
-            'app-frame isolate grid min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[701px]:grid-cols-1 max-[701px]:grid-rows-[2.5rem_minmax(0,1fr)]',
+            'app-frame isolate grid min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-900 max-[701px]:grid-cols-1 max-[701px]:grid-rows-[2.5rem_minmax(0,1fr)] max-[701px]:bg-zinc-950',
             resizingSidebar && 'select-none'
           )}
           style={
@@ -126,7 +126,7 @@ export function WorkspaceMain({
   return (
     <SidebarInset asChild>
       <div
-        className="relative grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-zinc-950"
+        className="relative grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-zinc-950 min-[702px]:my-2 min-[702px]:mr-2 min-[702px]:rounded-xl min-[702px]:shadow-[0_0_0_1px_rgb(255_255_255/0.07),0_12px_40px_-12px_rgb(0_0_0/0.6)]"
         inert={isMobile && openMobile ? true : undefined}
         aria-hidden={isMobile && openMobile ? true : undefined}
         onPointerDownCapture={() => {
@@ -202,8 +202,8 @@ export function ResizableSidebarRail() {
   return (
     <div
       className={cn(
-        'absolute inset-y-0 right-0 z-20 hidden w-3 translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-white/8 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-700 hover:before:w-0.5 hover:before:bg-cyan-400/60 hover:after:bg-cyan-400 focus-visible:before:w-0.5 focus-visible:before:bg-cyan-400 focus-visible:after:bg-cyan-400 min-[701px]:block',
-        resize.resizing && 'before:w-0.5 before:bg-cyan-400'
+        'absolute inset-y-0 right-0 z-20 hidden w-3 translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-600 after:opacity-0 after:transition-opacity hover:after:opacity-100 focus-visible:after:opacity-100 hover:before:w-0.5 hover:before:bg-accent-400/60 hover:after:bg-accent-400 focus-visible:before:w-0.5 focus-visible:before:bg-accent-400 focus-visible:after:bg-accent-400 min-[701px]:block',
+        resize.resizing && 'before:w-0.5 before:bg-accent-400 after:opacity-100'
       )}
       role="separator"
       aria-label="Resize sidebar"

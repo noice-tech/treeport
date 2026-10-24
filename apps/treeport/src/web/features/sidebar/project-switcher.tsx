@@ -8,7 +8,12 @@ import {
   PlusIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
+import {
+  PROJECT_COLORS,
+  type ProjectColor,
+  type ProjectRecord,
+  type RecentProjectRecord
+} from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { Button } from '../../components/ui/button'
@@ -39,6 +44,80 @@ export interface ProjectSwitcherProps {
   onProjectOpened: (project: ProjectRecord) => Promise<void>
   onRequestProjectClose: (project: ProjectRecord) => void
   onOpenProjectDialog: (trigger: HTMLElement) => void
+}
+
+const projectMarkColors = {
+  rose: 'from-rose-300 to-rose-500 text-rose-950',
+  orange: 'from-orange-300 to-orange-500 text-orange-950',
+  amber: 'from-amber-200 to-amber-400 text-amber-950',
+  emerald: 'from-emerald-300 to-emerald-500 text-emerald-950',
+  cyan: 'from-cyan-200 to-cyan-400 text-cyan-950',
+  blue: 'from-blue-300 to-blue-500 text-blue-950',
+  violet: 'from-violet-300 to-violet-500 text-violet-950',
+  pink: 'from-pink-300 to-pink-500 text-pink-950'
+} satisfies Record<ProjectColor, string>
+
+// Remembered for the page lifetime so remounting marks neither flash the
+// monogram nor request icons that were already found missing.
+const projectIconStatus = new Map<string, 'loaded' | 'missing'>()
+
+function ProjectMark({
+  project,
+  className
+}: {
+  project: { id: string; name: string; color: ProjectColor | null }
+  className?: string
+}) {
+  const [, rerender] = useState(0)
+  const iconStatus = projectIconStatus.get(project.id)
+  let hash = 0
+  for (const character of project.id) {
+    hash = (hash * 31 + character.charCodeAt(0)) | 0
+  }
+  const color =
+    project.color ?? PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length]!
+
+  return (
+    <span
+      className={cn(
+        'relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-md text-[0.6875rem]/none font-semibold uppercase',
+        iconStatus !== 'loaded' &&
+          'bg-linear-to-br shadow-sm inset-ring inset-ring-white/25',
+        iconStatus !== 'loaded' && projectMarkColors[color],
+        className
+      )}
+      aria-hidden="true"
+    >
+      {iconStatus !== 'loaded'
+        ? (/[\p{L}\p{N}]/u.exec(project.name)?.[0] ?? '·')
+        : null}
+      {iconStatus !== 'missing' ? (
+        <img
+          key={project.id}
+          src={`/api/projects/${encodeURIComponent(project.id)}/icon`}
+          alt=""
+          decoding="async"
+          draggable={false}
+          className={cn(
+            'absolute inset-0 size-full object-contain',
+            iconStatus !== 'loaded' && 'opacity-0'
+          )}
+          onLoad={() => {
+            if (iconStatus === 'loaded') {
+              return
+            }
+
+            projectIconStatus.set(project.id, 'loaded')
+            rerender((version) => version + 1)
+          }}
+          onError={() => {
+            projectIconStatus.set(project.id, 'missing')
+            rerender((version) => version + 1)
+          }}
+        />
+      ) : null}
+    </span>
+  )
 }
 
 export function ProjectSwitcherShortcut({ blocked }: { blocked: boolean }) {
@@ -195,7 +274,7 @@ export function ProjectSwitcher({
           ref={projectSwitcher.triggerRef}
           type="button"
           variant="ghost"
-          className="h-8 w-full min-w-0 flex-1 justify-start gap-1.5 px-2 text-[0.8125rem] min-[701px]:text-sm text-zinc-100 hover:bg-white/5 min-[701px]:h-8"
+          className="h-8 w-full min-w-0 flex-1 justify-start gap-2 px-1.5 text-[0.8125rem] min-[701px]:text-sm text-zinc-100 hover:bg-white/5 min-[701px]:h-9"
           aria-label={
             activeProject
               ? `Switch project, current project ${activeProject.name}`
@@ -208,7 +287,8 @@ export function ProjectSwitcher({
             usesMacKeyboard ? '⌘⇧P' : 'Ctrl+Shift+P'
           }`}
         >
-          <span className="truncate font-medium">
+          {activeProject ? <ProjectMark project={activeProject} /> : null}
+          <span className="truncate font-semibold tracking-tight">
             {activeProject?.name ?? 'Open project'}
           </span>
           <span className="touch-target" aria-hidden="true" />
@@ -221,7 +301,7 @@ export function ProjectSwitcher({
       <PopoverContent
         align="start"
         portalled={!isMobile}
-        className="grid w-[min(17rem,calc(100vw-1rem))] grid-cols-1 gap-1 p-1 min-[701px]:w-60"
+        className="grid w-[min(17rem,calc(100vw-1rem))] grid-cols-1 gap-1 p-1 animate-none! min-[701px]:w-60"
         onOpenAutoFocus={(event) => {
           if (isMobile) {
             event.preventDefault()
@@ -324,7 +404,7 @@ export function ProjectSwitcher({
                   <li
                     key={project.id}
                     className={cn(
-                      'group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 [@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 has-[button:active]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
+                      'group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 [@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 has-[button:active]:bg-white/10 focus-within:bg-white/5 min-[701px]:h-7',
                       highlightedProjectOption?.project.id === project.id &&
                         'bg-white/8'
                     )}
@@ -334,7 +414,7 @@ export function ProjectSwitcher({
                       id={`project-switcher-option-${project.id}`}
                       type="button"
                       variant="ghost"
-                      className="h-8 min-w-0 flex-1 justify-start px-2 text-left text-[0.8125rem] hover:bg-transparent min-[701px]:text-sm min-[701px]:h-7 min-[701px]:px-1.5 pointer-coarse:pr-12 max-[700px]:pr-10"
+                      className="h-8 min-w-0 flex-1 justify-start px-2 text-left text-[0.8125rem] hover:bg-transparent active:bg-transparent min-[701px]:text-sm min-[701px]:h-7 min-[701px]:px-1.5 pointer-coarse:pr-12 max-[700px]:pr-10"
                       data-highlighted={
                         highlightedProjectOption?.project.id === project.id
                           ? true
@@ -342,7 +422,11 @@ export function ProjectSwitcher({
                       }
                       onClick={() => selectOpenProject(project)}
                     >
-                      <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <ProjectMark
+                          project={project}
+                          className="size-4 rounded-[0.3125rem] text-[0.5625rem]/none"
+                        />
                         <span className="truncate font-medium text-zinc-100">
                           {project.name}
                         </span>
@@ -439,7 +523,7 @@ export function ProjectSwitcher({
                     <li
                       key={project.id}
                       className={cn(
-                        'group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 [@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 has-[button:active]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
+                        'group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 [@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 has-[button:active]:bg-white/10 focus-within:bg-white/5 min-[701px]:h-7',
                         highlightedProjectOption?.project.id === project.id &&
                           'bg-white/8'
                       )}
@@ -449,7 +533,7 @@ export function ProjectSwitcher({
                         id={`project-switcher-option-${project.id}`}
                         type="button"
                         variant="ghost"
-                        className="h-8 min-w-0 flex-1 justify-start px-2 text-left text-[0.8125rem] hover:bg-transparent min-[701px]:text-sm min-[701px]:h-7 min-[701px]:px-1.5 pointer-coarse:pr-12 max-[700px]:pr-10"
+                        className="h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left text-[0.8125rem] hover:bg-transparent active:bg-transparent min-[701px]:text-sm min-[701px]:h-7 min-[701px]:px-1.5 pointer-coarse:pr-12 max-[700px]:pr-10"
                         data-highlighted={
                           highlightedProjectOption?.project.id === project.id
                             ? true
@@ -461,6 +545,10 @@ export function ProjectSwitcher({
                         }
                         onClick={() => selectRecentProject(project)}
                       >
+                        <ProjectMark
+                          project={{ ...project, color: null }}
+                          className="size-4 rounded-[0.3125rem] text-[0.5625rem]/none opacity-60 grayscale-50"
+                        />
                         <span className="truncate font-medium text-zinc-200">
                           {project.name}
                         </span>

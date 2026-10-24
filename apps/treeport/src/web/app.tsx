@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState
 } from 'react'
@@ -49,6 +50,7 @@ import {
   WorkspaceShell
 } from './features/sidebar/workspace-shell'
 import { LaunchersDialog } from './features/launchers/launchers-dialog'
+import { SettingsMenu } from './features/settings/settings-menu'
 import { UpdateControl } from './features/updates/update-control'
 import { NewAppDialog } from './features/apps/new-app-dialog'
 import { useToolPicker } from './features/apps/tool-picker-context'
@@ -1197,6 +1199,10 @@ function WorkspaceApp() {
     [closeDrawerAfterNavigation, navigateToWorkspace, projects]
   )
 
+  // A tree starts a terminal when it is entered empty, not when its last
+  // terminal closes; reselecting the current empty tree starts one again.
+  const autoStartedWorktreeIdRef = useRef<string | null>(null)
+  const [, requestAutoStart] = useReducer((revision: number) => revision + 1, 0)
   const selectWorktree = useCallback(
     (worktree: WorktreeRecord) => {
       setFullViewWorktreeId(null)
@@ -1204,6 +1210,14 @@ function WorkspaceApp() {
       const target = targetForWorktree(projects, worktree, selectedTerminalId)
       if (target) {
         void navigateToWorkspace(target)
+      }
+
+      if (
+        worktree.terminals.length === 0 &&
+        autoStartedWorktreeIdRef.current === worktree.id
+      ) {
+        autoStartedWorktreeIdRef.current = null
+        requestAutoStart()
       }
 
       closeDrawerAfterNavigation()
@@ -1431,6 +1445,28 @@ function WorkspaceApp() {
     selectedProject.availability.state === 'unavailable' ||
     Boolean(selectedWorktree.prunable) ||
     Boolean(pendingRemovals[selectedWorktree.id])
+  useEffect(() => {
+    const worktreeId = selectedWorktree?.id ?? null
+    if (autoStartedWorktreeIdRef.current === worktreeId) {
+      return
+    }
+
+    autoStartedWorktreeIdRef.current = worktreeId
+    if (
+      workspaceResolution?.target.kind !== 'worktree' ||
+      !selectedProject ||
+      !selectedWorktree ||
+      toolLaunchDisabled
+    ) {
+      return
+    }
+
+    terminalWorkflows.createTerminalInWorktree(
+      selectedProject,
+      selectedWorktree,
+      { name: 'Terminal' }
+    )
+  })
   const toggleAppsPanel = useCallback(() => {
     if (!selectedWorktree) {
       return
@@ -1710,6 +1746,13 @@ function WorkspaceApp() {
       />
       <WorkspaceSidebar
         updateControl={<UpdateControl />}
+        settingsMenu={
+          <SettingsMenu
+            onManageLaunchers={(trigger) =>
+              openDialog({ type: 'launchers' }, trigger)
+            }
+          />
+        }
         notificationCenter={
           <NotificationCenter
             projects={projects}
@@ -1921,7 +1964,7 @@ function WorkspaceApp() {
           </span>
           <button
             type="button"
-            className="shrink-0 rounded px-2 py-1 text-cyan-300 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-300"
+            className="shrink-0 rounded px-2 py-1 text-accent-300 hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-accent-300"
             onClick={() => {
               const app = retainedApps.find(
                 (item) => item.id === browserPermissionPrompt.appId

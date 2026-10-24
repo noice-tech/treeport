@@ -297,7 +297,6 @@ export class ProjectSnapshotService {
                   project = yield* observations.observeAvailableProject(project)
                 }
 
-                yield* terminalService.ensureProjectTerminals(project.id)
                 project =
                   (yield* projectStore.storedProject(project.id)) ?? project
               })

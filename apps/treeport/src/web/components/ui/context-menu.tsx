@@ -60,7 +60,7 @@ function ContextMenuItem({
     <ContextMenuPrimitive.Item
       data-variant={variant}
       className={cn(
-        'relative flex min-h-8 cursor-default items-center gap-1.5 rounded-sm px-2 py-1.5 text-sm outline-none select-none [&_svg]:size-3.5 [&_svg]:shrink-0 data-[disabled]:pointer-events-none data-[disabled]:opacity-45 data-[highlighted]:bg-white/7 data-[highlighted]:text-zinc-50 data-[variant=destructive]:text-rose-300',
+        'relative flex min-h-8 cursor-default items-center gap-1.5 rounded-sm px-2 py-1.5 text-sm outline-none select-none [&_svg]:size-3.5 [&_svg]:shrink-0 data-[disabled]:pointer-events-none data-[disabled]:opacity-45 data-[highlighted]:bg-white/7 data-[highlighted]:text-zinc-50 data-[highlighted]:active:bg-white/10 data-[variant=destructive]:text-rose-300',
         className
       )}
       {...props}
