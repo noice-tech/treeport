@@ -410,16 +410,10 @@ export function useTerminalWorkflows({
     const worktree = project?.worktrees.find(
       (candidate) => candidate.id === terminal.worktreeId
     )
-    const remainingTerminals = worktree?.terminals.filter(
-      (candidate) =>
-        candidate.id !== terminal.id &&
-        !closingTerminalIdsRef.current.has(candidate.id)
-    )
     if (
       !project ||
       !worktree ||
-      closingTerminalIdsRef.current.has(terminal.id) ||
-      !remainingTerminals?.length
+      closingTerminalIdsRef.current.has(terminal.id)
     ) {
       return
     }
@@ -462,21 +456,21 @@ export function useTerminalWorkflows({
           .slice(0, index)
           .reverse()
           .find((candidate) => !closingTerminalIdsRef.current.has(candidate.id))
-      if (nextTerminal) {
-        browserTrace('terminal.remove.navigation.started', correlationId, {
-          nextTerminalId: nextTerminal.id,
+      browserTrace('terminal.remove.navigation.started', correlationId, {
+        nextTerminalId: nextTerminal?.id ?? null,
+        terminalId: terminal.id
+      })
+      void navigateToWorkspace(
+        nextTerminal
+          ? terminalTarget(project.id, worktree.id, nextTerminal.id)
+          : worktreeTarget(project.id, worktree.id),
+        true
+      ).then(() => {
+        browserTrace('terminal.remove.navigation.finished', correlationId, {
+          nextTerminalId: nextTerminal?.id ?? null,
           terminalId: terminal.id
         })
-        void navigateToWorkspace(
-          terminalTarget(project.id, worktree.id, nextTerminal.id),
-          true
-        ).then(() => {
-          browserTrace('terminal.remove.navigation.finished', correlationId, {
-            nextTerminalId: nextTerminal.id,
-            terminalId: terminal.id
-          })
-        })
-      }
+      })
     }
 
     terminalSessions.forget(terminal.id)

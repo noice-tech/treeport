@@ -224,10 +224,6 @@ code {
   font-family: 'SFMono-Regular', 'Cascadia Code', monospace;
 }
 
-@utility eyebrow {
-  @apply m-0 font-mono text-[0.6875rem]/4 font-medium tracking-wide text-zinc-500 uppercase;
-}
-
 @utility touch-target {
   position: absolute;
   top: 50%;

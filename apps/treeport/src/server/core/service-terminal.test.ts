@@ -3,7 +3,6 @@ import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
 import { fixture } from './service.integration-fixture'
-import { TerminalOperations } from './services/domain-services'
 import { MutationLocks } from './services/infrastructure/mutation-locks'
 
 describe('terminal operations', () => {
@@ -210,21 +209,6 @@ describe('terminal operations', () => {
     })
     const project = await service.registerProject(main)
     const mainTree = project.worktrees[0]!
-    // Simulate a lost terminal host session while a project mutation is held.
-    runner.sessions.delete(`${mainTree.id}/${mainTree.terminals[0]!.id}`)
-    const attemptsBeforeEnsure = runner.terminalCreateAttempts
-    await service.runEffect(
-      Effect.gen(function* () {
-        const locks = yield* MutationLocks
-        const terminals = yield* TerminalOperations
-        yield* Effect.acquireUseRelease(
-          locks.acquire({ projectId: project.id }),
-          () => terminals.ensureProjectTerminals(project.id),
-          () => locks.release({ projectId: project.id })
-        )
-      })
-    )
-    expect(runner.terminalCreateAttempts).toBe(attemptsBeforeEnsure)
     await service.createTerminal(mainTree.id, 'Shell')
     const initialAttempts = runner.terminalCreateAttempts
     let releaseLaunch!: () => void
@@ -253,8 +237,8 @@ describe('terminal operations', () => {
       await vi.waitFor(() =>
         expect(runner.terminalCreateAttempts).toBe(initialAttempts + 1)
       )
-      // Snapshot auto-ensure must not take the tree lock or launch Shell,
-      // even while the requested terminal is still starting.
+      // A snapshot must not take the tree lock or launch another terminal
+      // while the requested terminal is still starting.
       await expect(snapshot).resolves.toBeDefined()
       expect(reservedTreeId).not.toBeNull()
       await expect(
@@ -311,17 +295,12 @@ describe('terminal operations', () => {
     await Promise.all([closing, anotherClosing])
 
     const remaining = (await service.getWorktreeSnapshot(worktree.id)).terminals
-    const results = await Promise.allSettled(
+    await Promise.all(
       remaining.map((terminal) => service.deleteTerminal(terminal.id))
     )
     expect(
-      results.filter((result) => result.status === 'fulfilled')
-    ).toHaveLength(1)
-    expect(
-      results.find((result) => result.status === 'rejected')
-    ).toMatchObject({
-      reason: { code: 'LAST_TERMINAL' }
-    })
+      (await service.getWorktreeSnapshot(worktree.id)).terminals
+    ).toHaveLength(0)
   })
 
   it('allows terminal and project metadata changes while another tree is being removed', async () => {

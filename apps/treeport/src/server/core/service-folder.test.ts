@@ -49,7 +49,7 @@ describe('ordinary folder projects', () => {
           head: '',
           branch: null,
           dirty: null,
-          terminals: [{ name: 'Shell', status: 'running' }]
+          terminals: []
         }
       ]
     })
@@ -83,7 +83,9 @@ describe('ordinary folder projects', () => {
       })
     ])
 
-    const terminalId = registered.worktrees[0]!.terminals[0]!.id
+    const terminalId = (
+      await service.createTerminal(registered.worktrees[0]!.id, 'Shell')
+    ).id
     await database.db.run(sql`
       UPDATE projects
       SET repository_device = 'previous-boot-device',
@@ -108,9 +110,7 @@ describe('ordinary folder projects', () => {
     )
     expect(runner.terminalCreateAttempts).toBe(createAttemptsBeforePrepare)
     await restartedService.runEffect(restartedService.activateStartup())
-    expect(runner.terminalInventoryAttempts).toBeGreaterThan(
-      inventoryAttemptsBeforePrepare
-    )
+    expect(runner.terminalCreateAttempts).toBe(createAttemptsBeforePrepare)
     const reopenedDatabase = await openDatabaseForTest(config.databasePath)
     databases.push(reopenedDatabase)
     const restarted = await restartedService.getProjectSnapshot(registered.id)

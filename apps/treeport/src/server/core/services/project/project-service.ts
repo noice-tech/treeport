@@ -15,8 +15,7 @@ import { DomainError } from '../../domain'
 import {
   ProjectObservationOperations,
   ProjectRegistrationOperations,
-  ProjectSnapshotOperations,
-  TerminalOperations
+  ProjectSnapshotOperations
 } from '../domain-services'
 import {
   type ApplicationServices,
@@ -363,7 +362,6 @@ export class ProjectService {
       const packages = yield* PackageSystemPort
       const observations = yield* ProjectObservationOperations
       const projectStore = yield* ProjectStore
-      const terminals = yield* TerminalOperations
       const worktreeMutations = yield* WorktreeMutations
       yield* projectStore.requireOpenProject(projectId)
       if (yield* worktreeMutations.isBusy(projectId)) {
@@ -397,7 +395,6 @@ export class ProjectService {
             const project = yield* observations.observeAvailableProject(
               yield* projectStore.getProject(projectId)
             )
-            yield* terminals.ensureProjectTerminals(projectId)
             if (project.kind === 'repository') {
               const defaultBranch = yield* git
                 .defaultBranch(project.repositoryPath)

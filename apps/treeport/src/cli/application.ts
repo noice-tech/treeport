@@ -2563,7 +2563,7 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
     .addHelpText(
       'after',
-      '\nCommand arguments may be passed after --.\nAuto-close removes terminal output. A tree always keeps its last terminal.\n'
+      '\nCommand arguments may be passed after --.\nAuto-close removes terminal output.\n'
     )
   terminalCreateCommand.action(async () => {
     const options = terminalCreateCommand.opts<{

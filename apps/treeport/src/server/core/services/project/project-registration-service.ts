@@ -8,7 +8,6 @@ import { projects, worktrees } from '../../database-schema'
 import { DomainError } from '../../domain'
 import {
   ProjectSnapshotOperations,
-  TerminalOperations,
   WorktreeReconciliation
 } from '../domain-services'
 import {
@@ -89,11 +88,8 @@ export class ProjectRegistrationService {
       const projectObservations = yield* ProjectObservations
       const projectSnapshots = yield* ProjectSnapshotOperations
       const projectStore = yield* ProjectStore
-      const terminals = yield* TerminalOperations
       const reconciler = yield* WorktreeReconciliation
       const worktreeMutations = yield* WorktreeMutations
-      const ensureProjectTerminals =
-        terminals.ensureProjectTerminals.bind(terminals)
       const getProjectSnapshot =
         projectSnapshots.getProjectSnapshot.bind(projectSnapshots)
       const invalidateProjectsSnapshot =
@@ -435,9 +431,6 @@ export class ProjectRegistrationService {
                     .pipe(Effect.orDie)
                   const project = yield* projectStore.getProject(projectId)
                   yield* packages.registerProject(project)
-                  yield* ensureProjectTerminals(projectId).pipe(
-                    Effect.catchAll(() => Effect.void)
-                  )
                   yield* Effect.sync(() => {
                     invalidateProjectsSnapshot()
                     events.publish('project.updated', { projectId })
@@ -453,9 +446,6 @@ export class ProjectRegistrationService {
       yield* updateRegistration
       const project = yield* projectStore.getProject(projectId)
       yield* packages.registerProject(project)
-      yield* ensureProjectTerminals(projectId).pipe(
-        Effect.catchAll(() => Effect.void)
-      )
       yield* Effect.sync(() => {
         invalidateProjectsSnapshot()
         events.publish('project.created', { projectId })
@@ -477,10 +467,7 @@ export class ProjectRegistrationService {
       const projectObservations = yield* ProjectObservations
       const projectSnapshots = yield* ProjectSnapshotOperations
       const projectStore = yield* ProjectStore
-      const terminals = yield* TerminalOperations
       const worktreeMutations = yield* WorktreeMutations
-      const ensureProjectTerminals =
-        terminals.ensureProjectTerminals.bind(terminals)
       const getProjectSnapshot =
         projectSnapshots.getProjectSnapshot.bind(projectSnapshots)
       const invalidateProjectsSnapshot =
@@ -730,9 +717,6 @@ export class ProjectRegistrationService {
       yield* folderIdentities.set(projectId, { device, inode })
       const project = yield* projectStore.getProject(projectId)
       yield* packages.registerProject(project)
-      yield* ensureProjectTerminals(projectId).pipe(
-        Effect.catchAll(() => Effect.void)
-      )
       yield* Effect.sync(() => {
         invalidateProjectsSnapshot()
         events.publish(existing ? 'project.updated' : 'project.created', {

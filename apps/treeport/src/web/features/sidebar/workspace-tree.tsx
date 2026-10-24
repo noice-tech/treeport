@@ -576,12 +576,7 @@ export function WorkspaceTree({
                                   <SidebarAction
                                     label={`Close ${title}`}
                                     tooltipSide="right"
-                                    tooltip={
-                                      worktree.terminals.length === 1
-                                        ? 'Every tree keeps at least one terminal'
-                                        : 'Close terminal'
-                                    }
-                                    disabled={worktree.terminals.length === 1}
+                                    tooltip="Close terminal"
                                     className="text-zinc-500 hover:bg-transparent hover:text-zinc-200 active:bg-transparent"
                                     onClick={() => closeTerminal(terminal)}
                                   >
@@ -621,7 +616,6 @@ export function WorkspaceTree({
                                   <ContextMenuGroup>
                                     <ContextMenuItem
                                       variant="destructive"
-                                      disabled={worktree.terminals.length === 1}
                                       onSelect={() => closeTerminal(terminal)}
                                     >
                                       <XMarkIcon />

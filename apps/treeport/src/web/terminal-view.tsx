@@ -625,15 +625,14 @@ export function TerminalView({
         </div>
       ) : (
         <div className="empty-state grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
-          <div className="grid max-w-lg gap-3">
-            <p className="eyebrow">No terminal open</p>
-            <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
-              {worktree ? 'Start a terminal for this tree.' : 'Choose a tree.'}
+          <div className="grid max-w-xs gap-1 text-center">
+            <h1 className="text-sm font-medium text-zinc-300">
+              {worktree ? 'No terminals' : 'No tree selected'}
             </h1>
-            <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
+            <p className="text-sm text-pretty text-zinc-500">
               {worktree
-                ? 'Use New app in the sidebar to start a terminal, launcher, or web app.'
-                : 'Select a tree from the sidebar to view its terminals.'}
+                ? 'Select the tree to start one, or use New app.'
+                : 'Select a tree from the sidebar.'}
             </p>
           </div>
         </div>

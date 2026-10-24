@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState
 } from 'react'
@@ -1198,6 +1199,10 @@ function WorkspaceApp() {
     [closeDrawerAfterNavigation, navigateToWorkspace, projects]
   )
 
+  // A tree starts a terminal when it is entered empty, not when its last
+  // terminal closes; reselecting the current empty tree starts one again.
+  const autoStartedWorktreeIdRef = useRef<string | null>(null)
+  const [, requestAutoStart] = useReducer((revision: number) => revision + 1, 0)
   const selectWorktree = useCallback(
     (worktree: WorktreeRecord) => {
       setFullViewWorktreeId(null)
@@ -1205,6 +1210,14 @@ function WorkspaceApp() {
       const target = targetForWorktree(projects, worktree, selectedTerminalId)
       if (target) {
         void navigateToWorkspace(target)
+      }
+
+      if (
+        worktree.terminals.length === 0 &&
+        autoStartedWorktreeIdRef.current === worktree.id
+      ) {
+        autoStartedWorktreeIdRef.current = null
+        requestAutoStart()
       }
 
       closeDrawerAfterNavigation()
@@ -1432,6 +1445,28 @@ function WorkspaceApp() {
     selectedProject.availability.state === 'unavailable' ||
     Boolean(selectedWorktree.prunable) ||
     Boolean(pendingRemovals[selectedWorktree.id])
+  useEffect(() => {
+    const worktreeId = selectedWorktree?.id ?? null
+    if (autoStartedWorktreeIdRef.current === worktreeId) {
+      return
+    }
+
+    autoStartedWorktreeIdRef.current = worktreeId
+    if (
+      workspaceResolution?.target.kind !== 'worktree' ||
+      !selectedProject ||
+      !selectedWorktree ||
+      toolLaunchDisabled
+    ) {
+      return
+    }
+
+    terminalWorkflows.createTerminalInWorktree(
+      selectedProject,
+      selectedWorktree,
+      { name: 'Terminal' }
+    )
+  })
   const toggleAppsPanel = useCallback(() => {
     if (!selectedWorktree) {
       return
