@@ -296,6 +296,7 @@ function ChangedFileTree({
           } while (occupied.has(path))
           occupied.add(path)
         }
+
         const syntheticPath = `${entry.group}/${path}`
         actualPaths.set(syntheticPath, file.id)
         gitStatus.push({ path: syntheticPath, status: file.status })
@@ -1012,15 +1013,25 @@ function ReviewApp() {
             { name: filePath, contents: deleted.deletionLines.join('') },
             { name: filePath, contents: added.additionLines.join('') }
           ),
-          ...(deleted.mode ? { prevMode: deleted.mode } : {}),
-          ...(added.mode ? { mode: added.mode } : {}),
-          ...(deleted.prevObjectId
-            ? { prevObjectId: deleted.prevObjectId }
-            : {}),
-          ...(added.newObjectId ? { newObjectId: added.newObjectId } : {}),
           cacheKey: crypto.randomUUID()
         }
+        if (deleted.mode) {
+          fileDiff.prevMode = deleted.mode
+        }
+
+        if (added.mode) {
+          fileDiff.mode = added.mode
+        }
+
+        if (deleted.prevObjectId) {
+          fileDiff.prevObjectId = deleted.prevObjectId
+        }
+
+        if (added.newObjectId) {
+          fileDiff.newObjectId = added.newObjectId
+        }
       }
+
       if (!fileDiff) {
         throw new Error('The file diff did not contain a patch')
       }
@@ -2016,13 +2027,19 @@ function ReviewApp() {
           aria-valuetext={`${Math.round(fileTreeWidth)} percent`}
           onDoubleClick={() => setFileTreeWidth(30)}
           onPointerDown={(event) => {
-            if (event.button !== 0) return
+            if (event.button !== 0) {
+              return
+            }
+
             event.preventDefault()
             event.currentTarget.focus()
             event.currentTarget.setPointerCapture(event.pointerId)
           }}
           onPointerMove={(event) => {
-            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+              return
+            }
+
             const bounds = workspaceRef.current?.getBoundingClientRect()
             if (bounds?.width) {
               setFileTreeWidth(
@@ -2039,6 +2056,7 @@ function ReviewApp() {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
               return
             }
+
             event.preventDefault()
             const key = event.key
             setFileTreeWidth((width) =>
