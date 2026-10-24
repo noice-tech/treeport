@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { formatCommandLine, parseCommandLine } from './command-line'
 
-describe('terminal preset command lines', () => {
+describe('launcher command lines', () => {
   it('turns a command into literal argv without shell expansion', () => {
     expect(
       parseCommandLine("diff main --mode split '$HOME' 'semi;colon'")

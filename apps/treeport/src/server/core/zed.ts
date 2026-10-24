@@ -6,9 +6,10 @@ import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import type {
-  TerminalPresetDefinition,
-  TerminalPresetDefinitionDiagnostic
+  LauncherDefinition,
+  LauncherDefinitionDiagnostic
 } from '@treeport/shared'
+import { normalizeWorktreeName } from '@treeport/shared'
 import { readOptionalJsonc, type OptionalJsoncResult } from './jsonc'
 import type { WorktreeSetupTask } from './setup'
 
@@ -71,24 +72,6 @@ async function assertNoSymlinkComponents(
       )
     }
   }
-}
-
-export function normalizeWorktreeName(input: string): string {
-  const name = input
-    .normalize('NFKD')
-    .replace(/\p{Mark}+/gu, '')
-    .toLowerCase()
-    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
-    .replace(/^-+|-+$/gu, '')
-  if (!name) {
-    throw new Error('Tree name is required')
-  }
-
-  if (name.length > 120) {
-    throw new Error('Tree name must be 120 characters or fewer')
-  }
-
-  return name
 }
 
 export function inferWorktreeName(
@@ -430,7 +413,7 @@ function resolveTask(
   }
 }
 
-async function loadZedTerminalPresetDefinitionsPromise(
+async function loadZedLauncherDefinitionsPromise(
   input: {
     projectId: string
     shell: string
@@ -439,8 +422,8 @@ async function loadZedTerminalPresetDefinitionsPromise(
   },
   tasksFile: OptionalJsoncResult
 ): Promise<{
-  definitions: TerminalPresetDefinition[]
-  diagnostics: TerminalPresetDefinitionDiagnostic[]
+  definitions: LauncherDefinition[]
+  diagnostics: LauncherDefinitionDiagnostic[]
 }> {
   if (!tasksFile.found) {
     return { definitions: [], diagnostics: [] }
@@ -461,8 +444,8 @@ async function loadZedTerminalPresetDefinitionsPromise(
     }
   }
 
-  const definitions: TerminalPresetDefinition[] = []
-  const diagnostics: TerminalPresetDefinitionDiagnostic[] = []
+  const definitions: LauncherDefinition[] = []
+  const diagnostics: LauncherDefinitionDiagnostic[] = []
   for (const [index, entry] of entries.entries()) {
     let task: ZedTask
     try {
@@ -489,6 +472,7 @@ async function loadZedTerminalPresetDefinitionsPromise(
       cwd: resolved.cwd,
       env: resolved.env,
       closeOnSuccess: false,
+      treeTitle: null,
       source: { type: 'repository', format: 'zed' }
     })
   }
@@ -582,7 +566,7 @@ export function loadCreateWorktreeTasks(worktreePath: string) {
   )
 }
 
-export function loadZedTerminalPresetDefinitions(input: {
+export function loadZedLauncherDefinitions(input: {
   projectId: string
   shell: string
   mainWorktreePath: string
@@ -592,8 +576,8 @@ export function loadZedTerminalPresetDefinitions(input: {
     path.join(input.mainWorktreePath, ZED_TASKS_CONFIG_PATH)
   ).pipe(
     Effect.flatMap((tasksFile) =>
-      zedEffect('loadTerminalPresetDefinitions', () =>
-        loadZedTerminalPresetDefinitionsPromise(input, tasksFile)
+      zedEffect('loadLauncherDefinitions', () =>
+        loadZedLauncherDefinitionsPromise(input, tasksFile)
       )
     ),
     Effect.catchAll((error) =>
@@ -628,7 +612,7 @@ export function resolveZedCreateWorktreeSetupTasks(input: {
 export interface ZedService {
   readonly resolveWorktreePath: typeof resolveZedWorktreePath
   readonly prepareWorktreeWrapper: typeof prepareZedWorktreeWrapper
-  readonly loadTerminalPresetDefinitions: typeof loadZedTerminalPresetDefinitions
+  readonly loadLauncherDefinitions: typeof loadZedLauncherDefinitions
   readonly resolveCreateWorktreeSetupTasks: typeof resolveZedCreateWorktreeSetupTasks
 }
 
@@ -637,6 +621,6 @@ export class Zed extends Context.Tag('treeport/Zed')<Zed, ZedService>() {}
 export const ZedLive = Layer.succeed(Zed, {
   resolveWorktreePath: resolveZedWorktreePath,
   prepareWorktreeWrapper: prepareZedWorktreeWrapper,
-  loadTerminalPresetDefinitions: loadZedTerminalPresetDefinitions,
+  loadLauncherDefinitions: loadZedLauncherDefinitions,
   resolveCreateWorktreeSetupTasks: resolveZedCreateWorktreeSetupTasks
 })

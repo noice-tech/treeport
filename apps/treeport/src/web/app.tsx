@@ -48,7 +48,7 @@ import {
   WorkspaceMain,
   WorkspaceShell
 } from './features/sidebar/workspace-shell'
-import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
+import { LaunchersDialog } from './features/launchers/launchers-dialog'
 import { UpdateControl } from './features/updates/update-control'
 import { NewAppDialog } from './features/apps/new-app-dialog'
 import { useToolPicker } from './features/apps/tool-picker-context'
@@ -77,9 +77,8 @@ import { useWorkspacePresence } from './features/presence/use-workspace-presence
 import { WorkspaceViewers } from './features/presence/workspace-viewers'
 import {
   projectsQueryOptions,
-  terminalPresetDefinitionsQueryOptions,
-  terminalPresetsQueryOptions,
-  treeContextFieldsQueryOptions
+  launcherDefinitionsQueryOptions,
+  launchersQueryOptions
 } from './project-metadata'
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
@@ -124,7 +123,7 @@ type AppDialog =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
   | { type: 'app'; projectId: string; worktreeId: string | null }
-  | { type: 'presets' }
+  | { type: 'launchers' }
   | {
       type: 'remove'
       worktree: RemovalWorktree
@@ -179,8 +178,8 @@ function WorkspaceApp() {
       })),
     [projectsQuery.data, removals.hiddenWorktreeIds]
   )
-  const presetsQuery = useQuery(terminalPresetsQueryOptions)
-  const presets = presetsQuery.data ?? []
+  const launchersQuery = useQuery(launchersQueryOptions)
+  const launchers = launchersQuery.data ?? []
   const storedResumePath = localStorage.getItem(
     LAST_WORKSPACE_ROUTE_STORAGE_KEY
   )
@@ -546,7 +545,7 @@ function WorkspaceApp() {
       : null
   const webAppDefinitionsWorktree =
     appDialogWorktree ?? (appsPanelOpen ? selectedWorktree : null)
-  const presetDefinitionsContext =
+  const launcherDefinitionsContext =
     dialog?.type === 'worktree'
       ? { projectId: dialog.project.id }
       : appDialogWorktree
@@ -556,16 +555,11 @@ function WorkspaceApp() {
           : selectedProject
             ? { projectId: selectedProject.id }
             : undefined
-  const presetDefinitionsQuery = useQuery(
-    terminalPresetDefinitionsQueryOptions(presetDefinitionsContext)
+  const launcherDefinitionsQuery = useQuery(
+    launcherDefinitionsQueryOptions(launcherDefinitionsContext)
   )
-  const treeContextFieldsQuery = useQuery(
-    treeContextFieldsQueryOptions(
-      dialog?.type === 'worktree' ? dialog.project.id : null
-    )
-  )
-  const availablePresets = presetDefinitionsQuery.data?.definitions ?? []
-  const presetDiagnostics = presetDefinitionsQuery.data?.diagnostics ?? []
+  const availableLaunchers = launcherDefinitionsQuery.data?.definitions ?? []
+  const launcherDiagnostics = launcherDefinitionsQuery.data?.diagnostics ?? []
   const webAppDefinitionsQuery = useQuery({
     queryKey: ['web-app-definitions', webAppDefinitionsWorktree?.id],
     queryFn: async () =>
@@ -1324,7 +1318,7 @@ function WorkspaceApp() {
     terminalWorkflows.createTerminalInWorktree(
       selectedProject,
       selectedWorktree,
-      { name: 'Shell' },
+      { name: 'Terminal' },
       { targetTerminalId: selectedTerminal.id, direction }
     )
   }
@@ -1653,7 +1647,7 @@ function WorkspaceApp() {
           terminalWorkflows.createTerminalInWorktree(
             selectedProject,
             selectedWorktree,
-            { name: 'Shell', correlationId }
+            { name: 'Terminal', correlationId }
           )
         }
       } else if (splitDirection && !toolSurfaceHasFocus) {
@@ -1961,16 +1955,11 @@ function WorkspaceApp() {
         project={dialog?.type === 'worktree' ? dialog.project : null}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        presets={availablePresets}
-        presetDiagnostics={presetDiagnostics}
-        presetsLoading={presetDefinitionsQuery.isPending}
-        presetsError={presetDefinitionsQuery.isError}
-        onRetryPresets={() => void presetDefinitionsQuery.refetch()}
-        contextFields={treeContextFieldsQuery.data?.fields ?? []}
-        contextFieldDiagnostics={treeContextFieldsQuery.data?.diagnostics ?? []}
-        contextFieldsLoading={treeContextFieldsQuery.isPending}
-        contextFieldsError={treeContextFieldsQuery.isError}
-        onRetryContextFields={() => void treeContextFieldsQuery.refetch()}
+        launchers={availableLaunchers}
+        launcherDiagnostics={launcherDiagnostics}
+        launchersLoading={launcherDefinitionsQuery.isPending}
+        launchersError={launcherDefinitionsQuery.isError}
+        onRetryLaunchers={() => void launcherDefinitionsQuery.refetch()}
         onSubmit={submitWorktreeCreation}
       />
       <NewAppDialog
@@ -1978,10 +1967,10 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         worktreeName={appDialogWorktree?.name ?? null}
-        presets={availablePresets}
-        presetDiagnostics={presetDiagnostics}
-        presetsLoading={presetDefinitionsQuery.isPending}
-        presetsError={presetDefinitionsQuery.isError}
+        launchers={availableLaunchers}
+        launcherDiagnostics={launcherDiagnostics}
+        launchersLoading={launcherDefinitionsQuery.isPending}
+        launchersError={launcherDefinitionsQuery.isError}
         webAppDefinitions={webAppDefinitionsQuery.data ?? []}
         webAppDefinitionsLoading={
           Boolean(appDialogWorktree) && webAppDefinitionsQuery.isPending
@@ -2020,16 +2009,16 @@ function WorkspaceApp() {
             input: null
           })
         }}
-        onManagePresets={() => setDialog({ type: 'presets' })}
+        onManageLaunchers={() => setDialog({ type: 'launchers' })}
       />
-      <TerminalPresetsDialog
-        open={dialog?.type === 'presets'}
+      <LaunchersDialog
+        open={dialog?.type === 'launchers'}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        presets={presets}
-        loading={presetsQuery.isPending}
-        loadError={presetsQuery.isError}
-        onRetry={() => void presetsQuery.refetch()}
+        launchers={launchers}
+        loading={launchersQuery.isPending}
+        loadError={launchersQuery.isError}
+        onRetry={() => void launchersQuery.refetch()}
       />
       <CloseAppDialog
         app={dialog?.type === 'close-app' ? dialog.app : null}

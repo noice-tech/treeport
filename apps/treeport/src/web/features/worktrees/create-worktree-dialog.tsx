@@ -1,11 +1,8 @@
 import { lazy, Suspense, useRef } from 'react'
 import type {
   ProjectRecord,
-  TerminalPresetDefinition,
-  TerminalPresetDefinitionDiagnostic,
-  TreeContextFieldDefinition,
-  TreeContextFieldDiagnostic,
-  TreeContextValues
+  LauncherDefinition,
+  LauncherDefinitionDiagnostic
 } from '@treeport/shared'
 import {
   Dialog,
@@ -24,31 +21,21 @@ export function CreateWorktreeDialog({
   project,
   onOpenChange,
   restoreFocusTo,
-  presets,
-  presetDiagnostics,
-  presetsLoading,
-  presetsError,
-  onRetryPresets,
-  contextFields,
-  contextFieldDiagnostics,
-  contextFieldsLoading,
-  contextFieldsError,
-  onRetryContextFields,
+  launchers,
+  launcherDiagnostics,
+  launchersLoading,
+  launchersError,
+  onRetryLaunchers,
   onSubmit
 }: {
   project: ProjectRecord | null
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
-  presets: TerminalPresetDefinition[]
-  presetDiagnostics: TerminalPresetDefinitionDiagnostic[]
-  presetsLoading: boolean
-  presetsError: boolean
-  onRetryPresets: () => void
-  contextFields: TreeContextFieldDefinition[]
-  contextFieldDiagnostics: TreeContextFieldDiagnostic[]
-  contextFieldsLoading: boolean
-  contextFieldsError: boolean
-  onRetryContextFields: () => void
+  launchers: LauncherDefinition[]
+  launcherDiagnostics: LauncherDefinitionDiagnostic[]
+  launchersLoading: boolean
+  launchersError: boolean
+  onRetryLaunchers: () => void
   onSubmit: (
     project: ProjectRecord,
     name: string,
@@ -60,7 +47,7 @@ export function CreateWorktreeDialog({
       returnToShell?: boolean
     },
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: string[]
   ) => void
 }) {
   const submittedRef = useRef(false)
@@ -91,33 +78,15 @@ export function CreateWorktreeDialog({
             <WorktreeForm
               key={project.id}
               project={project}
-              presets={presets}
-              presetDiagnostics={presetDiagnostics}
-              presetsLoading={presetsLoading}
-              presetsError={presetsError}
-              onRetryPresets={onRetryPresets}
-              contextFields={contextFields}
-              contextFieldDiagnostics={contextFieldDiagnostics}
-              contextFieldsLoading={contextFieldsLoading}
-              contextFieldsError={contextFieldsError}
-              onRetryContextFields={onRetryContextFields}
+              launchers={launchers}
+              launcherDiagnostics={launcherDiagnostics}
+              launchersLoading={launchersLoading}
+              launchersError={launchersError}
+              onRetryLaunchers={onRetryLaunchers}
               busy={false}
-              onSubmit={(
-                name,
-                base,
-                initialTerminal,
-                sourceWorktreeId,
-                treeContext
-              ) => {
+              onSubmit={(...submission) => {
                 submittedRef.current = true
-                onSubmit(
-                  project,
-                  name,
-                  base,
-                  initialTerminal,
-                  sourceWorktreeId,
-                  treeContext
-                )
+                onSubmit(project, ...submission)
               }}
             />
           </Suspense>

@@ -1,12 +1,11 @@
 import { useRef, useState } from 'react'
 import {
-  TREE_CONTEXT_VALUE_MAX_LENGTH,
+  availableTreeName,
+  launcherInputNames,
+  resolveLauncherArgs,
   type ProjectRecord,
-  type TerminalPresetDefinition,
-  type TerminalPresetDefinitionDiagnostic,
-  type TreeContextFieldDefinition,
-  type TreeContextFieldDiagnostic,
-  type TreeContextValues
+  type LauncherDefinition,
+  type LauncherDefinitionDiagnostic
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
@@ -14,36 +13,29 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
 import { Textarea } from '../../components/ui/textarea'
-import { terminalPresetDisambiguator } from '../../terminal-preset-definition'
+import {
+  launcherDisambiguator,
+  launcherInputLabel
+} from '../../launcher-definition'
 
-const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
+const INITIAL_LAUNCHER_STORAGE_KEY = 'treeport-initial-launcher'
 
 export function WorktreeForm({
   project,
-  presets,
-  presetDiagnostics,
-  presetsLoading,
-  presetsError,
-  onRetryPresets,
-  contextFields,
-  contextFieldDiagnostics,
-  contextFieldsLoading,
-  contextFieldsError,
-  onRetryContextFields,
+  launchers,
+  launcherDiagnostics,
+  launchersLoading,
+  launchersError,
+  onRetryLaunchers,
   busy,
   onSubmit
 }: {
   project: ProjectRecord
-  presets: TerminalPresetDefinition[]
-  presetDiagnostics: TerminalPresetDefinitionDiagnostic[]
-  presetsLoading: boolean
-  presetsError: boolean
-  onRetryPresets: () => void
-  contextFields: TreeContextFieldDefinition[]
-  contextFieldDiagnostics: TreeContextFieldDiagnostic[]
-  contextFieldsLoading: boolean
-  contextFieldsError: boolean
-  onRetryContextFields: () => void
+  launchers: LauncherDefinition[]
+  launcherDiagnostics: LauncherDefinitionDiagnostic[]
+  launchersLoading: boolean
+  launchersError: boolean
+  onRetryLaunchers: () => void
   busy: boolean
   onSubmit: (
     name: string,
@@ -55,36 +47,57 @@ export function WorktreeForm({
       returnToShell?: boolean
     },
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: string[]
   ) => void
 }) {
   const submitButtonRef = useRef<HTMLButtonElement>(null)
   const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const [name, setName] = useState('')
   const [baseValue, setBaseValue] = useState('default')
-  const [treeContext, setTreeContext] = useState<TreeContextValues>({})
-  const initialTerminalStorageKey = `${INITIAL_TERMINAL_PRESET_STORAGE_KEY}:${project.id}`
-  const [initialPresetId, setInitialPresetId] = useState(() => {
+  const [inputs, setInputs] = useState<Record<string, string>>({})
+  const initialTerminalStorageKey = `${INITIAL_LAUNCHER_STORAGE_KEY}:${project.id}`
+  const [initialLauncherId, setInitialLauncherId] = useState(() => {
     const stored = localStorage.getItem(initialTerminalStorageKey)
 
     return stored ?? 'shell'
   })
-  const initialTerminalPresets = presets.filter(
-    (preset): preset is TerminalPresetDefinition & { executable: string } =>
-      !preset.closeOnSuccess &&
-      preset.executable !== null &&
-      preset.shellCommand === null
+  const initialLaunchers = launchers.filter(
+    (launcher): launcher is LauncherDefinition & { executable: string } =>
+      !launcher.closeOnSuccess &&
+      launcher.executable !== null &&
+      launcher.shellCommand === null
   )
-  const initialPresetAvailable = initialTerminalPresets.some(
-    (preset) => preset.id === initialPresetId
+  const initialLauncherAvailable = initialLaunchers.some(
+    (launcher) => launcher.id === initialLauncherId
   )
-  const initialPresetUnavailable =
-    initialPresetId !== 'shell' && !initialPresetAvailable
-  const waitingForInitialPreset = initialPresetUnavailable && presetsLoading
-  const initialPresetMissing =
-    initialPresetUnavailable && !presetsLoading && !presetsError
-  const effectiveInitialPresetId =
-    initialPresetUnavailable && !presetsLoading ? 'shell' : initialPresetId
+  const initialLauncherUnavailable =
+    initialLauncherId !== 'shell' && !initialLauncherAvailable
+  const waitingForInitialLauncher =
+    initialLauncherUnavailable && launchersLoading
+  const initialLauncherMissing =
+    initialLauncherUnavailable && !launchersLoading && !launchersError
+  const effectiveInitialLauncherId =
+    initialLauncherUnavailable && !launchersLoading
+      ? 'shell'
+      : initialLauncherId
+  const selectedLauncher = initialLaunchers.find(
+    (launcher) => launcher.id === effectiveInitialLauncherId
+  )
+  const inputNames = selectedLauncher
+    ? launcherInputNames([
+        ...selectedLauncher.args,
+        ...(selectedLauncher.treeTitle?.args ?? [])
+      ])
+    : []
+  const submittedInputs = Object.fromEntries(
+    inputNames.flatMap((inputName) => {
+      const value = inputs[inputName]?.trim()
+      return value ? [[inputName, value]] : []
+    })
+  )
+  const generatedName = availableTreeName(
+    project.worktrees.map((worktree) => worktree.name)
+  )
   const base = baseValue === 'default' ? 'default' : 'current'
   return (
     <form
@@ -110,197 +123,119 @@ export function WorktreeForm({
       }}
       onSubmit={(event) => {
         event.preventDefault()
-        const submittedName = name.trim()
-        if (busy || !submittedName) {
+        if (busy) {
           return
         }
 
-        const selectedPreset = initialTerminalPresets.find(
-          (preset) => preset.id === effectiveInitialPresetId
-        )
-        if (initialPresetMissing) {
+        if (initialLauncherMissing) {
           localStorage.setItem(initialTerminalStorageKey, 'shell')
         }
 
-        const submittedContext = Object.fromEntries(
-          contextFields.flatMap((field) => {
-            const value = treeContext[field.id]?.trim()
-            return value ? [[field.id, value]] : []
-          })
-        )
         onSubmit(
-          submittedName,
+          name.trim() || generatedName,
           base,
-          selectedPreset
+          selectedLauncher
             ? {
-                name: selectedPreset.name,
-                initialTitle: selectedPreset.name,
-                argv: [selectedPreset.executable, ...selectedPreset.args],
+                name: selectedLauncher.name,
+                initialTitle: selectedLauncher.name,
+                argv: [
+                  selectedLauncher.executable,
+                  ...resolveLauncherArgs(selectedLauncher.args, submittedInputs)
+                ],
                 returnToShell: true
               }
-            : { name: 'Shell' },
+            : { name: 'Terminal' },
           base === 'current' ? baseValue : undefined,
-          submittedContext
+          selectedLauncher?.treeTitle
+            ? [
+                selectedLauncher.treeTitle.executable,
+                ...resolveLauncherArgs(
+                  selectedLauncher.treeTitle.args,
+                  submittedInputs
+                )
+              ]
+            : undefined
         )
       }}
     >
-      <FormField>
-        <Label htmlFor="worktree-name">Name</Label>
-        <Input
-          id="worktree-name"
-          name="worktree-name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="feature-name"
-          aria-label="Tree name"
-          autoCapitalize="none"
-          spellCheck={false}
-          required
-          autoFocus
-          disabled={busy}
-        />
-      </FormField>
-      <FormField>
-        <Label htmlFor="worktree-base">Start from</Label>
-        <NativeSelect
-          id="worktree-base"
-          name="worktree-base"
-          value={baseValue}
-          onChange={(event) => setBaseValue(event.target.value)}
-          disabled={busy}
-        >
-          <option value="default">
-            {project.defaultBranch} · latest from origin
-          </option>
-          {project.worktrees.map((worktree) => (
-            <option key={worktree.id} value={worktree.id}>
-              {worktree.name} · current commit
-            </option>
-          ))}
-        </NativeSelect>
-      </FormField>
-      {contextFields.map((field) => (
-        <FormField key={field.id}>
-          <Label htmlFor={`tree-context-${field.id}`}>{field.label}</Label>
-          {field.input === 'textarea' ? (
+      {inputNames.map((inputName, index) => {
+        const id = `launcher-input-${inputName}`
+        return (
+          <FormField key={inputName}>
+            <Label htmlFor={id}>{launcherInputLabel(inputName)}</Label>
             <Textarea
-              id={`tree-context-${field.id}`}
-              name={`tree-context-${field.id}`}
-              value={treeContext[field.id] ?? ''}
-              onChange={(event) =>
-                setTreeContext((current) => ({
-                  ...current,
-                  [field.id]: event.target.value
-                }))
-              }
-              maxLength={TREE_CONTEXT_VALUE_MAX_LENGTH}
-              disabled={busy}
+              id={id}
+              name={id}
               rows={4}
-              className="max-[700px]:h-16"
-            />
-          ) : (
-            <Input
-              id={`tree-context-${field.id}`}
-              name={`tree-context-${field.id}`}
-              value={treeContext[field.id] ?? ''}
+              className="max-h-60 field-sizing-content resize-none"
+              value={inputs[inputName] ?? ''}
+              autoFocus={index === 0}
+              disabled={busy}
               onChange={(event) =>
-                setTreeContext((current) => ({
+                setInputs((current) => ({
                   ...current,
-                  [field.id]: event.target.value
+                  [inputName]: event.target.value
                 }))
               }
-              maxLength={TREE_CONTEXT_VALUE_MAX_LENGTH}
-              disabled={busy}
             />
-          )}
-        </FormField>
-      ))}
-      {contextFieldsLoading && (
-        <p className="form-note" role="status">
-          Loading tree context fields…
-        </p>
-      )}
-      {contextFieldsError && (
-        <div className="flex items-center justify-between gap-3">
-          <p className="form-note">
-            Tree context fields could not be loaded. You can still create the
-            tree.
-          </p>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={onRetryContextFields}
-          >
-            Retry
-          </Button>
-        </div>
-      )}
-      {contextFieldDiagnostics.map((diagnostic) => (
-        <p
-          key={`${diagnostic.scope}:${diagnostic.path}:${diagnostic.message}`}
-          className="form-note"
-          role="status"
-        >
-          {diagnostic.message}
-        </p>
-      ))}
+          </FormField>
+        )
+      })}
       <FormField>
-        <Label htmlFor="initial-terminal-preset">Initial terminal</Label>
+        <Label htmlFor="initial-launcher">Open with</Label>
         <NativeSelect
-          id="initial-terminal-preset"
-          name="initial-terminal-preset"
-          value={effectiveInitialPresetId}
+          id="initial-launcher"
+          name="initial-launcher"
+          value={effectiveInitialLauncherId}
           onChange={(event) => {
-            setInitialPresetId(event.target.value)
+            setInitialLauncherId(event.target.value)
             localStorage.setItem(initialTerminalStorageKey, event.target.value)
           }}
           disabled={busy}
         >
-          {waitingForInitialPreset && (
-            <option value={initialPresetId}>Loading saved preset…</option>
+          {waitingForInitialLauncher && (
+            <option value={initialLauncherId}>Loading saved launcher…</option>
           )}
-          <option value="shell">Shell</option>
-          {initialTerminalPresets.map((preset) => {
-            const disambiguator = terminalPresetDisambiguator(
-              preset,
-              initialTerminalPresets
+          <option value="shell">Terminal</option>
+          {initialLaunchers.map((launcher) => {
+            const disambiguator = launcherDisambiguator(
+              launcher,
+              initialLaunchers
             )
             return (
-              <option key={preset.id} value={preset.id}>
-                {preset.name}
+              <option key={launcher.id} value={launcher.id}>
+                {launcher.name}
                 {disambiguator ? ` — ${disambiguator}` : ''}
               </option>
             )
           })}
         </NativeSelect>
-        {initialPresetMissing && (
+        {initialLauncherMissing && (
           <p className="form-note" role="status">
-            The selected preset cannot be used as an initial terminal. Initial
-            terminal changed to Shell.
+            The selected launcher cannot open a new tree. Changed to Terminal.
           </p>
         )}
-        {presetsLoading && (
+        {launchersLoading && (
           <p className="form-note" role="status">
-            Loading terminal presets…
+            Loading launchers…
           </p>
         )}
-        {presetsError && (
+        {launchersError && (
           <div className="flex items-center justify-between gap-3">
             <p className="form-note">
-              Presets could not be loaded. Shell is still available.
+              Launchers could not be loaded. Terminal is still available.
             </p>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              onClick={onRetryPresets}
+              onClick={onRetryLaunchers}
             >
               Retry
             </Button>
           </div>
         )}
-        {presetDiagnostics.map((diagnostic) => (
+        {launcherDiagnostics.map((diagnostic) => (
           <p
             key={`${diagnostic.path}:${diagnostic.itemId ?? 'file'}:${diagnostic.message}`}
             className="form-note"
@@ -310,17 +245,48 @@ export function WorktreeForm({
           </p>
         ))}
       </FormField>
+      <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
+        <FormField>
+          <Label htmlFor="worktree-name">Tree name</Label>
+          <Input
+            id="worktree-name"
+            name="worktree-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={generatedName}
+            aria-label="Tree name"
+            autoCapitalize="none"
+            spellCheck={false}
+            autoFocus={inputNames.length === 0}
+            disabled={busy}
+          />
+        </FormField>
+        <FormField>
+          <Label htmlFor="worktree-base">Start from</Label>
+          <NativeSelect
+            id="worktree-base"
+            name="worktree-base"
+            value={baseValue}
+            onChange={(event) => setBaseValue(event.target.value)}
+            disabled={busy}
+          >
+            <option value="default">
+              {project.defaultBranch} · latest from origin
+            </option>
+            {project.worktrees.map((worktree) => (
+              <option key={worktree.id} value={worktree.id}>
+                {worktree.name} · current commit
+              </option>
+            ))}
+          </NativeSelect>
+        </FormField>
+      </div>
       <div className="flex items-center justify-end pt-1">
         <Button
           ref={submitButtonRef}
           type="submit"
           aria-keyshortcuts={usesMacKeyboard ? 'Meta+Enter' : 'Control+Enter'}
-          disabled={
-            busy ||
-            contextFieldsLoading ||
-            waitingForInitialPreset ||
-            !name.trim()
-          }
+          disabled={busy || waitingForInitialLauncher}
         >
           {busy ? 'Creating…' : 'Create tree'}
           <kbd

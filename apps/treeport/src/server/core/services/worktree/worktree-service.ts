@@ -3,8 +3,7 @@ import type {
   OperationRecord,
   PrInfo,
   RemovePreview,
-  TerminalSize,
-  TreeContextValues
+  TerminalSize
 } from '@treeport/shared'
 import type * as Effect from 'effect/Effect'
 import type { DomainError } from '../../domain'
@@ -42,7 +41,7 @@ export class WorktreeService {
 
   beginCreateWorktree(
     projectId: string,
-    inputName: string,
+    inputName: string | undefined,
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
@@ -52,7 +51,7 @@ export class WorktreeService {
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: readonly string[]
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     return this.creation.beginCreateWorktree(
       projectId,
@@ -60,7 +59,7 @@ export class WorktreeService {
       base,
       initialTerminal,
       sourceWorktreeId,
-      treeContext
+      treeTitleCommand
     )
   }
 
@@ -74,7 +73,7 @@ export class WorktreeService {
 
   createWorktree(
     projectId: string,
-    inputName: string,
+    inputName: string | undefined,
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
@@ -84,7 +83,7 @@ export class WorktreeService {
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: readonly string[]
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -96,7 +95,7 @@ export class WorktreeService {
       base,
       initialTerminal,
       sourceWorktreeId,
-      treeContext
+      treeTitleCommand
     )
   }
 

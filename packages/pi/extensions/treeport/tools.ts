@@ -110,7 +110,7 @@ export function registerTreeportTools(
 
   register(
     ['context'],
-    'Read the current project, tree, terminal, API instance, and tree context (including assigned tasks).',
+    'Read the current project, tree, terminal, and API instance.',
     Type.Object({}),
     contextSchema
   )

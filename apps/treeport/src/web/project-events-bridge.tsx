@@ -60,11 +60,7 @@ export function useProjectEventsBridge(
           { cancelRefetch: false }
         ),
         queryClient.invalidateQueries(
-          { queryKey: ['terminal-preset-definitions'] },
-          { cancelRefetch: false }
-        ),
-        queryClient.invalidateQueries(
-          { queryKey: ['tree-context-fields'] },
+          { queryKey: ['launcher-definitions'] },
           { cancelRefetch: false }
         ),
         queryClient.invalidateQueries(

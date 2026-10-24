@@ -22,12 +22,9 @@ const jsonObjectSchema = Schema.Record({
   value: jsonValueSchema
 })
 
-export const terminalPresetDefinitionsQuerySchema = Schema.Struct({
+export const launcherDefinitionsQuerySchema = Schema.Struct({
   projectId: Schema.optional(Schema.String),
   worktreeId: Schema.optional(Schema.String)
-})
-export const treeContextFieldsQuerySchema = Schema.Struct({
-  projectId: Schema.String.pipe(Schema.minLength(1))
 })
 export const operationQuerySchema = Schema.Struct({
   kind: Schema.optional(
@@ -65,12 +62,18 @@ export const terminalRecordSchema = Schema.Struct({
   updatedAt: Schema.String
 })
 
-export const terminalPresetSchema = Schema.Struct({
+const launcherCommandSchema = Schema.Struct({
+  executable: Schema.String,
+  args: stringArraySchema
+})
+
+export const launcherSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   executable: Schema.String,
   args: stringArraySchema,
   closeOnSuccess: Schema.Boolean,
+  treeTitle: Schema.NullOr(launcherCommandSchema),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
@@ -140,6 +143,7 @@ export const worktreeRecordSchema = Schema.Struct({
   id: Schema.String,
   projectId: Schema.String,
   name: Schema.String,
+  title: nullableStringSchema,
   path: Schema.String,
   head: Schema.String,
   branch: nullableStringSchema,
@@ -259,7 +263,8 @@ const createOperationRequestSchema = Schema.Struct({
       )
     })
   ),
-  sourceWorktreeId: Schema.optional(Schema.String)
+  sourceWorktreeId: Schema.optional(Schema.String),
+  treeTitleCommand: Schema.optional(stringArraySchema)
 })
 const createOperationResultSchema = Schema.Struct({
   worktreeId: Schema.String,
@@ -408,7 +413,7 @@ const packageDefinitionSourceSchema = Schema.Union(
     scope: Schema.Literal('global', 'project')
   })
 )
-export const terminalPresetDefinitionListingSchema = Schema.Struct({
+export const launcherDefinitionListingSchema = Schema.Struct({
   definitions: Schema.Array(
     Schema.Struct({
       id: Schema.String,
@@ -419,6 +424,7 @@ export const terminalPresetDefinitionListingSchema = Schema.Struct({
       cwd: nullableStringSchema,
       env: Schema.Record({ key: Schema.String, value: Schema.String }),
       closeOnSuccess: Schema.Boolean,
+      treeTitle: Schema.NullOr(launcherCommandSchema),
       source: packageDefinitionSourceSchema
     })
   ),
@@ -426,22 +432,6 @@ export const terminalPresetDefinitionListingSchema = Schema.Struct({
     Schema.Struct({
       path: Schema.String,
       itemId: nullableStringSchema,
-      message: Schema.String
-    })
-  )
-})
-export const treeContextFieldListingSchema = Schema.Struct({
-  fields: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      label: Schema.String,
-      input: Schema.Literal('text', 'textarea')
-    })
-  ),
-  diagnostics: Schema.Array(
-    Schema.Struct({
-      scope: Schema.Literal('global', 'project'),
-      path: Schema.String,
       message: Schema.String
     })
   )
@@ -559,7 +549,7 @@ const packageResourceDiagnosticSchema = Schema.Struct({
   scope: Schema.Literal('global', 'project'),
   source: Schema.optional(Schema.String),
   projectId: Schema.optional(Schema.String),
-  resourceType: Schema.optional(Schema.Literal('web-app', 'terminal-preset')),
+  resourceType: Schema.optional(Schema.Literal('web-app', 'launcher')),
   path: Schema.optional(Schema.String)
 })
 const packageListingSchema = Schema.Struct({
@@ -571,7 +561,7 @@ const packageListingSchema = Schema.Struct({
   installedPath: nullableStringSchema,
   resources: Schema.Struct({
     webApps: Schema.NonNegativeInt,
-    terminalPresets: Schema.NonNegativeInt
+    launchers: Schema.NonNegativeInt
   }),
   diagnostics: Schema.Array(packageResourceDiagnosticSchema)
 })
@@ -667,20 +657,17 @@ export const worktreeResponseSchema = Schema.Struct({
 export const worktreesResponseSchema = Schema.Struct({
   worktrees: Schema.Array(worktreeRecordSchema)
 })
-export const treeContextResponseSchema = Schema.Struct({
-  context: Schema.Record({ key: Schema.String, value: Schema.String })
-})
 export const operationResponseSchema = Schema.Struct({
   operation: operationRecordSchema
 })
 export const operationsResponseSchema = Schema.Struct({
   operations: Schema.Array(operationRecordSchema)
 })
-export const terminalPresetsResponseSchema = Schema.Struct({
-  presets: Schema.Array(terminalPresetSchema)
+export const launchersResponseSchema = Schema.Struct({
+  launchers: Schema.Array(launcherSchema)
 })
-export const terminalPresetResponseSchema = Schema.Struct({
-  preset: terminalPresetSchema
+export const launcherResponseSchema = Schema.Struct({
+  launcher: launcherSchema
 })
 export const webAppDefinitionsResponseSchema = Schema.Struct({
   definitions: Schema.Array(webAppDefinitionSchema)

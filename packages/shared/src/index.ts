@@ -61,13 +61,10 @@ export const TERMINAL_NAME_MAX_LENGTH = 120
 export const TERMINAL_ARGV_MAX_COUNT = 128
 export const TERMINAL_EXECUTABLE_MAX_LENGTH = 4_096
 export const TERMINAL_ARGUMENT_MAX_LENGTH = 4_096
-export const TERMINAL_PRESET_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
+export const LAUNCHER_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
 export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
 export const WEB_APP_INPUT_MAX_BYTES = 64 * 1024
-export const TREE_CONTEXT_FIELD_MAX_COUNT = 64
-export const TREE_CONTEXT_VALUE_MAX_LENGTH = 16 * 1024
-export const TREE_CONTEXT_VALUES_MAX_LENGTH = 64 * 1024
 export const TREE_FILE_MAX_BYTES = 2 * 1024 * 1024
 export const TREE_FILE_LIST_MAX_ENTRIES = 50_000
 export const TREE_FILE_SEARCH_QUERY_MAX_LENGTH = 256
@@ -130,18 +127,25 @@ export interface TerminalRecord {
   updatedAt: string
 }
 
-export interface TerminalPreset {
+export interface LauncherCommand {
+  readonly executable: string
+  readonly args: readonly string[]
+}
+
+export interface Launcher {
   id: string
   name: string
   executable: string
   args: string[]
   closeOnSuccess: boolean
+  /** Runs after a new tree starts; its first output line becomes the tree title. */
+  treeTitle: LauncherCommand | null
   createdAt: string
   updatedAt: string
 }
 
 export type PackageScope = 'global' | 'project'
-export type PackageResourceType = 'web-app' | 'terminal-preset'
+export type PackageResourceType = 'web-app' | 'launcher'
 
 export interface PackageResourceDiagnostic {
   severity: 'warning' | 'error'
@@ -159,7 +163,7 @@ export type PackageSource =
       source: string
       autoload?: boolean
       webApps?: string[]
-      terminalPresets?: string[]
+      launchers?: string[]
     }
 
 export interface PackageListing {
@@ -171,7 +175,7 @@ export interface PackageListing {
   installedPath: string | null
   resources: {
     webApps: number
-    terminalPresets: number
+    launchers: number
   }
   diagnostics: PackageResourceDiagnostic[]
 }
@@ -185,7 +189,7 @@ export interface PackageOperationResult {
   reason?: string
 }
 
-export type TerminalPresetDefinitionSource =
+export type LauncherDefinitionSource =
   | { type: 'user' }
   | { type: 'repository'; format: 'treeport' | 'zed' }
   | {
@@ -195,18 +199,18 @@ export type TerminalPresetDefinitionSource =
       scope: PackageScope
     }
 
-export interface TerminalPresetDefinitionDiagnostic {
+export interface LauncherDefinitionDiagnostic {
   path: string
   itemId: string | null
   message: string
 }
 
-export interface TerminalPresetDefinitionListing {
-  definitions: TerminalPresetDefinition[]
-  diagnostics: TerminalPresetDefinitionDiagnostic[]
+export interface LauncherDefinitionListing {
+  definitions: LauncherDefinition[]
+  diagnostics: LauncherDefinitionDiagnostic[]
 }
 
-export interface TerminalPresetDefinition {
+export interface LauncherDefinition {
   id: string
   name: string
   executable: string | null
@@ -215,7 +219,8 @@ export interface TerminalPresetDefinition {
   cwd: string | null
   env: Record<string, string>
   closeOnSuccess: boolean
-  source: TerminalPresetDefinitionSource
+  treeTitle: LauncherCommand | null
+  source: LauncherDefinitionSource
 }
 
 export interface TerminalCapture {
@@ -283,31 +288,11 @@ export interface OpenBrowserAppResult {
   app: BrowserApp
 }
 
-export type TreeContextFieldInput = 'text' | 'textarea'
-
-export interface TreeContextFieldDefinition {
-  id: string
-  label: string
-  input: TreeContextFieldInput
-}
-
-export interface TreeContextFieldDiagnostic {
-  scope: 'global' | 'project'
-  path: string
-  message: string
-}
-
-export interface TreeContextFieldListing {
-  fields: TreeContextFieldDefinition[]
-  diagnostics: TreeContextFieldDiagnostic[]
-}
-
-export type TreeContextValues = Record<string, string>
-
 export interface WorktreeRecord {
   id: string
   projectId: string
   name: string
+  title: string | null
   path: string
   head: string
   branch: string | null
@@ -405,7 +390,7 @@ export type TreeportContext =
         | 'branch'
         | 'detached'
         | 'kind'
-      > & { context: TreeContextValues }
+      >
       terminal: Pick<
         TerminalRecord,
         'id' | 'worktreeId' | 'name' | 'status' | 'exitCode'
@@ -482,7 +467,6 @@ export interface RemovalCheckoutIdentity {
 export interface CreateOperationRequest {
   name: string
   base: 'default' | 'current'
-  context?: TreeContextValues | undefined
   initialTerminal?:
     | {
         name: string
@@ -493,6 +477,7 @@ export interface CreateOperationRequest {
       }
     | undefined
   sourceWorktreeId?: string | undefined
+  treeTitleCommand?: string[] | undefined
 }
 
 export interface CreateOperationResult {
@@ -675,90 +660,123 @@ const terminalArgvSchema = Schema.Array(Schema.String).pipe(
   Schema.minItems(1),
   Schema.maxItems(TERMINAL_ARGV_MAX_COUNT)
 )
-const terminalPresetArgumentSchema = Schema.String.pipe(
+const launcherArgumentSchema = Schema.String.pipe(
   Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH)
 )
-const terminalPresetExecutableSchema = Schema.String.pipe(
+const launcherExecutableSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(TERMINAL_EXECUTABLE_MAX_LENGTH),
   Schema.filter((value) => value.trim().length > 0, {
     message: () => 'Executable cannot be blank'
   })
 )
-const terminalPresetFields = {
-  name: terminalNameSchema,
-  executable: terminalPresetExecutableSchema,
-  args: Schema.Array(terminalPresetArgumentSchema).pipe(
-    Schema.maxItems(TERMINAL_PRESET_ARGUMENT_MAX_COUNT)
-  ),
-  closeOnSuccess: Schema.optionalWith(Schema.Boolean, {
-    default: () => false
-  })
-}
-export const repositoryTerminalPresetSchema =
-  Schema.Struct(terminalPresetFields)
-const repositoryTerminalPresetIdSchema = Schema.String.pipe(
-  Schema.pattern(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
-    message: () =>
-      'Preset IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
+const launcherArgsSchema = Schema.Array(launcherArgumentSchema).pipe(
+  Schema.maxItems(LAUNCHER_ARGUMENT_MAX_COUNT)
+)
+const launcherTreeTitleSchema = Schema.NullOr(
+  Schema.Struct({
+    executable: launcherExecutableSchema,
+    args: launcherArgsSchema
   })
 )
-export const repositoryTerminalPresetsSettingsSchema = Schema.Struct({
-  terminalPresets: Schema.optionalWith(
+const launcherFields = {
+  name: terminalNameSchema,
+  executable: launcherExecutableSchema,
+  args: launcherArgsSchema,
+  closeOnSuccess: Schema.optionalWith(Schema.Boolean, {
+    default: () => false
+  }),
+  treeTitle: Schema.optionalWith(launcherTreeTitleSchema, {
+    default: () => null
+  })
+}
+export const repositoryLauncherSchema = Schema.Struct(launcherFields)
+const repositoryLauncherIdSchema = Schema.String.pipe(
+  Schema.pattern(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
+    message: () =>
+      'Launcher IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
+  })
+)
+export const repositoryLaunchersSettingsSchema = Schema.Struct({
+  launchers: Schema.optionalWith(
     Schema.Record({
-      key: repositoryTerminalPresetIdSchema,
+      key: repositoryLauncherIdSchema,
       value: Schema.Unknown
     }),
     { default: () => ({}) }
   )
 })
-const terminalPresetRevisionSchema = Schema.String.pipe(
+const launcherRevisionSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(64)
 )
 
-const treeContextFieldIdSchema = Schema.String.pipe(
-  Schema.pattern(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
-    message: () =>
-      'Field IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
-  })
-)
-export const treeContextFieldDefinitionSchema = Schema.Struct({
-  id: treeContextFieldIdSchema,
-  label: Schema.Trim.pipe(
-    Schema.minLength(1),
-    Schema.maxLength(120),
-    Schema.filter((value) => !value.includes('\0'), {
-      message: () => 'Field labels cannot contain NUL'
-    })
-  ),
-  input: Schema.Literal('text', 'textarea')
-})
+const LAUNCHER_INPUT_PATTERN = /\$\{([a-z][a-z0-9_]*)\}/g
+const LAUNCHER_WHOLE_INPUT_PATTERN = /^\$\{([a-z][a-z0-9_]*)\}$/
 
-export const treeContextValuesSchema = Schema.Record({
-  key: treeContextFieldIdSchema,
-  value: Schema.Trim.pipe(
-    Schema.minLength(1),
-    Schema.maxLength(TREE_CONTEXT_VALUE_MAX_LENGTH),
-    Schema.filter((value) => !value.includes('\0'), {
-      message: () => 'Tree context values cannot contain NUL'
-    })
-  )
-}).pipe(
-  Schema.filter(
-    (values) => {
-      const entries = Object.entries(values)
-      return (
-        entries.length <= TREE_CONTEXT_FIELD_MAX_COUNT &&
-        entries.reduce(
-          (length, [key, value]) => length + key.length + value.length,
-          0
-        ) <= TREE_CONTEXT_VALUES_MAX_LENGTH
+/** Input names referenced as `${name}` in launcher arguments, in first-use order. */
+export function launcherInputNames(args: readonly string[]): string[] {
+  return [
+    ...new Set(
+      args.flatMap((arg) =>
+        [...arg.matchAll(LAUNCHER_INPUT_PATTERN)].map((match) => match[1]!)
       )
-    },
-    { message: () => 'Tree context exceeds its size limit' }
-  )
-)
+    )
+  ]
+}
+
+/**
+ * Substitutes inputs inside each argument without shell parsing, so values
+ * never split into extra arguments. An argument that is exactly one empty
+ * input is omitted, letting `["pi", "${prompt}"]` also start without a prompt.
+ */
+export function resolveLauncherArgs(
+  args: readonly string[],
+  inputs: Readonly<Record<string, string>>
+): string[] {
+  return args.flatMap((arg) => {
+    const whole = LAUNCHER_WHOLE_INPUT_PATTERN.exec(arg)
+    if (whole && !inputs[whole[1]!]) {
+      return []
+    }
+
+    return [
+      arg.replace(
+        LAUNCHER_INPUT_PATTERN,
+        (_match, name: string) => inputs[name] ?? ''
+      )
+    ]
+  })
+}
+
+export function normalizeWorktreeName(input: string): string {
+  const name = input
+    .normalize('NFKD')
+    .replace(/\p{Mark}+/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+  if (!name) {
+    throw new Error('Tree name is required')
+  }
+
+  if (name.length > 120) {
+    throw new Error('Tree name must be 120 characters or fewer')
+  }
+
+  return name
+}
+
+/** `tree`, then `tree-2`, `tree-3`, … skipping names already taken. */
+export function availableTreeName(takenNames: readonly string[]): string {
+  const taken = new Set(takenNames.map((name) => name.toLowerCase()))
+  let name = 'tree'
+  for (let suffix = 2; taken.has(name); suffix += 1) {
+    name = `tree-${suffix}`
+  }
+
+  return name
+}
 
 const initialTerminalSchema = Schema.Struct({
   name: terminalNameSchema,
@@ -769,13 +787,15 @@ const initialTerminalSchema = Schema.Struct({
 })
 
 export const createWorktreeSchema = Schema.Struct({
-  name: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(120)),
+  name: Schema.optional(
+    Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(120))
+  ),
   base: Schema.optionalWith(Schema.Literal('default', 'current'), {
     default: () => 'default' as const
   }),
-  context: Schema.optional(treeContextValuesSchema),
   sourceWorktreeId: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
-  initialTerminal: Schema.optional(initialTerminalSchema)
+  initialTerminal: Schema.optional(initialTerminalSchema),
+  treeTitleCommand: Schema.optional(terminalArgvSchema)
 }).pipe(
   Schema.filter(
     (value) => value.base !== 'current' || Boolean(value.sourceWorktreeId),
@@ -844,6 +864,16 @@ export const createTerminalSchema = Schema.Struct({
 )
 
 export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })
+
+export const WORKTREE_TITLE_MAX_LENGTH = 120
+export const updateWorktreeTitleSchema = Schema.Struct({
+  title: Schema.NullOr(
+    Schema.Trim.pipe(
+      Schema.minLength(1),
+      Schema.maxLength(WORKTREE_TITLE_MAX_LENGTH)
+    )
+  )
+})
 
 export const reorderWorkspaceItemsSchema = Schema.Struct({
   itemIds: Schema.Array(
@@ -947,14 +977,15 @@ export const writeTreeFileSchema = Schema.Struct({
   )
 })
 
-export const createTerminalPresetSchema = Schema.Struct(terminalPresetFields)
-export const updateTerminalPresetSchema = Schema.Struct({
-  ...terminalPresetFields,
+export const createLauncherSchema = Schema.Struct(launcherFields)
+export const updateLauncherSchema = Schema.Struct({
+  ...launcherFields,
   closeOnSuccess: Schema.optional(Schema.Boolean),
-  expectedUpdatedAt: terminalPresetRevisionSchema
+  treeTitle: Schema.optional(launcherTreeTitleSchema),
+  expectedUpdatedAt: launcherRevisionSchema
 })
-export const deleteTerminalPresetSchema = Schema.Struct({
-  expectedUpdatedAt: terminalPresetRevisionSchema
+export const deleteLauncherSchema = Schema.Struct({
+  expectedUpdatedAt: launcherRevisionSchema
 })
 
 export const packageProjectQuerySchema = Schema.Struct({

@@ -1,5 +1,4 @@
 import type { ApplicationUpdateStatus } from '../../src/server/application-update'
-import type { TreeContextFieldDefinition } from '@treeport/shared'
 
 export interface MockAppOptions {
   keyboardPlatform?: string
@@ -7,6 +6,5 @@ export interface MockAppOptions {
   desktopBridge?: boolean
   desktopFilePaths?: Record<string, string>
   initialPath?: string
-  treeContextFields?: TreeContextFieldDefinition[]
   applicationUpdate?: ApplicationUpdateStatus
 }

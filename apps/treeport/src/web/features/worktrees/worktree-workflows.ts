@@ -11,7 +11,6 @@ import type {
   RemoveOperationRecord,
   RemovePreview,
   TerminalSize,
-  TreeContextValues,
   WorktreeRecord
 } from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
@@ -43,7 +42,7 @@ interface WorktreeCreationRequest {
     initialSize?: TerminalSize
   }
   sourceWorktreeId?: string
-  treeContext?: TreeContextValues
+  treeTitleCommand?: string[]
 }
 
 interface TrackedCreation {
@@ -258,8 +257,8 @@ export function useWorktreeWorkflows({
         Object.assign(json, { sourceWorktreeId: request.sourceWorktreeId })
       }
 
-      if (request.treeContext && Object.keys(request.treeContext).length > 0) {
-        Object.assign(json, { context: request.treeContext })
+      if (request.treeTitleCommand) {
+        Object.assign(json, { treeTitleCommand: request.treeTitleCommand })
       }
 
       return parseResponse(
@@ -383,7 +382,7 @@ export function useWorktreeWorkflows({
       returnToShell?: boolean
     },
     sourceWorktreeId?: string,
-    treeContext?: TreeContextValues
+    treeTitleCommand?: string[]
   ) => {
     const initialSize = selectedTerminalId
       ? terminalSessions.getInitialSize(selectedTerminalId)
@@ -417,8 +416,8 @@ export function useWorktreeWorkflows({
       pending.sourceWorktreeId = sourceWorktreeId
     }
 
-    if (treeContext && Object.keys(treeContext).length > 0) {
-      pending.treeContext = treeContext
+    if (treeTitleCommand) {
+      pending.treeTitleCommand = treeTitleCommand
     }
 
     onWorktreeSubmitted()

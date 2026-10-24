@@ -26,6 +26,7 @@ export const project: ProjectRecord = {
       prunable: false,
       kind: 'main',
       managedWrapperPath: null,
+      title: null,
       pr: {
         state: 'no_pr',
         number: null,
@@ -74,6 +75,7 @@ export const project: ProjectRecord = {
       prunable: false,
       kind: 'linked',
       managedWrapperPath: null,
+      title: null,
       pr: {
         state: 'merged',
         number: 12,

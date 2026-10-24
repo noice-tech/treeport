@@ -1,6 +1,6 @@
 ---
 name: treeport
-description: Use Treeport to manage persistent terminals, shared browser tabs, projects, and separate trees. Use when running inside Treeport, reading an assigned tree task, starting servers, opening a browser, or delegating work into another tree.
+description: Use Treeport to manage persistent terminals, shared browser tabs, projects, and separate trees. Use when running inside Treeport, starting servers, opening a browser, or delegating work into another tree.
 compatibility: Requires the treeport CLI and a reachable Treeport daemon.
 ---
 
@@ -12,7 +12,7 @@ Treeport keeps projects, Git worktrees (trees), persistent terminals, and browse
 
 ## Start with context
 
-Run `treeport context` before Treeport operations. It identifies this terminal, project, tree, assigned tree context, API instance, and daemon lifecycle. Only execute an assigned task when the user asks; starting a session is not permission to start the task.
+Run `treeport context` before Treeport operations. It identifies this terminal, project, tree, API instance, and daemon lifecycle.
 
 Use the inherited instance and exact IDs from context. Never infer the target from the current folder, a familiar port, or the visible Treeport window. A worktree's development instance may differ from the instance hosting this terminal. Do not mutate another instance without permission.
 
@@ -73,6 +73,17 @@ treeport spawn --worktree-name <tree-name> --name <terminal-name> -- <program> <
 By default, Treeport bases new trees on the fetched remote default branch. Use `--from-current` only when the task needs the current committed HEAD; uncommitted changes are not copied. Create trees sequentially. Do not automatically launch additional coding agents unless the user's request authorizes delegation.
 
 If creation reports `terminalError` or `setupError`, the tree may already exist. Report the retained tree and terminal IDs rather than blindly retrying or removing them. Never remove trees without explicit permission.
+
+## Launchers
+
+Launchers are saved programs that the Treeport UI and `treeport launch` start in a tree. A lowercase `${name}` in an argument is an input that is filled in at launch. To register an agent CLI, check its `--help` for how it accepts an initial prompt, then run:
+
+```sh
+treeport launcher add --name Claude -- claude '${prompt}'
+treeport launch claude --new-tree --tree-name login-redirect --input prompt="Fix the login redirect loop"
+```
+
+Add `--repo` to save the launcher in the current tree's `.treeport/settings.json`. Use `treeport launcher list` to see launcher IDs and inputs. Trees keep their folder name, but `treeport worktree title "<title>"` changes the title shown for the current tree.
 
 ## Safety and command discovery
 

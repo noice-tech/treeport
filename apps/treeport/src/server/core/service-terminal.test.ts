@@ -112,9 +112,9 @@ describe('terminal operations', () => {
     )
     for (const name of ['blocking-tree', 'queued-tree']) {
       const tree = reopened.worktrees.find((tree) => tree.name === name)!
-      expect(tree.terminals.some((terminal) => terminal.name === 'Shell')).toBe(
-        true
-      )
+      expect(
+        tree.terminals.some((terminal) => terminal.name === 'Terminal')
+      ).toBe(true)
     }
     await expect(
       service.createTerminal(mainTree.id, 'After creation')

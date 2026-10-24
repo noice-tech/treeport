@@ -393,8 +393,7 @@ describe('worktree setup', () => {
       path.join(worktree, '.treeport', 'settings.json'),
       JSON.stringify({
         packages: [],
-        terminalPresets: {},
-        treeContext: { fields: [] }
+        launchers: {}
       })
     )
     await expect(

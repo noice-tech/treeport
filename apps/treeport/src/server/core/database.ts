@@ -22,14 +22,15 @@ import type {
   RemoveOperationResult,
   PrInfo,
   ProjectRecord,
-  TerminalPreset,
+  Launcher,
+  LauncherCommand,
   WorktreeRecord
 } from '@treeport/shared'
 import * as schema from './database-schema'
 import type {
   operations,
   projects as projectTable,
-  terminalPresets,
+  launchers,
   worktrees
 } from './database-schema'
 import { inferWorktreeName } from './zed'
@@ -40,7 +41,6 @@ const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
   z.strictObject({
     name: z.string(),
     base: z.enum(['default', 'current']),
-    context: z.record(z.string(), z.string()).optional(),
     initialTerminal: z
       .strictObject({
         name: z.string(),
@@ -52,7 +52,8 @@ const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
           .optional()
       })
       .optional(),
-    sourceWorktreeId: z.string().optional()
+    sourceWorktreeId: z.string().optional(),
+    treeTitleCommand: z.array(z.string()).optional()
   })
 
 const createOperationResultSchema: z.ZodType<CreateOperationResult> =
@@ -225,7 +226,7 @@ type TreeportTransaction = Parameters<
 >[0]
 export type ProjectRow = typeof projectTable.$inferSelect
 export type WorktreeRow = typeof worktrees.$inferSelect
-export type TerminalPresetRow = typeof terminalPresets.$inferSelect
+export type LauncherRow = typeof launchers.$inferSelect
 export type OperationRow = typeof operations.$inferSelect
 
 export interface DatabaseOpenOptions {
@@ -564,6 +565,7 @@ export function mapWorktree(
     // SAFETY: The query selects the columns required by this database row contract.
     kind: row.kind as WorktreeRecord['kind'],
     managedWrapperPath: row.managedWrapperPath,
+    title: row.title,
     pr: {
       // SAFETY: The query selects the columns required by this database row contract.
       state: row.prState as PrInfo['state'],
@@ -582,7 +584,7 @@ export function mapWorktree(
   }
 }
 
-export function mapTerminalPreset(row: TerminalPresetRow): TerminalPreset {
+export function mapLauncher(row: LauncherRow): Launcher {
   return {
     id: row.id,
     name: row.name,
@@ -590,6 +592,10 @@ export function mapTerminalPreset(row: TerminalPresetRow): TerminalPreset {
     // SAFETY: The query selects the columns required by this database row contract.
     args: JSON.parse(row.argsJson) as string[],
     closeOnSuccess: Boolean(row.closeOnSuccess),
+    // SAFETY: Launcher writes store tree titles validated by the launcher schema.
+    treeTitle: row.treeTitleJson
+      ? (JSON.parse(row.treeTitleJson) as LauncherCommand)
+      : null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }

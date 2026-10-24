@@ -40,8 +40,7 @@ it('loads tools on demand and calls structured tools from codemode across reload
                 id: 'tree',
                 projectId: 'project',
                 name: 'test-tree',
-                path: root,
-                context: { task: 'Inspect the child' }
+                path: root
               },
               terminal: { id: 'terminal', worktreeId: 'tree', name: 'Pi' }
             }
@@ -182,22 +181,22 @@ it('loads tools on demand and calls structured tools from codemode across reload
         message.role === 'toolResult' && message.toolName === 'treeport_enable'
     )
     expect(loaderResult).toMatchObject({ isError: false })
-    expect(JSON.stringify(loaderResult)).toContain('Inspect the child')
+    expect(JSON.stringify(loaderResult)).toContain('test-tree')
 
     nextCall = {
       name: 'codemode',
       arguments: {
-        code: 'const results = await Promise.all([tools.treeport_context({}), tools.treeport_terminal_capture({terminal: "child"})]); return {task: results[0].worktree.context.task, output: results[1].content};'
+        code: 'const results = await Promise.all([tools.treeport_context({}), tools.treeport_terminal_capture({terminal: "child"})]); return {tree: results[0].worktree.name, output: results[1].content};'
       }
     }
-    await session.prompt('Read task and terminal output in parallel')
+    await session.prompt('Read tree and terminal output in parallel')
     const codeResult = session.messages.find(
       (message) =>
         message.role === 'toolResult' && message.toolName === 'codemode'
     )
     expect(codeResult).toMatchObject({ isError: false })
     expect(JSON.stringify(codeResult)).toContain('Server ready')
-    expect(JSON.stringify(codeResult)).toContain('Inspect the child')
+    expect(JSON.stringify(codeResult)).toContain('test-tree')
     const enabledLeaf = sm.getLeafId()!
     const history = await readFile(file, 'utf8')
     const messages = structuredClone(session.messages)

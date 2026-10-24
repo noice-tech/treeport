@@ -22,11 +22,10 @@ import {
   recentProjectsResponseSchema,
   removePreviewResponseSchema,
   storageValueResponseSchema,
-  terminalPresetDefinitionListingSchema,
-  terminalPresetResponseSchema,
-  terminalPresetsResponseSchema,
+  launcherDefinitionListingSchema,
+  launcherResponseSchema,
+  launchersResponseSchema,
   terminalResponseSchema,
-  treeContextFieldListingSchema,
   treeFileListingSchema,
   treeFileSchema,
   treeFileSearchResultSchema,
@@ -34,7 +33,8 @@ import {
   uploadedFileResponseSchema,
   webAppContextResponseSchema,
   webAppDefinitionResponseSchema,
-  webAppDefinitionsResponseSchema
+  webAppDefinitionsResponseSchema,
+  worktreeResponseSchema
 } from '@treeport/shared'
 import type * as Schema from 'effect/Schema'
 import type {
@@ -56,16 +56,16 @@ import type {
   ProjectRecord,
   RecentProjectRecord,
   RemovePreview,
-  TerminalPreset,
-  TerminalPresetDefinitionListing,
+  Launcher,
+  LauncherDefinitionListing,
   TerminalRecord,
-  TreeContextFieldListing,
   TreeFileListing,
   TreeFileSearchResult,
   TreeFileWriteResult,
   WebAppContext,
   WebAppDefinition,
-  WorktreeListenerDiscovery
+  WorktreeListenerDiscovery,
+  WorktreeRecord
 } from '@treeport/shared'
 import type { ApplicationUpdateStatus } from '../server/application-update'
 
@@ -384,67 +384,68 @@ export const rpc = {
           )
       }
     },
-    'terminal-presets': Object.assign(
+    launchers: Object.assign(
       {
         $get: () =>
-          endpoint<{ presets: TerminalPreset[] }>(
+          endpoint<{ launchers: Launcher[] }>(
             'GET',
-            '/api/terminal-presets',
-            terminalPresetsResponseSchema
+            '/api/launchers',
+            launchersResponseSchema
           ),
         $post: ({ json }: { readonly json: unknown }) =>
-          endpoint<{ preset: TerminalPreset }>(
+          endpoint<{ launcher: Launcher }>(
             'POST',
-            '/api/terminal-presets',
-            terminalPresetResponseSchema,
+            '/api/launchers',
+            launcherResponseSchema,
             { json }
           )
       },
       {
-        ':presetId': {
+        ':launcherId': {
           $patch: ({
             param,
             json
-          }: RequestInput<{ presetId: string }, unknown>) =>
-            endpoint<{ preset: TerminalPreset }>(
+          }: RequestInput<{ launcherId: string }, unknown>) =>
+            endpoint<{ launcher: Launcher }>(
               'PATCH',
-              `/api/terminal-presets/${id(param.presetId)}`,
-              terminalPresetResponseSchema,
+              `/api/launchers/${id(param.launcherId)}`,
+              launcherResponseSchema,
               { json }
             ),
           $delete: ({
             param,
             json
-          }: RequestInput<{ presetId: string }, unknown>) =>
+          }: RequestInput<{ launcherId: string }, unknown>) =>
             endpoint<{ ok: true }>(
               'DELETE',
-              `/api/terminal-presets/${id(param.presetId)}`,
+              `/api/launchers/${id(param.launcherId)}`,
               okResponseSchema,
               { json }
             )
         }
       }
     ),
-    'tree-context-fields': {
+    'launcher-definitions': {
       $get: ({ query }: { readonly query: Query }) =>
-        endpoint<TreeContextFieldListing>(
+        endpoint<LauncherDefinitionListing>(
           'GET',
-          '/api/tree-context-fields',
-          treeContextFieldListingSchema,
-          { query }
-        )
-    },
-    'terminal-preset-definitions': {
-      $get: ({ query }: { readonly query: Query }) =>
-        endpoint<TerminalPresetDefinitionListing>(
-          'GET',
-          '/api/terminal-preset-definitions',
-          terminalPresetDefinitionListingSchema,
+          '/api/launcher-definitions',
+          launcherDefinitionListingSchema,
           { query }
         )
     },
     worktrees: {
       ':worktreeId': {
+        $patch: ({
+          param,
+          json
+        }: RequestInput<{ worktreeId: string }, unknown>) =>
+          endpoint<{ worktree: WorktreeRecord }>(
+            'PATCH',
+            `/api/worktrees/${id(param.worktreeId)}`,
+            worktreeResponseSchema,
+            { json }
+          ),
         'web-app-definitions': Object.assign(
           {
             $get: ({ param }: RequestInput<{ worktreeId: string }>) =>

@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test'
 import type { TerminalRuntimeMetadata } from '@treeport/shared'
 import { installDesktopBridge, installKeyboardPlatform } from './desktop'
 import { createAppMock } from './apps'
-import { createPresetMock } from './presets'
+import { createLauncherMock } from './launchers'
 import { createProjectMock } from './projects'
 import { installMockSockets, type TerminalMock } from './sockets'
 import { createTerminalMock } from './terminals'
@@ -63,7 +63,7 @@ export async function mockApp(
 
   const { state, ...projects } = await createProjectMock(page, options)
   const updates = await createUpdateMock(page, options)
-  await createPresetMock(page, options)
+  await createLauncherMock(page)
   const worktrees = await createWorktreeMock(page, state)
   const terminals = await createTerminalMock(page, state)
   await createAppMock(page)

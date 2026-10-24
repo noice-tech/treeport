@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   mapOperation,
   mapProject,
-  mapTerminalPreset,
+  mapLauncher,
   openDatabaseForTest,
   type TreeportDatabase
 } from './database'
@@ -18,7 +18,7 @@ import {
   operations,
   projects,
   terminalBellStates,
-  terminalPresets,
+  launchers,
   webApps,
   webAppPermissionGrants,
   webAppStorage,
@@ -142,7 +142,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 16 })
+    ).toEqual({ count: 17 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -544,7 +544,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 16 })
+    ).toEqual({ count: 17 })
     await expect(
       fs.stat(path.join(directory, 'database-backups'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -654,7 +654,7 @@ describe('SQLite migration and catalog ordering', () => {
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
     const initial = await openDatabaseForTest(filePath)
-    await initial.db.insert(terminalPresets).values({
+    await initial.db.insert(launchers).values({
       id: 'preset_legacy',
       name: 'Legacy preset',
       executable: 'pi',
@@ -717,7 +717,7 @@ describe('SQLite migration and catalog ordering', () => {
     const reopened = await openDatabaseForTest(filePath)
     databases.push(reopened)
     expect(
-      (await reopened.db.select().from(terminalPresets)).map(mapTerminalPreset)
+      (await reopened.db.select().from(launchers)).map(mapLauncher)
     ).toEqual([
       {
         id: 'preset_legacy',
@@ -725,6 +725,7 @@ describe('SQLite migration and catalog ordering', () => {
         executable: 'pi',
         args: ['--continue'],
         closeOnSuccess: false,
+        treeTitle: null,
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01'
       }
@@ -836,7 +837,7 @@ describe('SQLite migration and catalog ordering', () => {
         .select({ id: worktrees.id, path: worktrees.path })
         .from(worktrees)
     ).toEqual([{ id: 'worktree_cutover', path: '/cutover' }])
-    expect(await migrated.db.select().from(terminalPresets)).toHaveLength(1)
+    expect(await migrated.db.select().from(launchers)).toHaveLength(1)
     expect(await migrated.db.select().from(webApps)).toMatchObject([
       {
         id: 'web_cutover',
@@ -1016,6 +1017,9 @@ describe('SQLite migration and catalog ordering', () => {
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE terminal_bell_states`)
       await tx.run(sql`DROP TABLE browser_panels`)
+      await tx.run(
+        sql`ALTER TABLE terminal_presets DROP COLUMN tree_title_json`
+      )
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -1076,6 +1080,6 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 16 })
+    ).toEqual({ count: 17 })
   })
 })

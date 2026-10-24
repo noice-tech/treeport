@@ -146,7 +146,7 @@ test.describe('mobile terminal UI', () => {
       .toEqual(['\u001b'])
 
     await page.setViewportSize({ width: 412, height: 915 })
-    const presetRequest = page.waitForRequest(
+    const launcherRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
@@ -157,7 +157,9 @@ test.describe('mobile terminal UI', () => {
       .getByRole('dialog', { name: 'New app' })
       .getByRole('button', { name: 'Hunk' })
       .click()
-    expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
+    expect((await launcherRequest).postDataJSON()).toMatchObject({
+      name: 'Hunk'
+    })
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
     const shortcutModifier = await page.evaluate(() =>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   browseDirectoryQuerySchema as browseDirectoryQueryEffectSchema,
-  createTerminalPresetSchema as createTerminalPresetEffectSchema,
+  createLauncherSchema as createLauncherEffectSchema,
   createTerminalSchema as createTerminalEffectSchema,
   createWorktreeSchema as createWorktreeEffectSchema,
   registerProjectSchema as registerProjectEffectSchema,
@@ -10,25 +10,19 @@ import {
   TERMINAL_ARGUMENT_MAX_LENGTH,
   TERMINAL_EXECUTABLE_MAX_LENGTH,
   TERMINAL_NAME_MAX_LENGTH,
-  TERMINAL_PRESET_ARGUMENT_MAX_COUNT,
-  treeContextFieldDefinitionSchema as treeContextFieldDefinitionEffectSchema,
-  treeContextValuesSchema as treeContextValuesEffectSchema,
-  updateTerminalPresetSchema as updateTerminalPresetEffectSchema
+  LAUNCHER_ARGUMENT_MAX_COUNT,
+  updateLauncherSchema as updateLauncherEffectSchema
 } from './index.js'
 import { testSchema } from './schema.test-support.js'
 
 const browseDirectoryQuerySchema = testSchema(browseDirectoryQueryEffectSchema)
-const createTerminalPresetSchema = testSchema(createTerminalPresetEffectSchema)
+const createLauncherSchema = testSchema(createLauncherEffectSchema)
 const createTerminalSchema = testSchema(createTerminalEffectSchema)
 const createWorktreeSchema = testSchema(createWorktreeEffectSchema)
 const registerProjectSchema = testSchema(registerProjectEffectSchema)
 const removeWorktreeSchema = testSchema(removeWorktreeEffectSchema)
 const spawnSchema = testSchema(spawnEffectSchema)
-const treeContextFieldDefinitionSchema = testSchema(
-  treeContextFieldDefinitionEffectSchema
-)
-const treeContextValuesSchema = testSchema(treeContextValuesEffectSchema)
-const updateTerminalPresetSchema = testSchema(updateTerminalPresetEffectSchema)
+const updateLauncherSchema = testSchema(updateLauncherEffectSchema)
 
 describe('API input validation', () => {
   it('requires repository paths and valid names', () => {
@@ -65,7 +59,7 @@ describe('API input validation', () => {
     expect(
       createTerminalSchema.parse({
         name: 'researcher',
-        initialTitle: '  Review preset  ',
+        initialTitle: '  Review launcher  ',
         argv,
         cwd: '/repo/worktrees/topic with spaces',
         env: { CUSTOM: 'value;$HOME 雪' },
@@ -73,7 +67,7 @@ describe('API input validation', () => {
         initialSize: { cols: 132, rows: 47 }
       })
     ).toMatchObject({
-      initialTitle: 'Review preset',
+      initialTitle: 'Review launcher',
       argv,
       cwd: '/repo/worktrees/topic with spaces',
       env: { CUSTOM: 'value;$HOME 雪' },
@@ -116,10 +110,6 @@ describe('API input validation', () => {
     expect(
       createWorktreeSchema.parse({
         name: 'topic',
-        context: {
-          issue: '  TREE-123  ',
-          brief: ' Review the cache behavior. '
-        },
         initialTerminal: {
           name: 'Hunk',
           initialTitle: '  Hunk review  ',
@@ -127,22 +117,8 @@ describe('API input validation', () => {
         }
       })
     ).toMatchObject({
-      context: {
-        issue: 'TREE-123',
-        brief: 'Review the cache behavior.'
-      },
       initialTerminal: { name: 'Hunk', initialTitle: 'Hunk review', argv }
     })
-    expect(
-      treeContextFieldDefinitionSchema.parse({
-        id: 'github.issue',
-        label: ' GitHub issue ',
-        input: 'text'
-      })
-    ).toEqual({ id: 'github.issue', label: 'GitHub issue', input: 'text' })
-    expect(
-      treeContextValuesSchema.safeParse({ 'Invalid field': 'value' }).success
-    ).toBe(false)
   })
 
   it('rejects empty argv, command strings, and invalid initial sizes', () => {
@@ -236,7 +212,7 @@ describe('API input validation', () => {
     ).toBe(false)
   })
 
-  it('validates preset fields separately and preserves literal arguments', () => {
+  it('validates launcher fields separately and preserves literal arguments', () => {
     const input = {
       name: '  Hunk review  ',
       executable: '/Applications/Tools with spaces/npx',
@@ -254,11 +230,12 @@ describe('API input validation', () => {
     const expected = {
       ...input,
       name: 'Hunk review',
-      closeOnSuccess: false
+      closeOnSuccess: false,
+      treeTitle: null
     }
-    expect(createTerminalPresetSchema.parse(input)).toEqual(expected)
+    expect(createLauncherSchema.parse(input)).toEqual(expected)
     expect(
-      updateTerminalPresetSchema.parse({
+      updateLauncherSchema.parse({
         ...input,
         expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
       })
@@ -268,21 +245,21 @@ describe('API input validation', () => {
       expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
     })
     expect(
-      updateTerminalPresetSchema.parse({
+      updateLauncherSchema.parse({
         ...input,
         closeOnSuccess: true,
         expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
       }).closeOnSuccess
     ).toBe(true)
     expect(
-      createTerminalPresetSchema.safeParse({
+      createLauncherSchema.safeParse({
         name: 'bad',
         executable: 'npx --yes hunkdiff',
         args: '--watch'
       }).success
     ).toBe(false)
     expect(
-      createTerminalPresetSchema.safeParse({
+      createLauncherSchema.safeParse({
         name: 'bad',
         executable: '   ',
         args: []
@@ -290,32 +267,32 @@ describe('API input validation', () => {
     ).toBe(false)
   })
 
-  it('bounds every terminal preset field', () => {
+  it('bounds every launcher field', () => {
     // SAFETY: The test fixture provides the asserted contract used here.
-    const valid = { name: 'Preset', executable: 'tool', args: [] as string[] }
+    const valid = { name: 'Launcher', executable: 'tool', args: [] as string[] }
     expect(
-      createTerminalPresetSchema.safeParse({
+      createLauncherSchema.safeParse({
         ...valid,
         name: 'n'.repeat(TERMINAL_NAME_MAX_LENGTH + 1)
       }).success
     ).toBe(false)
     expect(
-      createTerminalPresetSchema.safeParse({
+      createLauncherSchema.safeParse({
         ...valid,
         executable: 'x'.repeat(TERMINAL_EXECUTABLE_MAX_LENGTH + 1)
       }).success
     ).toBe(false)
     expect(
-      createTerminalPresetSchema.safeParse({
+      createLauncherSchema.safeParse({
         ...valid,
         args: Array.from(
-          { length: TERMINAL_PRESET_ARGUMENT_MAX_COUNT + 1 },
+          { length: LAUNCHER_ARGUMENT_MAX_COUNT + 1 },
           () => 'arg'
         )
       }).success
     ).toBe(false)
     expect(
-      createTerminalPresetSchema.safeParse({
+      createLauncherSchema.safeParse({
         ...valid,
         args: ['x'.repeat(TERMINAL_ARGUMENT_MAX_LENGTH + 1)]
       }).success

@@ -55,8 +55,7 @@ const ContextSchema = Type.Union([
           id: Type.String({ minLength: 1 }),
           projectId: Type.String({ minLength: 1 }),
           name: Type.String({ minLength: 1 }),
-          path: Type.String({ minLength: 1 }),
-          context: Type.Optional(Type.Record(Type.String(), Type.String()))
+          path: Type.String({ minLength: 1 })
         },
         { additionalProperties: true }
       ),
@@ -137,7 +136,7 @@ export default function treeportExtension(pi: ExtensionAPI): void {
     name: 'treeport_enable',
     label: 'Enable Treeport',
     description:
-      'Enable Treeport tools for persistent terminals, shared browser tabs, projects, and worktrees. Returns the current context, including assigned tree tasks. Tools are available on the next model request and callable from codemode.',
+      'Enable Treeport tools for persistent terminals, shared browser tabs, projects, and worktrees. Returns the current context. Tools are available on the next model request and callable from codemode.',
     promptSnippet:
       'Call treeport_enable before using Treeport terminals, browser tabs, projects, or worktrees. Prefer its typed tools over CLI help discovery.',
     promptGuidelines: TREEPORT_GUIDELINES,

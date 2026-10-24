@@ -29,13 +29,11 @@
       }
     ]
   },
-  "terminalPresets": {
-    "execute-task": {
-      "name": "Pi task",
+  "launchers": {
+    "pi": {
+      "name": "Pi",
       "executable": "pi",
-      "args": [
-        "Run `treeport context` first. Read the task from its tree context, then start executing it immediately."
-      ]
+      "args": ["${prompt}"]
     },
     "signoff": {
       "name": "Signoff",
@@ -43,14 +41,5 @@
       "args": ["signoff"],
       "closeOnSuccess": true
     }
-  },
-  "treeContext": {
-    "fields": [
-      {
-        "id": "task",
-        "label": "Task",
-        "input": "textarea"
-      }
-    ]
   }
 }
