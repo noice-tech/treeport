@@ -494,6 +494,7 @@ export function ProjectSwitcher({
                     <SidebarAction
                       label={`Close project ${project.name}`}
                       tooltip="Close project"
+                      tooltipSide="right"
                       disabled={closingProjectId === project.id}
                       className="absolute right-1 shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-option:opacity-100 group-focus-within/project-option:opacity-100 pointer-coarse:right-2.5 max-[700px]:right-1 max-[700px]:opacity-100"
                       onClick={() => requestProjectClose(project)}
