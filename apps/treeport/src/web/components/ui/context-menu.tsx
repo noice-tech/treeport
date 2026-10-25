@@ -20,9 +20,12 @@ function ContextMenuContent({
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   return (
     <ContextMenuPrimitive.Portal>
+      {/* Menus open beside the pointer and never shift sideways, so long items
+          (decoration titles) truncate to the room on that side of a phone. */}
       <ContextMenuPrimitive.Content
+        collisionPadding={8}
         className={cn(
-          'z-100 min-w-44 max-w-[calc(100vw-1rem)] rounded-md bg-zinc-900 p-1 text-zinc-200 shadow-xl ring-1 ring-white/10 outline-none',
+          'z-100 min-w-44 max-w-(--radix-context-menu-content-available-width) rounded-md bg-zinc-900 p-1 text-zinc-200 shadow-xl ring-1 ring-white/10 outline-none',
           className
         )}
         {...props}
