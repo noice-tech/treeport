@@ -736,7 +736,10 @@ function rendererWindowPreferences(): Electron.WebPreferences {
     nodeIntegration: false,
     contextIsolation: true,
     sandbox: true,
-    webviewTag: true
+    webviewTag: true,
+    // Hidden hosts retry navigations while the shell owns focus. Foreground
+    // focus is assigned explicitly once a host document is ready.
+    focusOnNavigation: false
   }
 }
 
