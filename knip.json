@@ -27,6 +27,9 @@
       ],
       "ignoreBinaries": ["iconutil", "lipo", "plutil"]
     },
+    "packages/claude-code": {
+      "entry": ["hooks/treeport.mjs"]
+    },
     "packages/cursor": {
       "entry": ["bin/hook.mjs", "bin/status-worker.mjs"]
     },

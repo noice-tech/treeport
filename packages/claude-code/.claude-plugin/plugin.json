@@ -1,0 +1,8 @@
+{
+  "name": "treeport",
+  "displayName": "Treeport",
+  "description": "Persistent terminals, shared browser tabs, projects, and trees for Claude Code sessions in Treeport.",
+  "homepage": "https://treeport.app",
+  "repository": "https://github.com/noice-tech/treeport",
+  "license": "Apache-2.0"
+}
