@@ -16,7 +16,7 @@ import {
   launcherDisambiguator,
   launcherInputLabel
 } from '../../launcher-definition'
-import { LauncherInputTextarea } from '../launchers/launcher-input-textarea'
+import { FilePasteTextarea } from '../../components/file-paste-textarea'
 
 const INITIAL_LAUNCHER_STORAGE_KEY = 'treeport-initial-launcher'
 
@@ -164,7 +164,7 @@ export function WorktreeForm({
         return (
           <FormField key={inputName}>
             <Label htmlFor={id}>{launcherInputLabel(inputName)}</Label>
-            <LauncherInputTextarea
+            <FilePasteTextarea
               id={id}
               value={inputs[inputName] ?? ''}
               autoFocus={index === 0}
