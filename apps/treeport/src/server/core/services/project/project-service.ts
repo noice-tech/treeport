@@ -6,7 +6,7 @@ import type {
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
-  TreeBadge,
+  TreeDecoration,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, eq, sql } from 'drizzle-orm'
@@ -240,13 +240,13 @@ export class ProjectService {
   }
 
   /**
-   * Set or clear one badge; unchanged values skip the write and event. A
-   * package may change only its own badges; a direct caller may clear any.
+   * Set or clear one decoration; unchanged values skip the write and event. A
+   * package may change only its own decorations; a direct caller may clear any.
    */
-  updateWorktreeBadge(
+  updateWorktreeDecoration(
     worktreeId: string,
     key: string,
-    badge: Omit<TreeBadge, 'key' | 'source' | 'updatedAt'> | null,
+    decoration: Omit<TreeDecoration, 'key' | 'source' | 'updatedAt'> | null,
     source: string | null
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     const invalidateProjectsSnapshot =
@@ -258,24 +258,28 @@ export class ProjectService {
       const projectStore = yield* ProjectStore
       const worktree = yield* projectStore.getWorktree(worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
-      const current = worktree.badges.find((entry) => entry.key === key)
-      if (current && current.source !== source && (badge || source !== null)) {
+      const current = worktree.decorations.find((entry) => entry.key === key)
+      if (
+        current &&
+        current.source !== source &&
+        (decoration || source !== null)
+      ) {
         return yield* Effect.fail(
           new DomainError(
-            'BADGE_OWNED',
-            `Badge ${key} belongs to ${current.source ?? 'a direct caller'}`,
+            'DECORATION_OWNED',
+            `Decoration ${key} belongs to ${current.source ?? 'a direct caller'}`,
             409
           )
         )
       }
 
       if (
-        badge
-          ? current?.text === badge.text &&
-            current.tone === badge.tone &&
-            current.url === badge.url &&
-            current.tooltip === badge.tooltip &&
-            current.icon === badge.icon
+        decoration
+          ? current?.text === decoration.text &&
+            current.tone === decoration.tone &&
+            current.url === decoration.url &&
+            current.title === decoration.title &&
+            current.icon === decoration.icon
           : !current
       ) {
         return
@@ -284,18 +288,18 @@ export class ProjectService {
       // The key pattern excludes quotes, so it is safe inside a JSON path.
       const jsonPath = `$."${key}"`
       yield* database
-        .execute('project.service.worktree-badge', (db) =>
+        .execute('project.service.worktree-decoration', (db) =>
           db.run(
-            badge
+            decoration
               ? sql`
                 UPDATE worktrees
-                SET badges = json_set(badges, ${jsonPath}, json(${JSON.stringify(
-                  { ...badge, source, updatedAt: now() }
+                SET decorations = json_set(decorations, ${jsonPath}, json(${JSON.stringify(
+                  { ...decoration, source, updatedAt: now() }
                 )}))
                 WHERE id = ${worktreeId}
               `
               : sql`
-                UPDATE worktrees SET badges = json_remove(badges, ${jsonPath})
+                UPDATE worktrees SET decorations = json_remove(decorations, ${jsonPath})
                 WHERE id = ${worktreeId}
               `
           )
@@ -308,8 +312,8 @@ export class ProjectService {
     })
   }
 
-  /** Remove badges owned by packages that are no longer configured. */
-  pruneBadgeSources(
+  /** Remove decorations owned by packages that are no longer configured. */
+  pruneDecorationSources(
     activeSources: string[]
   ): Effect.Effect<void, never, ApplicationServices> {
     const invalidateProjectsSnapshot =
@@ -320,20 +324,20 @@ export class ProjectService {
       const events = yield* EventBusPort
       const active = JSON.stringify(activeSources)
       const stale = sql`
-        SELECT 1 FROM json_each(worktrees.badges) AS badge
-        WHERE json_extract(badge.value, '$.source') IS NOT NULL
-          AND json_extract(badge.value, '$.source')
+        SELECT 1 FROM json_each(worktrees.decorations) AS decoration
+        WHERE json_extract(decoration.value, '$.source') IS NOT NULL
+          AND json_extract(decoration.value, '$.source')
             NOT IN (SELECT value FROM json_each(${active}))
       `
       const updated = yield* database
-        .execute('project.service.prune-badges', (db) =>
+        .execute('project.service.prune-decorations', (db) =>
           db.all<{ projectId: string }>(sql`
             UPDATE worktrees
-            SET badges = COALESCE((
-              SELECT json_group_object(badge.key, json(badge.value))
-              FROM json_each(worktrees.badges) AS badge
-              WHERE json_extract(badge.value, '$.source') IS NULL
-                OR json_extract(badge.value, '$.source')
+            SET decorations = COALESCE((
+              SELECT json_group_object(decoration.key, json(decoration.value))
+              FROM json_each(worktrees.decorations) AS decoration
+              WHERE json_extract(decoration.value, '$.source') IS NULL
+                OR json_extract(decoration.value, '$.source')
                   IN (SELECT value FROM json_each(${active}))
             ), '{}')
             WHERE EXISTS (${stale})

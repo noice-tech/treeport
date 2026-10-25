@@ -1,7 +1,7 @@
 import * as Schema from 'effect/Schema'
 import type {
-  TreeBadge,
-  TreeBadgeTone,
+  TreeDecoration,
+  TreeDecorationTone,
   TreeportProject,
   TreeportTree,
   WebApp,
@@ -45,9 +45,9 @@ export type {
   WorktreeListener,
   WorktreeListenerDiscovery,
   PackageServiceIdentity,
-  TreeBadge,
-  TreeBadgeInput,
-  TreeBadgeTone,
+  TreeDecoration,
+  TreeDecorationInput,
+  TreeDecorationTone,
   TreeportProject,
   TreeportServiceSdk,
   TreeportTree
@@ -114,14 +114,14 @@ export type OperationKind =
   | 'remove'
   | 'external_remove'
 
-export const TREE_BADGE_TONES = [
+export const TREE_DECORATION_TONES = [
   'neutral',
   'info',
   'success',
   'warning',
   'danger',
   'done'
-] as const satisfies readonly TreeBadgeTone[]
+] as const satisfies readonly TreeDecorationTone[]
 
 export interface TerminalRecord {
   id: string
@@ -316,7 +316,7 @@ export interface WorktreeRecord extends TreeportTree {
   prunable: boolean
   kind: WorktreeKind
   managedWrapperPath: string | null
-  badges: TreeBadge[]
+  decorations: TreeDecoration[]
   dirty: DirtyState | null
   terminals: TerminalRecord[]
   workspaceItems: WorkspaceItem[]
@@ -891,14 +891,15 @@ export const updateWorktreeTitleSchema = Schema.Struct({
   )
 })
 
-export const TREE_BADGE_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/
-export const TREE_BADGE_TEXT_MAX_LENGTH = 32
-export const setTreeBadgeSchema = Schema.Struct({
+export const TREE_DECORATION_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/
+export const TREE_DECORATION_TEXT_MAX_LENGTH = 32
+export const setTreeDecorationSchema = Schema.Struct({
   text: Schema.Trim.pipe(
     Schema.minLength(1),
-    Schema.maxLength(TREE_BADGE_TEXT_MAX_LENGTH)
+    Schema.maxLength(TREE_DECORATION_TEXT_MAX_LENGTH)
   ),
-  tone: Schema.optionalWith(Schema.Literal(...TREE_BADGE_TONES), {
+  title: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(256)),
+  tone: Schema.optionalWith(Schema.Literal(...TREE_DECORATION_TONES), {
     default: () => 'neutral' as const
   }),
   url: Schema.optionalWith(
@@ -909,14 +910,10 @@ export const setTreeBadgeSchema = Schema.Struct({
           (url) =>
             URL.canParse(url) &&
             ['http:', 'https:'].includes(new URL(url).protocol),
-          { message: () => 'A badge URL must use http or https' }
+          { message: () => 'A decoration URL must use http or https' }
         )
       )
     ),
-    { default: () => null }
-  ),
-  tooltip: Schema.optionalWith(
-    Schema.NullOr(Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(200))),
     { default: () => null }
   ),
   // Rendered as a CSS mask, so scripts and colors inside the SVG never apply.
@@ -926,7 +923,7 @@ export const setTreeBadgeSchema = Schema.Struct({
         Schema.maxLength(8_192),
         Schema.filter(
           (icon) => icon.startsWith('<svg') && icon.endsWith('</svg>'),
-          { message: () => 'A badge icon must be an <svg> element' }
+          { message: () => 'A decoration icon must be an <svg> element' }
         )
       )
     ),

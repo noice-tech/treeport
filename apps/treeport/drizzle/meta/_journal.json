@@ -148,6 +148,13 @@
       "when": 1792876806416,
       "tag": "0020_project_origin_url",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792876807416,
+      "tag": "0021_tree_decorations",
+      "breakpoints": true
     }
   ]
 }

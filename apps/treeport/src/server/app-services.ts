@@ -52,7 +52,7 @@ interface AppServicesOptions {
   apiUrl: string
   dataDir: string
   declarations: () => Promise<PackageServiceDeclaration[]>
-  pruneBadgeSources: (sources: string[]) => Promise<void>
+  pruneDecorationSources: (sources: string[]) => Promise<void>
   log: (message: string) => void
 }
 
@@ -179,7 +179,7 @@ export class AppServices {
       ...new Set(declarations.map((declaration) => declaration.packageId))
     ].sort()
     if (JSON.stringify(sources) !== this.activeSources) {
-      await this.options.pruneBadgeSources(sources)
+      await this.options.pruneDecorationSources(sources)
       this.activeSources = JSON.stringify(sources)
     }
   }

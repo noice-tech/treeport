@@ -135,11 +135,11 @@ export function integrationService(
     updateProjectColor: run(
       application.projects.updateProjectColor.bind(application.projects)
     ),
-    pruneBadgeSources: run(
-      application.projects.pruneBadgeSources.bind(application.projects)
+    pruneDecorationSources: run(
+      application.projects.pruneDecorationSources.bind(application.projects)
     ),
-    updateWorktreeBadge: run(
-      application.projects.updateWorktreeBadge.bind(application.projects)
+    updateWorktreeDecoration: run(
+      application.projects.updateWorktreeDecoration.bind(application.projects)
     ),
     updateWorktreeTitle: run(
       application.projects.updateWorktreeTitle.bind(application.projects)

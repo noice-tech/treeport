@@ -122,9 +122,10 @@ const workspaceItemSchema = Schema.Union(
   browserAppSchema
 )
 
-const treeBadgeSchema = Schema.Struct({
+const treeDecorationSchema = Schema.Struct({
   key: Schema.String,
   text: Schema.String,
+  title: Schema.String,
   tone: Schema.Literal(
     'neutral',
     'info',
@@ -134,7 +135,6 @@ const treeBadgeSchema = Schema.Struct({
     'done'
   ),
   url: nullableStringSchema,
-  tooltip: nullableStringSchema,
   icon: nullableStringSchema,
   source: nullableStringSchema,
   updatedAt: Schema.String
@@ -161,7 +161,7 @@ export const worktreeRecordSchema = Schema.Struct({
   prunable: Schema.Boolean,
   kind: Schema.Literal('main', 'linked', 'folder'),
   managedWrapperPath: nullableStringSchema,
-  badges: Schema.Array(treeBadgeSchema),
+  decorations: Schema.Array(treeDecorationSchema),
   dirty: Schema.NullOr(dirtyStateSchema),
   terminals: Schema.Array(terminalRecordSchema),
   workspaceItems: Schema.Array(workspaceItemSchema),

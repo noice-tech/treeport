@@ -73,8 +73,8 @@ export const worktrees = sqliteTable(
     kind: text().notNull(),
     managedWrapperPath: text('managed_wrapper_path'),
     title: text(),
-    // Badges keyed by badge key, in insertion order.
-    badges: text().notNull().default('{}'),
+    // Decorations keyed by decoration key, in insertion order.
+    decorations: text().notNull().default('{}'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },

@@ -657,7 +657,7 @@ export class ProjectRegistrationService {
                 UPDATE worktrees
                 SET path=${folderPath},git_worktree_key=NULL,head='',branch=NULL,
                     detached=0,locked=0,lock_reason=NULL,prunable=0,kind='folder',
-                    managed_wrapper_path=NULL,badges='{}',updated_at=${timestamp}
+                    managed_wrapper_path=NULL,decorations='{}',updated_at=${timestamp}
                 WHERE id=${worktreeId}
               `)
               } else {

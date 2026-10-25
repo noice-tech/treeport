@@ -23,7 +23,7 @@ import type {
   ProjectRecord,
   Launcher,
   LauncherCommand,
-  TreeBadge,
+  TreeDecoration,
   WorktreeRecord
 } from '@treeport/shared'
 import * as schema from './database-schema'
@@ -567,14 +567,14 @@ export function mapWorktree(
     kind: row.kind as WorktreeRecord['kind'],
     managedWrapperPath: row.managedWrapperPath,
     title: row.title,
-    badges: Object.entries(
-      // SAFETY: Badge writes store values validated by the badge schema.
-      JSON.parse(row.badges) as Record<string, Omit<TreeBadge, 'key'>>
-    ).map(([key, badge]) => ({
+    decorations: Object.entries(
+      // SAFETY: Decoration writes store values validated by the decoration schema.
+      JSON.parse(row.decorations) as Record<string, Omit<TreeDecoration, 'key'>>
+    ).map(([key, decoration]) => ({
       key,
-      ...badge,
-      icon: badge.icon ?? null,
-      source: badge.source ?? null
+      ...decoration,
+      icon: decoration.icon ?? null,
+      source: decoration.source ?? null
     })),
     dirty: null,
     terminals: [],

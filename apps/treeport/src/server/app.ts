@@ -89,9 +89,9 @@ import {
   uploadedFileResponseSchema,
   updateProjectSchema,
   updateWorktreeTitleSchema,
-  setTreeBadgeSchema,
+  setTreeDecorationSchema,
   packageServiceSelfResponseSchema,
-  TREE_BADGE_KEY_PATTERN,
+  TREE_DECORATION_KEY_PATTERN,
   updateLauncherSchema,
   updateTerminalSchema,
   updateWebAppPermissionGrantSchema,
@@ -1356,20 +1356,20 @@ export function createApp({
     ...(['PUT', 'DELETE'] as const).map((method) =>
       route(
         method,
-        '/api/worktrees/:worktreeId/badges/:badgeKey',
+        '/api/worktrees/:worktreeId/decorations/:decorationKey',
         Effect.gen(function* () {
           const params = yield* routeParams
-          if (!TREE_BADGE_KEY_PATTERN.test(params.badgeKey!)) {
+          if (!TREE_DECORATION_KEY_PATTERN.test(params.decorationKey!)) {
             return yield* Effect.fail(
               new DomainError(
-                'INVALID_BADGE_KEY',
-                'A badge key uses lowercase letters, digits, dots, dashes, and underscores',
+                'INVALID_DECORATION_KEY',
+                'A decoration key uses lowercase letters, digits, dots, dashes, and underscores',
                 400
               )
             )
           }
 
-          // A package service's token makes its package the badge owner.
+          // A package service's token makes its package the decoration owner.
           const request = yield* serverRequest
           const token = /^Bearer (\S+)$/u.exec(
             request.headers.authorization ?? ''
@@ -1400,13 +1400,15 @@ export function createApp({
             }
           }
 
-          const badge =
-            method === 'PUT' ? yield* requestBody(setTreeBadgeSchema) : null
+          const decoration =
+            method === 'PUT'
+              ? yield* requestBody(setTreeDecorationSchema)
+              : null
           yield* operation(() =>
-            service.projects.updateWorktreeBadge(
+            service.projects.updateWorktreeDecoration(
               params.worktreeId!,
-              params.badgeKey!,
-              badge,
+              params.decorationKey!,
+              decoration,
               access?.packageId ?? null
             )
           )

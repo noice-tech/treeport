@@ -1,17 +1,18 @@
 import { execFile } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
-import type { TreeBadgeInput, TreeportProject } from '@treeport/app-sdk'
+import type { TreeDecorationInput, TreeportProject } from '@treeport/app-sdk'
 import { treeport } from '@treeport/app-sdk/service'
 import { z } from 'zod'
 
 const INTERVAL_MS = 60_000
 // Leave headroom for the user's own GitHub usage.
 const RATE_LIMIT_RESERVE = 500
-const BADGE_KEY = 'pr'
+const DECORATION_KEY = 'pr'
 
 const pullRequestSchema = z.object({
   number: z.number().int(),
+  title: z.string(),
   state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
   isDraft: z.boolean(),
   url: z.url()
@@ -89,7 +90,7 @@ async function pullRequests(
   const variables = branches.map((_, index) => `$b${index}: String!`)
   const aliases = branches.map(
     (_, index) =>
-      `b${index}: pullRequests(headRefName: $b${index}, first: 1, orderBy: {field: CREATED_AT, direction: DESC}, states: [OPEN, MERGED, CLOSED]) { nodes { number state isDraft url } }`
+      `b${index}: pullRequests(headRefName: $b${index}, first: 1, orderBy: {field: CREATED_AT, direction: DESC}, states: [OPEN, MERGED, CLOSED]) { nodes { number title state isDraft url } }`
   )
   const response = await fetch(
     repository.host === 'github.com'
@@ -151,16 +152,23 @@ const ICONS = {
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z"/></svg>'
 }
 
-function badgeFor(pull: PullRequest): TreeBadgeInput {
-  const [tone, icon, tooltip] =
+function decorationFor(pull: PullRequest): TreeDecorationInput {
+  const [tone, icon, state] =
     pull.state === 'MERGED'
-      ? (['done', ICONS.merged, 'Pull request merged'] as const)
+      ? (['done', ICONS.merged, 'Merged'] as const)
       : pull.state === 'CLOSED'
-        ? (['danger', ICONS.closed, 'Pull request closed'] as const)
+        ? (['danger', ICONS.closed, 'Closed'] as const)
         : pull.isDraft
-          ? (['neutral', ICONS.draft, 'Draft pull request'] as const)
-          : (['success', ICONS.open, 'Pull request open'] as const)
-  return { text: `#${pull.number}`, tone, icon, url: pull.url, tooltip }
+          ? (['neutral', ICONS.draft, 'Draft'] as const)
+          : (['success', ICONS.open, 'Open'] as const)
+  return {
+    text: `#${pull.number}`,
+    // Keep the state when a long title is cut to Treeport's limit.
+    title: `${pull.title.slice(0, 240)} · ${state}`,
+    tone,
+    icon,
+    url: pull.url
+  }
 }
 
 const { packageId } = await treeport.self()
@@ -176,11 +184,12 @@ async function refreshProject(
   for (const tree of project.worktrees) {
     if (
       !trees.includes(tree) &&
-      tree.badges.some(
-        (badge) => badge.key === BADGE_KEY && badge.source === packageId
+      tree.decorations.some(
+        (decoration) =>
+          decoration.key === DECORATION_KEY && decoration.source === packageId
       )
     ) {
-      await treeport.badges.clear(tree.id, BADGE_KEY)
+      await treeport.decorations.clear(tree.id, DECORATION_KEY)
     }
   }
 
@@ -201,9 +210,13 @@ async function refreshProject(
   for (const [index, tree] of pending.entries()) {
     const pull = pulls[index] ?? null
     if (pull) {
-      await treeport.badges.set(tree.id, BADGE_KEY, badgeFor(pull))
+      await treeport.decorations.set(
+        tree.id,
+        DECORATION_KEY,
+        decorationFor(pull)
+      )
     } else {
-      await treeport.badges.clear(tree.id, BADGE_KEY)
+      await treeport.decorations.clear(tree.id, DECORATION_KEY)
     }
 
     if (pull?.state === 'MERGED') {

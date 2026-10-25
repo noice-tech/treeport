@@ -1,6 +1,6 @@
 import type {
   PackageServiceIdentity,
-  TreeBadgeInput,
+  TreeDecorationInput,
   TreeportProject,
   TreeportServiceSdk
 } from './index.js'
@@ -22,7 +22,7 @@ export class TreeportRequestError extends Error {
 async function request<Result>(
   method: 'GET' | 'PUT' | 'DELETE',
   pathname: string,
-  badge?: TreeBadgeInput
+  decoration?: TreeDecorationInput
 ): Promise<Result> {
   // Treeport passes these to every service it starts.
   const apiUrl = process.env.TREEPORT_API_URL
@@ -40,8 +40,8 @@ async function request<Result>(
       'content-type': 'application/json'
     }
   }
-  if (badge) {
-    init.body = JSON.stringify(badge)
+  if (decoration) {
+    init.body = JSON.stringify(decoration)
   }
 
   const response = await fetch(new URL(pathname, apiUrl), init)
@@ -61,8 +61,8 @@ async function request<Result>(
   return (await response.json()) as Result
 }
 
-const badgePath = (treeId: string, key: string) =>
-  `/api/worktrees/${encodeURIComponent(treeId)}/badges/${encodeURIComponent(key)}`
+const decorationPath = (treeId: string, key: string) =>
+  `/api/worktrees/${encodeURIComponent(treeId)}/decorations/${encodeURIComponent(key)}`
 
 /** The Treeport API available to this package service. */
 export const treeport: TreeportServiceSdk = Object.freeze({
@@ -79,12 +79,16 @@ export const treeport: TreeportServiceSdk = Object.freeze({
       (project) => !self.projectIds || self.projectIds.includes(project.id)
     )
   },
-  badges: Object.freeze({
-    set: async (treeId: string, key: string, badge: TreeBadgeInput) => {
-      await request('PUT', badgePath(treeId, key), badge)
+  decorations: Object.freeze({
+    set: async (
+      treeId: string,
+      key: string,
+      decoration: TreeDecorationInput
+    ) => {
+      await request('PUT', decorationPath(treeId, key), decoration)
     },
     clear: async (treeId: string, key: string) => {
-      await request('DELETE', badgePath(treeId, key))
+      await request('DELETE', decorationPath(treeId, key))
     }
   })
 })

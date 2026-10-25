@@ -59,7 +59,7 @@ type ProjectApi = Pick<
   | 'listProjects'
   | 'listRecentProjects'
   | 'openProject'
-  | 'pruneBadgeSources'
+  | 'pruneDecorationSources'
   | 'refreshProject'
   | 'reconcile'
   | 'registerProject'
@@ -68,7 +68,7 @@ type ProjectApi = Pick<
   | 'resolveProject'
   | 'resolveWorktree'
   | 'updateProjectColor'
-  | 'updateWorktreeBadge'
+  | 'updateWorktreeDecoration'
   | 'updateWorktreeTitle'
 >
 type WorktreeApi = Pick<

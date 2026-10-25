@@ -34,7 +34,7 @@ import {
   terminalCaptureResponseSchema,
   TERMINAL_CAPTURE_DEFAULT_LINES,
   TERMINAL_CAPTURE_MAX_LINES,
-  TREE_BADGE_TONES,
+  TREE_DECORATION_TONES,
   terminalObservationResponseSchema,
   terminalResponseSchema,
   terminatedTerminalsResponseSchema,
@@ -2346,59 +2346,69 @@ async function main(args: string[]): Promise<void> {
     )
   })
 
-  const worktreeBadgeCommand = worktreeCommand
-    .command('badge')
-    .description('Show a status badge on a tree, such as a pull request state')
-    .argument('<key>', 'badge identity; setting the same key replaces it')
-    .argument('[text]', 'text to show')
-    .option('--tone <tone>', TREE_BADGE_TONES.join(', '), 'neutral')
+  const worktreeDecorationCommand = worktreeCommand
+    .command('decorate')
+    .description(
+      'Show a short marker beside a tree, such as a pull request state'
+    )
+    .argument('<key>', 'decoration identity; setting the same key replaces it')
+    .argument('[text]', 'short text to show, such as #123')
+    .option('--tone <tone>', TREE_DECORATION_TONES.join(', '), 'neutral')
     .option('--url <url>', 'http or https link opened from the tree menu')
-    .option('--tooltip <text>', 'text shown on hover')
+    .option(
+      '--title <text>',
+      'what it means, shown on hover and in the tree menu'
+    )
     .option(
       '--icon <svg-file>',
       'SVG icon shown before the text, in the tone color'
     )
-    .option('--worktree <id-or-path-or-dot>', 'tree to badge', '.')
-    .option('--clear', 'remove the badge')
+    .option('--worktree <id-or-path-or-dot>', 'tree to decorate', '.')
+    .option('--clear', 'remove the decoration')
     .option('--json', 'emit machine-readable JSON')
-  worktreeBadgeCommand.action(async (key: string, text: string | undefined) => {
-    const options = worktreeBadgeCommand.opts<{
-      tone: string
-      url?: string
-      tooltip?: string
-      icon?: string
-      worktree: string
-      clear?: boolean
-    }>()
-    if (!options.clear && !text?.trim()) {
-      throw new CliError('Expected badge text, or --clear', 2)
-    }
+  worktreeDecorationCommand.action(
+    async (key: string, text: string | undefined) => {
+      const options = worktreeDecorationCommand.opts<{
+        tone: string
+        url?: string
+        title?: string
+        icon?: string
+        worktree: string
+        clear?: boolean
+      }>()
+      if (!options.clear && (!text?.trim() || !options.title?.trim())) {
+        throw new CliError(
+          'Expected decoration text and --title, or --clear',
+          2
+        )
+      }
 
-    const worktree = await resolveWorktree(options.worktree)
-    const result = await request(
-      `/api/worktrees/${encodeURIComponent(worktree.id)}/badges/${encodeURIComponent(key)}`,
-      worktreeResponseSchema,
-      options.clear
-        ? { method: 'DELETE' }
-        : {
-            method: 'PUT',
-            body: JSON.stringify({
-              text,
-              tone: options.tone,
-              url: options.url ?? null,
-              tooltip: options.tooltip ?? null,
-              icon: options.icon
-                ? await fs.readFile(options.icon, 'utf8')
-                : null
-            })
-          }
-    )
-    print(result.worktree, () =>
-      options.clear
-        ? `Cleared badge ${key} on ${result.worktree.name}`
-        : `Set badge ${key} on ${result.worktree.name}: ${text}`
-    )
-  })
+      const worktree = await resolveWorktree(options.worktree)
+      const result = await request(
+        `/api/worktrees/${encodeURIComponent(worktree.id)}/decorations/${encodeURIComponent(key)}`,
+        worktreeResponseSchema,
+        options.clear
+          ? { method: 'DELETE' }
+          : {
+              method: 'PUT',
+              body: JSON.stringify({
+                text,
+                tone: options.tone,
+                url: options.url ?? null,
+                title: options.title,
+                icon: options.icon
+                  ? await fs.readFile(options.icon, 'utf8')
+                  : null
+              })
+            }
+      )
+      print(result.worktree, () =>
+        options.clear
+          ? `Cleared decoration ${key} on ${result.worktree.name}`
+          : `Set decoration ${key} on ${result.worktree.name}: ${text}`
+      )
+    }
+  )
 
   const worktreeRemoveCommand = worktreeCommand
     .command('remove')

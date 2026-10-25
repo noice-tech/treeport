@@ -193,9 +193,9 @@ export async function main(
                       packages.services()
                     )
                   ),
-                pruneBadgeSources: (sources) =>
+                pruneDecorationSources: (sources) =>
                   service.runEffect(
-                    service.projects.pruneBadgeSources(sources)
+                    service.projects.pruneDecorationSources(sources)
                   ),
                 log: (message) => console.warn(message)
               })

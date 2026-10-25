@@ -246,7 +246,7 @@ export interface AppService {
   error: string | null
 }
 
-export type TreeBadgeTone =
+export type TreeDecorationTone =
   | 'neutral'
   | 'info'
   | 'success'
@@ -254,29 +254,31 @@ export type TreeBadgeTone =
   | 'danger'
   | 'done'
 
-/** A compact status published for a tree by a script, hook, or package. */
-export interface TreeBadge {
+/** A short marker beside a tree's name, set by a script, hook, or package. */
+export interface TreeDecoration {
   key: string
   text: string
-  tone: TreeBadgeTone
+  /** Shown on hover and in the tree's context menu. */
+  title: string
+  tone: TreeDecorationTone
   url: string | null
-  tooltip: string | null
   /** SVG markup drawn before the text. Only its shape is used: it takes the tone's color. */
   icon: string | null
-  /** ID of the package that owns this badge, or null when set directly. */
+  /** ID of the package that owns this decoration, or null when set directly. */
   source: string | null
   /** ISO 8601 timestamp. */
   updatedAt: string
 }
 
-export interface TreeBadgeInput {
+export interface TreeDecorationInput {
   /** At most 32 characters. */
   text: string
+  /** What the decoration means, such as a pull request's title; at most 256 characters. */
+  title: string
   /** Defaults to neutral. */
-  tone?: TreeBadgeTone
+  tone?: TreeDecorationTone
   /** An http or https link, opened from the tree's context menu. */
   url?: string | null
-  tooltip?: string | null
   /** An `<svg>` of at most 8 KiB. Only its shape is used: it takes the tone's color. */
   icon?: string | null
 }
@@ -286,7 +288,7 @@ export interface TreeportTree {
   id: string
   name: string
   branch: string | null
-  badges: TreeBadge[]
+  decorations: TreeDecoration[]
 }
 
 /** The project fields available to package services. */
@@ -315,14 +317,18 @@ export interface PackageServiceIdentity {
 /** The Treeport API available to a package service process. */
 export interface TreeportServiceSdk {
   readonly version: 1
-  /** The package this service acts for; it owns the badges the service sets. */
+  /** The package this service acts for; it owns the decorations the service sets. */
   self(): Promise<PackageServiceIdentity>
   /** Projects this service's package is configured for, with their trees. */
   projects(): Promise<TreeportProject[]>
-  readonly badges: {
-    /** Set or replace this package's badge. Unchanged values cost nothing. */
-    set(treeId: string, key: string, badge: TreeBadgeInput): Promise<void>
-    /** Remove a badge this package owns; removing a missing badge is a no-op. */
+  readonly decorations: {
+    /** Set or replace this package's decoration. Unchanged values cost nothing. */
+    set(
+      treeId: string,
+      key: string,
+      decoration: TreeDecorationInput
+    ): Promise<void>
+    /** Remove a decoration this package owns; removing a missing decoration is a no-op. */
     clear(treeId: string, key: string): Promise<void>
   }
 }
