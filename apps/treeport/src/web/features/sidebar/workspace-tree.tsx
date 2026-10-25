@@ -196,7 +196,8 @@ function WorktreeShell({
       {decorations.length ? (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex min-w-0 items-center gap-2.5">
+            {/* An empty title stops the row's native title from stacking on this tooltip. */}
+            <span title="" className="flex min-w-0 items-center gap-2.5">
               {sortedDecorations
                 .slice(0, VISIBLE_TREE_DECORATIONS)
                 .map((decoration) => (
