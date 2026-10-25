@@ -23,6 +23,7 @@ import {
   ContextMenuTrigger
 } from './components/ui/context-menu'
 import { Button } from './components/ui/button'
+import { FilePasteTextarea } from './components/file-paste-textarea'
 import { Empty, EmptyTitle, EmptyDescription } from './components/ui/empty'
 import { parseResponse, rpc } from './api'
 import {
@@ -102,6 +103,7 @@ export function TerminalView({
     open: false,
     value: ''
   })
+  const [pasteUploading, setPasteUploading] = useState(false)
   const onStatusChangeRef = useRef(onStatusChange)
   const readyTraceTerminalRef = useRef<string | null>(null)
   onStatusChangeRef.current = onStatusChange
@@ -350,21 +352,24 @@ export function TerminalView({
       >
         Paste text here
       </label>
-      <textarea
+      <FilePasteTextarea
         id="terminal-paste-input"
         autoFocus
+        disabled={false}
         rows={2}
         value={pasteValue}
         placeholder="Touch and hold here, then choose Paste"
-        className="min-h-16 resize-none rounded-md border border-white/10 bg-zinc-950 px-3 py-2 text-base text-zinc-100 outline-none focus:border-accent-500"
-        onChange={(event) =>
-          setPaste({
+        className="min-h-16"
+        onValueChange={(value) =>
+          // An upload can finish after the menu was dismissed; keep it closed.
+          setPaste((current) => ({
             terminalId: terminal?.id ?? null,
-            open: true,
-            value: event.target.value
-          })
+            open: current.open,
+            value
+          }))
         }
-        onPaste={(event) => {
+        onUploadingChange={setPasteUploading}
+        onTextPaste={(event) => {
           const text = event.clipboardData.getData('text')
           if (!text) {
             return
@@ -392,7 +397,7 @@ export function TerminalView({
         <Button
           type="button"
           size="sm"
-          disabled={!pasteValue}
+          disabled={!pasteValue || pasteUploading}
           onClick={() => pasteIntoTerminal(pasteValue)}
         >
           Send

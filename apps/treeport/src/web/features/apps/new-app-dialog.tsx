@@ -35,7 +35,7 @@ import {
   launcherInputLabel,
   launcherProvenance
 } from '../../launcher-definition'
-import { LauncherInputTextarea } from '../launchers/launcher-input-textarea'
+import { FilePasteTextarea } from '../../components/file-paste-textarea'
 import { WebAppIcon } from '../web-apps/web-app-icon'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
 import { describeWebAppPermissions } from '../web-apps/web-app-permissions'
@@ -224,7 +224,7 @@ export function NewAppDialog({
                   >
                     {launcherInputLabel(inputName)}
                   </label>
-                  <LauncherInputTextarea
+                  <FilePasteTextarea
                     id={id}
                     value={inputs[inputName] ?? ''}
                     autoFocus={index === 0}

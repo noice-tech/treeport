@@ -1,22 +1,32 @@
-import { useState } from 'react'
-import { parseResponse, rpc } from '../../api'
-import { Textarea } from '../../components/ui/textarea'
-import { errorMessage } from '../../error-message'
+import { useState, type ClipboardEvent } from 'react'
+import { parseResponse, rpc } from '../api'
+import { Textarea } from './ui/textarea'
+import { errorMessage } from '../error-message'
+import { cn } from '../lib/utils'
 
-export function LauncherInputTextarea({
+// Pasted files are uploaded and their paths inserted at the caret.
+export function FilePasteTextarea({
   id,
   value,
   autoFocus,
   disabled,
+  rows = 4,
+  placeholder,
+  className,
   onValueChange,
-  onUploadingChange
+  onUploadingChange,
+  onTextPaste
 }: {
   id: string
   value: string
   autoFocus: boolean
   disabled: boolean
+  rows?: number
+  placeholder?: string
+  className?: string
   onValueChange: (value: string) => void
   onUploadingChange: (uploading: boolean) => void
+  onTextPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void
 }) {
   const [upload, setUpload] = useState<{
     state: 'uploading' | 'error'
@@ -28,8 +38,9 @@ export function LauncherInputTextarea({
       <Textarea
         id={id}
         name={id}
-        rows={4}
-        className="max-h-60 field-sizing-content resize-none"
+        rows={rows}
+        placeholder={placeholder}
+        className={cn('max-h-60 field-sizing-content resize-none', className)}
         value={value}
         autoFocus={autoFocus}
         disabled={disabled}
@@ -49,6 +60,7 @@ export function LauncherInputTextarea({
                 return file ? [file] : []
               })
           if (!files.length) {
+            onTextPaste?.(event)
             return
           }
 
