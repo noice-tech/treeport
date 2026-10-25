@@ -90,6 +90,10 @@ const treeBadgeToneClasses = {
   danger: 'text-rose-400',
   done: 'text-violet-400'
 } satisfies Record<TreeBadgeTone, string>
+// Problems sit nearest the name.
+const treeBadgeToneRank = (tone: TreeBadgeTone) =>
+  tone === 'danger' ? 0 : tone === 'warning' ? 1 : 2
+const VISIBLE_TREE_BADGES = 2
 
 function WorktreeShell({
   name,
@@ -130,16 +134,23 @@ function WorktreeShell({
     pending && 'pointer-events-none',
     className
   )
+  // A stable sort keeps the order badges were first set within each rank.
+  const sortedBadges = [...badges].sort(
+    (left, right) =>
+      treeBadgeToneRank(left.tone) - treeBadgeToneRank(right.tone)
+  )
+  const hiddenBadges = sortedBadges.slice(VISIBLE_TREE_BADGES)
   const content = (
     <>
       {icon}
-      <span className="flex min-w-0 flex-1 flex-col">
+      {/* The name keeps a few characters; badges truncate before it vanishes. */}
+      <span className="flex min-w-12 flex-1 flex-col">
         <span className="truncate">{name}</span>
         {status}
       </span>
       {badges.length ? (
-        <span className="flex shrink-0 items-center gap-2.5">
-          {badges.map((badge) => (
+        <span className="flex min-w-0 items-center gap-2.5">
+          {sortedBadges.slice(0, VISIBLE_TREE_BADGES).map((badge) => (
             // Status is secondary to the tree name: color marks the state,
             // on the icon when there is one, without a filled shape.
             <span
@@ -166,6 +177,16 @@ function WorktreeShell({
               <span className="min-w-0 truncate">{badge.text}</span>
             </span>
           ))}
+          {hiddenBadges.length ? (
+            <span
+              className="shrink-0 text-xs font-medium text-zinc-500 tabular-nums"
+              title={hiddenBadges
+                .map((badge) => badge.tooltip ?? badge.text)
+                .join('\n')}
+            >
+              +{hiddenBadges.length}
+            </span>
+          ) : null}
         </span>
       ) : null}
     </>
