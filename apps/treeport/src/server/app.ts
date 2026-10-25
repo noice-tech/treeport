@@ -90,7 +90,7 @@ import {
   updateProjectSchema,
   updateWorktreeTitleSchema,
   setTreeBadgeSchema,
-  packageWorkerSelfResponseSchema,
+  packageServiceSelfResponseSchema,
   TREE_BADGE_KEY_PATTERN,
   updateLauncherSchema,
   updateTerminalSchema,
@@ -142,7 +142,6 @@ import type { WorkspacePresenceManager } from './workspace-presence'
 import type { WebPushManager } from './web-push'
 import { findProjectIcon } from './project-icon'
 import type { AppServices } from './app-services'
-import type { PackageWorkers } from './package-workers'
 import { networkTelemetry } from './network-telemetry'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
@@ -217,7 +216,6 @@ interface AppDependencies {
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata: TerminalMetadataManager
   appServices?: AppServices
-  packageWorkers?: PackageWorkers
   browserSessions?: BrowserSessionManager
   presence: WorkspacePresenceManager
   push?: WebPushManager
@@ -391,7 +389,6 @@ export function createApp({
   terminalMetadata: metadata,
   browserSessions,
   appServices,
-  packageWorkers,
   presence,
   push,
   rpcHttpApp,
@@ -1336,24 +1333,24 @@ export function createApp({
     ),
     route(
       'GET',
-      '/api/package-workers/self',
+      '/api/package-services/self',
       Effect.gen(function* () {
         const request = yield* serverRequest
         const token = /^Bearer (\S+)$/u.exec(
           request.headers.authorization ?? ''
         )?.[1]
-        const access = token ? (packageWorkers?.access(token) ?? null) : null
+        const access = token ? (appServices?.access(token) ?? null) : null
         if (!access) {
           return yield* Effect.fail(
             new DomainError(
               'INVALID_PACKAGE_TOKEN',
-              'The package token is invalid or its worker stopped',
+              'The package token is invalid or its package was removed',
               401
             )
           )
         }
 
-        return jsonContractResponse(packageWorkerSelfResponseSchema, access)
+        return jsonContractResponse(packageServiceSelfResponseSchema, access)
       })
     ),
     ...(['PUT', 'DELETE'] as const).map((method) =>
@@ -1372,17 +1369,17 @@ export function createApp({
             )
           }
 
-          // A package worker's token makes its package the badge owner.
+          // A package service's token makes its package the badge owner.
           const request = yield* serverRequest
           const token = /^Bearer (\S+)$/u.exec(
             request.headers.authorization ?? ''
           )?.[1]
-          const access = token ? (packageWorkers?.access(token) ?? null) : null
+          const access = token ? (appServices?.access(token) ?? null) : null
           if (token && !access) {
             return yield* Effect.fail(
               new DomainError(
                 'INVALID_PACKAGE_TOKEN',
-                'The package token is invalid or its worker stopped',
+                'The package token is invalid or its package was removed',
                 401
               )
             )

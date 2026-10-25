@@ -89,15 +89,10 @@ interface ResolvedLauncher {
   enabled: boolean
 }
 
-interface PackageWorker {
-  name: string
-  executable: string
-  args: string[]
-}
+type PackageService = z.output<typeof packageServiceSchema> & { name: string }
 
-/** A package background process; null project IDs mean every project. */
-export interface PackageWorkerDeclaration extends PackageWorker {
-  id: string
+/** A package-declared process; null project IDs mean every project. */
+export interface PackageServiceDeclaration extends PackageService {
   packageId: string
   root: string
   projectIds: string[] | null
@@ -113,7 +108,7 @@ interface ResolvedPackage {
   installedPath: string
   webApps: ResolvedWebApp[]
   launchers: ResolvedLauncher[]
-  workers: PackageWorker[]
+  services: PackageService[]
   diagnostics: PackageResourceDiagnostic[]
 }
 
@@ -147,19 +142,28 @@ interface WebAppManifestEntry {
 interface PackageManifest {
   webApps: WebAppManifestEntry[]
   launchers: string[]
-  workers: PackageWorker[]
+  services: PackageService[]
 }
 
 const packageManifestInputSchema = z.unknown()
 type PackageManifestInput = z.input<typeof packageManifestInputSchema>
 const manifestPatternsSchema = z.array(z.string())
-const workersManifestSchema = z.record(
-  z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/u),
-  z.strictObject({
-    executable: z.string().min(1),
-    args: z.array(z.string()).default([])
-  })
-)
+// Services are trusted native applications. The declaration, not a caller,
+// supplies the executable. HTTP services set readinessPath and listen on
+// ${socket}; Treeport proxies them to the package's web apps.
+const packageServiceSchema = z.strictObject({
+  scope: z.literal('instance'),
+  /** on-demand services start for a web app; always services start with Treeport and restart. */
+  start: z.enum(['on-demand', 'always']).default('on-demand'),
+  executable: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  readinessPath: z
+    .string()
+    .regex(/^\/(?!\/)/u)
+    .nullable()
+    .default(null),
+  query: z.record(z.string(), z.string()).default({})
+})
 const webAppManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
@@ -1203,7 +1207,7 @@ export class PackageSystem {
           .looseObject({
             webApps: z.unknown().optional(),
             launchers: z.unknown().optional(),
-            workers: z.unknown().optional()
+            services: z.unknown().optional()
           })
           .safeParse(parsedPackageJson.data.treeport)
         if (!parsedTreeport.success) {
@@ -1222,19 +1226,19 @@ export class PackageSystem {
             'launchers',
             packageJsonPath
           ),
-          workers: (() => {
-            const workers = workersManifestSchema.safeParse(
-              parsedTreeport.data.workers ?? {}
-            )
-            if (!workers.success) {
+          services: (() => {
+            const services = z
+              .record(z.string().min(1), packageServiceSchema)
+              .safeParse(parsedTreeport.data.services ?? {})
+            if (!services.success) {
               throw new Error(
-                `${packageJsonPath} treeport.workers must map lowercase names to { executable, args }`
+                `${packageJsonPath} treeport.services is invalid: ${z.prettifyError(services.error)}`
               )
             }
 
-            return Object.entries(workers.data).map(([name, worker]) => ({
+            return Object.entries(services.data).map(([name, service]) => ({
               name,
-              ...worker
+              ...service
             }))
           })()
         }
@@ -1430,7 +1434,7 @@ export class PackageSystem {
       installedPath: root,
       webApps,
       launchers: filteredLaunchers,
-      workers: manifest?.workers ?? [],
+      services: manifest?.services ?? [],
       diagnostics: candidates.diagnostics
     }
   }
@@ -1453,9 +1457,10 @@ export class PackageSystem {
           source: { ...resource.definition.source }
         }
       })),
-      workers: pkg.workers.map((worker) => ({
-        ...worker,
-        args: [...worker.args]
+      services: pkg.services.map((service) => ({
+        ...service,
+        args: [...service.args],
+        query: { ...service.query }
       })),
       diagnostics: [...pkg.diagnostics]
     }
@@ -1538,7 +1543,7 @@ export class PackageSystem {
             : this.npmPackagePath(parsed, scope, projectId),
         webApps: [],
         launchers: [],
-        workers: [],
+        services: [],
         diagnostics: [
           diagnostic(
             scope,
@@ -1910,9 +1915,9 @@ export class PackageSystem {
     })
   }
 
-  /** Workers of packages configured globally or by a registered project. */
-  workers(): Effect.Effect<
-    PackageWorkerDeclaration[],
+  /** Services of packages configured globally or by a registered project. */
+  services(): Effect.Effect<
+    PackageServiceDeclaration[],
     never,
     ApplicationServices
   > {
@@ -1924,16 +1929,17 @@ export class PackageSystem {
         ),
         { concurrency: 'unbounded', discard: true }
       )
-      const declarations = new Map<string, PackageWorkerDeclaration>()
+      // One process per installed copy: every tree using it shares the instance.
+      const declarations = new Map<string, PackageServiceDeclaration>()
       const add = (pkg: ResolvedPackage, projectId: string | null) => {
-        for (const worker of pkg.workers) {
-          const id = `${pkg.packageId}:${worker.name}`
+        for (const service of pkg.services) {
+          const id = `${pkg.root}\0${service.name}`
           const existing = declarations.get(id)
           if (!existing) {
             declarations.set(id, {
-              ...worker,
-              args: [...worker.args],
-              id,
+              ...service,
+              args: [...service.args],
+              query: { ...service.query },
               packageId: pkg.packageId,
               root: pkg.root,
               projectIds: projectId === null ? null : [projectId]

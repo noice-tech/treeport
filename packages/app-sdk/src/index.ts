@@ -246,6 +246,83 @@ export interface AppService {
   error: string | null
 }
 
+export type TreeBadgeTone =
+  | 'neutral'
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'done'
+
+/** A compact status published for a tree by a script, hook, or package. */
+export interface TreeBadge {
+  key: string
+  text: string
+  tone: TreeBadgeTone
+  url: string | null
+  tooltip: string | null
+  /** ID of the package that owns this badge, or null when set directly. */
+  source: string | null
+  /** ISO 8601 timestamp. */
+  updatedAt: string
+}
+
+export interface TreeBadgeInput {
+  /** At most 32 characters. */
+  text: string
+  /** Defaults to neutral. */
+  tone?: TreeBadgeTone
+  /** An http or https link, opened from the tree's context menu. */
+  url?: string | null
+  tooltip?: string | null
+}
+
+/** The tree fields available to package services. */
+export interface TreeportTree {
+  id: string
+  name: string
+  branch: string | null
+  badges: TreeBadge[]
+}
+
+/** The project fields available to package services. */
+export interface TreeportProject {
+  id: string
+  name: string
+  kind: 'repository' | 'folder'
+  rootPath: string
+  defaultBranch: string
+  /** Fetch URL of the repository's origin remote, when it has one. */
+  originUrl: string | null
+  availability: {
+    state: 'available' | 'unavailable'
+    message: string | null
+  }
+  worktrees: TreeportTree[]
+}
+
+/** The package a service acts for, and where it is configured. */
+export interface PackageServiceIdentity {
+  packageId: string
+  /** Null when the package is configured globally. */
+  projectIds: string[] | null
+}
+
+/** The Treeport API available to a package service process. */
+export interface TreeportServiceSdk {
+  readonly version: 1
+  /** The package this service acts for; it owns the badges the service sets. */
+  self(): Promise<PackageServiceIdentity>
+  /** Projects this service's package is configured for, with their trees. */
+  projects(): Promise<TreeportProject[]>
+  readonly badges: {
+    /** Set or replace this package's badge. Unchanged values cost nothing. */
+    set(treeId: string, key: string, badge: TreeBadgeInput): Promise<void>
+    /** Remove a badge this package owns; removing a missing badge is a no-op. */
+    clear(treeId: string, key: string): Promise<void>
+  }
+}
+
 /** The tree-scoped API available to a Treeport web app. */
 export interface TreeportAppSdk {
   readonly version: 1

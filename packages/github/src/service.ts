@@ -1,11 +1,8 @@
 import { execFile } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
-import {
-  connectPackageWorker,
-  type TreeBadgeInput,
-  type WorkerProject
-} from '@treeport/app-sdk/worker'
+import type { TreeBadgeInput, TreeportProject } from '@treeport/app-sdk'
+import { treeport } from '@treeport/app-sdk/service'
 import { z } from 'zod'
 
 const INTERVAL_MS = 60_000
@@ -155,12 +152,12 @@ function badgeFor(pull: PullRequest): TreeBadgeInput {
   return { text: `#${pull.number}`, tone, url: pull.url, tooltip }
 }
 
-const worker = await connectPackageWorker(process.env)
+const { packageId } = await treeport.self()
 // A merged pull request cannot change, so its tree is not queried again.
 const mergedBranches = new Map<string, string>()
 
 async function refreshProject(
-  project: WorkerProject
+  project: TreeportProject
 ): Promise<RateLimit | null> {
   const trees = project.worktrees.filter(
     (tree) => tree.branch !== null && tree.branch !== project.defaultBranch
@@ -169,10 +166,10 @@ async function refreshProject(
     if (
       !trees.includes(tree) &&
       tree.badges.some(
-        (badge) => badge.key === BADGE_KEY && badge.source === worker.packageId
+        (badge) => badge.key === BADGE_KEY && badge.source === packageId
       )
     ) {
-      await worker.badges.clear(tree.id, BADGE_KEY)
+      await treeport.badges.clear(tree.id, BADGE_KEY)
     }
   }
 
@@ -193,9 +190,9 @@ async function refreshProject(
   for (const [index, tree] of pending.entries()) {
     const pull = pulls[index] ?? null
     if (pull) {
-      await worker.badges.set(tree.id, BADGE_KEY, badgeFor(pull))
+      await treeport.badges.set(tree.id, BADGE_KEY, badgeFor(pull))
     } else {
-      await worker.badges.clear(tree.id, BADGE_KEY)
+      await treeport.badges.clear(tree.id, BADGE_KEY)
     }
 
     if (pull?.state === 'MERGED') {
@@ -208,7 +205,7 @@ async function refreshProject(
 
 while (true) {
   let wait = INTERVAL_MS
-  const projects = await worker.projects().catch((error) => {
+  const projects = await treeport.projects().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     return []
   })

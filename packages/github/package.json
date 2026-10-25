@@ -11,11 +11,13 @@
     "treeport-package"
   ],
   "treeport": {
-    "workers": {
+    "services": {
       "pull-requests": {
+        "scope": "instance",
+        "start": "always",
         "executable": "node",
         "args": [
-          "${packageRoot}/dist/worker.js"
+          "${packageRoot}/dist/service.js"
         ]
       }
     }

@@ -1,11 +1,13 @@
 import * as Schema from 'effect/Schema'
-import type { WebApp, WebAppInput, WebAppPermission } from '@treeport/app-sdk'
 import type {
   TreeBadge,
   TreeBadgeTone,
-  WorkerProject,
-  WorkerTree
-} from '@treeport/app-sdk/worker'
+  TreeportProject,
+  TreeportTree,
+  WebApp,
+  WebAppInput,
+  WebAppPermission
+} from '@treeport/app-sdk'
 import { browserUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import type { WorkspacePresence } from './presence-protocol.js'
@@ -41,16 +43,15 @@ export type {
   WebAppLaunch,
   WebAppPermission,
   WorktreeListener,
-  WorktreeListenerDiscovery
-} from '@treeport/app-sdk'
-export type {
-  PackageWorker,
+  WorktreeListenerDiscovery,
+  PackageServiceIdentity,
   TreeBadge,
   TreeBadgeInput,
   TreeBadgeTone,
-  WorkerProject,
-  WorkerTree
-} from '@treeport/app-sdk/worker'
+  TreeportProject,
+  TreeportServiceSdk,
+  TreeportTree
+} from '@treeport/app-sdk'
 export * from './browser-protocol.js'
 export * from './browser-clipboard.js'
 export * from './browser-page-metadata.js'
@@ -300,8 +301,8 @@ export interface OpenBrowserAppResult {
   app: BrowserApp
 }
 
-// Workers read trees and projects through the SDK's narrower views.
-export interface WorktreeRecord extends WorkerTree {
+// Package services read trees and projects through the SDK's narrower views.
+export interface WorktreeRecord extends TreeportTree {
   id: string
   projectId: string
   name: string
@@ -336,7 +337,7 @@ export const PROJECT_COLORS = [
 
 export type ProjectColor = (typeof PROJECT_COLORS)[number]
 
-export interface ProjectRecord extends WorkerProject {
+export interface ProjectRecord extends TreeportProject {
   id: string
   name: string
   kind: ProjectKind

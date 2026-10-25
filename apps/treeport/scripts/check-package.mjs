@@ -89,8 +89,8 @@ async function checkPackage(
     : [
         'dist/index.js',
         'dist/index.d.ts',
-        'dist/worker.js',
-        'dist/worker.d.ts',
+        'dist/service.js',
+        'dist/service.d.ts',
         'LICENSE',
         'README.md'
       ]
@@ -203,7 +203,10 @@ async function checkPackage(
     assert.equal(manifest.types, 'dist/index.d.ts')
     assert.deepEqual(manifest.exports, {
       '.': { types: './dist/index.d.ts', default: './dist/index.js' },
-      './worker': { types: './dist/worker.d.ts', default: './dist/worker.js' }
+      './service': {
+        types: './dist/service.d.ts',
+        default: './dist/service.js'
+      }
     })
   }
 

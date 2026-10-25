@@ -31,7 +31,7 @@
       "entry": ["bin/hook.mjs", "bin/status-worker.mjs"]
     },
     "packages/github": {
-      "entry": ["src/worker.ts"]
+      "entry": ["src/service.ts"]
     },
     "packages/review": {
       "entry": ["web-apps/review/review.tsx"]

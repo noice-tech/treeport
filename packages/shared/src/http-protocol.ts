@@ -650,7 +650,7 @@ export const packageReloadResponseSchema = Schema.Struct({
 export const packageProjectResponseSchema = Schema.Struct({
   project: projectRecordSchema
 })
-export const packageWorkerSelfResponseSchema = Schema.Struct({
+export const packageServiceSelfResponseSchema = Schema.Struct({
   packageId: Schema.String,
   /** Null when the package is configured globally. */
   projectIds: Schema.NullOr(Schema.Array(Schema.String))
