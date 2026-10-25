@@ -135,6 +135,7 @@ const treeBadgeSchema = Schema.Struct({
   ),
   url: nullableStringSchema,
   tooltip: nullableStringSchema,
+  icon: nullableStringSchema,
   source: nullableStringSchema,
   updatedAt: Schema.String
 })

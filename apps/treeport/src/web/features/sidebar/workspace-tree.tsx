@@ -144,9 +144,23 @@ function WorktreeShell({
           {badges.map((badge) => (
             <Badge
               key={badge.key}
-              className={cn('max-w-28', treeBadgeToneClasses[badge.tone])}
+              className={cn(
+                'max-w-28 gap-1',
+                badge.icon && 'pl-1',
+                treeBadgeToneClasses[badge.tone]
+              )}
               title={badge.tooltip ?? undefined}
             >
+              {badge.icon ? (
+                // A mask keeps the SVG inert and paints its shape in the tone color.
+                <span
+                  aria-hidden
+                  className="size-3 shrink-0 bg-current mask-contain mask-center mask-no-repeat"
+                  style={{
+                    maskImage: `url("data:image/svg+xml,${encodeURIComponent(badge.icon)}")`
+                  }}
+                />
+              ) : null}
               <span className="min-w-0 truncate">{badge.text}</span>
             </Badge>
           ))}

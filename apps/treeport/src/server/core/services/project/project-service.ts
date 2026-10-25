@@ -274,7 +274,8 @@ export class ProjectService {
           ? current?.text === badge.text &&
             current.tone === badge.tone &&
             current.url === badge.url &&
-            current.tooltip === badge.tooltip
+            current.tooltip === badge.tooltip &&
+            current.icon === badge.icon
           : !current
       ) {
         return

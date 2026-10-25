@@ -2354,6 +2354,10 @@ async function main(args: string[]): Promise<void> {
     .option('--tone <tone>', TREE_BADGE_TONES.join(', '), 'neutral')
     .option('--url <url>', 'http or https link opened from the tree menu')
     .option('--tooltip <text>', 'text shown on hover')
+    .option(
+      '--icon <svg-file>',
+      'SVG icon shown before the text, in the tone color'
+    )
     .option('--worktree <id-or-path-or-dot>', 'tree to badge', '.')
     .option('--clear', 'remove the badge')
     .option('--json', 'emit machine-readable JSON')
@@ -2362,6 +2366,7 @@ async function main(args: string[]): Promise<void> {
       tone: string
       url?: string
       tooltip?: string
+      icon?: string
       worktree: string
       clear?: boolean
     }>()
@@ -2381,7 +2386,10 @@ async function main(args: string[]): Promise<void> {
               text,
               tone: options.tone,
               url: options.url ?? null,
-              tooltip: options.tooltip ?? null
+              tooltip: options.tooltip ?? null,
+              icon: options.icon
+                ? await fs.readFile(options.icon, 'utf8')
+                : null
             })
           }
     )

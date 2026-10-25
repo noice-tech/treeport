@@ -261,6 +261,8 @@ export interface TreeBadge {
   tone: TreeBadgeTone
   url: string | null
   tooltip: string | null
+  /** SVG markup drawn before the text. Only its shape is used: it takes the tone's color. */
+  icon: string | null
   /** ID of the package that owns this badge, or null when set directly. */
   source: string | null
   /** ISO 8601 timestamp. */
@@ -275,6 +277,8 @@ export interface TreeBadgeInput {
   /** An http or https link, opened from the tree's context menu. */
   url?: string | null
   tooltip?: string | null
+  /** An `<svg>` of at most 8 KiB. Only its shape is used: it takes the tone's color. */
+  icon?: string | null
 }
 
 /** The tree fields available to package services. */

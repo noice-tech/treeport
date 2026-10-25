@@ -570,7 +570,12 @@ export function mapWorktree(
     badges: Object.entries(
       // SAFETY: Badge writes store values validated by the badge schema.
       JSON.parse(row.badges) as Record<string, Omit<TreeBadge, 'key'>>
-    ).map(([key, badge]) => ({ key, ...badge, source: badge.source ?? null })),
+    ).map(([key, badge]) => ({
+      key,
+      ...badge,
+      icon: badge.icon ?? null,
+      source: badge.source ?? null
+    })),
     dirty: null,
     terminals: [],
     workspaceItems: [],

@@ -918,6 +918,19 @@ export const setTreeBadgeSchema = Schema.Struct({
   tooltip: Schema.optionalWith(
     Schema.NullOr(Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(200))),
     { default: () => null }
+  ),
+  // Rendered as a CSS mask, so scripts and colors inside the SVG never apply.
+  icon: Schema.optionalWith(
+    Schema.NullOr(
+      Schema.Trim.pipe(
+        Schema.maxLength(8_192),
+        Schema.filter(
+          (icon) => icon.startsWith('<svg') && icon.endsWith('</svg>'),
+          { message: () => 'A badge icon must be an <svg> element' }
+        )
+      )
+    ),
+    { default: () => null }
   )
 })
 
