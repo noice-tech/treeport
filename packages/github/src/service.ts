@@ -1,21 +1,46 @@
 import { execFile } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
-import type { TreeDecorationInput, TreeportProject } from '@treeport/app-sdk'
+import type {
+  TreeDecorationInput,
+  TreeportProject,
+  TreeportTree
+} from '@treeport/app-sdk'
 import { treeport } from '@treeport/app-sdk/service'
 import { z } from 'zod'
 
 const INTERVAL_MS = 60_000
 // Leave headroom for the user's own GitHub usage.
 const RATE_LIMIT_RESERVE = 500
-const DECORATION_KEY = 'pr'
+const PULL_REQUEST_KEY = 'pr'
+const CHECKS_KEY = 'ci'
 
 const pullRequestSchema = z.object({
   number: z.number().int(),
   title: z.string(),
   state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
   isDraft: z.boolean(),
-  url: z.url()
+  url: z.url(),
+  // The combined state of every check on the pull request's latest commit.
+  commits: z.object({
+    nodes: z.array(
+      z.object({
+        commit: z.object({
+          statusCheckRollup: z
+            .object({
+              state: z.enum([
+                'SUCCESS',
+                'FAILURE',
+                'ERROR',
+                'PENDING',
+                'EXPECTED'
+              ])
+            })
+            .nullable()
+        })
+      })
+    )
+  })
 })
 const rateLimitSchema = z.object({
   remaining: z.number().int(),
@@ -90,7 +115,7 @@ async function pullRequests(
   const variables = branches.map((_, index) => `$b${index}: String!`)
   const aliases = branches.map(
     (_, index) =>
-      `b${index}: pullRequests(headRefName: $b${index}, first: 1, orderBy: {field: CREATED_AT, direction: DESC}, states: [OPEN, MERGED, CLOSED]) { nodes { number title state isDraft url } }`
+      `b${index}: pullRequests(headRefName: $b${index}, first: 1, orderBy: {field: CREATED_AT, direction: DESC}, states: [OPEN, MERGED, CLOSED]) { nodes { number title state isDraft url commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }`
   )
   const response = await fetch(
     repository.host === 'github.com'
@@ -181,15 +206,21 @@ async function refreshProject(
   const trees = project.worktrees.filter(
     (tree) => tree.branch !== null && tree.branch !== project.defaultBranch
   )
-  for (const tree of project.worktrees) {
+  // Only touch this package's own decorations, and skip ones already gone.
+  const clear = async (tree: TreeportTree, key: string) => {
     if (
-      !trees.includes(tree) &&
       tree.decorations.some(
         (decoration) =>
-          decoration.key === DECORATION_KEY && decoration.source === packageId
+          decoration.key === key && decoration.source === packageId
       )
     ) {
-      await treeport.decorations.clear(tree.id, DECORATION_KEY)
+      await treeport.decorations.clear(tree.id, key)
+    }
+  }
+  for (const tree of project.worktrees) {
+    if (!trees.includes(tree)) {
+      await clear(tree, PULL_REQUEST_KEY)
+      await clear(tree, CHECKS_KEY)
     }
   }
 
@@ -212,11 +243,27 @@ async function refreshProject(
     if (pull) {
       await treeport.decorations.set(
         tree.id,
-        DECORATION_KEY,
+        PULL_REQUEST_KEY,
         decorationFor(pull)
       )
     } else {
-      await treeport.decorations.clear(tree.id, DECORATION_KEY)
+      await clear(tree, PULL_REQUEST_KEY)
+    }
+
+    // Like the sidebar, report checks only when they need attention.
+    const checks = pull?.commits.nodes[0]?.commit.statusCheckRollup?.state
+    if (
+      pull?.state === 'OPEN' &&
+      (checks === 'FAILURE' || checks === 'ERROR')
+    ) {
+      await treeport.decorations.set(tree.id, CHECKS_KEY, {
+        text: 'CI',
+        title: `Checks failing on #${pull.number}`,
+        tone: 'danger',
+        url: `${pull.url}/checks`
+      })
+    } else {
+      await clear(tree, CHECKS_KEY)
     }
 
     if (pull?.state === 'MERGED') {
