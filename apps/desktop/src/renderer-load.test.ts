@@ -18,7 +18,9 @@ it('retries a failed initial document load until the renderer is available', asy
       .mockImplementationOnce(async () => {
         renderer.emit('did-navigate', {}, url, 503)
       })
-      .mockResolvedValue(undefined)
+      .mockImplementation(async () => {
+        renderer.emit('did-navigate', {}, url, 200)
+      })
   })
 
   const onFailure = vi.fn()

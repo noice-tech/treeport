@@ -13,7 +13,7 @@ export function loadRenderer(
 ) {
   return Effect.gen(function* () {
     while (!renderer.isDestroyed()) {
-      let httpStatus = 200
+      let httpStatus: number | null = null
 
       const navigated = (
         _event: Electron.Event,
@@ -28,8 +28,10 @@ export function loadRenderer(
         () =>
           Effect.tryPromise(() => renderer.loadURL(url)).pipe(
             // loadURL can finish successfully even when the HTTP document is an
-            // error page. Keep recovery controls available for those responses.
-            Effect.map(() => httpStatus < 400),
+            // error page, or when stop() lets an interrupted load's late
+            // did-finish-load resolve it before this navigation commits. Only a
+            // committed, successful document counts as loaded.
+            Effect.map(() => httpStatus !== null && httpStatus < 400),
             Effect.catchAll((error) => {
               const failure = z
                 .object({ code: z.string() })
