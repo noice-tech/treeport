@@ -566,6 +566,8 @@ importers:
 
   packages/app-sdk: {}
 
+  packages/claude-code: {}
+
   packages/cursor: {}
 
   packages/desktop-bridge: {}

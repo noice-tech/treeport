@@ -16,6 +16,7 @@ const packageDirectories = [
   'packages/app-sdk',
   'packages/pi',
   'packages/cursor',
+  'packages/claude-code',
   'packages/review',
   'packages/session-keeper',
   'apps/treeport'

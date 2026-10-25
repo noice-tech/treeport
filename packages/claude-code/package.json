@@ -1,0 +1,38 @@
+{
+  "name": "@treeport/claude-code",
+  "version": "0.13.0",
+  "description": "Treeport skill and hooks for Claude Code.",
+  "type": "module",
+  "files": [
+    ".claude-plugin",
+    "hooks",
+    "skills",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "claude-code-plugin",
+    "treeport",
+    "coding-agent"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git",
+    "directory": "packages/claude-code"
+  },
+  "bugs": {
+    "url": "https://github.com/noice-tech/treeport/issues"
+  },
+  "homepage": "https://treeport.app",
+  "publishConfig": {
+    "access": "public"
+  }
+}
