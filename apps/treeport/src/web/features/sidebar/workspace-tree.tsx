@@ -17,7 +17,6 @@ import type {
   TreeBadgeTone,
   WorktreeRecord
 } from '@treeport/shared'
-import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import {
   ContextMenu,
@@ -84,12 +83,12 @@ function copyText(text: string) {
 
 // Status scales invert in light mode, so one set of tones serves both themes.
 const treeBadgeToneClasses = {
-  neutral: 'bg-zinc-800 text-zinc-300',
-  info: 'bg-blue-400/15 text-blue-300',
-  success: 'bg-emerald-400/15 text-emerald-300',
-  warning: 'bg-amber-400/15 text-amber-300',
-  danger: 'bg-rose-400/15 text-rose-300',
-  done: 'bg-violet-400/15 text-violet-300'
+  neutral: 'text-zinc-400',
+  info: 'text-blue-400',
+  success: 'text-emerald-400',
+  warning: 'text-amber-400',
+  danger: 'text-rose-400',
+  done: 'text-violet-400'
 } satisfies Record<TreeBadgeTone, string>
 
 function WorktreeShell({
@@ -139,14 +138,15 @@ function WorktreeShell({
         {status}
       </span>
       {badges.length ? (
-        <span className="flex shrink-0 items-center gap-1">
+        <span className="flex shrink-0 items-center gap-2.5">
           {badges.map((badge) => (
-            <Badge
+            // Status is secondary to the tree name: color marks the state,
+            // on the icon when there is one, without a filled shape.
+            <span
               key={badge.key}
               className={cn(
-                'max-w-28 gap-1',
-                badge.icon && 'pl-1',
-                treeBadgeToneClasses[badge.tone]
+                'flex max-w-28 min-w-0 items-center gap-1 text-xs font-medium tabular-nums',
+                badge.icon ? 'text-zinc-400' : treeBadgeToneClasses[badge.tone]
               )}
               title={badge.tooltip ?? undefined}
             >
@@ -154,14 +154,17 @@ function WorktreeShell({
                 // A mask keeps the SVG inert and paints its shape in the tone color.
                 <span
                   aria-hidden
-                  className="size-3 shrink-0 bg-current mask-contain mask-center mask-no-repeat"
+                  className={cn(
+                    'size-3 shrink-0 bg-current mask-contain mask-center mask-no-repeat',
+                    treeBadgeToneClasses[badge.tone]
+                  )}
                   style={{
                     maskImage: `url("data:image/svg+xml,${encodeURIComponent(badge.icon)}")`
                   }}
                 />
               ) : null}
               <span className="min-w-0 truncate">{badge.text}</span>
-            </Badge>
+            </span>
           ))}
         </span>
       ) : null}
