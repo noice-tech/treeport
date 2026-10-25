@@ -46,6 +46,7 @@ export class BrowserVideoViewer {
 
     if (this.#source.runtime.webcodecs) {
       this.#advertised = true
+
       if (!this.#source.runtime.webcodecs.start(this.send)) {
         this.fail('Capture helper unavailable. Reconnect to restart video.')
       }
@@ -56,6 +57,7 @@ export class BrowserVideoViewer {
 
   offer(requestId: string, sdp: string): void {
     const source = this.#source
+
     if (
       !source ||
       source.runtime.webcodecs ||
@@ -85,6 +87,7 @@ export class BrowserVideoViewer {
           this.prepare()
         }
       })
+
     this.#negotiation = negotiation
   }
 
@@ -92,6 +95,7 @@ export class BrowserVideoViewer {
     const source = this.#source
     this.#source = null
     this.#advertised = false
+
     if (!source) {
       return
     }
@@ -100,6 +104,7 @@ export class BrowserVideoViewer {
     // another source. A late answer/cleanup can never close a successor's peer.
     const close = source.runtime.close().catch(() => undefined)
     const negotiation = this.#negotiation
+
     const retirement = Promise.all([this.#retirement, close, negotiation])
       .then(async () => {
         if (negotiation) {
@@ -112,6 +117,7 @@ export class BrowserVideoViewer {
           this.prepare()
         }
       })
+
     this.#retirement = retirement
   }
 

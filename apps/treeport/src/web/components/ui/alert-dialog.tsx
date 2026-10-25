@@ -16,6 +16,7 @@ const AlertDialogOverlay = React.forwardRef<
     {...props}
   />
 ))
+
 AlertDialogOverlay.displayName = AlertDialogPrimitive.Overlay.displayName
 
 const AlertDialogContent = React.forwardRef<
@@ -34,6 +35,7 @@ const AlertDialogContent = React.forwardRef<
       )}
       onCloseAutoFocus={(event) => {
         onCloseAutoFocus?.(event)
+
         if (!event.defaultPrevented && restoreFocusTo?.isConnected) {
           event.preventDefault()
           restoreFocusTo.focus()
@@ -43,6 +45,7 @@ const AlertDialogContent = React.forwardRef<
     />
   </AlertDialogPortal>
 ))
+
 AlertDialogContent.displayName = AlertDialogPrimitive.Content.displayName
 
 function AlertDialogHeader({
@@ -85,6 +88,7 @@ const AlertDialogTitle = React.forwardRef<
     {...props}
   />
 ))
+
 AlertDialogTitle.displayName = AlertDialogPrimitive.Title.displayName
 
 const AlertDialogDescription = React.forwardRef<
@@ -97,6 +101,7 @@ const AlertDialogDescription = React.forwardRef<
     {...props}
   />
 ))
+
 AlertDialogDescription.displayName =
   AlertDialogPrimitive.Description.displayName
 
@@ -110,6 +115,7 @@ const AlertDialogAction = React.forwardRef<
     {...props}
   />
 ))
+
 AlertDialogAction.displayName = AlertDialogPrimitive.Action.displayName
 
 const AlertDialogCancel = React.forwardRef<
@@ -122,6 +128,7 @@ const AlertDialogCancel = React.forwardRef<
     {...props}
   />
 ))
+
 AlertDialogCancel.displayName = AlertDialogPrimitive.Cancel.displayName
 
 export {

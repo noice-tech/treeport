@@ -57,17 +57,21 @@ interface CdpResult {
 }
 
 const WHEEL_SPACING_MS = 1000 / 120
+
 // A healthy page acknowledges a wheel within about a frame. Past two frames it
 // has fallen behind.
 const WHEEL_BEHIND_MS = 1000 / 30
+
 // Trackpad events of one gesture arrive at least every few frames.
 const GESTURE_GAP_MS = 250
+
 // A barrier normally arrives within milliseconds. A stalled or lost one must
 // not hold scrolling for longer than this.
 const BARRIER_TIMEOUT_MS = 1_000
 const MAX_MEDIA_BUFFER = 2 * 1024 * 1024
 
 const streams = new Map<string, Stream>()
+
 // Hosted windows overlap at the display's origin; `raised` is the stream
 // whose window was last brought to the front under the pointer.
 const pointers = new Map<
@@ -80,9 +84,11 @@ const pointers = new Map<
     y: number
   }
 >()
+
 const media = new Map<string, WebSocket>()
 const barriers = new Map<string, number>()
 const cursors = new Map<string, { x: number; y: number }>()
+
 const mediaServer = new WebSocketServer({
   noServer: true,
   perMessageDeflate: false,
@@ -91,6 +97,7 @@ const mediaServer = new WebSocketServer({
 })
 
 const emit = (event: BrowserRelayEvent) => process.send?.(event)
+
 process.on('disconnect', () => process.exit(0))
 
 // A motion event of Xorg's inputtest driver protocol
@@ -102,16 +109,20 @@ const pointerEvent = (absolute: boolean, axes: [number, number][]) => {
   event.writeUInt32LE(2, 4)
   event.writeUInt32LE(absolute ? 1 : 0, 8)
   let mask = 0
+
   for (const [axis, value] of axes) {
     mask |= 1 << axis
     event.writeDoubleLE(value, 32 + axis * 8)
   }
+
   event.writeUInt8(mask, 20)
+
   return event
 }
 
 const pointer = (path: string) => {
   const existing = pointers.get(path)
+
   if (existing && !existing.socket.destroyed) {
     return existing
   }
@@ -127,6 +138,7 @@ const pointer = (path: string) => {
   socket.on('error', () => socket.destroy())
   const created = { socket, raised: null, scrolledAt: 0, x: -1, y: -1 }
   pointers.set(path, created)
+
   return created
 }
 
@@ -149,6 +161,7 @@ const call = (
   }
 
   const id = ++stream.nextCall
+
   return new Promise<CdpResult>((resolve, reject) => {
     stream.calls.set(id, { resolve, reject })
     stream.cdp.send(
@@ -180,6 +193,7 @@ const close = (stream: Stream) => {
   }
 
   streams.delete(stream.id)
+
   if (stream.timer) {
     clearTimeout(stream.timer)
   }
@@ -204,11 +218,13 @@ const forward = (
 
   viewer.awaitingKey = false
   const socket = media.get(viewer.attachment)
+
   if (
     socket?.readyState === WebSocket.OPEN &&
     socket.bufferedAmount < MAX_MEDIA_BUFFER
   ) {
     socket.send(packet)
+
     return
   }
 
@@ -222,9 +238,11 @@ const forward = (
 
 const cursor = (attachment: string, x: number, y: number) => {
   const pending = cursors.get(attachment)
+
   if (pending) {
     pending.x = x
     pending.y = y
+
     return
   }
 
@@ -234,6 +252,7 @@ const cursor = (attachment: string, x: number, y: number) => {
   emit({ type: 'cursor', attachment, x, y })
   setTimeout(() => {
     cursors.delete(attachment)
+
     if (latest.x !== x || latest.y !== y) {
       emit({ type: 'cursor', attachment, x: latest.x, y: latest.y })
     }
@@ -263,6 +282,7 @@ const dispatch = (
       stream.inFlight.splice(stream.inFlight.indexOf(dispatchedAt), 1)
       pump(stream)
     })
+
   // CDP multiplies coordinates by the pinch scale. Only a pinch (Ctrl) changes
   // it between events, so other wheels use a recent value instead of waiting.
   if (stream.dispatchedAt - stream.scaledAt > 250) {
@@ -287,6 +307,7 @@ const pump = (stream: Stream) => {
   while (stream.wheels.length > 0 && !stream.preparing) {
     const head = stream.wheels[0]!
     const now = performance.now()
+
     // CDP wheel ACKs include a compositor round trip, so a few in flight keep
     // one step per page frame. CDP makes each wheel its own gesture, which
     // Chrome cannot merge, so a page that falls behind would replay every one
@@ -297,6 +318,7 @@ const pump = (stream: Stream) => {
       now - (stream.inFlight[0] ?? now) > WHEEL_BEHIND_MS
     ) {
       stream.congested = true
+
       return
     }
 
@@ -310,6 +332,7 @@ const pump = (stream: Stream) => {
         () => pump(stream),
         BARRIER_TIMEOUT_MS - (now - head.arrived)
       )
+
       return
     }
 
@@ -318,12 +341,14 @@ const pump = (stream: Stream) => {
     // bunched event to the next frame, but never hold an event longer than a
     // frame after it arrived, so faster input is not rate-limited.
     const slot = stream.dispatchedAt + WHEEL_SPACING_MS
+
     if (
       !stream.congested &&
       slot > now &&
       slot - head.arrived <= WHEEL_SPACING_MS
     ) {
       stream.timer = setTimeout(() => pump(stream), slot - now)
+
       return
     }
 
@@ -333,6 +358,7 @@ const pump = (stream: Stream) => {
       stream.input !== null && head.message.modifiers === 0
         ? pointer(stream.input)
         : null
+
     if (
       native &&
       (native.raised !== stream.id || now - native.scrolledAt > GESTURE_GAP_MS)
@@ -356,12 +382,14 @@ const pump = (stream: Stream) => {
           stream.preparing = false
           pump(stream)
         })
+
       return
     }
 
     stream.wheels.shift()
     let last = head
     let { deltaX, deltaY } = head.message
+
     if (stream.congested) {
       // Like Chrome, sum the deltas of adjacent wheels with the same
       // modifiers and scroll at the latest point. A click or key between them
@@ -386,6 +414,7 @@ const pump = (stream: Stream) => {
       const { x, y } = last.message
       stream.dispatchedAt = now
       native.scrolledAt = now
+
       // The window is pinned fullscreen at the origin (see
       // PlaywrightBrowserHost), so viewport and screen pixels coincide.
       if (native.x !== x || native.y !== y) {
@@ -424,6 +453,7 @@ const pump = (stream: Stream) => {
           dispatch(stream, last, deltaX, deltaY)
           pump(stream)
         })
+
       return
     }
 
@@ -433,6 +463,7 @@ const pump = (stream: Stream) => {
 
 const wheel = (attachment: string, message: Wheel) => {
   const stream = viewerStream(attachment)
+
   if (!stream?.session) {
     // Not the streamed controller here (for example after a control change):
     // the daemon applies its usual checks and input path.
@@ -448,6 +479,7 @@ const wheel = (attachment: string, message: Wheel) => {
         deltaY: message.deltaY
       }
     })
+
     return
   }
 
@@ -461,18 +493,22 @@ const attachMedia = (attachment: string, socket: WebSocket) => {
   media.set(attachment, socket)
   socket.on('message', (data, binary) => {
     const message = binary ? null : parseBrowserMediaClientMessage(parse(data))
+
     if (!message) {
       socket.close(1007, 'Invalid Browser media message')
+
       return
     }
 
     if (message.type === 'wheel') {
       wheel(attachment, message)
+
       return
     }
 
     const stream = viewerStream(attachment)
     const viewer = stream?.viewer
+
     if (!stream || !viewer || viewer.epoch !== message.epoch) {
       return
     }
@@ -491,6 +527,7 @@ const attachMedia = (attachment: string, socket: WebSocket) => {
     if (message.sequence === 0) {
       if (!viewer.ready) {
         viewer.ready = true
+
         for (const packet of viewer.early.splice(0)) {
           forward(stream, viewer, packet, packet[16] === 1)
         }
@@ -517,14 +554,18 @@ const attachMedia = (attachment: string, socket: WebSocket) => {
 
 const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
   const viewer = stream.viewer
+
   if (!binary) {
     const value = Object(parse(data))
+
     if (value.type === 'error') {
       fail(stream, String(value.message))
+
       return
     }
 
     const config = parseBrowserServerMessage(value)
+
     if (
       viewer &&
       config?.type === 'webcodecsReady' &&
@@ -541,17 +582,21 @@ const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
   }
 
   const packet = new Uint8Array(data)
+
   if (packet.byteLength < 18 || packet.byteLength > 4 * 1024 * 1024) {
     fail(stream, 'Invalid encoded packet.')
+
     return
   }
 
   const header = new DataView(packet.buffer, packet.byteOffset)
+
   if (header.getUint32(0) !== viewer.epoch) {
     return
   }
 
   const key = header.getUint8(16) === 1
+
   if (!viewer.ready) {
     // The helper's window bounds this list before the first ACK.
     if (key) {
@@ -559,6 +604,7 @@ const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
     }
 
     viewer.early.push(packet)
+
     return
   }
 
@@ -571,13 +617,16 @@ const open = async (
   // The helper authenticates on loopback; capability tokens never appear in
   // URLs or logs.
   const token = crypto.randomBytes(32).toString('hex')
+
   const server = new WebSocketServer({
     host: '127.0.0.1',
     port: 0,
     perMessageDeflate: false,
     maxPayload: 4 * 1024 * 1024
   })
+
   const cdp = new WebSocket(command.endpoint, { perMessageDeflate: false })
+
   const stream: Stream = {
     id: command.stream,
     server,
@@ -597,7 +646,9 @@ const open = async (
     scaledAt: 0,
     timer: null
   }
+
   streams.set(stream.id, stream)
+
   // Scrolls in the first few hundred milliseconds of a driver connection are
   // lost, which would swallow the start of the first gesture.
   if (stream.input) {
@@ -607,11 +658,13 @@ const open = async (
   cdp.on('message', (data) => {
     const message = Object(parse(data))
     const pending = stream.calls.get(message.id)
+
     if (!pending) {
       return
     }
 
     stream.calls.delete(message.id)
+
     if (message.error) {
       pending.reject(new Error(String(message.error.message)))
     } else {
@@ -634,6 +687,7 @@ const open = async (
       request.headers.origin !== `chrome-extension://${command.extensionId}`
     ) {
       socket.terminate()
+
       return
     }
 
@@ -641,6 +695,7 @@ const open = async (
     socket.once('close', () => clearTimeout(timeout))
     socket.once('message', (data, binary) => {
       clearTimeout(timeout)
+
       if (
         binary ||
         !Buffer.isBuffer(data) ||
@@ -649,6 +704,7 @@ const open = async (
         stream.capture
       ) {
         socket.terminate()
+
         return
       }
 
@@ -680,10 +736,12 @@ const open = async (
       cdp.once('error', reject)
     })
   ])
+
   const { sessionId } = await call(stream, 'Target.attachToTarget', {
     targetId: command.targetId,
     flatten: true
   })
+
   stream.session = sessionId ?? null
   // SAFETY: listening has completed on a TCP host/port, never a Unix socket.
   const { port } = server.address() as AddressInfo
@@ -693,6 +751,7 @@ const open = async (
 process.on('message', (value, handle) => {
   // SAFETY: Only the daemon's BrowserRelay writes to this IPC channel.
   const command = value as BrowserRelayCommand
+
   if (command.type === 'media') {
     if (!handle) {
       return
@@ -700,18 +759,21 @@ process.on('message', (value, handle) => {
 
     // SAFETY: The daemon passes the upgraded request's TCP socket handle.
     const socket = handle as Socket
+
     // SAFETY: ws reads only the method, URL and headers of the upgrade request.
     const request = {
       method: 'GET',
       url: command.url,
       headers: command.headers
     } as IncomingMessage
+
     mediaServer.handleUpgrade(
       request,
       socket,
       Buffer.from(command.head, 'base64'),
       (accepted) => attachMedia(command.attachment, accepted)
     )
+
     return
   }
 
@@ -719,6 +781,7 @@ process.on('message', (value, handle) => {
     media.get(command.attachment)?.close(4001, 'Browser attachment closed')
     media.delete(command.attachment)
     barriers.delete(command.attachment)
+
     return
   }
 
@@ -727,6 +790,7 @@ process.on('message', (value, handle) => {
       command.attachment,
       Math.max(barriers.get(command.attachment) ?? 0, command.id)
     )
+
     for (const stream of streams.values()) {
       if (stream.wheels.length > 0) {
         pump(stream)
@@ -740,16 +804,19 @@ process.on('message', (value, handle) => {
     open(command).catch((error) => {
       const stream = streams.get(command.stream)
       const message = error instanceof Error ? error.message : String(error)
+
       if (stream) {
         fail(stream, message)
       } else {
         emit({ type: 'failed', stream: command.stream, message })
       }
     })
+
     return
   }
 
   const stream = streams.get(command.stream)
+
   if (!stream) {
     return
   }
@@ -757,6 +824,7 @@ process.on('message', (value, handle) => {
   if (command.type === 'start') {
     if (stream.capture?.readyState !== WebSocket.OPEN) {
       fail(stream, 'Capture helper unavailable. Reconnect to restart video.')
+
       return
     }
 

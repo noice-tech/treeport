@@ -111,12 +111,15 @@ let contextTerminalId: string | undefined
 let configuredDaemonLifecycle: string | undefined
 let jsonOutput = false
 let workingDirectory = process.cwd()
+
 let writeStdout: (value: string) => void = (value) => {
   process.stdout.write(value)
 }
+
 let writeStderr: (value: string) => void = (value) => {
   process.stderr.write(value)
 }
+
 let requestedExitCode = 0
 let cliEnvironment: NodeJS.ProcessEnv = process.env
 let output = humanOutput()
@@ -189,6 +192,7 @@ async function resolveDaemonLifecycle(): Promise<
 
   if (configuredApiUrl) {
     const observed = await daemonHealth(apiUrl)
+
     if (observed) {
       return observed.daemonLifecycle
     }
@@ -203,6 +207,7 @@ async function ensureServiceDaemon(): Promise<{
 }> {
   const result = await serviceStart()
   const state = result.status.daemon?.state
+
   if (state && result.status.healthy) {
     return { apiUrl: state.apiUrl, pid: state.pid }
   }
@@ -243,6 +248,7 @@ async function request<S extends Schema.Schema<any, any, never>>(
   const controller = new AbortController()
   const externalSignal = options.signal
   const abort = () => controller.abort()
+
   if (externalSignal?.aborted) {
     controller.abort()
   } else {
@@ -250,8 +256,10 @@ async function request<S extends Schema.Schema<any, any, never>>(
   }
 
   const timeout = setTimeout(abort, timeoutMs)
+
   try {
     const headers = new Headers({ accept: 'application/json' })
+
     if (options.body) {
       headers.set('content-type', 'application/json')
     }
@@ -259,12 +267,15 @@ async function request<S extends Schema.Schema<any, any, never>>(
     new Headers(options.headers).forEach((value, key) =>
       headers.set(key, value)
     )
+
     const response = await fetch(`${apiUrl}${pathname}`, {
       ...options,
       signal: controller.signal,
       headers
     })
+
     const body: unknown = await response.json().catch(() => ({}))
+
     if (!response.ok) {
       const failure = decodeUnknownOrNull(apiErrorBodySchema, body)
       throw new CliError(
@@ -276,6 +287,7 @@ async function request<S extends Schema.Schema<any, any, never>>(
     }
 
     const decoded = decodeUnknownOrNull(schema, body)
+
     if (decoded === null) {
       throw new CliError(
         `Treeport daemon returned an invalid response for ${pathname}`,
@@ -348,6 +360,7 @@ async function createWorktree(
   }
 
   const worktreeId = operation.result?.worktreeId ?? operation.worktreeId
+
   if (!worktreeId) {
     throw new CliError(
       'Completed tree creation did not identify its tree',
@@ -362,7 +375,9 @@ async function createWorktree(
       projectResponseSchema
     )
   ).project
+
   const worktree = project.worktrees.find((item) => item.id === worktreeId)
+
   if (!worktree) {
     throw new CliError(
       `Created tree ${worktreeId} was not found`,
@@ -383,12 +398,14 @@ async function createWorktree(
 
 function commandArgv(args: string[]): string[] | undefined {
   const separator = args.indexOf('--')
+
   if (separator === -1) {
     return undefined
   }
 
   const argv = args.slice(separator + 1)
   args.splice(separator)
+
   if (!argv.length) {
     throw new CliError('Expected a command after --', 2)
   }
@@ -398,6 +415,7 @@ function commandArgv(args: string[]): string[] | undefined {
 
 async function canonical(value: string): Promise<string> {
   const resolved = path.resolve(workingDirectory, value)
+
   return fs.realpath(resolved).catch(() => resolved)
 }
 
@@ -407,6 +425,7 @@ async function projects(): Promise<ProjectRecord[]> {
 
 function pathContains(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate)
+
   return (
     relative === '' ||
     (!relative.startsWith(`..${path.sep}`) &&
@@ -418,6 +437,7 @@ function pathContains(candidate: string, parent: string): boolean {
 async function resolveProject(identifier?: string): Promise<ProjectRecord> {
   const list = await projects()
   const direct = list.find((project) => project.id === identifier)
+
   if (direct) {
     return direct
   }
@@ -426,12 +446,14 @@ async function resolveProject(identifier?: string): Promise<ProjectRecord> {
     const environmentMatch = list.find(
       (project) => project.id === contextProjectId
     )
+
     if (environmentMatch) {
       return environmentMatch
     }
   }
 
   const candidate = await canonical(identifier ?? '.')
+
   const match = list
     .flatMap((project) =>
       [project.rootPath, ...project.worktrees.map((item) => item.path)].map(
@@ -440,6 +462,7 @@ async function resolveProject(identifier?: string): Promise<ProjectRecord> {
     )
     .filter(({ root }) => pathContains(candidate, root))
     .sort((left, right) => right.root.length - left.root.length)[0]?.project
+
   if (!match) {
     throw new CliError(
       identifier === undefined
@@ -476,6 +499,7 @@ async function localPackageProjectId(): Promise<string> {
   const search = new URLSearchParams({
     path: await canonical(workingDirectory)
   })
+
   return (
     await request(
       `/api/packages/project?${search.toString()}`,
@@ -487,6 +511,7 @@ async function localPackageProjectId(): Promise<string> {
 async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
   const all = (await projects()).flatMap((project) => project.worktrees)
   const direct = all.find((worktree) => worktree.id === identifier)
+
   if (direct) {
     return direct
   }
@@ -495,15 +520,18 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
     const environmentMatch = all.find(
       (worktree) => worktree.id === contextWorktreeId
     )
+
     if (environmentMatch) {
       return environmentMatch
     }
   }
 
   const candidate = await canonical(identifier)
+
   const match = all
     .filter((worktree) => pathContains(candidate, worktree.path))
     .sort((a, b) => b.path.length - a.path.length)[0]
+
   if (!match) {
     throw new CliError(`No registered tree matches ${identifier}`, 5)
   }
@@ -521,6 +549,7 @@ function parseWebAppInput(value: string | undefined): WebAppInput | null {
   }
 
   let parsed: unknown
+
   try {
     parsed = JSON.parse(value)
   } catch (error) {
@@ -531,6 +560,7 @@ function parseWebAppInput(value: string | undefined): WebAppInput | null {
   }
 
   const validated = decodeUnknownOrNull(webAppInputSchema, parsed)
+
   if (!validated) {
     throw new CliError('--input must contain a JSON object', 2)
   }
@@ -548,7 +578,9 @@ async function webAppDefinition(
       webAppDefinitionsResponseSchema
     )
   ).definitions
+
   const exact = definitions.find((definition) => definition.id === identifier)
+
   if (exact) {
     return exact
   }
@@ -557,6 +589,7 @@ async function webAppDefinition(
     (definition) =>
       decodeURIComponent(definition.id.split(':').at(-1) ?? '') === identifier
   )
+
   if (matches.length === 1) {
     return matches[0]!
   }
@@ -582,6 +615,7 @@ async function webAppLaunchCwd(worktree: WorktreeRecord): Promise<string> {
     canonical(workingDirectory),
     canonical(worktree.path)
   ])
+
   if (!pathContains(cwd, worktreeRoot)) {
     throw new CliError(
       `The current directory is outside tree ${worktree.name}`,
@@ -598,6 +632,7 @@ async function resolveBrowserApp(
   appId?: string
 ): Promise<{ app: BrowserApp; worktree: WorktreeRecord }> {
   const projectList = await projects()
+
   const candidates = projectList.flatMap((project) =>
     project.worktrees.flatMap((worktree) =>
       worktree.workspaceItems
@@ -605,8 +640,10 @@ async function resolveBrowserApp(
         .map((app) => ({ app, worktree }))
     )
   )
+
   if (appId) {
     const match = candidates.find((candidate) => candidate.app.id === appId)
+
     if (!match) {
       throw new CliError(`Browser ${appId} was not found`, 5)
     }
@@ -615,9 +652,11 @@ async function resolveBrowserApp(
   }
 
   const worktree = await resolveWorktree('.')
+
   const matches = candidates.filter(
     (candidate) => candidate.worktree.id === worktree.id
   )
+
   if (matches.length === 1) {
     return matches[0]!
   }
@@ -644,6 +683,7 @@ async function runBrowserAgentCommand(
   appId?: string
 ): Promise<{ appId: string; output: string }> {
   const { app } = await resolveBrowserApp(appId)
+
   const result = await request(
     `/api/apps/${encodeURIComponent(app.id)}/browser-agent`,
     browserAgentResponseSchema,
@@ -652,6 +692,7 @@ async function runBrowserAgentCommand(
       body: JSON.stringify({ command, args })
     }
   )
+
   return { appId: app.id, output: result.output }
 }
 
@@ -660,6 +701,7 @@ function appUrl(worktree: WorktreeRecord, appId: string): string {
   target.pathname = `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/apps/${encodeURIComponent(appId)}`
   target.search = ''
   target.hash = ''
+
   return target.href
 }
 
@@ -681,6 +723,7 @@ function resolveTerminalId(identifier: string): string {
   }
 
   const terminalId = contextTerminalId
+
   if (!terminalId) {
     const variable = `${contextPrefix}_TERMINAL_ID`
     throw new CliError(
@@ -703,6 +746,7 @@ function parseCaptureLines(value: string): number {
   }
 
   const lines = Number(value)
+
   if (!Number.isSafeInteger(lines) || lines > TERMINAL_CAPTURE_MAX_LINES) {
     throw new CliError(
       `--lines must be an integer between 1 and ${TERMINAL_CAPTURE_MAX_LINES}`,
@@ -742,6 +786,7 @@ async function waitForTerminal(
 ): Promise<TerminalWaitResult> {
   let observation: TerminalObservation | null = null
   let attentionBaseline: number | null = null
+
   const matched = (observedAt: string): TerminalWaitResult | null => {
     if (!observation) {
       return null
@@ -758,6 +803,7 @@ async function waitForTerminal(
       (condition === 'attention' &&
         attentionBaseline !== null &&
         (observation.metadata.attention?.sequence ?? 0) > attentionBaseline)
+
     if (!matches) {
       return null
     }
@@ -774,11 +820,14 @@ async function waitForTerminal(
 
   const controller = new AbortController()
   let cancellation: 'timeout' | 'interrupt' | null = null
+
   const interrupt = () => {
     cancellation = 'interrupt'
     controller.abort()
   }
+
   process.once('SIGINT', interrupt)
+
   const timeout =
     timeoutMs === undefined
       ? null
@@ -786,16 +835,19 @@ async function waitForTerminal(
           cancellation = 'timeout'
           controller.abort()
         }, timeoutMs)
+
   timeout?.unref()
   let events: Fiber.RuntimeFiber<void, unknown> | null = null
 
   try {
     observation = await inspectTerminal(terminalId, controller.signal)
+
     if (condition === 'attention') {
       attentionBaseline = observation.metadata.attention?.sequence ?? 0
     }
 
     const immediate = matched(new Date().toISOString())
+
     if (immediate) {
       return immediate
     }
@@ -804,22 +856,26 @@ async function waitForTerminal(
       let settled = false
       let connected = false
       let queue = Promise.resolve()
+
       const finish = (result: TerminalWaitResult) => {
         if (!settled) {
           settled = true
           resolve(result)
         }
       }
+
       const fail = (cause: unknown) => {
         if (!settled) {
           settled = true
           reject(cause)
         }
       }
+
       const enqueue = (task: () => Promise<void>) => {
         queue = queue.then(task)
         void queue.catch(fail)
       }
+
       const snapshot = async (value: EventsSnapshot) => {
         if (!observation) {
           throw new CliError(
@@ -830,29 +886,36 @@ async function waitForTerminal(
         }
 
         connected = true
+
         const metadata = value.terminalMetadata.find(
           (item) => item.terminalId === terminalId
         )
+
         if (metadata) {
           observation = { ...observation, metadata }
         }
 
         const snapshotMatch = matched(value.at)
+
         if (snapshotMatch) {
           finish(snapshotMatch)
+
           return
         }
 
         observation = await inspectTerminal(terminalId, controller.signal)
+
         if (cancellation) {
           throw new Error('Terminal wait cancelled')
         }
 
         const refreshedMatch = matched(new Date().toISOString())
+
         if (refreshedMatch) {
           finish(refreshedMatch)
         }
       }
+
       const productEvent = async (event: NetworkProductEvent) => {
         if (
           event.type !== 'terminal.metadata' &&
@@ -877,6 +940,7 @@ async function waitForTerminal(
 
         if (event.type === 'terminal.metadata') {
           const { worktreeId: _worktreeId, ...metadata } = event.data
+
           if (!observation) {
             throw new CliError(
               'Treeport daemon sent invalid terminal metadata',
@@ -888,12 +952,14 @@ async function waitForTerminal(
           observation = { ...observation, metadata }
         } else {
           observation = await inspectTerminal(terminalId, controller.signal)
+
           if (cancellation) {
             throw new Error('Terminal wait cancelled')
           }
         }
 
         const result = matched(event.at)
+
         if (result) {
           finish(result)
         }
@@ -904,6 +970,7 @@ async function waitForTerminal(
         () => fail(new Error('Terminal wait cancelled')),
         { once: true }
       )
+
       const program = Effect.scoped(
         Effect.gen(function* () {
           const client = yield* RpcClient.make(TreeportRpcs)
@@ -943,6 +1010,7 @@ async function waitForTerminal(
           )
         )
       )
+
       events = Effect.runFork(program)
     })
   } catch (error) {
@@ -980,6 +1048,7 @@ async function waitForTerminal(
 
     process.off('SIGINT', interrupt)
     controller.abort()
+
     if (events) {
       Effect.runFork(Fiber.interrupt(events))
     }
@@ -999,7 +1068,9 @@ async function main(args: string[]): Promise<void> {
     (args[0] === 'launcher' && args[1] === 'add')
       ? commandArgv(args)
       : undefined
+
   let parserError = ''
+
   const program = new Command()
     .name('treeport')
     .usage('[options] [folder] [command]')
@@ -1031,10 +1102,12 @@ async function main(args: string[]): Promise<void> {
   program.action(async (folder: string | undefined) => {
     if (folder === undefined) {
       writeStdout(program.helpInformation())
+
       return
     }
 
     const absoluteFolder = path.resolve(workingDirectory, folder)
+
     const folderStatus = await fs.stat(absoluteFolder).catch((error) => {
       if (
         error instanceof Error &&
@@ -1056,6 +1129,7 @@ async function main(args: string[]): Promise<void> {
         { path: absoluteFolder }
       )
     })
+
     if (!folderStatus.isDirectory()) {
       throw new CliError(
         `Path is not a folder: ${absoluteFolder}`,
@@ -1075,6 +1149,7 @@ async function main(args: string[]): Promise<void> {
     })
 
     const lifecycle = await resolveDaemonLifecycle()
+
     if (lifecycle === 'external') {
       if (!(await daemonHealth(apiUrl))) {
         throw new CliError(
@@ -1093,12 +1168,14 @@ async function main(args: string[]): Promise<void> {
       method: 'POST',
       body: JSON.stringify({ path: canonicalFolder })
     })
+
     const targetWorktree = registered.project.worktrees
       .filter(
         (worktree) =>
           !worktree.prunable && pathContains(canonicalFolder, worktree.path)
       )
       .sort((left, right) => right.path.length - left.path.length)[0]
+
     if (!targetWorktree) {
       throw new CliError(
         `Treeport did not find a workspace containing ${canonicalFolder}.`,
@@ -1112,6 +1189,7 @@ async function main(args: string[]): Promise<void> {
     target.pathname = `/projects/${encodeURIComponent(registered.project.id)}/worktrees/${encodeURIComponent(targetWorktree.id)}`
     target.search = ''
     target.hash = ''
+
     // ponytail: Managed commands assume a client shows the source terminal. Add request acknowledgements if background commands must open another client.
     const opened = contextTerminalId
       ? await request(
@@ -1131,6 +1209,7 @@ async function main(args: string[]): Promise<void> {
 
           throw error
         })
+
     const result = {
       projectId: registered.project.id,
       worktreeId: targetWorktree.id,
@@ -1139,6 +1218,7 @@ async function main(args: string[]): Promise<void> {
       url: target.href,
       client: opened.client
     }
+
     print(
       result,
       () =>
@@ -1153,8 +1233,10 @@ async function main(args: string[]): Promise<void> {
     .option('--port <port>', 'listener port')
     .option('--foreground', 'run in the foreground')
     .option('--json', 'emit machine-readable JSON')
+
   startCommand.action(async () => {
     const lifecycle = await resolveDaemonLifecycle()
+
     if (lifecycle === 'external') {
       throw new CliError(
         'Cannot run `treeport start` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
@@ -1168,6 +1250,7 @@ async function main(args: string[]): Promise<void> {
       port?: string
       foreground?: boolean
     }>()
+
     if (lifecycle === 'service') {
       if (options.foreground || options.host || options.port) {
         throw new CliError(
@@ -1179,6 +1262,7 @@ async function main(args: string[]): Promise<void> {
 
       const result = await serviceStart()
       print(result, () => formatServiceStatus(result.status, output))
+
       if (result.administratorCommand || !result.status.healthy) {
         requestedExitCode = 1
       }
@@ -1188,6 +1272,7 @@ async function main(args: string[]): Promise<void> {
 
     const port = options.port === undefined ? undefined : Number(options.port)
     const daemonOptions: Parameters<typeof daemonUp>[0] = {}
+
     if (options.host !== undefined) {
       daemonOptions.host = options.host
     }
@@ -1202,6 +1287,7 @@ async function main(args: string[]): Promise<void> {
     }
 
     const result = await daemonUp(daemonOptions)
+
     if (options.foreground) {
       return
     }
@@ -1223,8 +1309,10 @@ async function main(args: string[]): Promise<void> {
     )
     .option('--force', 'confirm termination of all terminals')
     .option('--json', 'emit machine-readable JSON')
+
   stopCommand.action(async () => {
     const lifecycle = await resolveDaemonLifecycle()
+
     if (lifecycle === 'external') {
       throw new CliError(
         'Cannot run `treeport stop` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
@@ -1237,6 +1325,7 @@ async function main(args: string[]): Promise<void> {
       terminateTerminals?: boolean
       force?: boolean
     }>()
+
     if (options.terminateTerminals && !options.force) {
       throw new CliError(
         'Re-run with --terminate-terminals --force to confirm termination of every terminal.',
@@ -1255,6 +1344,7 @@ async function main(args: string[]): Promise<void> {
     if (lifecycle === 'service') {
       const result = await serviceStop()
       print(result, () => formatServiceStatus(result.status, output))
+
       if (result.administratorCommand) {
         requestedExitCode = 1
       }
@@ -1276,6 +1366,7 @@ async function main(args: string[]): Promise<void> {
   const serviceCommand = program
     .command('service')
     .description('Manage opt-in OS service supervision')
+
   serviceCommand.action(() => {
     writeStdout(serviceCommand.helpInformation())
   })
@@ -1288,10 +1379,12 @@ async function main(args: string[]): Promise<void> {
       'use advanced macOS startup before login (requires an administrator)'
     )
     .option('--json', 'emit machine-readable JSON')
+
   serviceEnableCommand.action(async () => {
     const options = serviceEnableCommand.opts<{ headless?: boolean }>()
     const result = await serviceEnable(options.headless ? 'headless' : 'user')
     print(result, () => formatServiceStatus(result.status, output))
+
     if (result.status.state === 'action_required') {
       requestedExitCode = 1
     }
@@ -1301,9 +1394,11 @@ async function main(args: string[]): Promise<void> {
     .command('status')
     .description('Show OS service supervision status')
     .option('--json', 'emit machine-readable JSON')
+
   serviceStatusCommand.action(async () => {
     const result = await serviceStatus()
     print(result, () => formatServiceStatus(result, output))
+
     if (
       !['disabled', 'healthy', 'stopped'].includes(result.state) ||
       !result.supported
@@ -1316,9 +1411,11 @@ async function main(args: string[]): Promise<void> {
     .command('disable')
     .description('Stop and unregister OS service supervision')
     .option('--json', 'emit machine-readable JSON')
+
   serviceDisableCommand.action(async () => {
     const result = await serviceDisable()
     print(result, () => formatServiceStatus(result.status, output))
+
     if (result.administratorCommand || result.status.state !== 'disabled') {
       requestedExitCode = 1
     }
@@ -1331,10 +1428,12 @@ async function main(args: string[]): Promise<void> {
   const serviceApplyCommand = serviceCommand
     .command('apply', { hidden: true })
     .requiredOption('--request <absolute-path>', 'prepared request')
+
   serviceApplyCommand.action(async () => {
     const { request: requestPath } = serviceApplyCommand.opts<{
       request: string
     }>()
+
     const result = await serviceApply(requestPath)
     print(result, () =>
       output.summary(
@@ -1347,6 +1446,7 @@ async function main(args: string[]): Promise<void> {
   const remoteCommand = program
     .command('remote')
     .description('Expose Treeport privately through Tailscale Serve')
+
   remoteCommand.action(() => {
     writeStdout(remoteCommand.helpInformation())
   })
@@ -1356,8 +1456,10 @@ async function main(args: string[]): Promise<void> {
     .description('Enable private HTTPS access through Tailscale')
     .option('--port <port>', 'Tailscale HTTPS port (default: 8733)')
     .option('--json', 'emit machine-readable JSON')
+
   remoteEnableCommand.action(async () => {
     const lifecycle = await resolveDaemonLifecycle()
+
     if (lifecycle === 'external') {
       throw new CliError(
         'Cannot run `treeport remote enable` because the daemon lifecycle is externally managed. Configure remote access through the process that started Treeport instead.',
@@ -1368,6 +1470,7 @@ async function main(args: string[]): Promise<void> {
 
     const options = remoteEnableCommand.opts<{ port?: string }>()
     const port = options.port === undefined ? undefined : Number(options.port)
+
     if (
       port !== undefined &&
       (!Number.isInteger(port) || port < 1 || port > 65_535)
@@ -1377,7 +1480,9 @@ async function main(args: string[]): Promise<void> {
 
     const serviceDaemon =
       lifecycle === 'service' ? await ensureServiceDaemon() : undefined
+
     const remoteOptions: Parameters<typeof enableTailscaleRemote>[0] = {}
+
     if (port !== undefined) {
       remoteOptions.port = port
     }
@@ -1403,6 +1508,7 @@ async function main(args: string[]): Promise<void> {
     .command('status')
     .description('Show Tailscale remote access status')
     .option('--json', 'emit machine-readable JSON')
+
   remoteStatusCommand.action(async () => {
     const result = await tailscaleRemoteStatus()
     print(result, () => {
@@ -1430,6 +1536,7 @@ async function main(args: string[]): Promise<void> {
     .command('disable')
     .description('Disable Treeport Tailscale remote access')
     .option('--json', 'emit machine-readable JSON')
+
   remoteDisableCommand.action(async () => {
     const result = await disableTailscaleRemote()
     print(result, () => {
@@ -1450,20 +1557,26 @@ async function main(args: string[]): Promise<void> {
     .command('status')
     .description('Show local daemon status')
     .option('--json', 'emit machine-readable JSON')
+
   statusCommand.action(async () => {
     const [cliVersion, status] = await Promise.all([
       treeportVersion(),
       daemonStatus()
     ])
+
     const supervision = (await serviceInstalled())
       ? await serviceStatus()
       : null
+
     const observed = supervision?.daemon ?? status
+
     const daemonVersion =
       observed.running && observed.verified
         ? (observed.health?.version ?? null)
         : null
+
     const projectList = status.verified ? await projects() : []
+
     const result = {
       ...status,
       cliVersion,
@@ -1485,8 +1598,10 @@ async function main(args: string[]): Promise<void> {
         0
       )
     }
+
     print(result, () => {
       const healthy = observed.running && observed.verified
+
       return output.blocks(
         output.heading('Treeport status'),
         output.summary(
@@ -1550,8 +1665,10 @@ async function main(args: string[]): Promise<void> {
       '100'
     )
     .option('--service', 'show service-manager output instead of daemon logs')
+
   logsCommand.action(async () => {
     const lines = Number(logsCommand.opts<{ lines: string }>().lines)
+
     if (!Number.isInteger(lines) || lines < 1 || lines > 10_000) {
       throw new CliError('--lines must be an integer between 1 and 10000', 2)
     }
@@ -1561,6 +1678,7 @@ async function main(args: string[]): Promise<void> {
       configuredApiUrl !== process.env.TREEPORT_MANAGED_API_URL?.trim()
         ? apiUrl
         : undefined
+
     writeStdout(
       logsCommand.opts<{ service?: boolean }>().service
         ? await readServiceLogs(lines, targetApiUrl)
@@ -1572,6 +1690,7 @@ async function main(args: string[]): Promise<void> {
     .command('doctor')
     .description('Diagnose local requirements and paths')
     .option('--json', 'emit machine-readable JSON')
+
   doctorCommand.action(async () => {
     const checks = [...(await runDoctor()), await serviceDoctorCheck()]
     print(checks, () =>
@@ -1595,6 +1714,7 @@ async function main(args: string[]): Promise<void> {
         )
       )
     )
+
     if (checks.some((check) => !check.ok)) {
       requestedExitCode = 1
     }
@@ -1604,12 +1724,15 @@ async function main(args: string[]): Promise<void> {
     .command('version')
     .description('Show CLI and daemon versions')
     .option('--json', 'emit machine-readable JSON')
+
   versionCommand.action(async () => {
     const [cli, status] = await Promise.all([treeportVersion(), daemonStatus()])
+
     const result = {
       cli,
       daemon: status.verified ? (status.health?.version ?? null) : null
     }
+
     print(result, () =>
       output.blocks(
         output.heading('Treeport version'),
@@ -1630,11 +1753,13 @@ async function main(args: string[]): Promise<void> {
   const skillsCommand = program
     .command('skills')
     .description('Print the Treeport usage guide for AI agents')
+
   skillsCommand.action(async () => {
     const skill = await fs.readFile(
       await resolvePackagePath('skills', 'treeport', 'SKILL.md'),
       'utf8'
     )
+
     writeStdout(
       (await resolveDaemonLifecycle()) === 'external'
         ? skill.replace(
@@ -1649,22 +1774,26 @@ async function main(args: string[]): Promise<void> {
     .command('context')
     .description('Show the current Treeport-managed terminal context')
     .option('--json', 'emit machine-readable JSON')
+
   contextCommand.action(async () => {
     const projectId = contextProjectId
     const worktreeId = contextWorktreeId
     const terminalId = contextTerminalId
     const presentIds = [projectId, worktreeId, terminalId].filter(Boolean)
+
     if (!presentIds.length) {
       const context: TreeportContext = {
         managed: false,
         reason: 'outside_treeport'
       }
+
       print(context, () =>
         output.blocks(
           output.heading('Treeport context'),
           'Not running in a Treeport-managed terminal.'
         )
       )
+
       return
     }
 
@@ -1674,6 +1803,7 @@ async function main(args: string[]): Promise<void> {
       ...(!worktreeId ? [`${contextPrefix}_WORKTREE_ID`] : []),
       ...(!terminalId ? [`${contextPrefix}_TERMINAL_ID`] : [])
     ]
+
     if (missing.length) {
       throw new CliError(
         `Incomplete Treeport context; missing ${missing.join(', ')}`,
@@ -1689,9 +1819,11 @@ async function main(args: string[]): Promise<void> {
         projectResponseSchema
       )
     ).project
+
     const worktree = project.worktrees.find(
       (candidate) => candidate.id === worktreeId
     )
+
     if (!worktree) {
       throw new CliError(
         'Treeport context tree does not belong to the current project',
@@ -1704,6 +1836,7 @@ async function main(args: string[]): Promise<void> {
     const terminal = worktree.terminals.find(
       (candidate) => candidate.id === terminalId
     )
+
     if (!terminal) {
       throw new CliError(
         'Treeport context terminal does not belong to the current tree',
@@ -1745,6 +1878,7 @@ async function main(args: string[]): Promise<void> {
         exitCode: terminal.exitCode
       }
     }
+
     print(context, () =>
       output.blocks(
         output.heading('Treeport context'),
@@ -1777,6 +1911,7 @@ async function main(args: string[]): Promise<void> {
   const browserCommand = program
     .command('browser')
     .description('Manage Browser and its hosted runtime')
+
   browserCommand.action(() => {
     writeStdout(browserCommand.helpInformation())
   })
@@ -1790,10 +1925,12 @@ async function main(args: string[]): Promise<void> {
     )
     .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
     .option('--json', 'emit machine-readable JSON')
+
   browserOpenCommand.action(async (url?: string) => {
     const worktree = await resolveWorktree(
       browserOpenCommand.opts<{ worktree: string }>().worktree
     )
+
     const body = {
       url,
       sourceTerminalId:
@@ -1805,10 +1942,12 @@ async function main(args: string[]): Promise<void> {
       openBrowserAppResponseSchema,
       { method: 'POST', body: JSON.stringify(body) }
     )
+
     const output = {
       ...result,
       url: appUrl(worktree, result.app.id)
     }
+
     print(
       output,
       () => `Opened ${result.app.title} (${result.app.id})\n${output.url}`
@@ -1819,6 +1958,7 @@ async function main(args: string[]): Promise<void> {
     .command('install')
     .description('Show native browser installation guidance')
     .option('--json', 'emit machine-readable JSON')
+
   browserInstallCommand.action(async () => {
     const result = await request(
       '/api/browser/install',
@@ -1826,6 +1966,7 @@ async function main(args: string[]): Promise<void> {
       { method: 'POST' },
       660_000
     )
+
     print(result, () => result.message)
   })
 
@@ -1833,11 +1974,13 @@ async function main(args: string[]): Promise<void> {
     .command('status')
     .description('Show hosted browser installation status')
     .option('--json', 'emit machine-readable JSON')
+
   browserStatusCommand.action(async () => {
     const result = await request(
       '/api/browser/status',
       browserInstallStatusSchema
     )
+
     print(
       result,
       () =>
@@ -1849,6 +1992,7 @@ async function main(args: string[]): Promise<void> {
     .command('list')
     .description('List open Browser sessions')
     .option('--json', 'emit machine-readable JSON')
+
   browserListCommand.action(async () => {
     const apps = (await projects()).flatMap((project) =>
       project.worktrees.flatMap((worktree) =>
@@ -1864,6 +2008,7 @@ async function main(args: string[]): Promise<void> {
           }))
       )
     )
+
     print(apps, () =>
       apps.length
         ? apps
@@ -1890,6 +2035,7 @@ async function main(args: string[]): Promise<void> {
     .description('Capture an accessibility snapshot of the hosted page')
     .option('--app <app-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
+
   browserSnapshotCommand.action(async () =>
     printAgentResult(
       'snapshot',
@@ -1904,6 +2050,7 @@ async function main(args: string[]): Promise<void> {
     .argument('<target>', 'Playwright element reference or selector')
     .option('--app <app-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
+
   browserClickCommand.action(async (target: string) =>
     printAgentResult(
       'click',
@@ -1919,6 +2066,7 @@ async function main(args: string[]): Promise<void> {
     .argument('<text>', 'text to enter')
     .option('--app <app-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
+
   browserFillCommand.action(async (target: string, text: string) =>
     printAgentResult(
       'fill',
@@ -1933,6 +2081,7 @@ async function main(args: string[]): Promise<void> {
     .argument('<key>', 'Playwright key name')
     .option('--app <app-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
+
   browserPressCommand.action(async (key: string) =>
     printAgentResult(
       'press',
@@ -1950,6 +2099,7 @@ async function main(args: string[]): Promise<void> {
     )
     .option('--app <app-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
+
   browserGotoCommand.action(async (url: string) =>
     printAgentResult(
       'goto',
@@ -1964,6 +2114,7 @@ async function main(args: string[]): Promise<void> {
     .argument('[level]', 'minimum console level')
     .option('--app <app-id>', 'Browser ID')
     .option('--json', 'emit machine-readable JSON')
+
   browserConsoleCommand.action(async (level?: string) =>
     printAgentResult(
       'console',
@@ -1984,6 +2135,7 @@ async function main(args: string[]): Promise<void> {
       .description(description)
       .option('--app <app-id>', 'Browser ID')
       .option('--json', 'emit machine-readable JSON')
+
     command.action(async () =>
       printAgentResult(agentName, [], command.opts<{ app?: string }>().app)
     )
@@ -1998,11 +2150,14 @@ async function main(args: string[]): Promise<void> {
       'configure the registered project containing the current directory'
     )
     .option('--json', 'emit machine-readable JSON')
+
   installCommand.action(async (source: string) => {
     const options = installCommand.opts<{ local?: boolean }>()
+
     const body: PackageMutationBody = {
       source: await packageSource(source)
     }
+
     if (options.local) {
       body.projectId = await localPackageProjectId()
     }
@@ -2013,6 +2168,7 @@ async function main(args: string[]): Promise<void> {
         body: JSON.stringify(body)
       })
     ).result
+
     print(
       result,
       () =>
@@ -2030,11 +2186,14 @@ async function main(args: string[]): Promise<void> {
       'remove from the registered project containing the current directory'
     )
     .option('--json', 'emit machine-readable JSON')
+
   removePackageCommand.action(async (source: string) => {
     const options = removePackageCommand.opts<{ local?: boolean }>()
+
     const body: PackageMutationBody = {
       source: await packageSource(source)
     }
+
     if (options.local) {
       body.projectId = await localPackageProjectId()
     }
@@ -2045,6 +2204,7 @@ async function main(args: string[]): Promise<void> {
         body: JSON.stringify(body)
       })
     ).result
+
     print(result, () => `Removed ${result.source}`)
   })
 
@@ -2052,6 +2212,7 @@ async function main(args: string[]): Promise<void> {
     .command('list')
     .description('List configured Treeport packages')
     .option('--json', 'emit machine-readable JSON')
+
   listPackagesCommand.action(async () => {
     const result = await request('/api/packages', packageListingResponseSchema)
     print(result, () => {
@@ -2060,14 +2221,17 @@ async function main(args: string[]): Promise<void> {
           pkg.scope === 'global'
             ? 'global'
             : `project:${pkg.projectName ?? pkg.projectId}`
+
         return `${scope}\t${pkg.source}\t${pkg.resources.webApps} web apps, ${pkg.resources.launchers} launchers`
       })
+
       lines.push(
         ...result.diagnostics.map(
           (item) =>
             `error\t${item.scope}\t${item.source ?? item.path ?? 'settings'}\t${item.message}`
         )
       )
+
       return lines.join('\n')
     })
   })
@@ -2080,12 +2244,14 @@ async function main(args: string[]): Promise<void> {
     .option('-y, --yes', 'approve the Treeport self-update without prompting')
     .option('--start', 'start Treeport after a self-update if it was stopped')
     .option('--json', 'emit machine-readable JSON')
+
   updatePackagesCommand.action(async (source: string | undefined) => {
     const options = updatePackagesCommand.opts<{
       packages?: boolean
       yes?: boolean
       start?: boolean
     }>()
+
     if (source && options.packages) {
       throw new CliError('Specify a package source or --packages, not both.', 2)
     }
@@ -2111,6 +2277,7 @@ async function main(args: string[]): Promise<void> {
         yes: options.yes ?? false,
         start: options.start ?? false
       }
+
       if (
         !jsonOutput &&
         process.stdin.isTTY &&
@@ -2141,11 +2308,13 @@ async function main(args: string[]): Promise<void> {
       }
 
       const result = await runLocalUpdate(selfUpdateOptions)
+
       if (updateProgressShown) {
         writeStderr('\n')
       }
 
       print(result, () => formatLocalUpdateResult(result, output))
+
       return
     }
 
@@ -2157,6 +2326,7 @@ async function main(args: string[]): Promise<void> {
         )
       })
     ).results
+
     print(results, () =>
       output.blocks(
         output.heading('Treeport package update'),
@@ -2182,8 +2352,10 @@ async function main(args: string[]): Promise<void> {
       'reload only the registered project containing the current directory'
     )
     .option('--json', 'emit machine-readable JSON')
+
   reloadCommand.action(async () => {
     const options = reloadCommand.opts<{ local?: boolean }>()
+
     const result = await request(
       '/api/packages/reload',
       packageReloadResponseSchema,
@@ -2194,6 +2366,7 @@ async function main(args: string[]): Promise<void> {
         )
       }
     )
+
     print(result, () => {
       const lines = [
         ...result.results.map(
@@ -2205,6 +2378,7 @@ async function main(args: string[]): Promise<void> {
             `Error: ${item.source ?? item.path ?? item.scope}: ${item.message}`
         )
       ]
+
       return lines.join('\n')
     })
   })
@@ -2212,6 +2386,7 @@ async function main(args: string[]): Promise<void> {
   const projectCommand = program
     .command('project')
     .description('Register and list projects')
+
   projectCommand.action(() => {
     throw new CliError(projectCommand.helpInformation(), 2)
   })
@@ -2221,11 +2396,13 @@ async function main(args: string[]): Promise<void> {
     .description('Register a folder or Git repository')
     .argument('<path>', 'folder path')
     .option('--json', 'emit machine-readable JSON')
+
   projectAddCommand.action(async (repository: string) => {
     const body = await request('/api/projects', projectResponseSchema, {
       method: 'POST',
       body: JSON.stringify({ path: await canonical(repository) })
     })
+
     print(
       body.project,
       () =>
@@ -2237,6 +2414,7 @@ async function main(args: string[]): Promise<void> {
     .command('list')
     .description('List registered projects')
     .option('--json', 'emit machine-readable JSON')
+
   projectListCommand.action(async () => {
     const list = await projects()
     print(list, () =>
@@ -2252,6 +2430,7 @@ async function main(args: string[]): Promise<void> {
   const worktreeCommand = program
     .command('worktree')
     .description('List, create, and remove trees')
+
   worktreeCommand.action(() => {
     throw new CliError(worktreeCommand.helpInformation(), 2)
   })
@@ -2261,13 +2440,16 @@ async function main(args: string[]): Promise<void> {
     .description('List discovered trees')
     .option('--project <id-or-path>', 'limit results to a project')
     .option('--json', 'emit machine-readable JSON')
+
   worktreeListCommand.action(async () => {
     const { project: projectIdentifier } = worktreeListCommand.opts<{
       project?: string
     }>()
+
     const list = projectIdentifier
       ? (await resolveProject(projectIdentifier)).worktrees
       : (await projects()).flatMap((project) => project.worktrees)
+
     print(list, () =>
       list
         .map(
@@ -2288,20 +2470,25 @@ async function main(args: string[]): Promise<void> {
     .requiredOption('--name <name>', 'Tree name')
     .option('--from-current', 'base the tree on the current tree')
     .option('--json', 'emit machine-readable JSON')
+
   worktreeCreateCommand.action(async () => {
     const options = worktreeCreateCommand.opts<{
       project?: string
       name: string
       fromCurrent?: boolean
     }>()
+
     const project = await resolveProject(options.project)
+
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
+
     const request: CreateOperationRequest = {
       name: options.name,
       base: options.fromCurrent ? 'current' : 'default'
     }
+
     if (sourceWorktreeId) {
       request.sourceWorktreeId = sourceWorktreeId
     }
@@ -2321,16 +2508,19 @@ async function main(args: string[]): Promise<void> {
     .option('--worktree <id-or-path-or-dot>', 'tree to title', '.')
     .option('--clear', 'remove the title and show the tree name again')
     .option('--json', 'emit machine-readable JSON')
+
   worktreeTitleCommand.action(async (title: string | undefined) => {
     const options = worktreeTitleCommand.opts<{
       worktree: string
       clear?: boolean
     }>()
+
     if (!options.clear && !title?.trim()) {
       throw new CliError('Expected a title, or --clear', 2)
     }
 
     const worktree = await resolveWorktree(options.worktree)
+
     const result = await request(
       `/api/worktrees/${encodeURIComponent(worktree.id)}`,
       worktreeResponseSchema,
@@ -2339,6 +2529,7 @@ async function main(args: string[]): Promise<void> {
         body: JSON.stringify({ title: options.clear ? null : title })
       }
     )
+
     print(result.worktree, () =>
       result.worktree.title
         ? `Titled ${result.worktree.name}: ${result.worktree.title}`
@@ -2366,6 +2557,7 @@ async function main(args: string[]): Promise<void> {
     .option('--worktree <id-or-path-or-dot>', 'tree to decorate', '.')
     .option('--clear', 'remove the decoration')
     .option('--json', 'emit machine-readable JSON')
+
   worktreeDecorationCommand.action(
     async (key: string, text: string | undefined) => {
       const options = worktreeDecorationCommand.opts<{
@@ -2376,6 +2568,7 @@ async function main(args: string[]): Promise<void> {
         worktree: string
         clear?: boolean
       }>()
+
       if (!options.clear && (!text?.trim() || !options.title?.trim())) {
         throw new CliError(
           'Expected decoration text and --title, or --clear',
@@ -2384,6 +2577,7 @@ async function main(args: string[]): Promise<void> {
       }
 
       const worktree = await resolveWorktree(options.worktree)
+
       const result = await request(
         `/api/worktrees/${encodeURIComponent(worktree.id)}/decorations/${encodeURIComponent(key)}`,
         worktreeResponseSchema,
@@ -2402,6 +2596,7 @@ async function main(args: string[]): Promise<void> {
               })
             }
       )
+
       print(result.worktree, () =>
         options.clear
           ? `Cleared decoration ${key} on ${result.worktree.name}`
@@ -2417,19 +2612,23 @@ async function main(args: string[]): Promise<void> {
     .option('--force', 'confirm destructive removal warnings')
     .option('--skip-cleanup', 'remove without configured project cleanup')
     .option('--json', 'emit machine-readable JSON')
+
   worktreeRemoveCommand.action(async (identifier: string) => {
     const { force: confirmed, skipCleanup: requestedSkipCleanup } =
       worktreeRemoveCommand.opts<{
         force?: boolean
         skipCleanup?: boolean
       }>()
+
     const worktree = await resolveWorktree(identifier)
+
     const preview = (
       await request(
         `/api/worktrees/${worktree.id}/remove-preview`,
         removePreviewResponseSchema
       )
     ).preview
+
     if (!preview.eligible) {
       throw new CliError(preview.reasons.join('\n'), 5)
     }
@@ -2443,6 +2642,7 @@ async function main(args: string[]): Promise<void> {
 
     const skipCleanup =
       Boolean(requestedSkipCleanup) && preview.cleanup.commands.length > 0
+
     if (skipCleanup && !confirmed) {
       throw new CliError(
         'Skipping project cleanup can leave project resources behind.\nRe-run with --force --skip-cleanup to confirm removal.',
@@ -2464,7 +2664,9 @@ async function main(args: string[]): Promise<void> {
         }
       )
     ).operation
+
     const displayedCleanupCommands = new Set<number>()
+
     const displayFinishedCleanup = () => {
       if (jsonOutput || operation.kind !== 'remove') {
         return
@@ -2479,6 +2681,7 @@ async function main(args: string[]): Promise<void> {
         }
 
         displayedCleanupCommands.add(index)
+
         const lines = [
           `Cleanup: ${command.name}${command.status === 'failed' ? ' (failed)' : ''}`
         ]
@@ -2498,7 +2701,9 @@ async function main(args: string[]): Promise<void> {
         writeStdout(`${lines.join('\n')}\n`)
       })
     }
+
     displayFinishedCleanup()
+
     while (operation.status === 'pending' || operation.status === 'running') {
       await new Promise((resolve) => setTimeout(resolve, 100))
       operation = (
@@ -2509,6 +2714,7 @@ async function main(args: string[]): Promise<void> {
       ).operation
       displayFinishedCleanup()
     }
+
     if (operation.status === 'failed') {
       const cleanup =
         operation.kind === 'remove'
@@ -2516,6 +2722,7 @@ async function main(args: string[]): Promise<void> {
               (command) => command.status === 'failed'
             )
           : null
+
       throw new CliError(
         operation.error ?? 'Tree removal failed; Git kept the tree.',
         5,
@@ -2534,6 +2741,7 @@ async function main(args: string[]): Promise<void> {
 
     print(operation.result, () => {
       const warning = operation.result?.cleanup.warning
+
       return `Removed tree ${worktree.name} (${worktree.id})${warning ? `\nWarning: ${warning}` : ''}`
     })
   })
@@ -2541,6 +2749,7 @@ async function main(args: string[]): Promise<void> {
   const webAppCommand = program
     .command('app')
     .description('Open persistent web apps')
+
   webAppCommand.action(() => {
     throw new CliError(webAppCommand.helpInformation(), 2)
   })
@@ -2553,14 +2762,17 @@ async function main(args: string[]): Promise<void> {
     .option('--input <json>', 'structured app input as a JSON object')
     .option('--new', 'create a separate app instance')
     .option('--json', 'emit machine-readable JSON')
+
   webAppOpenCommand.action(async (identifier: string) => {
     const options = webAppOpenCommand.opts<{
       worktree: string
       input?: string
       new?: boolean
     }>()
+
     const worktree = await resolveWorktree(options.worktree)
     const definition = await webAppDefinition(worktree.id, identifier)
+
     const result = await request(
       `/api/worktrees/${encodeURIComponent(worktree.id)}/apps/open`,
       openWebAppResponseSchema,
@@ -2575,10 +2787,12 @@ async function main(args: string[]): Promise<void> {
         })
       }
     )
+
     const output = {
       ...result,
       url: appUrl(worktree, result.app.id)
     }
+
     print(
       output,
       () =>
@@ -2589,6 +2803,7 @@ async function main(args: string[]): Promise<void> {
   const terminalCommand = program
     .command('terminal')
     .description('Manage persistent tree terminals')
+
   terminalCommand.action(() => {
     throw new CliError(terminalCommand.helpInformation(), 2)
   })
@@ -2598,15 +2813,18 @@ async function main(args: string[]): Promise<void> {
     .description('List terminals')
     .option('--worktree <id-or-path>', 'limit results to a tree')
     .option('--json', 'emit machine-readable JSON')
+
   terminalListCommand.action(async () => {
     const { worktree: identifier } = terminalListCommand.opts<{
       worktree?: string
     }>()
+
     const list: TerminalRecord[] = identifier
       ? (await resolveWorktree(identifier)).terminals
       : (await projects()).flatMap((project) =>
           project.worktrees.flatMap((worktree) => worktree.terminals)
         )
+
     print(list, () =>
       list
         .map(
@@ -2632,16 +2850,20 @@ async function main(args: string[]): Promise<void> {
       'after',
       '\nCommand arguments may be passed after --.\nAuto-close removes terminal output.\n'
     )
+
   terminalCreateCommand.action(async () => {
     const options = terminalCreateCommand.opts<{
       worktree: string
       name: string
       closeOnExit?: boolean
     }>()
+
     const worktree = await resolveWorktree(options.worktree)
     const body: TerminalCreateBody = { name: options.name }
+
     if (argv) {
       body.argv = argv
+
       if (!options.closeOnExit) {
         body.returnToShell = true
       }
@@ -2656,6 +2878,7 @@ async function main(args: string[]): Promise<void> {
       terminalResponseSchema,
       { method: 'POST', body: JSON.stringify(body) }
     )
+
     print(
       result.terminal,
       () => `Created ${result.terminal.name} (${result.terminal.id})`
@@ -2667,24 +2890,29 @@ async function main(args: string[]): Promise<void> {
     .description('Inspect terminal status and runtime metadata')
     .argument('<terminal-id-or-dot>', 'terminal to inspect')
     .option('--json', 'emit machine-readable JSON')
+
   terminalInspectCommand.action(async (identifier: string) => {
     const observation = await inspectTerminal(resolveTerminalId(identifier))
     print(observation, () => {
       const { terminal, metadata } = observation
       const { activity, attention } = metadata
+
       const details = [
         activity.kind,
         activity.progress === null ? null : `${activity.progress}%`,
         activity.message
       ].filter(Boolean)
+
       const status =
         terminal.status === 'exited'
           ? `exited${terminal.exitCode === null ? '' : ` (${terminal.exitCode})`}`
           : terminal.status
+
       const command =
         terminal.commandExitCode == null
           ? ''
           : `\nCommand:  exited (${terminal.commandExitCode})`
+
       return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}${command}\nTitle:    ${metadata.title ?? '—'}\nActivity: ${activity.state}${details.length ? ` (${details.join(', ')})` : ''}\nSince:    ${activity.since ?? '—'}\nAttention: ${attention ? `${attention.reason} at ${attention.at} (#${attention.sequence}${attention.unread ? ', unread' : ''})` : '—'}`
     })
   })
@@ -2695,19 +2923,24 @@ async function main(args: string[]): Promise<void> {
     .argument('<terminal-id-or-dot>', 'terminal to capture')
     .option('--lines <count>', 'number of lines to capture')
     .option('--json', 'emit machine-readable JSON')
+
   terminalCaptureCommand.action(async (identifier: string) => {
     const { lines: rawLines } = terminalCaptureCommand.opts<{
       lines?: string
     }>()
+
     const lines =
       rawLines === undefined
         ? TERMINAL_CAPTURE_DEFAULT_LINES
         : parseCaptureLines(rawLines)
+
     const terminalId = resolveTerminalId(identifier)
+
     const capture = await request(
       `/api/terminals/${encodeURIComponent(terminalId)}/capture?lines=${lines}`,
       terminalCaptureResponseSchema
     )
+
     if (jsonOutput) {
       print(capture)
     } else {
@@ -2729,11 +2962,13 @@ async function main(args: string[]): Promise<void> {
     )
     .option('--timeout <duration>', 'maximum wait, such as 30s or 5m')
     .option('--json', 'emit machine-readable JSON')
+
   terminalWaitCommand.action(async (identifier: string) => {
     const options = terminalWaitCommand.opts<{
       until: string
       timeout?: string
     }>()
+
     if (!['idle', 'working', 'attention', 'exit'].includes(options.until)) {
       throw new CliError(
         '--until must be one of idle, working, attention, or exit',
@@ -2747,6 +2982,7 @@ async function main(args: string[]): Promise<void> {
       options.until as WaitCondition,
       options.timeout === undefined ? undefined : parseDuration(options.timeout)
     )
+
     print(
       result,
       () =>
@@ -2759,6 +2995,7 @@ async function main(args: string[]): Promise<void> {
     .description('Delete a terminal')
     .argument('<terminal-id>', 'terminal to delete')
     .option('--json', 'emit machine-readable JSON')
+
   terminalDeleteCommand.action(async (terminalId: string) => {
     await request(`/api/terminals/${terminalId}`, okResponseSchema, {
       method: 'DELETE'
@@ -2779,6 +3016,7 @@ async function main(args: string[]): Promise<void> {
     .option('--from-current', 'base the tree on the current tree')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('after', '\nCommand arguments may be passed after --.\n')
+
   spawnCommand.action(async () => {
     const options = spawnCommand.opts<{
       project?: string
@@ -2786,13 +3024,17 @@ async function main(args: string[]): Promise<void> {
       name: string
       fromCurrent?: boolean
     }>()
+
     const project = await resolveProject(options.project)
+
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
+
     const initialTerminal: NonNullable<
       CreateOperationRequest['initialTerminal']
     > = { name: options.name }
+
     if (argv) {
       initialTerminal.argv = argv
     }
@@ -2802,6 +3044,7 @@ async function main(args: string[]): Promise<void> {
       base: options.fromCurrent ? 'current' : 'default',
       initialTerminal
     }
+
     if (sourceWorktreeId) {
       request.sourceWorktreeId = sourceWorktreeId
     }
@@ -2817,6 +3060,7 @@ async function main(args: string[]): Promise<void> {
   const launcherCommand = program
     .command('launcher')
     .description('List, add, and remove launchers')
+
   launcherCommand.action(() => {
     throw new CliError(launcherCommand.helpInformation(), 2)
   })
@@ -2829,18 +3073,22 @@ async function main(args: string[]): Promise<void> {
       'include repository and package launchers of a tree (default: current tree)'
     )
     .option('--json', 'emit machine-readable JSON')
+
   launcherListCommand.action(async () => {
     const { worktree: identifier } = launcherListCommand.opts<{
       worktree?: string
     }>()
+
     const worktree =
       identifier === undefined
         ? await resolveWorktree('.').catch(() => null)
         : await resolveWorktree(identifier)
+
     const listing = await request(
       `/api/launcher-definitions${worktree ? `?worktreeId=${encodeURIComponent(worktree.id)}` : ''}`,
       launcherDefinitionListingSchema
     )
+
     print(listing, () =>
       [
         ...listing.definitions.map((launcher) => {
@@ -2848,6 +3096,7 @@ async function main(args: string[]): Promise<void> {
             ...launcher.args,
             ...(launcher.treeTitle?.args ?? [])
           ])
+
           return `${launcher.id}\t${launcher.name}\t${launcher.shellCommand ?? JSON.stringify([launcher.executable, ...launcher.args])}${inputs.length ? `\tinputs: ${inputs.join(', ')}` : ''}${launcher.treeTitle ? `\ttree title: ${JSON.stringify([launcher.treeTitle.executable, ...launcher.treeTitle.args])}` : ''}`
         }),
         ...listing.diagnostics.map(
@@ -2876,6 +3125,7 @@ async function main(args: string[]): Promise<void> {
       'after',
       '\nWrite ${name} inside an argument to accept an input. An argument that is\nexactly one input is omitted when that input is empty. The tree title\ncommand runs after a new tree starts and can use the same inputs.\n\n  treeport launcher add --name Pi -- pi \'${prompt}\'\n  treeport launcher add --name Claude \\\n    --tree-title \'["claude","-p","Reply with a 3-5 word title for: ${task}"]\' \\\n    -- claude \'${task}\'\n'
     )
+
   launcherAddCommand.action(async () => {
     const options = launcherAddCommand.opts<{
       name: string
@@ -2883,6 +3133,7 @@ async function main(args: string[]): Promise<void> {
       closeOnSuccess?: boolean
       treeTitle?: string
     }>()
+
     if (!argv) {
       throw new CliError('Expected a command after --', 2)
     }
@@ -2896,6 +3147,7 @@ async function main(args: string[]): Promise<void> {
             ),
             options.treeTitle
           )
+
     if (options.treeTitle !== undefined && !treeTitleArgv) {
       throw new CliError(
         '--tree-title must be a JSON array such as ["claude","-p","Title for: ${task}"]',
@@ -2905,6 +3157,7 @@ async function main(args: string[]): Promise<void> {
 
     const [executable = '', ...args] = argv
     const [treeTitleExecutable = '', ...treeTitleArgs] = treeTitleArgv ?? []
+
     const launcher = decodeUnknownOrNull(repositoryLauncherSchema, {
       name: options.name,
       executable,
@@ -2914,6 +3167,7 @@ async function main(args: string[]): Promise<void> {
         ? { executable: treeTitleExecutable, args: treeTitleArgs }
         : null
     })
+
     if (!launcher) {
       throw new CliError('Invalid launcher name or command', 2)
     }
@@ -2923,28 +3177,34 @@ async function main(args: string[]): Promise<void> {
         method: 'POST',
         body: JSON.stringify(launcher)
       })
+
       print(
         result.launcher,
         () => `Saved ${result.launcher.name} (${result.launcher.id})`
       )
+
       return
     }
 
     const worktree = await resolveWorktree('.')
     const settingsPath = path.join(worktree.path, '.treeport', 'settings.json')
+
     const content = await fs
       .readFile(settingsPath, 'utf8')
       .catch((error: NodeJS.ErrnoException) =>
         error.code === 'ENOENT' ? '{}' : Promise.reject(error)
       )
+
     const jsonObjectSchema = Schema.Record({
       key: Schema.String,
       value: Schema.Unknown
     })
+
     const settings = decodeUnknownOrNull(
       Schema.parseJson(jsonObjectSchema),
       content
     )
+
     if (!settings) {
       throw new CliError(`${settingsPath} must contain a JSON object`, 5)
     }
@@ -2954,6 +3214,7 @@ async function main(args: string[]): Promise<void> {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '') || 'launcher'
+
     await fs.mkdir(path.dirname(settingsPath), { recursive: true })
     await fs.writeFile(
       settingsPath,
@@ -2980,10 +3241,12 @@ async function main(args: string[]): Promise<void> {
     .description('Remove a launcher saved with `treeport launcher add`')
     .argument('<launcher-id>', 'saved launcher to remove')
     .option('--json', 'emit machine-readable JSON')
+
   launcherRemoveCommand.action(async (launcherId: string) => {
     const saved = (
       await request('/api/launchers', launchersResponseSchema)
     ).launchers.find((launcher) => launcher.id === launcherId)
+
     if (!saved) {
       throw new CliError(
         `No saved launcher ${launcherId}. Repository launchers live in .treeport/settings.json.`,
@@ -3024,6 +3287,7 @@ async function main(args: string[]): Promise<void> {
       'project for the new tree (default: current folder)'
     )
     .option('--json', 'emit machine-readable JSON')
+
   launchCommand.action(async (identifier: string) => {
     const options = launchCommand.opts<{
       input: string[]
@@ -3033,9 +3297,12 @@ async function main(args: string[]): Promise<void> {
       fromCurrent?: boolean
       project?: string
     }>()
+
     const inputs: Record<string, string> = {}
+
     for (const entry of options.input) {
       const separator = entry.indexOf('=')
+
       if (separator < 1) {
         throw new CliError(`--input must look like name=value: ${entry}`, 2)
       }
@@ -3046,19 +3313,24 @@ async function main(args: string[]): Promise<void> {
     const project = options.newTree
       ? await resolveProject(options.project)
       : null
+
     const worktree = project ? null : await resolveWorktree(options.worktree)
+
     const listing = await request(
       `/api/launcher-definitions?${project ? `projectId=${encodeURIComponent(project.id)}` : `worktreeId=${encodeURIComponent(worktree!.id)}`}`,
       launcherDefinitionListingSchema
     )
+
     const matches = listing.definitions.filter(
       (launcher) =>
         launcher.id.endsWith(`:launcher:${identifier}`) ||
         launcher.name.toLowerCase() === identifier.toLowerCase()
     )
+
     const launcher =
       listing.definitions.find((candidate) => candidate.id === identifier) ??
       (matches.length === 1 ? matches[0] : undefined)
+
     if (!launcher) {
       throw new CliError(
         matches.length > 1
@@ -3069,13 +3341,16 @@ async function main(args: string[]): Promise<void> {
     }
 
     const treeTitle = project ? launcher.treeTitle : null
+
     const accepted = launcherInputNames([
       ...launcher.args,
       ...(treeTitle?.args ?? [])
     ])
+
     const unknown = Object.keys(inputs).filter(
       (name) => !accepted.includes(name)
     )
+
     if (unknown.length > 0) {
       throw new CliError(
         `${launcher.name} does not accept ${unknown.join(', ')}${accepted.length ? `; it accepts ${accepted.join(', ')}` : ''}`,
@@ -3086,6 +3361,7 @@ async function main(args: string[]): Promise<void> {
     const launchArgv = launcher.executable
       ? [launcher.executable, ...resolveLauncherArgs(launcher.args, inputs)]
       : null
+
     if (project) {
       if (!launchArgv || launcher.closeOnSuccess) {
         throw new CliError(
@@ -3108,6 +3384,7 @@ async function main(args: string[]): Promise<void> {
           returnToShell: true
         }
       }
+
       if (options.fromCurrent) {
         createRequest.sourceWorktreeId = (await resolveWorktree('.')).id
       }
@@ -3125,6 +3402,7 @@ async function main(args: string[]): Promise<void> {
         () =>
           `Created tree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
       )
+
       return
     }
 
@@ -3132,6 +3410,7 @@ async function main(args: string[]): Promise<void> {
       name: launcher.name,
       initialTitle: launcher.name
     }
+
     if (launcher.shellCommand !== null) {
       body.shellCommand = launcher.shellCommand
     } else if (launchArgv) {
@@ -3157,6 +3436,7 @@ async function main(args: string[]): Promise<void> {
       terminalResponseSchema,
       { method: 'POST', body: JSON.stringify(body) }
     )
+
     print(
       result.terminal,
       () => `Started ${result.terminal.name} (${result.terminal.id})`
@@ -3216,6 +3496,7 @@ export async function runCliApplication(
             error instanceof Error ? error.message : String(error),
             1
           )
+
     if (jsonOutput) {
       const errorBody =
         cliError.details === undefined
@@ -3225,6 +3506,7 @@ export async function runCliApplication(
               message: cliError.message,
               details: cliError.details
             }
+
       const body: ApiErrorBody = { error: errorBody }
 
       writeStderr(`${JSON.stringify(body)}\n`)
@@ -3249,6 +3531,7 @@ export async function runCliApplication(
               cliError.code === 'USAGE_ERROR' &&
                 errorOutput.next(['treeport --help'])
             )
+
       writeStderr(`${updateProgressShown ? '\n' : ''}${text}\n`)
     }
 

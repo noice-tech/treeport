@@ -22,6 +22,7 @@ export async function loadRepositoryLaunchers(
   diagnostics: LauncherDefinitionDiagnostic[]
 }> {
   const configPath = path.join(worktreePath, CONFIG_PATH)
+
   const content = await fs.readFile(configPath, 'utf8').catch((error) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return null
@@ -29,6 +30,7 @@ export async function loadRepositoryLaunchers(
 
     return error instanceof Error ? error : new Error(String(error))
   })
+
   if (content === null) {
     return { definitions: [], diagnostics: [] }
   }
@@ -47,6 +49,7 @@ export async function loadRepositoryLaunchers(
   }
 
   let value: unknown
+
   try {
     value = JSON.parse(content)
   } catch (error) {
@@ -65,6 +68,7 @@ export async function loadRepositoryLaunchers(
   const file = Schema.decodeUnknownEither(repositoryLaunchersSettingsSchema)(
     value
   )
+
   if (Either.isLeft(file)) {
     return {
       definitions: [],
@@ -80,10 +84,12 @@ export async function loadRepositoryLaunchers(
 
   const definitions: LauncherDefinition[] = []
   const diagnostics: LauncherDefinitionDiagnostic[] = []
+
   for (const launcherId of Object.keys(file.right.launchers).sort()) {
     const launcher = Schema.decodeUnknownEither(repositoryLauncherSchema)(
       file.right.launchers[launcherId]
     )
+
     if (Either.isLeft(launcher)) {
       diagnostics.push({
         path: CONFIG_PATH,

@@ -36,6 +36,7 @@ export class ChromiumWebCodecsVideo {
   async start(width: number, height: number): Promise<void> {
     const captureWidth = Math.max(2, Math.round(width / 2) * 2)
     const captureHeight = Math.max(2, Math.round(height / 2) * 2)
+
     if (this.helper) {
       if (this.width === captureWidth && this.height === captureHeight) {
         return
@@ -47,6 +48,7 @@ export class ChromiumWebCodecsVideo {
         height,
         'WebCodecs capture could not be resized. Reconnect to restart video.'
       )
+
       return
     }
 
@@ -54,15 +56,18 @@ export class ChromiumWebCodecsVideo {
     this.height = captureHeight
     const { page: helper, targetId } = await this.openCapturePage()
     this.helper = helper
+
     const lost = () => {
       if (this.helper === helper) {
         this.helper = null
         this.failed('Browser video capture stopped. Reconnect to restart it.')
       }
     }
+
     helper.once('crash', lost)
     helper.once('close', lost)
     const endpoint = this.debuggingEndpoint()
+
     const stream = await helper
       .goto(`chrome-extension://${this.extensionId}/capture.html`)
       .then(() => {
@@ -80,6 +85,7 @@ export class ChromiumWebCodecsVideo {
           {
             ready: (config) => {
               const viewer = this.viewer
+
               if (
                 this.stream === stream &&
                 viewer?.epoch === config.epoch &&
@@ -96,8 +102,10 @@ export class ChromiumWebCodecsVideo {
               // A relay or helper loss is usually transient: recover once,
               // but let a fault that keeps recurring reach the viewer.
               const now = performance.now()
+
               if (now - this.restartedAt < 10_000) {
                 this.failed(message)
+
                 return
               }
 
@@ -113,6 +121,7 @@ export class ChromiumWebCodecsVideo {
         await this.stop()
         throw error
       })
+
     this.stream = stream
     let timeout: ReturnType<typeof setTimeout> | null = null
     await Promise.all([
@@ -171,6 +180,7 @@ export class ChromiumWebCodecsVideo {
 
         this.viewer = { id, epoch: ++this.epoch, send }
         this.stream.start(id, this.epoch)
+
         return true
       }
     }
@@ -198,6 +208,7 @@ export class ChromiumWebCodecsVideo {
       this.failed(message)
       throw error
     })
+
     if (viewer && !this.viewerSource(viewer.id).start(viewer.send)) {
       this.failed('Capture helper unavailable after restarting.')
     }

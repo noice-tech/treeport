@@ -69,6 +69,7 @@ export async function mockApp(
   await createAppMock(page)
 
   await page.goto(options.initialPath ?? '/')
+
   return {
     ...sockets,
     ...projects,

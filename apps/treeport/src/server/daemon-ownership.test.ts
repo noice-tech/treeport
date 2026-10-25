@@ -7,6 +7,7 @@ import type { AppConfig } from './core/config'
 import { acquireDaemonOwnership } from './daemon-ownership'
 
 const temporary: string[] = []
+
 afterEach(async () => {
   await Promise.all(
     temporary
@@ -20,6 +21,7 @@ async function fixture(instanceId: string | undefined = 'instance-a') {
   temporary.push(root)
   const dataDir = path.join(root, 'data')
   const runtimeDir = path.join(root, 'runtime')
+
   const config: AppConfig = {
     host: '127.0.0.1',
     port: 8733,
@@ -36,6 +38,7 @@ async function fixture(instanceId: string | undefined = 'instance-a') {
     installationMethod: 'test',
     webDevelopment: false
   }
+
   if (instanceId !== undefined) {
     config.instanceId = instanceId
   }
@@ -50,9 +53,11 @@ describe('daemon ownership', () => {
   it('does not mutate the filesystem without an instance id', async () => {
     const { root, config } = await fixture()
     delete config.instanceId
+
     const error = await Effect.runPromise(
       Effect.flip(Effect.scoped(acquireDaemonOwnership(config)))
     )
+
     expect(error.message).toContain('TREEPORT_INSTANCE_ID')
     expect(await fs.readdir(root)).toEqual([])
   })
@@ -64,9 +69,11 @@ describe('daemon ownership', () => {
         Effect.gen(function* () {
           const ownership = yield* acquireDaemonOwnership(config)
           yield* ownership.publish()
+
           const state = yield* Effect.tryPromise(() =>
             fs.readFile(path.join(runtimeDir, 'daemon.json'), 'utf8')
           )
+
           expect(JSON.parse(state)).toMatchObject({
             pid: process.pid,
             instanceId: 'instance-a',
@@ -91,9 +98,11 @@ describe('daemon ownership', () => {
     await fs.mkdir(dataDir, { recursive: true })
     const lockPath = path.join(dataDir, 'daemon.lock')
     await fs.writeFile(lockPath, record('live'))
+
     const liveError = await Effect.runPromise(
       Effect.flip(Effect.scoped(acquireDaemonOwnership(config)))
     )
+
     expect(liveError.message).toContain('already running')
 
     await fs.writeFile(lockPath, record('stale', 999_999_999))

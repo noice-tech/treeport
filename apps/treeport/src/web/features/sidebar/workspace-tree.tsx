@@ -95,8 +95,10 @@ const treeDecorationToneClasses = {
   danger: 'text-rose-400',
   done: 'text-violet-400'
 } satisfies Record<TreeDecorationTone, string>
+
 const treeDecorationToneRank = (tone: TreeDecorationTone) =>
   tone === 'danger' ? 0 : tone === 'warning' ? 1 : 2
+
 const VISIBLE_TREE_DECORATIONS = 2
 
 /** Problems first; a stable sort keeps the order decorations were first set. */
@@ -183,8 +185,10 @@ function WorktreeShell({
     pending && 'pointer-events-none',
     className
   )
+
   const sortedDecorations = sortTreeDecorations(decorations)
   const hiddenDecorations = sortedDecorations.slice(VISIBLE_TREE_DECORATIONS)
+
   const content = (
     <>
       {icon}
@@ -300,26 +304,32 @@ export function WorkspaceTree({
     terminalWorkspaceLayouts.getSnapshot
   )
   const { focusedSurface } = useWorkspaceSurfaceFocus()
+
   const [titleWorktree, setTitleWorktree] = useState<WorktreeRecord | null>(
     null
   )
+
   const {
     attention: terminalAttention,
     titles: runtimeTitles,
     programs: terminalPrograms,
     activity: terminalActivity
   } = useTerminalNavigationMetadata()
+
   const desktopBridge = window.treeportDesktop
+
   const newWorktreeShortcut = desktopBridge?.onCommand
     ? desktopBridge.platform === 'darwin'
       ? '⌘N'
       : 'Ctrl+N'
     : null
+
   const newAppShortcut = desktopBridge?.onCommand
     ? desktopBridge.platform === 'darwin'
       ? '⌘⇧T'
       : 'Ctrl+Shift+T'
     : null
+
   const terminalTrees = new Map<
     string,
     {
@@ -327,19 +337,24 @@ export function WorkspaceTree({
       splitMembers: Map<string, 'first' | 'middle' | 'last'>
     }
   >()
+
   for (const project of projects) {
     for (const worktree of project.worktrees) {
       const terminalsById = new Map(
         worktree.terminals.map((terminal) => [terminal.id, terminal])
       )
+
       const layout = normalizeTerminalWorkspaceLayout(
         terminalWorkspaceLayouts.read(worktree.id),
         worktree.terminals.map((terminal) => terminal.id)
       )
+
       const orderedIds = layout.groups.flatMap(terminalIdsInLayoutNode)
       const splitMembers = new Map<string, 'first' | 'middle' | 'last'>()
+
       for (const group of layout.groups) {
         const groupIds = terminalIdsInLayoutNode(group)
+
         if (groupIds.length < 2) {
           continue
         }
@@ -355,6 +370,7 @@ export function WorkspaceTree({
           )
         })
       }
+
       terminalTrees.set(worktree.id, {
         terminals: orderedIds.map((terminalId) =>
           terminalsById.get(terminalId)!
@@ -610,12 +626,16 @@ export function WorkspaceTree({
                             runtimeTitles.get(terminal.id),
                             terminal.name
                           )
+
                           const attention =
                             terminalAttention.get(terminal.id) ?? null
+
                           const needsAttention = attention !== null
                           const activity = terminalActivity.get(terminal.id)
+
                           const working =
                             activity?.state === 'working' && !needsAttention
+
                           const status = [
                             activity
                               ? terminalActivityLabel(activity)
@@ -624,13 +644,16 @@ export function WorkspaceTree({
                           ]
                             .filter(Boolean)
                             .join(', ')
+
                           const shortcutIndex =
                             selectedWorktree?.id === worktree.id && index < 9
                               ? index + 1
                               : null
+
                           const splitMember = terminalTrees
                             .get(worktree.id)
                             ?.splitMembers.get(terminal.id)
+
                           return (
                             <SidebarMenuSubItem
                               key={terminal.id}

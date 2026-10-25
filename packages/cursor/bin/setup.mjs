@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
 const [operation, ...args] = process.argv.slice(2)
+
 if (!operation || operation === '--help' || args.includes('--help')) {
   console.log(
     'Usage: npx @treeport/cursor <install-hooks|uninstall-hooks> [--project]'
@@ -38,15 +39,18 @@ if (
 }
 
 const uninstall = operation === 'uninstall-hooks'
+
 const root = join(
   args.includes('--project') ? process.cwd() : homedir(),
   '.cursor'
 )
+
 const configPath = join(root, 'hooks.json')
 const skillPath = join(root, 'skills/treeport/SKILL.md')
 const runtimePath = join(root, 'treeport')
 const runtimeMarkerPath = join(runtimePath, '.managed-by-treeport-cursor')
 const runtimeMarker = '@treeport/cursor runtime\n'
+
 const readOptional = (path) =>
   readFile(path, 'utf8').catch((error) => {
     if (error.code === 'ENOENT') {
@@ -55,8 +59,10 @@ const readOptional = (path) =>
 
     throw error
   })
+
 const source = await readOptional(configPath)
 const config = source === null ? { version: 1, hooks: {} } : JSON.parse(source)
+
 if (
   config === null ||
   typeof config !== 'object' ||
@@ -72,6 +78,7 @@ if (
 
 const existingSkill = await readOptional(skillPath)
 const marker = '<!-- Managed by @treeport/cursor. -->'
+
 if (existingSkill !== null && !existingSkill.includes(marker)) {
   throw new Error(
     'Refusing to overwrite an existing Treeport skill: ' + skillPath
@@ -85,6 +92,7 @@ const runtime = await lstat(runtimePath).catch((error) => {
 
   throw error
 })
+
 if (
   runtime !== null &&
   (!runtime.isDirectory() ||
@@ -94,10 +102,14 @@ if (
 }
 
 config.version = 1
+
 config.hooks ??= {}
+
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'"
+
 // Never point hooks into npx's disposable package cache or pin its Node binary.
 const command = 'node ' + quote(join(runtimePath, 'hook.mjs'))
+
 for (const [event, state] of [
   ['sessionStart', 'context'],
   ['beforeSubmitPrompt', 'working'],
@@ -105,12 +117,14 @@ for (const [event, state] of [
   ['sessionEnd', 'ended']
 ]) {
   const hooks = config.hooks[event] ?? []
+
   if (!Array.isArray(hooks)) {
     throw new Error('Invalid Cursor hook array: ' + event)
   }
 
   const entry = command + ' ' + state
   const others = hooks.filter((hook) => hook?.command !== entry)
+
   if (!uninstall) {
     others.push({ command: entry })
   }
@@ -124,10 +138,12 @@ for (const [event, state] of [
 
 async function writeAtomic(path, content) {
   await mkdir(dirname(path), { recursive: true })
+
   const temporary = join(
     dirname(path),
     '.' + basename(path) + '-' + randomUUID()
   )
+
   await writeFile(temporary, content, { mode: 0o600, flag: 'wx' })
   await rename(temporary, path).finally(() => rm(temporary, { force: true }))
 }
@@ -135,6 +151,7 @@ async function writeAtomic(path, content) {
 if (!uninstall) {
   await mkdir(runtimePath, { recursive: true, mode: 0o700 })
   await writeAtomic(runtimeMarkerPath, runtimeMarker)
+
   for (const file of ['hook.mjs', 'status-worker.mjs']) {
     await writeAtomic(
       join(runtimePath, file),

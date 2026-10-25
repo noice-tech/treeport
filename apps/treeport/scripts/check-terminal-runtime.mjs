@@ -6,13 +6,16 @@ import { fileURLToPath } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const runtimeRoot = path.join(appRoot, 'src/terminal-runtime')
+
 const files = (await fs.readdir(runtimeRoot))
   .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
   .sort()
+
 // Lifecycle consumers must ask the native owner, not reimplement ownership
 // using discovery PIDs, ps timestamps, or filesystem deletion.
 export function sessionOwnershipViolations(file, source) {
   const violations = []
+
   if (
     file.endsWith('/session-client.ts') &&
     /process\.kill\s*\(|\b(?:processExists|sessionOwnerExists)\s*\(|\bfs\.rm\s*\(|\blstart\b/u.test(
@@ -40,15 +43,18 @@ export function sessionOwnershipViolations(file, source) {
 }
 
 const violations = []
+
 for (const name of files) {
   const source = await fs.readFile(path.join(runtimeRoot, name), 'utf8')
   violations.push(
     ...sessionOwnershipViolations(`src/terminal-runtime/${name}`, source)
   )
+
   for (const match of source.matchAll(
     /(?:from\s*|import\s*)['"]([^'"]+)['"]/g
   )) {
     const specifier = match[1]
+
     const allowed =
       specifier.startsWith('node:') ||
       specifier.startsWith('effect/') ||
@@ -60,10 +66,12 @@ for (const name of files) {
       (['session-client.ts', 'session-protocol.ts'].includes(name) &&
         specifier === '@treeport/session-keeper') ||
       (specifier.startsWith('./') && !specifier.startsWith('../'))
+
     const persistentPrimitive = [
       'session-journal.ts',
       'session-protocol.ts'
     ].includes(name)
+
     const ownerAllowed =
       (name === 'session-protocol.ts' &&
         specifier === '@treeport/session-keeper') ||
@@ -72,6 +80,7 @@ for (const name of files) {
       specifier === 'zod' ||
       specifier === './session-journal' ||
       specifier === './session-protocol'
+
     if (!allowed || (persistentPrimitive && !ownerAllowed)) {
       violations.push(`${name}: ${specifier}`)
     }
@@ -79,6 +88,7 @@ for (const name of files) {
 }
 
 const cleanup = 'scripts/cleanup-development-runtime.mjs'
+
 violations.push(
   ...sessionOwnershipViolations(
     cleanup,
@@ -91,6 +101,7 @@ assert.deepEqual(
   [],
   'Terminal runtime boundary violation: use the runtime API for product operations and @treeport/session-keeper for native ownership'
 )
+
 for (const required of [
   'contract.ts',
   'api.ts',
@@ -107,6 +118,7 @@ for (const required of [
     `Missing terminal runtime boundary file: ${required}`
   )
 }
+
 console.log(
   `Terminal runtime dependency boundary passed (${files.length} files)`
 )

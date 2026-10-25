@@ -27,23 +27,28 @@ for (const workerFails of [false, true]) {
         })
       )
       await page.goto('/video-check')
+
       const fixture = await page.evaluateHandle(async () => {
         const moduleUrl = '/src/web/browser-video-presentation.ts'
+
         const {
           presentBrowserVideo
         }: { presentBrowserVideo: typeof PresentBrowserVideo } = await import(
           moduleUrl
         )
+
         const video = document.querySelector('video')!
         const source = document.createElement('canvas')
         source.width = 64
         source.height = 64
         const context = source.getContext('2d')!
         let color = '#e02020'
+
         const draw = () => {
           context.fillStyle = color
           context.fillRect(0, 0, source.width, source.height)
         }
+
         draw()
         // Keep producing frames during negotiation and restart; no fixed sleeps
         // or external network are needed to observe the requested image.
@@ -56,14 +61,17 @@ for (const workerFails of [false, true]) {
             void receiver.addIceCandidate(candidate)
           }
         }
+
         receiver.onicecandidate = ({ candidate }) => {
           if (candidate) {
             void sender.addIceCandidate(candidate)
           }
         }
+
         const incoming = new Promise<MediaStreamTrack>((resolve) => {
           receiver.ontrack = ({ track }) => resolve(track)
         })
+
         sender.addTrack(stream.getVideoTracks()[0]!, stream)
         await sender.setLocalDescription(await sender.createOffer())
         await receiver.setRemoteDescription(sender.localDescription!)
@@ -71,9 +79,11 @@ for (const workerFails of [false, true]) {
         await sender.setRemoteDescription(receiver.localDescription!)
         const track = await incoming
         const failures: string[] = []
+
         let stop = presentBrowserVideo(video, track, (error) => {
           failures.push(String(error))
         })
+
         return {
           failures,
           change(next: string) {
@@ -85,6 +95,7 @@ for (const workerFails of [false, true]) {
             const output = (video.srcObject as MediaStream).getVideoTracks()[0]!
             stop()
             video.srcObject = null
+
             return { output: output.readyState, received: track.readyState }
           },
           start() {
@@ -102,6 +113,7 @@ for (const workerFails of [false, true]) {
           }
         }
       })
+
       const expectColor = async (rgb: number[]) => {
         await expect
           .poll(
@@ -118,6 +130,7 @@ for (const workerFails of [false, true]) {
                   const context = canvas.getContext('2d')!
                   context.drawImage(video, 0, 0, 1, 1)
                   const pixels = context.getImageData(0, 0, 1, 1).data
+
                   return Math.max(
                     ...expected.map((value, index) =>
                       Math.abs(pixels[index]! - value)
@@ -129,6 +142,7 @@ for (const workerFails of [false, true]) {
           // Allow codec/color-conversion rounding, not a different source image.
           .toBeLessThan(12)
       }
+
       try {
         await expectColor([224, 32, 32])
         await fixture.evaluate((state) => state.change('#20e020'))

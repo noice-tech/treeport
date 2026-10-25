@@ -21,12 +21,15 @@ export class ProductEventBus {
       at: new Date().toISOString(),
       data: { ...data, worktreeId: data.worktreeId ?? null }
     } as ProductEvent<Type>
+
     this.emitter.emit('event', event)
+
     return event
   }
 
   subscribe(listener: (event: ProductEvent) => void): () => void {
     this.emitter.on('event', listener)
+
     return () => this.emitter.off('event', listener)
   }
 }

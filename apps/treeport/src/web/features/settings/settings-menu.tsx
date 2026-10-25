@@ -39,10 +39,12 @@ export function SettingsMenu({
   const [theme, setTheme] = useState(storedTheme)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const id = useId()
+
   const update = (next: typeof theme) => {
     setTheme(next)
     applyTheme(next)
   }
+
   const customAccent = !ACCENT_PRESETS.some(
     (preset) => preset.color === theme.accent
   )

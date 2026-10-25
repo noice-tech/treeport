@@ -68,7 +68,9 @@ export async function requestLocalBrowserOwnerTicket(
       signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)])
     }
   )
+
   const body: unknown = await response.json().catch(() => null)
+
   if (!response.ok) {
     const error = decodeUnknownOrNull(apiErrorBodySchema, body)
     throw new Error(
@@ -77,6 +79,7 @@ export async function requestLocalBrowserOwnerTicket(
   }
 
   const ticket = decodeUnknownOrNull(browserOwnerTicketResponseSchema, body)
+
   if (!ticket) {
     throw new Error('The host sent an invalid Browser owner ticket response.')
   }
@@ -113,6 +116,7 @@ export function connectLocalBrowserOwner(
       challenge: ownerTicket.challenge
     }
   })
+
   let settled = false
   let disposed = false
   let activeGeneration: number | null = null
@@ -130,19 +134,25 @@ export function connectLocalBrowserOwner(
       socket.disconnect()
       reject(cause instanceof Error ? cause : new Error(String(cause)))
     }
+
     const abort = () =>
       rejectBeforeReady(new Error('Browser ownership was canceled.'))
+
     const readyTimer = setTimeout(() => {
       rejectBeforeReady(new Error('The Browser owner did not respond.'))
     }, 10_000)
+
     signal.addEventListener('abort', abort, { once: true })
+
     if (signal.aborted) {
       abort()
+
       return
     }
 
     socket.on('ownerMessage', (value: BrowserOwnerServerMessage) => {
       const message = parseBrowserOwnerServerMessage(value)
+
       if (!message) {
         if (disposed) {
           return
@@ -163,6 +173,7 @@ export function connectLocalBrowserOwner(
 
       if (message.type === 'claimRejected') {
         rejectBeforeReady(new Error(message.message))
+
         return
       }
 
@@ -179,6 +190,7 @@ export function connectLocalBrowserOwner(
       if (message.type === 'claimGranted') {
         if (settled || message.appId !== appId) {
           socket.disconnect()
+
           return
         }
 
@@ -188,11 +200,13 @@ export function connectLocalBrowserOwner(
         let revision = 0
         const generation = message.generation
         activeGeneration = generation
+
         const send = (ownerMessage: BrowserOwnerClientMessage) => {
           if (!disposed && socket.connected) {
             socket.emit('ownerMessage', ownerMessage)
           }
         }
+
         resolve({
           generation,
           resumed: message.resumed,
@@ -228,6 +242,7 @@ export function connectLocalBrowserOwner(
             socket.disconnect()
           }
         })
+
         return
       }
 
@@ -262,6 +277,7 @@ export function connectLocalBrowserOwner(
                 accepted: false
               })
           )
+
         return
       }
 

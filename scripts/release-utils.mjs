@@ -24,6 +24,7 @@ export function git(args, options = {}) {
 
 export function parseVersion(value) {
   const match = canonicalVersionPattern.exec(value)
+
   return match ? match.slice(1).map((part) => BigInt(part)) : undefined
 }
 
@@ -37,17 +38,20 @@ export function compareVersions(left, right) {
       return -1
     }
   }
+
   return 0
 }
 
 export function githubRepositoryFromUrl(url) {
   const scpMatch = /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/.exec(url)
+
   if (scpMatch) {
     return scpMatch[1]
   }
 
   try {
     const parsedUrl = new URL(url)
+
     if (parsedUrl.hostname !== 'github.com') {
       return undefined
     }

@@ -12,6 +12,7 @@ import { z } from 'zod'
 // Unchanged responses are free, so polling for changes made on GitHub is
 // cheap. Local commits, checkouts, and pushes arrive as Treeport events.
 const POLL_MS = 15_000
+
 // Leave headroom for the user's own GitHub usage.
 const RATE_LIMIT_RESERVE = 500
 const PULL_REQUEST_KEY = 'pr'
@@ -26,9 +27,11 @@ const pullRequestSchema = z.object({
   html_url: z.url(),
   head: z.object({ sha: z.string() })
 })
+
 const checkRunsSchema = z.object({
   check_runs: z.array(z.object({ conclusion: z.string().nullable() }))
 })
+
 const statusSchema = z.object({ state: z.string() })
 
 type PullRequest = z.infer<typeof pullRequestSchema>
@@ -45,6 +48,7 @@ function parseRemote(url: string): Repository | null {
     /^(?:https:\/\/(?:[^@/]+@)?|ssh:\/\/git@|git@)([^/:]+)[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/u.exec(
       url
     )
+
   return match ? { host: match[1]!, owner: match[2]!, name: match[3]! } : null
 }
 
@@ -56,11 +60,13 @@ function token(host: string): Promise<string | null> {
     host === 'github.com'
       ? (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN)
       : undefined
+
   if (environment) {
     return Promise.resolve(environment)
   }
 
   let pending = tokens.get(host)
+
   if (!pending) {
     pending = promisify(execFile)('gh', ['auth', 'token', '--hostname', host], {
       timeout: 10_000
@@ -68,6 +74,7 @@ function token(host: string): Promise<string | null> {
       ({ stdout }) => stdout.trim() || null,
       () => {
         console.error(`No GitHub login for ${host}; run \`gh auth login\``)
+
         return null
       }
     )
@@ -91,17 +98,21 @@ async function github<Body extends z.ZodType>(
     repository.host === 'github.com'
       ? `https://api.github.com/repos/${repository.owner}/${repository.name}${pathname}`
       : `https://${repository.host}/api/v3/repos/${repository.owner}/${repository.name}${pathname}`
+
   const cached = responses.get(url)
+
   const headers = new Headers({
     accept: 'application/vnd.github+json',
     authorization: `Bearer ${credential}`,
     'x-github-api-version': '2022-11-28'
   })
+
   if (cached) {
     headers.set('if-none-match', cached.etag)
   }
 
   const response = await fetch(url, { headers })
+
   if (response.status === 401) {
     // The stored login may have been refreshed; read it again next time.
     tokens.delete(repository.host)
@@ -117,6 +128,7 @@ async function github<Body extends z.ZodType>(
 
   // GitHub Enterprise Server may run without rate limits and omit these.
   const remaining = response.headers.get('x-ratelimit-remaining')
+
   if (remaining !== null && Number(remaining) < RATE_LIMIT_RESERVE) {
     pausedUntil = Number(response.headers.get('x-ratelimit-reset')) * 1_000
     console.error(
@@ -126,10 +138,12 @@ async function github<Body extends z.ZodType>(
 
   const body: unknown = await response.json()
   const etag = response.headers.get('etag')
+
   if (etag) {
     // Keep recent responses only; old commits' checks are not asked again.
     responses.delete(url)
     responses.set(url, { etag, body })
+
     if (responses.size > 1_000) {
       responses.delete(responses.keys().next().value!)
     }
@@ -157,6 +171,7 @@ function decorationFor(pull: PullRequest): TreeDecorationInput {
       : pull.draft
         ? (['neutral', ICONS.draft, 'Draft'] as const)
         : (['success', ICONS.open, 'Open'] as const)
+
   return {
     text: `#${pull.number}`,
     // Keep the state when a long title is cut to Treeport's limit.
@@ -168,14 +183,17 @@ function decorationFor(pull: PullRequest): TreeDecorationInput {
 }
 
 const { packageId } = await treeport.self()
+
 // A merged pull request cannot change, so its tree is not queried again.
 const mergedBranches = new Map<string, string>()
 
 async function refreshProject(project: TreeportProject): Promise<void> {
   const defaultBranch = project.git?.defaultBranch
+
   const trees = project.worktrees.filter(
     (tree) => tree.git?.branch && tree.git.branch !== defaultBranch
   )
+
   // Only touch this package's own decorations, and skip ones already gone.
   const clear = async (tree: TreeportTree, key: string) => {
     if (
@@ -187,6 +205,7 @@ async function refreshProject(project: TreeportProject): Promise<void> {
       await treeport.decorations.clear(tree.id, key)
     }
   }
+
   for (const tree of project.worktrees) {
     if (!trees.includes(tree)) {
       await clear(tree, PULL_REQUEST_KEY)
@@ -197,12 +216,14 @@ async function refreshProject(project: TreeportProject): Promise<void> {
   const originUrl = project.git?.originUrl
   const repository = originUrl ? parseRemote(originUrl) : null
   const credential = repository ? await token(repository.host) : null
+
   if (!repository || !credential) {
     return
   }
 
   for (const tree of trees) {
     const branch = tree.git!.branch!
+
     if (mergedBranches.get(tree.id) === branch) {
       continue
     }
@@ -213,6 +234,7 @@ async function refreshProject(project: TreeportProject): Promise<void> {
       `/pulls?state=all&per_page=1&head=${encodeURIComponent(`${repository.owner}:${branch}`)}`,
       z.array(pullRequestSchema)
     )
+
     if (pull) {
       await treeport.decorations.set(
         tree.id,
@@ -225,6 +247,7 @@ async function refreshProject(project: TreeportProject): Promise<void> {
 
     // Like the sidebar, report checks only when they need attention.
     const open = pull?.state === 'open'
+
     const [checkRuns, status] = open
       ? await Promise.all([
           github(
@@ -241,6 +264,7 @@ async function refreshProject(project: TreeportProject): Promise<void> {
           )
         ])
       : [null, null]
+
     if (
       open &&
       (status?.state === 'failure' ||
@@ -270,11 +294,14 @@ async function refreshProject(project: TreeportProject): Promise<void> {
 // Project IDs to refresh; null refreshes every project.
 let pending: Set<string> | null = new Set()
 let wake = () => {}
+
 const refresh = (projectId: string | null) => {
   pending = projectId && pending ? pending.add(projectId) : null
   wake()
 }
+
 setInterval(() => refresh(null), POLL_MS)
+
 void (async () => {
   for await (const event of treeport.events()) {
     refresh(event.type === 'resync' ? null : event.projectId)
@@ -282,6 +309,7 @@ void (async () => {
 })()
 
 refresh(null)
+
 while (true) {
   if (pending?.size === 0) {
     await new Promise<void>((resolve) => {
@@ -295,10 +323,13 @@ while (true) {
 
   const due = pending
   pending = new Set()
+
   const projects = await treeport.projects().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
+
     return []
   })
+
   for (const project of projects) {
     if (
       project.availability.state === 'available' &&

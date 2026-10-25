@@ -16,9 +16,11 @@ const identifierSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)
 )
+
 const dateTimeString = Schema.String.pipe(
   Schema.filter((value) => !Number.isNaN(Date.parse(value)))
 )
+
 const eventEnvelope = <Type extends string, Data extends Schema.Schema.Any>(
   type: Type,
   data: Data
@@ -29,19 +31,24 @@ const eventEnvelope = <Type extends string, Data extends Schema.Schema.Any>(
     at: dateTimeString,
     data
   })
+
 const projectEventDataSchema = Schema.Struct({
   projectId: identifierSchema,
   worktreeId: Schema.Null
 })
+
 const worktreeEventDataSchema = Schema.Struct({ worktreeId: identifierSchema })
+
 const projectWorktreeEventDataSchema = Schema.Struct({
   projectId: identifierSchema,
   worktreeId: identifierSchema
 })
+
 const operationEventDataSchema = Schema.Struct({
   operationId: identifierSchema,
   worktreeId: identifierSchema
 })
+
 const webAppSnapshotSchema = Schema.Struct({
   id: identifierSchema,
   kind: Schema.Literal('web'),
@@ -64,6 +71,7 @@ const webAppSnapshotSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 const browserAppSnapshotSchema = Schema.Struct({
   id: identifierSchema,
   kind: Schema.Literal('browser'),
@@ -73,10 +81,12 @@ const browserAppSnapshotSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 const openAppSnapshotSchema = Schema.Union(
   webAppSnapshotSchema,
   browserAppSnapshotSchema
 )
+
 const terminalRecordSchema = Schema.Struct({
   id: identifierSchema,
   worktreeId: identifierSchema,
@@ -241,6 +251,7 @@ export const eventsSnapshotSchema = Schema.Struct({
   browserApps: Schema.Array(browserAppSnapshotSchema),
   presence: Schema.Array(workspacePresenceSchema)
 })
+
 export type EventsSnapshot = Schema.Schema.Type<typeof eventsSnapshotSchema>
 
 export const socketHandshakeSchema = Schema.Struct({
@@ -248,12 +259,14 @@ export const socketHandshakeSchema = Schema.Struct({
   auth: jsonValueSchema,
   query: Schema.Record({ key: Schema.String, value: Schema.String })
 })
+
 export type SocketHandshake = Schema.Schema.Type<typeof socketHandshakeSchema>
 
 export const socketMessageSchema = Schema.Struct({
   event: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(80)),
   payload: jsonValueSchema
 })
+
 export type SocketMessage = Schema.Schema.Type<typeof socketMessageSchema>
 
 function decodeOrNull<S extends Schema.Schema<any, any, never>>(
@@ -263,18 +276,22 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
   const parsed = Schema.decodeUnknownEither(schema, {
     onExcessProperty: 'error'
   })(value)
+
   return Either.isRight(parsed) ? parsed.right : null
 }
 
 export function parseEventsSnapshot(value: unknown): EventsSnapshot | null {
   return decodeOrNull(eventsSnapshotSchema, value)
 }
+
 export function parseProductEvent(value: unknown): NetworkProductEvent | null {
   return decodeOrNull(productEventSchema, value)
 }
+
 export function parseSocketHandshake(value: unknown): SocketHandshake | null {
   return decodeOrNull(socketHandshakeSchema, value)
 }
+
 export function parseSocketMessage(value: unknown): SocketMessage | null {
   return decodeOrNull(socketMessageSchema, value)
 }

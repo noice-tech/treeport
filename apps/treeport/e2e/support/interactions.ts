@@ -7,6 +7,7 @@ export async function openWorktreeContextMenu(
   await page
     .getByRole('button', { name: new RegExp(`^${worktreeName}(?:,|\\s|$)`) })
     .click({ button: 'right' })
+
   return page.getByRole('menu')
 }
 

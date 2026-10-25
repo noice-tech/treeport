@@ -39,8 +39,10 @@ function emptySnapshot(cols: number, rows: number): string {
       clipboardWrite: null
     }
   )
+
   const snapshot = Buffer.from(terminal.snapshot()).toString('base64')
   terminal.dispose()
+
   return snapshot
 }
 
@@ -107,6 +109,7 @@ class TerminalConnection {
     this.rows = state.rows
     this.revision = state.revision
     this.generation = state.generation
+
     if (dimensionsChanged) {
       this.receive('dimensions', {
         cols: this.cols,
@@ -136,17 +139,20 @@ export async function installMockSockets(
     const nativeFetch = window.fetch.bind(window)
     window.fetch = async (input, init) => {
       const request = new Request(input, init)
+
       if (new URL(request.url).pathname !== '/api/rpc') {
         return nativeFetch(request)
       }
 
       const message = JSON.parse((await request.text()).trim())
+
       if (message._tag !== 'Request' || message.tag !== 'WatchProjectEvents') {
         throw new Error('Unexpected RPC request in browser fixture')
       }
 
       const encoder = new TextEncoder()
       let active = true
+
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           const send = (value: ProjectEventsItem) => {
@@ -164,6 +170,7 @@ export async function installMockSockets(
               )
             )
           }
+
           window.__eventSource = {
             emit: (name, source) => {
               send({
@@ -204,6 +211,7 @@ export async function installMockSockets(
           active = false
         }
       })
+
       return new Response(stream, {
         headers: { 'content-type': 'application/ndjson' }
       })
@@ -214,7 +222,9 @@ export async function installMockSockets(
     states: new Map<string, TerminalState>(),
     connections: new Set<TerminalConnection>()
   }
+
   terminalServers.set(page.context(), server)
+
   const terminal: TerminalMock = {
     messages: [],
     connections: [],
@@ -242,10 +252,12 @@ export async function installMockSockets(
         event: string
         payload: ClientPayload
       } = JSON.parse(data.toString())
+
       if (message.type === 'handshake') {
         const auth = message.auth
         connection.clientId = auth.clientId
         connection.terminalId = auth.terminalId
+
         const state = server.states.get(auth.terminalId) ?? {
           terminalId: auth.terminalId,
           cols: auth.cols,
@@ -254,6 +266,7 @@ export async function installMockSockets(
           generation: 1,
           controllerClientId: 'other'
         }
+
         server.states.set(auth.terminalId, state)
         Object.assign(connection, {
           cols: state.cols,
@@ -285,17 +298,20 @@ export async function installMockSockets(
               ? 'dev · /worktrees/topic'
               : 'zsh · /worktrees/topic'
         })
+
         return
       }
 
       const { event: type, payload } = message
       terminal.messages.push({ type, ...payload })
+
       if (type === 'query_authority') {
         connection.receive('query_authority', {
           generation: connection.generation,
           transitionId: null,
           active: true
         })
+
         return
       }
 
@@ -305,6 +321,7 @@ export async function installMockSockets(
 
       const apply = () => {
         const state = server.states.get(connection.terminalId)!
+
         if (payload.cols !== state.cols || payload.rows !== state.rows) {
           state.cols = payload.cols
           state.rows = payload.rows
@@ -322,6 +339,7 @@ export async function installMockSockets(
           }
         }
       }
+
       if (type === 'take_control' && terminal.delayTakeControl) {
         terminal.releaseTakeControl = () => {
           terminal.delayTakeControl = false
@@ -333,6 +351,7 @@ export async function installMockSockets(
       }
     })
   })
+
   return {
     terminal,
     emitProjectEvent: (type: NetworkProductEvent['type'], data: JsonValue) =>

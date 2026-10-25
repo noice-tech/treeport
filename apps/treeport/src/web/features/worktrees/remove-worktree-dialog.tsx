@@ -48,6 +48,7 @@ export function RemoveWorktreeDialog({
   const removalCompleted = operation?.status === 'completed'
   const cleanup = operation?.request.cleanupCommands
   const cleanupFailed = cleanup?.status === 'failed'
+
   const activeCommand = cleanup?.commands.find(
     (command) => command.status === 'running'
   )
@@ -73,6 +74,7 @@ export function RemoveWorktreeDialog({
             }
 
             event.preventDefault()
+
             if (
               confirmButtonRef.current &&
               !confirmButtonRef.current.disabled
@@ -260,6 +262,7 @@ export function RemoveWorktreeDialog({
                     disabled={busy || !preview.eligible}
                     onClick={(event) => {
                       event.preventDefault()
+
                       if (skipCleanup) {
                         onSkipCleanup(worktree, preview)
                       } else {

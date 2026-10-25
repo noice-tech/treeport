@@ -94,24 +94,28 @@ class FakeProtocolSocket {
 
   on(event: string, listener: (value: any) => void): this {
     this.handlers.set(event, [...(this.handlers.get(event) ?? []), listener])
+
     return this
   }
 
   removeAllListeners(): this {
     this.handlers.clear()
     this.managerHandlers.clear()
+
     return this
   }
 
   connect(): this {
     this.connected = true
     this.emitServer('connect', undefined)
+
     return this
   }
 
   disconnect(): this {
     const wasConnected = this.connected
     this.connected = false
+
     if (wasConnected) {
       this.emitServer('disconnect', 'client disconnect')
     }
@@ -153,9 +157,11 @@ function ghosttySnapshot(output = '', cols = 100, rows = 30): string {
       clipboardWrite: null
     }
   )
+
   terminal.write(output)
   const snapshot = Buffer.from(terminal.snapshot()).toString('base64')
   terminal.dispose()
+
   return snapshot
 }
 
@@ -182,6 +188,7 @@ class GhosttyWTerm {
     this.log.push(`write ${JSON.stringify(data)}`)
     this.bridge.writeString(data)
     const response = this.bridge.getResponse()
+
     if (response) {
       this.onData?.(response)
     }
@@ -212,6 +219,7 @@ class GhosttyWTerm {
 
   text(): string {
     const core = this.bridge
+
     return Array.from({ length: core.getRows() }, (_, row) =>
       Array.from({ length: core.getCols() }, (_, col) =>
         String.fromCodePoint(core.getCell(row, col).char || 32)
@@ -267,6 +275,7 @@ class FakeSession {
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
+
     return () => this.listeners.delete(listener)
   }
 
@@ -376,19 +385,23 @@ afterEach(() => {
 
 function fixture(maxSessions = 3, idleMs = 1_000) {
   const sessions = new Map<string, FakeSession>()
+
   const acknowledgeAttention = vi.fn<
     (terminalId: string, sequence: number) => Promise<void>
   >(async () => undefined)
+
   const manager = new TerminalSessionManager(
     maxSessions,
     idleMs,
     (terminalId) => {
       const session = new FakeSession()
       sessions.set(terminalId, session)
+
       return testAccess<TerminalSessionInstance>(session)
     },
     acknowledgeAttention
   )
+
   return { acknowledgeAttention, manager, sessions }
 }
 
@@ -426,10 +439,12 @@ function controllerSessionFixture() {
       error: null
     }
   })
+
   const measure = (dimensions: { cols: number; rows: number }) => {
     terminal.measurement = dimensions
     terminalSessionTestAccess(session).services.layout.fit(true)
   }
+
   const dimensions = (cols: number, rows: number, revision: number) => {
     terminalSessionTestAccess(session).services.protocol.handleServerEvent(
       'dimensions',
@@ -440,6 +455,7 @@ function controllerSessionFixture() {
       }
     )
   }
+
   const control = (controller: boolean, generation: number) => {
     terminalSessionTestAccess(session).services.protocol.handleServerEvent(
       'control',
@@ -449,6 +465,7 @@ function controllerSessionFixture() {
       }
     )
   }
+
   return {
     control,
     dimensions,
@@ -467,12 +484,14 @@ describe('terminal options', () => {
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
     vi.stubGlobal('fetch', request)
     const handler = terminalOptions('term_source').linkHandler
+
     for (const button of [1, 2]) {
       handler.activate(
         testAccess<MouseEvent>({ button, ctrlKey: true }),
         'https://example.test/'
       )
     }
+
     expect(request).not.toHaveBeenCalled()
   })
 
@@ -581,6 +600,7 @@ describe('terminal options', () => {
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
     vi.stubGlobal('window', { open })
     const handler = terminalOptions().linkHandler
+
     const click = testAccess<MouseEvent>({
       button: 0,
       metaKey: false,
@@ -716,6 +736,7 @@ describe('TerminalSession', () => {
         query: { terminalProtocol: '10' }
       })
     )
+
     const options = testAccess<{
       authorize: () => {
         terminalId: string
@@ -724,6 +745,7 @@ describe('TerminalSession', () => {
         rows: number
       }
     }>(socketClient.create.mock.calls[0]![1])
+
     expect(options.authorize()).toEqual({
       terminalId: 'terminal-one',
       clientId,
@@ -780,11 +802,13 @@ describe('TerminalSession', () => {
     const firstSession = createTerminalSession('terminal-one')
     const secondSession = createTerminalSession('terminal-one')
     const terminals = [new GhosttyWTerm(80, 24), new GhosttyWTerm(80, 24)]
+
     for (const [index, session] of [firstSession, secondSession].entries()) {
       terminals[index]!.getSelectionText.mockReturnValue('selected')
       terminalSessionTestAccess(session).state.terminal = terminals[index]!
       terminalSessionTestAccess(session).services.connection.connect()
     }
+
     for (const [index, socket] of [firstSocket, secondSocket].entries()) {
       socket.emitServer('ready', {
         connectionId: `connection-${index}`,
@@ -803,6 +827,7 @@ describe('TerminalSession', () => {
         data: 'shared live output\r\n'
       })
     }
+
     await vi.waitFor(() =>
       expect(terminals.map((terminal) => terminal.text())).toEqual([
         'shared history\nshared live output',
@@ -855,6 +880,7 @@ describe('TerminalSession', () => {
       'input',
       expect.anything()
     )
+
     const grant = async (generation: number, transitionId: string) => {
       socket.emitServer('query_authority', {
         generation,
@@ -1123,6 +1149,7 @@ describe('TerminalSession', () => {
   it('refits as a viewer when takeover dimensions arrive before control loss', async () => {
     const { control, dimensions, resize, session, socket, terminal } =
       controllerSessionFixture()
+
     terminal.measurement = { cols: 60, rows: 20 }
 
     dimensions(120, 40, 2)
@@ -1232,12 +1259,14 @@ describe('TerminalSession', () => {
 
   it('fails closed instead of dropping renders when the bounded queue fills', () => {
     const session = createTerminalSession('terminal-one')
+
     for (let index = 0; index < 1_026; index += 1) {
       terminalSessionTestAccess(session).services.render.enqueueRender(
         0,
         Effect.never
       )
     }
+
     expect(session.getSnapshot()).toMatchObject({
       phase: 'closed',
       error:
@@ -1258,10 +1287,13 @@ describe('TerminalSession', () => {
     )
     vi.stubGlobal('location', { hostname: 'remote.example' })
     const signals: AbortSignal[] = []
+
     const request = vi.fn((_input: RequestInfo | URL, init: RequestInit) => {
       signals.push(init.signal!)
+
       return new Promise<Response>(() => undefined)
     })
+
     vi.stubGlobal('fetch', request)
     session.pasteFiles([new File(['one'], 'one.txt')])
     session.pasteFiles([new File(['two'], 'two.txt')])
@@ -1304,11 +1336,13 @@ describe('TerminalSession', () => {
     )
     vi.stubGlobal('location', { hostname: 'remote.example' })
     const pending: Array<() => void> = []
+
     const request = vi
       .fn()
       .mockRejectedValueOnce(new Error('upload failed'))
       .mockImplementation((_input: RequestInfo | URL, init: RequestInit) => {
         const file = init.body
+
         if (!(file instanceof File)) {
           throw new Error('Expected file body')
         }
@@ -1319,13 +1353,16 @@ describe('TerminalSession', () => {
           )
         })
       })
+
     vi.stubGlobal('fetch', request)
     const paste = vi.fn()
     terminal.onData = paste
+
     const files = Array.from(
       { length: 12 },
       (_, index) => new File(['two'], `${index}.txt`)
     )
+
     Object.defineProperty(files[0], 'size', { value: 60 * 1024 * 1024 })
     session.pasteFiles([new File(['one'], 'one.txt')])
     session.pasteFiles(files)
@@ -1335,6 +1372,7 @@ describe('TerminalSession', () => {
       queuedFiles: 9,
       message: expect.stringContaining('0/12 files · 0%')
     })
+
     // Finish each wave out of order: only three run at a time, and the
     // eventual terminal input must still preserve the selection order.
     for (let completed = 0; completed < 12; completed += 3) {
@@ -1343,12 +1381,14 @@ describe('TerminalSession', () => {
         .splice(0)
         .reverse()
         .forEach((finish) => finish())
+
       if (completed < 9) {
         await vi.waitFor(() =>
           expect(request).toHaveBeenCalledTimes(completed + 7)
         )
       }
     }
+
     await vi.waitFor(() =>
       expect(paste).toHaveBeenCalledExactlyOnceWith(
         files.map((file) => `/tmp/${file.name}`).join(' ')
@@ -1358,14 +1398,17 @@ describe('TerminalSession', () => {
     expect(session.getSnapshot().fileTransfer).toBe(null)
 
     vi.stubGlobal('location', { hostname: 'localhost' })
+
     const localFiles = files.map((file) => {
       const local = new File([], file.name)
       Object.defineProperties(local, {
         path: { value: `/local/${file.name}` },
         size: { value: 60 * 1024 * 1024 * 1024 }
       })
+
       return local
     })
+
     session.pasteFiles(localFiles)
     await vi.waitFor(() => expect(paste).toHaveBeenCalledTimes(2))
     expect(paste).toHaveBeenLastCalledWith(
@@ -1387,12 +1430,14 @@ describe('TerminalSession', () => {
     )
     vi.stubGlobal('location', { hostname: 'remote.example' })
     let finish: (response: Response) => void = () => undefined
+
     const request = vi.fn(
       () =>
         new Promise<Response>((resolve) => {
           finish = resolve
         })
     )
+
     vi.stubGlobal('fetch', request)
     const paste = vi.fn()
     terminal.onData = paste
@@ -1580,6 +1625,7 @@ describe('TerminalSession', () => {
     const fitController = vi
       .mocked(requestAnimationFrame)
       .mock.calls.at(-1)?.[0]
+
     fitController?.(0)
     await vi.advanceTimersByTimeAsync(150)
     expect(socket.emit).toHaveBeenCalledWith('resize', {
@@ -1650,6 +1696,7 @@ describe('TerminalSession', () => {
         error: null
       }
     })
+
     const handleControl =
       terminalSessionTestAccess(
         session
@@ -1894,6 +1941,7 @@ describe('TerminalSessionManager', () => {
   it('publishes each runtime update once with complete snapshots before its attention event', () => {
     const { manager, sessions } = fixture()
     const order: string[] = []
+
     const observed: Array<{
       title: string | undefined
       foreground: boolean
@@ -1901,6 +1949,7 @@ describe('TerminalSessionManager', () => {
       attention: boolean
       entry: { sequence: number; unread: boolean } | undefined
     }> = []
+
     manager.subscribe(() => {
       order.push('store')
       observed.push({
@@ -1968,6 +2017,7 @@ describe('TerminalSessionManager', () => {
     const { manager } = fixture()
     const events: TerminalAttentionEvent[] = []
     manager.subscribeAttentionEvents((event) => events.push(event))
+
     const metadata = {
       terminalId: 'background',
       title: 'Pi',
@@ -2002,6 +2052,7 @@ describe('TerminalSessionManager', () => {
         reason: 'bell'
       }
     } as const
+
     manager.applyRuntimeMetadata(next)
     expect(events).toEqual([
       {
@@ -2018,6 +2069,7 @@ describe('TerminalSessionManager', () => {
 
   it('restores daemon attention and clears it only from authoritative metadata', async () => {
     const { acknowledgeAttention, manager } = fixture()
+
     const metadata = {
       terminalId: 'background',
       title: 'Pi',
@@ -2068,6 +2120,7 @@ describe('TerminalSessionManager', () => {
 
   it('acknowledges an equal sequence again after a daemon snapshot', async () => {
     const { acknowledgeAttention, manager } = fixture()
+
     const metadata = {
       terminalId: 'active',
       title: null,
@@ -2091,6 +2144,7 @@ describe('TerminalSessionManager', () => {
 
   it('ignores stale incremental attention but lets snapshots reset the sequence', () => {
     const { manager } = fixture()
+
     const metadata = {
       terminalId: 'background',
       title: 'first',
@@ -2142,11 +2196,14 @@ describe('TerminalSessionManager', () => {
 
   it('queues exact newer acknowledgements behind an in-flight request', async () => {
     let releaseFirst!: () => void
+
     const first = new Promise<void>((resolve) => {
       releaseFirst = resolve
     })
+
     const { acknowledgeAttention, manager } = fixture()
     acknowledgeAttention.mockImplementationOnce(() => first)
+
     const metadata = {
       terminalId: 'active',
       title: null,
@@ -2186,11 +2243,14 @@ describe('TerminalSessionManager', () => {
 
   it('drops stale queued acknowledgements after a snapshot reset', async () => {
     let releaseFirst!: () => void
+
     const first = new Promise<void>((resolve) => {
       releaseFirst = resolve
     })
+
     const { acknowledgeAttention, manager } = fixture()
     acknowledgeAttention.mockImplementationOnce(() => first)
+
     const metadata = {
       terminalId: 'active',
       title: null,
@@ -2278,12 +2338,14 @@ describe('TerminalSessionManager', () => {
 
   it('does not let session churn resurrect activity after a daemon clear', () => {
     const { manager, sessions } = fixture(1)
+
     const active = {
       terminalId: 'one',
       title: null,
       activity: working(null),
       attention: null
     } as const
+
     manager.applyRuntimeMetadata(active)
     manager.acquire('one')
     manager.release('one')

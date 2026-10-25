@@ -59,6 +59,7 @@ describe('Application background ownership', () => {
               )
             )
           )
+
           return yield* Deferred.await(result)
         }).pipe(Effect.provide(ApplicationFibers.Default))
       )
@@ -75,6 +76,7 @@ describe('Application background ownership', () => {
           const fibers = yield* ApplicationFibers
           const started = yield* Deferred.make<void>()
           const release = yield* Deferred.make<void>()
+
           const request = yield* Effect.forkScoped(
             Effect.uninterruptible(
               fibers.fork(
@@ -86,6 +88,7 @@ describe('Application background ownership', () => {
               )
             ).pipe(Effect.zipRight(Effect.never))
           )
+
           yield* Deferred.await(started)
           yield* Fiber.interrupt(request)
           expect(completed).toBe(false)
@@ -118,28 +121,34 @@ describe('MutationCoordinator', () => {
                 yield* Deferred.succeed(firstStarted, undefined)
                 yield* Deferred.await(firstGate)
                 calls.push('first:end')
+
                 return 1
               })
             )
           )
+
           const failed = yield* Effect.forkScoped(
             coordinator.enqueue(
               'project',
               Effect.gen(function* () {
                 calls.push('failed')
+
                 return yield* Effect.fail('expected failure')
               })
             )
           )
+
           const last = yield* Effect.forkScoped(
             coordinator.enqueue(
               'project',
               Effect.sync(() => {
                 calls.push('last')
+
                 return 3
               })
             )
           )
+
           const otherKey = yield* Effect.forkScoped(
             coordinator.enqueue(
               'other',
@@ -175,6 +184,7 @@ describe('MutationCoordinator', () => {
           yield* Deferred.succeed(secondKeyGate, undefined)
           yield* Fiber.join(otherKey)
           yield* coordinator.drain
+
           return calls
         })
       )
@@ -198,12 +208,15 @@ describe('MutationCoordinator', () => {
                 Effect.gen(function* () {
                   yield* Deferred.succeed(started, undefined)
                   yield* Deferred.await(gate)
+
                   return yield* TestValue
                 })
               )
               .pipe(Effect.provideService(TestValue, 'first'))
           )
+
           yield* Deferred.await(started)
+
           const second = yield* Effect.forkScoped(
             coordinator
               .enqueue('project', TestValue)
@@ -211,6 +224,7 @@ describe('MutationCoordinator', () => {
           )
 
           yield* Deferred.succeed(gate, undefined)
+
           return yield* Effect.all([Fiber.join(first), Fiber.join(second)])
         })
       )

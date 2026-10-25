@@ -8,6 +8,7 @@
 
 export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
 export const TERMINAL_NAME_MAX_LENGTH = 120
+
 /** Private OSC carrying `command;<line>` from Treeport shell integration. */
 export const TERMINAL_COMMAND_OSC = 7740
 

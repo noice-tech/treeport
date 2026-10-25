@@ -51,6 +51,7 @@ function fixture(webDist = '/missing') {
     daemonLifecycle: 'treeport',
     webDevelopment: false
   }
+
   const projectRecord = {
     id: 'p',
     name: 'Project',
@@ -66,6 +67,7 @@ function fixture(webDist = '/missing') {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
+
   const terminalRecord = {
     id: 'term_1',
     worktreeId: 'wt_1',
@@ -78,6 +80,7 @@ function fixture(webDist = '/missing') {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
+
   const createOperationRecord = {
     id: 'op_create',
     projectId: 'p',
@@ -90,6 +93,7 @@ function fixture(webDist = '/missing') {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
+
   const removePreviewRecord = {
     worktreeId: 'wt_1',
     name: 'feature',
@@ -116,6 +120,7 @@ function fixture(webDist = '/missing') {
     terminals: [],
     confirmationToken: 'a'.repeat(64)
   }
+
   const removeOperationRecord = {
     id: 'op_1',
     projectId: 'p',
@@ -146,6 +151,7 @@ function fixture(webDist = '/missing') {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
+
   const serviceMethods = {
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
@@ -523,6 +529,7 @@ function fixture(webDist = '/missing') {
     beginRemove: vi.fn(async () => removeOperationRecord),
     terminateAllTerminals: vi.fn(async () => 2)
   }
+
   // SAFETY: The fixture exposes the same doubles through the temporary façade
   // and the domain APIs used by the HTTP handlers.
   const service = testAccess<TreeportService & typeof serviceMethods>({
@@ -541,6 +548,7 @@ function fixture(webDist = '/missing') {
     treeFiles: serviceMethods,
     packageManagement: serviceMethods
   })
+
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'pi · /repo',
@@ -555,13 +563,17 @@ function fixture(webDist = '/missing') {
     },
     attention: null
   }
+
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [])
+
   const metadataGet = vi.fn((terminalId: string) => ({
     ...runtimeMetadata,
     terminalId
   }))
+
   const metadataTrack = vi.fn(() => Effect.void)
   const metadataAcknowledgeAttention = vi.fn(() => Effect.void)
+
   // SAFETY: The test fixture provides the asserted contract used here.
   const terminalMetadata = testAccess<TerminalMetadataManager>({
     snapshot: metadataSnapshot,
@@ -569,10 +581,12 @@ function fixture(webDist = '/missing') {
     trackTerminal: metadataTrack,
     acknowledgeAttention: metadataAcknowledgeAttention
   })
+
   const captureTerminal = vi.fn(
     async (_terminalId: string, _lines: number): Promise<string | null> =>
       'Preparing changes\nRunning tests'
   )
+
   const applicationUpdateStatus: ApplicationUpdateStatus = {
     currentVersion: '0.4.0',
     latestVersion: null,
@@ -585,6 +599,7 @@ function fixture(webDist = '/missing') {
     targetVersion: null,
     error: null
   }
+
   const applicationUpdate = testAccess<ApplicationUpdateManager>({
     status: vi.fn(async () => applicationUpdateStatus),
     check: vi.fn(async () => undefined),
@@ -592,20 +607,25 @@ function fixture(webDist = '/missing') {
     start: vi.fn(async () => applicationUpdateStatus),
     dispose: vi.fn()
   })
+
   const browserIssueTicket = vi.fn(() => Effect.succeed('b'.repeat(43)))
   const browserAgentCommand = vi.fn(async () => 'browser output')
   const browserRequestAppClose = vi.fn(async () => true)
+
   const browserSessions = testAccess<BrowserSessionManager>({
     issueTicket: browserIssueTicket,
     agentCommand: browserAgentCommand,
     requestAppClose: browserRequestAppClose
   })
+
   const terminalHost = testAccess<TerminalSessionBackend>({
     captureTerminal: (terminalId: string, lines: number) =>
       Effect.promise(() => captureTerminal(terminalId, lines)),
     shutdownIfEmpty: vi.fn(() => Effect.void)
   })
+
   const presence = new WorkspacePresenceManager(service.events)
+
   const app = createApp({
     service,
     config,
@@ -616,6 +636,7 @@ function fixture(webDist = '/missing') {
     presence,
     webDist
   })
+
   return {
     app,
     presence,
@@ -639,13 +660,17 @@ describe('HTTP API validation', () => {
     onTestFinished
   }) => {
     const { app, presence, service, browserIssueTicket } = fixture()
+
     const listener = await service.runEffect(
       NodeHttpServer.makeHandler(app.httpApp)
     )
+
     const server = http.createServer((request, response) => {
       const security = authorizeRequest(request)
+
       if (!security.allowed) {
         rejectHttpRequest(request, response, security)
+
         return
       }
 
@@ -658,6 +683,7 @@ describe('HTTP API validation', () => {
 
       listener(request, response)
     })
+
     onTestFinished(async () => {
       presence.dispose()
       await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -666,6 +692,7 @@ describe('HTTP API validation', () => {
     // SAFETY: The server is listening on a TCP port.
     const address = server.address() as AddressInfo
     const url = `http://127.0.0.1:${address.port}/api/presence`
+
     const headers = {
       'content-type': 'application/json',
       host: 'treeport.tailnet.ts.net',
@@ -676,6 +703,7 @@ describe('HTTP API validation', () => {
       'tailscale-user-name': 'Alice',
       'x-forwarded-for': '100.64.0.10'
     }
+
     const input = {
       sessionId: crypto.randomUUID(),
       worktreeId: 'wt_1',
@@ -683,11 +711,13 @@ describe('HTTP API validation', () => {
       visible: true,
       focused: true
     }
+
     const response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(input)
     })
+
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({
       identity: {
@@ -703,11 +733,13 @@ describe('HTTP API validation', () => {
 
     const ticketPath = '/api/apps/app_browser/browser-ticket'
     const ticketInput = { clientId: 'viewer-one', visible: true }
+
     const ticketResponse = await fetch(new URL(ticketPath, url), {
       method: 'POST',
       headers,
       body: JSON.stringify(ticketInput)
     })
+
     expect(ticketResponse.status).toBe(200)
     expect(browserIssueTicket).toHaveBeenCalledWith(
       'app_browser',
@@ -723,14 +755,17 @@ describe('HTTP API validation', () => {
         deviceId: 'tailscale:100.64.0.10'
       }
     )
+
     for (const field of ['account', 'deviceId', 'identity']) {
       const forged = await fetch(new URL(ticketPath, url), {
         method: 'POST',
         headers,
         body: JSON.stringify({ ...ticketInput, [field]: 'forged' })
       })
+
       expect(forged.status).toBe(400)
     }
+
     expect(
       (
         await app.request(ticketPath, {
@@ -747,6 +782,7 @@ describe('HTTP API validation', () => {
       'tailscale-user-login': 'bob@example.test',
       'tailscale-user-name': 'Bob'
     }
+
     await fetch(url, {
       method: 'POST',
       headers: bobHeaders,
@@ -797,6 +833,7 @@ describe('HTTP API validation', () => {
         ).status
       ).toBe(status)
     }
+
     expect(
       (
         await fetch(url, {
@@ -848,6 +885,7 @@ describe('HTTP API validation', () => {
 
   it('reports and starts only the server-selected application update', async () => {
     const { app, applicationUpdate } = fixture()
+
     const available: ApplicationUpdateStatus = {
       currentVersion: '0.4.0',
       latestVersion: '0.5.0',
@@ -860,6 +898,7 @@ describe('HTTP API validation', () => {
       targetVersion: '0.5.0',
       error: null
     }
+
     vi.mocked(applicationUpdate.status).mockResolvedValue(available)
     vi.mocked(applicationUpdate.start).mockResolvedValue({
       ...available,
@@ -876,6 +915,7 @@ describe('HTTP API validation', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ version: '99.0.0' })
     })
+
     expect(started.status).toBe(202)
     expect(await started.json()).toMatchObject({
       currentVersion: '0.4.0',
@@ -903,6 +943,7 @@ describe('HTTP API validation', () => {
 
   it('routes persistent Browser and web-app lifecycle with scoped runtime reads', async () => {
     const { app, browserAgentCommand, service } = fixture()
+
     const browser = await app.request('/api/worktrees/wt_1/browser-apps', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -911,6 +952,7 @@ describe('HTTP API validation', () => {
         sourceTerminalId: 'term_1'
       })
     })
+
     expect(browser.status).toBe(201)
     expect(await browser.json()).toMatchObject({
       app: { kind: 'browser', worktreeId: 'wt_1' }
@@ -933,6 +975,7 @@ describe('HTTP API validation', () => {
         body: JSON.stringify({ url: 'http://localhost:4173/' })
       }
     )
+
     expect(terminalBrowser.status).toBe(201)
     expect(service.openBrowserAppFromTerminal).toHaveBeenCalledWith(
       'term_1',
@@ -976,14 +1019,17 @@ describe('HTTP API validation', () => {
         ).status
       ).toBe(400)
     }
+
     expect(service.openBrowserApp).toHaveBeenCalledOnce()
 
     const fileUrl = 'file:///tmp/preview%20draft.html#section'
+
     const fileBrowser = await app.request('/api/worktrees/wt_1/browser-apps', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url: fileUrl })
     })
+
     expect(fileBrowser.status).toBe(201)
     expect(service.openBrowserApp).toHaveBeenLastCalledWith(
       'wt_1',
@@ -991,6 +1037,7 @@ describe('HTTP API validation', () => {
       null,
       null
     )
+
     const fileNavigation = await app.request(
       '/api/apps/app_browser/browser-agent',
       {
@@ -999,6 +1046,7 @@ describe('HTTP API validation', () => {
         body: JSON.stringify({ command: 'goto', args: [fileUrl] })
       }
     )
+
     expect(fileNavigation.status).toBe(200)
     expect(browserAgentCommand).toHaveBeenLastCalledWith('app_browser', {
       command: 'goto',
@@ -1010,6 +1058,7 @@ describe('HTTP API validation', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ command: 'snapshot', args: [] })
     })
+
     expect(snapshot.status).toBe(200)
     expect(await snapshot.json()).toEqual({ output: 'browser output' })
     expect(browserAgentCommand).toHaveBeenCalledWith('app_browser', {
@@ -1020,6 +1069,7 @@ describe('HTTP API validation', () => {
     browserAgentCommand.mockRejectedValueOnce(
       new Error('The Browser app is not visible.')
     )
+
     const failedScreenshot = await app.request(
       '/api/apps/app_browser/browser-agent',
       {
@@ -1028,6 +1078,7 @@ describe('HTTP API validation', () => {
         body: JSON.stringify({ command: 'screenshot', args: [] })
       }
     )
+
     expect(failedScreenshot.status).toBe(409)
     expect(await failedScreenshot.json()).toEqual({
       error: {
@@ -1044,6 +1095,7 @@ describe('HTTP API validation', () => {
     const definitions = await app.request(
       '/api/worktrees/wt_1/web-app-definitions'
     )
+
     expect(await definitions.json()).toMatchObject({
       definitions: [{ id: 'project:review', source: { type: 'project' } }]
     })
@@ -1057,6 +1109,7 @@ describe('HTTP API validation', () => {
         launchCwd: 'packages/preview'
       })
     })
+
     expect(created.status).toBe(201)
     expect(service.createWebApp).toHaveBeenCalledWith(
       'wt_1',
@@ -1078,6 +1131,7 @@ describe('HTTP API validation', () => {
         sourceTerminalId: 'term_1'
       })
     })
+
     expect(opened.status).toBe(200)
     expect(await opened.json()).toMatchObject({ reused: true, created: false })
     expect(service.openWebApp).toHaveBeenCalledWith(
@@ -1105,11 +1159,13 @@ describe('HTTP API validation', () => {
     expect(
       (await app.request('/api/apps/app_review/diff?scope=invalid')).status
     ).toBe(400)
+
     const fileDiff = await app.request('/api/apps/app_review/diff/file', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'a' })
     })
+
     expect(fileDiff.status).toBe(200)
     expect(await fileDiff.json()).toEqual({
       path: 'a',
@@ -1137,11 +1193,13 @@ describe('HTTP API validation', () => {
       'a',
       'uncommitted'
     )
+
     const image = await app.request('/api/apps/app_review/diff/image', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'image.png', commit: null })
     })
+
     expect(image.status).toBe(200)
     expect(await image.json()).toEqual({
       dataUrl: 'data:image/png;base64,iVBORw==',
@@ -1162,6 +1220,7 @@ describe('HTTP API validation', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ query: 'value' })
     })
+
     expect(await searchFiles.json()).toEqual({
       files: [
         {
@@ -1181,6 +1240,7 @@ describe('HTTP API validation', () => {
       truncated: false
     })
     expect(service.searchTreeFiles).toHaveBeenCalledWith('app_review', 'value')
+
     for (const query of ['', 'two\nlines']) {
       expect(
         (
@@ -1192,6 +1252,7 @@ describe('HTTP API validation', () => {
         ).status
       ).toBe(400)
     }
+
     expect(service.searchTreeFiles).toHaveBeenCalledOnce()
 
     const readFile = await app.request('/api/apps/app_review/files/read', {
@@ -1199,6 +1260,7 @@ describe('HTTP API validation', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: 'src/app.ts' })
     })
+
     expect(await readFile.json()).toEqual({
       path: 'src/app.ts',
       content: 'export const value = 1\n',
@@ -1218,6 +1280,7 @@ describe('HTTP API validation', () => {
         expectedRevision: 'revision-1'
       })
     })
+
     expect(await writeFile.json()).toEqual({
       path: 'src/app.ts',
       revision: 'revision-2'
@@ -1270,6 +1333,7 @@ describe('HTTP API validation', () => {
         scope: 'definition'
       })
     })
+
     expect(stored.status).toBe(200)
     expect(service.setWebAppStorage).toHaveBeenCalledWith(
       'app_review',
@@ -1283,6 +1347,7 @@ describe('HTTP API validation', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'comments' })
     })
+
     expect(await restored.json()).toEqual({
       found: true,
       value: [{ file: 'src/app.ts', line: 12 }]
@@ -1291,6 +1356,7 @@ describe('HTTP API validation', () => {
     vi.mocked(service.getWebAppStorage)
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(null)
+
     const missingStorage = await app.request(
       '/api/apps/app_review/storage/get',
       {
@@ -1299,12 +1365,15 @@ describe('HTTP API validation', () => {
         body: JSON.stringify({ key: 'missing' })
       }
     )
+
     expect(await missingStorage.json()).toEqual({ found: false, value: null })
+
     const nullStorage = await app.request('/api/apps/app_review/storage/get', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'null-value' })
     })
+
     expect(await nullStorage.json()).toEqual({ found: true, value: null })
 
     const removedStorage = await app.request('/api/apps/app_review/storage', {
@@ -1312,6 +1381,7 @@ describe('HTTP API validation', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'comments' })
     })
+
     expect(removedStorage.status).toBe(200)
     expect(service.deleteWebAppStorage).toHaveBeenCalledWith(
       'app_review',
@@ -1322,6 +1392,7 @@ describe('HTTP API validation', () => {
     const closed = await app.request('/api/apps/app_review', {
       method: 'DELETE'
     })
+
     expect(closed.status).toBe(200)
     expect(service.deleteApp).toHaveBeenCalledWith('app_review', false)
 
@@ -1338,6 +1409,7 @@ describe('HTTP API validation', () => {
     const blocked = await app.request('/api/apps/browser_app', {
       method: 'DELETE'
     })
+
     expect(blocked.status).toBe(409)
     expect(await blocked.json()).toEqual({
       error: {
@@ -1350,6 +1422,7 @@ describe('HTTP API validation', () => {
     const closed = await app.request('/api/apps/browser_app?force=true', {
       method: 'DELETE'
     })
+
     expect(closed.status).toBe(200)
     expect(browserRequestAppClose).toHaveBeenLastCalledWith('browser_app', true)
     expect(service.deleteApp).toHaveBeenCalledWith('browser_app', false)
@@ -1363,10 +1436,12 @@ describe('HTTP API validation', () => {
     vi.stubGlobal('addEventListener', (type: string, listener: EventListener) =>
       listeners.set(type, listener)
     )
+
     const dispatch = <EventFixture extends object>(
       type: string,
       event: EventFixture
     ) => listeners.get(type)!(testAccess<Event>(event))
+
     try {
       // SAFETY: The test fixture provides the asserted contract used here.
       const sdk = (await import('@treeport/app-sdk')) as {
@@ -1382,6 +1457,7 @@ describe('HTTP API validation', () => {
           }
         }
       }
+
       const context = sdk.treeport.context()
       const message = appParent.postMessage.mock.calls[0]![0]
       dispatch('message', {
@@ -1455,6 +1531,7 @@ describe('HTTP API validation', () => {
       const stored = sdk.treeport.storage.set('comments', [{ line: 12 }], {
         scope: 'definition'
       })
+
       const storageMessage = appParent.postMessage.mock.calls.at(-1)![0]
       expect(storageMessage).toMatchObject({
         source: 'treeport-app-v1',
@@ -1552,8 +1629,10 @@ describe('HTTP API validation', () => {
     const appRoot = path.join(config.runtimeDir, 'typed-app')
     const indexPath = path.join(appRoot, 'index.html')
     const modulePath = path.join(appRoot, 'app.js')
+
     const indexSource =
       '<!doctype html><html><body><script type="module" src="app.js"></script></body></html>'
+
     await fs.mkdir(appRoot, { recursive: true })
     await fs.writeFile(indexPath, indexSource)
     await fs.writeFile(modulePath, 'export const answer = 42')
@@ -1569,6 +1648,7 @@ describe('HTTP API validation', () => {
 
     try {
       const browserOrigin = 'https://treeport.example.ts.net:5173'
+
       const documentResponse = await app.request(
         '/api/web-apps/app_review/assets/',
         {
@@ -1579,6 +1659,7 @@ describe('HTTP API validation', () => {
           }
         }
       )
+
       expect(documentResponse.status).toBe(200)
       await expect(documentResponse.text()).resolves.toBe(indexSource)
       expect(
@@ -1601,15 +1682,18 @@ describe('HTTP API validation', () => {
       const moduleResponse = await app.request(
         '/api/web-apps/app_review/assets/app.js'
       )
+
       expect(moduleResponse.status).toBe(200)
       expect(moduleResponse.headers.get('content-type')).toBe(
         'text/javascript; charset=utf-8'
       )
       const moduleSource = await moduleResponse.text()
+
       // SAFETY: The test fixture provides the asserted contract used here.
       const compiled = (await import(
         /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`
       )) as { answer: number }
+
       expect(compiled.answer).toBe(42)
     } finally {
       await fs.rm(config.runtimeDir, { recursive: true, force: true })
@@ -1633,6 +1717,7 @@ describe('HTTP API validation', () => {
       const response = await app.request(
         '/api/web-apps/app_review/assets/nested/review.js'
       )
+
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toBe(
         'text/javascript; charset=utf-8'
@@ -1652,15 +1737,18 @@ describe('HTTP API validation', () => {
 
   it('returns consistent validation errors without calling domain services', async () => {
     const { app, service } = fixture()
+
     const response = await app.request('/api/worktrees/wt_1/terminals', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'bad', argv: 'pnpm dev' })
     })
+
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({
       error: { code: 'VALIDATION_ERROR', message: 'Request validation failed' }
     })
+
     const invalidEnvironment = await app.request(
       '/api/worktrees/wt_1/terminals',
       {
@@ -1672,7 +1760,9 @@ describe('HTTP API validation', () => {
         })
       }
     )
+
     expect(invalidEnvironment.status).toBe(400)
+
     const ambiguousCommand = await app.request(
       '/api/worktrees/wt_1/terminals',
       {
@@ -1685,12 +1775,14 @@ describe('HTTP API validation', () => {
         })
       }
     )
+
     expect(ambiguousCommand.status).toBe(400)
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
   it('forwards terminal completion behavior without changing argv', async () => {
     const { app, service } = fixture()
+
     const response = await app.request('/api/worktrees/wt_1/terminals', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1704,6 +1796,7 @@ describe('HTTP API validation', () => {
         initialSize: { cols: 132, rows: 47 }
       })
     })
+
     expect(response.status).toBe(201)
     expect(service.createTerminal).toHaveBeenCalledWith(
       'wt_1',
@@ -1727,6 +1820,7 @@ describe('HTTP API validation', () => {
         closeOnSuccess: true
       })
     })
+
     expect(oneOff.status).toBe(201)
     expect(service.createTerminal).toHaveBeenLastCalledWith(
       'wt_1',
@@ -1744,6 +1838,7 @@ describe('HTTP API validation', () => {
         returnToShell: true
       })
     })
+
     expect(shellCommand.status).toBe(201)
     expect(service.createTerminal).toHaveBeenLastCalledWith(
       'wt_1',
@@ -1755,9 +1850,11 @@ describe('HTTP API validation', () => {
 
   it('validates and forwards server directory browsing', async () => {
     const { app, service } = fixture()
+
     const browsed = await app.request(
       '/api/filesystem/directories?input=%2Frepos%2Fwith%20spaces&hidden=true'
     )
+
     expect(browsed.status).toBe(200)
     expect(await browsed.json()).toMatchObject({
       project: {
@@ -1774,6 +1871,7 @@ describe('HTTP API validation', () => {
     const invalid = await app.request(
       '/api/filesystem/directories?input=&hidden=yes'
     )
+
     expect(invalid.status).toBe(400)
     expect(service.browseDirectory).toHaveBeenCalledTimes(1)
   })
@@ -1798,24 +1896,28 @@ describe('HTTP API validation', () => {
     const opened = await app.request('/api/projects/p/open', {
       method: 'POST'
     })
+
     expect(opened.status).toBe(200)
     expect(service.openProject).toHaveBeenCalledWith('p')
 
     const closed = await app.request('/api/projects/p/close', {
       method: 'POST'
     })
+
     expect(closed.status).toBe(200)
     expect(service.closeProject).toHaveBeenCalledWith('p')
 
     const dismissed = await app.request('/api/projects/p/recent', {
       method: 'DELETE'
     })
+
     expect(dismissed.status).toBe(200)
     expect(service.dismissRecentProject).toHaveBeenCalledWith('p')
 
     const removed = await app.request('/api/projects/p', {
       method: 'DELETE'
     })
+
     expect(removed.status).toBe(200)
     expect(service.deleteProject).toHaveBeenCalledWith('p')
     expect(service.closeProject).toHaveBeenCalledTimes(1)
@@ -1826,6 +1928,7 @@ describe('HTTP API validation', () => {
     vi.mocked(service.listProjects).mockRejectedValueOnce(
       new Error('Database connection failed at /internal/data')
     )
+
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => undefined)
@@ -1834,6 +1937,7 @@ describe('HTTP API validation', () => {
       const response = await app.request('/api/projects?token=hidden', {
         headers: { 'x-request-id': 'request_test_123' }
       })
+
       const body = await response.json()
 
       expect(response.status).toBe(500)
@@ -1884,6 +1988,7 @@ describe('HTTP API validation', () => {
       ) as never
     )
     const abort = new AbortController()
+
     const response = app.request(
       new Request('http://localhost/api/projects', { signal: abort.signal })
     )
@@ -1896,11 +2001,13 @@ describe('HTTP API validation', () => {
 
   it('rejects malformed JSON with a machine-readable code', async () => {
     const { app } = fixture()
+
     const response = await app.request('/api/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: '{'
     })
+
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({
       error: { code: 'INVALID_JSON' }
@@ -1909,6 +2016,7 @@ describe('HTTP API validation', () => {
 
   it('accepts durable worktree creation and one remove endpoint', async () => {
     const { app, service } = fixture()
+
     const accepted = await app.request('/api/projects/p/worktree-operations', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1925,6 +2033,7 @@ describe('HTTP API validation', () => {
         }
       })
     })
+
     expect(accepted.status).toBe(202)
     expect(await accepted.json()).toMatchObject({
       operation: { id: 'op_create', status: 'pending' }
@@ -1955,6 +2064,7 @@ describe('HTTP API validation', () => {
     expect(
       (await app.request('/api/worktrees/wt_1/remove-preview')).status
     ).toBe(200)
+
     const removed = await app.request('/api/worktrees/wt_1/remove', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1963,6 +2073,7 @@ describe('HTTP API validation', () => {
         confirmDestructive: true
       })
     })
+
     expect(removed.status).toBe(202)
     expect(service.beginRemove).toHaveBeenCalledWith('wt_1', {
       confirmationToken: 'a'.repeat(64),
@@ -1976,10 +2087,12 @@ describe('HTTP API validation', () => {
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
     const uploadDirectory = path.join(config.runtimeDir, 'uploads')
     const stalePath = path.join(uploadDirectory, 'treeport-upload-stale.png')
+
     const retainedPath = path.join(
       uploadDirectory,
       'treeport-upload-retained.bin'
     )
+
     try {
       await fs.mkdir(uploadDirectory, { recursive: true })
       await fs.writeFile(stalePath, 'stale')
@@ -2014,11 +2127,13 @@ describe('HTTP API validation', () => {
       })
 
       expect((await fs.stat(retainedPath)).size).toBe(600 * 1024 * 1024)
+
       const oversized = await app.request('/api/terminals/term_1/files', {
         method: 'POST',
         headers: { 'content-length': String(50 * 1024 * 1024 * 1024 + 1) },
         body: bytes
       })
+
       expect(oversized.status).toBe(413)
       expect(await oversized.json()).toMatchObject({
         error: { code: 'FILE_TOO_LARGE' }
@@ -2029,6 +2144,7 @@ describe('HTTP API validation', () => {
         headers: { 'x-treeport-file-extension': 'txt' },
         body: new TextEncoder().encode('legacy')
       })
+
       expect(legacyHeader.status).toBe(201)
       expect(
         path.extname(
@@ -2042,6 +2158,7 @@ describe('HTTP API validation', () => {
         headers: { 'x-treeport-file-extension': '../png' },
         body: new Uint8Array()
       })
+
       expect(invalid.status).toBe(400)
       expect(await invalid.json()).toMatchObject({
         error: { code: 'VALIDATION_ERROR' }
@@ -2054,6 +2171,7 @@ describe('HTTP API validation', () => {
   it('acknowledges an exact attention sequence without refreshing projects', async () => {
     const { app, metadataAcknowledgeAttention, metadataTrack, service } =
       fixture()
+
     const response = await app.request(
       '/api/terminals/term/attention/acknowledge',
       {
@@ -2079,6 +2197,7 @@ describe('HTTP API validation', () => {
         body: JSON.stringify({ sequence: 0 })
       }
     )
+
     expect(invalid.status).toBe(400)
   })
 
@@ -2092,6 +2211,7 @@ describe('HTTP API validation', () => {
       service.getKnownTerminal.mockRejectedValueOnce(
         new DomainError(code, 'Terminal is unavailable', status)
       )
+
       const response = await app.request(
         '/api/terminals/term/attention/acknowledge',
         {
@@ -2140,6 +2260,7 @@ describe('HTTP API validation', () => {
 
   it('shuts down an empty detached host after terminating all terminals', async () => {
     const { app, service, terminalHost } = fixture()
+
     const response = await app.request('/api/admin/terminate-terminals', {
       method: 'POST'
     })
@@ -2155,6 +2276,7 @@ describe('HTTP API validation', () => {
       '/tmp',
       `treeport-web-dist-${crypto.randomUUID()}`
     )
+
     await fs.mkdir(webDist, { recursive: true })
     await fs.writeFile(
       path.join(webDist, 'index.html'),
@@ -2163,9 +2285,11 @@ describe('HTTP API validation', () => {
 
     try {
       const { app } = fixture(webDist)
+
       const deepLink = await app.request(
         '/projects/project/worktrees/worktree/terminals/terminal'
       )
+
       expect(deepLink.status).toBe(200)
       expect(deepLink.headers.get('cache-control')).toBe('no-store')
       expect(await deepLink.text()).toContain('Treeport route fallback')
@@ -2174,6 +2298,7 @@ describe('HTTP API validation', () => {
         '/projects/project/worktrees/worktree/terminals/terminal',
         { method: 'HEAD' }
       )
+
       expect(head.status).toBe(200)
       expect(await head.text()).toBe('')
 

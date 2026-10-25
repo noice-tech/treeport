@@ -221,12 +221,17 @@ const externalRemoveOperationResultSchema: z.ZodType<ExternalRemoveOperationResu
   })
 
 type TreeportOrm = LibSQLDatabase<typeof schema>
+
 type TreeportTransaction = Parameters<
   Parameters<TreeportOrm['transaction']>[0]
 >[0]
+
 export type ProjectRow = typeof projectTable.$inferSelect
+
 export type WorktreeRow = typeof worktrees.$inferSelect
+
 export type LauncherRow = typeof launchers.$inferSelect
+
 export type OperationRow = typeof operations.$inferSelect
 
 export interface DatabaseOpenOptions {
@@ -318,12 +323,15 @@ async function openDatabasePromise(
   options: DatabaseOpenOptions = {}
 ): Promise<TreeportDatabase> {
   const absoluteFilePath = path.resolve(filePath)
+
   const packagedMigrations = fileURLToPath(
     new URL('../../../drizzle', import.meta.url)
   )
+
   const migrationsFolder = options.migrationsFolder ?? packagedMigrations
   const migrations = readMigrationFiles({ migrationsFolder })
   const latestMigration = migrations.at(-1)
+
   if (!latestMigration) {
     throw new Error(
       `Treeport has no database migrations in ${migrationsFolder}`
@@ -348,6 +356,7 @@ async function openDatabasePromise(
     intMode: 'number',
     timeout: 5_000
   })
+
   const db = drizzle(client, { schema })
 
   try {
@@ -356,6 +365,7 @@ async function openDatabasePromise(
           SELECT name FROM sqlite_master
           WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
         `)
+
       const tableNames = tableNameRows.map((row) => row.name)
       hasDurableSchema = tableNames.some(
         (name) =>
@@ -367,6 +377,7 @@ async function openDatabasePromise(
         const legacyRows = await db.all<{ version: number }>(sql`
             SELECT version FROM schema_migrations ORDER BY version
           `)
+
         const legacyVersions = legacyRows.map((row) => row.version)
         const newestLegacyVersion = legacyVersions.at(-1) ?? 0
 
@@ -385,6 +396,7 @@ async function openDatabasePromise(
         const missingTables = ['projects', 'worktrees', 'operations'].filter(
           (table) => !tableNames.includes(table)
         )
+
         if (missingTables.length > 0) {
           throw new Error(
             `Treeport cannot safely adopt the legacy database at ${absoluteFilePath}: missing ${missingTables.join(
@@ -417,6 +429,7 @@ async function openDatabasePromise(
         const knownMigration = migrations.find(
           (migration) => migration.folderMillis === createdAt
         )
+
         if (!knownMigration || knownMigration.hash !== row.hash) {
           throw new Error(
             `Treeport database at ${absoluteFilePath} has an unrecognized migration history. Reinstall the same or a newer compatible Treeport release before opening it.`
@@ -456,10 +469,12 @@ async function openDatabasePromise(
           SELECT 1 AS found FROM sqlite_master
           WHERE type = 'table' AND name = 'terminal_presets'
         `)
+
       if (presetTable) {
         const columns = await db.all<{ name: string }>(
           sql`PRAGMA table_info(terminal_presets)`
         )
+
         if (!columns.some((column) => column.name === 'close_on_success')) {
           await db.transaction(async (tx) => {
             await tx.run(sql`
@@ -473,6 +488,7 @@ async function openDatabasePromise(
     }
 
     await migrate(db, { migrationsFolder })
+
     if (migrationsPending) {
       const foreignKeyViolations = await db.all<{
         table: string
@@ -480,6 +496,7 @@ async function openDatabasePromise(
         parent: string
         fkid: number
       }>(sql`PRAGMA foreign_key_check`)
+
       if (foreignKeyViolations.length > 0) {
         throw new Error(
           `Treeport database migration introduced ${foreignKeyViolations.length} foreign-key violation(s)`
@@ -649,6 +666,7 @@ export function mapOperation(row: OperationRow): OperationRecord {
   const legacyKind = z
     .enum(['finish', 'discard', 'project_cleanup'])
     .parse(row.kind)
+
   return {
     ...common,
     kind: legacyKind,

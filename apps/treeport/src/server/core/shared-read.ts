@@ -15,6 +15,7 @@ export class SharedRead {
   ): Promise<A> {
     signal?.throwIfAborted()
     let entry = this.pending.get(key)
+
     if (!entry) {
       if (this.pending.size >= 256) {
         return Promise.reject(new Error('Too many pending Git reads'))
@@ -25,18 +26,22 @@ export class SharedRead {
       entry = { controller, promise, readers: 0 }
       this.pending.set(key, entry)
       const current = entry
+
       const settled = () => {
         if (this.pending.get(key) === current) {
           this.pending.delete(key)
         }
       }
+
       void promise.then(settled, settled)
     }
 
     const current = entry
     current.readers++
+
     return new Promise<A>((resolve, reject) => {
       let finished = false
+
       const finish = () => {
         if (finished) {
           return false
@@ -45,6 +50,7 @@ export class SharedRead {
         finished = true
         signal?.removeEventListener('abort', abort)
         current.readers--
+
         if (current.readers === 0) {
           if (this.pending.get(key) === current) {
             this.pending.delete(key)
@@ -55,11 +61,13 @@ export class SharedRead {
 
         return true
       }
+
       const abort = () => {
         if (finish()) {
           reject(signal?.reason)
         }
       }
+
       signal?.addEventListener('abort', abort, { once: true })
       void current.promise.then(
         (value) => {

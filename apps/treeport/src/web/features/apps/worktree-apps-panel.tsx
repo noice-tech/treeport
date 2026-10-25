@@ -80,6 +80,7 @@ function ToolPickerActions({
   onSelectWebApp
 }: ToolPickerActionsProps) {
   const definitionTitleCounts = new Map<string, number>()
+
   for (const definition of definitions) {
     definitionTitleCounts.set(
       definition.title,
@@ -104,6 +105,7 @@ function ToolPickerActions({
             {definitions.map((definition) => {
               const hasDuplicateTitle =
                 (definitionTitleCounts.get(definition.title) ?? 0) > 1
+
               return (
                 <CommandItem
                   key={definition.id}
@@ -158,6 +160,7 @@ function ToolPickerActions({
       {definitions.map((definition) => {
         const hasDuplicateTitle =
           (definitionTitleCounts.get(definition.title) ?? 0) > 1
+
         return (
           <Button
             key={definition.id}
@@ -216,6 +219,7 @@ function BrowserAppLoadingIcon() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => setShowSpinner(true), 200)
+
     return () => window.clearTimeout(timer)
   }, [])
 
@@ -301,6 +305,7 @@ function appsPanelMaxWidth(rail: HTMLDivElement): number {
   const layoutWidth =
     rail.parentElement?.parentElement?.parentElement?.getBoundingClientRect()
       .width
+
   return Math.max(
     MIN_APPS_PANEL_WIDTH,
     (layoutWidth ?? window.innerWidth) - MIN_TERMINAL_WIDTH
@@ -340,6 +345,7 @@ function AppsPanelResizeRail({
     }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
+
   const continueResize = (event: PointerEvent<HTMLDivElement>) => {
     if (!resizeOrigin.current) {
       return
@@ -354,16 +360,21 @@ function AppsPanelResizeRail({
       )
     )
   }
+
   const stopResize = (event: PointerEvent<HTMLDivElement>) => {
     resizeOrigin.current = null
+
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
   }
+
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     const maxWidth = appsPanelMaxWidth(event.currentTarget)
+
     let nextWidth =
       event.currentTarget.parentElement?.getBoundingClientRect().width ?? width
+
     if (event.key === 'ArrowLeft') {
       nextWidth += event.shiftKey ? 32 : 16
     } else if (event.key === 'ArrowRight') {
@@ -454,8 +465,10 @@ export function WorktreeAppsPanel({
     setOpen: setPickerOpen,
     dismiss: dismissPicker
   } = useToolPicker()
+
   const { focusedSurface, emptyToolFocusRevision } = useWorkspaceSurfaceFocus()
   const focused = focusedSurface === 'tool'
+
   const {
     orderedItems: orderedTools,
     announcement: reorderAnnouncement,
@@ -466,32 +479,40 @@ export function WorktreeAppsPanel({
     orientation: 'horizontal',
     onReorder: onReorderApps
   })
+
   const toolPickerCommandRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLElement>(null)
   const restoredEmptyFocusRevisionRef = useRef(0)
+
   const [preferredWidthByWorktree, setPreferredWidthByWorktree] = useState<
     Record<string, number>
   >({})
+
   const savedWidth = Number.parseInt(
     localStorage.getItem(`${APPS_PANEL_WIDTH_STORAGE_PREFIX}${worktreeId}`) ??
       '',
     10
   )
+
   const [layoutWidth, setLayoutWidth] = useState(() => window.innerWidth)
   const defaultAppsPanelWidth = layoutWidth / 2
+
   const preferredAppsPanelWidth =
     preferredWidthByWorktree[worktreeId] ??
     (Number.isFinite(savedWidth)
       ? Math.max(MIN_APPS_PANEL_WIDTH, savedWidth)
       : defaultAppsPanelWidth)
+
   const maximumAppsPanelWidth = Math.max(
     MIN_APPS_PANEL_WIDTH,
     layoutWidth - MIN_TERMINAL_WIDTH
   )
+
   const appsPanelWidth = clampAppsPanelWidth(
     preferredAppsPanelWidth,
     maximumAppsPanelWidth
   )
+
   const setAndSaveAppsPanelWidth = (width: number) => {
     const nextWidth = Math.max(MIN_APPS_PANEL_WIDTH, width)
     setPreferredWidthByWorktree((current) => ({
@@ -503,31 +524,40 @@ export function WorktreeAppsPanel({
       String(nextWidth)
     )
   }
+
   const [permissionDefinition, setPermissionDefinition] =
     useState<WebAppDefinition | null>(null)
+
   const permissionSource = permissionDefinition
     ? permissionDefinition.source.type === 'package'
       ? `${permissionDefinition.source.scope} package ${permissionDefinition.source.source}`
       : 'this project'
     : ''
+
   const permissionDescription = describeWebAppPermissions(
     permissionDefinition?.permissions ?? []
   )
+
   const createBrowserApp = () => {
     dismissPicker()
     onCreateBrowserApp()
   }
+
   const selectWebApp = (definition: WebAppDefinition) => {
     dismissPicker()
+
     if (definition.permissions.length > 0 && !definition.permissionsGranted) {
       setPermissionDefinition(definition)
+
       return
     }
 
     onOpenWebApp(definition)
   }
+
   useLayoutEffect(() => {
     const layout = paneRef.current?.parentElement?.parentElement
+
     if (!layout) {
       return
     }
@@ -535,9 +565,11 @@ export function WorktreeAppsPanel({
     const updateLayoutWidth = () => {
       setLayoutWidth(layout.getBoundingClientRect().width)
     }
+
     const observer = new ResizeObserver(updateLayoutWidth)
     observer.observe(layout)
     updateLayoutWidth()
+
     return () => observer.disconnect()
   }, [])
 
@@ -551,8 +583,10 @@ export function WorktreeAppsPanel({
     }
 
     restoredEmptyFocusRevisionRef.current = emptyToolFocusRevision
+
     const frame = window.requestAnimationFrame(() => {
       const pane = paneRef.current
+
       if (!pane || pane.contains(document.activeElement)) {
         return
       }
@@ -560,12 +594,14 @@ export function WorktreeAppsPanel({
       const firstAction = pane.querySelector<HTMLButtonElement>(
         'button:not(:disabled)'
       )
+
       if (firstAction) {
         firstAction.focus()
       } else {
         pane.focus()
       }
     })
+
     return () => window.cancelAnimationFrame(frame)
   }, [emptyToolFocusRevision, tools.length, visible])
 
@@ -630,9 +666,12 @@ export function WorktreeAppsPanel({
                   app.kind === 'web'
                     ? (webAppRuntimeTitles[app.id] ?? app.title)
                     : app.title
+
                 const active = app.id === activeAppId
+
                 const loading =
                   app.kind === 'browser' && Boolean(browserAppLoading[app.id])
+
                 return (
                   <div
                     key={app.id}
@@ -805,6 +844,7 @@ export function WorktreeAppsPanel({
                 onClick={() => {
                   const definition = permissionDefinition
                   setPermissionDefinition(null)
+
                   if (definition) {
                     onOpenWebApp(definition)
                   }

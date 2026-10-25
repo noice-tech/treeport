@@ -15,6 +15,7 @@ export const browserClipboardSchema = Schema.Struct({
       BROWSER_MAX_CLIPBOARD_LENGTH
   )
 )
+
 export type BrowserClipboard = Schema.Schema.Type<typeof browserClipboardSchema>
 
 /* eslint-disable anti-slop/no-unknown-returns -- CDP returns external JSON; copyBrowserPage decodes every response before use. */
@@ -43,7 +44,9 @@ export async function copyBrowserPage(
   const tree = Schema.decodeUnknownSync(
     Schema.Struct({ frameTree: Schema.Unknown })
   )(await cdp.send('Page.getFrameTree'))
+
   const frames = [tree.frameTree]
+
   for (const value of frames) {
     const frame = Schema.decodeUnknownSync(
       Schema.Struct({
@@ -51,6 +54,7 @@ export async function copyBrowserPage(
         childFrames: Schema.optional(Schema.Array(Schema.Unknown))
       })
     )(value)
+
     const world = Schema.decodeUnknownSync(
       Schema.Struct({ executionContextId: Schema.Number })
     )(
@@ -59,6 +63,7 @@ export async function copyBrowserPage(
         worldName: 'treeport-clipboard'
       })
     )
+
     const response = Schema.decodeUnknownSync(
       Schema.Struct({
         result: Schema.Struct({
@@ -74,6 +79,7 @@ export async function copyBrowserPage(
         userGesture: true
       })
     )
+
     if (response.exceptionDetails !== undefined) {
       throw new Error('The browser could not copy the selection.')
     }
@@ -84,6 +90,7 @@ export async function copyBrowserPage(
 
     frames.push(...(frame.childFrames ?? []))
   }
+
   return null
 }
 
@@ -97,6 +104,7 @@ function copyBrowserSelection(): boolean | null {
   }
 
   let active = document.activeElement
+
   while (active?.shadowRoot?.activeElement) {
     active = active.shadowRoot.activeElement
   }
@@ -116,6 +124,7 @@ function copyBrowserSelection(): boolean | null {
   // selections inside shadow roots need the browser's native selection logic.
   const hasSelection = document.queryCommandEnabled('copy')
   let copied = false
+
   const observe = (event: ClipboardEvent) => {
     if (!event.isTrusted) {
       return
@@ -126,7 +135,9 @@ function copyBrowserSelection(): boolean | null {
       ? (event.clipboardData?.types.length ?? 0) > 0
       : hasSelection
   }
+
   window.addEventListener('copy', observe)
+
   try {
     return document.execCommand('copy') && copied
   } finally {

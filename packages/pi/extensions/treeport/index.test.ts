@@ -38,18 +38,22 @@ function harness(
   sessionManager = SessionManager.inMemory('/repo/pi-extension')
 ) {
   const handlers = new Map<string, Array<(event: any, context: any) => any>>()
+
   const tools = new Map<
     string,
     Pick<ToolDefinition, 'parameters' | 'execute'>
   >()
+
   let active = ['read', 'bash', 'codemode']
   const execCalls: ExecCall[] = []
   const sent = vi.fn()
+
   const piFixture: Partial<ExtensionAPI> = {
     on(name: string, handler: (event: any, context: any) => any) {
       const current = handlers.get(name) ?? []
       current.push(handler)
       handlers.set(name, current)
+
       return () =>
         handlers.set(
           name,
@@ -79,13 +83,16 @@ function harness(
     async exec(command, args, options = {}) {
       const call = { command, args: [...args], options }
       execCalls.push(call)
+
       return execute(call)
     }
   }
+
   // SAFETY: The fixture implements every API method used by this extension.
   treeportExtension(piFixture as ExtensionAPI)
   const statuses: Array<{ key: string; text: string | undefined }> = []
   const notifications: Array<{ message: string; type: string | undefined }> = []
+
   const ui: Partial<ExtensionToolContext['ui']> = {
     // SAFETY: The badge only calls theme.fg; no other theme methods are used.
     theme: {
@@ -98,6 +105,7 @@ function harness(
       notifications.push({ message, type })
     }
   }
+
   const context: Pick<
     ExtensionToolContext,
     'cwd' | 'hasUI' | 'isIdle' | 'sessionManager' | 'ui'
@@ -109,6 +117,7 @@ function harness(
     // SAFETY: Only status and notification UI methods are used by the extension.
     ui: ui as ExtensionToolContext['ui']
   }
+
   return {
     tools,
     execCalls,
@@ -131,6 +140,7 @@ function harness(
       const tool = tools.get(name)!
       expect(active).toContain(name)
       expect(Value.Check(tool.parameters, params)).toBe(true)
+
       // SAFETY: Tools under test only use cwd and sessionManager from this context.
       return tool.execute(
         'call',
@@ -160,6 +170,7 @@ beforeEach(() => {
   vi.stubEnv('TREEPORT_WORKTREE_ID', '')
   vi.stubEnv('TREEPORT_TERMINAL_ID', '')
 })
+
 afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
@@ -171,6 +182,7 @@ describe('Treeport Pi extension', () => {
     const outside = harness(() =>
       success({ managed: false, reason: 'outside_treeport' })
     )
+
     await outside.emit('session_start')
     await outside.emit('input')
     expect(outside.active()).toEqual([
@@ -182,12 +194,14 @@ describe('Treeport Pi extension', () => {
     expect(outside.sent).not.toHaveBeenCalled()
     expect(outside.statuses).toEqual([])
     expect(outside.notifications).toEqual([])
+
     const missing = harness(() => ({
       stdout: '',
       stderr: 'spawn treeport ENOENT',
       code: 1,
       killed: false
     }))
+
     await missing.emit('session_start')
     expect(missing.notifications).toEqual([])
     await expect(missing.call('treeport_enable')).rejects.toThrow('ENOENT')
@@ -196,12 +210,14 @@ describe('Treeport Pi extension', () => {
     vi.stubEnv('TREEPORT_PROJECT_ID', 'project-1')
     await missing.emit('session_start')
     expect(missing.notifications[0]?.message).toContain('unavailable')
+
     const invalid = harness(() =>
       success({
         ...managed,
         worktree: { ...managed.worktree, projectId: 'wrong' }
       })
     )
+
     await invalid.emit('session_start')
     expect(invalid.notifications[0]?.message).toContain('invalid')
     await expect(invalid.call('treeport_enable')).rejects.toThrow('invalid')
@@ -248,6 +264,7 @@ describe('Treeport Pi extension', () => {
   it('refreshes its badge only while idle without transcript changes and cancels late results on shutdown', async () => {
     let slow = false
     let release = () => {}
+
     const pending = new Promise<ReturnType<typeof success>>((resolve) => {
       release = () =>
         resolve(
@@ -257,6 +274,7 @@ describe('Treeport Pi extension', () => {
           })
         )
     })
+
     const runtime = harness(() => (slow ? pending : success(managed)))
     await runtime.emit('session_start')
     expect(runtime.statuses.at(-1)?.text).toBe('treeport · pi-extension')
@@ -284,6 +302,7 @@ describe('Treeport Pi extension', () => {
 
   it('works without UI and preserves history when Treeport becomes unavailable', async () => {
     let available = true
+
     const runtime = harness(() => {
       if (!available) {
         throw new Error('CLI unavailable')
@@ -291,6 +310,7 @@ describe('Treeport Pi extension', () => {
 
       return success(managed)
     })
+
     runtime.context.hasUI = false
     await runtime.emit('session_start')
     await runtime.call('treeport_enable')
@@ -309,6 +329,7 @@ describe('Treeport Pi extension', () => {
 
   it('exposes typed operations using the configured CLI with structured results and cancellation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'treeport-pi-cli-'))
+
     try {
       const cli = join(root, '.treeport-dev-dist/node/cli/index.js')
       await mkdir(dirname(cli), { recursive: true })
@@ -420,9 +441,11 @@ describe('Treeport Pi extension', () => {
         'TREEPORT_INVALID_JSON'
       )
       response = success({ content: 'x'.repeat(60_000) })
+
       const large = await runtime.call('treeport_terminal_capture', {
         terminal: 'child'
       })
+
       expect(large.structuredContent).toEqual({ content: 'x'.repeat(60_000) })
       const text = large.content.find((block) => block.type === 'text')!.text
       expect(text.length).toBeLessThan(55_000)

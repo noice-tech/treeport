@@ -43,6 +43,7 @@ class HostDouble implements TerminalAttachmentBackend {
     return Effect.gen(this, function* () {
       const pending: Array<{ data: string; sequence: number }> = []
       let emit: ((data: string, sequence: number) => void) | null = null
+
       const listener = (data: string, sequence: number) => {
         if (emit) {
           emit(data, sequence)
@@ -50,6 +51,7 @@ class HostDouble implements TerminalAttachmentBackend {
           pending.push({ data, sequence })
         }
       }
+
       this.outputListeners.add(listener)
 
       if (this.snapshotGate) {
@@ -67,6 +69,7 @@ class HostDouble implements TerminalAttachmentBackend {
             Effect.acquireRelease(
               Effect.sync(() => {
                 emit = (data, sequence) => streamEmit.single({ data, sequence })
+
                 for (const output of pending.splice(0)) {
                   emit(output.data, output.sequence)
                 }
@@ -125,6 +128,7 @@ class HostDouble implements TerminalAttachmentBackend {
 
   prepareQueryAuthority() {
     this.transitionSerial += 1
+
     return Effect.succeed({
       transitionId: `transition-${this.transitionSerial}`,
       fence: this.snapshotFence
@@ -183,6 +187,7 @@ class TransportDouble {
 
     this.sent.push({ event, payload })
     this.onSend?.(event, payload)
+
     return true
   }
 
@@ -194,6 +199,7 @@ class TransportDouble {
 
 function fixture() {
   const host = new HostDouble()
+
   const getKnownTerminal = vi.fn(() =>
     Effect.succeed({
       id: 'terminal',
@@ -208,12 +214,14 @@ function fixture() {
       updatedAt: '2026-01-01T00:00:00.000Z'
     })
   )
+
   const getWorktree = vi.fn(() =>
     Effect.succeed({
       id: 'worktree',
       path: '/tmp'
     })
   )
+
   // SAFETY: This fixture supplies the service methods exercised by attachments.
   const service = testAccess<TreeportService>({
     getKnownTerminal,
@@ -232,6 +240,7 @@ function fixture() {
     terminalAttachmentMutation: vi.fn((_terminalId, effect) => effect),
     events: { publish: vi.fn() }
   })
+
   const metadataValue = {
     terminalId: 'terminal',
     title: null,
@@ -246,14 +255,17 @@ function fixture() {
     },
     attention: null
   }
+
   // SAFETY: This fixture supplies the metadata methods exercised by attachments.
   const metadata = testAccess<TerminalMetadataManager>({
     trackTerminal: vi.fn(() => Effect.void),
     subscribe: vi.fn(() => () => undefined),
     get: vi.fn(() => metadataValue)
   })
+
   const manager = new TerminalAttachmentManager(service, metadata, host)
   const scope = Effect.runSync(Scope.make())
+
   return {
     host,
     manager,
@@ -286,6 +298,7 @@ function eventPayloads<Event extends TerminalServerEvent>(
     .filter((item) => item.event === event)
     .map((item) => {
       const payload = parseTerminalServerEvent(event, item.payload)
+
       if (!payload) {
         throw new Error(`Invalid ${event} payload in test transport`)
       }
@@ -296,6 +309,7 @@ function eventPayloads<Event extends TerminalServerEvent>(
 
 function readyPayload(transport: TransportDouble) {
   const ready = eventPayloads(transport, 'ready')[0]
+
   if (!ready) {
     throw new Error('Ready event was not sent')
   }
@@ -314,9 +328,11 @@ async function activateAuthority(
     transitionId: null
   })
   await waitForEvent(transport, 'query_authority', 1)
+
   const transition = eventPayloads(transport, 'query_authority').find(
     (item) => item.transitionId !== null
   )
+
   if (!transition?.transitionId) {
     throw new Error('Query authority transition was not sent')
   }
@@ -342,10 +358,12 @@ describe('TerminalAttachmentManager', () => {
     })
     host.snapshotFence = 4
     const transport = new TransportDouble('viewer')
+
     const connectionId = await accept(
       { terminalId: 'terminal', clientId: 'client', cols: 100, rows: 30 },
       transport
     )
+
     await vi.waitFor(() => expect(host.outputListeners.size).toBe(1))
 
     const concurrentSuffix = 'x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK + 1)
@@ -380,14 +398,17 @@ describe('TerminalAttachmentManager', () => {
     const { host, manager, accept, dispose } = fixture()
     const slow = new TransportDouble('slow')
     const fast = new TransportDouble('fast')
+
     const slowId = await accept(
       { terminalId: 'terminal', clientId: 'slow-client', cols: 100, rows: 30 },
       slow
     )
+
     const fastId = await accept(
       { terminalId: 'terminal', clientId: 'fast-client', cols: 100, rows: 30 },
       fast
     )
+
     await Promise.all([
       waitForEvent(slow, 'ready'),
       waitForEvent(fast, 'ready')
@@ -395,6 +416,7 @@ describe('TerminalAttachmentManager', () => {
     fast.onSend = (event, payload) => {
       if (event === 'output') {
         const output = parseTerminalServerEvent('output', payload)
+
         if (!output) {
           throw new Error('Invalid output payload in test transport')
         }
@@ -422,6 +444,7 @@ describe('TerminalAttachmentManager', () => {
     const stalledChunk = 'x'.repeat(
       TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES / 2
     )
+
     host.emit(stalledChunk, 3)
     host.emit(stalledChunk, 4)
     await vi.waitFor(() => expect(slow.disconnects).toEqual([true]))
@@ -441,10 +464,12 @@ describe('TerminalAttachmentManager', () => {
   it('reports an asynchronous terminal-host write failure and disconnects the controller', async () => {
     const { host, manager, accept, dispose } = fixture()
     const transport = new TransportDouble('controller')
+
     const connectionId = await accept(
       { terminalId: 'terminal', clientId: 'client', cols: 100, rows: 30 },
       transport
     )
+
     await waitForEvent(transport, 'ready')
     const generation = readyPayload(transport).generation
     await activateAuthority(manager, connectionId, transport, generation)
@@ -465,10 +490,12 @@ describe('TerminalAttachmentManager', () => {
   it('hands query authority between controllers behind parser fences', async () => {
     const { host, manager, accept, dispose } = fixture()
     const first = new TransportDouble('first')
+
     const firstId = await accept(
       { terminalId: 'terminal', clientId: 'client-a', cols: 100, rows: 30 },
       first
     )
+
     await waitForEvent(first, 'ready')
     const firstGeneration = readyPayload(first).generation
 
@@ -485,10 +512,12 @@ describe('TerminalAttachmentManager', () => {
     await vi.waitFor(() => expect(host.writes).toHaveLength(1))
 
     const second = new TransportDouble('second')
+
     const secondId = await accept(
       { terminalId: 'terminal', clientId: 'client-b', cols: 100, rows: 30 },
       second
     )
+
     await waitForEvent(second, 'ready')
     manager.message(secondId, 'take_control', {
       generation: firstGeneration,
@@ -501,6 +530,7 @@ describe('TerminalAttachmentManager', () => {
       ).toMatchObject({ controller: true })
     )
     const secondControl = eventPayloads(second, 'control').at(-1)
+
     if (!secondControl) {
       throw new Error('Second controller state was not sent')
     }
@@ -522,10 +552,12 @@ describe('TerminalAttachmentManager', () => {
 
     host.status = 'exited'
     const transitionsBeforeExit = host.transitionSerial
+
     const authorityEventsBeforeExit = eventPayloads(
       second,
       'query_authority'
     ).length
+
     manager.message(secondId, 'query_authority', {
       generation: secondGeneration,
       transitionId: null

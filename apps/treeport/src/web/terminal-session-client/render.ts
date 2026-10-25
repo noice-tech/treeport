@@ -45,9 +45,11 @@ export function makeRender(
 ) {
   return Effect.gen(function* () {
     const renderQueue = yield* Queue.bounded<RenderOperation>(1_024)
+
     const render = Effect.forever(
       Effect.gen(function* () {
         const operation = yield* Queue.take(renderQueue)
+
         if (
           !state.disposed &&
           !state.renderFailed &&
@@ -93,9 +95,11 @@ export function makeRender(
       }
 
       state.renderFailed = true
+
       const detail = (
         cause instanceof Error ? cause.message : String(cause)
       ).trim()
+
       state.reconnectAllowed = false
       dependencies.stopWithError(
         detail
@@ -118,6 +122,7 @@ export function makeRender(
         sequence !== state.expectedSequence
       ) {
         dependencies.failProtocol('Terminal output arrived out of order')
+
         return
       }
 
@@ -127,20 +132,24 @@ export function makeRender(
         epoch,
         Effect.sync(() => {
           const terminal = state.terminal
+
           if (!terminal) {
             return
           }
 
           terminal.write(data)
+
           if (
             state.ready &&
             epoch === state.renderEpoch &&
             streamId === state.streamId
           ) {
             state.parsedSequences.add(sequence)
+
             while (state.parsedSequences.delete(state.lastParsedSequence + 1)) {
               state.lastParsedSequence += 1
             }
+
             dependencies.send('output_ack', {
               streamId,
               sequence: state.lastParsedSequence

@@ -4,6 +4,7 @@ export async function writeBrowserClipboard(
   value: BrowserClipboard
 ): Promise<void> {
   const formats: Record<string, Blob> = {}
+
   if (value.text !== null) {
     formats['text/plain'] = new Blob([value.text], { type: 'text/plain' })
   }
@@ -16,6 +17,7 @@ export async function writeBrowserClipboard(
     const bytes = Uint8Array.from(atob(value.png), (character) =>
       character.charCodeAt(0)
     )
+
     formats['image/png'] = new Blob([bytes], { type: 'image/png' })
   }
 
@@ -37,8 +39,10 @@ export async function writeBrowserClipboard(
     buffer.value = value.text || ' '
     buffer.style.position = 'fixed'
     buffer.style.left = '-9999px'
+
     const copy = (event: ClipboardEvent) => {
       event.preventDefault()
+
       if (value.text !== null) {
         event.clipboardData?.setData('text/plain', value.text)
       }
@@ -47,12 +51,14 @@ export async function writeBrowserClipboard(
         event.clipboardData?.setData('text/html', value.html)
       }
     }
+
     buffer.addEventListener('copy', copy)
     document.body.append(buffer)
     buffer.focus({ preventScroll: true })
     buffer.select()
     const copied = document.execCommand('copy')
     buffer.remove()
+
     if (previous instanceof HTMLElement) {
       previous.focus({ preventScroll: true })
     }

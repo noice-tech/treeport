@@ -17,6 +17,7 @@ export class DesktopRuntime {
     Effect.cached(
       Effect.suspend(() => {
         this.closed = true
+
         return Scope.close(this.scope, Exit.void).pipe(
           Effect.ensuring(
             this.parent

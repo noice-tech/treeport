@@ -51,6 +51,7 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
           const projects = new Map(current.projects)
           const worktrees = new Set(current.worktrees)
           const removals = new Map(current.removals)
+
           if (request.projectId) {
             if (mode === 'acquire') {
               projects.set(
@@ -64,12 +65,14 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
 
           for (const worktreeId of request.worktreeIds ?? []) {
             worktrees[mode === 'acquire' ? 'add' : 'delete'](worktreeId)
+
             if (mode === 'acquire' && request.worktreeRemovalProjectId) {
               removals.set(worktreeId, request.worktreeRemovalProjectId)
             } else if (mode === 'release') {
               removals.delete(worktreeId)
             }
           }
+
           return { projects, worktrees, removals }
         })
 
@@ -94,10 +97,12 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
           SynchronizedRef.modify(state, (current) => {
             const worktreeIds = [...(request.worktreeIds ?? [])]
             const checkedProjectIds = [...(request.checkProjectIds ?? [])]
+
             const checkedWorktreeIds = [
               ...worktreeIds,
               ...(request.checkWorktreeIds ?? [])
             ]
+
             if (
               (request.projectId !== undefined &&
                 (current.projects.has(request.projectId) ||
@@ -107,6 +112,7 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
                     )))) ||
               checkedProjectIds.some((projectId) => {
                 const kind = current.projects.get(projectId)
+
                 return (
                   kind !== undefined &&
                   !(
@@ -125,6 +131,7 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
             const projects = new Map(current.projects)
             const worktrees = new Set(current.worktrees)
             const removals = new Map(current.removals)
+
             if (request.projectId) {
               projects.set(
                 request.projectId,
@@ -134,10 +141,12 @@ export class MutationLocks extends Effect.Service<MutationLocks>()(
 
             for (const worktreeId of worktreeIds) {
               worktrees.add(worktreeId)
+
               if (request.worktreeRemovalProjectId) {
                 removals.set(worktreeId, request.worktreeRemovalProjectId)
               }
             }
+
             return [true, { projects, worktrees, removals }] as const
           }),
         acquire: (request: LockRequest) => update(request, 'acquire'),

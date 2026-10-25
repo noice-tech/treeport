@@ -26,13 +26,16 @@ export function useWorkspacePresence(
   const [store] = useState(() => {
     const listeners = new Set<() => void>()
     let snapshot: PresenceSnapshot = { identity: null, viewers: [] }
+
     const update = (patch: Partial<PresenceSnapshot>) => {
       snapshot = { ...snapshot, ...patch }
       listeners.forEach((listener) => listener())
     }
+
     return {
       subscribe: (listener: () => void) => {
         listeners.add(listener)
+
         return () => listeners.delete(listener)
       },
       getSnapshot: () => snapshot,
@@ -40,6 +43,7 @@ export function useWorkspacePresence(
         update({ viewers }),
       setIdentity: (identity: ViewerIdentity | null) => {
         const current = snapshot.identity
+
         if (
           current === identity ||
           (current &&
@@ -56,6 +60,7 @@ export function useWorkspacePresence(
       }
     }
   })
+
   const latest = useRef({ worktreeId, focusedAppId })
   latest.current = { worktreeId, focusedAppId }
   const publish = useRef(() => {})
@@ -66,16 +71,20 @@ export function useWorkspacePresence(
     let leaving = false
     let sending = false
     let pending = false
+
     const send = () => {
       if (sending) {
         pending = true
+
         return
       }
 
       sending = true
       pending = false
+
       const visible =
         !disposed && !leaving && document.visibilityState === 'visible'
+
       const focused = visible && document.hasFocus()
       // Serialize updates so a slow navigation/focus request cannot overwrite
       // a newer one. Each effect lifetime has its own tab session.
@@ -105,19 +114,23 @@ export function useWorkspacePresence(
         )
         .finally(() => {
           sending = false
+
           if (pending) {
             send()
           }
         })
     }
+
     const pageHide = () => {
       leaving = true
       send()
     }
+
     const pageShow = () => {
       leaving = false
       send()
     }
+
     publish.current = send
     const heartbeat = window.setInterval(send, PRESENCE_HEARTBEAT_MS)
     document.addEventListener('visibilitychange', send)
@@ -125,9 +138,11 @@ export function useWorkspacePresence(
     window.addEventListener('blur', send)
     window.addEventListener('pagehide', pageHide)
     window.addEventListener('pageshow', pageShow)
+
     return () => {
       disposed = true
       publish.current = () => {}
+
       clearInterval(heartbeat)
       document.removeEventListener('visibilitychange', send)
       window.removeEventListener('focus', send)

@@ -16,19 +16,23 @@ export async function createUpdateMock(page: Page, options: MockAppOptions) {
       targetVersion: null,
       error: null
     }
+
   let applicationUpdateRequests = 0
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
+
     if (pathname === '/api/update') {
       if (route.request().method() === 'POST') {
         applicationUpdateRequests += 1
         applicationUpdate = { ...applicationUpdate, phase: 'starting' }
         await route.fulfill({ status: 202, json: applicationUpdate })
+
         return
       }
 
       await route.fulfill({ json: applicationUpdate })
+
       return
     }
 

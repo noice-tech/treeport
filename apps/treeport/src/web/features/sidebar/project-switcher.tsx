@@ -71,9 +71,11 @@ function ProjectMark({
   const [, rerender] = useState(0)
   const iconStatus = projectIconStatus.get(project.id)
   let hash = 0
+
   for (const character of project.id) {
     hash = (hash * 31 + character.charCodeAt(0)) | 0
   }
+
   const color =
     project.color ?? PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length]!
 
@@ -130,6 +132,7 @@ export function ProjectSwitcherShortcut({ blocked }: { blocked: boolean }) {
       const modifierPressed = usesMacKeyboard
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
+
       if (
         event.isComposing ||
         event.key.toLocaleLowerCase() !== 'p' ||
@@ -143,6 +146,7 @@ export function ProjectSwitcherShortcut({ blocked }: { blocked: boolean }) {
 
       event.preventDefault()
       event.stopPropagation()
+
       if (isMobile) {
         setOpenMobile(true)
         window.requestAnimationFrame(() => projectSwitcher.setOpen(true))
@@ -150,7 +154,9 @@ export function ProjectSwitcherShortcut({ blocked }: { blocked: boolean }) {
         projectSwitcher.setOpen(true)
       }
     }
+
     document.addEventListener('keydown', keydown, true)
+
     return () => document.removeEventListener('keydown', keydown, true)
   }, [blocked, isMobile, projectSwitcher.setOpen, setOpenMobile])
 
@@ -170,16 +176,21 @@ export function ProjectSwitcher({
   const { isMobile } = useSidebar()
   const projectSwitcher = useProjectSwitcher()
   const queryClient = useQueryClient()
+
   const { attention: terminalAttention, activity: terminalActivity } =
     useTerminalNavigationMetadata()
+
   const [projectSearch, setProjectSearch] = useState('')
+
   const [highlightedProjectId, setHighlightedProjectId] = useState<
     string | null
   >(null)
+
   const recentProjectsQuery = useQuery({
     ...recentProjectsQueryOptions,
     enabled: projectSwitcher.open
   })
+
   const reopenProject = useMutation({
     mutationFn: async (project: RecentProjectRecord) =>
       (
@@ -194,6 +205,7 @@ export function ProjectSwitcher({
       notifyError(error, { operation: `reopen project “${project.name}”` })
     }
   })
+
   const removeRecentProject = useMutation({
     mutationFn: (project: RecentProjectRecord) =>
       parseResponse(
@@ -216,33 +228,41 @@ export function ProjectSwitcher({
       })
     }
   })
+
   const selectOpenProject = (project: ProjectRecord) => {
     selectProject(project)
     setProjectSearch('')
     setHighlightedProjectId(null)
   }
+
   const selectRecentProject = (project: RecentProjectRecord) => {
     reopenProject.mutate(project)
     setProjectSearch('')
     setHighlightedProjectId(null)
   }
+
   const normalizedProjectSearch = projectSearch.trim().toLocaleLowerCase()
+
   const filteredOpenProjects = projects.filter(
     (project) =>
       !normalizedProjectSearch ||
       project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
       project.rootPath.toLocaleLowerCase().includes(normalizedProjectSearch)
   )
+
   const openProjectIds = new Set(projects.map((project) => project.id))
+
   const recentProjects = (recentProjectsQuery.data ?? []).filter(
     (project) => !openProjectIds.has(project.id)
   )
+
   const filteredRecentProjects = recentProjects.filter(
     (project) =>
       !normalizedProjectSearch ||
       project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
       project.rootPath.toLocaleLowerCase().includes(normalizedProjectSearch)
   )
+
   const projectSwitcherOptions = [
     ...filteredOpenProjects.map((project) => ({
       kind: 'open' as const,
@@ -253,6 +273,7 @@ export function ProjectSwitcher({
       project
     }))
   ]
+
   const highlightedProjectOption =
     projectSwitcherOptions.find(
       (option) => option.project.id === highlightedProjectId
@@ -333,6 +354,7 @@ export function ProjectSwitcher({
 
               if (event.key === 'Enter') {
                 event.preventDefault()
+
                 if (highlightedProjectOption?.kind === 'open') {
                   selectOpenProject(highlightedProjectOption.project)
                 } else if (
@@ -351,6 +373,7 @@ export function ProjectSwitcher({
               }
 
               event.preventDefault()
+
               const highlightedIndex = Math.max(
                 0,
                 projectSwitcherOptions.findIndex(
@@ -358,6 +381,7 @@ export function ProjectSwitcher({
                     option.project.id === highlightedProjectOption?.project.id
                 )
               )
+
               const nextIndex =
                 event.key === 'ArrowDown'
                   ? Math.min(
@@ -365,6 +389,7 @@ export function ProjectSwitcher({
                       projectSwitcherOptions.length - 1
                     )
                   : Math.max(highlightedIndex - 1, 0)
+
               const nextOption = projectSwitcherOptions[nextIndex]!
               setHighlightedProjectId(nextOption.project.id)
               window.requestAnimationFrame(() =>
@@ -393,10 +418,12 @@ export function ProjectSwitcher({
                 const terminals = project.worktrees.flatMap(
                   (worktree) => worktree.terminals
                 )
+
                 const attention =
                   terminals
                     .map((terminal) => terminalAttention.get(terminal.id))
                     .find((reason) => reason !== undefined) ?? null
+
                 // Read outcomes look idle, as in the terminal list.
                 const activity = terminals
                   .map((terminal) => terminalActivity.get(terminal.id))

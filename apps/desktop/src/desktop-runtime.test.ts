@@ -12,6 +12,7 @@ it('exports named desktop tasks and flushes child spans when the root closes', a
   const directory = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-desktop-tracing-')
   )
+
   vi.stubEnv('TREEPORT_TRACE', 'jsonl')
   vi.stubEnv('TREEPORT_TRACE_FILE', '')
   vi.stubEnv('TREEPORT_TRACE_DIR', directory)
@@ -28,12 +29,14 @@ it('exports named desktop tasks and flushes child spans when the root closes', a
   await Effect.runPromise(window.close)
   await app.run(Effect.void, 'desktop.after-window')
   await Effect.runPromise(app.close)
+
   const records = (
     await fs.readFile(path.join(directory, 'treeport-desktop.jsonl'), 'utf8')
   )
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line))
+
   expect(records.map((record) => record.name)).toEqual([
     'desktop.child',
     'desktop.test',
@@ -53,6 +56,7 @@ it('closes children, interrupts tasks, and awaits resource finalizers exactly on
   const entered = Effect.runSync(Deferred.make<void>())
   const release = Effect.runSync(Deferred.make<void>())
   const events: string[] = []
+
   const task = guest.fork(
     Effect.gen(function* () {
       yield* Effect.acquireRelease(
@@ -68,6 +72,7 @@ it('closes children, interrupts tasks, and awaits resource finalizers exactly on
       yield* Effect.never
     })
   )
+
   await Effect.runPromise(Deferred.await(entered))
   const closing = Effect.runPromise(app.close)
   expect(app.isClosed).toBe(true)

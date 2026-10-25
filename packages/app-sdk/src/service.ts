@@ -24,6 +24,7 @@ function connection() {
   // Treeport passes these to every service it starts.
   const apiUrl = process.env.TREEPORT_API_URL
   const token = process.env.TREEPORT_PACKAGE_TOKEN
+
   if (!apiUrl || !token) {
     throw new Error(
       'TREEPORT_API_URL and TREEPORT_PACKAGE_TOKEN are missing; run this as a Treeport package service'
@@ -39,20 +40,24 @@ async function request<Result>(
   decoration?: TreeDecorationInput
 ): Promise<Result> {
   const { apiUrl, authorization } = connection()
+
   const init: RequestInit = {
     method,
     headers: { authorization, 'content-type': 'application/json' }
   }
+
   if (decoration) {
     init.body = JSON.stringify(decoration)
   }
 
   const response = await fetch(new URL(pathname, apiUrl), init)
+
   if (!response.ok) {
     // SAFETY: Failed Treeport responses use the { error: { code, message } } envelope.
     const { error } = (await response.json()) as {
       error?: { code?: string; message?: string }
     }
+
     throw new TreeportRequestError(
       response.status,
       error?.code ?? null,
@@ -82,11 +87,13 @@ export const treeport: TreeportServiceSdk = Object.freeze({
   events: async function* () {
     const { apiUrl, authorization } = connection()
     let retryMs = 1_000
+
     while (true) {
       const response = await fetch(
         new URL('/api/package-services/events', apiUrl),
         { headers: { authorization, accept: 'text/event-stream' } }
       ).catch(() => null)
+
       if (response?.status === 401) {
         throw new TreeportRequestError(
           401,
@@ -97,21 +104,26 @@ export const treeport: TreeportServiceSdk = Object.freeze({
 
       if (response?.ok && response.body) {
         retryMs = 1_000
+
         const reader = response.body
           .pipeThrough(new TextDecoderStream())
           .getReader()
+
         let buffer = ''
+
         while (true) {
           // A dropped connection ends the stream; reconnect below.
           const chunk = await reader
             .read()
             .catch(() => ({ done: true, value: undefined }) as const)
+
           if (chunk.done) {
             break
           }
 
           const messages = (buffer + chunk.value).split('\n\n')
           buffer = messages.pop()!
+
           for (const message of messages) {
             if (message.startsWith('data: ')) {
               // SAFETY: Treeport sends one TreeportEvent per server-sent event.

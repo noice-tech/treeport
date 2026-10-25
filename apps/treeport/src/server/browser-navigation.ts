@@ -16,7 +16,9 @@ export async function browserNavigation<T>(
     on(event: 'Treeport.navigationCanceled', listener: () => void): void
     off(event: 'Treeport.navigationCanceled', listener: () => void): void
   } | null
+
   let cancel: () => void = () => undefined
+
   const canceled = new Promise<never>((_resolve, reject) => {
     cancel = () =>
       reject(
@@ -25,11 +27,13 @@ export async function browserNavigation<T>(
         )
       )
   })
+
   const onDialog = (dialog: Dialog) => {
     if (dialog.type() === 'beforeunload') {
       cancel()
     }
   }
+
   // Hosted pages dismiss beforeunload. Local Electron pages retain native
   // ownership and report the actual native result through the exact-guest CDP.
   if (nativeCdp) {
@@ -55,6 +59,7 @@ export async function browserNavigation<T>(
           )
           .then(async (handle) => {
             await handle.dispose()
+
             return true
           })
           .catch(() => false))

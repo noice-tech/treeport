@@ -108,7 +108,9 @@ function terminalHostPaths(
     .update(path.resolve(dataDir))
     .digest('hex')
     .slice(0, 20)
+
   const engineDirectory = path.join(runtimeDir, 'terminal-engine')
+
   return {
     hostKey,
     socketPath: path.join(
@@ -138,6 +140,7 @@ function readOrCreateToken(
       )
     )
     yield* nodePromise(() => fs.chmod(tokenPath, 0o600))
+
     return (yield* nodePromise(() => fs.readFile(tokenPath, 'utf8'))).trim()
   })
 }
@@ -153,9 +156,11 @@ function readRecord(recordPath: string): Effect.Effect<TerminalHostDiscovery> {
     const source = yield* Effect.either(
       nodePromise(() => fs.readFile(recordPath, 'utf8'))
     )
+
     if (Either.isLeft(source)) {
       // SAFETY: Node filesystem failures expose their standard code on ErrnoException.
       const code = (source.left.cause as NodeJS.ErrnoException).code
+
       return {
         record: null,
         missing: code === 'ENOENT',
@@ -170,11 +175,13 @@ function readRecord(recordPath: string): Effect.Effect<TerminalHostDiscovery> {
         catch: connectionError
       })
     )
+
     if (Either.isLeft(parsed)) {
       return { record: null, missing: false, invalid: true }
     }
 
     const decoded = yield* Effect.either(decodeTerminalHostRecord(parsed.right))
+
     return Either.isLeft(decoded)
       ? { record: null, missing: false, invalid: true }
       : { record: decoded.right, missing: false, invalid: false }
@@ -185,6 +192,7 @@ function processExists(pid: number): Effect.Effect<boolean> {
   return Effect.sync(() => {
     try {
       process.kill(pid, 0)
+
       return true
     } catch (cause) {
       // SAFETY: process.kill reports permission failures using Node's ErrnoException shape.
@@ -204,6 +212,7 @@ function isDefinitiveConnectionFailure(
 
 function isStaleSocketFailure(error: TerminalHostClientError): boolean {
   let cause: unknown = error
+
   while (
     (cause instanceof TerminalHostConnectionError ||
       EffectSocket.isSocketError(cause)) &&
@@ -211,8 +220,10 @@ function isStaleSocketFailure(error: TerminalHostClientError): boolean {
   ) {
     cause = cause.cause
   }
+
   // SAFETY: Nested Node socket failures expose their platform error through ErrnoException.code.
   const code = (cause as NodeJS.ErrnoException).code
+
   return code === 'ENOENT' || code === 'ECONNREFUSED'
 }
 
@@ -241,6 +252,7 @@ export class TerminalHostClient
   ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
     return Effect.gen(function* () {
       const connectionScope = yield* Scope.make()
+
       const acquired = yield* Effect.exit(
         Scope.extend(
           TerminalHostClient.acquire(
@@ -252,12 +264,15 @@ export class TerminalHostClient
           connectionScope
         )
       )
+
       if (Exit.isFailure(acquired)) {
         yield* Scope.close(connectionScope, acquired)
+
         return yield* Effect.failCause(acquired.cause)
       }
 
       yield* Effect.addFinalizer(() => Scope.close(connectionScope, Exit.void))
+
       return acquired.value
     })
   }
@@ -273,14 +288,18 @@ export class TerminalHostClient
         path: socketPath,
         openTimeout: '5 seconds'
       }).pipe(Effect.mapError(connectionError))
+
       const outgoing = yield* Effect.acquireRelease(
         Queue.unbounded<Buffer>(),
         Queue.shutdown
       )
+
       const pending = yield* SynchronizedRef.make<
         ReadonlyMap<string, PendingRequest>
       >(new Map())
+
       const closed = yield* SynchronizedRef.make(false)
+
       const provisionalRecord: TerminalHostRecord = {
         hostId: '',
         hostKey,
@@ -288,6 +307,7 @@ export class TerminalHostClient
         socketPath,
         startedAt: ''
       }
+
       const client = new TerminalHostClient(
         provisionalRecord,
         outgoing,
@@ -300,6 +320,7 @@ export class TerminalHostClient
       const disconnected = new TerminalHostDisconnected({
         message: 'Terminal host connection closed'
       })
+
       const close = client.closeWith(disconnected)
       yield* Effect.addFinalizer(() => close)
 
@@ -373,6 +394,7 @@ export class TerminalHostClient
       )
 
       const handshake = yield* client.request('handshake', { token, hostKey })
+
       if (expectedHostId && handshake.hostId !== expectedHostId) {
         return yield* Effect.fail(
           new TerminalHostRequestError({
@@ -384,6 +406,7 @@ export class TerminalHostClient
       }
 
       Object.assign(client.record, handshake)
+
       return client
     })
   }
@@ -427,6 +450,7 @@ export class TerminalHostClient
           terminalId,
           Effect.gen(this, function* () {
             let route = this.outputRoutes.get(terminalId)
+
             if (!route) {
               route = {
                 pubsub: yield* PubSub.unbounded<TerminalHostOutput>(),
@@ -436,16 +460,19 @@ export class TerminalHostClient
             }
 
             route.references += 1
+
             return route
           })
         ),
         (route) => this.releaseOutputRoute(terminalId, route)
       )
+
       return yield* this.withRouteLock(
         terminalId,
         Effect.gen(this, function* () {
           const subscription = yield* PubSub.subscribe(route.pubsub)
           const snapshot = yield* this.request('attach', { terminalId }, trace)
+
           if (!snapshot) {
             return null
           }
@@ -475,6 +502,7 @@ export class TerminalHostClient
             terminalId,
             Effect.gen(this, function* () {
               let route = this.runtimeRoutes.get(terminalId)
+
               if (!route) {
                 route = {
                   pubsub: yield* PubSub.unbounded<TerminalHostRuntimeEvent>(),
@@ -485,11 +513,13 @@ export class TerminalHostClient
               }
 
               route.references += 1
+
               return route
             })
           ),
           (route) => this.releaseRuntimeRoute(terminalId, route)
         )
+
         const subscription = yield* PubSub.subscribe(route.pubsub)
         yield* this.withRouteLock(
           terminalId,
@@ -500,6 +530,7 @@ export class TerminalHostClient
             }
           })
         )
+
         return Stream.fromQueue(subscription)
       })
     )
@@ -539,7 +570,9 @@ export class TerminalHostClient
       attachmentId,
       generation
     }
+
     Object.assign(input, { cellSize })
+
     return this.request('activateQueryAuthority', input).pipe(Effect.asVoid)
   }
 
@@ -613,27 +646,33 @@ export class TerminalHostClient
       }
 
       const id = crypto.randomUUID()
+
       const response = yield* Deferred.make<
         TerminalHostResult,
         TerminalHostClientError
       >()
+
       yield* SynchronizedRef.update(this.pending, (current) => {
         const next = new Map(current)
         next.set(id, response)
+
         return next
       })
+
       const frame: TerminalHostRequestFrame = {
         type: 'request',
         id,
         method,
         input
       }
+
       if (_trace) {
         Object.assign(frame, { trace: _trace })
       }
 
       const encoded = yield* encodeTerminalHostFrame(frame)
       const offered = yield* Queue.offer(this.outgoing, encoded)
+
       if (!offered) {
         return yield* Effect.fail(
           new TerminalHostDisconnected({
@@ -660,6 +699,7 @@ export class TerminalHostClient
 
             const next = new Map(current)
             next.delete(id)
+
             return next
           })
         )
@@ -673,14 +713,17 @@ export class TerminalHostClient
     return Effect.gen(this, function* () {
       const pending = yield* SynchronizedRef.modify(this.pending, (current) => {
         const request = current.get(frame.id) ?? null
+
         if (!request) {
           return [null, current] as const
         }
 
         const next = new Map(current)
         next.delete(frame.id)
+
         return [request, next] as const
       })
+
       if (!pending) {
         return
       }
@@ -690,6 +733,7 @@ export class TerminalHostClient
           pending,
           new TerminalHostRequestError({ ...frame.error })
         )
+
         return
       }
 
@@ -705,6 +749,7 @@ export class TerminalHostClient
             message: 'Terminal host response omitted its result'
           })
         )
+
         return
       }
 
@@ -715,6 +760,7 @@ export class TerminalHostClient
   private receiveEvent(frame: TerminalHostEventFrame): Effect.Effect<void> {
     if (frame.event === 'output') {
       const route = this.outputRoutes.get(frame.data.terminalId)
+
       return route
         ? PubSub.publish(route.pubsub, {
             data: frame.data.output,
@@ -724,6 +770,7 @@ export class TerminalHostClient
     }
 
     const route = this.runtimeRoutes.get(frame.data.terminalId)
+
     return route
       ? PubSub.publish(route.pubsub, frame.data.value).pipe(Effect.asVoid)
       : Effect.void
@@ -741,14 +788,17 @@ export class TerminalHostClient
           semaphore: Effect.unsafeMakeSemaphore(1),
           users: 0
         }
+
         lock.users += 1
         this.routeLocks.set(terminalId, lock)
+
         return lock
       }),
       (lock) => lock.semaphore.withPermits(1)(effect),
       (lock) =>
         Effect.sync(() => {
           lock.users -= 1
+
           if (lock.users === 0) {
             this.routeLocks.delete(terminalId)
           }
@@ -768,6 +818,7 @@ export class TerminalHostClient
         }
 
         route.references = Math.max(0, route.references - 1)
+
         if (route.references > 0) {
           return
         }
@@ -799,6 +850,7 @@ export class TerminalHostClient
         }
 
         route.references = Math.max(0, route.references - 1)
+
         if (route.references > 0) {
           return
         }
@@ -823,6 +875,7 @@ export class TerminalHostClient
       const first = yield* SynchronizedRef.modify(this.closed, (closed) =>
         closed ? [false, closed] : [true, true]
       )
+
       if (!first) {
         return
       }
@@ -831,6 +884,7 @@ export class TerminalHostClient
         this.pending,
         (current) => [[...current.values()], new Map()] as const
       )
+
       yield* Effect.forEach(pending, (request) =>
         Deferred.fail(request, failure)
       )
@@ -857,6 +911,7 @@ export function connectOrStartTerminalHost(
     const legacy = yield* nodePromise(() =>
       inspectLegacyTerminalHost(options.dataDir, options.runtimeDir)
     )
+
     if (legacy.reason !== null) {
       return yield* Effect.fail(
         new TerminalHostRequestError({
@@ -879,6 +934,7 @@ export function connectOrStartTerminalHost(
       )
       // It deletes the shared token file on exit; wait before reading it.
       const deadline = Date.now() + LEGACY_HOST_STOP_TIMEOUT_MS
+
       while (yield* processExists(record.pid)) {
         if (Date.now() >= deadline) {
           return yield* Effect.fail(
@@ -940,8 +996,10 @@ export function connectOrStartTerminalHost(
     }
 
     let token = ''
+
     if (record) {
       token = yield* readOrCreateToken(paths.tokenPath)
+
       if (
         record.hostKey !== paths.hostKey ||
         record.socketPath !== paths.socketPath
@@ -963,11 +1021,13 @@ export function connectOrStartTerminalHost(
           record.hostId
         )
       )
+
       if (Either.isRight(connected)) {
         return connected.right
       }
 
       const failure = connected.left
+
       if (isDefinitiveConnectionFailure(failure)) {
         return yield* Effect.fail(failure)
       }
@@ -1007,6 +1067,7 @@ export function connectOrStartTerminalHost(
             : Effect.fail(failure)
         )
       )
+
       if (socketStats) {
         // A missing record is no evidence that the socket is unowned, but a
         // refused connection is: a listening host always accepts. This daemon
@@ -1028,8 +1089,10 @@ export function connectOrStartTerminalHost(
                 )
               )
             })
+
             return Effect.sync(() => socket.destroy())
           }))
+
         if (!refused) {
           return yield* Effect.fail(
             connectionError(
@@ -1047,12 +1110,14 @@ export function connectOrStartTerminalHost(
     }
 
     const hostId = crypto.randomUUID()
+
     const sessionExecutable = yield* nodePromise(() =>
       prepareSessionKeeper(
         options.sessionExecutable,
         path.join(paths.hostRuntimeDir, 'keepers')
       )
     )
+
     // Workers die with the daemon; only raw PTY keepers detach. Keep emulator
     // parsing and snapshots off the HTTP/browser-control event loop.
     yield* startTerminalEngineWorker(
@@ -1070,6 +1135,7 @@ export function connectOrStartTerminalHost(
       },
       options.environment ?? process.env
     )
+
     return yield* TerminalHostClient.connect(
       paths.socketPath,
       token,

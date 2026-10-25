@@ -77,6 +77,7 @@ const terminalHostRecordFields = {
   startedAt: nonEmptyString,
   launcherPath: Schema.optional(nonEmptyString)
 }
+
 const terminalHostRecordSchema = Schema.Struct(terminalHostRecordFields)
 
 export type TerminalHostRecord = typeof terminalHostRecordSchema.Type
@@ -85,8 +86,10 @@ const terminalSizeSchema = Schema.Struct({
   cols: positiveInteger,
   rows: positiveInteger
 })
+
 const terminalIdSchema = Schema.Struct({ terminalId: nonEmptyString })
 const worktreeIdSchema = Schema.Struct({ worktreeId: nonEmptyString })
+
 const setupTaskSchema = Schema.Struct({
   label: Schema.String,
   argv: Schema.Array(Schema.String),
@@ -94,6 +97,7 @@ const setupTaskSchema = Schema.Struct({
   env: Schema.Record({ key: Schema.String, value: Schema.String }),
   timeoutMs: Schema.Number.pipe(Schema.positive())
 })
+
 const createSchema = Schema.Struct({
   terminalId: nonEmptyString,
   worktreeId: nonEmptyString,
@@ -214,6 +218,7 @@ export function isTerminalHostRequestMethod(
   // SAFETY: The readonly tuple is widened only to use Array.includes for a string candidate.
   return (TERMINAL_HOST_REQUEST_METHODS as readonly string[]).includes(method)
 }
+
 export type TerminalHostRequestInput<
   Method extends TerminalHostRequestMethod = TerminalHostRequestMethod
 > = (typeof terminalHostInputSchemas)[Method]['Type']
@@ -300,6 +305,7 @@ const traceSchema = Schema.Struct({
   spanId: Schema.String.pipe(Schema.pattern(/^[0-9a-f]{16}$/)),
   sampled: Schema.Boolean
 })
+
 const terminalActivitySchema = Schema.Struct({
   state: Schema.Literal('idle', 'working', 'blocked', 'done', 'error'),
   kind: Schema.NullOr(Schema.Literal('permission', 'question', 'auth')),
@@ -308,11 +314,13 @@ const terminalActivitySchema = Schema.Struct({
   message: Schema.NullOr(Schema.String),
   since: Schema.NullOr(Schema.String)
 })
+
 const terminalAttentionSchema = Schema.Struct({
   sequence: positiveInteger,
   at: Schema.String,
   reason: Schema.Literal('bell', 'done', 'blocked', 'error')
 })
+
 const runtimeEventSchema = Schema.Struct({
   title: Schema.optional(Schema.String),
   activity: Schema.optional(terminalActivitySchema),
@@ -329,11 +337,13 @@ const runtimeEventSchema = Schema.Struct({
 })
 
 const terminalStatusSchema = Schema.Literal('running', 'exited', 'unavailable')
+
 const terminalTitleStateSchema = Schema.Struct({
   terminalTitle: Schema.NullOr(Schema.String),
   currentCommand: Schema.NullOr(Schema.String),
   commandLine: Schema.optional(Schema.NullOr(Schema.String))
 })
+
 const hostedTerminalSchema = Schema.Struct({
   id: Schema.String,
   worktreeId: Schema.String,
@@ -351,7 +361,9 @@ const hostedTerminalSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 const nullResultSchema = Schema.Null
+
 const terminalHostResultSchemas = {
   handshake: Schema.Struct({
     ...terminalHostRecordFields,
@@ -460,6 +472,7 @@ export function decodeTerminalHostInput<
 > {
   // SAFETY: Every request method maps to the schema for its declared input type.
   const schema = terminalHostInputSchemas[method] as Schema.Schema<unknown>
+
   // SAFETY: Decoding with the method-indexed schema establishes the generic method input type.
   return Schema.decodeUnknown(schema)(input).pipe(
     Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
@@ -477,6 +490,7 @@ export function decodeTerminalEngineMetadata(source: string) {
       try: () => JSON.parse(source),
       catch: (cause) => new TerminalHostFrameDecodeError({ cause })
     })
+
     const metadata = yield* Schema.decodeUnknown(
       Schema.Struct({
         engineVersion: Schema.Literal(1),
@@ -486,7 +500,9 @@ export function decodeTerminalEngineMetadata(source: string) {
     )(parsed).pipe(
       Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
     )
+
     const input = yield* decodeTerminalHostInput('create', parsed)
+
     return { ...metadata, input }
   })
 }
@@ -500,6 +516,7 @@ export function decodeTerminalHostResult<
 ): Effect.Effect<TerminalHostResults[Method], TerminalHostFrameDecodeError> {
   // SAFETY: Every request method maps to the schema for its declared result type.
   const schema = terminalHostResultSchemas[method] as Schema.Schema<unknown>
+
   // SAFETY: Decoding with the method-indexed schema establishes the generic method result type.
   return Schema.decodeUnknown(schema)(input).pipe(
     Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
@@ -523,6 +540,7 @@ export function encodeTerminalHostFrame(
     try: () => {
       const validated = decodeFrame(frame)
       let payload: Buffer
+
       if (
         binaryOutput &&
         validated.type === 'event' &&
@@ -551,6 +569,7 @@ export function encodeTerminalHostFrame(
 
       const header = Buffer.allocUnsafe(4)
       header.writeUInt32BE(payload.byteLength)
+
       return Buffer.concat([header, payload])
     },
     catch: (cause) => new TerminalHostFrameEncodeError({ cause })
@@ -562,14 +581,17 @@ export function makeTerminalHostFrameDecoder(): (
   chunk: Uint8Array
 ) => Effect.Effect<readonly TerminalHostFrame[], TerminalHostFrameDecodeError> {
   let buffered = Buffer.alloc(0)
+
   return (chunk) =>
     Effect.try({
       try: () => {
         const next = Buffer.from(chunk)
         buffered = buffered.byteLength ? Buffer.concat([buffered, next]) : next
         const frames: TerminalHostFrame[] = []
+
         while (buffered.byteLength >= 4) {
           const length = buffered.readUInt32BE(0)
+
           if (length <= 0 || length > TERMINAL_HOST_MAX_FRAME_BYTES) {
             throw new Error('Invalid terminal host frame length')
           }
@@ -581,6 +603,7 @@ export function makeTerminalHostFrameDecoder(): (
           const payload = buffered.subarray(4, length + 4)
           buffered = buffered.subarray(length + 4)
           let value: ReturnType<typeof decodeFrame>
+
           if (payload[0] === 0) {
             if (payload.length < 13) {
               throw new Error('Truncated terminal output frame')
@@ -588,6 +611,7 @@ export function makeTerminalHostFrameDecoder(): (
 
             const idLength = payload.readUInt32BE(1)
             const sequence = Number(payload.readBigUInt64BE(5))
+
             if (
               idLength > payload.length - 13 ||
               !Number.isSafeInteger(sequence)
@@ -611,6 +635,7 @@ export function makeTerminalHostFrameDecoder(): (
           // SAFETY: decodeFrame validates both wire representations identically.
           frames.push(value as TerminalHostFrame)
         }
+
         return frames
       },
       catch: (cause) => new TerminalHostFrameDecodeError({ cause })

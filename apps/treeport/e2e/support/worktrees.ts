@@ -20,6 +20,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
+
     if (pathname.endsWith('/remove-preview')) {
       const worktree = state.worktrees[1]!
       await route.fulfill({
@@ -54,6 +55,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           }
         }
       })
+
       return
     }
 
@@ -69,10 +71,12 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           )
         }
       })
+
       return
     }
 
     const operationMatch = pathname.match(/^\/api\/operations\/([^/]+)$/)
+
     if (operationMatch && route.request().method() === 'GET') {
       await route.fulfill({
         json: {
@@ -83,6 +87,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
               : undefined)
         }
       })
+
       return
     }
 
@@ -102,12 +107,14 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           returnToShell?: boolean
         }
       } = route.request().postDataJSON()
+
       const canonicalName = body.name
         .normalize('NFKD')
         .replace(/\p{Mark}+/gu, '')
         .toLowerCase()
         .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
         .replace(/^-+|-+$/gu, '')
+
       const operation: OperationRecord = {
         id: `op_create_${++creationSequence}`,
         kind: 'create',
@@ -120,6 +127,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01'
       }
+
       creationOperations.set(operation.id, operation)
       await route.fulfill({ status: 202, json: { operation } })
 
@@ -149,6 +157,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
               ),
             operation.id
           )
+
           return
         }
 
@@ -164,6 +173,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           createdAt: '2026-01-01',
           updatedAt: '2026-01-01'
         }
+
         const worktree = {
           ...structuredClone(state.worktrees[1]!),
           id: 'wt_new',
@@ -172,9 +182,11 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           terminals: [terminal],
           workspaceItems: []
         }
+
         const existingIndex = state.worktrees.findIndex(
           (item) => item.id === worktree.id
         )
+
         if (existingIndex >= 0) {
           state.worktrees[existingIndex] = worktree
         } else {
@@ -202,6 +214,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           { operationId: operation.id, worktreeId: worktree.id }
         )
       })()
+
       return
     }
 
@@ -209,6 +222,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
       removeRequests += 1
       const removeRequest = route.request().postDataJSON()
       removeRequestBodies.push(removeRequest)
+
       if (staleRemovePreview) {
         removePreviewOverride = staleRemovePreview
         staleRemovePreview = null
@@ -222,6 +236,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
             }
           }
         })
+
         return
       }
 
@@ -308,6 +323,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
         status: 202,
         json: { operation: removeOperation }
       })
+
       return
     }
 
@@ -344,6 +360,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
     },
     completeRemoval: () => {
       const worktree = state.worktrees[1]
+
       if (worktree && removeOperation?.kind === 'remove') {
         state.worktrees.splice(1, 1)
         removeOperation = {
@@ -375,6 +392,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
       createGate = new Promise<void>((resolve) => {
         releaseCreate = resolve
       })
+
       return () => releaseCreate?.()
     },
     failNextCreate: () => {

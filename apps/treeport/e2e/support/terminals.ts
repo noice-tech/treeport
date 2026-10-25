@@ -16,21 +16,26 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
+
     if (
       pathname === '/api/worktrees/wt_topic/terminals/order' &&
       route.request().method() === 'PUT'
     ) {
       const body: { itemIds: string[] } = route.request().postDataJSON()
+
       const worktree = state.worktrees.find(
         (candidate) => candidate.id === 'wt_topic'
       )!
+
       const terminalsById = new Map(
         worktree.terminals.map((terminal) => [terminal.id, terminal])
       )
+
       worktree.terminals = body.itemIds.map((terminalId) =>
         terminalsById.get(terminalId)!
       )
       await route.fulfill({ json: { ok: true } })
+
       return
     }
 
@@ -40,14 +45,17 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
     ) {
       const body: { name: string; argv?: string[]; shellCommand?: string } =
         route.request().postDataJSON()
+
       terminalCreations += 1
       const creationNumber = terminalCreations
+
       if (terminalCreateGate) {
         await terminalCreateGate
       }
 
       terminalCreateGate = null
       releaseTerminalCreate = null
+
       if (failTerminalCreate) {
         failTerminalCreate = false
         await route.fulfill({
@@ -60,6 +68,7 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
             }
           }
         })
+
         return
       }
 
@@ -70,12 +79,14 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
           contentType: 'text/html',
           body: '<html><body>PRIVATE_PROXY_DIAGNOSTIC</body></html>'
         })
+
         return
       }
 
       if (failTerminalCreateWithNetwork) {
         failTerminalCreateWithNetwork = false
         await route.abort('connectionrefused')
+
         return
       }
 
@@ -95,8 +106,10 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01'
       }
+
       state.worktrees[1]!.terminals.push(terminal)
       await route.fulfill({ status: 201, json: { terminal } })
+
       return
     }
 
@@ -105,8 +118,10 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
       route.request().method() === 'POST'
     ) {
       fileUploadRequests += 1
+
       const extension =
         route.request().headers()['x-treeport-file-extension'] || 'bin'
+
       await route.fulfill({
         status: 201,
         json: {
@@ -115,6 +130,7 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
           }
         }
       })
+
       return
     }
 
@@ -123,28 +139,34 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
       route.request().method() === 'DELETE'
     ) {
       terminalDeletions += 1
+
       if (terminalDeleteGate) {
         await terminalDeleteGate
       }
 
       terminalDeleteGate = null
       releaseTerminalDelete = null
+
       if (failTerminalDelete) {
         failTerminalDelete = false
         await route.fulfill({
           status: 500,
           json: { error: { message: 'Terminal could not be closed' } }
         })
+
         return
       }
 
       const terminalId = pathname.split('/').at(-1)
+
       for (const worktree of state.worktrees) {
         worktree.terminals = worktree.terminals.filter(
           (terminal) => terminal.id !== terminalId
         )
       }
+
       await route.fulfill({ json: { ok: true } })
+
       return
     }
 
@@ -159,6 +181,7 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
       terminalCreateGate = new Promise<void>((resolve) => {
         releaseTerminalCreate = resolve
       })
+
       return () => releaseTerminalCreate?.()
     },
     failNextTerminalCreate: () => {
@@ -174,6 +197,7 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
       terminalDeleteGate = new Promise<void>((resolve) => {
         releaseTerminalDelete = resolve
       })
+
       return () => releaseTerminalDelete?.()
     },
     failNextTerminalDelete: () => {

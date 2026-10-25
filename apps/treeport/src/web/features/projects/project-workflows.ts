@@ -30,6 +30,7 @@ export function useProjectWorkflows({
   const queryClient = useQueryClient()
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
+
   const closeProject = useMutation({
     mutationFn: (project: ProjectRecord) =>
       parseResponse(
@@ -40,12 +41,15 @@ export function useProjectWorkflows({
     onSuccess: async (_, closedProject) => {
       const currentProjects =
         queryClient.getQueryData<ProjectRecord[]>(projectsQueryKey) ?? projects
+
       const remainingProjects = currentProjects.filter(
         (project) => project.id !== closedProject.id
       )
+
       const closedProjectIndex = currentProjects.findIndex(
         (project) => project.id === closedProject.id
       )
+
       const fallbackProject =
         remainingProjects[
           Math.min(
@@ -53,7 +57,9 @@ export function useProjectWorkflows({
             remainingProjects.length - 1
           )
         ] ?? null
+
       const closedSelection = selectedProject?.id === closedProject.id
+
       if (closedSelection) {
         await navigateToWorkspace(
           fallbackProject
@@ -68,6 +74,7 @@ export function useProjectWorkflows({
         projectsQueryKey,
         remainingProjects
       )
+
       for (const terminal of closedProject.worktrees.flatMap(
         (worktree) => worktree.terminals
       )) {
@@ -78,6 +85,7 @@ export function useProjectWorkflows({
         queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
         queryClient.invalidateQueries({ queryKey: recentProjectsQueryKey })
       ])
+
       if (closedSelection || !remainingProjects.length) {
         window.requestAnimationFrame(() =>
           projectSwitcherTriggerRef.current?.focus()

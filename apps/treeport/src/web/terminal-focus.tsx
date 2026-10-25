@@ -19,12 +19,14 @@ interface TerminalFocusRequest {
 const SetTerminalFocusIntentContext = createContext<
   ((terminalId: string, focus: boolean) => void) | null
 >(null)
+
 const TerminalFocusRequestContext = createContext<TerminalFocusRequest | null>(
   null
 )
 
 export function TerminalFocusProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<TerminalFocusRequest | null>(null)
+
   const setTerminalFocusIntent = useCallback(
     (terminalId: string, focus: boolean) => {
       setRequest((current) => ({
@@ -50,6 +52,7 @@ export function useSetTerminalFocusIntent(): (
   focus: boolean
 ) => void {
   const setTerminalFocusIntent = useContext(SetTerminalFocusIntentContext)
+
   if (!setTerminalFocusIntent) {
     throw new Error(
       'useSetTerminalFocusIntent must be used within TerminalFocusProvider'
@@ -97,6 +100,7 @@ export function useTerminalAutoFocus({
       previousTerminalId.current = terminalId
       pendingTerminalId.current =
         suppressedTerminalId.current === terminalId ? null : terminalId
+
       if (suppressedTerminalId.current === terminalId) {
         suppressedTerminalId.current = null
       }
@@ -125,6 +129,7 @@ export function useTerminalAutoFocus({
       session.focus()
       pendingTerminalId.current = null
     })
+
     return () => window.cancelAnimationFrame(frame)
   }, [blocked, request, session, terminalId])
 }

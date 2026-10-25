@@ -17,11 +17,13 @@ export function browserPresentationOrigin(
   }
 
   const parsed = decodeUnknownOrNull(browserUrlSchema, requestingUrl)
+
   if (parsed === null) {
     return null
   }
 
   const url = new URL(parsed)
+
   // File pages have an opaque origin; never grant permissions to "null".
   return url.protocol === 'http:' || url.protocol === 'https:'
     ? url.origin

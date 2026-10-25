@@ -10,6 +10,7 @@ import { makeTerminalHostServer } from './server'
 import type { TerminalHostSessions } from './sessions'
 
 const roots: string[] = []
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))
@@ -25,11 +26,13 @@ async function paths() {
     fs.mkdir(dataDir, { recursive: true }),
     fs.mkdir(runtimeDir, { recursive: true })
   ])
+
   const hostKey = crypto
     .createHash('sha256')
     .update(path.resolve(dataDir))
     .digest('hex')
     .slice(0, 20)
+
   return {
     root,
     dataDir,
@@ -71,12 +74,15 @@ describe('staged terminal host compatibility probe', () => {
               shutdown: () => Effect.void
             } as unknown as TerminalHostSessions
           })
+
           const source = yield* Effect.promise(() =>
             fs.readFile(value.recordPath, 'utf8')
           )
+
           const result = yield* Effect.promise(() =>
             probeTerminalHostCompatibility(value.dataDir, value.runtimeDir)
           )
+
           expect(result).toMatchObject({
             compatible: false,
             running: true,
@@ -97,6 +103,7 @@ describe('staged terminal host compatibility probe', () => {
 
   it('refuses a live historical host with actionable manual-cutover guidance', async () => {
     const value = await paths()
+
     const source = `${JSON.stringify({
       protocolVersion: 4,
       hostId: 'legacy-host',
@@ -105,12 +112,14 @@ describe('staged terminal host compatibility probe', () => {
       socketPath: value.socketPath,
       startedAt: '2026-01-01T00:00:00.000Z'
     })}\n`
+
     await fs.writeFile(value.recordPath, source)
 
     const result = await probeTerminalHostCompatibility(
       value.dataDir,
       value.runtimeDir
     )
+
     expect(result).toMatchObject({
       compatible: false,
       running: true,

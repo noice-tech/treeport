@@ -39,6 +39,7 @@ export class AppDefinitionService {
       const projectStore = yield* ProjectStore
       const worktree = yield* projectStore.getWorktree(worktreeId)
       const webAppsRoot = path.join(worktree.path, '.treeport', 'web-apps')
+
       const directories = yield* Effect.tryPromise(() =>
         fs.readdir(webAppsRoot, { withFileTypes: true }).catch((error) => {
           // SAFETY: Node filesystem errors expose their stable code here.
@@ -49,7 +50,9 @@ export class AppDefinitionService {
           throw error
         })
       ).pipe(Effect.orDie)
+
       const definitions: ResolvedDefinition[] = []
+
       for (const directory of directories.sort((left, right) =>
         left.name.localeCompare(right.name)
       )) {
@@ -59,12 +62,14 @@ export class AppDefinitionService {
 
         const root = path.join(webAppsRoot, directory.name)
         const entry = 'index.html'
+
         const entryIsFile = yield* Effect.tryPromise(() =>
           fs
             .stat(path.join(root, entry))
             .then((value) => value.isFile())
             .catch(() => false)
         ).pipe(Effect.orDie)
+
         if (!entryIsFile) {
           continue
         }
@@ -73,6 +78,7 @@ export class AppDefinitionService {
           .split(/[-_.]+/)
           .filter(Boolean)
           .join(' ')
+
         definitions.push({
           id: `project:${encodeURIComponent(directory.name)}`,
           title: words
@@ -91,6 +97,7 @@ export class AppDefinitionService {
           allowNetworkRequests: false
         })
       }
+
       return definitions
     })
   }
@@ -110,9 +117,11 @@ export class AppDefinitionService {
       const worktree = yield* projectStore.getWorktree(worktreeId)
       const project = yield* projectStore.getProject(worktree.projectId)
       yield* Effect.sync(() => packages.syncProjects([project]))
+
       const packageDefinitions = yield* packages.webAppDefinitions(
         worktree.projectId
       )
+
       const definitions: ResolvedDefinition[] = [
         ...(yield* localWebAppDefinitions(worktreeId)),
         ...packageDefinitions.map(
@@ -133,6 +142,7 @@ export class AppDefinitionService {
               definitionId: definition.id,
               allowNetworkRequests: definition.sandbox.allowSameOrigin
             }
+
             if (packageLockPath) {
               resolved.packageLockPath = packageLockPath
             }
@@ -145,21 +155,26 @@ export class AppDefinitionService {
           }
         )
       ]
+
       return yield* Effect.forEach(definitions, (definition) =>
         Effect.tryPromise(async () => {
           const realRoot = await fs.realpath(definition.root).catch(() => null)
+
           const realIcon = await fs
             .realpath(path.join(definition.root, 'icon.svg'))
             .catch(() => null)
+
           if (!realRoot || !realIcon) {
             return definition
           }
 
           const relativeIcon = path.relative(realRoot, realIcon)
+
           const iconSize = await fs
             .stat(realIcon)
             .then((value) => (value.isFile() ? value.size : null))
             .catch(() => null)
+
           if (
             path.isAbsolute(relativeIcon) ||
             relativeIcon === '..' ||
@@ -186,6 +201,7 @@ export class AppDefinitionService {
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       const worktree = yield* projectStore.getWorktree(worktreeId)
+
       const source =
         definition.source.type === 'project'
           ? {
@@ -204,6 +220,7 @@ export class AppDefinitionService {
               source: definition.source.source,
               definitionId: definition.id
             }
+
       return crypto
         .createHash('sha256')
         .update(JSON.stringify(source))
@@ -220,6 +237,7 @@ export class AppDefinitionService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const sourceKey = yield* webAppPermissionSourceKey(worktreeId, definition)
+
       const [grant] = yield* database
         .execute('app.definition.service.230', (db) =>
           db
@@ -231,6 +249,7 @@ export class AppDefinitionService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       if (definition.permissions.length === 0) {
         if (grant) {
           yield* database
@@ -248,6 +267,7 @@ export class AppDefinitionService {
       const matches =
         grant?.permissionsJson ===
         JSON.stringify([...definition.permissions].sort())
+
       if (grant && !matches) {
         yield* database
           .execute('app.definition.service.253', (db) =>
@@ -271,10 +291,12 @@ export class AppDefinitionService {
   > {
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const webAppPermissionsGranted = this.webAppPermissionsGranted.bind(this)
 
     return Effect.gen(function* () {
       const definitions = yield* effectiveWebAppDefinitions(worktreeId)
+
       return yield* Effect.forEach(
         definitions,
         ({
@@ -308,6 +330,7 @@ export class AppDefinitionService {
   > {
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const webAppPermissionSourceKey = this.webAppPermissionSourceKey.bind(this)
 
     return Effect.gen(function* () {
@@ -316,9 +339,11 @@ export class AppDefinitionService {
       const observations = yield* ProjectObservationOperations
       const projectSnapshots = yield* ProjectSnapshotOperations
       yield* observations.requireAvailableWorktree(worktreeId)
+
       const definition = (yield* effectiveWebAppDefinitions(worktreeId)).find(
         (candidate) => candidate.id === definitionId
       )
+
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
@@ -344,6 +369,7 @@ export class AppDefinitionService {
       }
 
       const sourceKey = yield* webAppPermissionSourceKey(worktreeId, definition)
+
       if (granted && definition.permissions.length > 0) {
         const timestamp = now()
         yield* database
@@ -393,6 +419,7 @@ export class AppDefinitionService {
             )
         )
         .pipe(Effect.orDie)
+
       yield* Effect.sync(() => projectSnapshots.invalidate())
       yield* Effect.sync(() => {
         for (const app of affectedApps) {
@@ -448,6 +475,7 @@ export class AppDefinitionService {
   > {
     return Effect.gen(function* () {
       const inputJson = JSON.stringify(launch.input)
+
       if (Buffer.byteLength(inputJson) > WEB_APP_INPUT_MAX_BYTES) {
         return yield* Effect.fail(
           new DomainError(
@@ -465,9 +493,11 @@ export class AppDefinitionService {
       const worktreeRoot = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
       ).pipe(Effect.orDie)
+
       const requestedCwd = yield* Effect.tryPromise(() =>
         fs.realpath(path.resolve(worktree.path, launch.cwd!)).catch(() => null)
       ).pipe(Effect.orDie)
+
       if (
         !requestedCwd ||
         !(yield* Effect.tryPromise(() => fs.stat(requestedCwd)).pipe(
@@ -484,6 +514,7 @@ export class AppDefinitionService {
       }
 
       const relativeCwd = path.relative(worktreeRoot, requestedCwd)
+
       if (
         relativeCwd === '..' ||
         relativeCwd.startsWith(`..${path.sep}`) ||

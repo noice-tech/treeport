@@ -79,6 +79,7 @@ export function WorkspaceMobileHeader({
 }) {
   const { isMobile, openMobile } = useSidebar()
   const { titles: runtimeTitles } = useTerminalNavigationMetadata()
+
   const title = terminal
     ? terminalDisplayTitle(runtimeTitles.get(terminal.id), terminal.name)
     : ''

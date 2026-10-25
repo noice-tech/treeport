@@ -38,8 +38,10 @@ import { ProjectStore } from '../project/project-store'
 import { TerminalState } from '../terminal/terminal-state'
 
 const now = (): string => new Date().toISOString()
+
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
+
 const CLEANUP_OUTPUT_MAX_LENGTH = 16 * 1024
 const CLEANUP_OUTPUT_TRUNCATION_MARKER = '[Earlier output was truncated]\n'
 
@@ -136,6 +138,7 @@ export class WorktreeRemovalService {
 
     return Effect.gen(function* () {
       const checkout = yield* checkoutStat(checkoutPath)
+
       if (!checkout) {
         return null
       }
@@ -155,6 +158,7 @@ export class WorktreeRemovalService {
       const markerPath = path.join(checkoutPath, '.git')
       const markerStat = yield* checkoutStat(markerPath)
       let marker: string | null = null
+
       if (markerStat?.isFile()) {
         marker = yield* Effect.tryPromise({
           try: () => fs.readFile(markerPath, 'utf8'),
@@ -198,12 +202,14 @@ export class WorktreeRemovalService {
       }
 
       const quarantinePath = identity.quarantinePath
+
       if (yield* checkoutStat(quarantinePath)) {
         const quarantineError = yield* authorizedCheckoutError(
           quarantinePath,
           identity,
           checkoutPath
         )
+
         if (quarantineError) {
           return {
             removed: false,
@@ -215,6 +221,7 @@ export class WorktreeRemovalService {
           checkoutPath,
           identity
         )
+
         if (authorizationError) {
           return { removed: false, error: authorizationError }
         }
@@ -229,8 +236,10 @@ export class WorktreeRemovalService {
             catch: (cause) => cause
           })
         )
+
         if (Either.isLeft(rename)) {
           const renameError = rename.left
+
           if (
             // SAFETY: Node filesystem failures can carry the standard errno code.
             (renameError as NodeJS.ErrnoException).code === 'ENOENT' &&
@@ -248,6 +257,7 @@ export class WorktreeRemovalService {
           identity,
           checkoutPath
         )
+
         if (quarantineError) {
           if (!(yield* checkoutStat(checkoutPath))) {
             const restore = yield* Effect.either(
@@ -256,6 +266,7 @@ export class WorktreeRemovalService {
                 catch: (cause) => cause
               })
             )
+
             if (Either.isRight(restore)) {
               return { removed: false, error: quarantineError }
             }
@@ -274,7 +285,9 @@ export class WorktreeRemovalService {
           catch: (cause) => cause
         })
       )
+
       const removalError = Either.isLeft(removal) ? removal.left : null
+
       if (removalError || (yield* checkoutStat(quarantinePath))) {
         if (!(yield* checkoutStat(checkoutPath))) {
           const restore = yield* Effect.either(
@@ -283,6 +296,7 @@ export class WorktreeRemovalService {
               catch: (cause) => cause
             })
           )
+
           if (Either.isRight(restore)) {
             return {
               removed: false,
@@ -331,6 +345,7 @@ export class WorktreeRemovalService {
       const worktree = yield* requireAvailableWorktree(worktreeId, true)
       worktree.terminals = yield* listWorktreeTerminals(worktree)
       const project = yield* projectStore.getProject(worktree.projectId)
+
       if (project.kind === 'folder') {
         return yield* Effect.fail(
           new DomainError(
@@ -344,6 +359,7 @@ export class WorktreeRemovalService {
       const live = (yield* git
         .listWorktrees(project.repositoryPath)
         .pipe(Effect.orDie)).find((item) => item.path === worktree.path)
+
       if (!live) {
         return yield* Effect.fail(
           new DomainError(
@@ -355,6 +371,7 @@ export class WorktreeRemovalService {
       }
 
       const head = live.head ?? worktree.head
+
       const status = live.prunable
         ? {
             dirty: {
@@ -368,7 +385,9 @@ export class WorktreeRemovalService {
             fingerprint: `prunable:${live.head ?? ''}:${live.branch ?? ''}`
           }
         : yield* git.dirtyStatus(worktree.path).pipe(Effect.orDie)
+
       const dirty = status.dirty
+
       const reachable =
         live.detached && head
           ? yield* git
@@ -378,17 +397,20 @@ export class WorktreeRemovalService {
               )
               .pipe(Effect.orDie)
           : null
+
       const reasons: string[] = []
       const warnings: string[] = []
       let cleanupTasks: WorktreeSetupTask[] = []
       let cleanupDefinitionHash: string | null = null
       let cleanupUnavailableReason: string | null = null
+
       const cleanup = yield* Effect.either(
         setupService.resolveCleanupTasks({
           mainWorktreePath: project.mainWorktreePath,
           worktreePath: worktree.path
         })
       )
+
       if (Either.isRight(cleanup)) {
         cleanupTasks = cleanup.right.tasks
         cleanupDefinitionHash = cleanup.right.definitionHash
@@ -471,6 +493,7 @@ export class WorktreeRemovalService {
           })
         )
       } satisfies Omit<RemovePreview, 'confirmationToken'>
+
       return {
         preview: {
           ...previewWithoutToken,
@@ -514,6 +537,7 @@ export class WorktreeRemovalService {
       const worktreeMutations = yield* WorktreeMutations
       const worktree = yield* projectStore.getWorktree(worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
+
       const [activeRemoval] = yield* database
         .execute('worktree.removal.service.592', (db) =>
           db.all<{ id: string }>(sql`
@@ -524,6 +548,7 @@ export class WorktreeRemovalService {
         `)
         )
         .pipe(Effect.orDie)
+
       if (activeRemoval) {
         return yield* Effect.fail(
           new DomainError(
@@ -550,6 +575,7 @@ export class WorktreeRemovalService {
 
         return yield* acceptRemove(worktreeId, request)
       })
+
       if (yield* terminalMutations.isBusy(worktreeId)) {
         return yield* terminalMutations.enqueue(
           worktreeId,
@@ -595,6 +621,7 @@ export class WorktreeRemovalService {
     const prepareRemovePreview = this.prepareRemovePreview.bind(this)
     const checkoutStat = this.checkoutStat.bind(this)
     const executeRemove = this.executeRemove.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -608,11 +635,13 @@ export class WorktreeRemovalService {
         const projectStore = yield* ProjectStore
         const worktree = yield* projectStore.getWorktree(worktreeId)
         yield* projectStore.requireOpenProject(worktree.projectId)
+
         const acquired = yield* locks.tryAcquire({
           worktreeIds: [worktreeId],
           worktreeRemovalProjectId: worktree.projectId,
           checkProjectIds: [worktree.projectId]
         })
+
         if (!acquired) {
           return yield* Effect.fail(
             new DomainError(
@@ -627,6 +656,7 @@ export class WorktreeRemovalService {
           Effect.gen(function* () {
             const { preview, prunable, cleanupTasks, cleanupDefinitionHash } =
               yield* prepareRemovePreview(worktreeId)
+
             if (!preview.eligible) {
               return yield* Effect.fail(
                 new DomainError(
@@ -651,6 +681,7 @@ export class WorktreeRemovalService {
 
             const skipCleanup =
               request.skipCleanup === true && cleanupTasks.length > 0
+
             if (
               (preview.warnings.length > 0 || skipCleanup) &&
               !request.confirmDestructive
@@ -668,6 +699,7 @@ export class WorktreeRemovalService {
             }
 
             const checkout = yield* checkoutStat(preview.path)
+
             const [checkoutBinding] = yield* database
               .execute('worktree.removal.service.734', (db) =>
                 db.all<{
@@ -679,6 +711,7 @@ export class WorktreeRemovalService {
               `)
               )
               .pipe(Effect.orDie)
+
             const [projectMetadata] = yield* database
               .execute('worktree.removal.service.743', (db) =>
                 db
@@ -688,13 +721,16 @@ export class WorktreeRemovalService {
                   .limit(1)
               )
               .pipe(Effect.orDie)
+
             const repositoryPath = prunable
               ? (yield* projectStore.getProject(worktree.projectId))
                   .repositoryPath
               : preview.path
+
             const repositoryIdentity = yield* git
               .repositoryIdentity(repositoryPath)
               .pipe(Effect.orDie)
+
             if (
               !projectMetadata?.identity ||
               repositoryIdentity !== projectMetadata.identity
@@ -711,6 +747,7 @@ export class WorktreeRemovalService {
 
             const operationId = id('op')
             let checkoutIdentity: RemovalCheckoutIdentity | null = null
+
             if (prunable) {
               if (!checkoutBinding?.git_worktree_key) {
                 return yield* Effect.fail(
@@ -726,6 +763,7 @@ export class WorktreeRemovalService {
               const markerPath = path.join(preview.path, '.git')
               const markerStat = yield* checkoutStat(markerPath)
               let gitMarker: string | null = null
+
               if (markerStat?.isFile()) {
                 gitMarker = yield* Effect.tryPromise({
                   try: () => fs.readFile(markerPath, 'utf8'),
@@ -821,6 +859,7 @@ export class WorktreeRemovalService {
               )
               .pipe(Effect.orDie)
             yield* invalidateProjectsSnapshot()
+
             return { operationId, preview, skipCleanup }
           })
         ).pipe(
@@ -836,6 +875,7 @@ export class WorktreeRemovalService {
             skipCleanup: accepted.skipCleanup
           })
         )
+
         const backgroundRemoval = executeRemove(
           accepted.operationId,
           worktreeId,
@@ -849,6 +889,7 @@ export class WorktreeRemovalService {
             )
           )
         )
+
         yield* applicationFibers.fork(backgroundRemoval)
         yield* Effect.sync(() =>
           events.publish('remove.started', {
@@ -857,6 +898,7 @@ export class WorktreeRemovalService {
             kind: 'remove'
           })
         )
+
         return yield* projectStore.getOperation(accepted.operationId)
       })
     )
@@ -870,6 +912,7 @@ export class WorktreeRemovalService {
     const authorizedCheckoutError = this.authorizedCheckoutError.bind(this)
     const removeAuthorizedCheckout = this.removeAuthorizedCheckout.bind(this)
     const checkoutStat = this.checkoutStat.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -884,6 +927,7 @@ export class WorktreeRemovalService {
       const terminalState = yield* TerminalState
       const worktreeMutations = yield* WorktreeMutations
       const operation = yield* projectStore.storedOperation(operationId)
+
       if (
         operation?.kind !== 'remove' ||
         !operation.projectId ||
@@ -896,6 +940,7 @@ export class WorktreeRemovalService {
       const request = operation.request
       const preview = operation.request.preview
       const project = yield* projectStore.storedProject(projectId)
+
       if (!project) {
         return
       }
@@ -941,14 +986,19 @@ export class WorktreeRemovalService {
         `)
         )
         .pipe(Effect.orDie)
+
       let gitRemoved =
         request.phase === 'git_removed' || request.phase === 'cleanup_pending'
+
       let retiredNow = false
+
       const workflow = Effect.gen(function* () {
         const liveWorktrees = yield* removalAdapter(
           git.listWorktrees(project.repositoryPath)
         )
+
         const acceptedKey = request.gitWorktreeKey
+
         const liveAccepted = liveWorktrees.find(
           (item) =>
             item.path === preview.path &&
@@ -956,6 +1006,7 @@ export class WorktreeRemovalService {
               ? item.prunable
               : acceptedKey !== null && item.gitWorktreeKey === acceptedKey)
         )
+
         const liveRepositoryIdentity = yield* removalAdapter(
           git.repositoryIdentity(project.repositoryPath)
         )
@@ -984,6 +1035,7 @@ export class WorktreeRemovalService {
             const authorizationError = yield* removalEffect(
               authorizedCheckoutError(preview.path, request.checkoutIdentity)
             )
+
             if (authorizationError) {
               return yield* Effect.fail(
                 removalFailure(
@@ -1003,6 +1055,7 @@ export class WorktreeRemovalService {
             request.cleanupCommands.commands.every(
               (command) => command.status === 'completed'
             )
+
           if (!cleanupAlreadyCompleted) {
             const cleanup = yield* removalAdapter(
               setupService.resolveCleanupTasks({
@@ -1012,6 +1065,7 @@ export class WorktreeRemovalService {
             ).pipe(
               Effect.catchAll((error) => {
                 request.cleanupCommands.status = 'failed'
+
                 return database
                   .execute('worktree.removal.service.1071', (db) =>
                     db.run(sql`
@@ -1032,6 +1086,7 @@ export class WorktreeRemovalService {
                   )
               })
             )
+
             if (
               cleanup.definitionHash !== request.cleanupCommands.definitionHash
             ) {
@@ -1045,6 +1100,7 @@ export class WorktreeRemovalService {
                 `)
                 )
                 .pipe(Effect.orDie)
+
               return yield* Effect.fail(
                 removalFailure(
                   'Project cleanup configuration changed after removal was accepted'
@@ -1070,6 +1126,7 @@ export class WorktreeRemovalService {
                 `)
                 )
                 .pipe(Effect.orDie)
+
               return yield* Effect.fail(
                 removalFailure(
                   'Project cleanup commands changed after removal was accepted'
@@ -1087,6 +1144,7 @@ export class WorktreeRemovalService {
               `)
               )
               .pipe(Effect.orDie)
+
             // Cleanup cwd is constrained to this tree by Setup; commands are
             // tree-local teardown, not owners of Treeport's Git inventory.
             // Distinct trees run independently. Scripts touching shared state
@@ -1095,6 +1153,7 @@ export class WorktreeRemovalService {
             // Do not hold the repository queue around arbitrary user commands.
             for (const [index, task] of cleanup.tasks.entries()) {
               const progress = request.cleanupCommands.commands[index]
+
               if (!progress) {
                 return yield* Effect.fail(
                   removalFailure(
@@ -1126,6 +1185,7 @@ export class WorktreeRemovalService {
                 .pipe(Effect.orDie)
 
               const [executable, ...args] = task.argv
+
               if (!executable) {
                 Object.assign(progress, {
                   status: 'failed' as const,
@@ -1185,6 +1245,7 @@ export class WorktreeRemovalService {
                 `)
                 )
                 .pipe(Effect.orDie)
+
               if (progress.status === 'failed') {
                 return yield* Effect.fail(
                   removalFailure(
@@ -1210,9 +1271,11 @@ export class WorktreeRemovalService {
               const identity = yield* removalAdapter(
                 git.repositoryIdentity(project.repositoryPath)
               )
+
               const current = (yield* removalAdapter(
                 git.listWorktrees(project.repositoryPath)
               )).find((item) => item.path === preview.path)
+
               if (
                 identity !== request.repositoryIdentity ||
                 (current &&
@@ -1232,6 +1295,7 @@ export class WorktreeRemovalService {
                 // accepted checkout still goes through identity-bound cleanup.
                 gitRemoved = true
                 yield* persistPhase('git_removed')
+
                 return
               }
 
@@ -1242,6 +1306,7 @@ export class WorktreeRemovalService {
                     request.checkoutIdentity
                   )
                 )
+
                 if (authorizationError) {
                   return yield* Effect.fail(removalFailure(authorizationError))
                 }
@@ -1270,6 +1335,7 @@ export class WorktreeRemovalService {
                     ? item.prunable
                     : item.gitWorktreeKey === acceptedKey)
               )
+
               if (stillReported) {
                 return yield* Effect.fail(
                   removalFailure(
@@ -1301,6 +1367,7 @@ export class WorktreeRemovalService {
           `)
           )
           .pipe(Effect.orDie)
+
         if (
           storedBinding &&
           (!acceptedKey || storedBinding.git_worktree_key === acceptedKey)
@@ -1312,11 +1379,14 @@ export class WorktreeRemovalService {
             `)
             )
             .pipe(Effect.orDie)
+
           retiredNow = deletion.rowsAffected > 0
+
           if (retiredNow) {
             const terminalIds = yield* terminalState.clearWorktree(
               preview.worktreeId
             )
+
             yield* invalidateProjectsSnapshot()
             yield* Effect.sync(() => {
               for (const terminalId of terminalIds) {
@@ -1325,6 +1395,7 @@ export class WorktreeRemovalService {
                   terminalId
                 })
               }
+
               events.publish('worktree.removed', {
                 projectId: project.id,
                 worktreeId: preview.worktreeId
@@ -1336,6 +1407,7 @@ export class WorktreeRemovalService {
         yield* persistPhase('cleanup_pending')
         let cleanupWarning: string | null = null
         let residualPath: string | null = null
+
         const currentRepositoryIdentity = yield* removalAdapter(
           git.repositoryIdentity(project.repositoryPath)
         ).pipe(
@@ -1344,6 +1416,7 @@ export class WorktreeRemovalService {
             onSuccess: (identity) => identity
           })
         )
+
         if (
           request.repositoryIdentity &&
           currentRepositoryIdentity !== request.repositoryIdentity
@@ -1353,10 +1426,12 @@ export class WorktreeRemovalService {
           residualPath = preview.path
         } else if (request.checkoutIdentity) {
           const checkoutIdentity = request.checkoutIdentity
+
           let cleanup: CheckoutCleanupResult = {
             removed: false,
             error: null
           }
+
           for (let attempt = 0; attempt < 3; attempt += 1) {
             cleanup = yield* removalEffect(
               removeAuthorizedCheckout(preview.path, checkoutIdentity)
@@ -1369,6 +1444,7 @@ export class WorktreeRemovalService {
                 onSuccess: (result) => result
               })
             )
+
             if (!cleanup.error || !cleanup.error.startsWith('Automatic ')) {
               break
             }
@@ -1377,6 +1453,7 @@ export class WorktreeRemovalService {
               yield* Effect.sleep(100)
             }
           }
+
           if (cleanup.error) {
             cleanupWarning = cleanup.error.slice(0, 4_096)
             residualPath = (yield* removalEffect(
@@ -1389,6 +1466,7 @@ export class WorktreeRemovalService {
           const worktreeAtPath = (yield* removalAdapter(
             git.listWorktrees(project.repositoryPath)
           )).some((item) => item.path === preview.path)
+
           if (!worktreeAtPath) {
             yield* Effect.ignore(
               Effect.tryPromise({
@@ -1404,6 +1482,7 @@ export class WorktreeRemovalService {
         }
 
         const managedWrapperPath = request.managedWrapperPath
+
         if (managedWrapperPath) {
           yield* Effect.ignore(
             Effect.tryPromise({
@@ -1458,6 +1537,7 @@ export class WorktreeRemovalService {
       yield* Effect.catchAll(workflow, (error) =>
         Effect.gen(function* () {
           const base = removalErrorMessage(error)
+
           if (gitRemoved) {
             const warning = base.slice(0, 4_096)
             yield* database
@@ -1509,6 +1589,7 @@ export class WorktreeRemovalService {
                   ? `Terminals were stopped, but Git removal failed: ${base}. The checkout may have been partially deleted.`
                   : base
             ).slice(0, 4_096)
+
             yield* database
               .execute('worktree.removal.service.1486', (db) =>
                 db.run(sql`
@@ -1552,6 +1633,7 @@ export class WorktreeRemovalService {
 
 function gitMarkerTarget(checkoutPath: string, marker: string): string | null {
   const match = /^gitdir: (.+)$/u.exec(marker.trim())
+
   return match ? path.resolve(checkoutPath, match[1]!) : null
 }
 
@@ -1561,6 +1643,7 @@ function gitMarkerMatchesKey(
   gitWorktreeKey: string
 ): boolean {
   const target = gitMarkerTarget(checkoutPath, marker)
+
   if (!target) {
     return false
   }
@@ -1570,6 +1653,7 @@ function gitMarkerMatchesKey(
   }
 
   const normalizedKey = path.normalize(gitWorktreeKey)
+
   return target.endsWith(`${path.sep}${normalizedKey}`)
 }
 

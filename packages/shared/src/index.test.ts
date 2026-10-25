@@ -56,6 +56,7 @@ describe('API input validation', () => {
       'Unicode 世界',
       "single'quote"
     ]
+
     expect(
       createTerminalSchema.parse({
         name: 'researcher',
@@ -168,6 +169,7 @@ describe('API input validation', () => {
         }
       }).success
     ).toBe(false)
+
     for (const invalid of [
       { cwd: '' },
       { cwd: ' \t ' },
@@ -227,12 +229,14 @@ describe('API input validation', () => {
         "single'quote"
       ]
     }
+
     const expected = {
       ...input,
       name: 'Hunk review',
       closeOnSuccess: false,
       treeTitle: null
     }
+
     expect(createLauncherSchema.parse(input)).toEqual(expected)
     expect(
       updateLauncherSchema.parse({

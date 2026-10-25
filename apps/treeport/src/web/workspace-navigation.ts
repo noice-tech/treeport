@@ -7,6 +7,7 @@ import type {
 } from '@treeport/shared'
 
 export const LAST_WORKSPACE_ROUTE_STORAGE_KEY = 'treeport-last-workspace-route'
+
 export const LAST_PROJECT_TERMINAL_STORAGE_PREFIX =
   'treeport-last-project-terminal:'
 
@@ -124,11 +125,13 @@ export function appTarget(
 
 export function deepestProjectTarget(project: ProjectRecord): WorkspaceTarget {
   const worktree = project.worktrees[0]
+
   if (!worktree) {
     return projectTarget(project.id)
   }
 
   const terminal = worktree.terminals[0]
+
   return terminal
     ? terminalTarget(project.id, worktree.id, terminal.id)
     : worktreeTarget(project.id, worktree.id)
@@ -143,6 +146,7 @@ export function targetForProject(
       const terminal = worktree.terminals.find(
         (candidate) => candidate.id === rememberedTerminalId
       )
+
       if (terminal) {
         return terminalTarget(project.id, worktree.id, terminal.id)
       }
@@ -157,6 +161,7 @@ function deepestWorktreeTarget(
   worktree: WorktreeRecord
 ): WorkspaceTarget {
   const terminal = worktree.terminals[0]
+
   return terminal
     ? terminalTarget(project.id, worktree.id, terminal.id)
     : worktreeTarget(project.id, worktree.id)
@@ -170,6 +175,7 @@ export function targetForApp(
     const worktree = project.worktrees.find(
       (candidate) => candidate.id === app.worktreeId
     )
+
     if (
       worktree?.workspaceItems.some(
         (candidate) => candidate.kind !== 'terminal' && candidate.id === app.id
@@ -190,6 +196,7 @@ export function targetForTerminal(
     const worktree = project.worktrees.find(
       (candidate) => candidate.id === terminal.worktreeId
     )
+
     if (worktree?.terminals.some((candidate) => candidate.id === terminal.id)) {
       return terminalTarget(project.id, worktree.id, terminal.id)
     }
@@ -210,6 +217,7 @@ export function targetForWorktree(
         (candidateWorktree) => candidateWorktree.id === worktree.id
       )
   )
+
   if (!project) {
     return null
   }
@@ -218,6 +226,7 @@ export function targetForWorktree(
     worktree.terminals.find(
       (candidate) => candidate.id === currentTerminalId
     ) ?? worktree.terminals[0]
+
   return terminal
     ? terminalTarget(project.id, worktree.id, terminal.id)
     : worktreeTarget(project.id, worktree.id)
@@ -233,6 +242,7 @@ function selectionForTarget(
 
   const project =
     projects.find((candidate) => candidate.id === target.projectId) ?? null
+
   if (!project || target.kind === 'project') {
     return { project, worktree: null, terminal: null, app: null }
   }
@@ -240,6 +250,7 @@ function selectionForTarget(
   const worktree =
     project.worktrees.find((candidate) => candidate.id === target.worktreeId) ??
     null
+
   if (!worktree || target.kind === 'worktree') {
     return { project, worktree, terminal: null, app: null }
   }
@@ -250,6 +261,7 @@ function selectionForTarget(
         (candidate): candidate is BrowserApp | WebApp =>
           candidate.kind !== 'terminal' && candidate.id === target.appId
       ) ?? null
+
     return { project, worktree, terminal: null, app }
   }
 
@@ -257,6 +269,7 @@ function selectionForTarget(
     worktree.terminals.find(
       (candidate) => candidate.id === target.terminalId
     ) ?? null
+
   return { project, worktree, terminal, app: null }
 }
 
@@ -274,11 +287,13 @@ function requestedTarget(pathname: string): WorkspaceTarget | null {
   }
 
   const parts = pathname.split('/').filter(Boolean)
+
   if (parts[0] !== 'projects') {
     return null
   }
 
   const projectId = parts[1] ? decode(parts[1]) : null
+
   if (!projectId) {
     return null
   }
@@ -292,6 +307,7 @@ function requestedTarget(pathname: string): WorkspaceTarget | null {
   }
 
   const worktreeId = parts[3] ? decode(parts[3]) : null
+
   if (!worktreeId) {
     return null
   }
@@ -301,6 +317,7 @@ function requestedTarget(pathname: string): WorkspaceTarget | null {
   }
 
   const descendantId = parts[5] ? decode(parts[5]) : null
+
   if (!descendantId || parts.length !== 6) {
     return null
   }
@@ -333,6 +350,7 @@ function resolveTarget(
   const project = projects.find(
     (candidate) => candidate.id === requested.projectId
   )
+
   if (!project) {
     return fallbackTarget(projects)
   }
@@ -346,6 +364,7 @@ function resolveTarget(
   const worktree = project.worktrees.find(
     (candidate) => candidate.id === requested.worktreeId
   )
+
   if (!worktree) {
     return project.worktrees[0]
       ? deepestWorktreeTarget(project, project.worktrees[0])
@@ -361,6 +380,7 @@ function resolveTarget(
       (candidate) =>
         candidate.kind !== 'terminal' && candidate.id === requested.appId
     )
+
     return app
       ? appTarget(project.id, worktree.id, app.id)
       : deepestWorktreeTarget(project, worktree)
@@ -369,6 +389,7 @@ function resolveTarget(
   const terminal = worktree.terminals.find(
     (candidate) => candidate.id === requested.terminalId
   )
+
   if (!terminal) {
     return deepestWorktreeTarget(project, worktree)
   }
@@ -386,9 +407,11 @@ export function resolveWorkspaceRoute(
 
   if (requested?.kind === 'root' && projects.length && rootResumePath) {
     const resumeTarget = requestedTarget(rootResumePath)
+
     const resumeProjectIsValid =
       resumeTarget?.kind !== 'root' &&
       projects.some((project) => project.id === resumeTarget?.projectId)
+
     target = resumeProjectIsValid
       ? resolveTarget(projects, resumeTarget)
       : fallbackTarget(projects)

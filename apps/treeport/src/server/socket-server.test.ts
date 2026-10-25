@@ -60,12 +60,14 @@ class FakePty {
     | null = null
   onData = (listener: (data: string, sequence: number) => void) => {
     this.dataListener = listener
+
     return { dispose: () => (this.dataListener = null) }
   }
   onExit = (
     listener: (event: { exitCode: number; signal?: number }) => void
   ) => {
     this.exitListener = listener
+
     return { dispose: () => (this.exitListener = null) }
   }
   emit(data: string) {
@@ -112,6 +114,7 @@ async function fixture(
   const ptys: FakePty[] = []
   const listWebApps = vi.fn<() => Promise<WebApp[]>>(async () => [])
   const listBrowserApps = vi.fn<() => Promise<BrowserApp[]>>(async () => [])
+
   const getKnownTerminal = vi.fn<
     (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
   >(() =>
@@ -128,12 +131,14 @@ async function fixture(
       updatedAt: '2026-01-01T00:00:00.000Z'
     })
   )
+
   const getWorktree = vi.fn(() =>
     Effect.succeed({
       id: 'wt',
       path: '/tmp'
     })
   )
+
   // SAFETY: The test fixture provides the asserted contract used here.
   const service = testAccess<TreeportService>({
     events,
@@ -158,8 +163,10 @@ async function fixture(
     }),
     terminalAttachmentMutation: vi.fn((_terminalId, effect) => effect)
   })
+
   const child = new FakePty()
   ptys.push(child)
+
   // SAFETY: The test fixture provides the terminal-host attachment contract.
   const terminalHost = testAccess<TerminalAttachmentBackend>({
     attach: vi.fn(() =>
@@ -204,6 +211,7 @@ async function fixture(
     useHostQueryAuthority: vi.fn(() => Effect.void),
     resize: vi.fn(() => Effect.void)
   })
+
   const currentMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'shell',
@@ -218,9 +226,11 @@ async function fixture(
     },
     attention: null
   }
+
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [
     currentMetadata
   ])
+
   // SAFETY: The test fixture provides the asserted contract used here.
   const metadata = testAccess<TerminalMetadataManager>({
     initialize: vi.fn(() => Effect.void),
@@ -229,15 +239,18 @@ async function fixture(
     trackTerminal: vi.fn(() => Effect.void),
     subscribe: vi.fn(() => () => undefined)
   })
+
   const attachmentManager = new TerminalAttachmentManager(
     service,
     metadata,
     terminalHost
   )
+
   const server = http.createServer((_request, response) => {
     response.statusCode = 404
     response.end()
   })
+
   const config = {
     host: '127.0.0.1',
     port: 0,
@@ -252,6 +265,7 @@ async function fixture(
     daemonLifecycle: 'treeport',
     webDevelopment: false
   } satisfies AppConfig
+
   const socketServerDependencies = {
     service,
     config,
@@ -259,12 +273,14 @@ async function fixture(
     terminalHost,
     attachmentManager
   }
+
   const socketServer = browserSessions
     ? createSocketServer({
         ...socketServerDependencies,
         browserSessions
       })
     : createSocketServer(socketServerDependencies)
+
   const { attachments } = socketServer
   server.on('upgrade', (request, socket, head) => {
     if (!socketServer.handleUpgrade(request, socket, head)) {
@@ -274,6 +290,7 @@ async function fixture(
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   // SAFETY: The test fixture provides the asserted contract used here.
   const address = server.address() as AddressInfo
+
   const value: NetworkFixture = {
     server,
     url: `http://127.0.0.1:${address.port}`,
@@ -294,7 +311,9 @@ async function fixture(
       )
     }
   }
+
   fixtures.push(value)
+
   return value
 }
 
@@ -305,6 +324,7 @@ function webSocketConstructor(extraHeaders?: Record<string, string>) {
 
   return (url: string, protocols?: string | string[]) => {
     const socket = new WebSocket(url, protocols, { headers: extraHeaders })
+
     // SAFETY: ws implements the WebSocket operations consumed by Effect Socket.
     // eslint-disable-next-line anti-slop/no-chained-type-assertions -- The ws and DOM declarations describe the same runtime object differently.
     return socket as unknown as globalThis.WebSocket
@@ -318,17 +338,20 @@ function terminalClient(
   options: { extraHeaders?: Record<string, string> } = {}
 ): ProtocolSocket<TerminalServerToClientEvents, TerminalClientToServerEvents> {
   const query: Record<string, string> = {}
+
   if (terminalProtocol !== null) {
     query.terminalProtocol = terminalProtocol
   }
 
   const constructor = webSocketConstructor(options.extraHeaders)
+
   const socketOptions: ProtocolSocketOptions = {
     reconnection: true,
     reconnectionDelay: 10,
     auth: { terminalId: 'term', clientId, cols: 100, rows: 30 },
     query
   }
+
   return createProtocolSocket(
     `${url}/terminals`,
     constructor
@@ -388,6 +411,7 @@ describe('Effect WebSocket real network', () => {
     const closes: string[] = []
     const ownerCloses: string[] = []
     const transports = new Map<string, BrowserTransport>()
+
     const browserSessions = {
       accept: vi.fn((ticket: string, transport: BrowserTransport) =>
         Effect.sync(() => {
@@ -411,11 +435,13 @@ describe('Effect WebSocket real network', () => {
             }
           })
           transport.sendMessage({ type: 'videoReady' })
+
           return 'browser-connection'
         })
       ),
       message: vi.fn((connectionId: string, message: BrowserClientMessage) => {
         messages.push(message)
+
         if (message.type === 'videoOffer') {
           transports.get(connectionId)?.sendMessage({
             type: 'videoAnswer',
@@ -443,6 +469,7 @@ describe('Effect WebSocket real network', () => {
               viewport: { width: 800, height: 600 }
             }
           })
+
           return 'browser-owner'
         })
       ),
@@ -455,7 +482,9 @@ describe('Effect WebSocket real network', () => {
       ),
       handoffMedia: vi.fn(() => false)
     } satisfies BrowserSessionController
+
     const value = await fixture(browserSessions)
+
     const browser = createProtocolSocket<
       BrowserServerToClientEvents,
       BrowserClientToServerEvents
@@ -472,6 +501,7 @@ describe('Effect WebSocket real network', () => {
         ticket: 'b'.repeat(43)
       }
     })
+
     const answer = new Promise<BrowserServerMessage>((resolve) => {
       browser.on('message', (message) => {
         if (message.type === 'videoReady') {
@@ -485,6 +515,7 @@ describe('Effect WebSocket real network', () => {
         }
       })
     })
+
     const ready = await new Promise<BrowserServerMessage>((resolve) =>
       browser.once('message', (message) => {
         // Control and signaling remain authenticated on the same connection.
@@ -492,6 +523,7 @@ describe('Effect WebSocket real network', () => {
         resolve(message)
       })
     )
+
     expect(ready).toMatchObject({
       type: 'ready',
       state: { controlled: true, viewport: { width: 800, height: 600 } }
@@ -536,6 +568,7 @@ describe('Effect WebSocket real network', () => {
         endpoint: 'http://127.0.0.1:43210/private-owner/'
       }
     })
+
     const claimed = await new Promise<BrowserOwnerServerMessage>((resolve) =>
       owner.once('ownerMessage', (message) => {
         if (message.type === 'claimGranted') {
@@ -550,6 +583,7 @@ describe('Effect WebSocket real network', () => {
         resolve(message)
       })
     )
+
     expect(claimed).toMatchObject({
       type: 'claimGranted',
       appId: 'app_browser',
@@ -577,6 +611,7 @@ describe('Effect WebSocket real network', () => {
   it('interrupts Browser attachment work when the client disconnects before ready', async () => {
     let started = false
     let interrupted = false
+
     const browserSessions: BrowserSessionController = {
       accept: vi.fn((_ticket, transport) =>
         Effect.sync(() => {
@@ -601,7 +636,9 @@ describe('Effect WebSocket real network', () => {
       closeOwner: vi.fn(),
       handoffMedia: vi.fn(() => false)
     }
+
     const value = await fixture(browserSessions)
+
     const browser = createProtocolSocket<
       BrowserServerToClientEvents,
       BrowserClientToServerEvents
@@ -623,10 +660,12 @@ describe('Effect WebSocket real network', () => {
   it('closes Browser attachments on output failure and permits a fresh connection', async () => {
     const transports: BrowserTransport[] = []
     const closed: string[] = []
+
     const browserSessions: BrowserSessionController = {
       accept: (_ticket, transport) =>
         Effect.sync(() => {
           transports.push(transport)
+
           return transport.id
         }),
       message: vi.fn(),
@@ -636,7 +675,9 @@ describe('Effect WebSocket real network', () => {
       closeOwner: vi.fn(),
       handoffMedia: vi.fn(() => false)
     }
+
     const value = await fixture(browserSessions)
+
     const connect = () =>
       createProtocolSocket<
         BrowserServerToClientEvents,
@@ -647,17 +688,20 @@ describe('Effect WebSocket real network', () => {
           ticket: 'b'.repeat(43)
         }
       })
+
     const browser = connect()
     await new Promise<void>((resolve) => browser.once('connect', resolve))
     const disconnected = vi.fn()
     browser.on('disconnect', disconnected)
     const signal = { type: 'videoReady' as const }
+
     // Only the server uses ws here; clients use the native WebSocket.
     const send = vi
       .spyOn(WebSocket.prototype, 'send')
       .mockImplementation(() => {
         throw new Error('Injected signaling write failure')
       })
+
     try {
       expect(transports[0]!.sendMessage(signal)).toBe(true)
       await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
@@ -670,9 +714,11 @@ describe('Effect WebSocket real network', () => {
 
     const reconnected = connect()
     await new Promise<void>((resolve) => reconnected.once('connect', resolve))
+
     const nextSignal = new Promise((resolve) =>
       reconnected.once('message', resolve)
     )
+
     expect(transports[1]!.sendMessage(signal)).toBe(true)
     await expect(nextSignal).resolves.toMatchObject(signal)
     await closeClient(reconnected)
@@ -683,12 +729,14 @@ describe('Effect WebSocket real network', () => {
 
   it('authenticates local and Tailscale clients before accepting socket connections', async () => {
     const value = await fixture()
+
     const local = terminalClient(
       value.url,
       'tab-local',
       String(TERMINAL_PROTOCOL_VERSION),
       { extraHeaders: { Origin: value.url } }
     )
+
     await new Promise<void>((resolve, reject) => {
       local.once('ready', () => resolve())
       local.once('connect_error', reject)
@@ -700,12 +748,14 @@ describe('Effect WebSocket real network', () => {
       'X-Forwarded-Host': 'feature.treeport.localhost',
       'X-Forwarded-Proto': 'https'
     }
+
     const proxied = terminalClient(
       value.url,
       'tab-proxied',
       String(TERMINAL_PROTOCOL_VERSION),
       { extraHeaders: tailscaleHeaders }
     )
+
     await new Promise<void>((resolve, reject) => {
       proxied.once('ready', () => resolve())
       proxied.once('connect_error', reject)
@@ -716,16 +766,20 @@ describe('Effect WebSocket real network', () => {
       'X-Forwarded-Host': 'feature.treeport.localhost',
       'X-Forwarded-Proto': 'https'
     }
+
     const bypassed = terminalClient(
       value.url,
       'tab-bypassed',
       String(TERMINAL_PROTOCOL_VERSION),
       { extraHeaders: bypassHeaders }
     )
+
     bypassed.manager.reconnection(false)
+
     const bypassError = await new Promise<Error>((resolve) =>
       bypassed.once('connect_error', resolve)
     )
+
     expect(bypassError.message).toMatch(/websocket error/i)
 
     const foreignOrigin = terminalClient(
@@ -734,10 +788,13 @@ describe('Effect WebSocket real network', () => {
       String(TERMINAL_PROTOCOL_VERSION),
       { extraHeaders: { ...tailscaleHeaders, Origin: 'https://evil.example' } }
     )
+
     foreignOrigin.manager.reconnection(false)
+
     const originError = await new Promise<Error>((resolve) =>
       foreignOrigin.once('connect_error', resolve)
     )
+
     expect(originError.message).toMatch(/websocket error/i)
 
     const opaqueOrigin = terminalClient(
@@ -746,10 +803,13 @@ describe('Effect WebSocket real network', () => {
       String(TERMINAL_PROTOCOL_VERSION),
       { extraHeaders: { ...tailscaleHeaders, Origin: 'null' } }
     )
+
     opaqueOrigin.manager.reconnection(false)
+
     const opaqueOriginError = await new Promise<Error>((resolve) =>
       opaqueOrigin.once('connect_error', resolve)
     )
+
     expect(opaqueOriginError.message).toMatch(/websocket error/i)
 
     const originless = terminalClient(value.url, 'tab-originless')
@@ -768,9 +828,11 @@ describe('Effect WebSocket real network', () => {
   it('requires the exact terminal protocol version', async () => {
     const value = await fixture()
     const current = terminalClient(value.url, 'tab-current')
+
     const currentReady = await new Promise<TerminalReady>((resolve) =>
       current.once('ready', (payload) => resolve(payload))
     )
+
     expect(currentReady).toMatchObject({
       cols: 100,
       rows: 30,
@@ -780,16 +842,20 @@ describe('Effect WebSocket real network', () => {
 
     const missing = terminalClient(value.url, 'tab-missing', null)
     missing.manager.reconnection(false)
+
     const missingError = await new Promise<Error>((resolve) =>
       missing.once('connect_error', resolve)
     )
+
     expect(missingError.message).toBe('UNSUPPORTED_TERMINAL_PROTOCOL')
 
     const unsupported = terminalClient(value.url, 'tab-unsupported', '2')
     unsupported.manager.reconnection(false)
+
     const error = await new Promise<Error>((resolve) =>
       unsupported.once('connect_error', resolve)
     )
+
     expect(error.message).toBe('UNSUPPORTED_TERMINAL_PROTOCOL')
 
     await closeClient(current)
@@ -841,11 +907,13 @@ describe('Effect WebSocket real network', () => {
   it('reconnects to the same hosted PTY with a fresh viewer stream', async () => {
     const value = await fixture()
     const socket = terminalClient(value.url)
+
     const readyEvents: Array<{
       streamId: string
       generation: number
       controller: boolean
     }> = []
+
     socket.on('ready', (ready) => readyEvents.push(ready))
     await vi.waitFor(() => expect(readyEvents).toHaveLength(1))
     expect(value.ptys).toHaveLength(1)
@@ -860,6 +928,7 @@ describe('Effect WebSocket real network', () => {
     const disconnected = new Promise<void>((resolve) =>
       socket.once('disconnect', () => resolve())
     )
+
     value.closeConnections()
     await disconnected
     expect(socket.connected).toBe(false)

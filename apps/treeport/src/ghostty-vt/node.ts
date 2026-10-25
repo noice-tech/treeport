@@ -10,6 +10,7 @@ export function loadGhosttyVtModule(): Promise<WebAssembly.Module> {
       const bytes = await fs
         .readFile(new URL(candidate, import.meta.url))
         .catch(() => null)
+
       if (bytes) {
         return WebAssembly.compile(bytes)
       }
@@ -17,5 +18,6 @@ export function loadGhosttyVtModule(): Promise<WebAssembly.Module> {
 
     throw new Error('ghostty-vt.wasm is missing')
   })()
+
   return compiled
 }

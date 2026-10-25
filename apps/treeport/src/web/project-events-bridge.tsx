@@ -43,12 +43,14 @@ export function useProjectEventsBridge(
     let reconnecting = false
     let connectedAt: number | null = null
     let reconnectAttempts = 0
+
     const refreshes = createInvalidationCoalescer(() =>
       queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
         { cancelRefetch: false }
       )
     )
+
     const projectRefreshes = createInvalidationCoalescer(() =>
       Promise.all([
         queryClient.invalidateQueries(
@@ -69,6 +71,7 @@ export function useProjectEventsBridge(
         )
       ]).then(() => undefined)
     )
+
     const refresh = () => {
       refreshes.schedule()
       void Promise.all([
@@ -76,7 +79,9 @@ export function useProjectEventsBridge(
         queryClient.invalidateQueries({ queryKey: ['worktree-removals'] })
       ])
     }
+
     const refreshProjects = () => projectRefreshes.schedule()
+
     const snapshot = (payload: EventsSnapshot) => {
       connectedAt ??= Date.now()
       terminalSessions.replaceRuntimeMetadata(payload.terminalMetadata)
@@ -84,9 +89,11 @@ export function useProjectEventsBridge(
       setEventsDisconnected(false)
       refresh()
     }
+
     const productEvent = (event: NetworkProductEvent) => {
       if (event.type === 'presence.changed') {
         onPresenceChangedRef.current?.(event.data.viewers)
+
         return
       }
 
@@ -100,10 +107,13 @@ export function useProjectEventsBridge(
               event.data.terminal.worktreeId,
               event.data.terminal
             )
+
             targetFound = update.found
+
             return update.projects
           }
         )
+
         if (!targetFound) {
           refresh()
         }
@@ -114,8 +124,10 @@ export function useProjectEventsBridge(
       if (event.type === 'terminal.removed') {
         terminalSessions.forget(event.data.terminalId)
         const worktreeId = event.data.worktreeId
+
         if (!worktreeId) {
           refresh()
+
           return
         }
 
@@ -128,10 +140,13 @@ export function useProjectEventsBridge(
               worktreeId,
               event.data.terminalId
             )
+
             worktreeFound = update.worktreeFound
+
             return update.projects
           }
         )
+
         if (!worktreeFound) {
           refresh()
         }
@@ -148,28 +163,33 @@ export function useProjectEventsBridge(
           activity: event.data.activity,
           attention: event.data.attention
         })
+
         return
       }
 
       if (event.type === 'app.open_requested') {
         refresh()
         onAppOpenRequestedRef.current?.(event.data)
+
         return
       }
 
       if (event.type === 'workspace.open_requested') {
         refresh()
         onWorkspaceOpenRequestedRef.current?.(event.data)
+
         return
       }
 
       if (event.type === 'project.updated') {
         refreshProjects()
+
         return
       }
 
       if (event.type === 'project.removed') {
         refreshProjects()
+
         return
       }
 
@@ -177,6 +197,7 @@ export function useProjectEventsBridge(
         refresh()
       }
     }
+
     const connect = Effect.scoped(
       Effect.gen(function* () {
         if (reconnecting) {
@@ -189,6 +210,7 @@ export function useProjectEventsBridge(
               cache: 'no-store',
               signal
             })
+
             if (
               !response.ok ||
               !response.headers.get('content-type')?.includes('text/html')
@@ -200,6 +222,7 @@ export function useProjectEventsBridge(
               await response.text(),
               'text/html'
             )
+
             return [document, nextDocument].map((page) =>
               Array.from(
                 page.querySelectorAll('script[type="module"][src]'),
@@ -214,6 +237,7 @@ export function useProjectEventsBridge(
             Effect.timeout('5 seconds'),
             Effect.catchAll(() => Effect.succeed(null))
           )
+
           if (disposed || !modules?.[0]?.length || !modules[1]?.length) {
             return
           }
@@ -242,6 +266,7 @@ export function useProjectEventsBridge(
           )
       })
     ).pipe(Effect.provide(treeportRpcClientLayer('/api/rpc')))
+
     const program = Effect.forever(
       Effect.gen(function* () {
         yield* connect.pipe(
@@ -256,6 +281,7 @@ export function useProjectEventsBridge(
                 })
           )
         )
+
         if (disposed) {
           return
         }
@@ -265,6 +291,7 @@ export function useProjectEventsBridge(
         reconnecting = true
         setEventsDisconnected(true)
         onPresenceChangedRef.current?.([])
+
         if (connectedAt !== null && Date.now() - connectedAt >= 30_000) {
           reconnectAttempts = 0
         }
@@ -275,7 +302,9 @@ export function useProjectEventsBridge(
         )
       })
     )
+
     const fiber = Effect.runFork(program)
+
     return () => {
       disposed = true
       refreshes.dispose()

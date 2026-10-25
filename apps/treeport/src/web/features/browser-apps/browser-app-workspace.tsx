@@ -73,6 +73,7 @@ const viewportPresetSchema = z.enum([
   'tablet',
   'desktop'
 ])
+
 const viewportSettingsSchema = z.object({
   viewport: z
     .object({
@@ -85,6 +86,7 @@ const viewportSettingsSchema = z.object({
 
 function parseBrowserAddress(value: string): URL | null {
   const input = value.trim()
+
   if (!input) {
     return null
   }
@@ -92,8 +94,10 @@ function parseBrowserAddress(value: string): URL | null {
   const hasProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
   const candidate = hasProtocol ? input : `http://${input}`
   const parsed = decodeUnknownOrNull(browserUrlSchema, candidate)
+
   if (parsed !== null) {
     const url = new URL(parsed)
+
     if (
       hasProtocol ||
       url.hostname === 'localhost' ||
@@ -106,12 +110,14 @@ function parseBrowserAddress(value: string): URL | null {
   }
 
   const candidateUrl = URL.canParse(candidate) ? new URL(candidate) : null
+
   if (hasProtocol || candidateUrl?.username || candidateUrl?.password) {
     return null
   }
 
   const search = new URL('https://www.google.com/search')
   search.searchParams.set('q', input)
+
   return decodeUnknownOrNull(browserUrlSchema, search.href) !== null
     ? search
     : null
@@ -144,6 +150,7 @@ export function BrowserAppWorkspace({
   const inputRef = useRef<HTMLInputElement>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserAppConnection | null>(null)
+
   const pendingCopiesRef = useRef(
     new Map<
       string,
@@ -153,8 +160,10 @@ export function BrowserAppWorkspace({
       }
     >()
   )
+
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
+
   const viewportDragRef = useRef<{
     x: number
     y: number
@@ -162,55 +171,74 @@ export function BrowserAppWorkspace({
     height: number
     scale: number
   } | null>(null)
+
   const contextRequestRef = useRef<string | null>(null)
   const contextTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contextRef = useRef<BrowserContextResult | null>(null)
+
   const contextActionRef = useRef<{
     requestId: string
     resolveCopy: ((value: Blob) => void) | null
     rejectCopy: ((reason: Error) => void) | null
     timeout: ReturnType<typeof setTimeout> | null
   } | null>(null)
+
   const [contextMenu, setContextMenu] = useState<BrowserContextResult | null>(
     null
   )
+
   const pointerActiveRef = useRef(false)
+
   const touchesRef = useRef(
     new Map<number, { id: number; x: number; y: number }>()
   )
+
   const addressPointerSelectAllRef = useRef(false)
   const addressDirtyRef = useRef(false)
   const autoFocusAddressRef = useRef(app.url === 'about:blank')
+
   const pendingNavigationRef = useRef<{
     startUrl: string
     targetUrl: string
   } | null>(null)
+
   const [streamStatus, setStreamStatus] = useState<string | null>(
     'Connecting to remote browser…'
   )
+
   const [fileChooser, setFileChooser] = useState<Extract<
     BrowserServerMessage,
     { type: 'fileChooser' }
   > | null>(null)
+
   const [connectionRevision, setConnectionRevision] = useState(0)
   const [addressFocusRevision, setAddressFocusRevision] = useState(0)
+
   const [localBrowserPaintRetained, setLocalBrowserPaintRetained] =
     useState(false)
+
   const [state, setState] = useState<BrowserSessionState | null>(null)
+
   const [inputValue, setInputValue] = useState(
     app.url === 'about:blank' ? '' : app.url
   )
+
   const [permissionsOpen, setPermissionsOpen] = useState(false)
+
   const [permissionSettings, setPermissionSettings] = useState<{
     origin: string | null
     decisions: Array<{ capability: string; label: string; allowed: boolean }>
   } | null>(null)
+
   const [permissionSettingsBusy, setPermissionSettingsBusy] = useState(false)
+
   const [permissionSettingsError, setPermissionSettingsError] = useState<
     string | null
   >(null)
+
   const [toolsOpen, setToolsOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+
   const [
     { viewport: viewportOverride, preset: viewportPreset },
     setViewportSettings
@@ -221,33 +249,43 @@ export function BrowserAppWorkspace({
       const stored = sessionStorage.getItem(
         `treeport-browser-viewport:${app.id}`
       )
+
       const parsed = viewportSettingsSchema.safeParse(
         stored ? JSON.parse(stored) : null
       )
+
       if (parsed.success) {
         return parsed.data
       }
     } catch {
       // Storage may be unavailable or contain an invalid value.
     }
+
     return { viewport: null, preset: 'responsive' }
   })
+
   const viewportOverrideRef = useRef(viewportOverride)
   const [viewportSpace, setViewportSpace] = useState({ width: 0, height: 0 })
+
   const [viewportWidth, setViewportWidth] = useState(
     String(viewportOverride?.width ?? 390)
   )
+
   const [viewportHeight, setViewportHeight] = useState(
     String(viewportOverride?.height ?? 844)
   )
+
   const [findOpen, setFindOpen] = useState(false)
   const [findValue, setFindValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+
   const [clipboardToCopy, setClipboardToCopy] =
     useState<BrowserClipboard | null>(null)
+
   const [failure, setFailure] = useState<{
     message: string
   } | null>(null)
+
   const { localBrowser, computerId } = getDesktopRuntime()
 
   useEffect(() => {
@@ -268,6 +306,7 @@ export function BrowserAppWorkspace({
           setPermissionSettingsError('Could not load website permissions.')
         }
       })
+
     return () => {
       current = false
     }
@@ -283,8 +322,10 @@ export function BrowserAppWorkspace({
 
     setPermissionSettingsBusy(true)
     setPermissionSettingsError(null)
+
     try {
       const bridge = window.treeportDesktop
+
       if (
         !bridge ||
         !(await bridge.resetBrowserPermissions?.(app.id, origin, capability))
@@ -292,6 +333,7 @@ export function BrowserAppWorkspace({
         setPermissionSettingsError(
           'Could not reset website permissions. The page may have navigated.'
         )
+
         return
       }
 
@@ -340,6 +382,7 @@ export function BrowserAppWorkspace({
 
   const dismissContext = useCallback(() => {
     contextRequestRef.current = null
+
     if (contextTimeoutRef.current) {
       clearTimeout(contextTimeoutRef.current)
       contextTimeoutRef.current = null
@@ -363,14 +406,17 @@ export function BrowserAppWorkspace({
         dismissContext()
       }
     }
+
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         cancelPending()
       }
     }
+
     document.addEventListener('pointerdown', cancelPending, true)
     document.addEventListener('keydown', onKey, true)
     window.addEventListener('blur', dismissContext)
+
     return () => {
       document.removeEventListener('pointerdown', cancelPending, true)
       document.removeEventListener('keydown', onKey, true)
@@ -385,23 +431,28 @@ export function BrowserAppWorkspace({
 
   const contextAction = (action: BrowserContextAction) => {
     const context = contextRef.current
+
     if (!context?.contextId || inputBlocked || !active) {
       return
     }
 
     const requestId = crypto.randomUUID()
+
     const pending: NonNullable<typeof contextActionRef.current> = {
       requestId,
       resolveCopy: null,
       rejectCopy: null,
       timeout: null
     }
+
     contextActionRef.current = pending
+
     if (action === 'copyLink') {
       if (!navigator.clipboard || !window.ClipboardItem) {
         setError('Clipboard access is unavailable in this viewer.')
         contextActionRef.current = null
         dismissContext()
+
         return
       }
 
@@ -411,6 +462,7 @@ export function BrowserAppWorkspace({
         pending.resolveCopy = resolve
         pending.rejectCopy = reject
       })
+
       void navigator.clipboard
         .write([new ClipboardItem({ 'text/plain': text })])
         .catch(() =>
@@ -444,6 +496,7 @@ export function BrowserAppWorkspace({
     const page =
       videoRef.current ??
       sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
+
     page?.focus({ preventScroll: true })
   }, [])
 
@@ -468,6 +521,7 @@ export function BrowserAppWorkspace({
     (text: string, forward: boolean, findNext: boolean) => {
       const webview =
         sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
+
       if (webview) {
         if (text) {
           webview.findInPage(
@@ -483,6 +537,7 @@ export function BrowserAppWorkspace({
 
       if (!text) {
         send({ type: 'stopFind' })
+
         return
       }
 
@@ -510,6 +565,7 @@ export function BrowserAppWorkspace({
 
       if (message.type === 'fileChooser') {
         setFileChooser(message)
+
         return
       }
 
@@ -517,6 +573,7 @@ export function BrowserAppWorkspace({
         setFileChooser((current) =>
           current?.requestId === message.requestId ? null : current
         )
+
         if (message.error) {
           setError(message.error)
         }
@@ -549,11 +606,13 @@ export function BrowserAppWorkspace({
                 : 'Couldn’t copy. Click Copy to clipboard to retry.'
             )
           )
+
         return
       }
 
       if (message.type === 'copyResult') {
         const pending = pendingCopiesRef.current.get(message.requestId)
+
         if (message.error !== null || message.clipboard === null) {
           pending?.reject(
             new Error(message.error ?? 'Nothing is selected to copy.')
@@ -566,6 +625,7 @@ export function BrowserAppWorkspace({
       }
 
       const canvas = videoRef.current
+
       if (message.type === 'contextResult') {
         if (message.requestId !== contextRequestRef.current) {
           if (message.contextId) {
@@ -576,6 +636,7 @@ export function BrowserAppWorkspace({
         }
 
         contextRequestRef.current = null
+
         if (contextTimeoutRef.current) {
           clearTimeout(contextTimeoutRef.current)
           contextTimeoutRef.current = null
@@ -583,16 +644,19 @@ export function BrowserAppWorkspace({
 
         contextRef.current = message.contextId ? message : null
         setContextMenu(contextRef.current)
+
         return
       }
 
       if (message.type === 'contextActionResult') {
         const pending = contextActionRef.current
+
         if (message.requestId !== pending?.requestId) {
           return
         }
 
         contextActionRef.current = null
+
         if (pending.timeout) {
           clearTimeout(pending.timeout)
         }
@@ -639,6 +703,7 @@ export function BrowserAppWorkspace({
         message.type === 'controlChanged'
       ) {
         const previousUrl = stateRef.current?.url ?? app.url
+
         if (
           message.type === 'ready' ||
           !message.state.controlled ||
@@ -659,6 +724,7 @@ export function BrowserAppWorkspace({
             message.state.url !== previousUrl)
         ) {
           canvas.style.cursor = 'default'
+
           if (message.state.controlled && message.state.url !== previousUrl) {
             cancelTouches()
           } else {
@@ -667,6 +733,7 @@ export function BrowserAppWorkspace({
         }
 
         stateRef.current = message.state
+
         if (
           message.state.viewport.width > 0 &&
           message.state.viewport.height > 0
@@ -684,31 +751,37 @@ export function BrowserAppWorkspace({
 
         onLoadingChange(app.id, message.state.loading)
         onFaviconChange(app.id, message.state.faviconUrl)
+
         if (!addressDirtyRef.current && message.state.url !== previousUrl) {
           setError(null)
         }
 
         const pendingNavigation = pendingNavigationRef.current
+
         const validUrl =
           decodeUnknownOrNull(browserObservedUrlSchema, message.state.url) !==
           null
+
         // takeControl can report the old page before the queued navigation starts.
         const navigationStarted =
           pendingNavigation === null ||
           (validUrl &&
             (message.state.url === pendingNavigation.targetUrl ||
               message.state.url !== pendingNavigation.startUrl))
+
         if (!navigationStarted) {
           return
         }
 
         pendingNavigationRef.current = null
+
         const receivedAddress =
           message.state.url === 'about:blank'
             ? ''
             : validUrl
               ? message.state.url
               : null
+
         if (receivedAddress === null) {
           return
         }
@@ -726,6 +799,7 @@ export function BrowserAppWorkspace({
         }
 
         setInputValue(receivedAddress)
+
         return
       }
 
@@ -740,6 +814,7 @@ export function BrowserAppWorkspace({
       )
       contextActionRef.current = null
       onLoadingChange(app.id, false)
+
       if (
         message.type === 'browserUnavailable' ||
         message.type === 'videoUnavailable'
@@ -751,10 +826,12 @@ export function BrowserAppWorkspace({
         }
 
         setFailure({ message: message.message })
+
         return
       }
 
       pendingNavigationRef.current = null
+
       if (
         message.type === 'videoSettingsResult' ||
         message.type === 'videoChannel'
@@ -782,6 +859,7 @@ export function BrowserAppWorkspace({
     traceBrowserOpen(app.id, 'browser.hosted.attach_started')
     const video = videoRef.current
     const canvasHost = canvasHostRef.current
+
     if (!video || !canvasHost) {
       return
     }
@@ -791,6 +869,7 @@ export function BrowserAppWorkspace({
     canvas.className = 'block size-full object-contain'
     canvasHost.replaceChildren(canvas)
     let firstFrame = true
+
     const playing = () => {
       if (firstFrame) {
         firstFrame = false
@@ -801,15 +880,19 @@ export function BrowserAppWorkspace({
       setFailure(null)
       setError(null)
     }
+
     video.addEventListener('playing', playing)
+
     const connection = connectRemoteBrowser(app.id, video, canvas, {
       message: receiveMessage,
       failed: (message) => setFailure({ message }),
       statusChanged: setStreamStatus,
       presented: playing
     })
+
     remoteConnectionRef.current = connection
     connectionRef.current = connection
+
     return () => {
       if (touchesRef.current.size > 0) {
         touchesRef.current.clear()
@@ -832,6 +915,7 @@ export function BrowserAppWorkspace({
 
       pendingCopiesRef.current.clear()
       video.removeEventListener('playing', playing)
+
       if (remoteConnectionRef.current === connection) {
         remoteConnectionRef.current = null
       }
@@ -845,6 +929,7 @@ export function BrowserAppWorkspace({
     (connection: BrowserAppConnection | null) => {
       connectionRef.current = connection
       const pendingNavigation = pendingNavigationRef.current
+
       if (connection && pendingNavigation) {
         connection.send({ type: 'navigate', url: pendingNavigation.targetUrl })
       }
@@ -855,11 +940,13 @@ export function BrowserAppWorkspace({
   const setLocalBrowserPaintRetention = useCallback(
     async (retained: boolean) => {
       setLocalBrowserPaintRetained(retained)
+
       if (!retained) {
         return true
       }
 
       let timer: number | null = null
+
       const layoutReady = await Promise.race([
         new Promise<true>((resolve) =>
           window.requestAnimationFrame(() =>
@@ -870,12 +957,14 @@ export function BrowserAppWorkspace({
           timer = window.setTimeout(() => resolve(false), 2_000)
         })
       ])
+
       if (timer) {
         window.clearTimeout(timer)
       }
 
       const section = sectionRef.current
       const webview = section?.querySelector<TreeportBrowserWebview>('webview')
+
       if (
         !layoutReady ||
         !section?.isConnected ||
@@ -888,6 +977,7 @@ export function BrowserAppWorkspace({
 
       const sectionBounds = section.getBoundingClientRect()
       const webviewBounds = webview.getBoundingClientRect()
+
       return (
         sectionBounds.width > 0 &&
         sectionBounds.height > 0 &&
@@ -908,21 +998,26 @@ export function BrowserAppWorkspace({
     const updateVisibility = () => {
       connectionRef.current?.setVisible(active && !document.hidden)
     }
+
     updateVisibility()
     document.addEventListener('visibilitychange', updateVisibility)
+
     return () =>
       document.removeEventListener('visibilitychange', updateVisibility)
   }, [active, connectionRevision, localBrowser])
 
   useEffect(() => {
     cancelTouches()
+
     const visibility = () => {
       if (document.hidden) {
         cancelTouches()
       }
     }
+
     window.addEventListener('blur', cancelTouches)
     document.addEventListener('visibilitychange', visibility)
+
     return () => {
       window.removeEventListener('blur', cancelTouches)
       document.removeEventListener('visibilitychange', visibility)
@@ -932,12 +1027,14 @@ export function BrowserAppWorkspace({
 
   useEffect(() => {
     const canvas = videoRef.current
+
     if (localBrowser || !canvas || !active) {
       return
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null
     let viewport: { width: number; height: number } | null = null
+
     const observer = new ResizeObserver(([entry]) => {
       if (
         !entry ||
@@ -964,14 +1061,18 @@ export function BrowserAppWorkspace({
       // Input coordinates continue using the server's confirmed viewport.
       timer ??= setTimeout(() => {
         timer = null
+
         if (viewport) {
           send({ type: 'resize', ...viewport })
         }
       }, 100)
     })
+
     observer.observe(canvas)
+
     return () => {
       observer.disconnect()
+
       if (timer) {
         clearTimeout(timer)
       }
@@ -980,6 +1081,7 @@ export function BrowserAppWorkspace({
 
   useEffect(() => {
     const area = viewportAreaRef.current
+
     if (!area || !active) {
       return
     }
@@ -992,7 +1094,9 @@ export function BrowserAppWorkspace({
         })
       }
     })
+
     observer.observe(area)
+
     return () => observer.disconnect()
   }, [active])
 
@@ -1004,14 +1108,17 @@ export function BrowserAppWorkspace({
 
     let frame = 0
     let timer: ReturnType<typeof setTimeout> | null = null
+
     const autoFocusAddress = () => {
       if (document.querySelector('[role="dialog"], [role="alertdialog"]')) {
         frame = window.requestAnimationFrame(autoFocusAddress)
+
         return
       }
 
       timer = setTimeout(() => {
         const input = inputRef.current
+
         if (
           !input ||
           input.value !== '' ||
@@ -1024,9 +1131,12 @@ export function BrowserAppWorkspace({
         autoFocusAddressRef.current = false
       }, 50)
     }
+
     frame = window.requestAnimationFrame(autoFocusAddress)
+
     return () => {
       window.cancelAnimationFrame(frame)
+
       if (timer) {
         clearTimeout(timer)
       }
@@ -1041,10 +1151,13 @@ export function BrowserAppWorkspace({
 
     const focusBrowserControl = (event: globalThis.KeyboardEvent) => {
       const applePlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+
       const modifier = applePlatform
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
+
       const key = event.key.toLowerCase()
+
       if (
         !modifier ||
         event.altKey ||
@@ -1058,19 +1171,23 @@ export function BrowserAppWorkspace({
 
       event.preventDefault()
       event.stopPropagation()
+
       if (key === 'f') {
         focusFind()
       } else {
         focusAddress()
       }
     }
+
     document.addEventListener('keydown', focusBrowserControl, true)
+
     return () =>
       document.removeEventListener('keydown', focusBrowserControl, true)
   }, [active, autoFocusBlocked, focusAddress, focusFind])
 
   useEffect(() => {
     const desktopBridge = window.treeportDesktop
+
     if (!active || !desktopBridge?.onCommand) {
       return
     }
@@ -1078,6 +1195,7 @@ export function BrowserAppWorkspace({
     return desktopBridge.onCommand((command) => {
       if (command === 'reload') {
         send({ type: 'reload' })
+
         return
       }
 
@@ -1099,12 +1217,14 @@ export function BrowserAppWorkspace({
 
   const navigate = (value: string) => {
     const parsed = parseBrowserAddress(value)
+
     if (!parsed) {
       addressDirtyRef.current = true
       setError(
         'Enter search terms or an HTTP, HTTPS, chrome://, or local file address without credentials.'
       )
       inputRef.current?.focus({ preventScroll: true })
+
       return
     }
 
@@ -1127,6 +1247,7 @@ export function BrowserAppWorkspace({
   ) => {
     const settings = { viewport: size, preset }
     setViewportSettings(settings)
+
     try {
       sessionStorage.setItem(
         `treeport-browser-viewport:${app.id}`,
@@ -1135,8 +1256,10 @@ export function BrowserAppWorkspace({
     } catch {
       // The current app remains usable when storage is unavailable.
     }
+
     const needsControl = !stateRef.current?.controlled
     viewportOverrideRef.current = size
+
     if (needsControl) {
       send({ type: 'takeControl' })
     }
@@ -1144,11 +1267,13 @@ export function BrowserAppWorkspace({
     if (size) {
       setViewportWidth(String(size.width))
       setViewportHeight(String(size.height))
+
       if (!localBrowser) {
         send({ type: 'resize', ...size })
       }
     } else {
       const bounds = videoRef.current?.getBoundingClientRect()
+
       if (bounds && bounds.width > 0 && bounds.height > 0) {
         send({
           type: 'resize',
@@ -1170,18 +1295,22 @@ export function BrowserAppWorkspace({
       // Match object-contain's letterboxing using the decoded video dimensions,
       // then map into the host's CSS viewport (not the encoder's pixel size).
       const viewport = stateRef.current?.viewport ?? viewportRef.current
+
       const image =
         canvas.videoWidth && canvas.videoHeight
           ? { width: canvas.videoWidth, height: canvas.videoHeight }
           : viewport
+
       const scale = Math.min(
         bounds.width / image.width,
         bounds.height / image.height
       )
+
       const width = image.width * scale
       const height = image.height * scale
       const left = bounds.left + (bounds.width - width) / 2
       const top = bounds.top + (bounds.height - height) / 2
+
       return {
         x: Math.max(
           0,
@@ -1219,14 +1348,17 @@ export function BrowserAppWorkspace({
       (event.metaKey || event.ctrlKey) &&
       !event.altKey &&
       !event.shiftKey
+
     if (isCopyShortcut) {
       event.preventDefault()
+
       if (phase !== 'down' || event.repeat) {
         return
       }
 
       if (!connectionRef.current || inputBlocked) {
         setError('Copy is unavailable. Reconnect, then retry.')
+
         return
       }
 
@@ -1234,6 +1366,7 @@ export function BrowserAppWorkspace({
       setError(null)
       const requestId = crypto.randomUUID()
       let timer: ReturnType<typeof setTimeout> | null = null
+
       const result = new Promise<BrowserClipboard>((resolve, reject) => {
         pendingCopiesRef.current.set(requestId, { resolve, reject })
         timer = setTimeout(
@@ -1256,6 +1389,7 @@ export function BrowserAppWorkspace({
           // A browser may require a fresh gesture once the remote response has
           // arrived. Retain the exact payload for the explicit retry button.
           setClipboardToCopy(clipboard)
+
           return writeBrowserClipboard(clipboard).then(() =>
             setClipboardToCopy(null)
           )
@@ -1267,6 +1401,7 @@ export function BrowserAppWorkspace({
               : 'Couldn’t copy the selected content. Try again.'
           )
         )
+
       return
     }
 
@@ -1274,17 +1409,20 @@ export function BrowserAppWorkspace({
       event.key.toLowerCase() === 'v' &&
       (event.ctrlKey || event.metaKey) &&
       !event.altKey
+
     const isShiftInsert =
       event.key === 'Insert' &&
       event.shiftKey &&
       !event.ctrlKey &&
       !event.metaKey &&
       !event.altKey
+
     if (isPasteShortcut || isShiftInsert) {
       return
     }
 
     event.preventDefault()
+
     if (phase === 'down') {
       send({ type: 'takeControl' })
     }
@@ -1303,12 +1441,14 @@ export function BrowserAppWorkspace({
 
   useEffect(() => {
     const canvas = videoRef.current
+
     if (localBrowser || !canvas || !active || inputBlocked) {
       return
     }
 
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
+
       if (!stateRef.current?.controlled) {
         send({ type: 'takeControl' })
       }
@@ -1319,6 +1459,7 @@ export function BrowserAppWorkspace({
           : event.deltaMode === 2
             ? canvas.clientHeight
             : 1
+
       send({
         type: 'wheel',
         ...point({
@@ -1335,9 +1476,11 @@ export function BrowserAppWorkspace({
         deltaY: Math.max(-10_000, Math.min(10_000, event.deltaY * unit))
       })
     }
+
     // React's delegated wheel listener is passive and cannot prevent the
     // containing workspace from scrolling along with the streamed page.
     canvas.addEventListener('wheel', wheel, { passive: false })
+
     return () => canvas.removeEventListener('wheel', wheel)
   }, [active, inputBlocked, localBrowser, point, send])
 
@@ -1364,6 +1507,7 @@ export function BrowserAppWorkspace({
   const applyViewportDimensions = () => {
     const width = Number(viewportWidth)
     const height = Number(viewportHeight)
+
     if (
       Number.isInteger(width) &&
       width >= 1 &&
@@ -1386,12 +1530,14 @@ export function BrowserAppWorkspace({
         value={viewportPreset}
         onChange={(event) => {
           const preset = viewportPresetSchema.parse(event.target.value)
+
           const size = {
             responsive: null,
             phone: { width: 390, height: 844 },
             tablet: { width: 768, height: 1024 },
             desktop: { width: 1280, height: 800 }
           }[preset]
+
           resizeViewport(
             size ?? viewportOverride ?? { width: 390, height: 844 },
             preset
@@ -1554,6 +1700,7 @@ export function BrowserAppWorkspace({
           onPointerUp={(event) => {
             const selectAll = addressPointerSelectAllRef.current
             addressPointerSelectAllRef.current = false
+
             if (
               selectAll &&
               event.currentTarget.selectionStart ===
@@ -1581,8 +1728,10 @@ export function BrowserAppWorkspace({
             }
 
             event.preventDefault()
+
             if (!addressDirtyRef.current) {
               focusPage()
+
               return
             }
 
@@ -1590,6 +1739,7 @@ export function BrowserAppWorkspace({
               pendingNavigationRef.current?.targetUrl ??
               stateRef.current?.url ??
               app.url
+
             addressDirtyRef.current = false
             setError(null)
             setInputValue(
@@ -1697,6 +1847,7 @@ export function BrowserAppWorkspace({
             open={permissionsOpen}
             onOpenChange={(open) => {
               setPermissionsOpen(open)
+
               if (open) {
                 setPermissionSettings(null)
                 setPermissionSettingsError(null)
@@ -1990,6 +2141,7 @@ export function BrowserAppWorkspace({
                   }}
                   onPointerMove={(event) => {
                     const drag = viewportDragRef.current
+
                     if (
                       !drag ||
                       !event.currentTarget.hasPointerCapture(event.pointerId)
@@ -2038,6 +2190,7 @@ export function BrowserAppWorkspace({
                         : event.key === 'ArrowLeft'
                           ? -10
                           : 0)
+
                     const dy =
                       y &&
                       (event.key === 'ArrowDown'
@@ -2045,6 +2198,7 @@ export function BrowserAppWorkspace({
                         : event.key === 'ArrowUp'
                           ? -10
                           : 0)
+
                     if (!dx && !dy) {
                       return
                     }
@@ -2251,11 +2405,13 @@ export function BrowserAppWorkspace({
 
                       onFocusSurface()
                       event.currentTarget.focus({ preventScroll: true })
+
                       if (event.button === 2) {
                         return
                       }
 
                       event.currentTarget.setPointerCapture(event.pointerId)
+
                       if (event.pointerType === 'touch') {
                         if (touchesRef.current.size === 0) {
                           send({ type: 'takeControl' })
@@ -2268,7 +2424,9 @@ export function BrowserAppWorkspace({
                             (touch) => touch.id
                           )
                         )
+
                         let id = 0
+
                         while (ids.has(id)) {
                           id++
                         }
@@ -2282,6 +2440,7 @@ export function BrowserAppWorkspace({
                           phase: 'start',
                           points: [...touchesRef.current.values()]
                         })
+
                         return
                       }
 
@@ -2290,12 +2449,14 @@ export function BrowserAppWorkspace({
                     }}
                     onPointerUp={(event) => {
                       event.preventDefault()
+
                       if (event.button === 2) {
                         return
                       }
 
                       if (event.pointerType === 'touch') {
                         const touch = touchesRef.current.get(event.pointerId)
+
                         if (touch) {
                           touchesRef.current.delete(event.pointerId)
                           send({
@@ -2317,6 +2478,7 @@ export function BrowserAppWorkspace({
                       }
 
                       pointerActiveRef.current = false
+
                       if (
                         event.currentTarget.hasPointerCapture(event.pointerId)
                       ) {
@@ -2327,6 +2489,7 @@ export function BrowserAppWorkspace({
                     }}
                     onMouseDown={(event) => {
                       event.preventDefault()
+
                       if (event.button === 2 || inputBlocked || !active) {
                         return
                       }
@@ -2341,6 +2504,7 @@ export function BrowserAppWorkspace({
                     }}
                     onMouseUp={(event) => {
                       event.preventDefault()
+
                       if (event.button === 2) {
                         return
                       }
@@ -2361,6 +2525,7 @@ export function BrowserAppWorkspace({
                     onPointerCancel={(event) => {
                       if (event.pointerType === 'touch') {
                         cancelTouches()
+
                         return
                       }
 
@@ -2371,6 +2536,7 @@ export function BrowserAppWorkspace({
                         button: button(event.button)
                       })
                       pointerActiveRef.current = false
+
                       if (
                         event.currentTarget.hasPointerCapture(event.pointerId)
                       ) {
@@ -2383,6 +2549,7 @@ export function BrowserAppWorkspace({
                     onContextMenu={(event) => {
                       if (!active || inputBlocked || !connectionRef.current) {
                         event.preventDefault()
+
                         return
                       }
 
@@ -2405,18 +2572,22 @@ export function BrowserAppWorkspace({
                     onKeyUp={(event) => key(event, 'up')}
                     onPaste={(event) => {
                       event.preventDefault()
+
                       if (!event.clipboardData.types.includes('text/plain')) {
                         setError(
                           'Paste was not sent. Only plain text is supported; copy text and try again.'
                         )
+
                         return
                       }
 
                       const text = event.clipboardData.getData('text/plain')
+
                       if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
                         setError(
                           'Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.'
                         )
+
                         return
                       }
 
@@ -2424,6 +2595,7 @@ export function BrowserAppWorkspace({
                         setError(
                           'Paste was not sent. Wait for the browser to become available, then retry.'
                         )
+
                         return
                       }
 

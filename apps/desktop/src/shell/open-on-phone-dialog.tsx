@@ -14,6 +14,7 @@ export function OpenOnPhoneDialog({
 }) {
   const [result, setResult] = useState<PhoneAccessResponse | null>(null)
   const [attempt, setAttempt] = useState(0)
+
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
     'idle'
   )
@@ -36,6 +37,7 @@ export function OpenOnPhoneDialog({
         }
       }
     )
+
     return () => {
       active = false
     }

@@ -52,6 +52,7 @@ export class TreeFileService {
     return Effect.gen(function* () {
       const apps = yield* AppOperations
       const { project, worktree } = yield* apps.requireWebAppTreeFiles(appId)
+
       return yield* listTreeFilesForTree(project, worktree)
     })
   }
@@ -62,18 +63,23 @@ export class TreeFileService {
   ): Effect.Effect<TreeFileListing, never, ApplicationServices> {
     return Effect.gen(function* () {
       const git = yield* GitPort
+
       const root = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
       ).pipe(Effect.orDie)
+
       const paths: string[] = []
+
       if (project.kind === 'repository') {
         const candidates = yield* git.worktreeFiles(root).pipe(Effect.orDie)
+
         for (const relativePath of candidates) {
           if (paths.length > TREE_FILE_LIST_MAX_ENTRIES) {
             break
           }
 
           const candidate = path.resolve(root, relativePath)
+
           if (!isPathWithin(candidate, root)) {
             continue
           }
@@ -91,6 +97,7 @@ export class TreeFileService {
             ],
             { concurrency: 'unbounded' }
           )
+
           if (
             canonicalPath &&
             isPathWithin(canonicalPath, root) &&
@@ -102,11 +109,13 @@ export class TreeFileService {
         }
       } else {
         const directories = ['']
+
         while (
           directories.length > 0 &&
           paths.length <= TREE_FILE_LIST_MAX_ENTRIES
         ) {
           const relativeDirectory = directories.pop()!
+
           const entries = (yield* Effect.tryPromise(() =>
             fs.readdir(path.join(root, relativeDirectory), {
               withFileTypes: true
@@ -114,16 +123,19 @@ export class TreeFileService {
           ).pipe(Effect.orDie)).sort((left, right) =>
             right.name.localeCompare(left.name)
           )
+
           for (const entry of entries) {
             if (entry.name === '.git' && entry.isDirectory()) {
               continue
             }
 
             const relativePath = path.join(relativeDirectory, entry.name)
+
             if (entry.isDirectory()) {
               directories.push(relativePath)
             } else if (entry.isFile()) {
               paths.push(relativePath.split(path.sep).join('/'))
+
               if (paths.length > TREE_FILE_LIST_MAX_ENTRIES) {
                 break
               }
@@ -133,6 +145,7 @@ export class TreeFileService {
       }
 
       paths.sort()
+
       return {
         paths: paths.slice(0, TREE_FILE_LIST_MAX_ENTRIES),
         truncated: paths.length > TREE_FILE_LIST_MAX_ENTRIES
@@ -149,10 +162,13 @@ export class TreeFileService {
     return Effect.gen(function* () {
       const apps = yield* AppOperations
       const { worktree } = yield* apps.requireWebAppTreeFiles(appId)
+
       const root = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
       ).pipe(Effect.orDie)
+
       const file = yield* readTreeFileFromRoot(root, requestedPath)
+
       return {
         path: file.path,
         content: file.content,
@@ -176,25 +192,30 @@ export class TreeFileService {
       const apps = yield* AppOperations
       const { project, worktree } = yield* apps.requireWebAppTreeFiles(appId)
       const listing = yield* listTreeFilesForTree(project, worktree)
+
       const root = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
       ).pipe(Effect.orDie)
+
       const expression = new RegExp(
         query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
         'iu'
       )
+
       const files: TreeFileSearchFile[] = []
       let matchCount = 0
       let hasExtraMatch = false
 
       for (let start = 0; start < listing.paths.length; start += 8) {
         const batchPaths = listing.paths.slice(start, start + 8)
+
         const reads = yield* Effect.all(
           batchPaths.map((filePath) =>
             Effect.either(readTreeFileFromRoot(root, filePath))
           ),
           { concurrency: 'unbounded' }
         )
+
         for (const read of reads) {
           if (Either.isLeft(read)) {
             if (
@@ -213,9 +234,11 @@ export class TreeFileService {
 
           const matches: TreeFileSearchFile['matches'] = []
           const lines = read.right.content.split(/\r\n|\r|\n/)
+
           for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
             const line = lines[lineIndex]!
             const match = expression.exec(line)
+
             if (!match) {
               continue
             }
@@ -226,11 +249,13 @@ export class TreeFileService {
             }
 
             const length = match[0].length
+
             let previewStart = Math.max(
               0,
               match.index -
                 Math.floor((TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH - length) / 2)
             )
+
             previewStart = Math.min(
               previewStart,
               Math.max(0, line.length - TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH)
@@ -248,6 +273,7 @@ export class TreeFileService {
             })
             matchCount += 1
           }
+
           if (matches.length > 0) {
             files.push({ path: read.right.path, matches })
           }
@@ -256,6 +282,7 @@ export class TreeFileService {
             break
           }
         }
+
         if (hasExtraMatch) {
           break
         }
@@ -283,6 +310,7 @@ export class TreeFileService {
       const apps = yield* AppOperations
       const { worktree } = yield* apps.requireWebAppTreeFiles(appId)
       const content = Buffer.from(input.content, 'utf8')
+
       if (content.length > TREE_FILE_MAX_BYTES) {
         return yield* Effect.fail(
           new DomainError(
@@ -306,8 +334,10 @@ export class TreeFileService {
       const root = yield* Effect.tryPromise(() =>
         fs.realpath(worktree.path)
       ).pipe(Effect.orDie)
+
       const resolved = yield* resolveTreeFile(root, input.path)
       const mutations = yield* TreeFileMutations
+
       return yield* mutations.enqueue(
         resolved.canonicalPath,
         Effect.acquireUseRelease(
@@ -320,10 +350,12 @@ export class TreeFileService {
           (handle) =>
             Effect.gen(function* () {
               const current = yield* readTreeFileHandle(handle)
+
               const currentRevision = crypto
                 .createHash('sha256')
                 .update(current.bytes)
                 .digest('hex')
+
               if (currentRevision !== input.expectedRevision) {
                 return yield* Effect.fail(
                   new DomainError(
@@ -335,20 +367,24 @@ export class TreeFileService {
               }
 
               let offset = 0
+
               while (offset < content.length) {
                 const write = yield* Effect.tryPromise(() =>
                   handle.write(content, offset, content.length - offset, offset)
                 ).pipe(Effect.orDie)
+
                 if (write.bytesWritten === 0) {
                   throw new Error('Could not write tree file')
                 }
 
                 offset += write.bytesWritten
               }
+
               yield* Effect.tryPromise(() =>
                 handle.truncate(content.length)
               ).pipe(Effect.orDie)
               yield* Effect.tryPromise(() => handle.sync()).pipe(Effect.orDie)
+
               return {
                 path: resolved.path,
                 revision: crypto
@@ -375,6 +411,7 @@ export class TreeFileService {
 
     return Effect.gen(function* () {
       const resolved = yield* resolveTreeFile(root, requestedPath)
+
       const file = yield* Effect.acquireUseRelease(
         domainPromise(() =>
           fs
@@ -413,6 +450,7 @@ export class TreeFileService {
         readTreeFileHandle,
         (handle) => Effect.tryPromise(() => handle.close()).pipe(Effect.orDie)
       )
+
       return { path: resolved.path, ...file }
     })
   }
@@ -436,6 +474,7 @@ export class TreeFileService {
       }
 
       const candidate = path.resolve(root, requestedPath)
+
       if (!isPathWithin(candidate, root)) {
         return yield* Effect.fail(
           new DomainError(
@@ -459,6 +498,7 @@ export class TreeFileService {
           throw error
         })
       )
+
       if (!canonicalPath) {
         return yield* Effect.fail(
           new DomainError(
@@ -492,6 +532,7 @@ export class TreeFileService {
           throw error
         })
       )
+
       if (!stat) {
         return yield* Effect.fail(
           new DomainError(
@@ -526,6 +567,7 @@ export class TreeFileService {
       const stat = yield* Effect.tryPromise(() => handle.stat()).pipe(
         Effect.orDie
       )
+
       if (!stat.isFile()) {
         return yield* Effect.fail(
           new DomainError(
@@ -548,16 +590,19 @@ export class TreeFileService {
 
       const buffer = Buffer.alloc(TREE_FILE_MAX_BYTES + 1)
       let bytesRead = 0
+
       while (bytesRead < buffer.length) {
         const read = yield* Effect.tryPromise(() =>
           handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
         ).pipe(Effect.orDie)
+
         if (read.bytesRead === 0) {
           break
         }
 
         bytesRead += read.bytesRead
       }
+
       if (bytesRead > TREE_FILE_MAX_BYTES) {
         return yield* Effect.fail(
           new DomainError(
@@ -569,6 +614,7 @@ export class TreeFileService {
       }
 
       const bytes = buffer.subarray(0, bytesRead)
+
       const content = yield* Effect.try({
         try: () => new TextDecoder('utf-8', { fatal: true }).decode(bytes),
         catch: () =>
@@ -578,6 +624,7 @@ export class TreeFileService {
             415
           )
       })
+
       if (content.includes('\0')) {
         return yield* Effect.fail(
           new DomainError(
@@ -595,6 +642,7 @@ export class TreeFileService {
 
 function isPathWithin(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate)
+
   return (
     relative === '' ||
     (!relative.startsWith('..') && !path.isAbsolute(relative))

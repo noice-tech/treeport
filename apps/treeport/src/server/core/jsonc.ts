@@ -41,10 +41,12 @@ export function readOptionalJsonc(
         Effect.try({
           try: (): OptionalJsoncResult => {
             const errors: ParseError[] = []
+
             const value = parse(source, errors, {
               allowTrailingComma: true,
               disallowComments: false
             })
+
             if (errors.length) {
               const first = errors[0]!
               throw new Error(

@@ -27,6 +27,7 @@ function defaultLaunch(
     const child = spawn(executable, args, {
       stdio: ['ignore', 'ignore', 'pipe']
     })
+
     let settled = false
     let stderr = ''
     child.stderr.setEncoding('utf8')
@@ -54,6 +55,7 @@ function desktopCanOpen(workspaceUrl: string): boolean {
   }
 
   const url = new URL(workspaceUrl)
+
   return (
     !url.username &&
     !url.password &&
@@ -76,11 +78,13 @@ export async function openWorkspace(
   if (platform === 'darwin' && desktopCanOpen(workspaceUrl)) {
     const deepLink = new URL('treeport://open')
     deepLink.searchParams.set('url', workspaceUrl)
+
     const desktop = await launch('open', [
       '-b',
       DESKTOP_BUNDLE_ID,
       deepLink.href
     ])
+
     if (desktop.code === 0) {
       return { client: 'desktop' }
     }
@@ -88,6 +92,7 @@ export async function openWorkspace(
 
   const browserCommand = platform === 'darwin' ? 'open' : 'xdg-open'
   const browser = await launch(browserCommand, [workspaceUrl])
+
   if (browser.code === 0) {
     return { client: 'browser' }
   }

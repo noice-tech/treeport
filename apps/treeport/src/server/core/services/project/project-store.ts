@@ -64,6 +64,7 @@ export const ProjectStoreLive = Layer.effect(
               .orderBy(sql`${projects.name} COLLATE NOCASE`)
           )
           .pipe(Effect.orDie)
+
         const worktreeRows = yield* database
           .execute('project.store.65', (db) =>
             db
@@ -77,6 +78,7 @@ export const ProjectStoreLive = Layer.effect(
               )
           )
           .pipe(Effect.orDie)
+
         return projectRows.map((project) =>
           mapProject(
             project,
@@ -98,6 +100,7 @@ export const ProjectStoreLive = Layer.effect(
               .limit(1)
           )
           .pipe(Effect.orDie)
+
         if (!project) {
           return null
         }
@@ -115,6 +118,7 @@ export const ProjectStoreLive = Layer.effect(
               )
           )
           .pipe(Effect.orDie)
+
         return mapProject(project, worktreeRows)
       })
 
@@ -135,6 +139,7 @@ export const ProjectStoreLive = Layer.effect(
               .limit(1)
           )
           .pipe(Effect.orDie)
+
         return row ? mapWorktree(row.worktree, row.mainWorktreePath) : null
       })
 
@@ -151,6 +156,7 @@ export const ProjectStoreLive = Layer.effect(
               .limit(1)
           )
           .pipe(Effect.orDie)
+
         return row ? Boolean(row.isOpen) : null
       })
 
@@ -167,6 +173,7 @@ export const ProjectStoreLive = Layer.effect(
               .limit(1)
           )
           .pipe(Effect.orDie)
+
         return row ? mapOperation(row) : null
       })
 
@@ -188,6 +195,7 @@ export const ProjectStoreLive = Layer.effect(
     ): Effect.Effect<ProjectRecord, DomainError<unknown>> =>
       Effect.gen(function* () {
         const project = yield* getProject(projectId)
+
         if ((yield* projectOpenState(projectId)) !== true) {
           return yield* Effect.fail(
             new DomainError(

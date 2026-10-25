@@ -24,6 +24,7 @@ const SheetOverlay = React.forwardRef<
     ref={ref}
   />
 ))
+
 SheetOverlay.displayName = SheetPrimitive.Overlay.displayName
 
 const sheetVariants = cva(
@@ -77,6 +78,7 @@ const SheetContent = React.forwardRef<
     </SheetPortal>
   )
 )
+
 SheetContent.displayName = SheetPrimitive.Content.displayName
 
 const SheetHeader = ({
@@ -88,6 +90,7 @@ const SheetHeader = ({
     {...props}
   />
 )
+
 SheetHeader.displayName = 'SheetHeader'
 
 const SheetFooter = ({
@@ -102,6 +105,7 @@ const SheetFooter = ({
     {...props}
   />
 )
+
 SheetFooter.displayName = 'SheetFooter'
 
 const SheetTitle = React.forwardRef<
@@ -114,6 +118,7 @@ const SheetTitle = React.forwardRef<
     {...props}
   />
 ))
+
 SheetTitle.displayName = SheetPrimitive.Title.displayName
 
 const SheetDescription = React.forwardRef<
@@ -126,6 +131,7 @@ const SheetDescription = React.forwardRef<
     {...props}
   />
 ))
+
 SheetDescription.displayName = SheetPrimitive.Description.displayName
 
 export { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription }

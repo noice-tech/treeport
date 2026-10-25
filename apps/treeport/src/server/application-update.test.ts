@@ -77,19 +77,24 @@ describe('application update manager', () => {
     const dataDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-application-update-')
     )
+
     let progress = idleProgress()
     let releaseFailure = false
     const operationId = crypto.randomUUID()
+
     const warning = vi
       .spyOn(console, 'warn')
       .mockImplementation(() => undefined)
+
     const unref = vi.fn()
+
     const spawnProcess = vi.fn(() => {
       const child = testAccess<ChildProcess>(
         Object.assign(new EventEmitter(), {
           unref
         })
       )
+
       queueMicrotask(() => {
         progress = {
           active: true,
@@ -100,8 +105,10 @@ describe('application update manager', () => {
         }
         child.emit('spawn')
       })
+
       return child
     })
+
     const manager = createApplicationUpdateManager(config(dataDir), {
       environment: {
         TREEPORT_CLI_ENTRYPOINT: installation(dataDir).entrypoint
@@ -196,6 +203,7 @@ describe('application update manager', () => {
           unref
         })
       )
+
       queueMicrotask(() => {
         progress = {
           active: true,
@@ -206,6 +214,7 @@ describe('application update manager', () => {
         }
         child.emit('spawn')
       })
+
       return child
     })
     await manager.start()
@@ -242,6 +251,7 @@ describe('application update manager', () => {
     const dataDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-application-update-interrupted-')
     )
+
     const manager = createApplicationUpdateManager(config(dataDir), {
       resolveRelease: async () => release,
       inspectInstallation: async () => installation(dataDir),
@@ -266,10 +276,13 @@ describe('application update manager', () => {
 
   it('checks immediately, repeats on its schedule, and stops after disposal', async () => {
     vi.useFakeTimers()
+
     const dataDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-application-update-polling-')
     )
+
     const resolveRelease = vi.fn(async () => release)
+
     const manager = createApplicationUpdateManager(config(dataDir), {
       resolveRelease,
       inspectInstallation: async () => installation(dataDir),
@@ -295,9 +308,11 @@ describe('application update manager', () => {
     const dataDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-application-update-external-')
     )
+
     const externalConfig = config(dataDir)
     externalConfig.daemonLifecycle = 'external'
     const resolveRelease = vi.fn(async () => release)
+
     const manager = createApplicationUpdateManager(externalConfig, {
       resolveRelease,
       readProgress: async () => idleProgress(),
@@ -327,6 +342,7 @@ describe('application update manager', () => {
       },
       readProgress: async () => idleProgress()
     })
+
     await nonWritable.check()
     expect(await nonWritable.status()).toMatchObject({
       updateAvailable: true,

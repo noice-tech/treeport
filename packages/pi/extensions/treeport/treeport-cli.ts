@@ -47,6 +47,7 @@ function conciseError(value: string): string {
 
 async function treeportExecutable(): Promise<string> {
   const configured = process.env.TREEPORT_CLI_ENTRYPOINT?.trim()
+
   if (
     configured &&
     (await access(configured, fsConstants.X_OK).then(
@@ -58,13 +59,16 @@ async function treeportExecutable(): Promise<string> {
   }
 
   const daemonRecord = process.env.TREEPORT_DAEMON_RECORD?.trim()
+
   if (daemonRecord) {
     const developmentRuntime = dirname(dirname(daemonRecord))
+
     if (basename(developmentRuntime) === '.treeport-dev') {
       const developmentCli = join(
         dirname(developmentRuntime),
         '.treeport-dev-dist/node/cli/index.js'
       )
+
       if (
         await access(developmentCli, fsConstants.X_OK).then(
           () => true,
@@ -97,6 +101,7 @@ export async function runTreeportJson<T extends TSchema>(
     cwd: options.cwd,
     timeout: options.timeout
   }
+
   if (options.signal) {
     execOptions.signal = options.signal
   }
@@ -112,6 +117,7 @@ export async function runTreeportJson<T extends TSchema>(
       result.stderr.trim(),
       TreeportCliErrorBodySchema
     )
+
     const code = parsed
       ? parsed.error.code
       : result.killed
@@ -119,6 +125,7 @@ export async function runTreeportJson<T extends TSchema>(
           ? 'TREEPORT_CANCELLED'
           : 'TREEPORT_EXECUTION_TIMEOUT'
         : 'TREEPORT_EXECUTION_FAILED'
+
     const message = parsed
       ? conciseError(parsed.error.message)
       : result.killed
@@ -128,11 +135,13 @@ export async function runTreeportJson<T extends TSchema>(
         : result.stderr.trim()
           ? `${conciseError(result.stderr)} (Treeport exit code ${result.code}).`
           : `Treeport exited with code ${result.code}.`
+
     throw new TreeportCliError(code, message)
   }
 
   const output = result.stdout.trim()
   const parsed: Static<T> | null = parseJson(output, schema)
+
   if (parsed === null) {
     throw new TreeportCliError(
       'TREEPORT_INVALID_JSON',

@@ -34,6 +34,7 @@ interface ComputerUpdateInput {
 
 const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
   const result = desktopSettingsSchema.safeParse(value)
+
   if (!result.success) {
     return null
   }
@@ -41,24 +42,29 @@ const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
   const computers: SavedComputer[] = []
   const origins = new Set<string>()
   const ids = new Set<string>()
+
   for (const candidate of result.data.computers) {
     let origin: string
+
     try {
       origin = parseComputerUrl(candidate.origin).origin
     } catch {
       return null
     }
+
     if (origins.has(origin) || ids.has(candidate.id)) {
       return null
     }
 
     origins.add(origin)
     ids.add(candidate.id)
+
     const computer: SavedComputer = {
       id: candidate.id,
       origin,
       createdAt: candidate.createdAt
     }
+
     if (candidate.nameOverride?.trim()) {
       computer.nameOverride = candidate.nameOverride.trim()
     }
@@ -73,7 +79,9 @@ const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
 
     computers.push(computer)
   }
+
   const settings: DesktopSettings = { version: 1, computers }
+
   if (
     result.data.selectedComputerId &&
     ids.has(result.data.selectedComputerId)
@@ -90,6 +98,7 @@ export function computerName(computer: SavedComputer): string {
   }
 
   const url = new URL(computer.origin)
+
   if (isLoopbackUrl(url)) {
     return process.platform === 'darwin' ? 'This Mac' : 'This computer'
   }
@@ -116,18 +125,22 @@ export class ComputerStore {
       ).pipe(
         Effect.catchAll((error) => {
           const code = z.object({ code: z.string() }).safeParse(error.cause)
+
           return code.success && code.data.code === 'ENOENT'
             ? Effect.succeed(null)
             : Effect.fail(error)
         })
       )
+
       if (contents !== null) {
         const parsed = yield* Effect.try(() =>
           parseSettings(JSON.parse(contents))
         ).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
         if (parsed) {
           const store = new ComputerStore(filePath, parsed)
           const selected = store.selectedComputer
+
           if (
             options.synchronizeSelectedLoopback &&
             selected &&
@@ -136,12 +149,15 @@ export class ComputerStore {
             const { origin } = yield* Effect.try(() =>
               parseComputerUrl(seedOrigin)
             )
+
             if (selected.origin !== origin) {
               const existing = store.findByOrigin(origin, selected.id)
+
               if (existing) {
                 yield* store.select(existing.id)
               } else {
                 const update: ComputerUpdateInput = { origin }
+
                 if (selected.nameOverride) {
                   update.nameOverride = selected.nameOverride
                 }
@@ -163,18 +179,22 @@ export class ComputerStore {
 
       const { origin } = yield* Effect.try(() => parseComputerUrl(seedOrigin))
       const now = new Date().toISOString()
+
       const computer: SavedComputer = {
         id: crypto.randomUUID(),
         origin,
         createdAt: now,
         lastSelectedAt: now
       }
+
       const store = new ComputerStore(filePath, {
         version: 1,
         selectedComputerId: computer.id,
         computers: [computer]
       })
+
       yield* store.persist(store.settings)
+
       return store
     })
   }
@@ -217,6 +237,7 @@ export class ComputerStore {
           const result = yield* Effect.try(() => mutation(draft))
           yield* this.persist(draft)
           this.settings = draft
+
           return result
         })
       )
@@ -233,11 +254,13 @@ export class ComputerStore {
 
   summaries(): ComputerSummary[] {
     const selectedId = this.settings.selectedComputerId
+
     return [...this.settings.computers]
       .sort((left, right) => {
         const localDifference =
           Number(isLoopbackUrl(new URL(right.origin))) -
           Number(isLoopbackUrl(new URL(left.origin)))
+
         if (localDifference !== 0) {
           return localDifference
         }
@@ -262,6 +285,7 @@ export class ComputerStore {
   add(origin: string) {
     return this.mutate((draft) => {
       const normalizedOrigin = parseComputerUrl(origin).origin
+
       if (
         draft.computers.some((computer) => computer.origin === normalizedOrigin)
       ) {
@@ -269,14 +293,17 @@ export class ComputerStore {
       }
 
       const now = new Date().toISOString()
+
       const computer: SavedComputer = {
         id: crypto.randomUUID(),
         origin: normalizedOrigin,
         createdAt: now,
         lastSelectedAt: now
       }
+
       draft.computers.push(computer)
       draft.selectedComputerId = computer.id
+
       return computer
     })
   }
@@ -284,12 +311,14 @@ export class ComputerStore {
   select(id: string) {
     return this.mutate((draft) => {
       const computer = draft.computers.find((candidate) => candidate.id === id)
+
       if (!computer) {
         return false
       }
 
       computer.lastSelectedAt = new Date().toISOString()
       draft.selectedComputerId = id
+
       return true
     })
   }
@@ -297,11 +326,13 @@ export class ComputerStore {
   update(id: string, input: ComputerUpdateInput) {
     return this.mutate((draft) => {
       const computer = draft.computers.find((candidate) => candidate.id === id)
+
       if (!computer) {
         return null
       }
 
       const origin = parseComputerUrl(input.origin).origin
+
       if (
         draft.computers.some(
           (candidate) => candidate.origin === origin && candidate.id !== id
@@ -313,6 +344,7 @@ export class ComputerStore {
       const originChanged = computer.origin !== origin
       computer.origin = origin
       const name = input.nameOverride?.trim()
+
       if (name) {
         computer.nameOverride = name
       } else {
@@ -331,6 +363,7 @@ export class ComputerStore {
     return Effect.suspend(() => {
       const computer = this.getComputer(id)
       const normalized = hostname.trim()
+
       if (
         !computer ||
         !normalized ||
@@ -341,6 +374,7 @@ export class ComputerStore {
 
       return this.mutate((draft) => {
         const candidate = draft.computers.find((value) => value.id === id)
+
         if (candidate && candidate.origin === computer.origin) {
           candidate.advertisedHostname = normalized
         }
@@ -352,13 +386,16 @@ export class ComputerStore {
     return this.mutate((draft) => {
       const wasSelected = draft.selectedComputerId === id
       draft.computers = draft.computers.filter((computer) => computer.id !== id)
+
       if (wasSelected) {
         const recent = [...draft.computers].sort((left, right) =>
           (right.lastSelectedAt ?? '').localeCompare(left.lastSelectedAt ?? '')
         )
+
         const replacement =
           recent.find((computer) => isLoopbackUrl(new URL(computer.origin))) ??
           recent[0]
+
         if (replacement) {
           replacement.lastSelectedAt = new Date().toISOString()
           draft.selectedComputerId = replacement.id

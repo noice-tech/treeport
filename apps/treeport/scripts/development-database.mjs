@@ -42,6 +42,7 @@ export async function cloneDevelopmentDatabase(
   const destinationDirectory = path.dirname(destinationPath)
   await fs.mkdir(destinationDirectory, { recursive: true, mode: 0o700 })
   await fs.chmod(destinationDirectory, 0o700)
+
   const temporaryPath = path.join(
     destinationDirectory,
     `.${path.basename(destinationPath)}.${process.pid}-${crypto.randomBytes(6).toString('hex')}.tmp`
@@ -49,6 +50,7 @@ export async function cloneDevelopmentDatabase(
 
   try {
     const sourceClient = createClient({ url: pathToFileURL(sourcePath).href })
+
     try {
       await drizzle(sourceClient).run(
         sql.raw(`VACUUM INTO '${temporaryPath.replaceAll("'", "''")}'`)
@@ -60,7 +62,9 @@ export async function cloneDevelopmentDatabase(
     const destinationClient = createClient({
       url: pathToFileURL(temporaryPath).href
     })
+
     const destinationDatabase = drizzle(destinationClient)
+
     try {
       await destinationDatabase.run(sql`DELETE FROM operations`)
       await destinationDatabase.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
@@ -69,6 +73,7 @@ export async function cloneDevelopmentDatabase(
     }
 
     await fs.chmod(temporaryPath, 0o600)
+
     if (force) {
       await Promise.all(
         ['', '-shm', '-wal'].map((suffix) =>
@@ -105,8 +110,10 @@ async function main() {
   const sourceIndex = args.indexOf('--from')
   const destinationIndex = args.indexOf('--to')
   const source = sourceIndex >= 0 ? args[sourceIndex + 1] : undefined
+
   const destination =
     destinationIndex >= 0 ? args[destinationIndex + 1] : undefined
+
   if (!source || !destination) {
     throw new Error(
       'Usage: development-database.mjs --from <database> --to <database> [--force]'
@@ -116,6 +123,7 @@ async function main() {
   const result = await cloneDevelopmentDatabase(source, destination, {
     force: args.includes('--force')
   })
+
   if (result.copied) {
     console.log(`Cloned Treeport development database to ${destination}`)
   } else if (result.reason === 'missing-source') {

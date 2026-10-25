@@ -8,6 +8,7 @@ import { startTerminalEngineWorker } from './terminal-engine-worker'
 it('joins worker shutdown and settles startup errors without leaking its scope', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-worker-'))
   const entry = path.join(root, 'worker.mjs')
+
   const options = {
     runtimeDir: root,
     launcherPath: '',
@@ -19,6 +20,7 @@ it('joins worker shutdown and settles startup errors without leaking its scope',
     socketPath: '',
     recordPath: path.join(root, 'stopped')
   }
+
   try {
     await fs.writeFile(
       entry,

@@ -16,6 +16,7 @@ export function WorkspaceWindowTitle({
   const { attention, programs, activity } = useTerminalNavigationMetadata()
   let working = 0
   let needsAttention = 0
+
   for (const project of projects) {
     for (const worktree of project.worktrees) {
       for (const terminal of worktree.terminals) {
@@ -24,6 +25,7 @@ export function WorkspaceWindowTitle({
         }
 
         const state = activity.get(terminal.id)?.state
+
         if (attention.has(terminal.id) || state === 'blocked') {
           needsAttention += 1
         } else if (state === 'working') {
@@ -41,6 +43,7 @@ export function WorkspaceWindowTitle({
   useEffect(() => {
     const previousTitle = document.title
     document.title = title
+
     return () => {
       document.title = previousTitle
     }
@@ -56,12 +59,14 @@ export function WorkspaceWindowTitle({
     canvas.width = 64
     canvas.height = 64
     const context = canvas.getContext('2d')
+
     if (!favicon || !context) {
       return
     }
 
     const originalHref = favicon.href
     const originalType = favicon.getAttribute('type')
+
     const frames = [7, 9, 11, 9].map((radius) => {
       context.clearRect(0, 0, 64, 64)
       context.fillStyle = '#09090b'
@@ -79,11 +84,14 @@ export function WorkspaceWindowTitle({
       context.arc(50, 50, radius, 0, Math.PI * 2)
       context.fillStyle = needsAgentAttention ? '#fbbf24' : '#67e8f9'
       context.fill()
+
       return canvas.toDataURL('image/png')
     })
+
     favicon.type = 'image/png'
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
     let timer: number | null = null
+
     const updateAnimation = () => {
       if (timer !== null) {
         window.clearInterval(timer)
@@ -91,6 +99,7 @@ export function WorkspaceWindowTitle({
       }
 
       favicon.href = frames[2]!
+
       if (isWorking && !reducedMotion.matches) {
         let frame = 0
         // Swap raster frames: SVG favicon animations are not reliably supported.
@@ -100,6 +109,7 @@ export function WorkspaceWindowTitle({
         }, 600)
       }
     }
+
     updateAnimation()
     reducedMotion.addEventListener('change', updateAnimation)
 
@@ -110,6 +120,7 @@ export function WorkspaceWindowTitle({
 
       reducedMotion.removeEventListener('change', updateAnimation)
       favicon.href = originalHref
+
       if (originalType === null) {
         favicon.removeAttribute('type')
       } else {

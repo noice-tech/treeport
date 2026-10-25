@@ -16,11 +16,14 @@ const desktopDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
 )
+
 const packageManifest = JSON.parse(
   readFileSync(path.join(desktopDirectory, 'package.json'), 'utf8')
 )
+
 const [version = packageManifest.version, outputArgument = 'out', ...extra] =
   process.argv.slice(2)
+
 if (
   extra.length > 0 ||
   !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
@@ -32,21 +35,25 @@ if (
 
 const outputDirectory = path.resolve(desktopDirectory, outputArgument)
 const paths = []
+
 const visit = (directory) => {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const entryPath = path.join(directory, entry.name)
     paths.push(entryPath)
+
     if (entry.isDirectory() && !entry.name.endsWith('.app')) {
       visit(entryPath)
     }
   }
 }
+
 visit(outputDirectory)
 
 const expectedBase = `Treeport-${version}-darwin-universal`
 const dmgFiles = paths.filter((entry) => entry.endsWith(`${expectedBase}.dmg`))
 const zipFiles = paths.filter((entry) => entry.endsWith(`${expectedBase}.zip`))
 const apps = paths.filter((entry) => entry.endsWith(`${path.sep}Treeport.app`))
+
 if (dmgFiles.length !== 1 || zipFiles.length !== 1 || apps.length !== 1) {
   throw new Error(
     `Expected one universal app, DMG, and ZIP; found ${apps.length} app(s), ${dmgFiles.length} DMG(s), and ${zipFiles.length} ZIP(s)`
@@ -58,15 +65,18 @@ for (const artifact of [...dmgFiles, ...zipFiles]) {
     throw new Error(`Release artifact is empty: ${artifact}`)
   }
 }
+
 const zipEntries = execFileSync('unzip', ['-Z1', zipFiles[0]], {
   encoding: 'utf8'
 })
+
 if (!zipEntries.split('\n').includes('Treeport.app/Contents/MacOS/Treeport')) {
   throw new Error('Updater ZIP does not contain the packaged Treeport app')
 }
 
 const appPath = apps[0]
 const plistPath = path.join(appPath, 'Contents', 'Info.plist')
+
 const plistValue = (key) =>
   execFileSync('plutil', ['-extract', key, 'raw', '-o', '-', plistPath], {
     encoding: 'utf8'
@@ -83,9 +93,11 @@ const urlTypes = JSON.parse(
     { encoding: 'utf8' }
   )
 )
+
 const parsedUrlTypes = z
   .array(z.object({ CFBundleURLSchemes: z.array(z.string()) }))
   .safeParse(urlTypes)
+
 if (
   !parsedUrlTypes.success ||
   !parsedUrlTypes.data.some((entry) =>
@@ -100,11 +112,13 @@ if (plistValue('CFBundleShortVersionString') !== version) {
 }
 
 const executable = path.join(appPath, 'Contents', 'MacOS', 'Treeport')
+
 const architectures = new Set(
   execFileSync('lipo', ['-archs', executable], { encoding: 'utf8' })
     .trim()
     .split(/\s+/)
 )
+
 if (!architectures.has('arm64') || !architectures.has('x86_64')) {
   throw new Error(
     `Packaged app is not universal: ${[...architectures].join(', ')}`
@@ -113,6 +127,7 @@ if (!architectures.has('arm64') || !architectures.has('x86_64')) {
 
 const asarPath = path.join(appPath, 'Contents', 'Resources', 'app.asar')
 const asarEntries = listPackage(asarPath)
+
 const requiredEntries = [
   '/package.json',
   '/.vite/build/main.js',
@@ -121,11 +136,13 @@ const requiredEntries = [
   '/node_modules/ws/index.js',
   '/node_modules/ws/package.json'
 ]
+
 for (const required of requiredEntries) {
   if (!asarEntries.includes(required)) {
     throw new Error(`Packaged app is missing ${required}`)
   }
 }
+
 const forbiddenEntry = asarEntries.find(
   (entry) =>
     entry.startsWith('/src/') ||
@@ -134,6 +151,7 @@ const forbiddenEntry = asarEntries.find(
     entry.endsWith('.map') ||
     /(?:^|\/)forge\.config\./.test(entry)
 )
+
 if (forbiddenEntry) {
   throw new Error(
     `Packaged app contains development/server content: ${forbiddenEntry}`
@@ -141,6 +159,7 @@ if (forbiddenEntry) {
 }
 
 const mainBundle = extractFile(asarPath, '.vite/build/main.js').toString()
+
 if (
   !mainBundle.includes('https://update.electronjs.org') ||
   !mainBundle.includes('noice-tech/treeport') ||
@@ -150,6 +169,7 @@ if (
 }
 
 const fuseWire = await getCurrentFuseWire(executable)
+
 const expectedFuses = new Map([
   [FuseV1Options.RunAsNode, FuseState.DISABLE],
   [FuseV1Options.EnableCookieEncryption, FuseState.ENABLE],
@@ -158,6 +178,7 @@ const expectedFuses = new Map([
   [FuseV1Options.EnableEmbeddedAsarIntegrityValidation, FuseState.ENABLE],
   [FuseV1Options.OnlyLoadAppFromAsar, FuseState.ENABLE]
 ])
+
 for (const [fuse, expected] of expectedFuses) {
   if (fuseWire[fuse] !== expected) {
     throw new Error(`Packaged app has an unsafe ${FuseV1Options[fuse]} fuse`)

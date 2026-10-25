@@ -23,6 +23,7 @@ import type { AppConfig } from './core/index.js'
 
 const POLL_INTERVAL_MS = 10 * 60_000
 const POLL_JITTER_MS = 60_000
+
 const updateResultSchema = z.looseObject({
   schemaVersion: z.literal(1),
   operationId: z.string().uuid(),
@@ -31,6 +32,7 @@ const updateResultSchema = z.looseObject({
   fromVersion: z.string(),
   toVersion: z.string()
 })
+
 const updateErrorSchema = z.looseObject({
   error: z.looseObject({
     code: z.string(),
@@ -110,10 +112,13 @@ export function createApplicationUpdateManager(
   dependencies: ApplicationUpdateDependencies = {}
 ): ApplicationUpdateManager {
   const environment = dependencies.environment ?? process.env
+
   const resolveRelease =
     dependencies.resolveRelease ?? resolveLatestTreeportRelease
+
   const inspectInstallation =
     dependencies.inspectInstallation ?? inspectLocalUpdateInstallation
+
   const readProgress = dependencies.readProgress ?? readLocalUpdateProgress
   const readServiceStatus = dependencies.readServiceStatus ?? serviceStatus
   const spawnProcess = dependencies.spawnProcess ?? spawn
@@ -124,6 +129,7 @@ export function createApplicationUpdateManager(
   const resultPath = path.join(updateDirectory, 'web-update-result.json')
   const errorPath = path.join(updateDirectory, 'web-update-error.json')
   const currentVersion = config.appVersion ?? 'development'
+
   const staticBlockedReason =
     config.installationMethod !== 'npm'
       ? 'This Treeport installation cannot update itself. Update it with its installation method.'
@@ -151,6 +157,7 @@ export function createApplicationUpdateManager(
       canUpdate = false
       blockedReason = staticBlockedReason
       installation = null
+
       return
     }
 
@@ -169,18 +176,21 @@ export function createApplicationUpdateManager(
 
     capabilityChecked = true
     installation = installationResult.value
+
     if (!installation) {
       canUpdate = false
       blockedReason =
         installationResult.error instanceof Error
           ? installationResult.error.message
           : 'Treeport could not verify this npm installation.'
+
       return
     }
 
     if (serviceResult.error) {
       canUpdate = false
       blockedReason = 'Treeport could not verify the service update lifecycle.'
+
       return
     }
 
@@ -191,6 +201,7 @@ export function createApplicationUpdateManager(
       canUpdate = false
       blockedReason =
         'Stop the advanced headless service with its administrator action before you update Treeport.'
+
       return
     }
 
@@ -207,6 +218,7 @@ export function createApplicationUpdateManager(
         fileExists(resultPath),
         fileExists(errorPath)
       ])
+
     if (progress.active) {
       launching = false
     }
@@ -215,19 +227,24 @@ export function createApplicationUpdateManager(
       !result ||
       !progress.operationId ||
       result.operationId === progress.operationId
+
     const completedResult = resultMatchesOperation ? result : null
     const errorOperationId = updateError?.error.details?.operationId ?? null
+
     const errorMatchesOperation =
       !updateError ||
       !errorOperationId ||
       !progress.operationId ||
       errorOperationId === progress.operationId
+
     const available = Boolean(
       latestVersion &&
       isCanonicalTreeportVersion(currentVersion) &&
       compareTreeportVersions(latestVersion, currentVersion) > 0
     )
+
     const cliError = errorMatchesOperation ? updateError?.error : null
+
     const interrupted = Boolean(
       !progress.active &&
       progress.phase &&
@@ -237,8 +254,10 @@ export function createApplicationUpdateManager(
       !cliError &&
       (resultFileExists || errorFileExists || progress.operationId)
     )
+
     const updateFailed = progress.phase === 'failed' || interrupted
     const cliDetails = cliError ? { ...cliError.details } : undefined
+
     if (
       cliError &&
       cliDetails &&
@@ -260,6 +279,7 @@ export function createApplicationUpdateManager(
               { next: LOCAL_UPDATE_REINSTALL_GUIDANCE }
             )
           : null)
+
     const phase: ApplicationUpdatePhase = progress.active
       ? (progress.phase ?? 'starting')
       : launching
@@ -300,6 +320,7 @@ export function createApplicationUpdateManager(
     }
 
     const progress = await readProgress(config.dataDir)
+
     if (progress.active) {
       return
     }
@@ -363,6 +384,7 @@ export function createApplicationUpdateManager(
     polling,
     async start() {
       const currentStatus = await status()
+
       if (!currentStatus.updateAvailable) {
         throw new DomainError(
           'APPLICATION_UPDATE_NOT_AVAILABLE',
@@ -394,8 +416,10 @@ export function createApplicationUpdateManager(
 
       launching = true
       launchError = null
+
       const launchResult = await (async () => {
         await refreshCapability()
+
         if (!canUpdate || !installation) {
           throw new DomainError(
             'APPLICATION_UPDATE_BLOCKED',
@@ -411,10 +435,12 @@ export function createApplicationUpdateManager(
           fs.rm(resultPath, { force: true }),
           fs.rm(errorPath, { force: true })
         ])
+
         const [resultFile, errorFile] = await Promise.all([
           fs.open(resultPath, 'wx', 0o600),
           fs.open(errorPath, 'wx', 0o600)
         ])
+
         const spawned = new Promise<ChildProcess>((resolve, reject) => {
           const child = spawnProcess(
             entrypoint,
@@ -426,17 +452,21 @@ export function createApplicationUpdateManager(
               stdio: ['ignore', resultFile.fd, errorFile.fd]
             }
           )
+
           child.once('spawn', () => resolve(child))
           child.once('error', reject)
           child.once('exit', () => {
             launching = false
           })
         })
+
         const spawnResult = await spawned.then(
           (child) => ({ child, error: null }),
           (cause: unknown) => ({ child: null, error: cause })
         )
+
         await Promise.all([resultFile.close(), errorFile.close()])
+
         if (!spawnResult.child) {
           throw spawnResult.error instanceof Error
             ? spawnResult.error
@@ -448,8 +478,10 @@ export function createApplicationUpdateManager(
         () => ({ error: null }),
         (cause: unknown) => ({ error: cause })
       )
+
       if (launchResult.error) {
         launching = false
+
         if (launchResult.error instanceof DomainError) {
           throw launchResult.error
         }

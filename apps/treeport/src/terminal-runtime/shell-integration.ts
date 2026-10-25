@@ -176,13 +176,16 @@ export function integrateShellLaunch(
   enabled: boolean
 ): ShellLaunch {
   const shell = path.basename(argv[0] ?? '').replace(/^-/, '')
+
   if (!root || !enabled || !['zsh', 'bash', 'fish'].includes(shell)) {
     return { argv, env }
   }
 
   let positional = false
+
   if (shell !== 'bash') {
     let hasCommandOption = false
+
     for (const argument of argv.slice(1)) {
       if (positional) {
         hasCommandOption = argument !== '-'
@@ -205,6 +208,7 @@ export function integrateShellLaunch(
         break
       }
     }
+
     if (hasCommandOption) {
       return { argv, env }
     }
@@ -214,14 +218,17 @@ export function integrateShellLaunch(
     ...env,
     TREEPORT_SHELL_INTEGRATION: '1'
   }
+
   if (shell === 'zsh') {
     const integrationZdotDir = path.join(root, 'zsh')
     const configuredZdotDir = env.ZDOTDIR?.trim()
+
     const userZdotDir =
       configuredZdotDir &&
       path.resolve(configuredZdotDir) !== path.resolve(integrationZdotDir)
         ? configuredZdotDir
         : env.HOME?.trim()
+
     if (!userZdotDir) {
       return { argv, env }
     }
@@ -238,6 +245,7 @@ export function integrateShellLaunch(
 
   if (shell === 'fish') {
     const integrationDataDir = path.join(root, 'fish')
+
     const fishEnvironment: NodeJS.ProcessEnv = {
       ...integratedEnv,
       TREEPORT_FISH_XDG_DATA_DIR: integrationDataDir,
@@ -245,6 +253,7 @@ export function integrateShellLaunch(
         .filter(Boolean)
         .join(':')
     }
+
     if (env.XDG_DATA_DIRS !== undefined) {
       fishEnvironment.TREEPORT_FISH_XDG_DATA_DIRS_SET = '1'
     }
@@ -253,6 +262,7 @@ export function integrateShellLaunch(
   }
 
   positional = false
+
   for (const argument of argv.slice(1)) {
     if (positional) {
       if (argument !== '-') {
@@ -279,6 +289,7 @@ export function integrateShellLaunch(
   }
 
   const userHome = env.HOME?.trim()
+
   if (!userHome) {
     return { argv, env }
   }

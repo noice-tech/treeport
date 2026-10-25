@@ -18,6 +18,7 @@ import {
 } from './state'
 
 let fallbackClientId: string | null = null
+
 function getClientId(): string {
   if (fallbackClientId) {
     return fallbackClientId
@@ -25,8 +26,10 @@ function getClientId(): string {
 
   try {
     const stored = sessionStorage.getItem('treeport-terminal-client-id')
+
     if (stored) {
       sessionStorage.setItem('treeport-terminal-client-id', stored)
+
       return (fallbackClientId = stored)
     }
   } catch {
@@ -34,6 +37,7 @@ function getClientId(): string {
   }
 
   const bytes = new Uint8Array(16)
+
   if (globalThis.crypto?.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes)
   } else {
@@ -52,6 +56,7 @@ function getClientId(): string {
   } catch {
     // The in-memory ID still keeps reconnects stable for this page load.
   }
+
   return (fallbackClientId = created)
 }
 
@@ -103,7 +108,9 @@ export function makeConnection(
       data: string
       offset: number
     }> = []
+
     let inputInFlight: { generation: number; end: number } | null = null
+
     // UTF-8 needs at most three bytes per UTF-16 code unit; JSON escaping can
     // need six. Bound both representations without encoding the whole paste.
     const chunkLength = Math.min(
@@ -116,6 +123,7 @@ export function makeConnection(
       inputQueue.length = 0
       inputInFlight = null
       state.pendingPaste = ''
+
       if (interrupted && !state.disposed) {
         dependencies.update({
           inputError:
@@ -132,22 +140,26 @@ export function makeConnection(
       if (state.pendingPaste) {
         const pendingPaste = state.pendingPaste
         state.pendingPaste = ''
+
         if (state.terminal) {
           pasteTerminalText(state.terminal, pendingPaste)
         }
       }
 
       const input = inputQueue[0]
+
       if (!input || inputInFlight) {
         return
       }
 
       if (input.generation !== state.controllerGeneration) {
         cancelInput()
+
         return
       }
 
       let end = Math.min(input.offset + chunkLength, input.data.length)
+
       if (
         input.event === 'input' &&
         end < input.data.length &&
@@ -175,6 +187,7 @@ export function makeConnection(
 
       const input = inputQueue[0]!
       input.offset = inputInFlight.end
+
       if (input.offset === input.data.length) {
         inputQueue.shift()
       }
@@ -195,9 +208,11 @@ export function makeConnection(
       }
 
       const staleSocket = state.socket
+
       if (staleSocket) {
         staleSocket.disconnect()
         staleSocket.removeAllListeners()
+
         if (state.socket === staleSocket) {
           state.socket = null
         }
@@ -222,6 +237,7 @@ export function makeConnection(
         error: null
       })
       startDegradedTimer()
+
       const socket = createSocket('/terminals', {
         autoConnect: false,
         reconnection: true,
@@ -236,6 +252,7 @@ export function makeConnection(
               rows: state.terminal?.rows ?? 30
             }
           )
+
           return {
             terminalId: state.terminalId,
             clientId: getClientId(),
@@ -243,6 +260,7 @@ export function makeConnection(
           }
         }
       })
+
       state.socket = socket
       socket.on('connect', () => {
         if (state.socket !== socket) {
@@ -251,6 +269,7 @@ export function makeConnection(
 
         dependencies.fit()
       })
+
       const receive = (
         event: TerminalServerEvent,
         value: TerminalProtocolInput
@@ -263,6 +282,7 @@ export function makeConnection(
           dependencies.handleServerEvent(event, value)
         }
       }
+
       socket.on('ready', (value) => receive('ready', value))
       socket.on('dimensions', (value) => receive('dimensions', value))
       socket.on('output', (value) => receive('output', value))
@@ -302,6 +322,7 @@ export function makeConnection(
         state.queryAuthorityActive = false
 
         dependencies.cancelControllerResizeIntent()
+
         if (!state.reconnectAllowed) {
           clearDegraded()
         }
@@ -357,6 +378,7 @@ export function makeConnection(
       if (event === 'input' || event === 'binary') {
         // SAFETY: Both input events have the same generation/data shape.
         const input = payload as TerminalInput
+
         if (!input.data) {
           return
         }
@@ -364,6 +386,7 @@ export function makeConnection(
         inputQueue.push({ event, ...input, offset: 0 })
         dependencies.update({ inputError: null })
         flushInput()
+
         return
       }
 
@@ -378,7 +401,9 @@ export function makeConnection(
           event: E,
           payload: Parameters<TerminalClientToServerEvents[E]>[0]
         ) => void
+
         emit(event, payload)
+
         return
       }
 
@@ -387,6 +412,7 @@ export function makeConnection(
         event: E,
         payload: Parameters<TerminalClientToServerEvents[E]>[0]
       ) => void
+
       emit(event, payload)
     }
 

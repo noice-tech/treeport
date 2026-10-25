@@ -6,10 +6,13 @@ import path from 'node:path'
 import '../../../scripts/development-tracing.mjs'
 
 const serverOnly = process.argv.includes('--server')
+
 await rm('.treeport-dev-dist', { recursive: true, force: true })
+
 const tsdownPackage = createRequire(import.meta.url).resolve(
   'tsdown/package.json'
 )
+
 // Run tsdown in a process group this script owns instead of behind
 // `pnpm exec`: pnpm SIGKILLs its child groups as soon as tsdown exits, which
 // kills the daemon tsdown spawned before it can release its terminal host.
@@ -52,6 +55,7 @@ function signalGroup(signal) {
     }
 
     process.kill(-child.pid, signal)
+
     return true
   } catch (error) {
     if (error?.code === 'ESRCH') {
@@ -64,6 +68,7 @@ function signalGroup(signal) {
 
 let stopping = false
 let requestedSignal = null
+
 function stop(signal = 'SIGTERM') {
   if (stopping) {
     return
@@ -86,6 +91,7 @@ child.once('error', (error) => {
   )
   process.exitCode = 1
 })
+
 child.once('exit', async (code) => {
   process.exitCode =
     requestedSignal === 'SIGINT'
@@ -99,9 +105,11 @@ child.once('exit', async (code) => {
   // the pnpm processes above this script alive, until the daemon has shut down.
   signalGroup('SIGTERM')
   const deadline = Date.now() + 10_000
+
   while (process.platform !== 'win32' && signalGroup(0)) {
     if (Date.now() >= deadline) {
       signalGroup('SIGKILL')
+
       return
     }
 

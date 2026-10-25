@@ -108,6 +108,7 @@ const BrowserAppWorkspace = lazy(() =>
     default: module.BrowserAppWorkspace
   }))
 )
+
 const WebAppWorkspace = lazy(() =>
   import('./features/web-apps/web-app-workspace').then((module) => ({
     default: module.WebAppWorkspace
@@ -158,18 +159,21 @@ export default function App() {
 
 function WorkspaceApp() {
   const { dismiss: dismissToolPicker } = useToolPicker()
+
   const {
     focusedSurface,
     focusedSurfaceRef,
     focusSurface,
     restoreEmptyToolFocus
   } = useWorkspaceSurfaceFocus()
+
   const desktopBridge = window.treeportDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
   const queryClient = useQueryClient()
   const location = useLocation()
   const projectsQuery = useQuery(projectsQueryOptions)
   const removals = useWorktreeRemovals()
+
   const projects = useMemo(
     () =>
       (projectsQuery.data ?? []).map((project) => ({
@@ -180,17 +184,22 @@ function WorkspaceApp() {
       })),
     [projectsQuery.data, removals.hiddenWorktreeIds]
   )
+
   const launchersQuery = useQuery(launchersQueryOptions)
   const launchers = launchersQuery.data ?? []
+
   const storedResumePath = localStorage.getItem(
     LAST_WORKSPACE_ROUTE_STORAGE_KEY
   )
+
   const workspaceResolution =
     projectsQuery.data && removals.ready
       ? resolveWorkspaceRoute(projects, location.pathname, storedResumePath)
       : null
+
   const selectedProject = workspaceResolution?.selection.project ?? null
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
+
   const selectedTerminal =
     workspaceResolution?.selection.terminal ??
     selectedWorktree?.terminals.find(
@@ -202,42 +211,55 @@ function WorkspaceApp() {
     ) ??
     selectedWorktree?.terminals[0] ??
     null
+
   const selectedTerminalId = selectedTerminal?.id ?? null
   const selectedApp = workspaceResolution?.selection.app ?? null
   const activeProject = selectedProject
+
   const {
     isMobile,
     openMobile: drawerOpen,
     setOpenMobile: setDrawerOpen,
     closeMobileWithoutFocusRestore: closeDrawerAfterNavigation
   } = useSidebar()
+
   const projectSwitcher = useProjectSwitcher()
   const projectSwitcherOpen = projectSwitcher.open
   const [dialog, setDialog] = useState<AppDialog>(null)
+
   const [desktopNotificationsOpen, setDesktopNotificationsOpen] =
     useState(false)
+
   const [mobileNotificationsOpen, setMobileNotificationsOpen] = useState(false)
+
   const [browserPermissionPrompt, setBrowserPermissionPrompt] =
     useState<DesktopBrowserPermissionPrompt | null>(null)
+
   useEffect(
     () =>
       desktopBridge?.onBrowserPermissionPrompt?.(setBrowserPermissionPrompt),
     [desktopBridge]
   )
+
   const workspaceActionsBlocked =
     dialog !== null || projectSwitcherOpen || (isMobile && drawerOpen)
+
   const [retainedAppIds, setRetainedAppIds] = useState<Set<string>>(
     () => new Set()
   )
+
   const [appsPanelOpenByWorktree, setAppsPanelOpenByWorktree] = useState<
     Record<string, boolean>
   >({})
+
   const [fullViewWorktreeId, setFullViewWorktreeId] = useState<string | null>(
     null
   )
+
   useEffect(() => {
     setFullViewWorktreeId(null)
   }, [selectedWorktree?.id])
+
   const setAppsPanelOpen = useCallback((worktreeId: string, open: boolean) => {
     if (!open) {
       setFullViewWorktreeId(null)
@@ -253,22 +275,27 @@ function WorkspaceApp() {
       String(open)
     )
   }, [])
+
   const appsPanelOpen = selectedWorktree
     ? (appsPanelOpenByWorktree[selectedWorktree.id] ??
       localStorage.getItem(
         `${APPS_PANEL_OPEN_STORAGE_PREFIX}${selectedWorktree.id}`
       ) === 'true')
     : false
+
   const appsPanelFullView =
     appsPanelOpen &&
     selectedWorktree !== null &&
     fullViewWorktreeId === selectedWorktree.id
+
   const [activeAppByWorktree, setActiveAppByWorktree] = useState<
     Record<string, string | null>
   >({})
+
   const [preserveTerminalFocusAppId, setPreserveTerminalFocusAppId] = useState<
     string | null
   >(null)
+
   const selectedWorktreeTools = useMemo(
     () =>
       selectedWorktree?.workspaceItems.filter(
@@ -276,6 +303,7 @@ function WorkspaceApp() {
       ) ?? [],
     [selectedWorktree]
   )
+
   const reorderTerminals = useCallback(
     (worktree: WorktreeRecord, itemIds: string[]) => {
       queryClient.setQueryData<ProjectRecord[]>(
@@ -291,6 +319,7 @@ function WorkspaceApp() {
               const terminalsById = new Map(
                 candidate.terminals.map((terminal) => [terminal.id, terminal])
               )
+
               return {
                 ...candidate,
                 terminals: itemIds.map((terminalId) =>
@@ -314,6 +343,7 @@ function WorkspaceApp() {
           notifyError(error, {
             operation: `reorder terminals in tree “${worktree.name}”`
           })
+
           return queryClient.invalidateQueries({
             queryKey: projectsQueryOptions.queryKey
           })
@@ -322,6 +352,7 @@ function WorkspaceApp() {
     },
     [queryClient]
   )
+
   const reorderTools = useCallback(
     (itemIds: string[]) => {
       if (!selectedWorktree) {
@@ -341,8 +372,10 @@ function WorkspaceApp() {
               const appsById = new Map(
                 worktree.workspaceItems.map((app) => [app.id, app])
               )
+
               const orderedTools = itemIds.map((appId) => appsById.get(appId)!)
               let toolIndex = 0
+
               return {
                 ...worktree,
                 workspaceItems: worktree.workspaceItems.map((app) =>
@@ -366,6 +399,7 @@ function WorkspaceApp() {
           notifyError(error, {
             operation: `reorder tools in tree “${selectedWorktree.name}”`
           })
+
           return queryClient.invalidateQueries({
             queryKey: projectsQueryOptions.queryKey
           })
@@ -374,15 +408,19 @@ function WorkspaceApp() {
     },
     [queryClient, selectedWorktree]
   )
+
   const rememberedActiveApp = selectedWorktreeTools.find(
     (app) => app.id === activeAppByWorktree[selectedWorktree?.id ?? '']
   )
+
   const activeApp =
     selectedApp ??
     rememberedActiveApp ??
     (appsPanelOpen ? selectedWorktreeTools.at(-1) : null) ??
     null
+
   const activeAppId = activeApp?.id ?? null
+
   const retainApp = useCallback((appId: string) => {
     setRetainedAppIds((current) => {
       if (current.has(appId)) {
@@ -391,9 +429,11 @@ function WorkspaceApp() {
 
       const next = new Set(current)
       next.add(appId)
+
       return next
     })
   }, [])
+
   const revealTool = useCallback(
     (app: BrowserApp | WebApp, preserveTerminalFocus: boolean) => {
       retainApp(app.id)
@@ -406,15 +446,19 @@ function WorkspaceApp() {
     },
     [retainApp, setAppsPanelOpen]
   )
+
   const [webAppReloadRevisions, setWebAppReloadRevisions] = useState<
     Record<string, number>
   >({})
+
   const [webAppRuntimeTitles, setWebAppRuntimeTitles] = useState<
     Record<string, string>
   >({})
+
   const [dirtyWebAppIds, setDirtyWebAppIds] = useState<Set<string>>(
     () => new Set()
   )
+
   const setWebAppDirty = useCallback((appId: string, dirty: boolean) => {
     setDirtyWebAppIds((current) => {
       if (current.has(appId) === dirty) {
@@ -422,6 +466,7 @@ function WorkspaceApp() {
       }
 
       const next = new Set(current)
+
       if (dirty) {
         next.add(appId)
       } else {
@@ -431,9 +476,11 @@ function WorkspaceApp() {
       return next
     })
   }, [])
+
   const [browserAppFavicons, setBrowserAppFavicons] = useState<
     Record<string, string | null>
   >({})
+
   const updateBrowserAppFavicon = useCallback(
     (appId: string, faviconUrl: string | null) => {
       setBrowserAppFavicons((current) =>
@@ -444,9 +491,11 @@ function WorkspaceApp() {
     },
     []
   )
+
   const [browserAppLoading, setBrowserAppLoading] = useState<
     Record<string, boolean>
   >({})
+
   const updateBrowserAppLoading = useCallback(
     (appId: string, loading: boolean) => {
       setBrowserAppLoading((current) => {
@@ -455,6 +504,7 @@ function WorkspaceApp() {
         }
 
         const next = { ...current }
+
         if (loading) {
           next[appId] = true
         } else {
@@ -466,6 +516,7 @@ function WorkspaceApp() {
     },
     []
   )
+
   const setWebAppRuntimeTitle = useCallback(
     (appId: string, title: string | null) => {
       setWebAppRuntimeTitles((current) => {
@@ -476,6 +527,7 @@ function WorkspaceApp() {
 
           const next = { ...current }
           delete next[appId]
+
           return next
         }
 
@@ -486,67 +538,82 @@ function WorkspaceApp() {
     },
     []
   )
+
   useEffect(() => {
     const apps = projects.flatMap((project) =>
       project.worktrees.flatMap((worktree) => worktree.workspaceItems)
     )
+
     const appIds = new Set(apps.map((app) => app.id))
+
     const webAppIds = new Set(
       apps.filter((app) => app.kind === 'web').map((app) => app.id)
     )
+
     setWebAppRuntimeTitles((current) => {
       const removedIds = Object.keys(current).filter(
         (appId) => !webAppIds.has(appId)
       )
+
       if (removedIds.length === 0) {
         return current
       }
 
       const next = { ...current }
       removedIds.forEach((appId) => delete next[appId])
+
       return next
     })
     setBrowserAppFavicons((current) => {
       const removedIds = Object.keys(current).filter(
         (appId) => !appIds.has(appId)
       )
+
       if (removedIds.length === 0) {
         return current
       }
 
       const next = { ...current }
       removedIds.forEach((appId) => delete next[appId])
+
       return next
     })
     setBrowserAppLoading((current) => {
       const removedIds = Object.keys(current).filter(
         (appId) => !appIds.has(appId)
       )
+
       if (removedIds.length === 0) {
         return current
       }
 
       const next = { ...current }
       removedIds.forEach((appId) => delete next[appId])
+
       return next
     })
     setDirtyWebAppIds((current) => {
       const next = new Set([...current].filter((appId) => webAppIds.has(appId)))
+
       return next.size === current.size ? current : next
     })
   }, [projects])
+
   const appDialogProject =
     dialog?.type === 'app'
       ? (projects.find((project) => project.id === dialog.projectId) ?? null)
       : null
+
   const appDialogWorktree =
     dialog?.type === 'app' && dialog.worktreeId
       ? (appDialogProject?.worktrees.find(
           (worktree) => worktree.id === dialog.worktreeId
         ) ?? null)
       : null
+
   const webAppDefinitionsWorktree =
     appDialogWorktree ?? (appsPanelOpen ? selectedWorktree : null)
+
   const launcherDefinitionsContext =
     dialog?.type === 'worktree'
       ? { projectId: dialog.project.id }
@@ -557,11 +624,14 @@ function WorkspaceApp() {
           : selectedProject
             ? { projectId: selectedProject.id }
             : undefined
+
   const launcherDefinitionsQuery = useQuery(
     launcherDefinitionsQueryOptions(launcherDefinitionsContext)
   )
+
   const availableLaunchers = launcherDefinitionsQuery.data?.definitions ?? []
   const launcherDiagnostics = launcherDefinitionsQuery.data?.diagnostics ?? []
+
   const webAppDefinitionsQuery = useQuery({
     queryKey: ['web-app-definitions', webAppDefinitionsWorktree?.id],
     queryFn: async () =>
@@ -574,6 +644,7 @@ function WorkspaceApp() {
       ).definitions,
     enabled: Boolean(webAppDefinitionsWorktree)
   })
+
   const createWebApp = useMutation({
     mutationFn: ({
       worktree,
@@ -586,6 +657,7 @@ function WorkspaceApp() {
     }) =>
       (async () => {
         const requestId = beginWebAppOpen()
+
         if (
           definition.permissions.length > 0 &&
           !definition.permissionsGranted
@@ -622,10 +694,12 @@ function WorkspaceApp() {
           browserTrace('web_app.open.request_failed', requestId)
           throw error
         })
+
         registerWebAppOpen(result.app.id, requestId)
         traceWebAppOpen(result.app.id, 'web_app.open.response', {
           reused: result.reused
         })
+
         return result.app
       })(),
     onSuccess: async (app, { worktree }) => {
@@ -654,15 +728,18 @@ function WorkspaceApp() {
                 }
           )
       )
+
       const target = targetForApp(
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? projects,
         app
       )
+
       const navigation = target
         ? navigateToWorkspace(target)
         : Promise.resolve()
+
       void queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
       })
@@ -674,6 +751,7 @@ function WorkspaceApp() {
       })
     }
   })
+
   const createBrowserApp = useMutation({
     mutationFn: ({ worktree }: { worktree: WorktreeRecord }) =>
       parseResponse(
@@ -707,15 +785,18 @@ function WorkspaceApp() {
                 }
           )
       )
+
       const target = targetForApp(
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? projects,
         app
       )
+
       const navigation = target
         ? navigateToWorkspace(target)
         : Promise.resolve()
+
       void queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
       })
@@ -727,6 +808,7 @@ function WorkspaceApp() {
       })
     }
   })
+
   const closeApp = useMutation({
     mutationFn: ({
       app,
@@ -743,6 +825,7 @@ function WorkspaceApp() {
       requestedAt: number
     }) => {
       const query: DeleteAppQuery = {}
+
       if (discardStoredData) {
         query.discardStoredData = 'true'
       }
@@ -756,6 +839,7 @@ function WorkspaceApp() {
         appId: app.id,
         appKind: app.kind
       })
+
       return parseResponse(
         rpc.api.apps[':appId'].$delete(
           {
@@ -784,6 +868,7 @@ function WorkspaceApp() {
 
         const next = new Set(current)
         next.delete(app.id)
+
         return next
       })
       setDialog((current) =>
@@ -791,22 +876,28 @@ function WorkspaceApp() {
           ? null
           : current
       )
+
       const worktree = projects
         .flatMap((project) => project.worktrees)
         .find((candidate) => candidate.id === app.worktreeId)
+
       const tools =
         worktree?.workspaceItems.filter(
           (candidate): candidate is BrowserApp | WebApp =>
             candidate.kind !== 'terminal'
         ) ?? []
+
       const closedIndex = tools.findIndex(
         (candidate) => candidate.id === app.id
       )
+
       const remainingTools = tools.filter(
         (candidate) => candidate.id !== app.id
       )
+
       const nextTool =
         remainingTools[closedIndex] ?? remainingTools[closedIndex - 1] ?? null
+
       setActiveAppByWorktree((current) =>
         current[app.worktreeId] === app.id
           ? { ...current, [app.worktreeId]: nextTool?.id ?? null }
@@ -832,12 +923,14 @@ function WorkspaceApp() {
       browserTrace('app.remove.cache.updated', correlationId, {
         appId: app.id
       })
+
       if (selectedApp?.id === app.id) {
         const target = nextTool
           ? targetForApp(projects, nextTool)
           : worktree
             ? targetForWorktree(projects, worktree, selectedTerminalId)
             : null
+
         if (target) {
           browserTrace('app.remove.navigation.started', correlationId, {
             appId: app.id
@@ -864,6 +957,7 @@ function WorkspaceApp() {
     },
     onError: (error, request) => {
       const { app, trigger, correlationId, requestedAt } = request
+
       if (
         app.kind === 'browser' &&
         errorDetails(error).code === 'BROWSER_BEFORE_UNLOAD'
@@ -877,6 +971,7 @@ function WorkspaceApp() {
           { type: 'close-app', app, reason: 'browser-before-unload' },
           trigger
         )
+
         return
       }
 
@@ -888,6 +983,7 @@ function WorkspaceApp() {
       notifyError(error, { operation: `close app “${app.title}”` })
     }
   })
+
   const startAppClose = (
     app: BrowserApp | WebApp,
     options: { discardStoredData?: boolean; force?: boolean } = {},
@@ -903,14 +999,17 @@ function WorkspaceApp() {
     const request = { app, ...options, correlationId, requestedAt }
     closeApp.mutate(trigger ? { ...request, trigger } : request)
   }
+
   const requestCloseApp = (app: BrowserApp | WebApp, trigger?: HTMLElement) => {
     if (app.kind === 'browser') {
       startAppClose(app, {}, trigger)
+
       return
     }
 
     if (dirtyWebAppIds.has(app.id)) {
       openDialog({ type: 'close-app', app, reason: 'unsaved-changes' }, trigger)
+
       return
     }
 
@@ -933,9 +1032,11 @@ function WorkspaceApp() {
       }
     )
   }
+
   const navigateAppOpenRequest = useCallback(
     (request: ProductEventDataMap['app.open_requested']) => {
       const webApp = request.app.kind === 'web'
+
       if (request.requestId) {
         browserTrace(
           webApp
@@ -999,11 +1100,14 @@ function WorkspaceApp() {
             )
           }))
       )
+
       const currentProjects =
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? []
+
       const target = targetForApp(currentProjects, request.app)
+
       const navigation = target
         ? navigateToWorkspace(target)
         : queryClient
@@ -1015,11 +1119,14 @@ function WorkspaceApp() {
                 queryClient.getQueryData<ProjectRecord[]>(
                   projectsQueryOptions.queryKey
                 ) ?? []
+
               const freshTarget = targetForApp(freshProjects, request.app)
+
               if (freshTarget) {
                 await navigateToWorkspace(freshTarget)
               }
             })
+
       void navigation
         .then(() => {
           if (request.requestId) {
@@ -1046,6 +1153,7 @@ function WorkspaceApp() {
       selectedTerminalId
     ]
   )
+
   const navigateWorkspaceOpenRequest = useCallback(
     (request: ProductEventDataMap['workspace.open_requested']) => {
       if (
@@ -1066,12 +1174,15 @@ function WorkspaceApp() {
             queryClient.getQueryData<ProjectRecord[]>(
               projectsQueryOptions.queryKey
             ) ?? []
+
           const worktree = freshProjects
             .flatMap((project) => project.worktrees)
             .find((candidate) => candidate.id === request.worktreeId)
+
           const target = worktree
             ? targetForWorktree(freshProjects, worktree)
             : null
+
           if (target) {
             await navigateToWorkspace(target)
           }
@@ -1082,6 +1193,7 @@ function WorkspaceApp() {
     },
     [navigateToWorkspace, queryClient, selectedTerminalId]
   )
+
   const presenceFocusedAppId =
     dialog !== null
       ? null
@@ -1091,18 +1203,22 @@ function WorkspaceApp() {
             (app) =>
               app.kind === 'terminal' && app.terminalId === selectedTerminalId
           )?.id ?? null)
+
   const presence = useWorkspacePresence(
     selectedWorktree?.id ?? null,
     presenceFocusedAppId
   )
+
   const eventsDisconnected = useProjectEventsBridge(
     projectsQuery.data,
     navigateAppOpenRequest,
     navigateWorkspaceOpenRequest,
     presence.setViewers
   )
+
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
+
   const openDialog = (
     nextDialog: Exclude<AppDialog, null>,
     trigger?: HTMLElement
@@ -1165,8 +1281,10 @@ function WorkspaceApp() {
     const degraded =
       projectsQuery.data !== undefined &&
       (eventsDisconnected || projectsQuery.isRefetchError)
+
     if (!degraded) {
       setShowSyncDegraded(false)
+
       return
     }
 
@@ -1174,6 +1292,7 @@ function WorkspaceApp() {
       () => setShowSyncDegraded(true),
       METADATA_DEGRADED_GRACE_MS
     )
+
     return () => window.clearTimeout(timer)
   }, [eventsDisconnected, projectsQuery.data, projectsQuery.isRefetchError])
 
@@ -1189,9 +1308,11 @@ function WorkspaceApp() {
         ),
     [activeAppId, projects, retainedAppIds]
   )
+
   const navigateToTerminal = useCallback(
     (terminal: TerminalRecord) => {
       const target = targetForTerminal(projects, terminal)
+
       if (target) {
         void navigateToWorkspace(target)
       }
@@ -1205,11 +1326,13 @@ function WorkspaceApp() {
   // terminal closes; reselecting the current empty tree starts one again.
   const autoStartedWorktreeIdRef = useRef<string | null>(null)
   const [, requestAutoStart] = useReducer((revision: number) => revision + 1, 0)
+
   const selectWorktree = useCallback(
     (worktree: WorktreeRecord) => {
       setFullViewWorktreeId(null)
       focusSurface('terminal')
       const target = targetForWorktree(projects, worktree, selectedTerminalId)
+
       if (target) {
         void navigateToWorkspace(target)
       }
@@ -1265,13 +1388,16 @@ function WorkspaceApp() {
         setDialog(null)
       }
     })
+
   const projectOpenedFromSwitcher = (project: ProjectRecord) => {
     focusSurface('terminal')
     const target = rememberedTargetForProject(project)
     projectSwitcher.dismissedIntoTerminalRef.current =
       !isMobile && target.kind === 'terminal'
+
     return projectOpened(project, !isMobile)
   }
+
   const {
     pendingWorktrees,
     pendingRemovals,
@@ -1322,10 +1448,12 @@ function WorkspaceApp() {
       ),
     selectedTerminalId
   })
+
   const terminalWorkflows = useTerminalWorkflows({
     projects,
     selectedTerminal
   })
+
   const createSplitTerminal = (direction: TerminalSplitDirection) => {
     if (!selectedProject || !selectedWorktree || !selectedTerminal) {
       return
@@ -1338,6 +1466,7 @@ function WorkspaceApp() {
       { targetTerminalId: selectedTerminal.id, direction }
     )
   }
+
   const selectTerminal = useCallback(
     (terminal: TerminalRecord) => {
       setFullViewWorktreeId(null)
@@ -1348,12 +1477,14 @@ function WorkspaceApp() {
     },
     [focusSurface, navigateToTerminal]
   )
+
   const selectApp = useCallback(
     (app: BrowserApp | WebApp) => {
       focusSurface('tool')
       revealTool(app, false)
 
       const target = targetForApp(projects, app)
+
       if (target) {
         void navigateToWorkspace(target)
       }
@@ -1368,6 +1499,7 @@ function WorkspaceApp() {
       revealTool
     ]
   )
+
   const selectWorkspaceByIndex = useCallback(
     (index: number) => {
       if (workspaceActionsBlocked || !selectedWorktree) {
@@ -1375,8 +1507,10 @@ function WorkspaceApp() {
       }
 
       const terminal = selectedWorktree.terminals[index]
+
       if (terminal) {
         selectTerminal(terminal)
+
         return true
       }
 
@@ -1393,11 +1527,13 @@ function WorkspaceApp() {
 
       if (appsPanelOpen && focusedSurfaceRef.current === 'tool') {
         const app = selectedWorktreeTools[index]
+
         if (!app) {
           return false
         }
 
         selectApp(app)
+
         return true
       }
 
@@ -1420,6 +1556,7 @@ function WorkspaceApp() {
       }
 
       const index = Number(event.key) - 1
+
       if (!Number.isInteger(index) || index < 0 || index > 8) {
         return
       }
@@ -1431,7 +1568,9 @@ function WorkspaceApp() {
       event.preventDefault()
       event.stopPropagation()
     }
+
     document.addEventListener('keydown', keydown, true)
+
     return () => document.removeEventListener('keydown', keydown, true)
   }, [selectFocusedSurfaceByIndex])
 
@@ -1441,19 +1580,23 @@ function WorkspaceApp() {
     appDialogProject.availability.state === 'unavailable' ||
     Boolean(appDialogWorktree.prunable) ||
     Boolean(pendingRemovals[appDialogWorktree.id])
+
   const toolLaunchDisabled =
     !selectedProject ||
     !selectedWorktree ||
     selectedProject.availability.state === 'unavailable' ||
     Boolean(selectedWorktree.prunable) ||
     Boolean(pendingRemovals[selectedWorktree.id])
+
   useEffect(() => {
     const worktreeId = selectedWorktree?.id ?? null
+
     if (autoStartedWorktreeIdRef.current === worktreeId) {
       return
     }
 
     autoStartedWorktreeIdRef.current = worktreeId
+
     if (
       workspaceResolution?.target.kind !== 'worktree' ||
       !selectedProject ||
@@ -1469,6 +1612,7 @@ function WorkspaceApp() {
       { name: 'Terminal' }
     )
   })
+
   const toggleAppsPanel = useCallback(() => {
     if (!selectedWorktree) {
       return
@@ -1477,10 +1621,12 @@ function WorkspaceApp() {
     if (appsPanelOpen) {
       setAppsPanelOpen(selectedWorktree.id, false)
       focusSurface('terminal')
+
       return
     }
 
     const app = activeApp ?? selectedWorktreeTools.at(-1) ?? null
+
     if (app) {
       retainApp(app.id)
       setActiveAppByWorktree((current) => ({
@@ -1499,6 +1645,7 @@ function WorkspaceApp() {
     setAppsPanelOpen,
     appsPanelOpen
   ])
+
   const focusToolSurface = useCallback(() => {
     focusSurface('tool')
     setPreserveTerminalFocusAppId(null)
@@ -1510,10 +1657,12 @@ function WorkspaceApp() {
     }
 
     const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+
     const keydown = (event: KeyboardEvent) => {
       const modifierPressed = usesMacKeyboard
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
+
       if (event.isComposing || event.shiftKey || !modifierPressed) {
         return
       }
@@ -1531,6 +1680,7 @@ function WorkspaceApp() {
 
         event.preventDefault()
         event.stopPropagation()
+
         if (
           !event.repeat &&
           !toolLaunchDisabled &&
@@ -1553,6 +1703,7 @@ function WorkspaceApp() {
               : event.key === 'ArrowDown'
                 ? 'down'
                 : null
+
       if (direction) {
         if (
           event.repeat ||
@@ -1577,7 +1728,9 @@ function WorkspaceApp() {
       event.preventDefault()
       event.stopPropagation()
     }
+
     document.addEventListener('keydown', keydown, true)
+
     return () => document.removeEventListener('keydown', keydown, true)
   }, [
     createBrowserApp.isPending,
@@ -1642,9 +1795,11 @@ function WorkspaceApp() {
         command === 'select-next-worktree'
       ) {
         const worktrees = selectedProject.worktrees
+
         const selectedIndex = worktrees.findIndex(
           (worktree) => worktree.id === selectedWorktree.id
         )
+
         if (worktrees.length > 1 && selectedIndex !== -1) {
           const offset = command === 'select-previous-worktree' ? -1 : 1
           selectWorktree(
@@ -1659,13 +1814,16 @@ function WorkspaceApp() {
 
       const toolSurfaceHasFocus =
         appsPanelOpen && focusedSurfaceRef.current === 'tool'
+
       const selectedTabIndex = command.startsWith('select-tab-')
         ? Number(command.at(-1)) - 1
         : null
+
       // SAFETY: DesktopCommand only has the four TerminalSplitDirection suffixes.
       const splitDirection = command.startsWith('split-terminal-')
         ? (command.slice('split-terminal-'.length) as TerminalSplitDirection)
         : null
+
       if (selectedTabIndex !== null) {
         selectFocusedSurfaceByIndex(selectedTabIndex)
       } else if (command === 'toggle-apps-panel') {
@@ -1910,9 +2068,11 @@ function WorkspaceApp() {
               >
                 {retainedApps.map((app) => {
                   const active = app.id === activeAppId && appsPanelOpen
+
                   const autoFocusBlocked =
                     workspaceActionsBlocked ||
                     preserveTerminalFocusAppId === app.id
+
                   return (
                     <Suspense
                       key={app.id}
@@ -1971,6 +2131,7 @@ function WorkspaceApp() {
               const app = retainedApps.find(
                 (item) => item.id === browserPermissionPrompt.appId
               )
+
               if (app?.kind === 'browser') {
                 selectApp(app)
               }

@@ -49,8 +49,10 @@ import {
 export type { TerminalHostRuntimeEvent } from './contract'
 
 const HOST_SCROLLBACK_LINES = 50_000
+
 // Bounds unfinished VT input a snapshot carries, such as a partial image upload.
 const HOST_CONTINUATION_BYTES = 64 * 1024 * 1024
+
 const IDLE_ACTIVITY: TerminalActivity = {
   state: 'idle',
   kind: null,
@@ -59,8 +61,10 @@ const IDLE_ACTIVITY: TerminalActivity = {
   message: null,
   since: null
 }
+
 // The OSC 7501 specification requires at least 64 records per terminal.
 const PROGRAM_STATUS_RECORDS = 64
+
 // Most important first, when several records are reported at once.
 const PROGRAM_STATUS_RANK = ['blocked', 'error', 'working', 'done', 'idle']
 const HOST_PARSER_HIGH_WATERMARK = 1024 * 1024
@@ -72,11 +76,13 @@ const engineMarkerSchema = z.object({
   width: z.number().min(1).max(100),
   height: z.number().min(1).max(200)
 })
+
 type TerminalHostAttachment = TerminalHostSnapshot & {
   output: Stream.Stream<TerminalHostOutput, unknown>
 }
 
 type PtySpawner = typeof pty.spawn
+
 type ProcessTreeTerminator = (child: IPty) => Effect.Effect<void, unknown>
 
 interface SshAgentDiscovery {
@@ -208,6 +214,7 @@ function raiseAttention(
     }
 
     session.attention = { ...session.attention, reason }
+
     return true
   }
 
@@ -217,6 +224,7 @@ function raiseAttention(
     at: new Date(at).toISOString(),
     reason
   }
+
   return true
 }
 
@@ -248,6 +256,7 @@ function execFileEffect(
             : Effect.succeed(String(stdout))
         )
     )
+
     return Effect.sync(() => child.kill('SIGKILL'))
   })
 }
@@ -256,6 +265,7 @@ function processSignal(pid: number, signal: NodeJS.Signals) {
   return Effect.try({
     try: () => {
       process.kill(pid, signal)
+
       return true
     },
     catch: (cause) => cause
@@ -279,17 +289,22 @@ function descendantPids(rootPid: number): Effect.Effect<number[]> {
           (row): row is [number, number] =>
             row.length === 2 && row.every(Number.isInteger)
         )
+
       const children = new Map<number, number[]>()
+
       for (const [pid, parentPid] of rows) {
         children.set(parentPid, [...(children.get(parentPid) ?? []), pid])
       }
+
       const descendants: number[] = []
       const pending = [...(children.get(rootPid) ?? [])]
+
       while (pending.length) {
         const pid = pending.pop()!
         descendants.push(pid)
         pending.push(...(children.get(pid) ?? []))
       }
+
       return descendants
     }),
     Effect.catchAll(() => Effect.succeed([]))
@@ -299,12 +314,14 @@ function descendantPids(rootPid: number): Effect.Effect<number[]> {
 const terminatePtyProcessTree: ProcessTreeTerminator = (child) =>
   Effect.gen(function* () {
     const descendants = yield* descendantPids(child.pid)
+
     const signalTree = (signal: NodeJS.Signals) =>
       Effect.gen(function* () {
         const groupSignaled = yield* processSignal(-child.pid, signal)
         yield* Effect.forEach([...descendants].reverse(), (pid) =>
           processSignal(pid, signal)
         )
+
         if (!groupSignaled) {
           yield* Effect.sync(() => child.kill(signal))
         }
@@ -381,10 +398,13 @@ export class TerminalHostSessions {
           launchctlPath: '/bin/launchctl'
         }
       }
+
       const sessions = yield* SynchronizedRef.make<
         ReadonlyMap<string, HostedTerminalSession | null>
       >(new Map())
+
       const cleanups = yield* FiberSet.make<void, never>()
+
       const manager = new TerminalHostSessions(
         resolved,
         sessions,
@@ -393,14 +413,17 @@ export class TerminalHostSessions {
         yield* Scope.Scope,
         options
       )
+
       yield* Effect.addFinalizer(() => manager.shutdown().pipe(Effect.orDie))
       yield* manager.initialize()
+
       if (options.sessionExecutable !== undefined) {
         const directory = path.join(resolved.runtimeDir, 'sessions')
         yield* nodePromise(() =>
           fs.mkdir(directory, { recursive: true, mode: 0o700 })
         )
         const names = yield* nodePromise(() => fs.readdir(directory))
+
         for (const name of names.sort()) {
           if (!/^[a-f0-9]{40}$/u.test(name)) {
             continue
@@ -424,6 +447,7 @@ export class TerminalHostSessions {
       }
 
       this.restoring.add(directory)
+
       return Effect.gen(this, function* () {
         const owner = yield* nodePromise(() =>
           PersistentSession.open(
@@ -431,9 +455,11 @@ export class TerminalHostSessions {
             this.persistentOptions.journalLimitBytes
           )
         )
+
         const { input } = yield* decodeTerminalEngineMetadata(
           owner.manifest.metadata
         ).pipe(Effect.mapError(effectError))
+
         if (
           path.basename(directory) !==
           crypto
@@ -454,6 +480,7 @@ export class TerminalHostSessions {
         }
 
         const previous = this.unavailable.get(input.terminalId)
+
         if (previous?.recovering) {
           return
         }
@@ -480,7 +507,9 @@ export class TerminalHostSessions {
             commandExitCode: null
           } satisfies HostedTerminal
         }
+
         this.unavailable.set(input.terminalId, recovery)
+
         const restore = this.createTerminal(
           {
             ...input,
@@ -515,6 +544,7 @@ export class TerminalHostSessions {
             )
           )
         )
+
         // Discovery is authoritative before readiness; attachment/replay is
         // not a prerequisite for serving the application or other terminals.
         yield* background
@@ -540,9 +570,11 @@ export class TerminalHostSessions {
     worktreeId: string | null
   ): Effect.Effect<void, TerminalHostSessionError> {
     const unknown = this.unidentified.entries().next().value
+
     const unavailable = [...this.unavailable.values()].find(
       (value) => worktreeId === null || value.terminal.worktreeId === worktreeId
     )
+
     return unknown || unavailable
       ? Effect.fail(
           new TerminalHostSessionError({
@@ -606,9 +638,11 @@ export class TerminalHostSessions {
 
           const next = new Map(current)
           next.set(input.terminalId, null)
+
           return [true, next] as const
         }
       )
+
       if (!reserved) {
         return yield* Effect.fail(
           new TerminalHostSessionError({
@@ -620,17 +654,20 @@ export class TerminalHostSessions {
       const childScope = yield* Scope.make()
       let hosted: HostedTerminalSession | null = null
       let retained = false
+
       return yield* Effect.gen(this, function* () {
         hosted = yield* Scope.extend(
           this.acquireSession(input, childScope, retainedOwner),
           childScope
         )
         const ownedSession = hosted
+
         const dataDisposable = yield* Effect.try({
           try: () =>
             ownedSession.pty.onData((data) => {
               const bytes = Buffer.byteLength(data)
               ownedSession.parserQueuedBytes += bytes
+
               const offered = Queue.unsafeOffer(ownedSession.parserCommands, {
                 _tag: 'Output',
                 data,
@@ -644,11 +681,13 @@ export class TerminalHostSessions {
                     ? ownedSession.pty.recordTime
                     : Date.now()
               })
+
               if (!offered) {
                 ownedSession.parserQueuedBytes = Math.max(
                   0,
                   ownedSession.parserQueuedBytes - bytes
                 )
+
                 return
               }
 
@@ -662,19 +701,23 @@ export class TerminalHostSessions {
             }),
           catch: effectError
         })
+
         yield* Scope.addFinalizer(
           childScope,
           Effect.sync(() => dataDisposable.dispose())
         )
+
         const exitDisposable = yield* Effect.try({
           try: () =>
             ownedSession.pty.onExit(({ exitCode }) => {
               ownedSession.status = 'exited'
               ownedSession.exitCode = exitCode
+
               const at =
                 ownedSession.pty instanceof PersistentSession
                   ? ownedSession.pty.recordTime
                   : Date.now()
+
               ownedSession.updatedAt = new Date(at).toISOString()
               Queue.unsafeOffer(ownedSession.runtimeCommands, {
                 _tag: 'Exit',
@@ -684,6 +727,7 @@ export class TerminalHostSessions {
             }),
           catch: effectError
         })
+
         yield* Scope.addFinalizer(
           childScope,
           Effect.sync(() => exitDisposable.dispose())
@@ -698,9 +742,11 @@ export class TerminalHostSessions {
 
             const next = new Map(current)
             next.set(input.terminalId, ownedSession)
+
             return [true, next] as const
           }
         )
+
         if (!installed) {
           return yield* Effect.fail(
             new TerminalHostSessionError({
@@ -711,6 +757,7 @@ export class TerminalHostSessions {
 
         if (ownedSession.pty instanceof PersistentSession) {
           const owner = ownedSession.pty
+
           const resizeDisposable = owner.onResize((cols, rows) => {
             ownedSession.outputSequence = owner.sequence
             Queue.unsafeOffer(ownedSession.parserCommands, {
@@ -719,10 +766,12 @@ export class TerminalHostSessions {
               rows
             })
           })
+
           yield* Scope.addFinalizer(
             childScope,
             Effect.sync(() => resizeDisposable.dispose())
           )
+
           const markerDisposable = owner.onMarker((data) => {
             const marker = engineMarkerSchema.parse(JSON.parse(data))
             ownedSession.outputSequence = owner.sequence
@@ -732,6 +781,7 @@ export class TerminalHostSessions {
               height: marker.height
             })
           })
+
           yield* Scope.addFinalizer(
             childScope,
             Effect.sync(() => markerDisposable.dispose())
@@ -746,6 +796,7 @@ export class TerminalHostSessions {
                 : Effect.fail(error)
             )
           )
+
           if (owner.archived) {
             // A vanished keeper cannot be revived by spawning its command.
             // Keep the reconstructed screen accessible and report unknown exit
@@ -778,12 +829,14 @@ export class TerminalHostSessions {
           // neither a missed notification nor journal rotation can lose it.
           const observeCommand = this.observeCommandExit(ownedSession)
           yield* observeCommand
+
           if (ownedSession.commandExitCode === null) {
             yield* Effect.forkIn(
               Effect.gen(function* () {
                 while (ownedSession.commandExitCode === null) {
                   const exited = ownedSession.status === 'exited'
                   yield* observeCommand
+
                   if (exited) {
                     return
                   }
@@ -818,12 +871,14 @@ export class TerminalHostSessions {
               ? Effect.void
               : SynchronizedRef.update(this.sessions, (current) => {
                   const value = current.get(input.terminalId)
+
                   if (value !== null && value !== hosted) {
                     return current
                   }
 
                   const next = new Map(current)
                   next.delete(input.terminalId)
+
                   return next
                 })
           )
@@ -845,12 +900,15 @@ export class TerminalHostSessions {
         !input.fallbackArgv &&
         !input.setupTasks?.length &&
         !input.setupError
+
       const retainedMetadata = retainedOwner
         ? yield* decodeTerminalEngineMetadata(
             retainedOwner.manifest.metadata
           ).pipe(Effect.mapError(effectError))
         : null
+
       let specPath: string | null = retainedMetadata?.launchSpecPath ?? null
+
       if (
         specPath &&
         path.dirname(path.resolve(specPath)) !==
@@ -899,6 +957,7 @@ export class TerminalHostSessions {
         yield* nodePromise(() =>
           fs.writeFile(specPath!, JSON.stringify(spec), { mode: 0o600 })
         )
+
         if (this.persistentOptions.sessionExecutable === undefined) {
           yield* Scope.addFinalizer(
             childScope,
@@ -919,14 +978,17 @@ export class TerminalHostSessions {
             rows: retainedOwner.manifest.rows
           }
         : (input.initialSize ?? { cols: 100, rows: 30 })
+
       const inheritedEnvironment = Object.fromEntries(
         Object.entries(process.env).filter(
           (entry): entry is [string, string] => entry[1] !== undefined
         )
       )
+
       inheritedEnvironment.TERM = 'xterm-256color'
       // xterm supports RGB colors; TERM alone makes apps fall back to 256 colors.
       inheritedEnvironment.COLORTERM = 'truecolor'
+
       if (
         this.options.sshAgentDiscovery.platform === 'darwin' &&
         inheritedEnvironment.SSH_AUTH_SOCK === undefined &&
@@ -939,6 +1001,7 @@ export class TerminalHostSessions {
         ).pipe(
           Effect.flatMap((stdout) => {
             const socket = stdout.trim()
+
             if (!socket) {
               return Effect.void
             }
@@ -981,15 +1044,18 @@ export class TerminalHostSessions {
         this.shellIntegrationDir,
         directShell
       )
+
       const directEnvironment = Object.fromEntries(
         Object.entries(directLaunch.env).filter(
           (entry): entry is [string, string] => entry[1] !== undefined
         )
       )
+
       const ghosttyModule = yield* nodePromise(loadGhosttyVtModule)
       // Parser callbacks run synchronously inside terminal.write, which only
       // happens after the session below is assigned.
       let hosted: HostedTerminalSession | null = null
+
       const terminal = GhosttyTerminal.create(
         ghosttyModule,
         size.cols,
@@ -1027,6 +1093,7 @@ export class TerminalHostSessions {
                 hosted.processingTime,
                 hosted.processingSequence
               )
+
               return
             }
 
@@ -1054,6 +1121,7 @@ export class TerminalHostSessions {
               (['idle', 'working', 'error', 'working', 'working'] as const)[
                 state
               ] ?? 'idle'
+
             Queue.unsafeOffer(hosted.runtimeCommands, {
               _tag: 'Progress',
               state: progressState,
@@ -1082,6 +1150,7 @@ export class TerminalHostSessions {
           },
           unknownOsc: (content) => {
             const prefix = `${TERMINAL_COMMAND_OSC};command;`
+
             if (!hosted || !content.startsWith(prefix)) {
               return
             }
@@ -1100,6 +1169,7 @@ export class TerminalHostSessions {
                 commandLine: hosted.commandLine
               }
             })
+
             if (hosted.commandLine === null) {
               Queue.unsafeOffer(hosted.runtimeCommands, {
                 _tag: 'Prompt',
@@ -1113,6 +1183,7 @@ export class TerminalHostSessions {
           clipboardWrite: null
         }
       )
+
       yield* Scope.addFinalizer(
         childScope,
         Effect.sync(() => terminal.dispose())
@@ -1177,6 +1248,7 @@ export class TerminalHostSessions {
                     ),
               catch: effectError
             }))
+
       if (child instanceof PersistentSession) {
         yield* Scope.addFinalizer(
           childScope,
@@ -1245,6 +1317,7 @@ export class TerminalHostSessions {
         queryAuthorityGeneration: null,
         queryTransition: null
       }
+
       hosted = session
 
       yield* Scope.addFinalizer(
@@ -1263,15 +1336,18 @@ export class TerminalHostSessions {
           const unavailable = new TerminalHostSessionError({
             message: 'Terminal is unavailable'
           })
+
           for (const fence of session.pendingFences) {
             yield* Deferred.fail(fence, unavailable)
           }
+
           session.pendingFences.clear()
         })
       )
 
       yield* Effect.forkIn(this.parserWorker(session), childScope)
       yield* Effect.forkIn(this.runtimeWorker(session), childScope)
+
       return session
     })
   }
@@ -1285,8 +1361,10 @@ export class TerminalHostSessions {
         const commands = Array.from(
           yield* Queue.takeBetween(session.parserCommands, 1, 256)
         )
+
         for (let index = 0; index < commands.length;) {
           const command = commands[index]!
+
           if (command._tag === 'Stop') {
             return yield* Effect.interrupt
           }
@@ -1323,8 +1401,10 @@ export class TerminalHostSessions {
 
           const batch: Array<Extract<ParserCommand, { _tag: 'Output' }>> = []
           let bytes = 0
+
           while (index < commands.length) {
             const next = commands[index]!
+
             if (
               next._tag !== 'Output' ||
               (session.replaying &&
@@ -1340,6 +1420,7 @@ export class TerminalHostSessions {
             bytes += next.bytes
             index++
           }
+
           if (session.replaying && session.pty instanceof PersistentSession) {
             // Advance metadata between records so replayed bells, progress,
             // and query replies retain their original timestamps and
@@ -1366,6 +1447,7 @@ export class TerminalHostSessions {
             0,
             session.parserQueuedBytes - bytes
           )
+
           // Preserve owner sequences: subscribers use them to distinguish
           // canonical snapshot contents from the live suffix.
           for (const output of batch) {
@@ -1374,11 +1456,13 @@ export class TerminalHostSessions {
               sequence: output.sequence
             })
           }
+
           if (
             session.parserPaused &&
             session.parserQueuedBytes <= HOST_PARSER_LOW_WATERMARK
           ) {
             session.parserPaused = false
+
             if (
               session.boundaryPauseCount === 0 &&
               (session.status === 'running' ||
@@ -1411,6 +1495,7 @@ export class TerminalHostSessions {
             throw error
           })
       )
+
       if (source === null || session.commandExitCode != null) {
         return
       }
@@ -1419,6 +1504,7 @@ export class TerminalHostSessions {
         try: () => z.int().parse(JSON.parse(source)),
         catch: effectError
       })
+
       session.commandExitCode = exitCode
       yield* PubSub.publish(session.runtime, { commandExitCode: exitCode })
     })
@@ -1428,6 +1514,7 @@ export class TerminalHostSessions {
     return Effect.forever(
       Effect.gen(this, function* () {
         const command = yield* Queue.take(session.runtimeCommands)
+
         switch (command._tag) {
           case 'Title':
             session.title = command.title
@@ -1439,11 +1526,13 @@ export class TerminalHostSessions {
                 commandLine: session.commandLine
               }
             })
+
             return
           case 'TitleState':
             yield* PubSub.publish(session.runtime, {
               titleState: command.value
             })
+
             return
           case 'Bell':
             if (raiseAttention(session, 'bell', command.at, command.batch)) {
@@ -1461,8 +1550,10 @@ export class TerminalHostSessions {
 
             const records =
               session.statusRecords ?? new Map<string, ProgramStatusRecord>()
+
             session.statusRecords = records
             const { report } = command
+
             if (report.state === 'clear') {
               for (const id of records.keys()) {
                 if (
@@ -1485,14 +1576,17 @@ export class TerminalHostSessions {
                 message:
                   report.message.replace(/\p{Cf}/gu, '').slice(0, 2048) || null
               })
+
               if (records.size > PROGRAM_STATUS_RECORDS) {
                 records.delete(records.keys().next().value!)
               }
             }
 
             yield* this.applyProgramStatus(session, command)
+
             return
           }
+
           case 'Prompt':
             // A new prompt ends work the program left reported as ongoing.
             if (session.statusRecords) {
@@ -1501,6 +1595,7 @@ export class TerminalHostSessions {
                   session.statusRecords.delete(id)
                 }
               }
+
               yield* this.applyProgramStatus(session, command)
             }
 
@@ -1508,6 +1603,7 @@ export class TerminalHostSessions {
           case 'Reset':
             // Ghostty already cleared the records before reporting the reset.
             session.statusRecords = null
+
             return
           case 'Progress': {
             if (session.statusRecords) {
@@ -1524,6 +1620,7 @@ export class TerminalHostSessions {
               this.options.progressStaleMs -
                 Math.max(0, Date.now() - command.at)
             )
+
             const state = remainingMs > 0 ? command.state : 'idle'
             session.activity = {
               ...IDLE_ACTIVITY,
@@ -1537,6 +1634,7 @@ export class TerminalHostSessions {
             yield* PubSub.publish(session.runtime, {
               activity: session.activity
             })
+
             if (state !== 'idle') {
               session.progressFiber = yield* Effect.forkIn(
                 Effect.sleep(remainingMs).pipe(
@@ -1563,12 +1661,14 @@ export class TerminalHostSessions {
 
             return
           }
+
           case 'Exit':
             // The launcher commits its child result before exiting. Read it
             // before the session-exit event stops product runtime subscriptions.
             yield* this.observeCommandExit(session).pipe(
               Effect.catchAll((error) => Effect.logError(error.message))
             )
+
             if (session.progressFiber) {
               yield* Fiber.interrupt(session.progressFiber)
               session.progressFiber = null
@@ -1584,6 +1684,7 @@ export class TerminalHostSessions {
             session.status = 'exited'
             session.exitCode = command.exitCode
             session.updatedAt = new Date(command.at).toISOString()
+
             if (session.specPath) {
               yield* nodePromise(() =>
                 fs.rm(session.specPath!, { force: true })
@@ -1616,7 +1717,9 @@ export class TerminalHostSessions {
     return Effect.gen(function* () {
       const records =
         session.statusRecords ?? new Map<string, ProgramStatusRecord>()
+
       let top: [string, ProgramStatusRecord] | null = null
+
       for (const entry of records) {
         if (
           !top ||
@@ -1628,6 +1731,7 @@ export class TerminalHostSessions {
       }
 
       let app = top?.[1].app ?? null
+
       for (let id = top?.[0] ?? ''; app === null && id !== '';) {
         id = id.includes('/') ? id.slice(0, id.lastIndexOf('/')) : ''
         app = records.get(id)?.app ?? null
@@ -1642,6 +1746,7 @@ export class TerminalHostSessions {
             ? previous.since
             : new Date(source.at).toISOString()
       }
+
       if (
         session.activity.state !== previous.state ||
         session.activity.kind !== previous.kind ||
@@ -1653,6 +1758,7 @@ export class TerminalHostSessions {
       }
 
       const { state } = session.activity
+
       if (
         (state === 'done' || state === 'blocked' || state === 'error') &&
         (state !== previous.state ||
@@ -1694,11 +1800,13 @@ export class TerminalHostSessions {
 
   private makePauseLease(session: HostedTerminalSession): PauseLease {
     session.boundaryPauseCount += 1
+
     if (session.boundaryPauseCount === 1) {
       session.pty.pause()
     }
 
     let active = true
+
     return {
       release: Effect.sync(() => {
         if (!active) {
@@ -1707,6 +1815,7 @@ export class TerminalHostSessions {
 
         active = false
         session.boundaryPauseCount = Math.max(0, session.boundaryPauseCount - 1)
+
         if (
           (session.status === 'running' ||
             session.pty instanceof PersistentSession) &&
@@ -1729,12 +1838,15 @@ export class TerminalHostSessions {
 
       const completed = yield* Deferred.make<void, TerminalHostSessionError>()
       session.pendingFences.add(completed)
+
       const offered = yield* Queue.offer(session.parserCommands, {
         _tag: 'Fence',
         completed
       })
+
       if (!offered) {
         session.pendingFences.delete(completed)
+
         return yield* Effect.fail(
           new TerminalHostSessionError({ message: 'Terminal parser is closed' })
         )
@@ -1795,6 +1907,7 @@ export class TerminalHostSessions {
   > {
     return Effect.gen(this, function* () {
       const session = yield* this.session(terminalId)
+
       if (!session) {
         return null
       }
@@ -1804,6 +1917,7 @@ export class TerminalHostSessions {
         Effect.gen(this, function* () {
           yield* this.drainParser(session)
           const current = yield* this.session(terminalId)
+
           if (current !== session) {
             return null
           }
@@ -1829,11 +1943,13 @@ export class TerminalHostSessions {
   > {
     return Effect.gen(this, function* () {
       const recovery = this.unavailable.get(terminalId)
+
       if (recovery?.recovering) {
         yield* Deferred.await(recovery.completed)
       }
 
       const unavailable = this.unavailable.get(terminalId)
+
       if (unavailable) {
         return yield* Effect.fail(
           new TerminalHostSessionError({
@@ -1845,12 +1961,14 @@ export class TerminalHostSessions {
       }
 
       const session = yield* this.session(terminalId)
+
       if (!session) {
         return null
       }
 
       const subscription = yield* PubSub.subscribe(session.output)
       const snapshot = yield* this.snapshot(terminalId)
+
       if (!snapshot) {
         return null
       }
@@ -1865,22 +1983,26 @@ export class TerminalHostSessions {
     return Stream.unwrapScoped(
       Effect.gen(this, function* () {
         const recovery = this.unavailable.get(terminalId)
+
         if (recovery?.recovering) {
           yield* Deferred.await(recovery.completed)
         }
 
         const session = yield* this.session(terminalId)
+
         if (!session) {
           return Stream.empty
         }
 
         const subscription = yield* PubSub.subscribe(session.runtime)
         const live = Stream.fromQueue(subscription)
+
         // Completion may have been replayed before subscriptions could attach.
         // Publish the recovered state once, then continue with live events.
         const restored: TerminalHostRuntimeEvent = {
           commandExitCode: session.commandExitCode ?? null
         }
+
         if (session.status === 'exited') {
           restored.exitCode = session.exitCode
         }
@@ -1914,6 +2036,7 @@ export class TerminalHostSessions {
             session.queryTransition === null
           ) {
             const pty = session.pty
+
             if (pty instanceof PersistentSession) {
               // Acknowledge only after the keeper admits this chunk into its
               // bounded PTY writer, propagating backpressure to the browser.
@@ -1936,6 +2059,7 @@ export class TerminalHostSessions {
   > {
     return Effect.gen(this, function* () {
       const session = yield* this.requireSession(terminalId)
+
       if (session.status !== 'running') {
         return yield* Effect.fail(
           new TerminalHostSessionError({ message: 'Terminal is unavailable' })
@@ -1952,11 +2076,13 @@ export class TerminalHostSessions {
 
       const owner =
         session.pty instanceof PersistentSession ? session.pty : null
+
       if (owner) {
         yield* Effect.uninterruptible(nodePromise(() => owner.pauseOwner(true)))
       }
 
       const lease = this.makePauseLease(session)
+
       if (owner) {
         // The keeper has already paused PTY output. Keep its IPC stream readable:
         // a viewer can resize before completing this authority handshake, and
@@ -1966,9 +2092,11 @@ export class TerminalHostSessions {
       }
 
       let retained = false
+
       return yield* Effect.gen(this, function* () {
         yield* this.drainParser(session)
         const current = yield* this.session(terminalId)
+
         if (current !== session) {
           return yield* Effect.fail(
             new TerminalHostSessionError({ message: 'Terminal is unavailable' })
@@ -1981,6 +2109,7 @@ export class TerminalHostSessions {
         const id = crypto.randomUUID()
         session.queryTransition = { id, lease }
         retained = true
+
         return { transitionId: id, fence: session.outputSequence }
       }).pipe(
         Effect.onExit(() =>
@@ -2010,6 +2139,7 @@ export class TerminalHostSessions {
     return Effect.gen(this, function* () {
       const session = yield* this.requireSession(terminalId)
       const transition = session.queryTransition
+
       if (
         session.status !== 'running' ||
         !transition ||
@@ -2050,6 +2180,7 @@ export class TerminalHostSessions {
       session.queryAuthorityGeneration = generation
       session.queryTransition = null
       yield* transition.lease.release
+
       if (session.pty instanceof PersistentSession) {
         const owner = session.pty
         yield* nodePromise(() => owner.pauseOwner(false))
@@ -2062,6 +2193,7 @@ export class TerminalHostSessions {
   ): Effect.Effect<void, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const session = yield* this.session(terminalId)
+
       if (!session || session.status !== 'running') {
         return
       }
@@ -2073,6 +2205,7 @@ export class TerminalHostSessions {
         session.queryAuthorityAttachmentId = null
         session.queryAuthorityGeneration = null
         yield* transition.lease.release
+
         if (session.pty instanceof PersistentSession) {
           const owner = session.pty
           yield* nodePromise(() => owner.pauseOwner(false))
@@ -2085,6 +2218,7 @@ export class TerminalHostSessions {
         session,
         Effect.gen(this, function* () {
           yield* this.drainParser(session)
+
           if ((yield* this.session(terminalId)) !== session) {
             return
           }
@@ -2115,6 +2249,7 @@ export class TerminalHostSessions {
   ): Effect.Effect<void, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const session = yield* this.session(terminalId)
+
       if (!session) {
         return
       }
@@ -2123,6 +2258,7 @@ export class TerminalHostSessions {
         const owner = session.pty
         yield* nodePromise(() => owner.resizeAndWait(cols, rows))
         yield* this.drainParser(session)
+
         return
       }
 
@@ -2130,6 +2266,7 @@ export class TerminalHostSessions {
         session,
         Effect.gen(this, function* () {
           yield* this.drainParser(session)
+
           if ((yield* this.session(terminalId)) !== session) {
             return
           }
@@ -2186,6 +2323,7 @@ export class TerminalHostSessions {
 
   terminalState(terminalId: string): Effect.Effect<TerminalSessionState> {
     const recovery = this.unavailable.get(terminalId)
+
     return (
       recovery ? this.restoreSession(recovery.directory) : Effect.void
     ).pipe(
@@ -2216,6 +2354,7 @@ export class TerminalHostSessions {
   ): Effect.Effect<string | null> {
     return Effect.gen(this, function* () {
       const session = yield* this.session(terminalId)
+
       if (!session) {
         return null
       }
@@ -2224,9 +2363,11 @@ export class TerminalHostSessions {
         .text()
         .split('\n')
         .map((line) => line.trimEnd())
+
       while (content.length && !content.at(-1)?.trim()) {
         content.pop()
       }
+
       return content.slice(-lines).join('\n')
     })
   }
@@ -2245,9 +2386,11 @@ export class TerminalHostSessions {
 
           if (session.pty instanceof PersistentSession) {
             const owner = session.pty
+
             const { input } = yield* decodeTerminalEngineMetadata(
               owner.manifest.metadata
             ).pipe(Effect.orDie)
+
             const metadata = JSON.stringify({
               ...input,
               engineVersion: 1,
@@ -2255,6 +2398,7 @@ export class TerminalHostSessions {
               launchSpecPath: session.specPath,
               updatedAt
             })
+
             yield* nodePromise(() => owner.setMetadata(metadata)).pipe(
               Effect.orDie
             )
@@ -2293,6 +2437,7 @@ export class TerminalHostSessions {
   ): Effect.Effect<TerminalTitleState | null> {
     return Effect.gen(this, function* () {
       const session = yield* this.session(terminalId)
+
       if (!session) {
         return null
       }
@@ -2330,6 +2475,7 @@ export class TerminalHostSessions {
     terminalId: string
   ): Effect.Effect<void, TerminalHostSessionError> {
     const recovery = this.unavailable.get(terminalId)
+
     if (recovery || this.unidentified.size > 0) {
       return this.recoveryBarrier(recovery?.terminal.worktreeId ?? null)
     }
@@ -2346,22 +2492,28 @@ export class TerminalHostSessions {
   ): Effect.Effect<string[], TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       yield* this.recoveryBarrier(worktreeId)
+
       const sessions = [
         ...(yield* SynchronizedRef.get(this.sessions)).values()
       ].filter(
         (session): session is HostedTerminalSession =>
           session !== null && session.worktreeId === worktreeId
       )
+
       const terminalIds = sessions.map((session) => session.id)
+
       const started = yield* Effect.forEach(sessions, (session) =>
         this.beginDestroy(session)
       )
+
       const pending = [...this.pendingCleanups]
         .filter((cleanup) => cleanup.worktreeId === worktreeId)
         .map((cleanup) => cleanup.completed)
+
       yield* Effect.forEach([...started, ...pending], Deferred.await, {
         concurrency: 'unbounded'
       }).pipe(Effect.mapError(effectError))
+
       return terminalIds
     })
   }
@@ -2371,6 +2523,7 @@ export class TerminalHostSessions {
       const sessions = [
         ...(yield* SynchronizedRef.get(this.sessions)).values()
       ].filter((session): session is HostedTerminalSession => session !== null)
+
       if (this.persistentOptions.sessionExecutable !== undefined) {
         yield* SynchronizedRef.set(this.sessions, new Map())
         yield* Effect.forEach(
@@ -2395,15 +2548,18 @@ export class TerminalHostSessions {
           { discard: true }
         )
         yield* FiberSet.awaitEmpty(this.cleanups)
+
         return
       }
 
       const started = yield* Effect.forEach(sessions, (session) =>
         this.beginDestroy(session)
       )
+
       const pending = [...this.pendingCleanups].map(
         (cleanup) => cleanup.completed
       )
+
       yield* Effect.forEach([...started, ...pending], Deferred.await, {
         concurrency: 'unbounded'
       }).pipe(Effect.mapError(effectError))
@@ -2427,6 +2583,7 @@ export class TerminalHostSessions {
       if ((yield* this.session(session.id)) !== session) {
         const done = yield* Deferred.make<void, unknown>()
         yield* Deferred.succeed(done, undefined)
+
         return done
       }
 
@@ -2446,21 +2603,26 @@ export class TerminalHostSessions {
 
           const next = new Map(current)
           next.delete(session.id)
+
           return [true, next] as const
         }
       )
+
       if (!removed) {
         const done = yield* Deferred.make<void, unknown>()
         yield* Deferred.succeed(done, undefined)
+
         return done
       }
 
       yield* Scope.close(session.scope, Exit.void)
       const completed = yield* Deferred.make<void, unknown>()
+
       const cleanup: PendingCleanup = {
         worktreeId: session.worktreeId,
         completed
       }
+
       this.pendingCleanups.add(cleanup)
       yield* FiberSet.run(
         this.cleanups,
@@ -2488,6 +2650,7 @@ export class TerminalHostSessions {
           Effect.asVoid
         )
       )
+
       return completed
     })
   }

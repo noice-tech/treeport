@@ -65,9 +65,11 @@ describe('ordinary folder projects', () => {
     ).toEqual([])
 
     const openedEvents: unknown[] = []
+
     const unsubscribe = service.events.subscribe((event) =>
       openedEvents.push(event)
     )
+
     await service.requestWorkspaceOpen(
       registered.worktrees[0]!.id,
       'term_source'
@@ -86,6 +88,7 @@ describe('ordinary folder projects', () => {
     const terminalId = (
       await service.createTerminal(registered.worktrees[0]!.id, 'Shell')
     ).id
+
     await database.db.run(sql`
       UPDATE projects
       SET repository_device = 'previous-boot-device',
@@ -94,6 +97,7 @@ describe('ordinary folder projects', () => {
     `)
     database.close()
     databases.splice(databases.indexOf(database), 1)
+
     const restartedService = integrationService(
       new TreeportService({
         config,
@@ -101,6 +105,7 @@ describe('ordinary folder projects', () => {
         terminalHost: new TerminalHostDouble(runner)
       })
     )
+
     services.push(restartedService)
     const inventoryAttemptsBeforePrepare = runner.terminalInventoryAttempts
     const createAttemptsBeforePrepare = runner.terminalCreateAttempts

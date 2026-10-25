@@ -15,8 +15,10 @@ import {
 } from './lifecycle.js'
 import { serviceInstalled, serviceStatus, serviceStop } from './service.js'
 import { humanOutput, type HumanOutput } from './output.js'
+
 const PACKAGE_NAME = '@treeport/treeport'
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+
 const INSTALLATION_PHASES = new Set<LocalUpdatePhase>([
   'stop',
   'activate',
@@ -271,6 +273,7 @@ export class LocalUpdateError extends Error {
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (error) {
     // SAFETY: Node process.kill reports system failures through ErrnoException.
@@ -292,6 +295,7 @@ async function runCommand(
       env: environment,
       stdio: ['ignore', 'pipe', 'pipe']
     })
+
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -315,6 +319,7 @@ function commandFailure(command: string, result: CommandResult): string {
   const detail = [result.stderr.trim(), result.stdout.trim()]
     .filter(Boolean)
     .join('\n')
+
   return `${command} failed${
     detail ? `: ${detail}` : ` with status ${result.code}`
   }`
@@ -354,6 +359,7 @@ export async function readLocalUpdateProgress(
   dataDir: string
 ): Promise<LocalUpdateProgress> {
   const updateDirectory = path.join(dataDir, 'updates')
+
   const [operation, lock] = await Promise.all([
     readOperation(path.join(updateDirectory, 'operation.json')),
     fs
@@ -362,7 +368,9 @@ export async function readLocalUpdateProgress(
       .then((result) => (result.success ? result.data : null))
       .catch(() => null)
   ])
+
   const active = Boolean(lock && processExists(lock.pid))
+
   const operationMatchesLock =
     !lock || operation?.operationId === lock.operationId
 
@@ -386,6 +394,7 @@ export function isCanonicalTreeportVersion(version: string): boolean {
 export function compareTreeportVersions(left: string, right: string): number {
   const leftMatch = VERSION.exec(left)
   const rightMatch = VERSION.exec(right)
+
   if (!leftMatch || !rightMatch) {
     throw new LocalUpdateError(
       'UPDATE_RELEASE_INVALID',
@@ -396,10 +405,12 @@ export function compareTreeportVersions(left: string, right: string): number {
 
   for (let index = 1; index <= 3; index += 1) {
     const difference = Number(leftMatch[index]) - Number(rightMatch[index])
+
     if (difference !== 0) {
       return difference
     }
   }
+
   return 0
 }
 
@@ -413,7 +424,9 @@ async function terminalIds(apiUrl: string): Promise<string[]> {
   const result = await fetch(`${apiUrl}/api/projects`)
     .then(async (response) => (response.ok ? response.json() : null))
     .catch(() => null)
+
   const parsed = decodeUnknownOrNull(projectsResponseSchema, result)
+
   if (!parsed) {
     throw new Error('Treeport could not read the terminal inventory.')
   }
@@ -430,6 +443,7 @@ async function stopUpdateDaemon(
 ): Promise<void> {
   if (lifecycle === 'service') {
     const stopped = await serviceStop()
+
     if (stopped.administratorCommand) {
       throw new LocalUpdateError(
         'UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED',
@@ -443,6 +457,7 @@ async function stopUpdateDaemon(
     }
 
     const deadline = Date.now() + 7_000
+
     while ((await daemonStatus()).state) {
       if (Date.now() >= deadline) {
         throw new Error(
@@ -462,6 +477,7 @@ async function startThroughStableEntrypoint(
   environment: NodeJS.ProcessEnv
 ): Promise<void> {
   const result = await runCommand(entrypoint, ['start', '--json'], environment)
+
   if (result.code !== 0) {
     throw new Error(commandFailure('treeport start', result))
   }
@@ -482,6 +498,7 @@ export async function inspectLocalUpdateInstallation(
   environment: NodeJS.ProcessEnv = process.env
 ): Promise<LocalUpdateInstallation> {
   const entrypointValue = environment.TREEPORT_CLI_ENTRYPOINT?.trim()
+
   if (!entrypointValue || !path.isAbsolute(entrypointValue)) {
     throw new LocalUpdateError(
       'UPDATE_INSTALLATION_UNSUPPORTED',
@@ -491,6 +508,7 @@ export async function inspectLocalUpdateInstallation(
   }
 
   const npm = await runCommand('npm', ['prefix', '--global'], environment)
+
   if (npm.code !== 0 || !npm.stdout.trim()) {
     throw new LocalUpdateError(
       'UPDATE_INSTALLATION_UNSUPPORTED',
@@ -502,6 +520,7 @@ export async function inspectLocalUpdateInstallation(
   const prefix = path.resolve(npm.stdout.trim())
   const entrypoint = path.resolve(entrypointValue)
   const expectedEntrypoint = path.join(prefix, 'bin', 'treeport')
+
   if (entrypoint !== expectedEntrypoint) {
     throw new LocalUpdateError(
       'UPDATE_INSTALLATION_UNSUPPORTED',
@@ -513,6 +532,7 @@ export async function inspectLocalUpdateInstallation(
   const packageDirectory = path.dirname(
     await resolvePackagePath('package.json')
   )
+
   const directPackage = path.join(
     prefix,
     'lib',
@@ -520,8 +540,10 @@ export async function inspectLocalUpdateInstallation(
     '@treeport',
     'treeport'
   )
+
   const managedRoot = path.join(prefix, 'lib', 'treeport')
   const currentLink = path.join(managedRoot, 'current')
+
   const managedPackage = path.join(
     currentLink,
     'lib',
@@ -529,11 +551,13 @@ export async function inspectLocalUpdateInstallation(
     '@treeport',
     'treeport'
   )
+
   const [actualPackage, actualDirect, actualManaged] = await Promise.all([
     fs.realpath(packageDirectory),
     fs.realpath(directPackage).catch(() => null),
     fs.realpath(managedPackage).catch(() => null)
   ])
+
   if (actualPackage !== actualDirect && actualPackage !== actualManaged) {
     throw new LocalUpdateError(
       'UPDATE_INSTALLATION_UNSUPPORTED',
@@ -546,6 +570,7 @@ export async function inspectLocalUpdateInstallation(
     .readFile(path.join(packageDirectory, 'package.json'), 'utf8')
     .then((value) => packageSchema.safeParse(JSON.parse(value)))
     .catch(() => null)
+
   if (!manifest?.success || !VERSION.test(manifest.data.version)) {
     throw new LocalUpdateError(
       'UPDATE_INSTALLATION_UNSUPPORTED',
@@ -578,6 +603,7 @@ export async function inspectLocalUpdateInstallation(
     path.dirname(entrypoint),
     `.treeport-update-${process.pid}-${crypto.randomUUID()}`
   )
+
   await fs
     .writeFile(writeProbe, '', { mode: 0o600, flag: 'wx' })
     .then(() => fs.rename(writeProbe, `${writeProbe}.renamed`))
@@ -617,6 +643,7 @@ export async function resolveLatestTreeportRelease(
     ['view', `${PACKAGE_NAME}@latest`, '--json'],
     environment
   )
+
   if (releaseCommand.code !== 0) {
     throw new LocalUpdateError(
       'UPDATE_RELEASE_RESOLUTION_FAILED',
@@ -628,6 +655,7 @@ export async function resolveLatestTreeportRelease(
   const release = await Promise.resolve(releaseCommand.stdout)
     .then((value) => releaseSchema.safeParse(JSON.parse(value)))
     .catch(() => null)
+
   if (!release?.success || !VERSION.test(release.data.version)) {
     throw new LocalUpdateError(
       'UPDATE_RELEASE_INVALID',
@@ -645,8 +673,10 @@ export async function runLocalUpdate(
   const environment = options.environment ?? process.env
   const progress = options.progress ?? (() => undefined)
   const explicitApiUrl = environment.TREEPORT_API_URL?.trim()
+
   if (explicitApiUrl) {
     const parsed = URL.canParse(explicitApiUrl) ? new URL(explicitApiUrl) : null
+
     if (
       !parsed ||
       !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(parsed.hostname)
@@ -674,20 +704,24 @@ export async function runLocalUpdate(
   await fs.mkdir(updateDirectory, { recursive: true, mode: 0o700 })
 
   const operationId = crypto.randomUUID()
+
   const provisionalVersion = await fs
     .readFile(await resolvePackagePath('package.json'), 'utf8')
     .then((value) => packageSchema.parse(JSON.parse(value)).version)
+
   const lock = {
     operationId,
     pid: process.pid,
     fromVersion: provisionalVersion,
     startedAt: new Date().toISOString()
   }
+
   const lockAcquired = await fs
     .open(lockPath, 'wx', 0o600)
     .then(async (file) => {
       await file.writeFile(`${JSON.stringify(lock)}\n`)
       await file.close()
+
       return true
     })
     .catch(async (error: NodeJS.ErrnoException) => {
@@ -700,6 +734,7 @@ export async function runLocalUpdate(
         .then((value) => lockSchema.safeParse(JSON.parse(value)))
         .then((result) => (result.success ? result.data : null))
         .catch(() => null)
+
       if (owner && processExists(owner.pid)) {
         throw new LocalUpdateError(
           'UPDATE_IN_PROGRESS',
@@ -712,6 +747,7 @@ export async function runLocalUpdate(
       const file = await fs.open(lockPath, 'wx', 0o600)
       await file.writeFile(`${JSON.stringify(lock)}\n`)
       await file.close()
+
       return true
     })
 
@@ -725,10 +761,12 @@ export async function runLocalUpdate(
 
   let interrupted = false
   const cancellation = new AbortController()
+
   const interrupt = () => {
     interrupted = true
     cancellation.abort()
   }
+
   process.on('SIGINT', interrupt)
   process.on('SIGTERM', interrupt)
 
@@ -740,16 +778,19 @@ export async function runLocalUpdate(
     toVersion: null,
     updatedAt: new Date().toISOString()
   }
+
   const save = async (phase: LocalUpdatePhase) => {
     operation = { ...operation, phase, updatedAt: new Date().toISOString() }
     await writeJson(operationPath, operation)
   }
+
   let stagedTarget: string | null = null
   let activated = false
   let daemonWasRunning = false
   let daemonLifecycle: 'treeport' | 'service' | null = null
   let shouldRunAfterUpdate = false
   let terminalIdsBefore: string[] = []
+
   let installation: Awaited<
     ReturnType<typeof inspectLocalUpdateInstallation>
   > | null = null
@@ -760,6 +801,7 @@ export async function runLocalUpdate(
 
     await save('inspect')
     const initialDaemon = await daemonStatus()
+
     if (initialDaemon.state && !initialDaemon.verified) {
       throw new LocalUpdateError(
         'UPDATE_DAEMON_OWNERSHIP_FAILED',
@@ -779,6 +821,7 @@ export async function runLocalUpdate(
     if (explicitApiUrl && initialDaemon.state) {
       const selectedUrl = new URL(explicitApiUrl)
       const localUrl = new URL(initialDaemon.state.apiUrl)
+
       if (
         selectedUrl.protocol !== localUrl.protocol ||
         (selectedUrl.port || '80') !== (localUrl.port || '80')
@@ -793,6 +836,7 @@ export async function runLocalUpdate(
 
     const installedService = await serviceInstalled()
     const serviceBefore = installedService ? await serviceStatus() : null
+
     if (
       installedService &&
       initialDaemon.running &&
@@ -810,10 +854,12 @@ export async function runLocalUpdate(
     const release = await resolveLatestTreeportRelease(environment, operationId)
 
     operation.toVersion = release.version
+
     const comparison = compareTreeportVersions(
       release.version,
       installation.version
     )
+
     if (comparison < 0) {
       throw new LocalUpdateError(
         'UPDATE_DOWNGRADE_REFUSED',
@@ -826,6 +872,7 @@ export async function runLocalUpdate(
       const currentTerminals = initialDaemon.verified
         ? await terminalIds(initialDaemon.state!.apiUrl)
         : []
+
       const currentLifecycle = initialDaemon.verified
         ? initialDaemon.health!.daemonLifecycle === 'service'
           ? 'service'
@@ -835,7 +882,9 @@ export async function runLocalUpdate(
         : installedService
           ? 'service'
           : 'treeport'
+
       await save('complete')
+
       return {
         schemaVersion: 1,
         operationId,
@@ -861,8 +910,10 @@ export async function runLocalUpdate(
 
     const intendedRunning =
       initialDaemon.verified || serviceBefore?.requestedState === 'running'
+
     const shouldRun = intendedRunning || Boolean(options.start)
     shouldRunAfterUpdate = shouldRun
+
     if (serviceBefore) {
       // The service owns migration/preflight diagnostics. Do not synthesize a
       // privileged stop flow, or discover a legacy launcher after activation.
@@ -906,6 +957,7 @@ export async function runLocalUpdate(
       daemonWasRunning: intendedRunning,
       startRequested: Boolean(options.start)
     }
+
     if (!options.yes && !interrupted) {
       if (options.confirm) {
         if (!(await options.confirm(preview, cancellation.signal))) {
@@ -949,20 +1001,25 @@ export async function runLocalUpdate(
       installation.managedRoot,
       `.staging-${release.version}-${operationId}`
     )
+
     const targetPath = path.join(
       installation.versionsDirectory,
       release.version
     )
+
     stagedTarget = stagingPath
     await save('stage')
     progress(`Downloading Treeport ${release.version}…`)
     await fs.rm(stagingPath, { recursive: true, force: true })
+
     const downloadPath = path.join(
       installation.managedRoot,
       `.download-${operationId}`
     )
+
     await fs.rm(downloadPath, { recursive: true, force: true })
     await fs.mkdir(downloadPath, { recursive: true, mode: 0o700 })
+
     const packed = await runCommand(
       'npm',
       [
@@ -975,6 +1032,7 @@ export async function runLocalUpdate(
       ],
       environment
     )
+
     const packedRelease = await Promise.resolve(packed.stdout)
       .then((value) =>
         packedReleaseSchema.safeParse(
@@ -982,6 +1040,7 @@ export async function runLocalUpdate(
         )
       )
       .catch(() => null)
+
     if (
       !packedRelease?.success ||
       packedRelease.data[0].integrity !== release.dist.integrity ||
@@ -998,6 +1057,7 @@ export async function runLocalUpdate(
     }
 
     const tarballPath = path.join(downloadPath, packedRelease.data[0].filename)
+
     const install = await runCommand(
       'npm',
       [
@@ -1012,7 +1072,9 @@ export async function runLocalUpdate(
       ],
       environment
     )
+
     await fs.rm(downloadPath, { recursive: true, force: true })
+
     if (install.code !== 0) {
       throw new LocalUpdateError(
         'UPDATE_STAGING_FAILED',
@@ -1022,6 +1084,7 @@ export async function runLocalUpdate(
     }
 
     await save('verify')
+
     const stagedPackage = path.join(
       stagingPath,
       'lib',
@@ -1029,10 +1092,12 @@ export async function runLocalUpdate(
       '@treeport',
       'treeport'
     )
+
     const stagedManifest = await fs
       .readFile(path.join(stagedPackage, 'package.json'), 'utf8')
       .then((value) => packageSchema.safeParse(JSON.parse(value)))
       .catch(() => null)
+
     if (
       !stagedManifest?.success ||
       stagedManifest.data.version !== release.version
@@ -1067,9 +1132,11 @@ export async function runLocalUpdate(
         { phase: 'verify', operationId, toVersion: release.version }
       )
     })
+
     const verificationData = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-update-verify-')
     )
+
     const stagedVersion = await runCommand(
       process.execPath,
       [
@@ -1085,7 +1152,9 @@ export async function runLocalUpdate(
         TREEPORT_CLI_ENTRYPOINT: path.join(stagingPath, 'bin', 'treeport')
       }
     )
+
     await fs.rm(verificationData, { recursive: true, force: true })
+
     const verifiedVersion = await Promise.resolve(stagedVersion.stdout)
       .then((value) =>
         z
@@ -1093,6 +1162,7 @@ export async function runLocalUpdate(
           .safeParse(stagedVersion.code === 0 ? JSON.parse(value) : null)
       )
       .catch(() => null)
+
     if (
       !verifiedVersion?.success ||
       verifiedVersion.data.cli !== release.version
@@ -1124,9 +1194,11 @@ export async function runLocalUpdate(
           TREEPORT_RUNTIME_DIR: paths.runtimeDir
         }
       )
+
       const parsed = await Promise.resolve(command.stdout)
         .then((value) => terminalHostProbeSchema.safeParse(JSON.parse(value)))
         .catch(() => null)
+
       if (!parsed?.success) {
         throw new LocalUpdateError(
           'UPDATE_VERIFICATION_FAILED',
@@ -1142,7 +1214,9 @@ export async function runLocalUpdate(
 
       return parsed.data
     }
+
     const hostProbe = await probeTerminalHost()
+
     if (!hostProbe.compatible) {
       throw new LocalUpdateError(
         'UPDATE_TERMINAL_HOST_INCOMPATIBLE',
@@ -1160,6 +1234,7 @@ export async function runLocalUpdate(
     }
 
     const daemonBefore = await daemonStatus()
+
     if (daemonBefore.state && !daemonBefore.verified) {
       throw new LocalUpdateError(
         'UPDATE_DAEMON_OWNERSHIP_FAILED',
@@ -1180,6 +1255,7 @@ export async function runLocalUpdate(
     }
 
     const serviceReady = installedService ? await serviceStatus() : null
+
     if (
       serviceReady?.installed !== serviceBefore?.installed ||
       serviceReady?.requestedState !== serviceBefore?.requestedState ||
@@ -1213,6 +1289,7 @@ export async function runLocalUpdate(
       : []
 
     const transitionHostProbe = await probeTerminalHost()
+
     if (!transitionHostProbe.compatible) {
       throw new LocalUpdateError(
         'UPDATE_TERMINAL_HOST_INCOMPATIBLE',
@@ -1250,6 +1327,7 @@ export async function runLocalUpdate(
     }
 
     await save('stop')
+
     // A stopped service can still have an in-flight supervisor launch. Await
     // its shutdown acknowledgement before switching binaries, independently
     // of whether this transaction should start Treeport afterward.
@@ -1263,10 +1341,12 @@ export async function runLocalUpdate(
     await fs.rm(targetPath, { recursive: true, force: true })
     await fs.rename(stagingPath, targetPath)
     stagedTarget = targetPath
+
     const currentExists = await fs
       .lstat(installation.currentLink)
       .then(() => true)
       .catch(() => false)
+
     if (!currentExists) {
       await fs.symlink(installation.prefix, installation.currentLink)
     } else if (!installation.managed) {
@@ -1274,6 +1354,7 @@ export async function runLocalUpdate(
     }
 
     await save('activate')
+
     const launcher = `#!/bin/sh\nset -eu\n# TREEPORT_MANAGED_LAUNCHER=1\nexport TREEPORT_INSTALLATION_METHOD=npm\nexport TREEPORT_CLI_ENTRYPOINT=${shellQuote(
       installation.entrypoint
     )}\nexec ${shellQuote(process.execPath)} ${shellQuote(
@@ -1287,6 +1368,7 @@ export async function runLocalUpdate(
         'treeport.mjs'
       )
     )} "$@"\n`
+
     const temporaryLauncher = `${installation.entrypoint}.${process.pid}.${operationId}.tmp`
     await fs.writeFile(temporaryLauncher, launcher, { mode: 0o755 })
     await fs.chmod(temporaryLauncher, 0o755)
@@ -1297,16 +1379,20 @@ export async function runLocalUpdate(
 
     let daemonAfter: Awaited<ReturnType<typeof daemonStatus>> | null = null
     let terminalsAfter: string[] = []
+
     if (shouldRun) {
       const startupCommitPath = path.join(
         updateDirectory,
         `startup-commit-${operationId}`
       )
+
       const startupCommitAcknowledgement = `${startupCommitPath}.ack`
+
       const startupTransactionPath = path.join(
         updateDirectory,
         'startup-transaction.json'
       )
+
       await Promise.all([
         fs.rm(startupCommitPath, { force: true }),
         fs.rm(startupCommitAcknowledgement, { force: true }),
@@ -1335,6 +1421,7 @@ export async function runLocalUpdate(
       await save('health_check')
       const healthDeadline = Date.now() + 10_000
       daemonAfter = await daemonStatus()
+
       while (
         Date.now() < healthDeadline &&
         (!daemonAfter.verified ||
@@ -1343,6 +1430,7 @@ export async function runLocalUpdate(
         await new Promise((resolve) => setTimeout(resolve, 100))
         daemonAfter = await daemonStatus()
       }
+
       if (
         !daemonAfter.running ||
         !daemonAfter.verified ||
@@ -1359,6 +1447,7 @@ export async function runLocalUpdate(
 
       if (daemonLifecycle === 'service') {
         const serviceAfter = await serviceStatus()
+
         if (
           !serviceAfter.healthy ||
           !serviceAfter.installed ||
@@ -1374,9 +1463,11 @@ export async function runLocalUpdate(
       }
 
       terminalsAfter = await terminalIds(daemonAfter.state!.apiUrl)
+
       const missing = terminalIdsBefore.filter(
         (terminalId) => !terminalsAfter.includes(terminalId)
       )
+
       if (missing.length > 0) {
         throw new LocalUpdateError(
           'UPDATE_TERMINAL_VERIFICATION_FAILED',
@@ -1390,6 +1481,7 @@ export async function runLocalUpdate(
         flag: 'wx'
       })
       const commitDeadline = Date.now() + 5_000
+
       while (Date.now() < commitDeadline) {
         if (
           await fs
@@ -1407,7 +1499,9 @@ export async function runLocalUpdate(
         .access(startupCommitAcknowledgement)
         .then(() => true)
         .catch(() => false)
+
       await fs.rm(startupCommitAcknowledgement, { force: true })
+
       if (!committed) {
         throw new LocalUpdateError(
           'UPDATE_HEALTH_VERIFICATION_FAILED',
@@ -1418,6 +1512,7 @@ export async function runLocalUpdate(
     }
 
     await save('complete')
+
     // Detached hosts may still execute their release's launcher for a later
     // terminal creation. Retaining managed release directories is the smallest
     // safe asset policy; a future cleanup may remove one only after proving no
@@ -1446,6 +1541,7 @@ export async function runLocalUpdate(
   } catch (error) {
     const failedPhase = operation.phase
     let candidateStopFailure: string | null = null
+
     if (
       activated &&
       shouldRunAfterUpdate &&
@@ -1470,6 +1566,7 @@ export async function runLocalUpdate(
             : failedPhase === 'verify'
               ? 'UPDATE_VERIFICATION_FAILED'
               : 'UPDATE_INSTALLATION_UNSUPPORTED'
+
       throw new LocalUpdateError(
         code,
         error instanceof Error ? error.message : String(error),
@@ -1483,13 +1580,16 @@ export async function runLocalUpdate(
     }
 
     await save('failed').catch(() => undefined)
+
     const candidateStopCause = candidateStopFailure
       ? `The failed candidate daemon could not be stopped: ${candidateStopFailure}`
       : null
+
     const localUpdateCause =
       error instanceof LocalUpdateError
         ? [error.details.cause, candidateStopCause].filter(Boolean).join('\n')
         : null
+
     const details: LocalUpdateErrorDetails =
       error instanceof LocalUpdateError
         ? {
@@ -1515,6 +1615,7 @@ export async function runLocalUpdate(
               .join('\n'),
             next: LOCAL_UPDATE_REINSTALL_GUIDANCE
           }
+
     if (error instanceof LocalUpdateError && localUpdateCause) {
       Object.assign(details, { cause: localUpdateCause })
     }
@@ -1529,6 +1630,7 @@ export async function runLocalUpdate(
   } finally {
     process.off('SIGINT', interrupt)
     process.off('SIGTERM', interrupt)
+
     if (installation) {
       await fs
         .rm(path.join(installation.managedRoot, `.download-${operationId}`), {

@@ -56,6 +56,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
 
             const removingTerminalIds = new Map(current.removingTerminalIds)
             removingTerminalIds.set(terminalId, worktreeId)
+
             return [null, { ...current, removingTerminalIds }] as const
           }).pipe(
             Effect.flatMap((error) =>
@@ -67,6 +68,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
           Ref.update(state, (current) => {
             const removingTerminalIds = new Map(current.removingTerminalIds)
             removingTerminalIds.delete(terminalId)
+
             return { ...current, removingTerminalIds }
           }),
 
@@ -96,6 +98,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
         ) =>
           Ref.update(state, (current) => {
             const terminalClosePolicies = new Map(current.terminalClosePolicies)
+
             for (const terminal of terminals) {
               if (terminal.closeOnExit || terminal.closeOnSuccess) {
                 terminalClosePolicies.set(
@@ -106,6 +109,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
                 terminalClosePolicies.delete(terminal.terminalId)
               }
             }
+
             return { ...current, terminalClosePolicies }
           }),
 
@@ -125,6 +129,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             for (const terminal of terminals) {
               const previous = cachedTerminals.get(terminal.id)
               cachedTerminals.set(terminal.id, terminal)
+
               if (
                 previous &&
                 (previous.status !== terminal.status ||
@@ -135,6 +140,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
                 updatedTerminalIds.push(terminal.id)
               }
             }
+
             for (const terminalId of previousIds ?? []) {
               if (!currentIds.has(terminalId)) {
                 cachedTerminals.delete(terminalId)
@@ -142,6 +148,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
                 removedTerminalIds.push(terminalId)
               }
             }
+
             terminalIdsByWorktree.set(worktreeId, currentIds)
 
             return [
@@ -163,6 +170,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             const terminals = new Map(current.terminals)
             terminals.set(terminal.id, terminal)
             const terminalClosePolicies = new Map(current.terminalClosePolicies)
+
             if (closePolicy) {
               terminalClosePolicies.set(terminal.id, closePolicy)
             } else {
@@ -170,11 +178,14 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             }
 
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
+
             const terminalIds = new Set(
               terminalIdsByWorktree.get(terminal.worktreeId) ?? []
             )
+
             terminalIds.add(terminal.id)
             terminalIdsByWorktree.set(terminal.worktreeId, terminalIds)
+
             return {
               terminals,
               removingTerminalIds: current.removingTerminalIds,
@@ -187,6 +198,7 @@ export class TerminalState extends Effect.Service<TerminalState>()(
           Ref.update(state, (current) => {
             const terminals = new Map(current.terminals)
             terminals.set(terminal.id, terminal)
+
             return { ...current, terminals }
           }),
 
@@ -197,11 +209,14 @@ export class TerminalState extends Effect.Service<TerminalState>()(
             const terminalClosePolicies = new Map(current.terminalClosePolicies)
             terminalClosePolicies.delete(terminalId)
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
+
             const terminalIds = new Set(
               terminalIdsByWorktree.get(worktreeId) ?? []
             )
+
             terminalIds.delete(terminalId)
             terminalIdsByWorktree.set(worktreeId, terminalIds)
+
             return {
               terminals,
               removingTerminalIds: current.removingTerminalIds,
@@ -219,20 +234,25 @@ export class TerminalState extends Effect.Service<TerminalState>()(
               ...(current.terminalIdsByWorktree.get(worktreeId) ?? []),
               ...discoveredTerminalIds
             ])
+
             const terminals = new Map(current.terminals)
             const terminalClosePolicies = new Map(current.terminalClosePolicies)
+
             for (const terminalId of terminalIds) {
               terminals.delete(terminalId)
               terminalClosePolicies.delete(terminalId)
             }
+
             const terminalIdsByWorktree = new Map(current.terminalIdsByWorktree)
             terminalIdsByWorktree.delete(worktreeId)
             const removingTerminalIds = new Map(current.removingTerminalIds)
+
             for (const [terminalId, treeId] of removingTerminalIds) {
               if (treeId === worktreeId) {
                 removingTerminalIds.delete(terminalId)
               }
             }
+
             return [
               [...terminalIds],
               {

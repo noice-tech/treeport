@@ -39,6 +39,7 @@ export function makeHost(
     let resizeObserver: ResizeObserver | null = null
     let keyboardViewportCleanup: (() => void) | null = null
     const reconnectWhenOnline = () => dependencies.reconnectImmediately()
+
     const reconnectWhenVisible = () => {
       if (document.visibilityState === 'visible') {
         dependencies.reconnectImmediately()
@@ -51,6 +52,7 @@ export function makeHost(
       }
 
       state.host = host
+
       if (!state.wrapper) {
         state.wrapper = document.createElement('div')
         state.wrapper.className = 'terminal-session-host h-full min-h-0 min-w-0'
@@ -58,6 +60,7 @@ export function makeHost(
 
       host.appendChild(state.wrapper)
       const terminal = state.terminal
+
       if (terminal && detachedScroll) {
         const element = terminal.element
         element.scrollTop = detachedScroll.following
@@ -70,28 +73,35 @@ export function makeHost(
       }
 
       state.socket?.manager.reconnection(true)
+
       if (!state.opened) {
         const opened = Effect.runSyncExit(
           Effect.sync(() => dependencies.openTerminal())
         )
+
         if (Exit.isFailure(opened)) {
           dependencies.failRendering(Cause.squash(opened.cause))
+
           return
         }
       }
 
       keyboardViewportCleanup?.()
       keyboardViewportCleanup = null
+
       const isIOS =
         /iPad|iPhone|iPod/.test(navigator.userAgent) ||
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
       const viewport = window.visualViewport
       const appFrame = document.querySelector<HTMLElement>('.app-frame')
+
       if (isIOS && viewport && appFrame) {
         // WebKit leaves the layout viewport unchanged when the software keyboard
         // opens. Size and position the application against the visual viewport
         // instead of scrolling the document between the cursor and accessory row.
         let viewportFrame: number | null = null
+
         const syncKeyboardViewport = () => {
           if (viewportFrame !== null) {
             window.cancelAnimationFrame(viewportFrame)
@@ -99,16 +109,20 @@ export function makeHost(
 
           viewportFrame = window.requestAnimationFrame(() => {
             viewportFrame = null
+
             const textarea =
               state.wrapper?.querySelector<HTMLTextAreaElement>(
                 '.wterm textarea'
               )
+
             const keyboardOpen =
               document.activeElement === textarea &&
               viewport.height < document.documentElement.clientHeight - 100
+
             if (!keyboardOpen) {
               appFrame.style.removeProperty('--app-visual-viewport-height')
               appFrame.style.removeProperty('--app-visual-viewport-offset-top')
+
               return
             }
 
@@ -123,12 +137,14 @@ export function makeHost(
             )
           })
         }
+
         viewport.addEventListener('resize', syncKeyboardViewport)
         viewport.addEventListener('scroll', syncKeyboardViewport)
         syncKeyboardViewport()
         keyboardViewportCleanup = () => {
           viewport.removeEventListener('resize', syncKeyboardViewport)
           viewport.removeEventListener('scroll', syncKeyboardViewport)
+
           if (viewportFrame !== null) {
             window.cancelAnimationFrame(viewportFrame)
           }
@@ -141,6 +157,7 @@ export function makeHost(
       resizeObserver?.disconnect()
       resizeObserver = new ResizeObserver(() => dependencies.scheduleFit())
       resizeObserver.observe(host)
+
       if (!wakeListenersAttached) {
         window.addEventListener('online', reconnectWhenOnline)
         document.addEventListener('visibilitychange', reconnectWhenVisible)
@@ -148,6 +165,7 @@ export function makeHost(
       }
 
       dependencies.scheduleFit()
+
       if (!state.socket && state.opened) {
         dependencies.connect()
       } else {
@@ -163,6 +181,7 @@ export function makeHost(
       resizeObserver?.disconnect()
       resizeObserver = null
       state.socket?.manager.reconnection(false)
+
       if (wakeListenersAttached) {
         window.removeEventListener('online', reconnectWhenOnline)
         document.removeEventListener('visibilitychange', reconnectWhenVisible)
@@ -174,6 +193,7 @@ export function makeHost(
       dependencies.cancelControllerResizeIntent(false)
       state.selectionDragCancel?.()
       const element = state.terminal?.element
+
       if (element) {
         detachedScroll = {
           top: element.scrollTop,

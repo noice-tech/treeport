@@ -58,6 +58,7 @@ interface AppServicesOptions {
 
 const PREFIX = '/api/app-services/'
 const LOG_LIMIT = 64 * 1024
+
 // Package state is reconciled lazily from settings fingerprints, so polling
 // picks up installs, removals, and settings edits without change events.
 const SYNC_INTERVAL_MS = 5_000
@@ -83,6 +84,7 @@ export class AppServices {
   /** Resolve a service's API token to the package it acts for. */
   access(token: string): PackageServiceAccess | null {
     const entry = this.tokens.get(token)
+
     return entry
       ? {
           packageId: entry.declaration.packageId,
@@ -101,17 +103,20 @@ export class AppServices {
       .finally(() => {
         this.syncing = null
       })
+
     return this.syncing
   }
 
   private async reconcile(): Promise<void> {
     const declarations = await this.options.declarations()
     const next = new Map<string, PackageServiceDeclaration>()
+
     for (const declaration of declarations) {
       // Hash the real path so a service keeps its data directory and URL.
       const root = await fs
         .realpath(declaration.root)
         .catch(() => declaration.root)
+
       next.set(
         crypto
           .createHash('sha256')
@@ -121,12 +126,14 @@ export class AppServices {
         declaration
       )
     }
+
     if (this.disposed) {
       return
     }
 
     for (const [id, entry] of this.entries) {
       const declaration = next.get(id)
+
       // Declarations are built in a stable key order. Project scope can change
       // without restarting the process.
       if (
@@ -168,8 +175,10 @@ export class AppServices {
         restarts: 0,
         restartTimer: null
       }
+
       this.entries.set(id, entry)
       this.tokens.set(entry.token, entry)
+
       if (declaration.start === 'always') {
         void this.run(entry).catch(() => undefined)
       }
@@ -178,6 +187,7 @@ export class AppServices {
     const sources = [
       ...new Set(declarations.map((declaration) => declaration.packageId))
     ].sort()
+
     if (JSON.stringify(sources) !== this.activeSources) {
       await this.options.pruneDecorationSources(sources)
       this.activeSources = JSON.stringify(sources)
@@ -194,8 +204,10 @@ export class AppServices {
           entry.declaration.root === context.packageRoot &&
           entry.declaration.name === name
       )
+
     // A package installed since the last sync is picked up on first use.
     const entry = find() ?? (await this.sync().then(find))
+
     if (this.disposed) {
       throw new DomainError('SERVICE_STOPPED', 'Treeport is shutting down', 503)
     }
@@ -213,9 +225,11 @@ export class AppServices {
 
   private snapshot(entry: ServiceEntry, context: ServiceContext): AppService {
     const query = new URLSearchParams()
+
     for (const [key, value] of Object.entries(entry.declaration.query)) {
       query.set(key, value.replaceAll('${treePath}', context.treePath))
     }
+
     return {
       id: entry.id,
       name: entry.declaration.name,
@@ -240,11 +254,13 @@ export class AppServices {
   async ensure(context: ServiceContext, name: string): Promise<AppService> {
     const entry = await this.resolve(context, name)
     await entry.stopping
+
     if (this.disposed) {
       throw new DomainError('SERVICE_STOPPED', 'Treeport is shutting down', 503)
     }
 
     await this.run(entry)
+
     if (entry.status !== 'ready') {
       throw new DomainError(
         'SERVICE_STOPPED',
@@ -309,6 +325,7 @@ export class AppServices {
       entry.restartTimer = null
       void (async () => {
         await entry.stopping
+
         if (!entry.stopped && !this.disposed) {
           await this.run(entry)
         }
@@ -327,6 +344,7 @@ export class AppServices {
     const { declaration } = entry
     const dataDir = path.join(this.options.dataDir, 'app-services', entry.id)
     await fs.mkdir(dataDir, { recursive: true })
+
     if (declaration.readinessPath) {
       // Keep Unix socket paths short even when the worktree/data directory is long.
       entry.socketDirectory = await fs.mkdtemp(
@@ -342,8 +360,10 @@ export class AppServices {
       )
         .replaceAll('${dataDir}', dataDir)
         .replaceAll('${packageRoot}', declaration.root)
+
     entry.abort.signal.throwIfAborted()
     const env = { ...process.env }
+
     // An editor's terminal environment must not redirect this launch into an
     // unrelated running editor, or identify its child terminals as our Pi tab.
     for (const key of Object.keys(env)) {
@@ -355,8 +375,10 @@ export class AppServices {
         delete env[key]
       }
     }
+
     env.TREEPORT_API_URL = this.options.apiUrl
     env.TREEPORT_PACKAGE_TOKEN = entry.token
+
     const child = spawn(
       substitute(declaration.executable),
       declaration.args.map(substitute),
@@ -367,6 +389,7 @@ export class AppServices {
         stdio: ['ignore', 'pipe', 'pipe']
       }
     )
+
     entry.child = child
     entry.startedAt = Date.now()
     entry.closed = new Promise((resolve) => {
@@ -374,6 +397,7 @@ export class AppServices {
     })
     child.once('exit', (code, signal) => {
       const crashed = entry.child === child && entry.status === 'ready'
+
       if (
         entry.child === child &&
         (entry.status === 'ready' || entry.status === 'starting')
@@ -399,29 +423,36 @@ export class AppServices {
       entry.error = `Could not start ${declaration.executable}: ${error.message}. Install the executable and make it available on Treeport's PATH.`
       entry.status = 'failed'
     })
+
     const append = (chunk: Buffer) => {
       entry.logs = (entry.logs + chunk.toString('utf8')).slice(-LOG_LIMIT)
     }
+
     child.stdout?.on('data', append)
     child.stderr?.on('data', append)
     const readinessPath = declaration.readinessPath
+
     if (!readinessPath) {
       // Without HTTP, a service is ready once its process runs.
       await new Promise((resolve) => {
         child.once('spawn', resolve)
         child.once('error', resolve)
       })
+
       if (entry.error) {
         throw new Error(entry.error)
       }
 
       entry.status = 'ready'
+
       return
     }
 
     const deadline = Date.now() + 30_000
+
     while (Date.now() < deadline) {
       entry.abort.signal.throwIfAborted()
+
       if (entry.error) {
         throw new Error(entry.error)
       }
@@ -438,22 +469,27 @@ export class AppServices {
             resolve(response.statusCode === 200)
           }
         )
+
         request.on('error', () => resolve(false))
         request.on('timeout', () => request.destroy())
         request.end()
       })
+
       if (ready) {
         entry.abort.signal.throwIfAborted()
+
         if (entry.error) {
           throw new Error(entry.error)
         }
 
         entry.status = 'ready'
+
         return
       }
 
       await delay(100, undefined, { signal: entry.abort.signal })
     }
+
     throw new Error(
       `Service “${declaration.name}” did not become ready within 30 seconds.\n${entry.logs.slice(-4_096)}`
     )
@@ -463,8 +499,10 @@ export class AppServices {
     for (const connection of entry.connections) {
       connection.destroy()
     }
+
     entry.connections.clear()
     const pid = entry.child?.pid
+
     if (pid) {
       const signal = (value: NodeJS.Signals) => {
         try {
@@ -477,6 +515,7 @@ export class AppServices {
           }
         }
       }
+
       signal('SIGTERM')
       await Promise.race([entry.closed, delay(1_000)])
       signal('SIGKILL')
@@ -489,6 +528,7 @@ export class AppServices {
     entry.child = null
     entry.closed = null
     entry.socketPath = null
+
     if (entry.socketDirectory) {
       await fs.rm(entry.socketDirectory, { recursive: true, force: true })
       entry.socketDirectory = null
@@ -497,6 +537,7 @@ export class AppServices {
 
   private stopEntry(entry: ServiceEntry): Promise<void> {
     entry.stopped = true
+
     if (entry.restartTimer) {
       clearTimeout(entry.restartTimer)
       entry.restartTimer = null
@@ -521,6 +562,7 @@ export class AppServices {
   async stop(context: ServiceContext, name: string): Promise<AppService> {
     const entry = await this.resolve(context, name)
     await this.stopEntry(entry)
+
     return this.snapshot(entry, context)
   }
 
@@ -536,11 +578,13 @@ export class AppServices {
     const match = /^\/api\/app-services\/([a-f0-9]{24})(\/.*)?$/u.exec(
       request.url ?? ''
     )
+
     if (!match) {
       return false
     }
 
     const entry = this.entries.get(match[1]!)
+
     if (!entry || entry.status !== 'ready' || !entry.socketPath) {
       if (response) {
         response.writeHead(503, {
@@ -558,9 +602,11 @@ export class AppServices {
     }
 
     const base = `${PREFIX}${entry.id}`
+
     if (!match[2]) {
       response?.writeHead(307, { location: `${base}/` }).end()
       socket?.destroy()
+
       return true
     }
 
@@ -569,17 +615,20 @@ export class AppServices {
     // Origin for code-server's own origin checks, including remote HTTPS viewers.
     delete headers.authorization
     delete headers.cookie
+
     for (const key of Object.keys(headers)) {
       if (key.startsWith('tailscale-')) {
         delete headers[key]
       }
     }
+
     const upstream = httpRequest({
       socketPath: entry.socketPath,
       path: match[2],
       method: request.method,
       headers
     })
+
     upstream.on('error', () => {
       if (response && !response.headersSent) {
         response.writeHead(502, {
@@ -599,10 +648,12 @@ export class AppServices {
       if (!response) {
         incoming.resume()
         socket?.destroy()
+
         return
       }
 
       const outgoing = { ...incoming.headers }
+
       if (
         outgoing.location?.startsWith('/') &&
         !outgoing.location.startsWith('//')
@@ -614,6 +665,7 @@ export class AppServices {
       incoming.on('error', () => response.destroy())
       incoming.pipe(response)
     })
+
     if (socket) {
       entry.connections.add(socket)
       socket.once('close', () => {
@@ -624,6 +676,7 @@ export class AppServices {
       upstream.on('upgrade', (incoming, remote, upstreamHead) => {
         if (socket.destroyed) {
           remote.destroy()
+
           return
         }
 
@@ -637,6 +690,7 @@ export class AppServices {
         socket.write(
           `HTTP/1.1 ${incoming.statusCode} ${incoming.statusMessage}\r\n${incoming.rawHeaders.reduce((lines, value, index) => lines + (index % 2 === 0 ? `${value}: ` : `${value}\r\n`), '')}\r\n`
         )
+
         if (upstreamHead.length) {
           socket.write(upstreamHead)
         }
@@ -660,6 +714,7 @@ export class AppServices {
 
   async dispose(): Promise<void> {
     this.disposed = true
+
     if (this.timer) {
       clearInterval(this.timer)
     }

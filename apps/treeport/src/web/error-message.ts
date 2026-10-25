@@ -6,14 +6,17 @@ import { DetailedError, RpcNetworkError } from './api'
 const MESSAGE_MAX_LENGTH = 500
 const STATUS_TEXT_MAX_LENGTH = 80
 const REQUEST_ID_MAX_LENGTH = 128
+
 const detailedErrorDetailSchema = Schema.Struct({
   data: Schema.optional(Schema.Unknown),
   statusText: Schema.optional(Schema.Unknown)
 })
+
 const detailRecordSchema = Schema.Record({
   key: Schema.String,
   value: Schema.Unknown
 })
+
 const httpStatusSchema = Schema.Int.pipe(Schema.between(100, 599))
 
 export interface ErrorDetails {
@@ -31,17 +34,20 @@ export interface ErrorDetails {
 
 function displayText(value: unknown, maximumLength: number): string | null {
   const parsed = decodeUnknownOrNull(Schema.String, value)
+
   if (parsed === null) {
     return null
   }
 
   let printable = ''
+
   for (const character of parsed) {
     const code = character.charCodeAt(0)
     printable += code < 32 || code === 127 ? ' ' : character
   }
 
   const normalized = printable.replace(/\s+/g, ' ').trim()
+
   if (!normalized) {
     return null
   }
@@ -53,9 +59,11 @@ function displayText(value: unknown, maximumLength: number): string | null {
 
 function requestIdFrom(details: unknown): string | null {
   const parsed = decodeUnknownOrNull(detailRecordSchema, details)
+
   const requestId = parsed
     ? decodeUnknownOrNull(Schema.String, parsed.requestId)
     : null
+
   return requestId !== null &&
     requestId.length <= REQUEST_ID_MAX_LENGTH &&
     /^[A-Za-z0-9_=-]+$/.test(requestId)
@@ -138,6 +146,7 @@ export function errorDetails(cause: unknown): ErrorDetails {
     cause instanceof Error ? cause.message : String(cause),
     MESSAGE_MAX_LENGTH
   )
+
   return {
     message: message ?? 'Unexpected error.',
     code: null,
@@ -156,6 +165,7 @@ export function errorDescription(details: ErrorDetails): string {
   const message = /[.!?]$/.test(details.message)
     ? details.message
     : `${details.message}.`
+
   return [
     message,
     details.recoveryHint,

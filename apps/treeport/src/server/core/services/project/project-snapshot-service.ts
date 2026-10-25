@@ -60,14 +60,17 @@ export class ProjectSnapshotService {
     return Effect.uninterruptibleMask((restore) =>
       Effect.gen(this, function* () {
         const candidate = yield* Deferred.make<ProjectRecord[], never>()
+
         const active = yield* Effect.sync(() => {
           if (this.inFlight) {
             return this.inFlight
           }
 
           this.inFlight = candidate
+
           return candidate
         })
+
         if (active !== candidate) {
           return yield* restore(Deferred.await(active))
         }
@@ -75,12 +78,14 @@ export class ProjectSnapshotService {
         const result = yield* Effect.exit(
           restore(collectCurrentProjectsSnapshot())
         )
+
         yield* Deferred.done(candidate, result)
         yield* Effect.sync(() => {
           if (this.inFlight === candidate) {
             this.inFlight = null
           }
         })
+
         if (Exit.isSuccess(result)) {
           return result.value
         }
@@ -97,6 +102,7 @@ export class ProjectSnapshotService {
   > {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       return yield* database
         .execute('project.snapshot.service.85', (db) =>
           db
@@ -126,6 +132,7 @@ export class ProjectSnapshotService {
       const projectStore = yield* ProjectStore
       yield* projectStore.requireOpenProject(projectId)
       const project = (yield* collectProjectsSnapshot(projectId))[0]
+
       if (!project) {
         return yield* Effect.fail(
           new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
@@ -139,6 +146,7 @@ export class ProjectSnapshotService {
         const worktree = project.worktrees.find(
           (candidate) => candidate.id === freshGitWorktreeId
         )
+
         if (!worktree) {
           return yield* Effect.fail(
             new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
@@ -146,6 +154,7 @@ export class ProjectSnapshotService {
         }
 
         const git = yield* GitPort
+
         const inventory = yield* git
           .listWorktrees(project.repositoryPath)
           .pipe(
@@ -154,9 +163,11 @@ export class ProjectSnapshotService {
                 new DomainError('PROJECT_UNAVAILABLE', error.message, 503)
             )
           )
+
         const live = inventory.find(
           (candidate) => candidate.path === worktree.path && !candidate.prunable
         )
+
         if (!live) {
           return yield* Effect.fail(
             new DomainError(
@@ -185,9 +196,11 @@ export class ProjectSnapshotService {
       const projectStore = yield* ProjectStore
       const binding = yield* projectStore.getWorktree(worktreeId)
       yield* projectStore.requireOpenProject(binding.projectId)
+
       const worktree = (yield* collectProjectsSnapshot(binding.projectId))
         .flatMap((project) => project.worktrees)
         .find((candidate) => candidate.id === worktreeId)
+
       if (!worktree) {
         return yield* Effect.fail(
           new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
@@ -209,6 +222,7 @@ export class ProjectSnapshotService {
       while (true) {
         const revision = this.revision
         const projects = yield* collectProjectsSnapshot()
+
         if (revision === this.revision) {
           return projects
         }
@@ -224,6 +238,7 @@ export class ProjectSnapshotService {
       const git = yield* GitPort
       const observations = yield* ProjectObservationOperations
       const projects = yield* store.storedProjects(true)
+
       const tasks = projects.flatMap((project) => [
         ...(project.kind === 'repository'
           ? [{ key: `project:${project.id}`, project, worktree: null }]
@@ -236,27 +251,34 @@ export class ProjectSnapshotService {
             worktree
           }))
       ])
+
       const keys = new Set(tasks.map((task) => task.key))
+
       const treeIds = new Set(
         projects.flatMap((project) => project.worktrees.map((tree) => tree.id))
       )
+
       for (const id of this.dirtyStates.keys()) {
         if (!treeIds.has(id)) {
           this.dirtyStates.delete(id)
         }
       }
+
       for (const key of this.refreshDue.keys()) {
         if (!keys.has(key)) {
           this.refreshDue.delete(key)
         }
       }
+
       for (const [projectId, watcher] of this.gitWatchers) {
         const project = projects.find((candidate) => candidate.id === projectId)
+
         if (project?.repositoryPath !== watcher.repositoryPath) {
           watcher.close()
           this.gitWatchers.delete(projectId)
         }
       }
+
       for (const project of projects) {
         if (project.kind !== 'repository' || this.gitWatchers.has(project.id)) {
           continue
@@ -265,6 +287,7 @@ export class ProjectSnapshotService {
         const commonDirectory = yield* git
           .commonDirectory(project.repositoryPath)
           .pipe(Effect.orElseSucceed(() => null))
+
         if (
           !commonDirectory ||
           !existsSync(path.join(commonDirectory, 'refs'))
@@ -281,12 +304,15 @@ export class ProjectSnapshotService {
         // Watch only HEADs and refs: commits, checkouts, fetches, and pushes
         // move them, while index and object writes would be noise.
         const changes = new Set<string>()
+
         const note = (ref: string) => {
           changes.add(ref)
           this.refreshDue.set(`project:${project.id}`, 0)
         }
+
         const worktreesDirectory = path.join(commonDirectory, 'worktrees')
         const watchingWorktrees = existsSync(worktreesDirectory)
+
         const watchers = [
           watch(commonDirectory, { persistent: false }, (_, name) => {
             if (name === 'HEAD' || name === 'packed-refs') {
@@ -320,11 +346,13 @@ export class ProjectSnapshotService {
               ]
             : [])
         ]
+
         const close = () => {
           for (const watcher of watchers) {
             watcher.close()
           }
         }
+
         for (const watcher of watchers) {
           // A removed repository fails its watchers; the next tick retries.
           watcher.on('error', () => {
@@ -332,6 +360,7 @@ export class ProjectSnapshotService {
             this.gitWatchers.delete(project.id)
           })
         }
+
         this.gitWatchers.set(project.id, {
           repositoryPath: project.repositoryPath,
           changes,
@@ -340,6 +369,7 @@ export class ProjectSnapshotService {
       }
 
       const now = Date.now()
+
       const task = tasks
         .filter((candidate) => (this.refreshDue.get(candidate.key) ?? 0) <= now)
         .sort(
@@ -347,6 +377,7 @@ export class ProjectSnapshotService {
             (this.refreshDue.get(a.key) ?? 0) -
             (this.refreshDue.get(b.key) ?? 0)
         )[0]
+
       if (!task) {
         return
       }
@@ -354,22 +385,27 @@ export class ProjectSnapshotService {
       // Reserve the slot before awaiting I/O so concurrent refreshes cannot
       // schedule the same expensive operation twice.
       this.refreshDue.set(task.key, now + (task.worktree ? 45_000 : 60_000))
+
       if (task.worktree) {
         const tree = task.worktree
+
         const state = yield* git
           .dirtyState(tree.path)
           .pipe(Effect.orElseSucceed(() => null))
+
         this.dirtyStates.set(tree.id, { path: tree.path, state })
       } else {
         const changes = [
           ...(this.gitWatchers.get(task.project.id)?.changes ?? [])
         ]
+
         this.gitWatchers.get(task.project.id)?.changes.clear()
         yield* observations.importWorktrees(
           task.project.id,
           task.project.repositoryPath,
           task.project.mainWorktreePath
         )
+
         // A tree changed when its HEAD moved, or when its branch or that
         // branch's remote-tracking ref did, such as after a push.
         const branches = new Set(
@@ -377,16 +413,21 @@ export class ProjectSnapshotService {
             const match = /^refs\/(?:heads\/(.+)|remotes\/[^/]+\/(.+))$/u.exec(
               ref
             )
+
             return match ? [match[1] ?? match[2]!] : []
           })
         )
+
         const before = new Map(
           task.project.worktrees.map((tree) => [tree.id, tree])
         )
+
         const events = yield* EventBusPort
+
         for (const tree of (yield* store.storedProject(task.project.id))
           ?.worktrees ?? []) {
           const previous = before.get(tree.id)
+
           if (
             previous &&
             (changes.includes('packed-refs') ||
@@ -400,10 +441,12 @@ export class ProjectSnapshotService {
             })
           }
         }
+
         // Remotes change rarely; checking here keeps existing projects current.
         const originUrl = yield* git
           .originUrl(task.project.repositoryPath)
           .pipe(Effect.orElseSucceed(() => task.project.originUrl))
+
         if (originUrl !== task.project.originUrl) {
           const database = yield* DatabasePort
           yield* database
@@ -425,21 +468,25 @@ export class ProjectSnapshotService {
     projectId?: string
   ): Effect.Effect<ProjectRecord[], never, ApplicationServices> {
     const dirtyStates = this.dirtyStates
+
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const observations = yield* ProjectObservationOperations
       const apps = yield* AppOperations
       const projectStore = yield* ProjectStore
       const terminalService = yield* TerminalOperations
+
       const storedProjects = projectId
         ? [yield* projectStore.storedProject(projectId)].filter(
             (project): project is ProjectRecord => project !== null
           )
         : yield* projectStore.storedProjects(true)
+
       const snapshots = yield* Effect.all(
         storedProjects.map((storedProject) =>
           Effect.gen(function* () {
             let project = storedProject
+
             const observation = yield* Effect.exit(
               Effect.gen(function* () {
                 if (project.kind !== 'repository') {
@@ -450,6 +497,7 @@ export class ProjectSnapshotService {
                   (yield* projectStore.storedProject(project.id)) ?? project
               })
             )
+
             if (Exit.isFailure(observation)) {
               if (Cause.isInterruptedOnly(observation.cause)) {
                 return yield* Effect.interrupt
@@ -470,6 +518,7 @@ export class ProjectSnapshotService {
               project.worktrees.map((worktree) =>
                 Effect.gen(function* () {
                   const cachedDirty = dirtyStates.get(worktree.id)
+
                   const dirty =
                     project.kind === 'repository' &&
                     project.availability.state === 'available' &&
@@ -477,9 +526,11 @@ export class ProjectSnapshotService {
                     cachedDirty?.path === worktree.path
                       ? cachedDirty.state
                       : null
+
                   const terminalInventory = yield* Effect.exit(
                     terminalService.listWorktreeTerminals(worktree)
                   )
+
                   if (
                     Exit.isFailure(terminalInventory) &&
                     Cause.isInterruptedOnly(terminalInventory.cause)
@@ -490,6 +541,7 @@ export class ProjectSnapshotService {
                   const terminals = Exit.isSuccess(terminalInventory)
                     ? terminalInventory.value
                     : []
+
                   if (Exit.isFailure(terminalInventory)) {
                     const error = Cause.squash(terminalInventory.cause)
                     project.availability = {
@@ -501,6 +553,7 @@ export class ProjectSnapshotService {
 
                   worktree.dirty = dirty
                   worktree.terminals = terminals
+
                   const [storedBrowserApps, storedWebApps, storedToolOrder] =
                     yield* Effect.all(
                       [
@@ -545,6 +598,7 @@ export class ProjectSnapshotService {
                       ],
                       { concurrency: 'unbounded' }
                     )
+
                   const definitions =
                     project.availability.state === 'available' &&
                     storedWebApps.length > 0
@@ -553,9 +607,11 @@ export class ProjectSnapshotService {
                           () => Effect.succeed([])
                         )
                       : []
+
                   const definitionsById = new Map(
                     definitions.map((definition) => [definition.id, definition])
                   )
+
                   const workspaceItems = [
                     ...terminals.map((terminal) => ({
                       id: `terminal_${terminal.id}`,
@@ -569,6 +625,7 @@ export class ProjectSnapshotService {
                     ...storedBrowserApps.map(mapBrowserApp),
                     ...storedWebApps.map((app) => {
                       const definition = definitionsById.get(app.definitionId)
+
                       return mapWebApp(
                         app,
                         definition?.permissions ?? [],
@@ -581,9 +638,11 @@ export class ProjectSnapshotService {
                       left.createdAt.localeCompare(right.createdAt) ||
                       left.id.localeCompare(right.id)
                   )
+
                   const toolPositionById = new Map(
                     storedToolOrder.map((item) => [item.itemId, item.position])
                   )
+
                   const orderedTools = workspaceItems
                     .filter((app) => app.kind !== 'terminal')
                     .sort((left, right) => {
@@ -605,6 +664,7 @@ export class ProjectSnapshotService {
                         left.id.localeCompare(right.id)
                       )
                     })
+
                   let toolIndex = 0
                   worktree.workspaceItems = workspaceItems.map((app) =>
                     app.kind === 'terminal' ? app : orderedTools[toolIndex++]!
@@ -613,11 +673,13 @@ export class ProjectSnapshotService {
               ),
               { concurrency: 'unbounded', discard: true }
             )
+
             return project
           })
         ),
         { concurrency: 'unbounded' }
       )
+
       return snapshots.filter(
         (project): project is ProjectRecord => project !== null
       )
@@ -647,6 +709,7 @@ function mapWebApp(
     Schema.NullOr(webAppInputSchema),
     JSON.parse(row.inputJson)
   )
+
   if (parsedInput === null && row.inputJson !== 'null') {
     throw new Error(`Web app ${row.id} has invalid stored launch input`)
   }

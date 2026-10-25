@@ -18,14 +18,17 @@ export function startTerminalEngineWorker(
             env: environment,
             execArgv: []
           })
+
           let ready = false
           let exited = false
+
           const stopped = new Promise<void>((resolve) => {
             worker.once('exit', () => {
               exited = true
               resolve()
             })
           })
+
           const started = new Promise<void>((resolve, reject) => {
             worker.once('message', (message: 'ready') => {
               if (message === 'ready') {
@@ -46,6 +49,7 @@ export function startTerminalEngineWorker(
               }
             })
           })
+
           return { worker, started, stopped, hasExited: () => exited }
         },
         catch: (cause) => new TerminalHostConnectionError({ cause })
@@ -57,12 +61,15 @@ export function startTerminalEngineWorker(
           }
 
           worker.postMessage('stop')
+
           const deadline = setTimeout(() => {
             void worker.terminate()
           }, 5_000)
+
           await stopped.finally(() => clearTimeout(deadline))
         })
     )
+
     yield* Effect.tryPromise({
       try: () => state.started,
       catch: (cause) => new TerminalHostConnectionError({ cause })

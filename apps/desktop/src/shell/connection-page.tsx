@@ -46,10 +46,12 @@ export function ConnectionPage({
   useEffect(() => {
     if (state?.connection.status !== 'connecting') {
       setConnectingVisible(false)
+
       return
     }
 
     const timer = setTimeout(() => setConnectingVisible(true), 300)
+
     return () => clearTimeout(timer)
   }, [state?.connection.status])
 
@@ -59,6 +61,7 @@ export function ConnectionPage({
 
   const computer = selectedComputer(state)
   let content: ReactNode = null
+
   switch (state.connection.status) {
     case 'ready':
       break

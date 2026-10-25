@@ -44,6 +44,7 @@ interface SignalSource {
   on(signal: NodeJS.Signals, listener: () => void): void
   off(signal: NodeJS.Signals, listener: () => void): void
 }
+
 type Writable = Pick<NodeJS.WritableStream, 'write'>
 
 interface LauncherChild {
@@ -86,6 +87,7 @@ function safeDiagnostic(value: string): string {
   return [...value]
     .map((character) => {
       const codePoint = character.codePointAt(0) ?? 0
+
       return codePoint <= 31 || (codePoint >= 127 && codePoint <= 159)
         ? ' '
         : character
@@ -109,6 +111,7 @@ function runChild(
   }
 ): Effect.Effect<ChildResult> {
   const [executable, ...args] = argv
+
   if (!executable) {
     return Effect.succeed({
       code: 127,
@@ -121,6 +124,7 @@ function runChild(
 
   return Effect.async<ChildResult>((resume) => {
     let child: LauncherChild
+
     try {
       child = options.spawnProcess(executable, args, {
         cwd: options.cwd,
@@ -138,6 +142,7 @@ function runChild(
           spawnError: error instanceof Error ? error : new Error(String(error))
         })
       )
+
       return
     }
 
@@ -146,6 +151,7 @@ function runChild(
     let forwardedSignal: NodeJS.Signals | null = null
     let timer: NodeJS.Timeout | undefined
     let killTimer: NodeJS.Timeout | undefined
+
     const forwarders = FORWARDED_SIGNALS.map(
       (signal) =>
         [
@@ -156,12 +162,14 @@ function runChild(
           }
         ] as const
     )
+
     const finish = (result: ChildResult) => {
       if (settled) {
         return
       }
 
       settled = true
+
       if (timer) {
         clearTimeout(timer)
       }
@@ -173,11 +181,14 @@ function runChild(
       for (const [signal, forward] of forwarders) {
         options.signalSource.off(signal, forward)
       }
+
       resume(Effect.succeed(result))
     }
+
     for (const [signal, forward] of forwarders) {
       options.signalSource.on(signal, forward)
     }
+
     if (options.timeoutMs && options.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true
@@ -213,12 +224,15 @@ function runChild(
       for (const [signal, forward] of forwarders) {
         options.signalSource.off(signal, forward)
       }
+
       if (settled) {
         complete(Effect.void)
+
         return
       }
 
       const forceTimer = setTimeout(() => child.kill('SIGKILL'), 5_000)
+
       const onInterruptedExit = () => {
         clearTimeout(forceTimer)
         complete(Effect.void)
@@ -240,16 +254,19 @@ export function runLaunchSpec(
     const stdout = dependencies.stdout ?? process.stdout
     const stderr = dependencies.stderr ?? process.stderr
     const signalSource = dependencies.signalSource ?? process
+
     if (spec.setupError) {
       stderr.write(
         `[Treeport setup] ${safeDiagnostic(spec.setupError) || 'setup preparation failed'}\n`
       )
+
       return 1
     }
 
     for (const task of spec.setupTasks ?? []) {
       const label = safeLabel(task.label)
       stdout.write(`[Treeport setup] ${label}\n`)
+
       const result = yield* runChild(task.argv, {
         cwd: task.cwd,
         env: { ...process.env, ...spec.env, ...task.env },
@@ -257,10 +274,12 @@ export function runLaunchSpec(
         spawnProcess,
         signalSource
       })
+
       if (result.spawnError) {
         stderr.write(
           `[Treeport setup] ${label} failed: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
         )
+
         return 127
       }
 
@@ -268,14 +287,17 @@ export function runLaunchSpec(
         stderr.write(
           `[Treeport setup] ${label} failed: timed out after ${task.timeoutMs}ms\n`
         )
+
         return 124
       }
 
       const terminationSignal = result.forwardedSignal ?? result.signal
+
       if (terminationSignal) {
         stderr.write(
           `[Treeport setup] ${label} failed: terminated by ${terminationSignal}\n`
         )
+
         return 1
       }
 
@@ -283,6 +305,7 @@ export function runLaunchSpec(
         stderr.write(
           `[Treeport setup] ${label} failed: exit ${result.code ?? 1}\n`
         )
+
         return result.code ?? 1
       }
 
@@ -291,19 +314,23 @@ export function runLaunchSpec(
 
     if (!spec.argv[0]) {
       stderr.write('Treeport launcher: argv is empty\n')
+
       return 127
     }
 
     const commandEnvironment = { ...process.env, ...spec.env }
+
     const command = integrateShellLaunch(
       spec.argv,
       commandEnvironment,
       spec.shellIntegrationDir,
       Boolean(spec.shellIntegrationDir)
     )
+
     const initialTitle = spec.initialTitle
       ? safeDiagnostic(spec.initialTitle)
       : ''
+
     if (initialTitle && spec.shellIntegrationDir) {
       stdout.write(`\u001b]7740;command;${initialTitle}\u001b\\`)
     }
@@ -314,6 +341,7 @@ export function runLaunchSpec(
       spawnProcess,
       signalSource
     })
+
     if (result.spawnError) {
       stderr.write(
         `Treeport launcher: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
@@ -345,16 +373,19 @@ export function runLaunchSpec(
         spec.shellIntegrationDir,
         Boolean(spec.shellIntegrationDir)
       )
+
       const fallbackResult = yield* runChild(fallback.argv, {
         cwd: spec.cwd,
         env: fallback.env,
         spawnProcess,
         signalSource
       })
+
       if (fallbackResult.spawnError) {
         stderr.write(
           `Treeport launcher: ${safeDiagnostic(fallbackResult.spawnError.message) || 'spawn error'}\n`
         )
+
         return 127
       }
 
@@ -379,9 +410,11 @@ export function runLaunchSpec(
 
 function main(): Effect.Effect<number> {
   const specPath = process.argv[2]
+
   if (!specPath) {
     return Effect.sync(() => {
       process.stderr.write('Treeport launcher: missing launch spec\n')
+
       return 127
     })
   }
@@ -412,6 +445,7 @@ function main(): Effect.Effect<number> {
         process.stderr.write(
           `Treeport launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`
         )
+
         return 127
       })
     )
@@ -419,6 +453,7 @@ function main(): Effect.Effect<number> {
 }
 
 const invokedPath = process.argv[1]
+
 if (
   invokedPath &&
   path.resolve(invokedPath) === path.resolve(fileURLToPath(import.meta.url))

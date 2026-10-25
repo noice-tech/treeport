@@ -12,11 +12,14 @@ it('preserves the published database contract through upgrade and downgrade refu
   const migrationsFolder = fileURLToPath(
     new URL('../../../drizzle', import.meta.url)
   )
+
   const migrations = readMigrationFiles({ migrationsFolder })
+
   const history = baseline.migrations.map((migration) => ({
     hash: migration.hash,
     created_at: migration.when
   }))
+
   // Frozen from the integrity-checked published tarball recorded in the fixture.
   // Reuse SQL only after verifying its historical hashes: constructing an old
   // schema by undoing today's schema could silently change both sides together.
@@ -32,13 +35,16 @@ it('preserves the published database contract through upgrade and downgrade refu
   const filePath = path.join(root, 'treeport.db')
   const historicalMigrations = path.join(root, 'historical-migrations')
   const historyQuery = sql`SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at`
+
   const catalogQuery = sql`
     SELECT projects.id AS projectId, projects.name, projects.repository_path,
       worktrees.id AS worktreeId, worktrees.path, worktrees.kind, worktrees.branch
     FROM projects JOIN worktrees ON worktrees.project_id = projects.id
     ORDER BY worktrees.id
   `
+
   let database: TreeportDatabase | null = null
+
   try {
     await fs.mkdir(path.join(historicalMigrations, 'meta'), { recursive: true })
     await fs.writeFile(

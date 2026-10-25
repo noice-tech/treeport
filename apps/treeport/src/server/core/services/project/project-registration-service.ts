@@ -23,6 +23,7 @@ import { ProjectFolderIdentities } from './project-folder-identities'
 import { ProjectStore } from './project-store'
 
 const now = (): string => new Date().toISOString()
+
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
 
@@ -44,6 +45,7 @@ export class ProjectRegistrationService {
 
     return Effect.gen(function* () {
       const git = yield* GitPort
+
       const canonicalPath = yield* Effect.tryPromise({
         try: () => fs.realpath(path.resolve(inputPath)),
         catch: (error) =>
@@ -53,9 +55,11 @@ export class ProjectRegistrationService {
             400
           )
       })
+
       const folderStat = yield* Effect.tryPromise(() =>
         fs.stat(canonicalPath, { bigint: true })
       ).pipe(Effect.orDie)
+
       if (!folderStat.isDirectory()) {
         return yield* Effect.fail(
           new DomainError(
@@ -69,6 +73,7 @@ export class ProjectRegistrationService {
       const repositoryRoot = yield* git
         .findProjectRepositoryRoot(canonicalPath)
         .pipe(Effect.orDie)
+
       return yield* repositoryRoot
         ? registerRepositoryProject(repositoryRoot, requestedName)
         : registerFolderProject(canonicalPath, requestedName)
@@ -90,10 +95,13 @@ export class ProjectRegistrationService {
       const projectStore = yield* ProjectStore
       const reconciler = yield* WorktreeReconciliation
       const worktreeMutations = yield* WorktreeMutations
+
       const getProjectSnapshot =
         projectSnapshots.getProjectSnapshot.bind(projectSnapshots)
+
       const invalidateProjectsSnapshot =
         projectSnapshots.invalidate.bind(projectSnapshots)
+
       const reconcileProjectWorktrees =
         reconciler.reconcileProjectWorktrees.bind(reconciler)
 
@@ -109,20 +117,26 @@ export class ProjectRegistrationService {
               )
           )
         )
+
       const mainPath = yield* git
         .resolveMainCheckout(checkout)
         .pipe(Effect.orDie)
+
       const repositoryPath = yield* Effect.tryPromise(() =>
         fs.realpath(mainPath)
       ).pipe(Effect.orDie)
+
       const repositoryStat = yield* Effect.tryPromise(() =>
         fs.stat(repositoryPath, { bigint: true })
       ).pipe(Effect.orDie)
+
       const repositoryDevice = repositoryStat.dev.toString()
       const repositoryInode = repositoryStat.ino.toString()
+
       const repositoryIdentity = yield* git
         .ensureRepositoryIdentity(repositoryPath)
         .pipe(Effect.orDie)
+
       const [pathMatches, identityMatches] = yield* Effect.all(
         [
           database
@@ -151,6 +165,7 @@ export class ProjectRegistrationService {
         ],
         { concurrency: 'unbounded' }
       )
+
       const [pathMatch, identityMatch] = yield* Effect.all(
         [
           pathMatches[0]
@@ -162,6 +177,7 @@ export class ProjectRegistrationService {
         ],
         { concurrency: 'unbounded' }
       )
+
       const pathMetadataRows = pathMatch
         ? yield* database
             .execute('project.registration.service.165', (db) =>
@@ -178,13 +194,16 @@ export class ProjectRegistrationService {
             )
             .pipe(Effect.orDie)
         : []
+
       const pathMetadataRow = pathMetadataRows[0]
+
       const pathMetadata = pathMetadataRow
         ? {
             ...pathMetadataRow,
             nameIsCustom: Boolean(pathMetadataRow.nameIsCustom)
           }
         : null
+
       if (pathMatch && !pathMetadata) {
         return yield* Effect.fail(
           new DomainError(
@@ -242,6 +261,7 @@ export class ProjectRegistrationService {
 
       const existing = identityMatch ?? pathMatch
       const projectId = existing?.id ?? id('proj')
+
       const updateRegistration: Effect.Effect<
         void,
         DomainError<unknown>,
@@ -249,9 +269,11 @@ export class ProjectRegistrationService {
       > = Effect.gen(function* () {
         if (existing && existing.repositoryPath !== repositoryPath) {
           yield* git.repairWorktrees(repositoryPath).pipe(Effect.orDie)
+
           const discovered = yield* git
             .listWorktrees(repositoryPath)
             .pipe(Effect.orDie)
+
           if (
             !discovered.some(
               (worktree) =>
@@ -272,13 +294,17 @@ export class ProjectRegistrationService {
         }
 
         const timestamp = now()
+
         const defaultBranch = yield* git
           .defaultBranch(repositoryPath)
           .pipe(Effect.orDie)
+
         const originUrl = yield* git
           .originUrl(repositoryPath)
           .pipe(Effect.orElseSucceed(() => null))
+
         const requested = requestedName?.trim() || null
+
         const existingMetadataRows = existing
           ? yield* database
               .execute('project.registration.service.277', (db) =>
@@ -295,13 +321,16 @@ export class ProjectRegistrationService {
               )
               .pipe(Effect.orDie)
           : []
+
         const existingMetadataRow = existingMetadataRows[0]
+
         const existingMetadata = existingMetadataRow
           ? {
               ...existingMetadataRow,
               nameIsCustom: Boolean(existingMetadataRow.nameIsCustom)
             }
           : null
+
         if (existing && !existingMetadata) {
           return yield* Effect.fail(
             new DomainError(
@@ -315,17 +344,20 @@ export class ProjectRegistrationService {
         const nameIsCustom = requested
           ? true
           : (existingMetadata?.nameIsCustom ?? false)
+
         const automaticExistingName = Boolean(
           existing &&
           !nameIsCustom &&
           existing.name === path.basename(existing.repositoryPath)
         )
+
         const name =
           requested ||
           (automaticExistingName
             ? path.basename(repositoryPath)
             : existing?.name) ||
           path.basename(repositoryPath)
+
         const [verifiedIdentity, verifiedStat] = yield* Effect.all(
           [
             git.repositoryIdentity(repositoryPath).pipe(Effect.orDie),
@@ -335,6 +367,7 @@ export class ProjectRegistrationService {
           ],
           { concurrency: 'unbounded' }
         )
+
         if (
           verifiedIdentity !== repositoryIdentity ||
           verifiedStat.dev.toString() !== repositoryDevice ||
@@ -445,6 +478,7 @@ export class ProjectRegistrationService {
             )
           })
         )
+
         return yield* getProjectSnapshot(projectId)
       }
 
@@ -455,6 +489,7 @@ export class ProjectRegistrationService {
         invalidateProjectsSnapshot()
         events.publish('project.created', { projectId })
       })
+
       return yield* getProjectSnapshot(projectId)
     })
   }
@@ -473,15 +508,20 @@ export class ProjectRegistrationService {
       const projectSnapshots = yield* ProjectSnapshotOperations
       const projectStore = yield* ProjectStore
       const worktreeMutations = yield* WorktreeMutations
+
       const getProjectSnapshot =
         projectSnapshots.getProjectSnapshot.bind(projectSnapshots)
+
       const invalidateProjectsSnapshot =
         projectSnapshots.invalidate.bind(projectSnapshots)
+
       const folderStat = yield* Effect.tryPromise(() =>
         fs.stat(folderPath, { bigint: true })
       ).pipe(Effect.orDie)
+
       const device = folderStat.dev.toString()
       const inode = folderStat.ino.toString()
+
       const pathMatches = yield* database
         .execute('project.registration.service.478', (db) =>
           db
@@ -491,10 +531,13 @@ export class ProjectRegistrationService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       const folderIdentitySnapshot = yield* folderIdentities.snapshot
+
       const identityMatchId = [...folderIdentitySnapshot].find(
         ([, identity]) => identity.device === device && identity.inode === inode
       )?.[0]
+
       const [pathMatch, identityMatch] = yield* Effect.all(
         [
           pathMatches[0]
@@ -506,6 +549,7 @@ export class ProjectRegistrationService {
         ],
         { concurrency: 'unbounded' }
       )
+
       if (pathMatch?.kind === 'repository') {
         return yield* Effect.fail(
           new DomainError(
@@ -519,6 +563,7 @@ export class ProjectRegistrationService {
       const observedPathIdentity = pathMatch
         ? yield* folderIdentities.get(pathMatch.id)
         : null
+
       if (
         observedPathIdentity &&
         (observedPathIdentity.device !== device ||
@@ -545,12 +590,14 @@ export class ProjectRegistrationService {
 
       const existing = identityMatch ?? pathMatch
       const projectId = existing?.id ?? id('proj')
+
       const updateRegistration: Effect.Effect<
         void,
         DomainError<unknown>,
         ApplicationServices
       > = Effect.gen(function* () {
         const timestamp = now()
+
         const metadataRows = existing
           ? yield* database
               .execute('project.registration.service.546', (db) =>
@@ -562,10 +609,13 @@ export class ProjectRegistrationService {
               )
               .pipe(Effect.orDie)
           : []
+
         const requested = requestedName?.trim() || null
+
         const nameIsCustom = requested
           ? true
           : Boolean(metadataRows[0]?.nameIsCustom)
+
         const name =
           requested ||
           (existing &&
@@ -574,6 +624,7 @@ export class ProjectRegistrationService {
             ? path.basename(folderPath)
             : existing?.name) ||
           path.basename(folderPath)
+
         const [verifiedPath, verifiedStat] = yield* Effect.all(
           [
             Effect.tryPromise(() => fs.realpath(folderPath)).pipe(Effect.orDie),
@@ -583,6 +634,7 @@ export class ProjectRegistrationService {
           ],
           { concurrency: 'unbounded' }
         )
+
         if (
           verifiedPath !== folderPath ||
           !verifiedStat.isDirectory() ||
@@ -608,6 +660,7 @@ export class ProjectRegistrationService {
               )
               .pipe(Effect.orDie)
           : []
+
         if (
           existingWorktreeRows.length > 1 ||
           existingWorktreeRows.some((worktree) => worktree.kind !== 'folder')
@@ -652,6 +705,7 @@ export class ProjectRegistrationService {
                 last_opened_at=excluded.last_opened_at,
                 updated_at=excluded.updated_at
             `)
+
               if (existingWorktree) {
                 await tx.run(sql`
                 UPDATE worktrees
@@ -727,6 +781,7 @@ export class ProjectRegistrationService {
           projectId
         })
       })
+
       return yield* getProjectSnapshot(projectId)
     })
   }

@@ -39,12 +39,14 @@ describe('operation recovery', () => {
         terminalHost: new TerminalHostDouble(runner)
       })
     )
+
     services.push(restartedService)
     await restartedService.runEffect(restartedService.prepareStartup())
     await restartedService.runEffect(restartedService.activateStartup())
     restartedService.attachHttpServer(http.createServer())
 
     let operation = await restartedService.getOperation(operationId)
+
     for (
       let attempt = 0;
       attempt < 100 &&

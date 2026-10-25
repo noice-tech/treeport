@@ -73,10 +73,13 @@ class HostDouble implements TerminalAttachmentBackend {
           const listeners =
             this.listeners.get(terminalId) ??
             new Set<(event: TerminalHostRuntimeEvent) => void>()
+
           const listener = (event: TerminalHostRuntimeEvent) =>
             emit.single(event)
+
           listeners.add(listener)
           this.listeners.set(terminalId, listeners)
+
           return listener
         }),
         (listener) =>
@@ -125,6 +128,7 @@ class AttentionStoreDouble implements TerminalAttentionStateStore {
   readonly markRead = vi.fn((terminalId: string, sequence: number) =>
     Effect.sync(() => {
       const state = this.states.get(terminalId)
+
       if (state?.sequence === sequence) {
         this.states.set(terminalId, { ...state, unread: false })
       }
@@ -157,19 +161,24 @@ function fixture(states: TerminalAttentionState[] = []) {
   const events = new ProductEventBus()
   const host = new HostDouble()
   const attention = new AttentionStoreDouble()
+
   for (const state of states) {
     attention.states.set(state.terminalId, state)
   }
+
   const listProjects = vi.fn(() => Effect.succeed([]))
   const getTerminal = vi.fn(() => Effect.succeed(terminal))
+
   const refreshTerminalStatus = vi.fn(() =>
     Effect.succeed({ ...terminal, status: 'exited' as const, exitCode: 7 })
   )
+
   const getWorktree = vi.fn(() =>
     Effect.succeed(
       testAccess<WorktreeRecord>({ id: 'worktree', path: '/repo' })
     )
   )
+
   // SAFETY: The fixture supplies the service methods used by metadata.
   const service = testAccess<TreeportService>({
     events,
@@ -191,7 +200,9 @@ function fixture(states: TerminalAttentionState[] = []) {
     terminalMetadataMutation: vi.fn((_terminalId, effect) => effect),
     drainTerminalMetadataMutations: vi.fn(() => Effect.void)
   })
+
   const manager = new TerminalMetadataManager(service, host, attention)
+
   return { attention, events, host, manager, refreshTerminalStatus, service }
 }
 
@@ -199,6 +210,7 @@ describe('TerminalMetadataManager', () => {
   it('projects host title, command, activity, attention, and exit events', async () => {
     const { attention, events, host, manager, refreshTerminalStatus, service } =
       fixture()
+
     const published: string[] = []
     events.subscribe((event) => {
       if (event.type === 'terminal.metadata') {
@@ -328,6 +340,7 @@ describe('TerminalMetadataManager', () => {
       reason: 'bell',
       unread: true
     }
+
     const { attention, host, manager, service } = fixture([existing])
     host.state.activity = { ...IDLE, state: 'working', progress: 71 }
     host.state.attention = {

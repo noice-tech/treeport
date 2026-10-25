@@ -52,6 +52,7 @@ type LauncherValues = {
   treeTitle: string
   closeOnSuccess: boolean
 }
+
 type Draft = {
   editingId: string | null
   loadedUpdatedAt: string | null
@@ -80,27 +81,35 @@ export function LaunchersManager({
   const [commandError, setCommandError] = useState<string | null>(null)
   const [treeTitleError, setTreeTitleError] = useState<string | null>(null)
   const [newInputName, setNewInputName] = useState<string | null>(null)
+
   const normalizedNewInputName = (newInputName ?? '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, '_')
+
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Launcher | null>(null)
+
   const selected = launchers.find(
     (launcher) => launcher.id === draft?.editingId
   )
+
   const dirty =
     draft !== null &&
     (draft.values.name !== draft.savedValues.name ||
       draft.values.command !== draft.savedValues.command ||
       draft.values.treeTitle !== draft.savedValues.treeTitle ||
       draft.values.closeOnSuccess !== draft.savedValues.closeOnSuccess)
+
   const stale =
     draft?.editingId != null && selected?.updatedAt !== draft.loadedUpdatedAt
+
   const commandArgv = draft ? parseCommandLine(draft.values.command).argv : null
+
   const treeTitleArgv = draft
     ? parseCommandLine(draft.values.treeTitle).argv
     : null
+
   const inputNames = launcherInputNames([
     ...(commandArgv?.slice(1) ?? []),
     ...(treeTitleArgv?.slice(1) ?? [])
@@ -120,6 +129,7 @@ export function LaunchersManager({
         : '',
       closeOnSuccess: launcher?.closeOnSuccess ?? false
     }
+
     setDraft({
       editingId: launcher?.id ?? null,
       loadedUpdatedAt: launcher?.updatedAt ?? null,
@@ -346,27 +356,34 @@ export function LaunchersManager({
               className="flex min-w-0 flex-col gap-5 md:border-l md:border-sidebar-border md:pl-6"
               onSubmit={(event) => {
                 event.preventDefault()
+
                 if (busy || stale || !draft.values.name.trim()) {
                   return
                 }
 
                 const parsed = parseCommandLine(draft.values.command)
+
                 if (parsed.argv === null || !parsed.argv[0]) {
                   setCommandError(parsed.error ?? 'Enter an executable name.')
+
                   return
                 }
 
                 const treeTitle = draft.values.treeTitle.trim()
                   ? parseCommandLine(draft.values.treeTitle)
                   : null
+
                 if (treeTitle && treeTitle.argv === null) {
                   setTreeTitleError(treeTitle.error)
+
                   return
                 }
 
                 const [executable, ...args] = parsed.argv
+
                 const [treeTitleExecutable, ...treeTitleArgs] =
                   treeTitle?.argv ?? []
+
                 saveLauncher.mutate({
                   launcherId: draft.editingId,
                   input: {

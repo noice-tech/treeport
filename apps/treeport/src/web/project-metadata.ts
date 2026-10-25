@@ -47,6 +47,7 @@ export const launcherDefinitionsQueryOptions = (context?: {
     ] as const,
     queryFn: async () => {
       const query: LauncherDefinitionsQuery = {}
+
       if (context?.projectId) {
         query.projectId = context.projectId
       }

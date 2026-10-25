@@ -9,6 +9,7 @@ export interface WorkspaceTarget {
 function decodedRoutePart(value: string): string | null {
   try {
     const decoded = decodeURIComponent(value)
+
     return decoded && !decoded.includes('/') ? decoded : null
   } catch {
     return null
@@ -19,12 +20,14 @@ const workspaceLinkParser = z
   .unknown()
   .transform((value): WorkspaceTarget | null => {
     const parsed = z.string().safeParse(value)
+
     if (!parsed.success || !URL.canParse(parsed.data)) {
       return null
     }
 
     const link = new URL(parsed.data)
     const targets = link.searchParams.getAll('url')
+
     if (
       link.protocol !== 'treeport:' ||
       link.hostname !== 'open' ||
@@ -40,16 +43,19 @@ const workspaceLinkParser = z
     }
 
     const targetValue = targets[0]!
+
     if (!URL.canParse(targetValue)) {
       return null
     }
 
     const target = new URL(targetValue)
+
     if (target.search || target.hash || target.username || target.password) {
       return null
     }
 
     let origin: string
+
     try {
       origin = parseComputerUrl(target.href).origin
     } catch {
@@ -57,6 +63,7 @@ const workspaceLinkParser = z
     }
 
     const parts = target.pathname.split('/')
+
     if (
       parts.length !== 5 ||
       parts[0] !== '' ||

@@ -15,14 +15,18 @@ import treeportExtension from './index.ts'
 
 it('loads tools on demand and calls structured tools from codemode across reload, branch navigation, and resume', async () => {
   const root = await mkdtemp(join(tmpdir(), 'treeport-pi-lifecycle-'))
+
   const sessions: Array<
     Awaited<ReturnType<typeof createAgentSession>>['session']
   > = []
+
   const fetch = vi.fn(() => {
     throw new Error('Unexpected network request')
   })
+
   vi.stubGlobal('fetch', fetch)
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+
   try {
     const exec: ExtensionAPI['exec'] = vi.fn(async (_command, args) => ({
       stdout: JSON.stringify(
@@ -50,10 +54,12 @@ it('loads tools on demand and calls structured tools from codemode across reload
       code: 0,
       killed: false
     }))
+
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: false }
     })
+
     const modelRuntime = await ModelRuntime.create({
       authPath: join(root, 'auth.json'),
       modelsPath: null,
@@ -61,19 +67,25 @@ it('loads tools on demand and calls structured tools from codemode across reload
       allowModelNetwork: false,
       refreshOnCreate: false
     })
+
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true)
     const model = modelRuntime.getModels()[0]!
     expect(model).toBeDefined()
+
     type Request = Parameters<ModelRuntime['streamSimple']>[1]
+
     const requests: Request[] = []
+
     let nextCall: { name: string; arguments: Record<string, string> } | null =
       null
+
     const stream = vi
       .spyOn(modelRuntime, 'streamSimple')
       .mockImplementation((model, context) => {
         requests.push(structuredClone(context))
         const call = nextCall
         nextCall = null
+
         const message: Awaited<ReturnType<ModelRuntime['completeSimple']>> = {
           role: 'assistant',
           content: call
@@ -93,16 +105,20 @@ it('loads tools on demand and calls structured tools from codemode across reload
           stopReason: call ? 'toolUse' : 'stop',
           timestamp: Date.now()
         }
+
         type Stream = ReturnType<ModelRuntime['streamSimple']>
+
         const fixture: Pick<Stream, typeof Symbol.asyncIterator | 'result'> = {
           async *[Symbol.asyncIterator]() {
             yield { type: 'done', reason: call ? 'toolUse' : 'stop', message }
           },
           result: async () => message
         }
+
         // SAFETY: The agent only consumes the iterator and result of this stream.
         return fixture as Stream
       })
+
     const create = async (
       sessionManager: SessionManager,
       reason: 'startup' | 'resume'
@@ -122,7 +138,9 @@ it('loads tools on demand and calls structured tools from codemode across reload
           (pi) => treeportExtension({ ...pi, exec })
         ]
       })
+
       await resourceLoader.reload()
+
       const { session } = await createAgentSession({
         cwd: root,
         agentDir: root,
@@ -134,6 +152,7 @@ it('loads tools on demand and calls structured tools from codemode across reload
         noTools: 'builtin',
         sessionStartEvent: { type: 'session_start', reason }
       })
+
       sessions.push(session)
       await session.bindExtensions({
         onError: (error) => {
@@ -144,8 +163,10 @@ it('loads tools on demand and calls structured tools from codemode across reload
         ...session.getActiveToolNames(),
         'codemode'
       ])
+
       return session
     }
+
     const sm = SessionManager.create(root, root)
     const session = await create(sm, 'startup')
     expect(session.getActiveToolNames().sort()).toEqual([
@@ -176,10 +197,12 @@ it('loads tools on demand and calls structured tools from codemode across reload
     expect(session.messages.some((message) => message.role === 'custom')).toBe(
       false
     )
+
     const loaderResult = session.messages.find(
       (message) =>
         message.role === 'toolResult' && message.toolName === 'treeport_enable'
     )
+
     expect(loaderResult).toMatchObject({ isError: false })
     expect(JSON.stringify(loaderResult)).toContain('test-tree')
 
@@ -190,10 +213,12 @@ it('loads tools on demand and calls structured tools from codemode across reload
       }
     }
     await session.prompt('Read tree and terminal output in parallel')
+
     const codeResult = session.messages.find(
       (message) =>
         message.role === 'toolResult' && message.toolName === 'codemode'
     )
+
     expect(codeResult).toMatchObject({ isError: false })
     expect(JSON.stringify(codeResult)).toContain('Server ready')
     expect(JSON.stringify(codeResult)).toContain('test-tree')
@@ -219,6 +244,7 @@ it('loads tools on demand and calls structured tools from codemode across reload
     for (const session of sessions) {
       session.dispose()
     }
+
     vi.clearAllTimers()
     vi.useRealTimers()
     vi.restoreAllMocks()

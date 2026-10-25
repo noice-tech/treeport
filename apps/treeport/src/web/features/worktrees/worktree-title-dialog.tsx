@@ -28,6 +28,7 @@ export function WorktreeTitleDialog({
 }) {
   const queryClient = useQueryClient()
   const [title, setTitle] = useState(worktree.title ?? '')
+
   const saveTitle = useMutation({
     mutationFn: (nextTitle: string | null) =>
       parseResponse(

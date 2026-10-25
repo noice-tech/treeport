@@ -55,6 +55,7 @@ export default defineConfig({
     'anti-slop/no-unknown-type-aliases': 'error',
     'anti-slop/no-unsafe-dictionary-type': 'error',
     'anti-slop/no-widen-then-assert': 'error',
+    'anti-slop/require-readable-spacing': 'error',
     'anti-slop/require-safety-comment-for-type-assertion': 'error',
     'treeport/no-record-string-unknown': 'error',
     'treeport/module-boundaries': 'error',
@@ -69,14 +70,12 @@ export default defineConfig({
     'react-you-might-not-need-an-effect/no-pass-data-to-parent': 'warn',
     'react-you-might-not-need-an-effect/no-external-store-subscription': 'warn',
     'react-you-might-not-need-an-effect/no-initialize-state': 'warn',
-    curly: 'error',
+    curly: ['error', 'all'],
+    complexity: ['warn', { max: 15 }],
+    'max-depth': ['warn', 4],
+    'no-nested-ternary': 'warn',
     '@stylistic/padding-line-between-statements': [
       'error',
-      {
-        blankLine: 'always',
-        prev: ['if', 'function'],
-        next: '*'
-      },
       {
         blankLine: 'always',
         prev: {

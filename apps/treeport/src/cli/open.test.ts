@@ -7,10 +7,12 @@ const workspaceUrl =
 describe('workspace launcher', () => {
   it('prefers the macOS desktop app and falls back to each platform browser', async () => {
     const desktopCalls: Array<{ executable: string; args: string[] }> = []
+
     const desktop = await openWorkspace(workspaceUrl, {
       platform: 'darwin',
       launch: async (executable, args) => {
         desktopCalls.push({ executable, args })
+
         return { code: 0, stderr: '' }
       }
     })
@@ -26,15 +28,18 @@ describe('workspace launcher', () => {
     )
 
     const fallbackCalls: Array<{ executable: string; args: string[] }> = []
+
     const fallback = await openWorkspace(workspaceUrl, {
       platform: 'darwin',
       launch: async (executable, args) => {
         fallbackCalls.push({ executable, args })
+
         return fallbackCalls.length === 1
           ? { code: 1, stderr: 'Application not found' }
           : { code: 0, stderr: '' }
       }
     })
+
     expect(fallback).toEqual({ client: 'browser' })
     expect(fallbackCalls[1]).toEqual({
       executable: 'open',
@@ -47,6 +52,7 @@ describe('workspace launcher', () => {
         platform: 'linux',
         launch: async (executable, args) => {
           linuxCalls.push({ executable, args })
+
           return { code: 0, stderr: '' }
         }
       })
@@ -59,12 +65,14 @@ describe('workspace launcher', () => {
       executable: string
       args: string[]
     }> = []
+
     await openWorkspace(
       'http://treeport.example.test/projects/project/worktrees/worktree',
       {
         platform: 'darwin',
         launch: async (executable, args) => {
           insecureRemoteCalls.push({ executable, args })
+
           return { code: 0, stderr: '' }
         }
       }

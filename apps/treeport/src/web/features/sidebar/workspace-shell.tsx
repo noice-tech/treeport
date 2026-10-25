@@ -48,6 +48,7 @@ function clampSidebarWidth(width: number): number {
 
 export function useProjectSwitcher() {
   const context = useContext(ProjectSwitcherContext)
+
   if (!context) {
     throw new Error('useProjectSwitcher must be used within WorkspaceShell.')
   }
@@ -59,15 +60,18 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
   const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null)
   const projectSwitcherDismissedIntoTerminalRef = useRef(false)
+
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const savedWidth = Number.parseInt(
       localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) ?? '',
       10
     )
+
     return Number.isFinite(savedWidth)
       ? clampSidebarWidth(savedWidth)
       : DEFAULT_SIDEBAR_WIDTH
   })
+
   const [resizingSidebar, setResizingSidebar] = useState(false)
 
   const setAndSaveSidebarWidth = (width: number) => {
@@ -146,6 +150,7 @@ export function WorkspaceMain({
 export function ResizableSidebarRail() {
   const resize = useContext(SidebarResizeContext)
   const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null)
+
   if (!resize) {
     throw new Error('ResizableSidebarRail must be used within WorkspaceShell.')
   }
@@ -162,6 +167,7 @@ export function ResizableSidebarRail() {
     event.currentTarget.setPointerCapture(event.pointerId)
     resize.setResizing(true)
   }
+
   const continueResize = (event: PointerEvent<HTMLDivElement>) => {
     if (!resizeOrigin.current) {
       return
@@ -174,6 +180,7 @@ export function ResizableSidebarRail() {
 
   const stopResize = (event: PointerEvent<HTMLDivElement>) => {
     resizeOrigin.current = null
+
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
@@ -183,6 +190,7 @@ export function ResizableSidebarRail() {
 
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     let nextWidth = resize.width
+
     if (event.key === 'ArrowLeft') {
       nextWidth -= event.shiftKey ? 32 : 16
     } else if (event.key === 'ArrowRight') {

@@ -104,6 +104,7 @@ class FakeBrowser implements BrowserSessionBrowser {
 
   async command(message: BrowserClientMessage) {
     this.commands.push(message)
+
     if (message.type === 'navigate') {
       this.state = { ...this.state, url: message.url }
       this.callbacks.state(this.state)
@@ -123,6 +124,7 @@ class FakeBrowser implements BrowserSessionBrowser {
   }
   async requestClose(force: boolean) {
     this.closeRequests.push(force)
+
     return force || !this.closeRequiresConfirmation
   }
   async close() {
@@ -139,15 +141,19 @@ function fakeLocalBrowser() {
     maxHeight?: number
     everyNthFrame?: number
   }
+
   interface CdpCommand {
     method: string
     params: CdpCommandParameters | null
   }
+
   const commands: CdpCommand[] = []
+
   const cdp = Object.assign(new EventEmitter(), {
     commands,
     async send(method: string, params?: CdpCommandParameters) {
       commands.push({ method, params: params ?? null })
+
       return method === 'Page.getLayoutMetrics'
         ? { cssVisualViewport: { scale: 2 } }
         : method === 'Treeport.negotiateVideo'
@@ -156,25 +162,30 @@ function fakeLocalBrowser() {
     },
     async detach() {}
   })
+
   let currentUrl = 'https://example.com/local'
+
   const mouse = {
     move: vi.fn(async () => undefined),
     down: vi.fn(async () => undefined),
     up: vi.fn(async () => undefined),
     wheel: vi.fn(async () => undefined)
   }
+
   const keyboard = {
     down: vi.fn(async () => undefined),
     up: vi.fn(async () => undefined),
     insertText: vi.fn(async () => undefined),
     press: vi.fn(async () => undefined)
   }
+
   const page = Object.assign(new EventEmitter(), {
     mouse,
     keyboard,
     url: () => currentUrl,
     goto: vi.fn(async (url: string) => {
       currentUrl = url
+
       return null
     }),
     goBack: vi.fn(async () => null),
@@ -187,11 +198,14 @@ function fakeLocalBrowser() {
       fill: vi.fn(async () => undefined)
     }))
   })
+
   const context = {
     pages: () => [page],
     newCDPSession: vi.fn(async () => cdp)
   }
+
   let connected = true
+
   const browser = Object.assign(new EventEmitter(), {
     contexts: () => [context],
     isConnected: () => connected,
@@ -200,6 +214,7 @@ function fakeLocalBrowser() {
       browser.emit('disconnected')
     })
   })
+
   return { browser, cdp, page, mouse, keyboard }
 }
 
@@ -222,6 +237,7 @@ function fixture(
   } = {}
 ) {
   const events = new EventEmitter()
+
   const app: BrowserApp = {
     id: 'app_browser',
     kind: 'browser',
@@ -231,6 +247,7 @@ function fixture(
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
+
   const apps = {
     authorizeBrowserApp: vi.fn<
       (
@@ -247,6 +264,7 @@ function fixture(
           app.url = state.url
           app.title = state.title || new URL(state.url).host || 'Browser'
           app.updatedAt = '2026-01-01T00:00:01.000Z'
+
           return { ...app }
         })
     ),
@@ -254,6 +272,7 @@ function fixture(
       Effect.succeed({ app: { ...app, id: 'app_popup' } })
     )
   }
+
   const service = testAccess<BrowserSessionService>({
     forkApplicationEffect: (effect: Effect.Effect<void, never, never>) => {
       Effect.runFork(effect)
@@ -262,10 +281,12 @@ function fixture(
     events: {
       subscribe(listener: (event: ProductEvent) => void) {
         events.on('event', listener)
+
         return () => events.off('event', listener)
       }
     }
   })
+
   const config = {
     cacheDir: '/cache',
     dataDir: '/data',
@@ -274,6 +295,7 @@ function fixture(
     ),
     browserRelayEntry: null
   } satisfies BrowserSessionConfig
+
   const manager = new BrowserSessionManager(
     service,
     config,
@@ -281,29 +303,35 @@ function fixture(
     agentCliRunner,
     options.connectLocalAutomation
   )
+
   onTestFinished(async () => {
     await manager.dispose()
     await fs.promises.rm(config.runtimeDir, { recursive: true, force: true })
   })
+
   const transports: Array<{
     transport: BrowserTransport
     messages: BrowserServerMessage[]
     disconnects: number
   }> = []
+
   const transport = (id: string) => {
     const messages: BrowserServerMessage[] = []
     let disconnects = 0
+
     const browserTransport: BrowserTransport = {
       id,
       isConnected: () => true,
       sendMessage: (message) => {
         messages.push(message)
+
         return true
       },
       disconnect: () => {
         disconnects += 1
       }
     }
+
     const value = {
       transport: browserTransport,
       messages,
@@ -311,9 +339,12 @@ function fixture(
         return disconnects
       }
     }
+
     transports.push(value)
+
     return value
   }
+
   return { manager, service, apps, events, transport, transports }
 }
 
@@ -426,22 +457,27 @@ describe('Browser sessions', () => {
     await vi.advanceTimersByTimeAsync(1_000)
     await vi.waitFor(() => expect(browser.frozen).toBe(true))
     let finishAgent: () => void = () => undefined
+
     const agentWork = new Promise<void>((resolve) => {
       finishAgent = resolve
     })
+
     const agentCommand = vi
       .spyOn(browser, 'agentCommand')
       .mockImplementation(async () => {
         expect(browser.frozen).toBe(false)
         await agentWork
+
         return 'snapshot'
       })
+
     const snapshot = runEffect(
       value.manager.agentCommand('app_browser', {
         command: 'snapshot',
         args: []
       })
     )
+
     await vi.waitFor(() => expect(agentCommand).toHaveBeenCalledOnce())
     // An unobserved page remains active for the entire automation operation.
     await vi.advanceTimersByTimeAsync(60_000)
@@ -486,6 +522,7 @@ describe('Browser sessions', () => {
 
   it('authorizes one-use attachment tickets, shares control, and isolates hosted video viewers', async () => {
     const value = fixture()
+
     const identity = {
       account: {
         source: 'tailscale',
@@ -495,16 +532,20 @@ describe('Browser sessions', () => {
       },
       deviceId: 'tailscale:100.64.0.10'
     } as const
+
     const otherDevice = { ...identity, deviceId: 'tailscale:100.64.0.11' }
+
     const otherAccount = {
       ...identity,
       account: { ...identity.account, login: 'bob@example.test', name: 'Bob' }
     }
+
     // Tickets are bound to the authenticated ingress, not renderer claims.
     for (const requester of [otherDevice, otherAccount, null]) {
       const ticket = await runEffect(
         value.manager.issueTicket('app_browser', 'client-first', true, identity)
       )
+
       await expect(
         runEffect(
           value.manager.accept(
@@ -515,10 +556,13 @@ describe('Browser sessions', () => {
         )
       ).rejects.toThrow('INVALID_BROWSER_TICKET')
     }
+
     const first = value.transport('first')
+
     const firstTicket = await runEffect(
       value.manager.issueTicket('app_browser', 'client-first', true, identity)
     )
+
     await runEffect(
       value.manager.accept(firstTicket, first.transport, identity)
     )
@@ -728,6 +772,7 @@ describe('Browser sessions', () => {
     const forwardCommands = browser.commands.filter(
       (command) => command.type === 'forward'
     ).length
+
     value.manager.message('first', { type: 'takeControl' })
     value.manager.message('second', { type: 'forward' })
     await vi.waitFor(() =>
@@ -797,31 +842,40 @@ describe('Browser sessions', () => {
 
   it('serializes concurrent attachments into one browser process', async () => {
     const value = fixture()
+
     const firstTicket = await runEffect(
       value.manager.issueTicket('app_browser', 'client-first')
     )
+
     const secondTicket = await runEffect(
       value.manager.issueTicket('app_browser', 'client-second')
     )
+
     const authorized = await runEffect(
       value.apps.authorizeBrowserApp('app_browser')
     )
+
     let finishAuthorization!: () => void
+
     const authorization = new Promise<void>((resolve) => {
       finishAuthorization = resolve
     })
+
     vi.mocked(value.apps.authorizeBrowserApp).mockImplementation(() =>
       Effect.promise(async () => {
         await authorization
+
         return authorized
       })
     )
     const first = value.transport('first')
     const second = value.transport('second')
+
     const attachments = Promise.all([
       runEffect(value.manager.accept(firstTicket, first.transport)),
       runEffect(value.manager.accept(secondTicket, second.transport))
     ])
+
     finishAuthorization()
     await attachments
 
@@ -838,10 +892,13 @@ describe('Browser sessions', () => {
   it('restores daemon-owned addresses and saves agent navigation without a client', async () => {
     const launchUrl = 'http://localhost:4173/from-launch'
     const agentUrl = 'http://localhost:4173/from-agent'
+
     const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) => {
       const browser = browsers[0]!
+
       if (args[0] === 'attach') {
         expect(browser.state.url).toBe(launchUrl)
+
         return 'attached'
       }
 
@@ -852,11 +909,13 @@ describe('Browser sessions', () => {
           title: 'Agent page'
         }
         browser.callbacks.state(browser.state)
+
         return 'navigated'
       }
 
       return 'detached'
     })
+
     const launchValue = fixture(runAgentCli, { appUrl: launchUrl })
 
     await expect(
@@ -908,10 +967,13 @@ describe('Browser sessions', () => {
     const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) =>
       args[0] === 'attach' ? 'attached' : 'snapshot output'
     )
+
     const localBrowser = fakeLocalBrowser()
+
     // SAFETY: This faithful fake supplies every Playwright Browser method used by BrowserSessionManager.
     const connectLocalAutomation: BrowserLocalAutomationConnector = async () =>
       localBrowser.browser as never
+
     const value = fixture(runAgentCli, { connectLocalAutomation })
     const remote = value.transport('remote')
     await runEffect(
@@ -927,7 +989,9 @@ describe('Browser sessions', () => {
     const ownerTicket = await runEffect(
       value.manager.issueOwnerTicket('app_browser', 'desktop-client')
     )
+
     let automationRequests = 0
+
     const ownerServer = http.createServer((request, response) => {
       if (request.url === '/private/identity') {
         response.setHeader('content-type', 'application/json')
@@ -937,6 +1001,7 @@ describe('Browser sessions', () => {
             challenge: ownerTicket.challenge
           })
         )
+
         return
       }
 
@@ -944,9 +1009,11 @@ describe('Browser sessions', () => {
       response.statusCode = 404
       response.end()
     })
+
     await new Promise<void>((resolve) =>
       ownerServer.listen(0, '127.0.0.1', resolve)
     )
+
     const address = z
       .object({ port: z.number().int().positive() })
       .parse(ownerServer.address())
@@ -954,11 +1021,13 @@ describe('Browser sessions', () => {
     const ownerMessages: BrowserOwnerServerMessage[] = []
     let ownerConnected = true
     let acceptRuntimeControl = true
+
     const ownerTransport: BrowserOwnerTransport = {
       id: 'local-owner',
       isConnected: () => ownerConnected,
       send: (message) => {
         ownerMessages.push(message)
+
         if (message.type === 'runtimeControl') {
           queueMicrotask(() =>
             value.manager.ownerMessage('local-owner', {
@@ -985,6 +1054,7 @@ describe('Browser sessions', () => {
         ownerConnected = false
       }
     }
+
     await runEffect(
       value.manager.acceptOwner(
         {
@@ -1000,21 +1070,25 @@ describe('Browser sessions', () => {
       type: 'claimGranted',
       appId: 'app_browser'
     })
+
     const claim = ownerMessages.find(
       (message) => message.type === 'claimGranted'
     )
+
     if (!claim || claim.type !== 'claimGranted') {
       throw new Error('The local owner claim was not granted.')
     }
 
     const generation = claim.generation
     let agentSettled = false
+
     const beforeReadyAgent = runEffect(
       value.manager.agentCommand('app_browser', {
         command: 'snapshot',
         args: []
       })
     )
+
     void beforeReadyAgent
       .finally(() => {
         agentSettled = true
@@ -1143,9 +1217,11 @@ describe('Browser sessions', () => {
       )
     ).rejects.toThrow('Navigation canceled by beforeunload')
     rejectReload(new Error('No dialog is showing'))
+
     const dismiss = vi.fn(async () => {
       throw new Error('No dialog is showing')
     })
+
     localBrowser.page.emit('dialog', { dismiss })
     await expect(
       runEffect(
@@ -1359,14 +1435,17 @@ describe('Browser sessions', () => {
     const resumedTicket = await runEffect(
       value.manager.issueOwnerTicket('app_browser', 'desktop-client')
     )
+
     expect(resumedTicket.challenge).toBe(ownerTicket.challenge)
     const resumedMessages: BrowserOwnerServerMessage[] = []
     let resumedConnected = true
+
     const resumedTransport: BrowserOwnerTransport = {
       id: 'local-owner-resumed',
       isConnected: () => resumedConnected,
       send: (message) => {
         resumedMessages.push(message)
+
         if (message.type === 'runtimeControl') {
           queueMicrotask(() =>
             value.manager.ownerMessage('local-owner-resumed', {
@@ -1384,6 +1463,7 @@ describe('Browser sessions', () => {
         resumedConnected = false
       }
     }
+
     await runEffect(
       value.manager.acceptOwner(
         {
@@ -1462,9 +1542,11 @@ describe('Browser sessions', () => {
     'requires force to close a app when its local owner is %s',
     async (failure) => {
       const value = fixture()
+
       const ticket = await runEffect(
         value.manager.issueOwnerTicket('app_browser', 'desktop-client')
       )
+
       const ownerServer = http.createServer((_request, response) => {
         response.setHeader('content-type', 'application/json')
         response.end(
@@ -1474,6 +1556,7 @@ describe('Browser sessions', () => {
           })
         )
       })
+
       onTestFinished(async () => {
         vi.useRealTimers()
         await value.manager.dispose()
@@ -1482,6 +1565,7 @@ describe('Browser sessions', () => {
       await new Promise<void>((resolve) =>
         ownerServer.listen(0, '127.0.0.1', resolve)
       )
+
       const address = z
         .object({ port: z.number().int().positive() })
         .parse(ownerServer.address())
@@ -1499,6 +1583,7 @@ describe('Browser sessions', () => {
             isConnected: () => connected,
             send: (message) => {
               messages.push(message)
+
               return connected
             },
             disconnect: () => {
@@ -1508,6 +1593,7 @@ describe('Browser sessions', () => {
         )
       )
       expect(messages[0]).toMatchObject({ type: 'claimGranted' })
+
       if (failure === 'disconnected') {
         connected = false
         value.manager.closeOwner('local-owner')
@@ -1589,6 +1675,7 @@ describe('Browser sessions', () => {
     const value = fixture()
     const first = value.transport('first')
     const second = value.transport('second')
+
     for (const client of [first, second]) {
       await runEffect(
         value.manager.accept(
@@ -1599,20 +1686,24 @@ describe('Browser sessions', () => {
         )
       )
     }
+
     const browser = browsers[0]!
     const gate = Effect.runSync(Deferred.make<string>())
     vi.spyOn(browser, 'agentCommand').mockImplementationOnce(() =>
       Effect.runPromise(Deferred.await(gate))
     )
+
     const agent = runEffect(
       value.manager.agentCommand('app_browser', {
         command: 'snapshot',
         args: []
       })
     )
+
     await vi.waitFor(() => expect(browser.agentCommand).toHaveBeenCalledOnce())
     browser.commands.length = 0
     value.manager.message('first', { type: 'takeControl' })
+
     for (let index = 0; index < 1_000; index += 1) {
       value.manager.message('first', { type: 'takeControl' })
       value.manager.message('first', {
@@ -1624,12 +1715,14 @@ describe('Browser sessions', () => {
         deltaY: -30
       })
     }
+
     value.manager.message('first', {
       type: 'pointer',
       phase: 'move',
       x: 1,
       y: 2
     })
+
     const boundary: BrowserClientMessage[] = [
       { type: 'pointer', phase: 'move', x: 10, y: 20 },
       { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 40 },
@@ -1667,6 +1760,7 @@ describe('Browser sessions', () => {
       { type: 'touch', phase: 'end', points: [{ id: 1, x: 90, y: 100 }] },
       { type: 'touch', phase: 'move', points: [{ id: 2, x: 220, y: 100 }] }
     ]
+
     for (const message of boundary) {
       if (message.type === 'touch' && message.phase === 'move') {
         for (let index = 0; index < 1_000; index += 1) {
@@ -1676,6 +1770,7 @@ describe('Browser sessions', () => {
         value.manager.message('first', message)
       }
     }
+
     value.manager.message('second', { type: 'takeControl' })
     value.manager.message('first', {
       type: 'wheel',
@@ -1751,20 +1846,24 @@ describe('Browser sessions', () => {
     const completions: Array<() => void> = []
     // Cursor layout queries must not occupy input slots or delay shutdown.
     let releaseCursor!: (cursor: 'default') => void
+
     const cursor = vi.spyOn(browser, 'cursor').mockImplementation(
       () =>
         new Promise<'default'>((resolve) => {
           releaseCursor = resolve
         })
     )
+
     const dispatch = vi
       .spyOn(browser, 'command')
       .mockImplementation(async (message) => {
         browser.commands.push(message)
+
         if (message.type === 'wheel') {
           await new Promise<void>((resolve) => completions.push(resolve))
         }
       })
+
     const wheel = {
       type: 'wheel',
       x: 10,
@@ -1773,15 +1872,18 @@ describe('Browser sessions', () => {
       deltaX: 0,
       deltaY: 6
     } as const
+
     value.manager.message('first', wheel)
     await vi.waitFor(() => expect(completions).toHaveLength(1))
     value.manager.message('first', { ...wheel, deltaX: 1 })
     await vi.waitFor(() => expect(completions).toHaveLength(2))
     const sideways = [0, -1, 0, 1, 0, -1]
+
     for (const [index, deltaX] of sideways.entries()) {
       value.manager.message('first', { ...wheel, deltaX })
       await vi.waitFor(() => expect(completions).toHaveLength(index + 3))
     }
+
     expect(browser.commands).toEqual([
       wheel,
       { ...wheel, deltaX: 1 },
@@ -1803,9 +1905,11 @@ describe('Browser sessions', () => {
     expect(browser.commands.every((message) => message.type === 'wheel')).toBe(
       true
     )
+
     for (const complete of completions.slice(1, 8)) {
       complete()
     }
+
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(dispatch).toHaveBeenCalledTimes(9)
     completions[8]!()
@@ -1841,13 +1945,16 @@ describe('Browser sessions', () => {
     vi.spyOn(browser, 'agentCommand').mockImplementationOnce(() =>
       Effect.runPromise(Deferred.await(gate))
     )
+
     const active = runEffect(
       value.manager.agentCommand('app_browser', {
         command: 'snapshot',
         args: []
       })
     ).catch((error: Error) => error.message)
+
     await vi.waitFor(() => expect(browser.agentCommand).toHaveBeenCalledOnce())
+
     const pending = Array.from({ length: 60 }, () =>
       runEffect(
         value.manager.agentCommand('app_browser', {
@@ -1856,6 +1963,7 @@ describe('Browser sessions', () => {
         })
       ).catch((error: Error) => error.message)
     )
+
     await expect(pending.at(-1)).resolves.toContain('queue is full')
     value.manager.message('client', {
       type: 'key',
@@ -1890,13 +1998,17 @@ describe('Browser sessions', () => {
       type: 'navigationError',
       message: 'The Browser command queue is full. Wait and try again.'
     })
+
     const closeRequest = value.manager
       .requestAppClose('app_browser')
       .catch((error: Error) => error.message)
+
     let closed = false
+
     const closing = value.manager.dispose().then(() => {
       closed = true
     })
+
     await expect(active).resolves.toContain('shutting down')
     await expect(pending[0]).resolves.toContain('shutting down')
     await expect(closeRequest).resolves.toContain('shutting down')
@@ -1917,18 +2029,22 @@ describe('Browser sessions', () => {
     const value = fixture()
     const client = value.transport('client')
     const gate = Effect.runSync(Deferred.make<void>())
+
     const launch = vi
       .spyOn(FakeBrowser.prototype, 'launch')
       .mockImplementationOnce(() => Effect.runPromise(Deferred.await(gate)))
+
     onTestFinished(() => {
       launch.mockRestore()
     })
+
     const attaching = runEffect(
       value.manager.accept(
         await runEffect(value.manager.issueTicket('app_browser', 'client')),
         client.transport
       )
     )
+
     await vi.waitFor(() => expect(launch).toHaveBeenCalledOnce())
     const closing = value.manager.dispose()
     await attaching
@@ -1950,9 +2066,11 @@ describe('Browser sessions', () => {
         client.transport
       )
     )
+
     const request = value.manager
       .requestAppClose('app_browser')
       .catch((error: Error) => error.message)
+
     const close = value.manager.closeApp('app_browser', 'closed immediately')
     await expect(request).resolves.toContain('closed immediately')
     await close
@@ -1999,6 +2117,7 @@ describe('Browser sessions', () => {
       .mockResolvedValueOnce('attached')
       .mockResolvedValueOnce('snapshot')
       .mockRejectedValueOnce(new Error('Browser disconnected'))
+
     const value = fixture(runAgentCli)
     const client = value.transport('client')
     await runEffect(

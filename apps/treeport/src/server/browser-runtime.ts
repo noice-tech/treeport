@@ -25,6 +25,7 @@ export async function browserRuntime(platform = process.platform): Promise<{
   launchError: string | null
 }> {
   const configured = process.env.TREEPORT_BROWSER_EXECUTABLE?.trim()
+
   const candidates = configured
     ? [configured]
     : platform === 'darwin'
@@ -37,7 +38,9 @@ export async function browserRuntime(platform = process.platform): Promise<{
           '/usr/bin/chromium-browser',
           '/snap/bin/chromium'
         ]
+
   const channel = configured?.includes('chromium') ? 'chromium' : 'chrome'
+
   if (configured && !path.isAbsolute(configured)) {
     return {
       executablePath: configured,
@@ -60,6 +63,7 @@ export async function browserRuntime(platform = process.platform): Promise<{
       }
     }
   }
+
   return {
     executablePath: configured || null,
     channel,

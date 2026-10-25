@@ -14,7 +14,9 @@ import { testSchema } from './schema.test-support.js'
 const terminalAttentionAcknowledgementSchema = testSchema(
   terminalAttentionAcknowledgementEffectSchema
 )
+
 const terminalSizeSchema = testSchema(terminalSizeEffectSchema)
+
 const IDLE = {
   state: 'idle',
   kind: null,

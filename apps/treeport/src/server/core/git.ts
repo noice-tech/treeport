@@ -49,6 +49,7 @@ export interface GitWorktreeLaunchIdentity {
 }
 
 const repositoryIdentityKey = 'treeport.repositoryId'
+
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
@@ -73,8 +74,10 @@ const MAX_FILE_DIFF_BYTES = 2 * 1024 * 1024
 export function parseGitDiffFiles(output: string): GitDiffFile[] {
   const fields = output.split('\0')
   const files: GitDiffFile[] = []
+
   for (let index = 0; index < fields.length;) {
     const code = fields[index++]
+
     if (!code) {
       continue
     }
@@ -82,6 +85,7 @@ export function parseGitDiffFiles(output: string): GitDiffFile[] {
     if (code.startsWith('R') || code.startsWith('C')) {
       const previousPath = fields[index++]
       const path = fields[index++]
+
       if (!previousPath || !path) {
         throw new Error('Invalid Git name-status output for renamed file')
       }
@@ -91,6 +95,7 @@ export function parseGitDiffFiles(output: string): GitDiffFile[] {
     }
 
     const filePath = fields[index++]
+
     if (!filePath) {
       throw new Error('Invalid Git name-status output for changed file')
     }
@@ -100,6 +105,7 @@ export function parseGitDiffFiles(output: string): GitDiffFile[] {
       : code.startsWith('D')
         ? 'deleted'
         : 'modified'
+
     files.push({ path: filePath, previousPath: null, status })
   }
 
@@ -109,24 +115,29 @@ export function parseGitDiffFiles(output: string): GitDiffFile[] {
 function parseGitDiffLineCounts(output: string) {
   const counts = { additions: 0, deletions: 0 }
   const fields = output.split('\0')
+
   for (let index = 0; index < fields.length; index += 1) {
     const record = fields[index]!
+
     if (!record) {
       continue
     }
 
     const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(record)
+
     if (!match) {
       throw new Error('Invalid Git numstat output')
     }
 
     counts.additions += match[1] === '-' ? 0 : Number(match[1])
     counts.deletions += match[2] === '-' ? 0 : Number(match[2])
+
     // With -z, renames have an empty path followed by two path fields.
     if (match[3] === '') {
       index += 2
     }
   }
+
   return counts
 }
 
@@ -135,18 +146,23 @@ export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
     .trim()
     .split(/\n\s*\n/)
     .filter(Boolean)
+
   return records.map((record) => {
     const values = new Map<string, string>()
     const flags = new Set<string>()
+
     for (const line of record.split('\n')) {
       const separator = line.indexOf(' ')
+
       if (separator === -1) {
         flags.add(line)
       } else {
         values.set(line.slice(0, separator), line.slice(separator + 1))
       }
     }
+
     const worktreePath = values.get('worktree')
+
     if (!worktreePath) {
       throw new Error(
         'Invalid git worktree porcelain output: missing worktree path'
@@ -154,6 +170,7 @@ export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
     }
 
     const ref = values.get('branch')
+
     return {
       path: worktreePath,
       gitWorktreeKey: null,
@@ -174,6 +191,7 @@ export function detectDefaultBranch(
 ): string {
   const value = symbolicRef.trim()
   const match = /refs\/remotes\/[^/]+\/(.+)$/.exec(value)
+
   return match?.[1] || fallback
 }
 
@@ -183,10 +201,12 @@ export function parseDirtyStatus(output: string): DirtyState {
   let untracked = 0
   let conflicts = 0
   const entries = output.split('\0').filter(Boolean)
+
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index]!
     const x = entry[0]
     const y = entry[1]
+
     if (x === '?' && y === '?') {
       untracked += 1
       continue
@@ -208,6 +228,7 @@ export function parseDirtyStatus(output: string): DirtyState {
       index += 1
     }
   }
+
   return {
     dirty: staged + unstaged + untracked > 0,
     staged,
@@ -251,13 +272,16 @@ class PromiseGitAdapter {
 
   async findRepositoryRoot(inputPath: string): Promise<string | null> {
     const canonicalInput = await fs.realpath(path.resolve(inputPath))
+
     const request = {
       executable: this.executable,
       args: ['rev-parse', '--show-toplevel'],
       cwd: canonicalInput,
       timeoutMs: 30_000
     } as const
+
     const result = await this.runner.run(request)
+
     if (result.exitCode === 0) {
       return fs.realpath(result.stdout.trim())
     }
@@ -278,6 +302,7 @@ class PromiseGitAdapter {
   async findProjectRepositoryRoot(inputPath: string): Promise<string | null> {
     const canonicalInput = await fs.realpath(path.resolve(inputPath))
     const repositoryRoot = await this.findRepositoryRoot(canonicalInput)
+
     if (!repositoryRoot || repositoryRoot === canonicalInput) {
       return repositoryRoot
     }
@@ -287,11 +312,13 @@ class PromiseGitAdapter {
       '--all',
       '--max-count=1'
     ])
+
     return commits.stdout.trim() ? repositoryRoot : null
   }
 
   async canonicalizeRepositoryPath(inputPath: string): Promise<string> {
     const repositoryRoot = await this.findRepositoryRoot(inputPath)
+
     if (repositoryRoot) {
       return repositoryRoot
     }
@@ -313,6 +340,7 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 30_000
     })
+
     if (result.exitCode === 1 && !result.stdout.trim()) {
       return []
     }
@@ -333,6 +361,7 @@ class PromiseGitAdapter {
 
   async repositoryIdentity(cwd: string): Promise<string | null> {
     const values = await this.repositoryIdentityValues(cwd)
+
     if (values.length === 0) {
       return null
     }
@@ -352,6 +381,7 @@ class PromiseGitAdapter {
     const result = await this.checked(cwd, ['rev-parse', '--git-common-dir'])
     const value = result.stdout.trim()
     const resolved = path.isAbsolute(value) ? value : path.resolve(cwd, value)
+
     return fs.realpath(resolved).catch(() => path.resolve(resolved))
   }
 
@@ -361,6 +391,7 @@ class PromiseGitAdapter {
 
   private async initializeRepositoryIdentity(cwd: string): Promise<string> {
     let existing: string | null = null
+
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
         existing = await this.repositoryIdentity(cwd)
@@ -383,12 +414,14 @@ class PromiseGitAdapter {
     }
 
     const generated = crypto.randomUUID()
+
     let write = await this.runner.run({
       executable: this.executable,
       args: ['config', '--local', '--add', repositoryIdentityKey, generated],
       cwd,
       timeoutMs: 30_000
     })
+
     for (
       let attempt = 0;
       write.exitCode !== 0 &&
@@ -407,6 +440,7 @@ class PromiseGitAdapter {
 
     if (write.exitCode !== 0) {
       const raced = await this.repositoryIdentity(cwd).catch(() => null)
+
       if (raced) {
         return raced
       }
@@ -419,6 +453,7 @@ class PromiseGitAdapter {
 
     const values = await this.repositoryIdentityValues(cwd)
     const valid = values.filter((value) => uuidPattern.test(value))
+
     if (valid.length === 0) {
       throw new InvalidRepositoryIdentityError(
         'Git did not persist a valid Treeport repository identity'
@@ -426,6 +461,7 @@ class PromiseGitAdapter {
     }
 
     const identity = valid[0]!.toLowerCase()
+
     if (values.length !== 1 || values[0] !== identity) {
       let cleanup = await this.runner.run({
         executable: this.executable,
@@ -439,6 +475,7 @@ class PromiseGitAdapter {
         cwd,
         timeoutMs: 30_000
       })
+
       for (
         let attempt = 0;
         cleanup.exitCode !== 0 &&
@@ -470,6 +507,7 @@ class PromiseGitAdapter {
     }
 
     const persisted = await this.repositoryIdentity(cwd)
+
     if (persisted !== identity) {
       throw new InvalidRepositoryIdentityError(
         'The local Treeport repository identity changed while it was initialized'
@@ -488,10 +526,12 @@ class PromiseGitAdapter {
       '--git-common-dir',
       '--absolute-git-dir'
     ])
+
     const values = result.stdout
       .split(/\r?\n/u)
       .map((value) => value.trim())
       .filter(Boolean)
+
     if (values.length !== 3) {
       throw new Error('Git returned an incomplete worktree identity')
     }
@@ -504,9 +544,11 @@ class PromiseGitAdapter {
             path.isAbsolute(value) ? value : path.resolve(cwd, value)
           )
         )
+
     const [topLevel, commonDirectory, gitDirectory] = await Promise.all(
       values.map(canonicalize)
     )
+
     return {
       topLevel: topLevel!,
       commonDirectory: commonDirectory!,
@@ -519,19 +561,25 @@ class PromiseGitAdapter {
       this.checked(cwd, ['worktree', 'list', '--porcelain']),
       this.checked(cwd, ['rev-parse', '--git-common-dir'])
     ])
+
     const commonDirectoryValue = commonDirectoryResult.stdout.trim()
+
     const resolvedCommonDirectory = path.isAbsolute(commonDirectoryValue)
       ? commonDirectoryValue
       : path.resolve(cwd, commonDirectoryValue)
+
     const commonDirectory = await fs
       .realpath(resolvedCommonDirectory)
       .catch(() => path.resolve(resolvedCommonDirectory))
+
     const parsed = parseWorktreePorcelain(result.stdout)
+
     return Promise.all(
       parsed.map(async (item) => {
         const worktreePath = await fs
           .realpath(item.path)
           .catch(() => path.resolve(item.path))
+
         if (item.prunable) {
           return { ...item, path: worktreePath }
         }
@@ -540,16 +588,21 @@ class PromiseGitAdapter {
           'rev-parse',
           '--absolute-git-dir'
         ])
+
         const gitDirectoryValue = gitDirectory.stdout.trim()
+
         const canonicalGitDirectory = await fs
           .realpath(gitDirectoryValue)
           .catch(() => path.resolve(gitDirectoryValue))
+
         const relative = path.relative(commonDirectory, canonicalGitDirectory)
         let gitWorktreeKey: string
+
         if (relative === '') {
           gitWorktreeKey = 'main'
         } else {
           const segments = relative.split(path.sep)
+
           if (
             segments.length !== 2 ||
             segments[0] !== 'worktrees' ||
@@ -579,6 +632,7 @@ class PromiseGitAdapter {
   async resolveMainCheckout(cwd: string): Promise<string> {
     const result = await this.checked(cwd, ['worktree', 'list', '--porcelain'])
     const main = parseWorktreePorcelain(result.stdout)[0]
+
     if (!main || main.bare) {
       throw new Error('A non-bare main Git checkout is required')
     }
@@ -588,6 +642,7 @@ class PromiseGitAdapter {
 
   async currentBranch(cwd: string): Promise<string> {
     const result = await this.checked(cwd, ['branch', '--show-current'])
+
     return result.stdout.trim() || '(detached)'
   }
 
@@ -598,11 +653,13 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 30_000
     })
+
     if (remote.exitCode !== 0) {
       return null
     }
 
     const match = /^ref:\s+refs\/heads\/(.+?)\s+HEAD$/m.exec(remote.stdout)
+
     return match?.[1] ?? null
   }
 
@@ -613,11 +670,13 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 10_000
     })
+
     return result.exitCode === 0 ? result.stdout.trim() || null : null
   }
 
   async defaultBranch(cwd: string): Promise<string> {
     const remote = await this.remoteDefaultBranch(cwd)
+
     if (remote) {
       return remote
     }
@@ -628,6 +687,7 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 10_000
     })
+
     if (symbolic.exitCode === 0) {
       return detectDefaultBranch(symbolic.stdout, '')
     }
@@ -638,6 +698,7 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 10_000
     })
+
     if (configured.exitCode === 0 && configured.stdout.trim()) {
       return configured.stdout.trim()
     }
@@ -651,7 +712,9 @@ class PromiseGitAdapter {
       '--verify',
       `${ref}^{commit}`
     ])
+
     const commit = result.stdout.trim()
+
     if (!commit) {
       throw new Error(`Git did not resolve ${ref} to a commit`)
     }
@@ -661,12 +724,14 @@ class PromiseGitAdapter {
 
   async resolveDefaultCommit(cwd: string): Promise<string> {
     const defaultBranch = await this.defaultBranch(cwd)
+
     const fetched = await this.runner.run({
       executable: this.executable,
       args: ['fetch', '--quiet', 'origin', defaultBranch],
       cwd,
       timeoutMs: 60_000
     })
+
     if (fetched.exitCode === 0) {
       return this.resolveCommit(cwd, `origin/${defaultBranch}`)
     }
@@ -702,6 +767,7 @@ class PromiseGitAdapter {
     force: boolean
   ): Promise<void> {
     const args = ['worktree', 'remove']
+
     if (force) {
       args.push('--force')
     }
@@ -735,6 +801,7 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 30_000
     })
+
     if (result.exitCode !== 0) {
       return null
     }
@@ -749,6 +816,7 @@ class PromiseGitAdapter {
       '-z',
       '--untracked-files=all'
     ])
+
     return {
       dirty: parseDirtyStatus(result.stdout),
       fingerprint: crypto
@@ -770,6 +838,7 @@ class PromiseGitAdapter {
       '--exclude-standard',
       '-z'
     ])
+
     return [...new Set(result.stdout.split('\0').filter(Boolean))].sort()
   }
 
@@ -788,7 +857,9 @@ class PromiseGitAdapter {
       ['.bmp', 'image/bmp'],
       ['.ico', 'image/x-icon']
     ])
+
     const mimeType = mimeTypes.get(path.extname(input.path).toLowerCase())
+
     if (!mimeType) {
       throw new Error('This file type does not support image previews')
     }
@@ -813,6 +884,7 @@ class PromiseGitAdapter {
 
     const maxBytes = 5 * 1024 * 1024
     let bytes: Buffer
+
     if (input.commit !== null) {
       if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.commit)) {
         throw new Error('Image revision must be a full Git commit ID')
@@ -826,8 +898,10 @@ class PromiseGitAdapter {
         '--',
         input.path
       ])
+
       // Read only regular blobs, never symlink targets or submodule contents.
       const match = /^(100644|100755) blob ([a-f0-9]+)\t/.exec(entry.stdout)
+
       if (!match) {
         throw new Error(
           'The image does not exist as a regular file at this revision'
@@ -835,6 +909,7 @@ class PromiseGitAdapter {
       }
 
       const size = await this.checked(cwd, ['cat-file', '-s', match[2]!])
+
       if (Number(size.stdout.trim()) > maxBytes) {
         throw new Error('Image previews are limited to 5 MiB')
       }
@@ -847,6 +922,7 @@ class PromiseGitAdapter {
         maxStdoutBytes: maxBytes,
         stdoutEncoding: 'base64'
       })
+
       bytes = Buffer.from(result.stdout, 'base64')
     } else {
       // Match diff visibility: tracked or untracked, but not ignored files.
@@ -858,6 +934,7 @@ class PromiseGitAdapter {
       const candidate = path.join(root, input.path)
       const canonical = await fs.realpath(candidate)
       const relative = path.relative(root, canonical)
+
       if (
         relative.startsWith(`..${path.sep}`) ||
         relative === '..' ||
@@ -874,8 +951,10 @@ class PromiseGitAdapter {
         canonical,
         fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK
       )
+
       try {
         const stat = await handle.stat()
+
         if (!stat.isFile()) {
           throw new Error('Only regular files support image previews')
         }
@@ -887,6 +966,7 @@ class PromiseGitAdapter {
         // Bound the read even if the file grows after stat().
         const buffer = Buffer.alloc(maxBytes + 1)
         let length = 0
+
         while (length < buffer.length) {
           const { bytesRead } = await handle.read(
             buffer,
@@ -894,12 +974,14 @@ class PromiseGitAdapter {
             buffer.length - length,
             null
           )
+
           if (bytesRead === 0) {
             break
           }
 
           length += bytesRead
         }
+
         if (length > maxBytes) {
           throw new Error('Image previews are limited to 5 MiB')
         }
@@ -931,6 +1013,7 @@ class PromiseGitAdapter {
             const candidates = [`origin/${defaultBranch}`, defaultBranch]
             let baseRef = ''
             let baseTip = ''
+
             for (const candidate of candidates) {
               const resolved = await this.runner.run({
                 executable: this.executable,
@@ -938,12 +1021,14 @@ class PromiseGitAdapter {
                 cwd,
                 timeoutMs: 10_000
               })
+
               if (resolved.exitCode === 0) {
                 baseRef = candidate
                 baseTip = resolved.stdout.trim()
                 break
               }
             }
+
             if (!baseRef) {
               throw new Error(
                 `Default branch ${defaultBranch} is unavailable locally`
@@ -951,15 +1036,18 @@ class PromiseGitAdapter {
             }
 
             const headCommit = await this.resolveCommit(cwd)
+
             // Resolve once, then use immutable IDs even if a branch moves mid-read.
             const mergeBase = await this.checked(cwd, [
               'merge-base',
               baseTip,
               headCommit
             ])
+
             return { baseRef, baseCommit: mergeBase.stdout.trim(), headCommit }
           }
         )
+
         const [changed, branch, staged, unstaged, untracked] =
           await Promise.all([
             this.checked(cwd, [
@@ -1011,11 +1099,14 @@ class PromiseGitAdapter {
                 ])
               : { stdout: '' }
           ])
+
         const paths = (output: string) =>
           [...new Set(output.split('\0').filter(Boolean))].sort()
+
         const untrackedPaths = paths(untracked.stdout)
         const files = parseGitDiffFiles(changed.stdout)
         const trackedPaths = new Set(files.map((file) => file.path))
+
         for (const filePath of scope === 'committed' ? [] : untrackedPaths) {
           if (!trackedPaths.has(filePath)) {
             files.push({
@@ -1025,6 +1116,7 @@ class PromiseGitAdapter {
             })
           }
         }
+
         files.sort((left, right) => left.path.localeCompare(right.path))
 
         return {
@@ -1050,6 +1142,7 @@ class PromiseGitAdapter {
   ): Promise<GitDiff> {
     return this.read(['summary', cwd, defaultBranch, scope], async () => {
       const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
+
       // Fetch compact statistics independently of the bounded, lazy patches.
       const stats = await this.checked(cwd, [
         'diff',
@@ -1060,7 +1153,9 @@ class PromiseGitAdapter {
         context.baseCommit,
         ...(scope === 'committed' ? [context.headCommit] : [])
       ])
+
       const lineCounts = parseGitDiffLineCounts(stats.stdout)
+
       for (const file of context.files) {
         if (file.status !== 'untracked') {
           continue
@@ -1081,7 +1176,9 @@ class PromiseGitAdapter {
           cwd,
           timeoutMs: 30_000
         }
+
         const result = await this.runner.run(request)
+
         // --no-index returns 1 when the files differ, including binary files.
         if (result.exitCode !== 0 && result.exitCode !== 1) {
           throw new ExternalCommandError(
@@ -1095,6 +1192,7 @@ class PromiseGitAdapter {
         lineCounts.additions += counts.additions
         lineCounts.deletions += counts.deletions
       }
+
       return { ...context, lineCounts, generatedAt: new Date().toISOString() }
     })
   }
@@ -1114,14 +1212,17 @@ class PromiseGitAdapter {
           scope,
           false
         )
+
         const cacheKey = JSON.stringify([
           cwd,
           context.baseCommit,
           context.headCommit,
           filePath
         ])
+
         const cached =
           scope === 'committed' ? this.committedPatches.get(cacheKey) : null
+
         if (cached) {
           return cached
         }
@@ -1129,6 +1230,7 @@ class PromiseGitAdapter {
         const file = context.files.find(
           (candidate) => candidate.path === filePath
         )
+
         if (!file) {
           throw new Error('The requested path is not in the current tree diff')
         }
@@ -1147,7 +1249,9 @@ class PromiseGitAdapter {
                 ...(file.previousPath ? [file.previousPath] : []),
                 file.path
               ]
+
         let result
+
         try {
           result = await this.runner.run({
             executable: this.executable,
@@ -1179,6 +1283,7 @@ class PromiseGitAdapter {
         }
 
         const expectedExitCodes = file.status === 'untracked' ? [0, 1] : [0]
+
         if (!expectedExitCodes.includes(result.exitCode)) {
           throw new ExternalCommandError(
             result.stderr.trim() || `Could not diff ${file.path}`,
@@ -1204,6 +1309,7 @@ class PromiseGitAdapter {
             .digest('hex'),
           message: null
         }
+
         if (scope === 'committed') {
           // Immutable commit IDs make this cache independent of working-tree edits.
           // Bound both tiny-entry overhead and retained UTF-16 patch storage.
@@ -1211,6 +1317,7 @@ class PromiseGitAdapter {
             (this.committedPatches.get(cacheKey)?.unified?.length ?? 0) * 2
           this.committedPatches.set(cacheKey, patch)
           this.committedPatchBytes += result.stdout.length * 2
+
           while (
             this.committedPatches.size > 128 ||
             this.committedPatchBytes > 16 * 1024 * 1024
@@ -1228,6 +1335,7 @@ class PromiseGitAdapter {
 
   async isMerged(cwd: string, branch: string): Promise<boolean> {
     const remoteDefaultBranch = await this.remoteDefaultBranch(cwd)
+
     if (!remoteDefaultBranch) {
       return false
     }
@@ -1238,6 +1346,7 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 60_000
     })
+
     if (fetch.exitCode !== 0) {
       return false
     }
@@ -1253,6 +1362,7 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 15_000
     })
+
     return merged.exitCode === 0
   }
 
@@ -1272,11 +1382,13 @@ class PromiseGitAdapter {
       cwd,
       timeoutMs: 15_000
     })
+
     if (result.exitCode !== 0) {
       return null
     }
 
     const [behind = '0', ahead = '0'] = result.stdout.trim().split(/\s+/)
+
     return {
       ahead: Number.parseInt(ahead, 10),
       behind: Number.parseInt(behind, 10)
@@ -1314,6 +1426,7 @@ export class GitAdapter {
     // Bound read fan-out, including parallel scans within one request. Long
     // fetches/worktree mutations must not occupy the interactive read budget.
     const permits = Effect.unsafeMakeSemaphore(4)
+
     const boundedReads = new Set([
       'diff',
       'ls-files',
@@ -1324,6 +1437,7 @@ export class GitAdapter {
       'ls-tree',
       'cat-file'
     ])
+
     this.implementation = new PromiseGitAdapter(
       {
         run: (request) =>
@@ -1381,23 +1495,29 @@ export class GitAdapter {
         'resolveRepositoryCommonDirectory',
         () => this.implementation.repositoryCommonDirectory(cwd)
       )
+
       const existing =
         this.repositoryIdentityInitializations.get(commonDirectory)
+
       if (existing) {
         return yield* Deferred.await(existing)
       }
 
       const candidate = yield* Deferred.make<string, GitError>()
+
       const pending = yield* Effect.sync(() => {
         const winner =
           this.repositoryIdentityInitializations.get(commonDirectory)
+
         if (winner) {
           return winner
         }
 
         this.repositoryIdentityInitializations.set(commonDirectory, candidate)
+
         return candidate
       })
+
       if (pending !== candidate) {
         return yield* Deferred.await(pending)
       }
@@ -1405,6 +1525,7 @@ export class GitAdapter {
       const initialization = this.operation('ensureRepositoryIdentity', () =>
         this.implementation.ensureRepositoryIdentity(cwd)
       )
+
       yield* Effect.uninterruptible(
         Effect.exit(initialization).pipe(
           Effect.flatMap((exit) => Deferred.done(candidate, exit)),
@@ -1420,6 +1541,7 @@ export class GitAdapter {
           )
         )
       )
+
       return yield* Deferred.await(candidate)
     })
   }

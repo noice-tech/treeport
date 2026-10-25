@@ -22,6 +22,7 @@ export function BrowserFilePicker({
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     mounted.current = true
+
     return () => {
       mounted.current = false
     }
@@ -47,6 +48,7 @@ export function BrowserFilePicker({
         onChange={(event) => {
           const files = Array.from(event.currentTarget.files ?? [])
           event.currentTarget.value = ''
+
           if (!files.length) {
             return
           }
@@ -59,6 +61,7 @@ export function BrowserFilePicker({
             setError(
               `Select at most ${BROWSER_MAX_UPLOAD_FILES} files, totaling no more than 10 MiB.`
             )
+
             return
           }
 
@@ -77,10 +80,12 @@ export function BrowserFilePicker({
                     reject(new Error('Could not read the selected file.'))
                   }
                 }
+
                 reader.onerror = () =>
                   reject(new Error('Could not read the selected file.'))
                 reader.readAsDataURL(file)
               })
+
               return { name: file.name, mimeType: file.type, base64 }
             })
           )

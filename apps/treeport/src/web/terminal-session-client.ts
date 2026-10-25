@@ -54,14 +54,17 @@ export class TerminalSession {
               state.listeners.clear()
             })
           )
+
           const timers = yield* makeTimers(state, {
             failRendering: (...args) => render.failRendering(...args)
           })
+
           const render = yield* makeRender(state, {
             failProtocol: (...args) => connection.failProtocol(...args),
             send: (...args) => connection.send(...args),
             stopWithError: (...args) => connection.stopWithError(...args)
           })
+
           const transfers = yield* makeTransfers(state, {
             canInput: (...args) => connection.canInput(...args),
             cancelTimer: timers.cancelTimer,
@@ -70,6 +73,7 @@ export class TerminalSession {
             scheduleTimer: timers.scheduleTimer,
             update: (...args) => this.update(...args)
           })
+
           const layout = yield* makeLayout(state, {
             cancelTimer: timers.cancelTimer,
             failRendering: render.failRendering,
@@ -77,6 +81,7 @@ export class TerminalSession {
             scheduleTimer: timers.scheduleTimer,
             send: (...args) => connection.send(...args)
           })
+
           // Finalizers run in reverse: detach the host and disconnect the
           // socket before disposing wterm, then interrupt the async workers.
           const browser = yield* makeBrowser(state, {
@@ -94,6 +99,7 @@ export class TerminalSession {
             send: (...args) => connection.send(...args),
             update: (...args) => this.update(...args)
           })
+
           const connection: Effect.Effect.Success<
             ReturnType<typeof makeConnection>
           > = yield* makeConnection(
@@ -111,6 +117,7 @@ export class TerminalSession {
             },
             createSocket
           )
+
           const host = yield* makeHost(state, {
             cancelControllerResizeIntent: layout.cancelControllerResizeIntent,
             connect: connection.connect,
@@ -120,6 +127,7 @@ export class TerminalSession {
             scheduleFit: layout.scheduleFit,
             update: (...args) => this.update(...args)
           })
+
           const protocol = yield* makeProtocol(state, {
             applyCanonicalDimensions: layout.applyCanonicalDimensions,
             cancelControllerResizeIntent: layout.cancelControllerResizeIntent,
@@ -140,6 +148,7 @@ export class TerminalSession {
             update: (...args) => this.update(...args),
             restoreTerminal: browser.restoreTerminal
           })
+
           return {
             timers,
             render,
@@ -164,6 +173,7 @@ export class TerminalSession {
     }
 
     this.state.listeners.add(listener)
+
     return () => this.state.listeners.delete(listener)
   }
 
@@ -187,6 +197,7 @@ export class TerminalSession {
 
     if (this.state.wrapper?.style.visibility === 'hidden') {
       this.state.focusAfterRender = true
+
       return
     }
 
@@ -196,6 +207,7 @@ export class TerminalSession {
 
   zoomIfFocused(action: TerminalFontZoom): boolean {
     const input = this.state.terminal?.element.querySelector('textarea')
+
     if (!input || input !== document.activeElement) {
       return false
     }
@@ -216,6 +228,7 @@ export class TerminalSession {
             32,
             Math.max(8, this.state.fontSize + (action === 'zoom-in' ? 1 : -1))
           )
+
     if (fontSize !== this.state.fontSize) {
       this.state.fontSize = fontSize
       this.services.layout.scheduleFit()
@@ -256,6 +269,7 @@ export class TerminalSession {
         rows: this.state.canonicalRows
       }
     )
+
     this.state.controlRequestGeneration = this.state.controllerGeneration
     this.update({ controlPending: true })
     this.services.connection.send('take_control', {
@@ -273,11 +287,13 @@ export class TerminalSession {
       // A rejected render queue must never be reused. Reloading reconstructs
       // xterm, its DOM listeners, and the queue before reconnecting.
       window.location.reload()
+
       return
     }
 
     this.state.reconnectAllowed = true
     this.update({ error: null, phase: 'connecting', degraded: false })
+
     if (this.state.socket) {
       this.state.socket.connect()
     } else {
@@ -319,6 +335,7 @@ export class TerminalSession {
     this.update({ inputError: null })
     this.requestControl()
     this.clearSelection()
+
     if (this.services.connection.canInput() && this.state.terminal) {
       pasteTerminalText(this.state.terminal, data)
     } else {
@@ -347,9 +364,11 @@ export class TerminalSession {
     options: { focus?: boolean } = {}
   ): void {
     const final = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
+
     const prefix = this.state.terminal?.bridge?.cursorKeysApp()
       ? '\u001bO'
       : '\u001b['
+
     this.sendText(
       terminalInputWithModifiers(`${prefix}${final}`, modifiers),
       options
@@ -422,6 +441,7 @@ export class TerminalSession {
 
   private handleBell(): void {
     const now = Date.now()
+
     if (now - this.state.lastBellAt < 1_000) {
       return
     }

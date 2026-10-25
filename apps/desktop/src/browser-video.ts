@@ -24,10 +24,12 @@ export function permitsBrowserVideoCapture(
   details: Electron.MediaAccessPermissionRequest
 ): boolean {
   const grant = captureGrants.get(guest)
+
   const origin =
     details.securityOrigin && URL.canParse(details.securityOrigin)
       ? new URL(details.securityOrigin).origin
       : null
+
   // Electron asks the SOURCE guest's permission handler for tab capture. Only
   // the exact registered helper may capture, during initial acquisition or
   // viewport-sized source replacement.
@@ -59,8 +61,10 @@ export class ElectronBrowserVideo {
   ) {
     return Effect.gen(this, function* () {
       const existing = this.helper
+
       if (existing) {
         const grant = captureGrants.get(this.guest)
+
         if (!grant || grant.helper !== existing.webContents) {
           return yield* Effect.fail(
             new Error('Browser capture authorization is unavailable.')
@@ -81,6 +85,7 @@ export class ElectronBrowserVideo {
           ),
           Effect.onError(() => this.stop)
         )
+
         return
       }
 
@@ -88,9 +93,11 @@ export class ElectronBrowserVideo {
       this.capture = capture
       yield* Effect.gen(this, function* () {
         const origin = `https://${crypto.randomUUID()}.treeport-video.invalid`
+
         const captureSession = session.fromPartition(
           `treeport-video-${crypto.randomUUID()}`
         )
+
         yield* Effect.acquireRelease(
           Effect.sync(() =>
             captureSession.protocol.handle(
@@ -120,6 +127,7 @@ export class ElectronBrowserVideo {
               )
             })
         )
+
         const helper = yield* Effect.acquireRelease(
           Effect.sync(
             () =>
@@ -154,13 +162,16 @@ export class ElectronBrowserVideo {
               }
             })
         )
+
         this.helper = helper
+
         const grant = {
           helper: helper.webContents,
           origin,
           starting: true,
           capture
         }
+
         captureGrants.set(this.guest, grant)
         captureSession.setPermissionCheckHandler(
           (contents, permission) =>
@@ -180,6 +191,7 @@ export class ElectronBrowserVideo {
         helper.webContents.on('will-navigate', (event) =>
           event.preventDefault()
         )
+
         const lost = () => {
           if (this.capture !== capture) {
             return
@@ -188,6 +200,7 @@ export class ElectronBrowserVideo {
           failed('Browser video capture stopped. Reconnect to restart it.')
           this.runtime.fork(this.stop)
         }
+
         helper.webContents.once('render-process-gone', lost)
         helper.once('closed', lost)
         yield* Effect.tryPromise(() => helper.loadURL(`${origin}/`))
@@ -212,6 +225,7 @@ export class ElectronBrowserVideo {
           failed(params.payload)
         })
         const sourceId = this.guest.getMediaSourceId(helper.webContents)
+
         const error: string | null = yield* Effect.tryPromise(() =>
           helper.webContents.executeJavaScript(`(async () => {
           globalThis.__treeportVideoSource = ${JSON.stringify(sourceId)};
@@ -219,7 +233,9 @@ export class ElectronBrowserVideo {
           return null;
         })().catch(error => error.name + ': ' + error.message)`)
         )
+
         grant.starting = false
+
         if (error) {
           return yield* Effect.fail(new Error(error))
         }
@@ -234,6 +250,7 @@ export class ElectronBrowserVideo {
   negotiate(peerId: string, sdp: string) {
     return Effect.tryPromise(async (): Promise<{ sdp: string }> => {
       const helper = this.helper
+
       if (!helper) {
         throw new Error('Browser video capture is unavailable.')
       }
@@ -241,6 +258,7 @@ export class ElectronBrowserVideo {
       const answer: string = await helper.webContents.executeJavaScript(
         `globalThis.__treeportVideo.negotiate(${JSON.stringify(peerId)}, ${JSON.stringify(sdp)})`
       )
+
       return { sdp: answer }
     })
   }
@@ -257,6 +275,7 @@ export class ElectronBrowserVideo {
     const capture = this.capture
     this.capture = null
     this.helper = null
+
     return capture?.close ?? Effect.void
   })
 }

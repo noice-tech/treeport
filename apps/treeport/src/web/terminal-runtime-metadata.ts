@@ -77,6 +77,7 @@ export class TerminalRuntimeMetadataStore {
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
+
     return () => this.listeners.delete(listener)
   }
 
@@ -84,6 +85,7 @@ export class TerminalRuntimeMetadataStore {
     listener: (event: TerminalAttentionEvent) => void
   ): (() => void) => {
     this.attentionEventListeners.add(listener)
+
     return () => this.attentionEventListeners.delete(listener)
   }
 
@@ -105,18 +107,21 @@ export class TerminalRuntimeMetadataStore {
     this.notificationBatchDepth += 1
     const currentAttention = this.attentionMetadata.get(metadata.terminalId)
     const incomingAttention = metadata.attention
+
     const attentionIsCurrent =
       incomingAttention !== null &&
       (!currentAttention ||
         incomingAttention.sequence > currentAttention.sequence ||
         (incomingAttention.sequence === currentAttention.sequence &&
           (currentAttention.unread || !incomingAttention.unread)))
+
     const attentionMetadataChanged =
       attentionIsCurrent &&
       (currentAttention?.sequence !== incomingAttention.sequence ||
         currentAttention?.at !== incomingAttention.at ||
         currentAttention?.reason !== incomingAttention.reason ||
         currentAttention?.unread !== incomingAttention.unread)
+
     const attentionEvent =
       attentionIsCurrent &&
       incomingAttention.unread &&
@@ -129,6 +134,7 @@ export class TerminalRuntimeMetadataStore {
             reason: incomingAttention.reason
           }
         : null
+
     if (attentionIsCurrent) {
       if (attentionMetadataChanged) {
         const next = new Map(this.attentionMetadata)
@@ -158,6 +164,7 @@ export class TerminalRuntimeMetadataStore {
     )
     this.setActivity(metadata.terminalId, metadata.activity)
     this.notificationBatchDepth -= 1
+
     if (this.notificationBatchDepth === 0 && this.notificationPending) {
       this.notificationPending = false
       this.listeners.forEach((listener) => listener())
@@ -179,8 +186,10 @@ export class TerminalRuntimeMetadataStore {
     const activities = new Map<string, TerminalActivity>()
     const attentionMetadata = new Map<string, TerminalAttentionMetadata>()
     const attention = new Map<string, TerminalAttentionReason>()
+
     for (const item of metadata) {
       const title = item.title?.trim().slice(0, 256)
+
       if (title) {
         titles.set(item.terminalId, title)
       }
@@ -210,43 +219,51 @@ export class TerminalRuntimeMetadataStore {
           unread: item.attention.unread,
           reason: item.attention.reason
         })
+
         if (item.attention.unread) {
           attention.set(item.terminalId, item.attention.reason)
         }
       }
     }
+
     const titlesChanged =
       titles.size !== this.titleSnapshot.size ||
       [...titles].some(
         ([terminalId, title]) => this.titleSnapshot.get(terminalId) !== title
       )
+
     const programsChanged =
       programs.size !== this.programSnapshot.size ||
       [...programs].some(
         ([terminalId, program]) =>
           this.programSnapshot.get(terminalId) !== program
       )
+
     const foregroundProcessesChanged =
       foregroundProcesses.size !== this.foregroundProcessSnapshot.size ||
       [...foregroundProcesses].some(
         (terminalId) => !this.foregroundProcessSnapshot.has(terminalId)
       )
+
     const activityChanged =
       activities.size !== this.activitySnapshot.size ||
       [...activities].some(
         ([terminalId, value]) =>
           !sameActivity(this.activitySnapshot.get(terminalId), value)
       )
+
     const attentionChanged =
       attention.size !== this.attentionSnapshot.size ||
       [...attention].some(
         ([terminalId, reason]) =>
           this.attentionSnapshot.get(terminalId) !== reason
       )
+
     const attentionMetadataChanged =
       attentionMetadata.size !== this.attentionMetadata.size ||
       [...attentionMetadata].some(([terminalId, value]) => {
         const current = this.attentionMetadata.get(terminalId)
+
         return (
           current?.sequence !== value.sequence ||
           current?.at !== value.at ||
@@ -254,6 +271,7 @@ export class TerminalRuntimeMetadataStore {
           current?.unread !== value.unread
         )
       })
+
     if (attentionMetadataChanged) {
       this.attentionMetadata = attentionMetadata
     }
@@ -295,8 +313,10 @@ export class TerminalRuntimeMetadataStore {
 
   setRuntimeTitle(terminalId: string, value: string | null): void {
     const title = value?.trim().slice(0, 256) || null
+
     if (title === null) {
       this.clearRuntimeTitle(terminalId)
+
       return
     }
 
@@ -333,37 +353,44 @@ export class TerminalRuntimeMetadataStore {
     const programs = new Map(this.programSnapshot)
     const foregroundProcesses = new Set(this.foregroundProcessSnapshot)
     const activities = new Map(this.activitySnapshot)
+
     for (const terminalId of attention.keys()) {
       if (!valid.has(terminalId)) {
         attention.delete(terminalId)
         changed = true
       }
     }
+
     for (const terminalId of titles.keys()) {
       if (!valid.has(terminalId)) {
         titles.delete(terminalId)
         changed = true
       }
     }
+
     for (const terminalId of programs.keys()) {
       if (!valid.has(terminalId)) {
         programs.delete(terminalId)
         changed = true
       }
     }
+
     for (const terminalId of foregroundProcesses) {
       if (!valid.has(terminalId)) {
         foregroundProcesses.delete(terminalId)
         changed = true
       }
     }
+
     for (const terminalId of activities.keys()) {
       if (!valid.has(terminalId)) {
         activities.delete(terminalId)
         changed = true
       }
     }
+
     const attentionMetadata = new Map(this.attentionMetadata)
+
     for (const terminalId of attentionMetadata.keys()) {
       if (!valid.has(terminalId)) {
         attentionMetadata.delete(terminalId)
@@ -372,6 +399,7 @@ export class TerminalRuntimeMetadataStore {
         changed = true
       }
     }
+
     if (changed) {
       this.attentionSnapshot = attention
       this.titleSnapshot = titles
@@ -385,12 +413,14 @@ export class TerminalRuntimeMetadataStore {
 
   acknowledgeAttention(terminalId: string, sequence: number): Promise<void> {
     const attention = this.attentionMetadata.get(terminalId)
+
     if (!attention?.unread || attention.sequence !== sequence) {
       return Promise.resolve()
     }
 
     const target = this.attentionAcknowledgementTargets.get(terminalId) ?? 0
     const currentQueue = this.attentionAcknowledgementQueues.get(terminalId)
+
     if (sequence <= target) {
       return currentQueue ?? Promise.resolve()
     }
@@ -398,10 +428,12 @@ export class TerminalRuntimeMetadataStore {
     const epoch = this.attentionAcknowledgementEpoch
     this.attentionAcknowledgementTargets.set(terminalId, sequence)
     const previous = currentQueue ?? Promise.resolve()
+
     const queued = previous
       .catch(() => undefined)
       .then(async () => {
         const currentAttention = this.attentionMetadata.get(terminalId)
+
         if (
           this.attentionAcknowledgementEpoch !== epoch ||
           currentAttention?.sequence !== sequence ||
@@ -430,7 +462,9 @@ export class TerminalRuntimeMetadataStore {
           this.attentionAcknowledgementQueues.delete(terminalId)
         }
       })
+
     this.attentionAcknowledgementQueues.set(terminalId, queued)
+
     return queued
   }
 
@@ -465,6 +499,7 @@ export class TerminalRuntimeMetadataStore {
     }
 
     const next = new Map(this.programSnapshot)
+
     if (program) {
       next.set(terminalId, program)
     } else {
@@ -486,6 +521,7 @@ export class TerminalRuntimeMetadataStore {
     }
 
     const next = new Set(this.foregroundProcessSnapshot)
+
     if (hasForegroundProcess) {
       next.add(terminalId)
     } else {
@@ -509,6 +545,7 @@ export class TerminalRuntimeMetadataStore {
     }
 
     const next = new Map(this.attentionSnapshot)
+
     if (unread) {
       next.set(terminalId, unread)
     } else {
@@ -525,11 +562,13 @@ export class TerminalRuntimeMetadataStore {
   ): void {
     const current = this.activitySnapshot.get(terminalId)
     const value = activity?.state === 'idle' ? null : activity
+
     if (value ? sameActivity(current, value) : !current) {
       return
     }
 
     const next = new Map(this.activitySnapshot)
+
     if (value) {
       next.set(terminalId, value)
     } else {
@@ -543,6 +582,7 @@ export class TerminalRuntimeMetadataStore {
   private emit(): void {
     if (this.notificationBatchDepth > 0) {
       this.notificationPending = true
+
       return
     }
 

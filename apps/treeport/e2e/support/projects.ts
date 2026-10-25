@@ -11,20 +11,24 @@ export async function createProjectMock(page: Page, options: MockAppOptions) {
   secondState.rootPath = '/another'
   secondState.repositoryPath = '/another'
   secondState.mainWorktreePath = '/another'
+
   for (const worktree of secondState.worktrees) {
     worktree.id = `second_${worktree.id}`
     worktree.projectId = secondState.id
     worktree.name = `another ${worktree.name}`
     worktree.path = worktree.path.replace('/repo', '/another')
+
     for (const terminal of worktree.terminals) {
       terminal.id = `second_${terminal.id}`
       terminal.worktreeId = worktree.id
     }
   }
+
   const openProjects = [
     state,
     ...(options.includeSecondProject ? [secondState] : [])
   ]
+
   const recentProjects: RecentProjectRecord[] = []
   let projectRequests = 0
   let nextProjectsGate: Promise<void> | null = null
@@ -32,16 +36,19 @@ export async function createProjectMock(page: Page, options: MockAppOptions) {
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
+
     if (
       pathname === '/api/projects/recent' &&
       route.request().method() === 'GET'
     ) {
       await route.fulfill({ json: { projects: recentProjects } })
+
       return
     }
 
     if (pathname === '/api/projects' && route.request().method() === 'GET') {
       projectRequests += 1
+
       if (nextProjectsGate) {
         const gate = nextProjectsGate
         nextProjectsGate = null
@@ -49,6 +56,7 @@ export async function createProjectMock(page: Page, options: MockAppOptions) {
       }
 
       await route.fulfill({ json: { projects: openProjects } })
+
       return
     }
 
@@ -59,6 +67,7 @@ export async function createProjectMock(page: Page, options: MockAppOptions) {
       const openIndex = openProjects.findIndex(
         (candidate) => candidate.id === state.id
       )
+
       if (openIndex >= 0) {
         openProjects.splice(openIndex, 1)
         recentProjects.push({
@@ -72,6 +81,7 @@ export async function createProjectMock(page: Page, options: MockAppOptions) {
       }
 
       await route.fulfill({ json: { ok: true } })
+
       return
     }
 
@@ -85,6 +95,7 @@ export async function createProjectMock(page: Page, options: MockAppOptions) {
       nextProjectsGate = new Promise<void>((resolve) => {
         releaseNextProjects = resolve
       })
+
       return () => releaseNextProjects?.()
     }
   }

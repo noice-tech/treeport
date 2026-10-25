@@ -6,11 +6,13 @@ export function isLoopbackUrl(url: URL): boolean {
 
 export function parseComputerUrl(value: string): URL {
   const input = value.trim()
+
   if (!URL.canParse(input)) {
     throw new Error('Enter a valid HTTP or HTTPS URL.')
   }
 
   const url = new URL(input)
+
   if (url.username || url.password) {
     throw new Error('Computer URLs cannot include a username or password.')
   }
@@ -26,5 +28,6 @@ export function parseComputerUrl(value: string): URL {
   url.pathname = '/'
   url.search = ''
   url.hash = ''
+
   return url
 }

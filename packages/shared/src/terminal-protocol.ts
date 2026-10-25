@@ -23,6 +23,7 @@ const terminalId = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)
 )
+
 const clientId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
 const streamId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
 const generation = Schema.NonNegativeInt
@@ -30,6 +31,7 @@ const positiveInt = Schema.Int.pipe(Schema.positive())
 const columns = Schema.Int.pipe(Schema.between(2, 1_000))
 const rows = Schema.Int.pipe(Schema.between(2, 500))
 const dimensions = { cols: columns, rows }
+
 const dateTimeString = Schema.String.pipe(
   Schema.filter((value) => !Number.isNaN(Date.parse(value)), {
     message: () => 'Expected an ISO date and time'
@@ -37,6 +39,7 @@ const dateTimeString = Schema.String.pipe(
 )
 
 export const terminalSizeSchema = Schema.Struct(dimensions)
+
 export type TerminalSize = Schema.Schema.Type<typeof terminalSizeSchema>
 
 export const terminalActivitySchema = Schema.Struct({
@@ -48,6 +51,7 @@ export const terminalActivitySchema = Schema.Struct({
   message: Schema.NullOr(Schema.String.pipe(Schema.maxLength(2048))),
   since: Schema.NullOr(dateTimeString)
 })
+
 export type TerminalActivity = Schema.Schema.Type<typeof terminalActivitySchema>
 
 export const terminalAttentionReasonSchema = Schema.Literal(
@@ -56,11 +60,13 @@ export const terminalAttentionReasonSchema = Schema.Literal(
   'blocked',
   'error'
 )
+
 export type TerminalAttentionReason = Schema.Schema.Type<
   typeof terminalAttentionReasonSchema
 >
 
 export const terminalProgramSchema = Schema.Literal('pi', 'claude', 'codex')
+
 export type TerminalProgram = Schema.Schema.Type<typeof terminalProgramSchema>
 
 export const terminalRuntimeMetadataFields = {
@@ -88,9 +94,11 @@ export const terminalRuntimeMetadataSchema = Schema.mutable(
 export const terminalAttentionAcknowledgementSchema = Schema.Struct({
   sequence: positiveInt
 })
+
 export type TerminalAttentionAcknowledgement = Schema.Schema.Type<
   typeof terminalAttentionAcknowledgementSchema
 >
+
 export type TerminalRuntimeMetadata = Schema.Schema.Type<
   typeof terminalRuntimeMetadataSchema
 >
@@ -102,6 +110,7 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
   const parsed = Schema.decodeUnknownEither(schema, {
     onExcessProperty: 'error'
   })(value)
+
   return Either.isRight(parsed) ? parsed.right : null
 }
 
@@ -116,23 +125,29 @@ export const terminalAuthSchema = Schema.Struct({
   clientId,
   ...dimensions
 })
+
 export const terminalInputSchema = Schema.Struct({
   generation,
   data: Schema.String.pipe(Schema.maxLength(TERMINAL_MAX_INPUT_BYTES))
 })
+
 export const terminalBinarySchema = Schema.Struct({
   generation,
   data: Schema.String.pipe(Schema.maxLength(TERMINAL_MAX_INPUT_BYTES))
 })
+
 export const terminalResizeSchema = Schema.Struct({ generation, ...dimensions })
+
 export const terminalTakeControlSchema = Schema.Struct({
   generation,
   ...dimensions
 })
+
 export const terminalOutputAckSchema = Schema.Struct({
   streamId,
   sequence: Schema.NonNegativeInt
 })
+
 export const terminalQueryAuthorityRequestSchema = Schema.Struct({
   generation,
   cellSize: Schema.optionalWith(
@@ -164,25 +179,31 @@ export const terminalReadySchema = Schema.Struct({
   // Base64 libghostty-vt snapshot.
   snapshot: Schema.String
 })
+
 export const terminalDimensionsSchema = Schema.Struct({
   ...dimensions,
   revision: positiveInt
 })
+
 export const terminalOutputSchema = Schema.Struct({
   streamId,
   sequence: positiveInt,
   data: Schema.String
 })
+
 export const terminalTitleSchema = Schema.Struct({
   title: Schema.String.pipe(Schema.maxLength(256))
 })
+
 export const terminalControlSchema = Schema.Struct({
   generation,
   controller: Schema.Boolean
 })
+
 export const terminalExitSchema = Schema.Struct({
   exitCode: Schema.NullOr(Schema.Int)
 })
+
 export const terminalQueryAuthoritySchema = Schema.Struct({
   generation,
   transitionId: Schema.NullOr(
@@ -190,7 +211,9 @@ export const terminalQueryAuthoritySchema = Schema.Struct({
   ),
   active: Schema.Boolean
 })
+
 export const terminalInputAckSchema = Schema.Struct({ generation })
+
 export const terminalErrorSchema = Schema.Struct({
   code: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(80)),
   message: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000)),
@@ -198,31 +221,47 @@ export const terminalErrorSchema = Schema.Struct({
 })
 
 export type TerminalAuth = Schema.Schema.Type<typeof terminalAuthSchema>
+
 export type TerminalInput = Schema.Schema.Type<typeof terminalInputSchema>
+
 export type TerminalInputAck = Schema.Schema.Type<typeof terminalInputAckSchema>
+
 export type TerminalBinary = Schema.Schema.Type<typeof terminalBinarySchema>
+
 export type TerminalResize = Schema.Schema.Type<typeof terminalResizeSchema>
+
 export type TerminalTakeControl = Schema.Schema.Type<
   typeof terminalTakeControlSchema
 >
+
 export type TerminalTakeControlPayload = TerminalTakeControl
+
 export type TerminalOutputAck = Schema.Schema.Type<
   typeof terminalOutputAckSchema
 >
+
 export type TerminalQueryAuthorityRequest = Schema.Schema.Type<
   typeof terminalQueryAuthorityRequestSchema
 >
+
 export type TerminalReady = Schema.Schema.Type<typeof terminalReadySchema>
+
 export type TerminalDimensions = Schema.Schema.Type<
   typeof terminalDimensionsSchema
 >
+
 export type TerminalOutput = Schema.Schema.Type<typeof terminalOutputSchema>
+
 export type TerminalTitle = Schema.Schema.Type<typeof terminalTitleSchema>
+
 export type TerminalControl = Schema.Schema.Type<typeof terminalControlSchema>
+
 export type TerminalExit = Schema.Schema.Type<typeof terminalExitSchema>
+
 export type TerminalQueryAuthority = Schema.Schema.Type<
   typeof terminalQueryAuthoritySchema
 >
+
 export type TerminalError = Schema.Schema.Type<typeof terminalErrorSchema>
 
 export interface TerminalClientEventPayloads {
@@ -233,7 +272,9 @@ export interface TerminalClientEventPayloads {
   output_ack: TerminalOutputAck
   query_authority: TerminalQueryAuthorityRequest
 }
+
 export type TerminalClientEvent = keyof TerminalClientEventPayloads
+
 export type TerminalClientToServerEvents = {
   [Event in TerminalClientEvent]: (
     payload: TerminalClientEventPayloads[Event]
@@ -251,9 +292,12 @@ export interface TerminalServerEventPayloads {
   terminal_error: TerminalError
   input_ack: TerminalInputAck
 }
+
 export type TerminalServerEvent = keyof TerminalServerEventPayloads
+
 export type TerminalServerPayload =
   TerminalServerEventPayloads[TerminalServerEvent]
+
 export type TerminalServerToClientEvents = {
   [Event in TerminalServerEvent]: (
     payload: TerminalServerEventPayloads[Event]
@@ -278,12 +322,15 @@ export function parseTerminalClientEvent<E extends TerminalClientEvent>(
     output_ack: terminalOutputAckSchema,
     query_authority: terminalQueryAuthorityRequestSchema
   }[event]
+
   // SAFETY: The event key selects one schema from the client payload map.
   // eslint-disable-next-line anti-slop/no-chained-type-assertions -- TypeScript cannot correlate a generic key with an indexed schema map.
   const selected = schema as unknown as Schema.Schema<unknown, unknown, never>
+
   const parsed = Schema.decodeUnknownEither(selected, {
     onExcessProperty: 'error'
   })(value)
+
   // SAFETY: The event key selects the corresponding payload schema above.
   return Either.isRight(parsed)
     ? (parsed.right as TerminalClientEventPayloads[E])
@@ -305,12 +352,15 @@ export function parseTerminalServerEvent<E extends TerminalServerEvent>(
     terminal_error: terminalErrorSchema,
     input_ack: terminalInputAckSchema
   }[event]
+
   // SAFETY: The event key selects one schema from the server payload map.
   // eslint-disable-next-line anti-slop/no-chained-type-assertions -- TypeScript cannot correlate a generic key with an indexed schema map.
   const selected = schema as unknown as Schema.Schema<unknown, unknown, never>
+
   const parsed = Schema.decodeUnknownEither(selected, {
     onExcessProperty: 'error'
   })(value)
+
   // SAFETY: The event key selects the corresponding payload schema above.
   return Either.isRight(parsed)
     ? (parsed.right as TerminalServerEventPayloads[E])

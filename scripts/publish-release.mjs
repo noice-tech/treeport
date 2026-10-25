@@ -12,6 +12,7 @@ import {
 } from './release-utils.mjs'
 
 const githubRepository = 'noice-tech/treeport'
+
 const packageDirectories = [
   'packages/app-sdk',
   'packages/pi',
@@ -21,13 +22,17 @@ const packageDirectories = [
   'packages/session-keeper',
   'apps/treeport'
 ]
+
 const packageManifests = packageDirectories.map((directory) =>
   JSON.parse(readFileSync(`${directory}/package.json`, 'utf8'))
 )
+
 const desktopManifest = JSON.parse(
   readFileSync('apps/desktop/package.json', 'utf8')
 )
+
 const [version, ...extraArguments] = process.argv.slice(2)
+
 if (!version || extraArguments.length > 0) {
   fail('Usage: pnpm release:publish <X.Y.Z>')
 }
@@ -49,11 +54,14 @@ if (desktopManifest.version !== version) {
 }
 
 const tag = `v${version}`
+
 const expectedDesktopAssets = [
   `Treeport-${version}-darwin-universal.dmg`,
   `Treeport-${version}-darwin-universal.zip`
 ]
+
 const originUrl = git(['config', '--get', 'remote.origin.url'])
+
 if (githubRepositoryFromUrl(originUrl) !== githubRepository) {
   fail(
     `origin must be the canonical ${githubRepository} repository; found ${originUrl}`
@@ -74,7 +82,9 @@ function verifyRelease() {
   } catch {
     fail('Could not fetch origin/main and tags; publication stopped')
   }
+
   const localHead = git(['rev-parse', 'HEAD'])
+
   if (localHead !== git(['rev-parse', 'refs/remotes/origin/main'])) {
     fail('Local main must exactly match origin/main before publishing')
   }
@@ -88,11 +98,13 @@ function verifyRelease() {
 
     throw error
   }
+
   if (git(['rev-list', '-n', '1', tag]) !== localHead) {
     fail(`${tag} must point to the current main commit`)
   }
 
   const localTagObject = git(['rev-parse', `refs/tags/${tag}`])
+
   const remoteTagObject = git([
     'ls-remote',
     '--tags',
@@ -102,11 +114,13 @@ function verifyRelease() {
     .split('\n')
     .find((line) => line.endsWith(`refs/tags/${tag}`))
     ?.split(/\s+/)[0]
+
   if (!remoteTagObject || remoteTagObject !== localTagObject) {
     fail(`Local and origin tags differ or ${tag} is missing on origin`)
   }
 
   let release
+
   try {
     release = JSON.parse(
       run('gh', [
@@ -124,11 +138,13 @@ function verifyRelease() {
       `Could not read the GitHub Release for ${tag}. Wait for the desktop-release workflow and authenticate gh before publishing.`
     )
   }
+
   if (release.tagName !== tag || release.isDraft || release.isPrerelease) {
     fail(`GitHub Release ${tag} must be published and must not be a prerelease`)
   }
 
   const assetNames = release.assets.map((asset) => asset.name).sort()
+
   if (
     assetNames.length !== expectedDesktopAssets.length ||
     assetNames.some((name, index) => name !== expectedDesktopAssets[index])
@@ -141,6 +157,7 @@ function verifyRelease() {
   const invalidAsset = release.assets.find(
     (asset) => asset.size <= 0 || asset.state !== 'uploaded'
   )
+
   if (invalidAsset) {
     fail(
       `GitHub Release asset ${invalidAsset.name} is empty or was not uploaded successfully`
@@ -148,6 +165,7 @@ function verifyRelease() {
   }
 
   let matchingReleases
+
   try {
     matchingReleases = JSON.parse(
       run('gh', [
@@ -162,6 +180,7 @@ function verifyRelease() {
   } catch {
     fail(`Could not verify that ${tag} has exactly one GitHub Release`)
   }
+
   if (matchingReleases.length !== 1) {
     fail(
       `Expected exactly one GitHub Release for ${tag}; found ${matchingReleases.length}`
@@ -181,6 +200,7 @@ function npmVersionExists(spec) {
   const result = spawnSync('npm', ['view', spec, 'version', '--json'], {
     encoding: 'utf8'
   })
+
   if (result.status === 0) {
     try {
       return JSON.parse(result.stdout) === version
@@ -199,6 +219,7 @@ function npmVersionExists(spec) {
 }
 
 let release = verifyRelease()
+
 try {
   run('pnpm', ['test:release-qualification'], { stdio: 'inherit' })
 } catch {
@@ -219,16 +240,20 @@ try {
 }
 
 let npmUser
+
 try {
   npmUser = run('npm', ['whoami'])
 } catch {
   fail('npm authentication failed. Run `npm login`, then retry.')
 }
+
 console.log(`Authenticated to npm as ${npmUser}.`)
 
 const packagesToPublish = []
+
 for (const manifest of packageManifests) {
   const spec = `${manifest.name}@${version}`
+
   if (npmVersionExists(spec)) {
     console.log(`${spec} is already published.`)
     continue
@@ -239,14 +264,18 @@ for (const manifest of packageManifests) {
     ['view', manifest.name, 'dist-tags.latest', '--json'],
     { encoding: 'utf8' }
   )
+
   if (latestResult.status === 0) {
     let latest
+
     try {
       latest = JSON.parse(latestResult.stdout)
     } catch {
       fail(`npm returned an unreadable latest version for ${manifest.name}`)
     }
+
     const parsedLatest = parseVersion(latest)
+
     if (!parsedLatest) {
       fail(`${manifest.name}'s latest tag is not canonical: ${latest}`)
     }
@@ -276,6 +305,7 @@ release = verifyRelease()
 for (const manifest of packagesToPublish) {
   const spec = `${manifest.name}@${version}`
   console.log(`Publishing ${spec} with npm tag latest...`)
+
   try {
     run(
       'pnpm',

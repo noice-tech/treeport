@@ -59,15 +59,19 @@ export class BrowserVideoReceiver {
       }
 
       this.stop()
+
       if (!ChromiumWebCodecsReceiver.supported(this.canvas)) {
         const reason =
           'This browser cannot decode hosted browser video. Use a current Chrome, Edge, Safari or Firefox.'
+
         this.send({ type: 'webcodecsStop', message: reason })
         this.failed(reason)
+
         return
       }
 
       this.statusChanged('Connecting browser video…')
+
       if (!this.webcodecs) {
         this.webcodecs = new ChromiumWebCodecsReceiver(
           this.canvas,
@@ -82,6 +86,7 @@ export class BrowserVideoReceiver {
               modifiers: wheel.modifiers
             })
         )
+
         if (this.mediaToken) {
           this.webcodecs.connect(this.mediaToken)
         }
@@ -135,6 +140,7 @@ export class BrowserVideoReceiver {
 
   setVisible(visible: boolean): void {
     this.visible = visible
+
     if (!visible) {
       // Hiding closes the host peer and may stop capture. Wait for a fresh
       // videoReady on return instead of racing capture restart with an offer.
@@ -150,11 +156,13 @@ export class BrowserVideoReceiver {
   } | null> {
     const peer = this.peer
     const connectionId = this.requestId
+
     if (!peer || !connectionId || peer.connectionState !== 'connected') {
       return null
     }
 
     const report = await peer.getStats().catch(() => null)
+
     return report && this.peer === peer ? { connectionId, report } : null
   }
 
@@ -166,6 +174,7 @@ export class BrowserVideoReceiver {
 
   private retry(message: string): void {
     this.stop()
+
     if (!this.visible || !this.available || this.disposed) {
       return
     }
@@ -174,6 +183,7 @@ export class BrowserVideoReceiver {
       this.failed(
         `${message} Browser video needs a direct WebRTC connection between this device and the host. Check VPN/firewall connectivity, then retry.`
       )
+
       return
     }
 
@@ -184,9 +194,11 @@ export class BrowserVideoReceiver {
   private start(): void {
     this.stop()
     this.statusChanged('Connecting browser video…')
+
     // eslint-disable-next-line anti-slop/no-runtime-typeof -- WebRTC availability is a browser capability, not an untrusted protocol shape.
     if (typeof RTCPeerConnection === 'undefined') {
       this.failed('This browser does not support WebRTC video.')
+
       return
     }
 
@@ -202,6 +214,7 @@ export class BrowserVideoReceiver {
     // laptops. Keep every advertised fallback and repair codec; the browser
     // negotiates a mutually supported profile.
     const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs ?? []
+
     if (codecs.some((codec) => codec.mimeType === 'video/H264')) {
       transceiver.setCodecPreferences([
         ...codecs.filter((codec) => codec.mimeType === 'video/H264'),
@@ -226,6 +239,7 @@ export class BrowserVideoReceiver {
         }
       )
     }
+
     peer.onconnectionstatechange = () => {
       if (this.peer !== peer) {
         return
@@ -247,6 +261,7 @@ export class BrowserVideoReceiver {
         )
       }
     }
+
     this.timer = setTimeout(
       () => this.retry('Browser video connection timed out.'),
       15_000
@@ -254,6 +269,7 @@ export class BrowserVideoReceiver {
     void (async () => {
       await peer.setLocalDescription(await peer.createOffer())
       await gatherBrowserIce(peer)
+
       if (this.peer === peer && this.visible && !this.disposed) {
         this.send({
           type: 'videoOffer',

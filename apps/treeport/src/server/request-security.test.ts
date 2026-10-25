@@ -25,6 +25,7 @@ async function request(
   } = {}
 ): Promise<ResponseRecord> {
   const target = new URL(options.path ?? '/', url)
+
   return new Promise((resolve, reject) => {
     const outgoing = http.request(
       target,
@@ -48,6 +49,7 @@ async function request(
         )
       }
     )
+
     outgoing.once('error', reject)
     outgoing.end()
   })
@@ -58,6 +60,7 @@ async function upgrade(
   options: { path: string; headers?: Record<string, string> }
 ): Promise<number> {
   const target = new URL(options.path, url)
+
   return new Promise((resolve, reject) => {
     const outgoing = http.request(target, {
       headers: {
@@ -66,6 +69,7 @@ async function upgrade(
         ...options.headers
       }
     })
+
     outgoing.once('upgrade', (response, socket) => {
       socket.destroy()
       resolve(response.statusCode ?? 0)
@@ -84,10 +88,13 @@ async function fixture(): Promise<{
   mutations: { count: number }
 }> {
   const mutations = { count: 0 }
+
   const server = http.createServer((incoming, response) => {
     const security = authorizeRequest(incoming)
+
     if (!security.allowed) {
       rejectHttpRequest(incoming, response, security)
+
       return
     }
 
@@ -104,6 +111,7 @@ async function fixture(): Promise<{
       })
     )
   })
+
   server.on('upgrade', (incoming, socket) => {
     const security = authorizeRequest(incoming, { socketUpgrade: true })
     socket.end(
@@ -116,6 +124,7 @@ async function fixture(): Promise<{
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   // SAFETY: The test fixture provides the asserted contract used here.
   const address = server.address() as AddressInfo
+
   return { url: `http://127.0.0.1:${address.port}`, mutations }
 }
 
@@ -135,6 +144,7 @@ afterEach(async () => {
 describe('request security over a real HTTP server', () => {
   it('allows only the bundled DevTools origin on the dedicated upgrade route', () => {
     const appId = `app_${'a'.repeat(32)}`
+
     const request = testAccess<IncomingMessage>({
       method: 'GET',
       url: `/api/browser-devtools/${appId}`,
@@ -223,10 +233,12 @@ describe('request security over a real HTTP server', () => {
       'X-Forwarded-Proto': 'https',
       'X-Forwarded-For': '100.64.0.10'
     }
+
     const tailscale = await request(value.url, {
       path: '/api/remote',
       headers: tailscaleHeaders
     })
+
     expect(tailscale.status).toBe(200)
     expect(JSON.parse(tailscale.body)).toEqual({
       source: 'tailscale',
@@ -244,16 +256,21 @@ describe('request security over a real HTTP server', () => {
       const unknownDevice = await request(value.url, {
         headers: { ...tailscaleHeaders, 'X-Forwarded-For': forwarded }
       })
+
       expect(unknownDevice.status).toBe(200)
       expect(JSON.parse(unknownDevice.body).deviceId).toBeNull()
     }
+
     const ipv6 = await request(value.url, {
       headers: { ...tailscaleHeaders, 'X-Forwarded-For': 'fd7a:115c:a1e0::1' }
     })
+
     expect(JSON.parse(ipv6.body).deviceId).toBe('tailscale:[fd7a:115c:a1e0::1]')
+
     const localWithForgedDevice = await request(value.url, {
       headers: { 'X-Forwarded-For': '100.64.0.10' }
     })
+
     expect(JSON.parse(localWithForgedDevice.body).deviceId).toBe('local')
 
     const identityWithoutProfile = await request(value.url, {
@@ -264,12 +281,14 @@ describe('request security over a real HTTP server', () => {
         'Tailscale-User-Profile-Pic': ''
       }
     })
+
     expect(identityWithoutProfile.status).toBe(200)
 
     const bypass = await request(value.url, {
       path: '/api/projects',
       headers: { Host: 'treeport.tailnet.ts.net' }
     })
+
     expect(bypass.status).toBe(401)
     expect(bypass.headers['cache-control']).toBe('no-store')
     expect(JSON.parse(bypass.body)).toEqual({
@@ -284,6 +303,7 @@ describe('request security over a real HTTP server', () => {
       path: '/assets/application.js',
       headers: { Host: 'treeport.tailnet.ts.net' }
     })
+
     expect(assetBypass.status).toBe(401)
     expect(assetBypass.body).not.toContain('treeport.tailnet.ts.net')
 
@@ -294,12 +314,14 @@ describe('request security over a real HTTP server', () => {
         'Tailscale-User-Name': 'Unverified User'
       }
     })
+
     expect(partialIdentity.status).toBe(401)
     expect(JSON.parse(partialIdentity.body).error.code).toBe(
       'INVALID_TAILSCALE_IDENTITY'
     )
 
     const oversizedLogin = `private-${'x'.repeat(321)}`
+
     const malformedIdentity = await request(value.url, {
       path: '/api/projects',
       headers: {
@@ -307,6 +329,7 @@ describe('request security over a real HTTP server', () => {
         'Tailscale-User-Login': oversizedLogin
       }
     })
+
     expect(malformedIdentity.status).toBe(401)
     expect(malformedIdentity.body).not.toContain(oversizedLogin)
 
@@ -317,12 +340,14 @@ describe('request security over a real HTTP server', () => {
         'Tailscale-User-Login': ['developer@example.test', 'other@example.test']
       }
     })
+
     expect(duplicateIdentity.status).toBe(401)
 
     const insecureForwardedOrigin = await request(value.url, {
       path: '/api/projects',
       headers: { ...tailscaleHeaders, 'X-Forwarded-Proto': 'http' }
     })
+
     expect(insecureForwardedOrigin.status).toBe(400)
     expect(JSON.parse(insecureForwardedOrigin.body).error.code).toBe(
       'INVALID_FORWARDED_ORIGIN'
@@ -336,10 +361,12 @@ describe('request security over a real HTTP server', () => {
         )
       )
     })
+
     expect(missingForwardedOrigin.status).toBe(400)
 
     const appId = `app_${'a'.repeat(32)}`
     const developmentKey = '0123456789abcdef01234567'
+
     const sandboxedAppModule = await request(value.url, {
       path: `/api/web-apps/${appId}/assets/__treeport/${'b'.repeat(64)}/assets/review.js`,
       headers: {
@@ -348,6 +375,7 @@ describe('request security over a real HTTP server', () => {
         'Sec-Fetch-Site': 'cross-site'
       }
     })
+
     expect(sandboxedAppModule.status).toBe(200)
 
     const sandboxedDevelopmentModule = await request(value.url, {
@@ -358,6 +386,7 @@ describe('request security over a real HTTP server', () => {
         'Sec-Fetch-Site': 'cross-site'
       }
     })
+
     expect(sandboxedDevelopmentModule.status).toBe(200)
 
     expect(
@@ -387,6 +416,7 @@ describe('request security over a real HTTP server', () => {
         'Sec-Fetch-Site': 'cross-site'
       }
     })
+
     expect(opaqueApiRead.status).toBe(403)
     expect(JSON.parse(opaqueApiRead.body).error.code).toBe('INVALID_ORIGIN')
 
@@ -394,6 +424,7 @@ describe('request security over a real HTTP server', () => {
       path: `/api/web-apps/${appId}/assets/review.js`,
       headers: { ...tailscaleHeaders, Origin: 'https://evil.example' }
     })
+
     expect(foreignAppAsset.status).toBe(403)
 
     const foreignMutation = await request(value.url, {
@@ -404,6 +435,7 @@ describe('request security over a real HTTP server', () => {
         Origin: 'https://evil.example'
       }
     })
+
     expect(foreignMutation.status).toBe(403)
     expect(JSON.parse(foreignMutation.body).error.code).toBe('INVALID_ORIGIN')
     expect(value.mutations.count).toBe(0)
@@ -413,6 +445,7 @@ describe('request security over a real HTTP server', () => {
       path: `/api/web-apps/${appId}/assets/review.js`,
       headers: { ...tailscaleHeaders, Origin: 'null' }
     })
+
     expect(opaqueAppMutation.status).toBe(403)
     expect(value.mutations.count).toBe(0)
 
@@ -426,6 +459,7 @@ describe('request security over a real HTTP server', () => {
         'Sec-Fetch-Site': 'cross-site'
       }
     })
+
     expect(crossSiteMutation.status).toBe(403)
     expect(value.mutations.count).toBe(0)
 
@@ -436,6 +470,7 @@ describe('request security over a real HTTP server', () => {
         Object.entries(tailscaleHeaders).filter(([name]) => name !== 'Origin')
       )
     })
+
     expect(originlessMutation.status).toBe(200)
     expect(value.mutations.count).toBe(1)
   })

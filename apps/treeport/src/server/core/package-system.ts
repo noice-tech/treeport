@@ -146,8 +146,11 @@ interface PackageManifest {
 }
 
 const packageManifestInputSchema = z.unknown()
+
 type PackageManifestInput = z.input<typeof packageManifestInputSchema>
+
 const manifestPatternsSchema = z.array(z.string())
+
 // Services are trusted native applications. The declaration, not a caller,
 // supplies the executable. HTTP services set readinessPath and listen on
 // ${socket}; Treeport proxies them to the package's web apps.
@@ -164,6 +167,7 @@ const packageServiceSchema = z.strictObject({
     .default(null),
   query: z.record(z.string(), z.string()).default({})
 })
+
 const webAppManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
@@ -198,6 +202,7 @@ function packagePromise<Result>(
 
 function sourceString(source: PackageSource): string {
   const parsed = z.string().safeParse(source)
+
   if (parsed.success) {
     return parsed.data
   }
@@ -207,6 +212,7 @@ function sourceString(source: PackageSource): string {
 
 function packageFilter(source: PackageSource): PackageSourceObject | undefined {
   const parsed = z.string().safeParse(source)
+
   if (parsed.success) {
     return undefined
   }
@@ -219,7 +225,9 @@ function packageFilter(source: PackageSource): PackageSourceObject | undefined {
       launchers: z.array(z.string()).optional()
     })
     .parse(source)
+
   const result: PackageSourceObject = { source: data.source }
+
   if (data.autoload !== undefined) {
     result.autoload = data.autoload
   }
@@ -241,10 +249,12 @@ function toPosix(value: string): string {
 
 function titleFromPath(value: string): string {
   const name = path.posix.basename(value)
+
   const words = name
     .split(/[-_.]+/)
     .filter(Boolean)
     .join(' ')
+
   return words ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}` : name
 }
 
@@ -257,6 +267,7 @@ function isExactNpmVersion(value: string | undefined): boolean {
 
 function isWithin(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate)
+
   return (
     relative === '' ||
     (!relative.startsWith(`..${path.sep}`) &&
@@ -281,6 +292,7 @@ function diagnostic(
     scope,
     message
   }
+
   if (options.source !== undefined) {
     result.source = options.source
   }
@@ -306,6 +318,7 @@ function normalizePattern(value: string): string {
 
 function patternMatches(relativePath: string, pattern: string): boolean {
   const normalized = normalizePattern(pattern)
+
   if (!normalized) {
     return false
   }
@@ -341,27 +354,33 @@ function applyNormalFilter<
       ...resource,
       enabled: false
     }))
+
     for (const pattern of patterns) {
       const marker = pattern[0] ?? ''
+
       const target = ['+', '-', '!'].includes(marker)
         ? pattern.slice(1)
         : pattern
+
       for (const resource of result) {
         const matches =
           marker === '+' || marker === '-'
             ? exactPatternMatches(resource.relativePath, target)
             : patternMatches(resource.relativePath, target)
+
         if (matches) {
           resource.enabled = marker !== '-' && marker !== '!'
         }
       }
     }
+
     return result
   }
 
   const includes = patterns.filter(
     (pattern) => !['!', '+', '-'].includes(pattern[0] ?? '')
   )
+
   const result = resources.map((resource) => ({
     ...resource,
     enabled:
@@ -371,6 +390,7 @@ function applyNormalFilter<
           patternMatches(resource.relativePath, pattern)
         ))
   }))
+
   for (const pattern of patterns.filter((value) => value.startsWith('!'))) {
     for (const resource of result) {
       if (patternMatches(resource.relativePath, pattern.slice(1))) {
@@ -378,6 +398,7 @@ function applyNormalFilter<
       }
     }
   }
+
   for (const pattern of patterns.filter((value) => value.startsWith('+'))) {
     for (const resource of result) {
       if (exactPatternMatches(resource.relativePath, pattern.slice(1))) {
@@ -385,6 +406,7 @@ function applyNormalFilter<
       }
     }
   }
+
   for (const pattern of patterns.filter((value) => value.startsWith('-'))) {
     for (const resource of result) {
       if (exactPatternMatches(resource.relativePath, pattern.slice(1))) {
@@ -392,6 +414,7 @@ function applyNormalFilter<
       }
     }
   }
+
   return result
 }
 
@@ -404,19 +427,23 @@ function applyDelta<T extends { relativePath: string; enabled: boolean }>(
   }
 
   const result = resources.map((resource) => ({ ...resource }))
+
   for (const pattern of patterns) {
     const marker = pattern[0] ?? ''
     const target = ['+', '-', '!'].includes(marker) ? pattern.slice(1) : pattern
+
     for (const resource of result) {
       const matches =
         marker === '+' || marker === '-'
           ? exactPatternMatches(resource.relativePath, target)
           : patternMatches(resource.relativePath, target)
+
       if (matches) {
         resource.enabled = marker !== '-' && marker !== '!'
       }
     }
   }
+
   return result
 }
 
@@ -442,6 +469,7 @@ export class PackageSystem {
     }
 
     const project = projectId ? this.projectContexts.get(projectId) : undefined
+
     if (!project) {
       throw new DomainError(
         'PROJECT_NOT_FOUND',
@@ -457,6 +485,7 @@ export class PackageSystem {
     settingsPath: string
   ): Promise<SettingsFileReadResult> {
     let readError: Error | undefined
+
     const content = await fs.readFile(settingsPath, 'utf8').catch((error) => {
       if (
         error instanceof Error &&
@@ -467,8 +496,10 @@ export class PackageSystem {
       }
 
       readError = error instanceof Error ? error : new Error(String(error))
+
       return null
     })
+
     const result: SettingsFileReadResult = {
       fingerprint: readError
         ? `error:${readError.message}`
@@ -477,6 +508,7 @@ export class PackageSystem {
           : crypto.createHash('sha256').update(content).digest('hex'),
       content
     }
+
     if (readError) {
       result.error = readError
     }
@@ -495,6 +527,7 @@ export class PackageSystem {
     }
 
     let input
+
     try {
       input = JSON.parse(content)
     } catch (error) {
@@ -515,6 +548,7 @@ export class PackageSystem {
         packages: z.unknown().optional()
       })
       .safeParse(input)
+
     if (!parsedRaw.success) {
       return {
         diagnostic: diagnostic(
@@ -529,6 +563,7 @@ export class PackageSystem {
       .array(z.string().min(1))
       .min(1)
       .safeParse(parsedRaw.data.npmCommand)
+
     if (parsedRaw.data.npmCommand !== undefined && !parsedNpmCommand.success) {
       return {
         diagnostic: diagnostic(
@@ -542,6 +577,7 @@ export class PackageSystem {
     const parsedPackageEntries = z
       .array(z.unknown())
       .safeParse(parsedRaw.data.packages ?? [])
+
     if (!parsedPackageEntries.success) {
       return {
         diagnostic: diagnostic(
@@ -558,15 +594,19 @@ export class PackageSystem {
       webApps: z.unknown().optional(),
       launchers: z.unknown().optional()
     })
+
     const packages: PackageSource[] = []
+
     for (const [index, entry] of parsedPackageEntries.data.entries()) {
       const parsedSourceString = z.string().safeParse(entry)
+
       if (parsedSourceString.success && parsedSourceString.data.trim()) {
         packages.push(parsedSourceString.data)
         continue
       }
 
       const parsedEntry = packageObjectSchema.safeParse(entry)
+
       if (!parsedEntry.success) {
         return {
           diagnostic: diagnostic(
@@ -578,6 +618,7 @@ export class PackageSystem {
       }
 
       const parsedSource = z.string().safeParse(parsedEntry.data.source)
+
       if (!parsedSource.success || !parsedSource.data.trim()) {
         return {
           diagnostic: diagnostic(
@@ -589,6 +630,7 @@ export class PackageSystem {
       }
 
       const parsedAutoload = z.boolean().safeParse(parsedEntry.data.autoload)
+
       if (parsedEntry.data.autoload !== undefined && !parsedAutoload.success) {
         return {
           diagnostic: diagnostic(
@@ -602,9 +644,11 @@ export class PackageSystem {
       const parsedWebApps = z
         .array(z.string())
         .safeParse(parsedEntry.data.webApps)
+
       const parsedLaunchers = z
         .array(z.string())
         .safeParse(parsedEntry.data.launchers)
+
       for (const [key, original, parsed] of [
         ['webApps', parsedEntry.data.webApps, parsedWebApps],
         ['launchers', parsedEntry.data.launchers, parsedLaunchers]
@@ -621,6 +665,7 @@ export class PackageSystem {
       }
 
       const configured: PackageSourceObject = { source: parsedSource.data }
+
       if (parsedAutoload.success) {
         configured.autoload = parsedAutoload.data
       }
@@ -637,6 +682,7 @@ export class PackageSystem {
     }
 
     const settings: TreeportSettings = { raw: parsedRaw.data, packages }
+
     if (parsedNpmCommand.success) {
       settings.npmCommand = parsedNpmCommand.data
     }
@@ -649,12 +695,15 @@ export class PackageSystem {
     settingsPath: string
   ): Promise<ParsedPackageSource> {
     const trimmed = source.trim()
+
     if (trimmed.startsWith('npm:')) {
       const spec = trimmed.slice(4).trim()
       let split = -1
+
       if (spec.startsWith('@')) {
         const slash = spec.indexOf('/')
         split = slash === -1 ? -1 : spec.lastIndexOf('@')
+
         if (split <= slash) {
           split = -1
         }
@@ -664,6 +713,7 @@ export class PackageSystem {
 
       const name = split > 0 ? spec.slice(0, split) : spec
       const version = split > 0 ? spec.slice(split + 1) : undefined
+
       if (
         !name ||
         name.includes('..') ||
@@ -679,6 +729,7 @@ export class PackageSystem {
       }
 
       const identity = `npm:${name}`
+
       const parsed: ParsedNpmSource = {
         type: 'npm',
         source: trimmed,
@@ -688,6 +739,7 @@ export class PackageSystem {
         identity,
         packageId: identity
       }
+
       if (version !== undefined) {
         parsed.version = version
       }
@@ -715,9 +767,11 @@ export class PackageSystem {
       trimmed === '~' || trimmed.startsWith('~/')
         ? path.join(os.homedir(), trimmed.slice(2))
         : trimmed
+
     const resolved = path.resolve(path.dirname(settingsPath), expanded)
     const canonical = await fs.realpath(resolved).catch(() => resolved)
     const identity = `local:${canonical}`
+
     return {
       type: 'local',
       source: trimmed,
@@ -762,10 +816,12 @@ export class PackageSystem {
   private async ensureNpmProject(root: string): Promise<void> {
     await fs.mkdir(root, { recursive: true, mode: 0o700 })
     const packageJsonPath = path.join(root, 'package.json')
+
     const packageJsonExists = await fs
       .stat(packageJsonPath)
       .then((value) => value.isFile())
       .catch(() => false)
+
     if (!packageJsonExists) {
       await fs.writeFile(
         packageJsonPath,
@@ -779,10 +835,12 @@ export class PackageSystem {
     }
 
     const ignorePath = path.join(root, '.gitignore')
+
     const ignoreExists = await fs
       .stat(ignorePath)
       .then((value) => value.isFile())
       .catch(() => false)
+
     if (!ignoreExists) {
       await fs.writeFile(ignorePath, '*\n!.gitignore\n', { mode: 0o600 })
     }
@@ -800,6 +858,7 @@ export class PackageSystem {
     await this.ensureNpmProject(root)
     const command = this.npmCommand(settings)
     const executable = command[0]
+
     if (!executable) {
       throw new DomainError(
         'INVALID_NPM_COMMAND',
@@ -810,12 +869,16 @@ export class PackageSystem {
 
     const prefix = command.slice(1)
     const separator = command.lastIndexOf('--')
+
     const manager = path
       .basename(separator >= 0 ? (command[separator + 1] ?? '') : executable)
       .replace(/\.(?:cmd|exe)$/iu, '')
+
     const requestedSpec =
       update && !source.version ? `${source.name}@latest` : source.spec
+
     let args: string[]
+
     if (manager === 'pnpm') {
       args =
         action === 'install'
@@ -865,6 +928,7 @@ export class PackageSystem {
   ): Promise<string> {
     if (source.type === 'local') {
       const stat = await fs.stat(source.path).catch(() => null)
+
       if (!stat?.isDirectory()) {
         throw new DomainError(
           'PACKAGE_PATH_NOT_FOUND',
@@ -878,10 +942,12 @@ export class PackageSystem {
 
     const installedPath = this.npmPackagePath(source, scope, projectId)
     let shouldInstall = forceInstall
+
     const installed = await fs
       .stat(installedPath)
       .then((value) => value.isDirectory())
       .catch(() => false)
+
     if (!installed) {
       shouldInstall = true
     } else if (source.exact) {
@@ -891,9 +957,11 @@ export class PackageSystem {
           const parsed = z
             .object({ version: z.string().optional() })
             .safeParse(JSON.parse(content))
+
           return parsed.success ? parsed.data.version : undefined
         })
         .catch(() => undefined)
+
       shouldInstall = installedVersion !== source.version
     }
 
@@ -905,6 +973,7 @@ export class PackageSystem {
       .stat(installedPath)
       .then((value) => value.isDirectory())
       .catch(() => false)
+
     if (!exists) {
       throw new DomainError(
         'PACKAGE_INSTALL_FAILED',
@@ -922,6 +991,7 @@ export class PackageSystem {
     packageJsonPath: string
   ): string[] {
     const parsed = manifestPatternsSchema.safeParse(patterns)
+
     if (!parsed.success) {
       throw new Error(
         `${packageJsonPath} treeport.${field} must be a string array`
@@ -931,6 +1001,7 @@ export class PackageSystem {
     for (const pattern of parsed.data) {
       const target = pattern.startsWith('!') ? pattern.slice(1) : pattern
       const normalized = normalizePattern(target)
+
       if (
         !normalized ||
         path.posix.isAbsolute(normalized) ||
@@ -945,6 +1016,7 @@ export class PackageSystem {
         )
       }
     }
+
     return [...parsed.data]
   }
 
@@ -953,12 +1025,14 @@ export class PackageSystem {
     packageJsonPath: string
   ): WebAppManifestEntry[] {
     const parsedEntries = z.array(z.unknown()).safeParse(entries)
+
     if (!parsedEntries.success) {
       throw new Error(`${packageJsonPath} treeport.webApps must be an array`)
     }
 
     return parsedEntries.data.map((entry): WebAppManifestEntry => {
       const parsed = webAppManifestEntrySchema.safeParse(entry)
+
       if (!parsed.success) {
         throw new Error(
           `${packageJsonPath} contains an invalid web app definition`
@@ -966,12 +1040,14 @@ export class PackageSystem {
       }
 
       const parsedSource = z.string().safeParse(parsed.data)
+
       if (parsedSource.success) {
         this.validateManifestPatterns(
           [parsedSource.data],
           'webApps',
           packageJsonPath
         )
+
         return {
           source: parsedSource.data,
           title: null,
@@ -994,12 +1070,14 @@ export class PackageSystem {
             .optional()
         })
         .parse(parsed.data)
+
       const {
         source,
         title = null,
         permissions = [],
         sandbox = true
       } = parsedDefinition
+
       if (source.startsWith('!')) {
         throw new Error(
           `${packageJsonPath} contains an invalid web app definition`
@@ -1008,6 +1086,7 @@ export class PackageSystem {
 
       this.validateManifestPatterns([source], 'webApps', packageJsonPath)
       const uniquePermissions = new Set(permissions)
+
       if (uniquePermissions.size !== permissions.length) {
         throw new Error(
           `${packageJsonPath} contains an invalid web app permission`
@@ -1032,6 +1111,7 @@ export class PackageSystem {
 
     const walk = async (directory: string): Promise<void> => {
       const realDirectory = await fs.realpath(directory).catch(() => null)
+
       if (!realDirectory || !isWithin(realDirectory, canonicalRoot)) {
         diagnostics.push(
           diagnostic(
@@ -1044,6 +1124,7 @@ export class PackageSystem {
             }
           )
         )
+
         return
       }
 
@@ -1072,18 +1153,23 @@ export class PackageSystem {
               }
             )
           )
+
           return []
         })
+
       const index = entries.find((entry) => entry.name === 'index.html')
+
       if (index) {
         const indexPath = path.join(directory, index.name)
         const realIndex = await fs.realpath(indexPath).catch(() => null)
+
         const indexIsFile = realIndex
           ? await fs
               .stat(realIndex)
               .then((value) => value.isFile())
               .catch(() => false)
           : false
+
         if (realIndex && indexIsFile && isWithin(realIndex, canonicalRoot)) {
           webApps.push({
             root: directory,
@@ -1107,8 +1193,10 @@ export class PackageSystem {
         }
 
         const candidate = path.join(directory, entry.name)
+
         if (entry.isDirectory() || entry.isSymbolicLink()) {
           const stat = await fs.stat(candidate).catch(() => null)
+
           if (stat?.isDirectory()) {
             await walk(candidate)
             continue
@@ -1120,6 +1208,7 @@ export class PackageSystem {
         }
 
         const realFile = await fs.realpath(candidate).catch(() => null)
+
         if (!realFile || !isWithin(realFile, canonicalRoot)) {
           diagnostics.push(
             diagnostic(scope, 'Launcher resource escapes the package root', {
@@ -1140,6 +1229,7 @@ export class PackageSystem {
     }
 
     await walk(root)
+
     return { webApps, launchers, diagnostics }
   }
 
@@ -1149,15 +1239,19 @@ export class PackageSystem {
     resourceType: 'web-app' | 'launcher'
   ): boolean {
     const positives = patterns.filter((pattern) => !pattern.startsWith('!'))
+
     const exclusions = patterns
       .filter((pattern) => pattern.startsWith('!'))
       .map((pattern) => pattern.slice(1))
+
     const comparable =
       resourceType === 'web-app'
         ? [relativePath, `${relativePath}/index.html`]
         : [relativePath]
+
     const matches = (pattern: string) =>
       comparable.some((candidate) => patternMatches(candidate, pattern))
+
     return positives.some(matches) && !exclusions.some(matches)
   }
 
@@ -1170,6 +1264,7 @@ export class PackageSystem {
   ): Promise<ResolvedPackage> {
     const source = sourceString(configured)
     const packageJsonPath = path.join(root, 'package.json')
+
     const packageJsonContent = await fs
       .readFile(packageJsonPath, 'utf8')
       .catch((error) => {
@@ -1183,9 +1278,12 @@ export class PackageSystem {
 
         throw error
       })
+
     let manifest: PackageManifest | undefined
+
     if (packageJsonContent !== null) {
       let packageJson: unknown
+
       try {
         packageJson = JSON.parse(packageJsonContent)
       } catch (error) {
@@ -1195,9 +1293,11 @@ export class PackageSystem {
           }`
         )
       }
+
       const parsedPackageJson = z
         .looseObject({ treeport: z.unknown().optional() })
         .safeParse(packageJson)
+
       if (!parsedPackageJson.success) {
         throw new Error(`${packageJsonPath} must contain a JSON object`)
       }
@@ -1210,6 +1310,7 @@ export class PackageSystem {
             services: z.unknown().optional()
           })
           .safeParse(parsedPackageJson.data.treeport)
+
         if (!parsedTreeport.success) {
           throw new Error(
             `${packageJsonPath} treeport manifest must be an object`
@@ -1230,6 +1331,7 @@ export class PackageSystem {
             const services = z
               .record(z.string().min(1), packageServiceSchema)
               .safeParse(parsedTreeport.data.services ?? {})
+
             if (!services.success) {
               throw new Error(
                 `${packageJsonPath} treeport.services is invalid: ${z.prettifyError(services.error)}`
@@ -1251,6 +1353,7 @@ export class PackageSystem {
       source,
       projectId
     )
+
     const appCandidates = candidates.webApps.filter((candidate) =>
       manifest
         ? this.manifestAllows(
@@ -1261,6 +1364,7 @@ export class PackageSystem {
         : candidate.relativePath.startsWith('web-apps/') &&
           candidate.relativePath.split('/').length === 2
     )
+
     const launcherCandidates = candidates.launchers.filter((candidate) =>
       manifest
         ? this.manifestAllows(
@@ -1271,14 +1375,17 @@ export class PackageSystem {
         : candidate.relativePath.startsWith('launchers/') &&
           candidate.relativePath.split('/').length === 2
     )
+
     const filter = packageFilter(configured)
     const autoload = filter?.autoload !== false
+
     const metadata = {
       type: 'package' as const,
       packageId: parsed.packageId,
       source,
       scope
     }
+
     const packageLockPath =
       parsed.type === 'npm'
         ? await Promise.all(
@@ -1290,6 +1397,7 @@ export class PackageSystem {
               'bun.lockb'
             ].map(async (name) => {
               const candidate = path.join(this.npmRoot(scope, projectId), name)
+
               return fs
                 .stat(candidate)
                 .then((stat) => (stat.isFile() ? candidate : undefined))
@@ -1297,19 +1405,24 @@ export class PackageSystem {
             })
           ).then((values) => values.find(Boolean))
         : undefined
+
     const webApps = applyNormalFilter(
       appCandidates.map((candidate): ResolvedWebApp => {
         const resourceId = encodeURIComponent(
           path.posix.basename(candidate.relativePath)
         )
+
         const declarations = (manifest?.webApps ?? []).filter((entry) =>
           this.manifestAllows(candidate.relativePath, [entry.source], 'web-app')
         )
+
         const permissions = [
           ...new Set(declarations.flatMap((entry) => entry.permissions))
         ]
+
         // Only an explicit package declaration may disable the frame sandbox.
         const sandboxEnabled = declarations.every((entry) => entry.sandbox)
+
         const resolved: ResolvedWebApp = {
           definition: {
             id: `package:${parsed.packageId}:web-app:${resourceId}`,
@@ -1333,6 +1446,7 @@ export class PackageSystem {
           relativePath: candidate.relativePath,
           enabled: true
         }
+
         if (packageLockPath) {
           resolved.packageLockPath = packageLockPath
         }
@@ -1342,9 +1456,12 @@ export class PackageSystem {
       filter?.webApps,
       autoload
     )
+
     const launchers: ResolvedLauncher[] = []
+
     for (const candidate of launcherCandidates) {
       let value: unknown
+
       try {
         value = JSON.parse(await fs.readFile(candidate.path, 'utf8'))
       } catch (error) {
@@ -1364,7 +1481,9 @@ export class PackageSystem {
         )
         continue
       }
+
       const result = decodeUnknownOrNull(createLauncherSchema, value)
+
       if (!result) {
         candidates.diagnostics.push(
           diagnostic(scope, 'Invalid launcher: Request validation failed', {
@@ -1403,9 +1522,12 @@ export class PackageSystem {
       filter?.launchers,
       autoload
     )
+
     const duplicateIds = new Set<string>()
+
     for (const resource of [...webApps, ...filteredLaunchers]) {
       const resourceId = resource.definition.id
+
       if (duplicateIds.has(resourceId)) {
         candidates.diagnostics.push(
           diagnostic(
@@ -1477,6 +1599,7 @@ export class PackageSystem {
     result.projectId = projectId
     result.webApps = applyDelta(result.webApps, configured.webApps)
     result.launchers = applyDelta(result.launchers, configured.launchers)
+
     for (const resource of [...result.webApps, ...result.launchers]) {
       resource.definition.source = {
         type: 'package',
@@ -1485,6 +1608,7 @@ export class PackageSystem {
         scope: 'project'
       }
     }
+
     return result
   }
 
@@ -1496,10 +1620,12 @@ export class PackageSystem {
     previous?: ResolvedPackage
   ): Promise<ResolvedPackage> {
     const settingsPath = this.settingsPath(scope, projectId ?? undefined)
+
     const parsed = await this.parseSource(
       sourceString(configured),
       settingsPath
     )
+
     try {
       const root = await this.ensureInstalled(
         parsed,
@@ -1508,6 +1634,7 @@ export class PackageSystem {
         settings,
         false
       )
+
       return await this.loadPackage(configured, parsed, root, scope, projectId)
     } catch (error) {
       if (previous && previous.scope === scope) {
@@ -1524,6 +1651,7 @@ export class PackageSystem {
             }
           )
         )
+
         return preserved
       }
 
@@ -1567,15 +1695,18 @@ export class PackageSystem {
     return Effect.gen(
       function* (this: PackageSystem) {
         const mutations = yield* PackageMutations
+
         const changed = yield* mutations.enqueue(
           'global',
           Effect.promise(async () => {
             const file = await this.readSettingsFile(settingsPath)
+
             if (!force && file.fingerprint === this.globalFingerprint) {
               return false
             }
 
             this.globalFingerprint = file.fingerprint
+
             if (file.error) {
               this.globalState = {
                 ...this.globalState,
@@ -1587,6 +1718,7 @@ export class PackageSystem {
                   )
                 ]
               }
+
               return false
             }
 
@@ -1595,18 +1727,22 @@ export class PackageSystem {
               settingsPath,
               'global'
             )
+
             if (!parsedSettings.settings) {
               this.globalState = {
                 ...this.globalState,
                 diagnostics: [parsedSettings.diagnostic!]
               }
+
               return false
             }
 
             const packages = new Map<string, ResolvedPackage>()
             const diagnostics: PackageResourceDiagnostic[] = []
+
             for (const configured of parsedSettings.settings.packages) {
               let parsed: ParsedPackageSource
+
               try {
                 parsed = await this.parseSource(
                   sourceString(configured),
@@ -1624,6 +1760,7 @@ export class PackageSystem {
                 )
                 continue
               }
+
               if (packages.has(parsed.identity)) {
                 diagnostics.push(
                   diagnostic(
@@ -1644,14 +1781,17 @@ export class PackageSystem {
                 parsedSettings.settings,
                 this.globalState.packages.get(parsed.identity)
               )
+
               packages.set(parsed.identity, resolved)
               diagnostics.push(...resolved.diagnostics)
             }
+
             this.globalState = {
               settings: parsedSettings.settings,
               packages,
               diagnostics
             }
+
             return true
           })
         )
@@ -1673,11 +1813,13 @@ export class PackageSystem {
     force = false
   ): Effect.Effect<void, never, ApplicationServices> {
     const context = this.projectContexts.get(projectId)
+
     if (!context) {
       return Effect.void
     }
 
     const settingsPath = this.settingsPath('project', projectId)
+
     return Effect.gen(
       function* (this: PackageSystem) {
         const mutations = yield* PackageMutations
@@ -1685,6 +1827,7 @@ export class PackageSystem {
           `project:${projectId}`,
           Effect.promise(async () => {
             const file = await this.readSettingsFile(settingsPath)
+
             if (
               !force &&
               file.fingerprint === this.projectFingerprints.get(projectId)
@@ -1694,12 +1837,14 @@ export class PackageSystem {
 
             this.projectFingerprints.set(projectId, file.fingerprint)
             const previous = this.projectStates.get(projectId)
+
             if (file.error) {
               const readDiagnostic = diagnostic(
                 'project',
                 `Could not read ${settingsPath}: ${file.error.message}`,
                 { projectId, path: settingsPath }
               )
+
               if (previous) {
                 this.projectStates.set(projectId, {
                   ...previous,
@@ -1724,6 +1869,7 @@ export class PackageSystem {
               'project',
               projectId
             )
+
             if (!parsedSettings.settings) {
               if (previous) {
                 this.projectStates.set(projectId, {
@@ -1744,14 +1890,18 @@ export class PackageSystem {
             }
 
             const ownPackages = new Map<string, ResolvedPackage>()
+
             const effectivePackages = new Map(
               [...this.globalState.packages.entries()].map(
                 ([identity, pkg]) => [identity, this.clonePackage(pkg)]
               )
             )
+
             const diagnostics: PackageResourceDiagnostic[] = []
+
             for (const configured of parsedSettings.settings.packages) {
               let parsed: ParsedPackageSource
+
               try {
                 parsed = await this.parseSource(
                   sourceString(configured),
@@ -1770,6 +1920,7 @@ export class PackageSystem {
                 )
                 continue
               }
+
               if (ownPackages.has(parsed.identity)) {
                 diagnostics.push(
                   diagnostic(
@@ -1782,6 +1933,7 @@ export class PackageSystem {
               }
 
               const filter = packageFilter(configured)
+
               if (
                 filter?.autoload === false &&
                 effectivePackages.has(parsed.identity)
@@ -1791,6 +1943,7 @@ export class PackageSystem {
                   filter,
                   projectId
                 )
+
                 ownPackages.set(parsed.identity, delta)
                 effectivePackages.set(parsed.identity, delta)
                 continue
@@ -1803,6 +1956,7 @@ export class PackageSystem {
                 parsedSettings.settings,
                 previous?.ownPackages.get(parsed.identity)
               )
+
               const projectPackage =
                 filter?.autoload === false
                   ? this.applyProjectDelta(
@@ -1821,6 +1975,7 @@ export class PackageSystem {
                       projectId
                     )
                   : resolved
+
               ownPackages.set(parsed.identity, projectPackage)
               effectivePackages.set(parsed.identity, projectPackage)
               diagnostics.push(...projectPackage.diagnostics)
@@ -1856,6 +2011,7 @@ export class PackageSystem {
       const next = this.context(project)
       const previous = this.projectContexts.get(project.id)
       this.projectContexts.set(project.id, next)
+
       if (
         previous &&
         (previous.rootPath !== next.rootPath || previous.name !== next.name)
@@ -1905,6 +2061,7 @@ export class PackageSystem {
       yield* this.reconcileGlobal()
       yield* this.reconcileProject(projectId)
       const state = this.projectStates.get(projectId)
+
       if (!state) {
         return yield* Effect.fail(
           new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
@@ -1931,10 +2088,12 @@ export class PackageSystem {
       )
       // One process per installed copy: every tree using it shares the instance.
       const declarations = new Map<string, PackageServiceDeclaration>()
+
       const add = (pkg: ResolvedPackage, projectId: string | null) => {
         for (const service of pkg.services) {
           const id = `${pkg.root}\0${service.name}`
           const existing = declarations.get(id)
+
           if (!existing) {
             declarations.set(id, {
               ...service,
@@ -1951,14 +2110,17 @@ export class PackageSystem {
           }
         }
       }
+
       for (const pkg of this.globalState.packages.values()) {
         add(pkg, null)
       }
+
       for (const [projectId, state] of this.projectStates) {
         for (const pkg of state.ownPackages.values()) {
           add(pkg, projectId)
         }
       }
+
       return [...declarations.values()]
     })
   }
@@ -1988,9 +2150,11 @@ export class PackageSystem {
   > {
     return Effect.gen(this, function* () {
       yield* this.reconcileGlobal()
+
       const packages = projectId
         ? (yield* this.ensureProject(projectId)).effectivePackages
         : this.globalState.packages
+
       return [...packages.values()].flatMap((pkg) =>
         pkg.launchers
           .filter((resource) => resource.enabled)
@@ -2016,6 +2180,7 @@ export class PackageSystem {
         { concurrency: 'unbounded', discard: true }
       )
       const packages: PackageListing[] = []
+
       for (const pkg of this.globalState.packages.values()) {
         packages.push({
           source: pkg.source,
@@ -2032,6 +2197,7 @@ export class PackageSystem {
           diagnostics: [...pkg.diagnostics]
         })
       }
+
       for (const state of this.projectStates.values()) {
         for (const pkg of state.ownPackages.values()) {
           packages.push({
@@ -2051,6 +2217,7 @@ export class PackageSystem {
           })
         }
       }
+
       return {
         packages,
         diagnostics: [
@@ -2069,6 +2236,7 @@ export class PackageSystem {
   ): Promise<{ settings: TreeportSettings; settingsPath: string }> {
     const settingsPath = this.settingsPath(scope, projectId)
     const file = await this.readSettingsFile(settingsPath)
+
     if (file.error) {
       throw new DomainError(
         'INVALID_PACKAGE_SETTINGS',
@@ -2084,6 +2252,7 @@ export class PackageSystem {
       scope,
       projectId
     )
+
     if (!parsed.settings) {
       throw new DomainError(
         'INVALID_PACKAGE_SETTINGS',
@@ -2106,9 +2275,11 @@ export class PackageSystem {
       mode: 0o700
     })
     const raw = { ...settings.raw, packages }
+
     const temporary = `${settingsPath}.${process.pid}.${crypto
       .randomBytes(6)
       .toString('hex')}.tmp`
+
     await fs.writeFile(temporary, `${JSON.stringify(raw, null, 2)}\n`, {
       mode: 0o600
     })
@@ -2126,6 +2297,7 @@ export class PackageSystem {
     const relative = toPosix(
       path.relative(path.dirname(settingsPath), parsed.path)
     )
+
     if (!relative) {
       return './'
     }
@@ -2151,6 +2323,7 @@ export class PackageSystem {
       }
 
       const mutations = yield* PackageMutations
+
       const result = yield* mutations.enqueue(
         projectId ? `project:${projectId}` : 'global',
         packagePromise(async () => {
@@ -2158,7 +2331,9 @@ export class PackageSystem {
             scope,
             projectId
           )
+
           const parsed = await this.parseSource(source, settingsPath)
+
           const root = await this.ensureInstalled(
             parsed,
             scope,
@@ -2166,6 +2341,7 @@ export class PackageSystem {
             settings,
             true
           )
+
           await this.loadPackage(
             this.persistedSource(parsed, settingsPath),
             parsed,
@@ -2176,11 +2352,13 @@ export class PackageSystem {
           const persisted = this.persistedSource(parsed, settingsPath)
           let replaced = false
           const next: PackageSource[] = []
+
           for (const configured of settings.packages) {
             const existing = await this.parseSource(
               sourceString(configured),
               settingsPath
             )
+
             if (existing.identity !== parsed.identity) {
               next.push(configured)
             } else if (!replaced) {
@@ -2189,11 +2367,13 @@ export class PackageSystem {
               replaced = true
             }
           }
+
           if (!replaced) {
             next.push(persisted)
           }
 
           await this.writeSettings(settingsPath, settings, next)
+
           return {
             action: 'install' as const,
             source: persisted,
@@ -2203,6 +2383,7 @@ export class PackageSystem {
           }
         })
       )
+
       if (scope === 'global') {
         yield* this.reconcileGlobal(true)
       } else {
@@ -2225,6 +2406,7 @@ export class PackageSystem {
 
     return Effect.gen(this, function* () {
       const mutations = yield* PackageMutations
+
       const result = yield* mutations.enqueue(
         projectId ? `project:${projectId}` : 'global',
         packagePromise(async () => {
@@ -2232,19 +2414,23 @@ export class PackageSystem {
             scope,
             projectId
           )
+
           const parsed = await this.parseSource(source, settingsPath)
           const matching: PackageSource[] = []
           const remaining: PackageSource[] = []
+
           for (const configured of settings.packages) {
             const existing = await this.parseSource(
               sourceString(configured),
               settingsPath
             )
+
             ;(existing.identity === parsed.identity
               ? matching
               : remaining
             ).push(configured)
           }
+
           if (matching.length === 0) {
             throw new DomainError(
               'PACKAGE_NOT_CONFIGURED',
@@ -2264,6 +2450,7 @@ export class PackageSystem {
           }
 
           await this.writeSettings(settingsPath, settings, remaining)
+
           return {
             action: 'remove' as const,
             source: sourceString(matching[0]!),
@@ -2273,6 +2460,7 @@ export class PackageSystem {
           }
         })
       )
+
       if (scope === 'global') {
         yield* this.reconcileGlobal(true)
       } else {
@@ -2299,6 +2487,7 @@ export class PackageSystem {
         { concurrency: 'unbounded', discard: true }
       )
       let requestedIdentity: string | undefined
+
       if (source) {
         requestedIdentity = (yield* packagePromise(() =>
           this.parseSource(source, this.settingsPath('global'))
@@ -2312,6 +2501,7 @@ export class PackageSystem {
         settings: TreeportSettings
         settingsPath: string
       }> = []
+
       for (const configured of this.globalState.settings.packages) {
         targets.push({
           configured,
@@ -2320,6 +2510,7 @@ export class PackageSystem {
           settingsPath: this.settingsPath('global')
         })
       }
+
       for (const state of this.projectStates.values()) {
         for (const configured of state.settings.packages) {
           targets.push({
@@ -2333,14 +2524,17 @@ export class PackageSystem {
       }
 
       const matching: typeof targets = []
+
       for (const target of targets) {
         const parsed = yield* packagePromise(() =>
           this.parseSource(sourceString(target.configured), target.settingsPath)
         )
+
         if (!requestedIdentity || parsed.identity === requestedIdentity) {
           matching.push(target)
         }
       }
+
       if (source && matching.length === 0) {
         throw new DomainError(
           'PACKAGE_NOT_CONFIGURED',
@@ -2351,10 +2545,12 @@ export class PackageSystem {
 
       const results: PackageOperationResult[] = []
       const mutations = yield* PackageMutations
+
       for (const target of matching) {
         const parsed = yield* packagePromise(() =>
           this.parseSource(sourceString(target.configured), target.settingsPath)
         )
+
         if (parsed.type === 'local') {
           results.push({
             action: 'update',
@@ -2416,7 +2612,9 @@ export class PackageSystem {
           status: 'updated'
         })
       }
+
       yield* this.reload()
+
       return results
     })
   }
@@ -2434,6 +2632,7 @@ export class PackageSystem {
         yield* this.reconcileGlobal()
         yield* this.reconcileProject(projectId, true)
         const state = this.projectStates.get(projectId)
+
         return {
           results: [
             {
@@ -2456,6 +2655,7 @@ export class PackageSystem {
         { concurrency: 'unbounded', discard: true }
       )
       const listed = yield* this.list()
+
       return {
         results: [
           {

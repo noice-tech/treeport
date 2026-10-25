@@ -50,8 +50,10 @@ function ResizeRail({
   onRatioChange: (ratio: number) => void
 }) {
   const boundsRef = useRef<DOMRect | null>(null)
+
   const updateFromPointer = (event: PointerEvent<HTMLDivElement>) => {
     const bounds = boundsRef.current
+
     if (!bounds) {
       return
     }
@@ -60,8 +62,10 @@ function ResizeRail({
       orientation === 'vertical'
         ? ((event.clientX - bounds.left) / bounds.width) * 100
         : ((event.clientY - bounds.top) / bounds.height) * 100
+
     onRatioChange(clampRatio(next))
   }
+
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) {
       return
@@ -74,22 +78,28 @@ function ResizeRail({
     event.currentTarget.setPointerCapture(event.pointerId)
     updateFromPointer(event)
   }
+
   const stopResize = (event: PointerEvent<HTMLDivElement>) => {
     boundsRef.current = null
+
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
   }
+
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     const decrement =
       orientation === 'vertical'
         ? event.key === 'ArrowLeft'
         : event.key === 'ArrowUp'
+
     const increment =
       orientation === 'vertical'
         ? event.key === 'ArrowRight'
         : event.key === 'ArrowDown'
+
     let next = ratio
+
     if (decrement) {
       next -= event.shiftKey ? 5 : 2
     } else if (increment) {
@@ -169,16 +179,20 @@ export function TerminalSplitWorkspace({
   )
   const terminalIds = worktree.terminals.map((terminal) => terminal.id)
   const terminalIdSignature = terminalIds.join('\u0000')
+
   const layout = normalizeTerminalWorkspaceLayout(
     terminalWorkspaceLayouts.read(worktree.id),
     terminalIds
   )
+
   const terminalsById = new Map(
     worktree.terminals.map((terminal) => [terminal.id, terminal])
   )
+
   const activeGroupIndex = layout.groups.findIndex((group) =>
     terminalIdsInLayoutNode(group).includes(selectedTerminal.id)
   )
+
   const activeGroup =
     activeGroupIndex >= 0
       ? layout.groups[activeGroupIndex]!
@@ -186,6 +200,7 @@ export function TerminalSplitWorkspace({
           type: 'terminal',
           terminalId: selectedTerminal.id
         } satisfies TerminalWorkspaceLayoutNode)
+
   const dragSnapshot = useSyncExternalStore(
     terminalLayoutDrag.subscribe,
     terminalLayoutDrag.getSnapshot,
@@ -195,6 +210,7 @@ export function TerminalSplitWorkspace({
   const dropTargetAt = useCallback(
     (snapshot: TerminalLayoutDragSnapshot): TerminalDropTarget | null => {
       const workspace = workspaceRef.current
+
       if (!workspace || snapshot.terminal.worktreeId !== worktree.id) {
         return null
       }
@@ -203,6 +219,7 @@ export function TerminalSplitWorkspace({
         workspace.querySelectorAll<HTMLElement>('[data-terminal-pane-id]')
       ).find((candidate) => {
         const bounds = candidate.getBoundingClientRect()
+
         return (
           snapshot.clientX >= bounds.left &&
           snapshot.clientX <= bounds.right &&
@@ -210,11 +227,13 @@ export function TerminalSplitWorkspace({
           snapshot.clientY <= bounds.bottom
         )
       })
+
       if (!pane) {
         return null
       }
 
       const terminalId = pane.dataset.terminalPaneId
+
       if (!terminalId || terminalId === snapshot.terminal.id) {
         return null
       }
@@ -224,6 +243,7 @@ export function TerminalSplitWorkspace({
       const y = (snapshot.clientY - bounds.top) / bounds.height
       const distances = [x, 1 - x, y, 1 - y]
       const directions = ['left', 'right', 'up', 'down'] as const
+
       return {
         terminalId,
         direction: directions[distances.indexOf(Math.min(...distances))]!,
@@ -232,9 +252,12 @@ export function TerminalSplitWorkspace({
     },
     [worktree.id]
   )
+
   const activeDrag =
     dragSnapshot?.terminal.worktreeId === worktree.id ? dragSnapshot : null
+
   const dropTarget = activeDrag ? dropTargetAt(activeDrag) : null
+
   const updateLayout = useCallback(
     (update: (current: TerminalWorkspaceLayout) => TerminalWorkspaceLayout) =>
       terminalWorkspaceLayouts.update(worktree.id, terminalIds, update),
@@ -245,6 +268,7 @@ export function TerminalSplitWorkspace({
     () =>
       terminalLayoutDrag.registerDropHandler((snapshot) => {
         const target = dropTargetAt(snapshot)
+
         if (!target) {
           return false
         }
@@ -258,6 +282,7 @@ export function TerminalSplitWorkspace({
           )
         )
         onSelectTerminal(snapshot.terminal)
+
         return true
       }),
     [dropTargetAt, onSelectTerminal, updateLayout]
@@ -279,11 +304,13 @@ export function TerminalSplitWorkspace({
   ): ReactNode => {
     if (node.type === 'terminal') {
       const terminal = terminalsById.get(node.terminalId)
+
       if (!terminal) {
         return null
       }
 
       const active = terminal.id === selectedTerminal.id
+
       return (
         <div
           key={terminal.id}
@@ -321,6 +348,7 @@ export function TerminalSplitWorkspace({
             gridTemplateColumns: 'minmax(0, 1fr)',
             gridTemplateRows: `${node.ratio}% ${100 - node.ratio}%`
           }
+
     return (
       <div
         key={path.join('.') || 'root'}
@@ -340,11 +368,14 @@ export function TerminalSplitWorkspace({
   }
 
   let dropOverlayStyle: CSSProperties | undefined
+
   if (dropTarget) {
     const workspaceBounds = workspaceRef.current?.getBoundingClientRect()
+
     if (workspaceBounds) {
       const vertical =
         dropTarget.direction === 'left' || dropTarget.direction === 'right'
+
       dropOverlayStyle = {
         left:
           dropTarget.bounds.left -

@@ -14,6 +14,7 @@ export async function installBrowserClipboardBridge(
 ): Promise<void> {
   await page.exposeBinding('__treeportClipboardWrite', (_source, value) => {
     const clipboard = decodeUnknownOrNull(browserClipboardSchema, value)
+
     if (!clipboard || !publish(clipboard)) {
       throw new Error('Take control of this browser before copying.')
     }
@@ -49,7 +50,9 @@ function bridgeBrowserClipboard(limit: number): void {
       }
     ).__treeportClipboardWrite(clipboard)
   }
+
   const clipboard = navigator.clipboard
+
   if (clipboard) {
     const writeText = clipboard.writeText.bind(clipboard)
     clipboard.writeText = async (text) => {
@@ -57,10 +60,12 @@ function bridgeBrowserClipboard(limit: number): void {
       await writeText(value)
       await publish({ text: value, html: null, png: null })
     }
+
     const write = clipboard.write.bind(clipboard)
     clipboard.write = async (items) => {
       let value: BrowserClipboard = { text: null, html: null, png: null }
       const item = items[0]
+
       if (item) {
         for (const type of item.types) {
           if (!['text/plain', 'text/html', 'image/png'].includes(type)) {
@@ -68,6 +73,7 @@ function bridgeBrowserClipboard(limit: number): void {
           }
 
           const blob = await item.getType(type)
+
           if (
             blob.size > limit ||
             (type === 'image/png' && (blob.size * 4) / 3 > limit)
@@ -82,17 +88,20 @@ function bridgeBrowserClipboard(limit: number): void {
           } else {
             const bytes = new Uint8Array(await blob.arrayBuffer())
             let binary = ''
+
             for (let offset = 0; offset < bytes.length; offset += 16_384) {
               binary += String.fromCharCode(
                 ...bytes.subarray(offset, offset + 16_384)
               )
             }
+
             value = { ...value, png: btoa(binary) }
           }
         }
       }
 
       await write(items)
+
       if (value.text !== null || value.html !== null || value.png !== null) {
         await publish(value)
       }
@@ -106,14 +115,17 @@ function bridgeBrowserClipboard(limit: number): void {
     }
 
     let active = document.activeElement
+
     while (active?.shadowRoot?.activeElement) {
       active = active.shadowRoot.activeElement
     }
+
     if (active instanceof HTMLInputElement && active.type === 'password') {
       return execCommand(command, showUI, argument)
     }
 
     let value: BrowserClipboard | null = null
+
     // Register at invocation time, after the website's copy handlers. Read the
     // DataTransfer during dispatch: Chromium empties it as soon as copy returns.
     const observe = (event: ClipboardEvent) => {
@@ -145,11 +157,14 @@ function bridgeBrowserClipboard(limit: number): void {
         }
       } else {
         const selection = window.getSelection()
+
         if (selection && !selection.isCollapsed) {
           const container = document.createElement('div')
+
           for (let index = 0; index < selection.rangeCount; index++) {
             container.append(selection.getRangeAt(index).cloneContents())
           }
+
           value = {
             text: selection.toString(),
             html: container.innerHTML,
@@ -158,9 +173,12 @@ function bridgeBrowserClipboard(limit: number): void {
         }
       }
     }
+
     window.addEventListener('copy', observe)
+
     try {
       const copied = execCommand(command, showUI, argument)
+
       // The native boolean return must stay synchronous for legacy copy libraries.
       if (copied && value !== null) {
         void publish(value).catch(() => undefined)

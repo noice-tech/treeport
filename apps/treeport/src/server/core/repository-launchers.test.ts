@@ -5,6 +5,7 @@ import { afterEach, expect, it } from 'vitest'
 import { loadRepositoryLaunchers } from './repository-launchers'
 
 const temporary: string[] = []
+
 afterEach(async () => {
   await Promise.all(
     temporary
@@ -16,6 +17,7 @@ afterEach(async () => {
 it('reads launchers from the current tree settings alongside other sections', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-launchers-'))
   temporary.push(root)
+
   for (const tree of ['main', 'topic']) {
     await fs.mkdir(path.join(root, tree, '.treeport'), { recursive: true })
     await fs.writeFile(
@@ -34,10 +36,12 @@ it('reads launchers from the current tree settings alongside other sections', as
       })
     )
   }
+
   const result = await loadRepositoryLaunchers(
     'project',
     path.join(root, 'topic')
   )
+
   expect(result.diagnostics).toEqual([])
   expect(result.definitions).toEqual([
     {
@@ -64,6 +68,7 @@ it('allows absent launchers and diagnoses invalid settings and individual launch
     definitions: [],
     diagnostics: []
   })
+
   for (const settings of [
     {},
     { setup: { commands: [] }, packages: [] },
@@ -75,6 +80,7 @@ it('allows absent launchers and diagnoses invalid settings and individual launch
       diagnostics: []
     })
   }
+
   for (const content of [
     'null',
     '[]',
@@ -93,6 +99,7 @@ it('allows absent launchers and diagnoses invalid settings and individual launch
       })
     ])
   }
+
   await fs.writeFile(
     file,
     JSON.stringify({

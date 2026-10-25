@@ -13,9 +13,11 @@ it('loads visible headers, refreshes mutable expanded patches, and bounds parall
     { id: 'hidden', scope: 'uncommitted' as const, loadState: 'ready' },
     { id: 'collapsed', scope: 'uncommitted' as const, loadState: 'ready' }
   ]
+
   const visible = new Set(
     files.filter((file) => file.id !== 'hidden').map((file) => file.id)
   )
+
   const loaded: Array<{ id: string; reload: boolean }> = []
   let active = 0
   let peak = 0

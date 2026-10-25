@@ -46,6 +46,7 @@ export interface LegacyTerminalHost {
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (cause) {
     // SAFETY: Node reports process signaling failures as ErrnoException objects.
@@ -62,6 +63,7 @@ async function socketAcceptsConnections(socketPath: string): Promise<boolean> {
     })
     socket.once('error', (cause: NodeJS.ErrnoException) => {
       socket.destroy()
+
       if (cause.code === 'ENOENT' || cause.code === 'ECONNREFUSED') {
         resolve(false)
       } else {
@@ -81,6 +83,7 @@ async function probeLegacyHost(
   reason: string | null
 }> {
   const id = crypto.randomUUID()
+
   const encoded = await Effect.runPromise(
     encodeTerminalHostFrame({
       type: 'request',
@@ -94,6 +97,7 @@ async function probeLegacyHost(
     const socket = net.createConnection(record.socketPath)
     const decode = makeTerminalHostFrameDecoder()
     let settled = false
+
     const finish = (result: {
       liveSessionCount: number | null
       stale: boolean
@@ -107,6 +111,7 @@ async function probeLegacyHost(
       socket.destroy()
       resolve(result)
     }
+
     socket.setTimeout(3_000)
     socket.once('connect', () => socket.write(encoded))
     socket.once('timeout', () =>
@@ -139,6 +144,7 @@ async function probeLegacyHost(
           const frame = frames.find(
             (candidate) => candidate.type === 'response' && candidate.id === id
           )
+
           if (!frame || frame.type !== 'response') {
             return
           }
@@ -149,12 +155,14 @@ async function probeLegacyHost(
               stale: false,
               reason: `The terminal host refused the read-only API probe: ${frame.error.code}: ${frame.error.message}`
             })
+
             return
           }
 
           const result = await Effect.runPromise(
             Effect.either(decodeTerminalHostResult('handshake', frame.result))
           )
+
           if (
             result._tag === 'Left' ||
             result.right.hostId !== record.hostId ||
@@ -168,6 +176,7 @@ async function probeLegacyHost(
               reason:
                 'The terminal host returned an invalid or mismatched API identity.'
             })
+
             return
           }
 
@@ -203,12 +212,15 @@ export async function inspectLegacyTerminalHost(
     .update(path.resolve(dataDir))
     .digest('hex')
     .slice(0, 20)
+
   const recordPath = path.join(runtimeDir, `terminal-host-${hostKey}.json`)
+
   const socketPath = path.join(
     os.tmpdir(),
     `treeport-${process.getuid?.() ?? 'user'}`,
     `terminal-${hostKey}.sock`
   )
+
   const result = (
     record: TerminalHostRecord | null,
     running: boolean,
@@ -232,6 +244,7 @@ export async function inspectLegacyTerminalHost(
 
     throw cause
   })
+
   if (source === null) {
     const socketExists = await fs
       .lstat(socketPath)
@@ -244,6 +257,7 @@ export async function inspectLegacyTerminalHost(
 
         throw cause
       })
+
     return socketExists
       ? result(
           null,
@@ -255,6 +269,7 @@ export async function inspectLegacyTerminalHost(
   }
 
   const parsed = Schema.decodeUnknownEither(legacyHostRecordSchema)(source)
+
   if (Either.isLeft(parsed)) {
     return result(
       null,
@@ -265,6 +280,7 @@ export async function inspectLegacyTerminalHost(
   }
 
   const { protocolVersion, ...record } = parsed.right
+
   if (record.hostKey !== hostKey || record.socketPath !== socketPath) {
     return result(
       record,
@@ -282,6 +298,7 @@ export async function inspectLegacyTerminalHost(
   }
 
   const closeTerminals = `Save your work, explicitly close terminals in the earlier Treeport release, then retry. Stopping terminal host PID ${record.pid} also ends its terminals.`
+
   if (protocolVersion !== undefined) {
     return result(
       record,
@@ -295,6 +312,7 @@ export async function inspectLegacyTerminalHost(
     .readFile(path.join(dataDir, 'terminal-host.token'), 'utf8')
     .then((contents) => contents.trim())
     .catch(() => null)
+
   if (!token) {
     return result(
       record,
@@ -305,6 +323,7 @@ export async function inspectLegacyTerminalHost(
   }
 
   const probe = await probeLegacyHost(record, token)
+
   if (probe.stale && !processExists(record.pid)) {
     return result(record, false)
   }

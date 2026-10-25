@@ -68,11 +68,13 @@ function tracingDestination(
   }
 
   const configuredPath = environment.TREEPORT_TRACE_FILE?.trim()
+
   if (configuredPath && !path.isAbsolute(configuredPath)) {
     throw new Error('TREEPORT_TRACE_FILE must be an absolute path')
   }
 
   const directory = environment.TREEPORT_TRACE_DIR?.trim()
+
   if (directory && !path.isAbsolute(directory)) {
     throw new Error('TREEPORT_TRACE_DIR must be an absolute path')
   }
@@ -87,6 +89,7 @@ function tracingDestination(
 
 function safeAttributes(attributes: TreeportSpanAttributes) {
   const result: TreeportSpanAttributes = {}
+
   for (const [name, value] of Object.entries(attributes)) {
     if (!SAFE_ATTRIBUTE_NAMES.has(name)) {
       continue
@@ -104,6 +107,7 @@ function safeAttributes(attributes: TreeportSpanAttributes) {
       result[name] = value
     }
   }
+
   return result
 }
 
@@ -129,13 +133,16 @@ class JsonLinesSpanExporter implements SpanExporter {
   ) {
     if (this.closed) {
       resultCallback({ code: 1 })
+
       return
     }
 
     const write = async () => {
       const lines: string[] = []
+
       for (const span of spans) {
         const context = span.spanContext()
+
         const record = {
           type: 'treeport.trace.span',
           timestamp: new Date(hrTimeMilliseconds(span.startTime)).toISOString(),
@@ -151,12 +158,16 @@ class JsonLinesSpanExporter implements SpanExporter {
           status: span.status.code,
           attributes: safeAttributes(span.attributes)
         }
+
         lines.push(`${JSON.stringify(record)}\n`)
       }
+
       const data = lines.join('')
       const filePath = this.destination.filePath
+
       if (!filePath) {
         process.stderr.write(data)
+
         return
       }
 
@@ -191,6 +202,7 @@ class JsonLinesSpanExporter implements SpanExporter {
       await this.descriptor.writeFile(data)
       this.bytes += Buffer.byteLength(data)
     }
+
     this.pending = this.pending.then(write).then(
       () => resultCallback({ code: 0 }),
       // eslint-disable-next-line anti-slop/no-unknown-parameters -- Promise rejection boundary; normalize before passing to OpenTelemetry.
@@ -228,6 +240,7 @@ export function makeTracingLayer(options: TracingOptions) {
     options.serviceName,
     options.destination
   )
+
   return NodeSdk.layer(() => ({
     resource: {
       serviceName: options.serviceName,
@@ -293,6 +306,7 @@ export const currentPromiseSpan = Effect.gen(function* () {
 
   const runtime = yield* Effect.runtime<never>()
   const parent = yield* Effect.option(Effect.currentSpan)
+
   const run: PromiseSpan = async (name, evaluate, attributes = {}) => {
     const exit = await Runtime.runPromiseExit(runtime)(
       Effect.tryPromise({ try: evaluate, catch: (cause) => ({ cause }) }).pipe(
@@ -302,6 +316,7 @@ export const currentPromiseSpan = Effect.gen(function* () {
         })
       )
     )
+
     if (Exit.isSuccess(exit)) {
       return exit.value
     }
@@ -311,5 +326,6 @@ export const currentPromiseSpan = Effect.gen(function* () {
       ? failure.value.cause
       : Cause.squash(exit.cause)
   }
+
   return run
 })

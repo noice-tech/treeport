@@ -48,14 +48,17 @@ describe('terminal operations', () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainTree = project.worktrees[0]!
+
     const linkedTree = (
       await service.createWorktree(project.id, 'existing-tree', 'default')
     ).worktree
+
     const sessionsBefore = [...runner.sessions.keys()]
     let releaseCreation!: () => void
     runner.worktreeAddGate = new Promise<void>((resolve) => {
       releaseCreation = resolve
     })
+
     const operation = await service.beginCreateWorktree(
       project.id,
       'blocking-tree',
@@ -72,6 +75,7 @@ describe('terminal operations', () => {
           )
         ).toBe(true)
       })
+
       for (const tree of [mainTree, linkedTree]) {
         await expect(
           service.createTerminal(tree.id, 'During creation')
@@ -80,6 +84,7 @@ describe('terminal operations', () => {
           name: 'During creation'
         })
       }
+
       expect((await service.getOperation(operation.id)).status).toBe('running')
       expect([...runner.sessions.keys()]).toEqual(
         expect.arrayContaining(sessionsBefore)
@@ -95,6 +100,7 @@ describe('terminal operations', () => {
     } finally {
       releaseCreation()
     }
+
     await vi.waitFor(async () =>
       expect((await service.getOperation(operation.id)).status).toBe(
         'completed'
@@ -109,12 +115,14 @@ describe('terminal operations', () => {
     expect(reopened.worktrees.map((tree) => tree.name)).toEqual(
       expect.arrayContaining(['blocking-tree', 'queued-tree'])
     )
+
     for (const name of ['blocking-tree', 'queued-tree']) {
       const tree = reopened.worktrees.find((tree) => tree.name === name)!
       expect(
         tree.terminals.some((terminal) => terminal.name === 'Terminal')
       ).toBe(true)
     }
+
     await expect(
       service.createTerminal(mainTree.id, 'After creation')
     ).resolves.toMatchObject({ name: 'After creation' })
@@ -127,13 +135,16 @@ describe('terminal operations', () => {
       const project = await service.registerProject(main)
       const tree = project.worktrees[0]!
       const attempts = runner.terminalCreateAttempts
+
       const request =
         kind === 'project mutation'
           ? { projectId: project.id }
           : { worktreeIds: [tree.id] }
+
       await service.runEffect(
         Effect.flatMap(MutationLocks, (locks) => locks.acquire(request))
       )
+
       try {
         await expect(
           service.createTerminal(tree.id, 'Blocked')
@@ -146,6 +157,7 @@ describe('terminal operations', () => {
           Effect.flatMap(MutationLocks, (locks) => locks.release(request))
         )
       }
+
       await expect(
         service.createTerminal(tree.id, 'Allowed')
       ).resolves.toMatchObject({
@@ -164,6 +176,7 @@ describe('terminal operations', () => {
       releaseLaunch = resolve
     })
     const launch = service.createTerminal(tree.id, 'Launching')
+
     try {
       await vi.waitFor(() =>
         expect(runner.terminalCreateAttempts).toBe(attempts + 1)
@@ -176,6 +189,7 @@ describe('terminal operations', () => {
     } finally {
       releaseLaunch()
     }
+
     await expect(launch).resolves.toMatchObject({ name: 'Launching' })
     await service.closeProject(project.id)
     await expect(
@@ -190,6 +204,7 @@ describe('terminal operations', () => {
     const run = runner.run.bind(runner)
     vi.spyOn(runner, 'run').mockImplementation(async (request) => {
       const result = await run(request)
+
       if (request.args[0] === 'worktree' && request.args[1] === 'add') {
         // Simulate committed settings appearing during checkout, not a main
         // checkout's uncommitted configuration being copied into the new tree.
@@ -217,6 +232,7 @@ describe('terminal operations', () => {
     })
     let snapshot: Promise<unknown> | null = null
     let reservedTreeId: string | null = null
+
     const unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'worktree.created') {
         reservedTreeId = event.data.worktreeId
@@ -231,6 +247,7 @@ describe('terminal operations', () => {
         'default',
         { name: 'pi', argv: ['pi'] }
       )
+
       await vi.waitFor(() => expect(snapshot).not.toBeNull())
       // The creation event precedes the terminal host call; wait for launch
       // to reach the gate before checking the concurrent snapshot.
@@ -257,9 +274,11 @@ describe('terminal operations', () => {
         setupError: null,
         terminalId: expect.any(String)
       })
+
       const inputs = [...runner.terminalCreateInputs.values()].filter(
         (input) => input.worktreeId === completed.worktreeId
       )
+
       expect(inputs.map((input) => input.name)).toEqual(['pi', 'Setup'])
       expect(inputs[1]?.setupTasks).toHaveLength(1)
     } finally {
@@ -285,6 +304,7 @@ describe('terminal operations', () => {
     await vi.waitFor(() =>
       expect(runner.terminalInventoryAttempts).toBe(inventoryAttempts + 2)
     )
+
     try {
       await expect(
         service.createTerminal(worktree.id, 'Replacement')
@@ -292,6 +312,7 @@ describe('terminal operations', () => {
     } finally {
       releaseInventory()
     }
+
     await Promise.all([closing, anotherClosing])
 
     const remaining = (await service.getWorktreeSnapshot(worktree.id)).terminals
@@ -306,9 +327,11 @@ describe('terminal operations', () => {
   it('allows terminal and project metadata changes while another tree is being removed', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
+
     const blockingWorktree = (
       await service.createWorktree(project.id, 'blocking-cleanup', 'default')
     ).worktree
+
     await fs.mkdir(path.join(blockingWorktree.path, '.treeport'))
     await fs.writeFile(
       path.join(blockingWorktree.path, '.treeport', 'settings.json'),
@@ -329,6 +352,7 @@ describe('terminal operations', () => {
     const targetWorktree = (
       await service.createWorktree(project.id, 'terminal-target', 'default')
     ).worktree
+
     const terminal = await service.createTerminal(targetWorktree.id, 'Extra')
 
     let releaseCleanup!: () => void
@@ -343,6 +367,7 @@ describe('terminal operations', () => {
       })
     )
     const preview = await service.removePreview(blockingWorktree.id)
+
     const removal = await service.beginRemove(blockingWorktree.id, {
       confirmationToken: preview.confirmationToken,
       confirmDestructive: preview.warnings.length > 0
@@ -352,11 +377,13 @@ describe('terminal operations', () => {
       await vi.waitFor(async () => {
         const operation = await service.getOperation(removal.id)
         expect(operation.kind).toBe('remove')
+
         if (operation.kind === 'remove') {
           expect(operation.request.cleanupCommands.status).toBe('running')
         }
       })
       await expect(service.deleteTerminal(terminal.id)).resolves.toBeUndefined()
+
       for (const phase of ['cleanup', 'git']) {
         if (phase === 'git') {
           releaseCleanup()
@@ -385,11 +412,13 @@ describe('terminal operations', () => {
         })
         expect((await service.getOperation(removal.id)).status).toBe('running')
       }
+
       await service.closeProject(project.id)
     } finally {
       releaseCleanup()
       releaseGitRemoval()
     }
+
     await vi.waitFor(async () =>
       expect((await service.getOperation(removal.id)).status).toBe('completed')
     )

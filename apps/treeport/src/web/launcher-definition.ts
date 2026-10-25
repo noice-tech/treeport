@@ -13,6 +13,7 @@ export function launcherCommand(launcher: LauncherDefinition): string {
 
 export function launcherInputLabel(inputName: string): string {
   const words = inputName.replaceAll('_', ' ')
+
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 

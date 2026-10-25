@@ -85,9 +85,11 @@ interface LoadedReview {
 const COMMENTS_KEY = 'review-comments-v1'
 const VIEWED_KEY = 'review-viewed-files-v1'
 const DIFF_STYLE_KEY = 'review-diff-style-v1'
+
 // ponytail: Unfocused apps stay stale, and focused apps can lag two seconds.
 // Add a host diff-change event when either limit matters.
 const AUTO_REFRESH_INTERVAL_MS = 2_000
+
 // Document styles don't reach the diff/tree shadow roots. Keep their native
 // control behavior aligned without disabling selection or zoom on content.
 const NATIVE_CONTROL_CSS = `
@@ -112,6 +114,7 @@ const NATIVE_CONTROL_CSS = `
     }
   }
 `
+
 const DIFF_CSS = `
   ${NATIVE_CONTROL_CSS}
   [data-diffs-header] { position: sticky; top: calc(var(--review-group-header-height) - var(--review-scroll-padding)); z-index: 2; }
@@ -130,6 +133,7 @@ const DIFF_CSS = `
   ::highlight(review-find-matches) { background: rgb(250 204 21 / 30%); }
   ::highlight(review-find-active) { background: rgb(251 146 60 / 75%); }
 `
+
 const TREE_CSS = `
   ${NATIVE_CONTROL_CSS}
   /* Contain scrolling inside the library's actual shadow-root scroller. */
@@ -168,6 +172,7 @@ const parseReviewComment = z
   .unknown()
   .transform((value): ReviewComment | null => {
     const parsed = reviewCommentSchema.safeParse(value)
+
     return parsed.success
       ? {
           ...parsed.data,
@@ -184,14 +189,17 @@ function savedComments(comments: ReviewComment[]) {
     }
 
     const { draft: _draft, originalBody, ...saved } = comment
+
     return [{ ...saved, body: originalBody ?? saved.body }]
   })
 }
 
 function searchableLinesFor(files: ReviewFile[]) {
   const lines: SearchableLine[] = []
+
   for (const file of files) {
     const fileDiff = file.diff
+
     if (!fileDiff) {
       continue
     }
@@ -199,6 +207,7 @@ function searchableLinesFor(files: ReviewFile[]) {
     for (const hunk of fileDiff.hunks) {
       let additionLineNumber = hunk.additionStart
       let deletionLineNumber = hunk.deletionStart
+
       for (const content of hunk.hunkContent) {
         if (content.type === 'context') {
           for (let index = 0; index < content.lines; index += 1) {
@@ -210,6 +219,7 @@ function searchableLinesFor(files: ReviewFile[]) {
                 fileDiff.additionLines[content.additionLineIndex + index] ?? ''
             })
           }
+
           additionLineNumber += content.lines
           deletionLineNumber += content.lines
           continue
@@ -224,6 +234,7 @@ function searchableLinesFor(files: ReviewFile[]) {
               fileDiff.deletionLines[content.deletionLineIndex + index] ?? ''
           })
         }
+
         for (let index = 0; index < content.additions; index += 1) {
           lines.push({
             file: file.id,
@@ -233,16 +244,19 @@ function searchableLinesFor(files: ReviewFile[]) {
               fileDiff.additionLines[content.additionLineIndex + index] ?? ''
           })
         }
+
         additionLineNumber += content.additions
         deletionLineNumber += content.deletions
       }
     }
   }
+
   return lines
 }
 
 function Chevron({ direction }: { direction: 'up' | 'down' }) {
   const Icon = direction === 'up' ? ChevronUpIcon : ChevronDownIcon
+
   return <Icon aria-hidden="true" />
 }
 
@@ -259,41 +273,52 @@ function ChangedFileTree({
     const uncommitted = files.filter((file) => file.scope === 'uncommitted')
     const committed = files.filter((file) => file.scope === 'committed')
     const uncommittedCount = uncommitted.length
+
     const counts = new Map([
       [uncommittedRoot, uncommittedCount],
       [committedRoot, committed.length]
     ])
+
     const entries = [
       { group: uncommittedRoot, files: uncommitted },
       { group: committedRoot, files: committed }
     ]
+
     const actualPaths = new Map<string, string>()
+
     const gitStatus: Array<{
       path: string
       status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
     }> = []
+
     for (const entry of entries) {
       // A replacement can contain both a leaf and descendants of that leaf.
       // Reserve real files AND directories before choosing display-only names.
       const occupied = new Set<string>()
       const parents = new Set<string>()
+
       for (const file of entry.files) {
         occupied.add(file.path)
         const segments = file.path.split('/')
+
         for (let depth = 1; depth < segments.length; depth += 1) {
           const parent = segments.slice(0, depth).join('/')
           parents.add(parent)
           occupied.add(parent)
         }
       }
+
       for (const file of entry.files) {
         let path = file.path
+
         if (parents.has(path)) {
           let suffix = 1
+
           do {
             path = `${file.path} (file change${suffix === 1 ? '' : ` ${suffix}`})`
             suffix += 1
           } while (occupied.has(path))
+
           occupied.add(path)
         }
 
@@ -306,11 +331,14 @@ function ChangedFileTree({
     const paths = [...actualPaths.keys()]
     const directories = new Set<string>()
     const initialExpandedPaths = new Set<string>()
+
     for (const path of paths) {
       const segments = path.split('/')
+
       for (let depth = 1; depth < segments.length; depth += 1) {
         const directory = segments.slice(0, depth).join('/')
         directories.add(directory)
+
         if (uncommittedCount === 0 || segments[0] === uncommittedRoot) {
           initialExpandedPaths.add(directory)
         }
@@ -326,10 +354,12 @@ function ChangedFileTree({
       initialExpandedPaths: [...initialExpandedPaths]
     }
   }, [files])
+
   // useFileTree captures options once; callbacks must read the current data.
   const current = useRef({ tree, onSelect })
   current.current = { tree, onSelect }
   const previousTree = useRef(tree)
+
   const { model } = useFileTree({
     paths: tree.paths,
     gitStatus: tree.gitStatus,
@@ -344,11 +374,13 @@ function ChangedFileTree({
       const leftRootOrder = left.segments[0]?.startsWith('Uncommitted changes')
         ? 0
         : 1
+
       const rightRootOrder = right.segments[0]?.startsWith(
         'Uncommitted changes'
       )
         ? 0
         : 1
+
       if (leftRootOrder !== rightRootOrder) {
         return leftRootOrder - rightRootOrder
       }
@@ -361,12 +393,14 @@ function ChangedFileTree({
     },
     renderRowDecoration: ({ row }) => {
       const count = current.current.tree.counts.get(row.path)
+
       return count === undefined ? null : { text: `(${count})` }
     },
     onSelectionChange: (selectedPaths) => {
       const { tree, onSelect } = current.current
       const selected = selectedPaths.find((path) => tree.actualPaths.has(path))
       const actualPath = selected ? tree.actualPaths.get(selected) : null
+
       if (actualPath) {
         requestAnimationFrame(() => onSelect(actualPath))
       }
@@ -375,6 +409,7 @@ function ChangedFileTree({
 
   useEffect(() => {
     const previous = previousTree.current
+
     if (
       previous.paths.length !== tree.paths.length ||
       previous.paths.some((path, index) => path !== tree.paths[index])
@@ -382,23 +417,29 @@ function ChangedFileTree({
       // Include hidden directories so closing a parent doesn't lose its
       // children's expansion state. Defaults apply only to new directories.
       const collapsedPaths: string[] = []
+
       const expandedPaths = [...tree.directories].filter((path) => {
         const item = model.getItem(path)
+
         // SAFETY: isDirectory() checks that the handle has directory methods.
         const expanded = item?.isDirectory()
           ? (item as FileTreeDirectoryHandle).isExpanded()
           : tree.initialExpandedPaths.includes(path)
+
         if (!expanded) {
           collapsedPaths.push(path)
         }
 
         return expanded
       })
+
       model.resetPaths(tree.paths, { initialExpandedPaths: expandedPaths })
+
       // resetPaths expands ancestors of expanded children; restore closed
       // parents without changing those children's remembered state.
       for (const path of collapsedPaths) {
         const item = model.getItem(path)
+
         if (item?.isDirectory()) {
           // SAFETY: isDirectory() checks that this is a directory handle.
           const directory = item as FileTreeDirectoryHandle
@@ -445,12 +486,14 @@ function CommentEditor({
 
   const submit = () => {
     const trimmed = body.trim()
+
     if (trimmed) {
       onSave(trimmed)
     } else {
       textareaRef.current?.focus()
     }
   }
+
   const onKeyDown = (event: ReactKeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -530,14 +573,17 @@ function ImagePreview({
   label: string
 }) {
   const container = useRef<HTMLElement>(null)
+
   const [result, setResult] = useState<{
     image: GitDiffImage | null
     error: string | null
   }>({ image: null, error: null })
+
   const [dimensions, setDimensions] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
+
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) {
@@ -564,6 +610,7 @@ function ImagePreview({
       },
       { rootMargin: '300px' }
     )
+
     if (container.current) {
       observer.observe(container.current)
     }
@@ -617,10 +664,12 @@ function ReviewApp() {
   const [loaded, setLoaded] = useState<LoadedReview | null>(null)
   const loadedRef = useRef(loaded)
   loadedRef.current = loaded
+
   const loadedDiff = useRef<{
     uncommitted: GitDiff
     committed: GitDiff
   } | null>(null)
+
   const loadPending = useRef(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -636,10 +685,12 @@ function ReviewApp() {
   collapsedFilesRef.current = collapsedFiles
   const fileStateLoaded = useRef(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
+
   const [selectedLines, setSelectedLines] = useState<{
     file: string
     range: SelectedLineRange
   } | null>(null)
+
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
   const [commentStatus, setCommentStatus] = useState('')
   const commentSerial = useRef(0)
@@ -654,16 +705,20 @@ function ReviewApp() {
   const [activeFindMatch, setActiveFindMatch] = useState(-1)
   const findInputRef = useRef<HTMLInputElement>(null)
   const findReturnFocus = useRef<HTMLElement | null>(null)
+
   const clearCopyFeedback = useCallback(() => {
     setCopyFeedback(null)
+
     if (copyTimer.current) {
       clearTimeout(copyTimer.current)
       copyTimer.current = null
     }
   }, [])
+
   const sectionRefs = useRef(new Map<string, HTMLElement>())
 
   const files = loaded?.files ?? []
+
   const fileGroups = useMemo(
     () =>
       [
@@ -680,13 +735,16 @@ function ReviewApp() {
       ].filter((group) => group.files.length > 0),
     [files]
   )
+
   const fileNames = useMemo(() => files.map((file) => file.id), [files])
   const lineCounts = loaded?.lineCounts ?? { additions: 0, deletions: 0 }
   const saved = useMemo(() => savedComments(comments), [comments])
+
   const unresolved = useMemo(
     () => saved.filter((comment) => !comment.resolved),
     [saved]
   )
+
   const commentLocations = useMemo(
     () =>
       new Set(
@@ -696,6 +754,7 @@ function ReviewApp() {
       ),
     [loaded]
   )
+
   const loadedFileNames = useMemo(
     () =>
       new Set(
@@ -705,6 +764,7 @@ function ReviewApp() {
       ),
     [files]
   )
+
   const outdatedComments = useMemo(
     () =>
       loaded
@@ -719,6 +779,7 @@ function ReviewApp() {
         : [],
     [commentLocations, fileNames, loaded, loadedFileNames, unresolved]
   )
+
   const navigableComments = useMemo(
     () =>
       outdatedComments.length
@@ -728,12 +789,16 @@ function ReviewApp() {
         : unresolved,
     [commentLocations, outdatedComments.length, unresolved]
   )
+
   const viewedCount = fileNames.filter((file) => viewedFiles.has(file)).length
+
   const activeCommentIndex = navigableComments.findIndex(
     ({ id }) => id === activeCommentId
   )
+
   const findMatches = useMemo(() => {
     const query = findQuery.toLocaleLowerCase()
+
     if (!query || !loaded) {
       return []
     }
@@ -742,19 +807,23 @@ function ReviewApp() {
       const matches: FindMatch[] = []
       const text = line.text.toLocaleLowerCase()
       let start = text.indexOf(query)
+
       while (start !== -1) {
         matches.push({ ...line, start, length: query.length })
         start = text.indexOf(query, start + query.length)
       }
+
       return matches
     })
   }, [findQuery, loaded])
 
   const persistComments = useCallback(async (next: ReviewComment[]) => {
     const values = savedComments(next)
+
     const operation = values.length
       ? treeport.storage.set(COMMENTS_KEY, values)
       : treeport.storage.delete(COMMENTS_KEY)
+
     await operation.catch((reason) => {
       setCommentStatus(
         reason instanceof Error
@@ -768,6 +837,7 @@ function ReviewApp() {
     const operation = next.size
       ? treeport.storage.set(VIEWED_KEY, [...next].sort())
       : treeport.storage.delete(VIEWED_KEY)
+
     await operation.catch((reason) => {
       setCommentStatus(
         reason instanceof Error
@@ -784,11 +854,13 @@ function ReviewApp() {
 
     loadPending.current = true
     const initial = loadedRef.current === null
+
     if (initial) {
       setLoading(true)
     }
 
     setError(null)
+
     try {
       const [
         context,
@@ -805,16 +877,19 @@ function ReviewApp() {
         initial ? treeport.storage.get(VIEWED_KEY) : null,
         initial ? treeport.storage.get(DIFF_STYLE_KEY, { scope: 'definition' }) : null
       ])
+
       if (uncommitted.headCommit !== committed.headCommit) {
         throw new Error('HEAD changed while reading the review. Retrying…')
       }
 
       const previousDiff = loadedDiff.current
+
       if (
         previousDiff &&
         [uncommitted, committed].every((diff, index) => {
           const previous =
             index === 0 ? previousDiff.uncommitted : previousDiff.committed
+
           return (
             previous.baseRef === diff.baseRef &&
             previous.baseCommit === diff.baseCommit &&
@@ -832,18 +907,24 @@ function ReviewApp() {
         initial && Array.isArray(storedComments)
           ? storedComments.flatMap((comment): ReviewComment[] => {
               const parsed = parseReviewComment(comment)
+
               return parsed ? [parsed] : []
             })
           : commentsRef.current
+
       const parsedViewed = initial
         ? new Set(z.array(z.string()).catch([]).parse(storedViewedFiles))
         : viewedFilesRef.current
+
       const previousFiles = new Map(
         (loadedRef.current?.files ?? []).map((file) => [file.id, file])
       )
+
       const reviewFiles: ReviewFile[] = []
+
       for (const scope of ['uncommitted', 'committed'] as const) {
         const diff = scope === 'uncommitted' ? uncommitted : committed
+
         for (const file of diff.files) {
           const id = `${scope}:${file.path}`
           const beforeCommit = diff.baseCommit
@@ -877,6 +958,7 @@ function ReviewApp() {
       )
       setSelectedLines(null)
       setActiveFindMatch(-1)
+
       if (initial) {
         setComments(parsedComments)
         setActiveCommentId((current) =>
@@ -892,6 +974,7 @@ function ReviewApp() {
       const collapsed = fileStateLoaded.current
         ? new Set(collapsedFilesRef.current)
         : new Set(parsedViewed)
+
       if (!fileStateLoaded.current && uncommitted.files.length > 0) {
         for (const file of reviewFiles) {
           if (file.scope === 'committed') {
@@ -917,6 +1000,7 @@ function ReviewApp() {
         files: reviewFiles,
         searchableLines: searchableLinesFor(reviewFiles)
       }
+
       loadedDiff.current = { uncommitted, committed }
       loadedRef.current = nextLoaded
       setLoaded(nextLoaded)
@@ -931,10 +1015,12 @@ function ReviewApp() {
   const visibleFiles = useRef(new Set<string>())
   const refreshPending = useRef(false)
   const fileLoads = useRef(new Set<string>())
+
   const loadFile = useCallback(async (fileId: string, reload = false) => {
     const currentFile = loadedRef.current?.files.find(
       (file) => file.id === fileId
     )
+
     if (
       !currentFile ||
       fileLoads.current.has(fileId) ||
@@ -944,6 +1030,7 @@ function ReviewApp() {
     }
 
     const filePath = currentFile.path
+
     const updateFile = (update: Partial<ReviewFile>) => {
       setLoaded((current) => {
         if (
@@ -964,8 +1051,10 @@ function ReviewApp() {
             file.id === fileId ? { ...file, ...update } : file
           )
         }
+
         next.searchableLines = searchableLinesFor(next.files)
         loadedRef.current = next
+
         return next
       })
     }
@@ -989,6 +1078,7 @@ function ReviewApp() {
           revision: null,
           message: result.message ?? 'This patch is too large to display.'
         })
+
         return
       }
 
@@ -1001,12 +1091,14 @@ function ReviewApp() {
             (patch) => patch.files
           )
         : []
+
       // A pathspec may also return descendants during directory replacement.
       // Git emits separate delete/add patches for a regular-file/symlink change.
       const matching = parsed.filter((candidate) => candidate.name === filePath)
       let fileDiff = matching[0]
       const deleted = matching.find((candidate) => candidate.type === 'deleted')
       const added = matching.find((candidate) => candidate.type === 'new')
+
       if (deleted && added) {
         fileDiff = {
           ...parseDiffFromFile(
@@ -1015,6 +1107,7 @@ function ReviewApp() {
           ),
           cacheKey: crypto.randomUUID()
         }
+
         if (deleted.mode) {
           fileDiff.prevMode = deleted.mode
         }
@@ -1063,6 +1156,7 @@ function ReviewApp() {
             entry.target instanceof HTMLElement
               ? entry.target.dataset.reviewFile
               : null
+
           if (!id) {
             continue
           }
@@ -1083,9 +1177,11 @@ function ReviewApp() {
       },
       { root: document.querySelector('#review'), rootMargin: '300px 0px' }
     )
+
     for (const section of sectionRefs.current.values()) {
       observer.observe(section)
     }
+
     return () => {
       observer.disconnect()
       visibleFiles.current.clear()
@@ -1099,6 +1195,7 @@ function ReviewApp() {
       }
 
       refreshPending.current = true
+
       try {
         // Update commit identities before requesting patches; unchanged committed
         // patches are immutable. Only the viewport needs working-tree refreshes.
@@ -1113,13 +1210,16 @@ function ReviewApp() {
         refreshPending.current = false
       }
     }
+
     refresh()
     addEventListener('focus', refresh)
+
     const interval = setInterval(() => {
       if (document.hasFocus()) {
         refresh()
       }
     }, AUTO_REFRESH_INTERVAL_MS)
+
     return () => {
       removeEventListener('focus', refresh)
       clearInterval(interval)
@@ -1135,6 +1235,7 @@ function ReviewApp() {
 
       setCollapsedFiles((current) => {
         const next = new Set(current)
+
         if (collapsed) {
           next.add(file)
         } else {
@@ -1162,16 +1263,19 @@ function ReviewApp() {
 
     const section = sectionRefs.current.get(match.file)
     const fileContainer = section?.firstElementChild
+
     const sideSelector =
       match.side === 'deletions'
         ? '[data-line-type="change-deletion"]'
         : ':not([data-line-type="change-deletion"])'
+
     const line =
       fileContainer instanceof HTMLElement
         ? fileContainer.shadowRoot?.querySelector(
             `[data-code]:is([data-unified], [data-${match.side}]) [data-line="${match.lineNumber}"]${sideSelector}`
           )
         : null
+
     if (!(line instanceof HTMLElement)) {
       return null
     }
@@ -1183,9 +1287,11 @@ function ReviewApp() {
     let startOffset = 0
     let endNode: Node | null = null
     let endOffset = 0
+
     while (walker.nextNode()) {
       const node = walker.currentNode
       const length = node.textContent?.length ?? 0
+
       if (startNode === null && match.start <= offset + length) {
         startNode = node
         startOffset = match.start - offset
@@ -1199,17 +1305,20 @@ function ReviewApp() {
 
       offset += length
     }
+
     if (startNode === null || endNode === null) {
       return null
     }
 
     range.setStart(startNode, startOffset)
     range.setEnd(endNode, endOffset)
+
     return range
   }, [])
 
   const updateFindHighlights = useCallback(() => {
     const highlights = CSS.highlights
+
     if (!highlights) {
       return
     }
@@ -1217,8 +1326,10 @@ function ReviewApp() {
     const ranges = findMatches
       .map(createMatchRange)
       .filter((range): range is Range => range !== null)
+
     highlights.set('review-find-matches', new Highlight(...ranges))
     const activeRange = createMatchRange(findMatches[activeFindMatch])
+
     if (activeRange) {
       highlights.set('review-find-active', new Highlight(activeRange))
     } else {
@@ -1230,10 +1341,12 @@ function ReviewApp() {
     if (!findOpen) {
       CSS.highlights?.delete('review-find-matches')
       CSS.highlights?.delete('review-find-active')
+
       return
     }
 
     const frame = requestAnimationFrame(updateFindHighlights)
+
     return () => cancelAnimationFrame(frame)
   }, [collapsedFiles, diffStyle, findOpen, updateFindHighlights])
 
@@ -1253,6 +1366,7 @@ function ReviewApp() {
         updateFindHighlights()
         const range = createMatchRange(match)
         const line = range?.startContainer.parentElement?.closest('[data-line]')
+
         if (line instanceof HTMLElement) {
           line.scrollIntoView({ block: 'center' })
         } else {
@@ -1267,6 +1381,7 @@ function ReviewApp() {
 
   useEffect(() => {
     setActiveFindMatch(findMatches.length ? 0 : -1)
+
     if (findMatches.length) {
       const match = findMatches[0]!
       setImageSources((current) => new Set(current).add(match.file))
@@ -1275,6 +1390,7 @@ function ReviewApp() {
       requestAnimationFrame(() => {
         const range = createMatchRange(match)
         const line = range?.startContainer.parentElement?.closest('[data-line]')
+
         if (line instanceof HTMLElement) {
           line.scrollIntoView({ block: 'center' })
         }
@@ -1296,10 +1412,12 @@ function ReviewApp() {
       findInputRef.current?.select()
     })
   }, [findOpen])
+
   const closeFind = useCallback(() => {
     setFindOpen(false)
     setActiveFindMatch(-1)
     const returnFocus = findReturnFocus.current
+
     if (returnFocus?.isConnected) {
       returnFocus.focus()
     }
@@ -1315,7 +1433,9 @@ function ReviewApp() {
         closeFind()
       }
     }
+
     document.addEventListener('keydown', onKeyDown)
+
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [closeFind, findOpen])
 
@@ -1338,6 +1458,7 @@ function ReviewApp() {
         const element = document.querySelector(
           `[data-comment-id="${CSS.escape(comment.id)}"]`
         )
+
         if (element instanceof HTMLElement) {
           element.scrollIntoView({ block: 'center' })
         } else {
@@ -1358,6 +1479,7 @@ function ReviewApp() {
     const current = navigableComments.findIndex(
       ({ id }) => id === activeCommentId
     )
+
     const index =
       current === -1
         ? direction > 0
@@ -1365,16 +1487,19 @@ function ReviewApp() {
           : navigableComments.length - 1
         : (current + direction + navigableComments.length) %
           navigableComments.length
+
     navigateToComment(navigableComments[index]!)
   }
 
   const updateComment = (next: ReviewComment[], persist: boolean) => {
     clearCopyFeedback()
     setComments(next)
+
     if (persist) {
       void persistComments(next)
     }
   }
+
   const cancelComment = (comment: ReviewComment) => {
     const next =
       comment.originalBody === undefined
@@ -1385,15 +1510,18 @@ function ReviewApp() {
             }
 
             const { originalBody, ...rest } = candidate
+
             return {
               ...rest,
               body: originalBody ?? candidate.body,
               draft: false
             }
           })
+
     updateComment(next, false)
     setSelectedLines(null)
   }
+
   const saveComment = (comment: ReviewComment, body: string) => {
     const next = commentsRef.current.map((candidate) => {
       if (candidate.id !== comment.id) {
@@ -1401,23 +1529,29 @@ function ReviewApp() {
       }
 
       const { originalBody: _originalBody, ...rest } = candidate
+
       return { ...rest, body, draft: false }
     })
+
     setActiveCommentId(comment.id)
     updateComment(next, true)
     setSelectedLines(null)
   }
+
   const editComment = (comment: ReviewComment) => {
     const next = commentsRef.current.map((candidate) =>
       candidate.id === comment.id
         ? { ...candidate, draft: true, originalBody: candidate.body }
         : candidate
     )
+
     setActiveCommentId(comment.id)
     updateComment(next, false)
   }
+
   const deleteComment = (comment: ReviewComment) => {
     const next = commentsRef.current.filter(({ id }) => id !== comment.id)
+
     if (activeCommentId === comment.id) {
       setActiveCommentId(null)
     }
@@ -1425,10 +1559,12 @@ function ReviewApp() {
     updateComment(next, true)
     setSelectedLines(null)
   }
+
   const setCommentResolved = (comment: ReviewComment, resolved: boolean) => {
     const next = commentsRef.current.map((candidate) =>
       candidate.id === comment.id ? { ...candidate, resolved } : candidate
     )
+
     if (resolved && activeCommentId === comment.id) {
       setActiveCommentId(null)
     }
@@ -1440,14 +1576,17 @@ function ReviewApp() {
     const output = unresolved
       .map((comment) => {
         const side = comment.side === 'deletions' ? ' (deleted line)' : ''
+
         const scope = comment.fileId.startsWith('committed:')
           ? 'committed'
           : comment.fileId.startsWith('uncommitted:')
             ? 'uncommitted'
             : 'previous combined diff'
+
         return `${comment.file}:${comment.lineNumber}${side} (${scope})\n${comment.body}`
       })
       .join('\n\n')
+
     const textarea = document.createElement('textarea')
     textarea.value = output
     textarea.style.position = 'fixed'
@@ -1461,6 +1600,7 @@ function ReviewApp() {
         ? `Copied ${unresolved.length} ${unresolved.length === 1 ? 'comment' : 'comments'}`
         : 'Could not copy unresolved comments'
     )
+
     if (copyTimer.current) {
       clearTimeout(copyTimer.current)
     }
@@ -1750,6 +1890,7 @@ function ReviewApp() {
                 {group.files.map((file) => {
                   const fileDiff = file.diff
                   const collapsed = collapsedFiles.has(file.id)
+
                   if (!fileDiff) {
                     const label =
                       file.loadState === 'oversized'
@@ -1759,10 +1900,12 @@ function ReviewApp() {
                           : file.loadState === 'loading'
                             ? 'Loading patch…'
                             : 'Waiting to load patch…'
+
                     const isImage =
                       /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
                         file.path
                       )
+
                     return (
                       <section
                         key={file.id}
@@ -1828,19 +1971,23 @@ function ReviewApp() {
                   const fileComments = comments.filter(
                     (comment) => comment.fileId === file.id
                   )
+
                   const annotations: DiffLineAnnotation<ReviewComment>[] =
                     fileComments.map((comment) => ({
                       side: comment.side,
                       lineNumber: comment.lineNumber,
                       metadata: comment
                     }))
+
                   const isImage =
                     /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(
                       fileDiff.name
                     )
+
                   const showImage =
                     isImage &&
                     (fileDiff.hunks.length === 0 || !imageSources.has(file.id))
+
                   return (
                     <section
                       key={file.id}
@@ -1888,6 +2035,7 @@ function ReviewApp() {
                                 draft: true
                               } satisfies ReviewComment
                             ]
+
                             clearCopyFeedback()
                             setComments(next)
                             setSelectedLines({ file: file.id, range })
@@ -1929,6 +2077,7 @@ function ReviewApp() {
                                 onClick={() => {
                                   setImageSources((current) => {
                                     const next = new Set(current)
+
                                     if (showImage) {
                                       next.add(file.id)
                                     } else {
@@ -1951,6 +2100,7 @@ function ReviewApp() {
                                 onChange={(event) => {
                                   const checked = event.target.checked
                                   const next = new Set(viewedFiles)
+
                                   if (checked) {
                                     next.add(file.id)
                                   } else {
@@ -1968,6 +2118,7 @@ function ReviewApp() {
                         )}
                         renderAnnotation={(annotation) => {
                           const comment = annotation.metadata
+
                           return (
                             <CommentEditor
                               comment={comment}
@@ -2041,6 +2192,7 @@ function ReviewApp() {
             }
 
             const bounds = workspaceRef.current?.getBoundingClientRect()
+
             if (bounds?.width) {
               setFileTreeWidth(
                 Math.max(20, Math.min(60, (bounds.right - event.clientX) / bounds.width * 100))

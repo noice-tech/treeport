@@ -432,10 +432,12 @@ if (parent !== self) {
         event.key.toLowerCase() === 'f' &&
         (event.metaKey || event.ctrlKey) &&
         !event.altKey
+
       if (find && findSubscribers > 0) {
         event.preventDefault()
         event.stopPropagation()
         triggerFindShortcut()
+
         return
       }
 
@@ -444,6 +446,7 @@ if (parent !== self) {
       }
 
       const index = Number(event.key) - 1
+
       if (!Number.isInteger(index) || index < 0 || index > 8) {
         return
       }
@@ -463,6 +466,7 @@ addEventListener(
   'message',
   (event: MessageEvent<HostResponse | HostShortcut>) => {
     const message = event.data
+
     if (event.source !== parent) {
       return
     }
@@ -480,6 +484,7 @@ addEventListener(
     }
 
     const request = pending.get(message.id)
+
     if (!request) {
       return
     }
@@ -526,6 +531,7 @@ function call<Result>(
           resolve(response.value as Result)
         } else {
           const error = new Error(response.error || 'Treeport request failed')
+
           if (response.errorCode) {
             Object.assign(error, { code: response.errorCode })
           }

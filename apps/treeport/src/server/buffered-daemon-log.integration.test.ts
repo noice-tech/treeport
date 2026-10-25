@@ -14,13 +14,16 @@ describe('buffered daemon diagnostics', () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-log-'))
     const logPath = path.join(root, 'logs', 'daemon.log')
     const failures: Error[] = []
+
     const log = createBufferedDaemonLog(entry, logPath, (error) =>
       failures.push(error)
     )
+
     try {
       for (let index = 0; index < 1_000; index++) {
         expect(log.write(`${index}\n`)).toBe(true)
       }
+
       // No await: this also exercises flushing before the worker is ready.
       expect(log.flushSync()).toBe(true)
       expect(await fs.readFile(logPath, 'utf8')).toBe(
@@ -42,11 +45,13 @@ describe('buffered daemon diagnostics', () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-log-'))
     const failures: Error[] = []
     await fs.writeFile(path.join(root, 'not-a-directory'), '')
+
     const log = createBufferedDaemonLog(
       entry,
       path.join(root, 'not-a-directory', 'log'),
       (error) => failures.push(error)
     )
+
     try {
       expect(log.write(Buffer.alloc(1024 * 1024 + 1))).toBe(false)
       expect(log.write('cannot persist')).toBe(true)

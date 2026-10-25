@@ -62,6 +62,7 @@ async function readContextLink(
   backendNodeId: number
 ): Promise<string | null> {
   const { object } = await cdp.send('DOM.resolveNode', { backendNodeId })
+
   if (!object.objectId) {
     return null
   }
@@ -83,10 +84,12 @@ async function readContextLink(
           node =
             node.parentNode ?? (root instanceof ShadowRoot ? root.host : null)
         }
+
         return null
       }.toString(),
       returnByValue: true
     })
+
     return decodeUnknownOrNull(
       browserContextResultSchema.fields.linkUrl,
       result.value
@@ -148,6 +151,7 @@ export class PlaywrightBrowser {
     const packageJson = await import('playwright/package.json', {
       with: { type: 'json' }
     })
+
     const runtime = await browserRuntime()
     const { executablePath, channel } = runtime
     let launchError = runtime.launchError
@@ -157,9 +161,11 @@ export class PlaywrightBrowser {
 
     if (installed) {
       await fs.mkdir(cachePath, { recursive: true })
+
       const statusProfile = await fs.mkdtemp(
         path.join(cachePath, '.launch-status-')
       )
+
       const host = new PlaywrightBrowserHost(statusProfile, null)
       await host
         .openPage()
@@ -196,22 +202,26 @@ export class PlaywrightBrowser {
   async devtoolsEndpoint(): Promise<string> {
     // An agent using another CDP connection can reposition the pointer.
     this.pointerPoint = null
+
     if (!this.page || this.page.isClosed() || !this.cdp) {
       throw new Error('The hosted browser page is not available.')
     }
 
     const endpoint = this.host.getDebuggingEndpoint()
+
     if (!endpoint) {
       throw new Error('The hosted browser debugger is not available.')
     }
 
     const { targetInfo } = await this.cdp.send('Target.getTargetInfo')
+
     if (!/^[a-fA-F0-9]{32}$/.test(targetInfo.targetId)) {
       throw new Error('Chrome returned an invalid page target.')
     }
 
     const url = new URL(endpoint)
     url.pathname = `/devtools/page/${targetInfo.targetId}`
+
     return url.href
   }
 
@@ -229,6 +239,7 @@ export class PlaywrightBrowser {
       input,
       openCapturePage
     } = await this.host.openPage()
+
     this.context = context
     this.browser = browser
     browser.once('disconnected', () => {
@@ -269,9 +280,12 @@ export class PlaywrightBrowser {
       void (async () => {
         const supportedUrl = (value: string): string | null => {
           const parsed = decodeUnknownOrNull(browserUrlSchema, value)
+
           return parsed === null ? null : new URL(parsed).href
         }
+
         let popupUrl = supportedUrl(candidate.url())
+
         if (!popupUrl) {
           await candidate
             .waitForURL((url) => supportedUrl(url.href) !== null, {
@@ -305,12 +319,14 @@ export class PlaywrightBrowser {
 
     page.on('console', (message) => {
       this.consoleMessages.push(`${message.type()}: ${message.text()}`)
+
       if (this.consoleMessages.length > 1_000) {
         this.consoleMessages.shift()
       }
     })
     page.on('pageerror', (error) => {
       this.consoleMessages.push(`error: ${error.message}`)
+
       if (this.consoleMessages.length > 1_000) {
         this.consoleMessages.shift()
       }
@@ -335,6 +351,7 @@ export class PlaywrightBrowser {
       this.pendingRequests.add(request)
       this.networkActivityAt = Date.now()
       this.requests.push(`${request.method()} ${request.url()}`)
+
       if (this.requests.length > 2_000) {
         this.requests.shift()
       }
@@ -355,6 +372,7 @@ export class PlaywrightBrowser {
     page.on('requestfailed', (request) => {
       this.pendingRequests.delete(request)
       this.networkActivityAt = Date.now()
+
       if (
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
@@ -372,6 +390,7 @@ export class PlaywrightBrowser {
       this.callbacks.fileChooser(null)
       this.contextMenu = null
       this.pointerPoint = null
+
       if (frame === page.mainFrame()) {
         void this.refreshPageState()
       }
@@ -386,6 +405,7 @@ export class PlaywrightBrowser {
     this.dialogHandler = (dialog) => {
       void dialog.dismiss().catch(() => undefined)
     }
+
     page.on('dialog', this.dialogHandler)
     page.once('crash', () =>
       this.callbacks.crashed('The hosted browser page crashed.')
@@ -409,28 +429,34 @@ export class PlaywrightBrowser {
           }
 
           const source = normalizeBrowserFaviconUrl(faviconUrl)
+
           if (source === this.faviconSource) {
             return
           }
 
           this.faviconSource = source
           this.updateState({ faviconUrl: null })
+
           if (!source) {
             return
           }
 
           // Hosted icons travel as data, never fetching on the viewer's network.
           let icon = source.startsWith('data:') ? source : null
+
           if (!icon) {
             const response = await this.context?.request
               .get(source, { timeout: 3_000 })
               .catch(() => null)
+
             if (response) {
               const type = response.headers()['content-type']?.split(';')[0]
+
               const body =
                 response.ok() && type?.startsWith('image/')
                   ? await response.body().catch(() => null)
                   : null
+
               if (body && body.length <= 256 * 1024) {
                 icon = normalizeBrowserFaviconUrl(
                   `data:${type};base64,${body.toString('base64')}`
@@ -456,6 +482,7 @@ export class PlaywrightBrowser {
 
   private updateState(patch: Partial<BrowserRuntimeState>): void {
     const observedUrl = patch.url ?? this.stateValue.url
+
     // Chromium error pages are not navigable protocol URLs. Keep the last
     // supported address (including a failed navigation's target) for recovery.
     const url =
@@ -463,6 +490,7 @@ export class PlaywrightBrowser {
       decodeUnknownOrNull(browserObservedUrlSchema, observedUrl) !== null
         ? observedUrl
         : this.stateValue.url
+
     this.stateValue = {
       ...this.stateValue,
       ...patch,
@@ -476,11 +504,13 @@ export class PlaywrightBrowser {
   private async refreshPageState(): Promise<void> {
     const page = this.page
     const cdp = this.cdp
+
     if (!page || !cdp || page.isClosed()) {
       return
     }
 
     const revision = ++this.historyRevision
+
     const [title, history] = await Promise.all([
       page.title().catch(() => ''),
       cdp.send('Page.getNavigationHistory').catch(() => ({
@@ -496,6 +526,7 @@ export class PlaywrightBrowser {
         ]
       }))
     ])
+
     if (revision !== this.historyRevision || page.isClosed()) {
       return
     }
@@ -526,6 +557,7 @@ export class PlaywrightBrowser {
   async setFrozen(frozen: boolean): Promise<void> {
     const cdp = this.cdp
     const page = this.page
+
     if (
       !cdp ||
       !page ||
@@ -539,15 +571,19 @@ export class PlaywrightBrowser {
       // Pause polling before draining its last read, then recheck network/load.
       this.frozenValue = true
       await this.metadataUpdate
+
       if (!this.idle) {
         this.frozenValue = false
+
         return
       }
 
       await this.host.setPageFocus(page, false)
+
       if (!this.idle) {
         await this.host.setPageFocus(page, true)
         this.frozenValue = false
+
         return
       }
 
@@ -587,13 +623,16 @@ export class PlaywrightBrowser {
     // Commands, resize stop/start pairs and cleanup share the session consumer.
     const page = this.page
     const video = this.video
+
     if (!page || page.isClosed() || !video || enabled === this.screencasting) {
       return
     }
 
     this.screencasting = enabled
+
     if (!enabled) {
       await video.stop()
+
       return
     }
 
@@ -617,6 +656,7 @@ export class PlaywrightBrowser {
     message: BrowserClientMessage
   ): Promise<void | BrowserContextResult | BrowserContextActionResult> {
     const page = this.page
+
     if (!page || page.isClosed()) {
       throw new Error('The hosted browser page is unavailable.')
     }
@@ -626,6 +666,7 @@ export class PlaywrightBrowser {
         message.type === 'key'
           ? `key:${message.key}`
           : `pointer:${message.button ?? 'left'}`
+
       if (message.phase === 'down') {
         this.pressedInputs.add(input)
       } else if (message.phase === 'up') {
@@ -653,7 +694,9 @@ export class PlaywrightBrowser {
         targetId: null,
         createdAt: Date.now()
       }
+
       this.contextMenu = context
+
       // Observe the real Chromium event in every frame, including cross-origin
       // frames. Do not synthesize another contextmenu or suppress the site's one.
       const observers = await Promise.all(
@@ -665,6 +708,7 @@ export class PlaywrightBrowser {
                 linkUrl: string | null
                 listener: (event: MouseEvent) => void
               }
+
               const captured: CapturedContextMenu = {
                 event: null,
                 linkUrl: null,
@@ -674,6 +718,7 @@ export class PlaywrightBrowser {
                   }
 
                   captured.event = event
+
                   for (const node of event.composedPath()) {
                     if (
                       node instanceof HTMLAnchorElement ||
@@ -685,16 +730,20 @@ export class PlaywrightBrowser {
                   }
                 }
               }
+
               window.addEventListener('contextmenu', captured.listener, {
                 capture: true
               })
+
               return captured
             })
             .then((observer) => ({ frame, observer }))
             .catch(() => null)
         )
       )
+
       let captured: { prevented: boolean; linkUrl: string | null } | null = null
+
       try {
         // CDP hit testing pierces shadow roots and reports a remote backend node,
         // never a node in the viewer's streamed canvas.
@@ -705,7 +754,9 @@ export class PlaywrightBrowser {
             includeUserAgentShadowDOM: true
           })
           .catch(() => null)
+
         context.backendNodeId = hit?.backendNodeId ?? null
+
         if (this.cdp && context.backendNodeId !== null) {
           context.linkUrl = await readContextLink(
             this.cdp,
@@ -714,6 +765,7 @@ export class PlaywrightBrowser {
         }
 
         await page.mouse.click(message.x, message.y, { button: 'right' })
+
         for (const entry of observers) {
           const value = await entry?.observer
             .evaluate((observed) =>
@@ -727,14 +779,17 @@ export class PlaywrightBrowser {
                 : null
             )
             .catch(() => null)
+
           if (value && entry) {
             captured = value
+
             if (entry.frame !== page.mainFrame()) {
               // Page-target hit testing stops at out-of-process iframes. Keep
               // that frame's target identity to route inspection in DevTools.
               const frameCdp = await this.context
                 ?.newCDPSession(entry.frame)
                 .catch(() => null)
+
               if (frameCdp) {
                 try {
                   const frameHit = await frameCdp
@@ -744,9 +799,11 @@ export class PlaywrightBrowser {
                       includeUserAgentShadowDOM: true
                     })
                     .catch(() => null)
+
                   const info = await frameCdp.send('Target.getTargetInfo')
                   context.backendNodeId = frameHit?.backendNodeId ?? null
                   context.targetId = info.targetInfo.targetId
+
                   if (context.backendNodeId !== null) {
                     context.linkUrl = await readContextLink(
                       frameCdp,
@@ -774,8 +831,10 @@ export class PlaywrightBrowser {
           })
         )
       }
+
       if (!captured || captured.prevented || this.contextMenu !== context) {
         this.contextMenu = null
+
         return {
           type: 'contextResult',
           requestId: message.requestId,
@@ -790,6 +849,7 @@ export class PlaywrightBrowser {
         browserContextResultSchema.fields.linkUrl,
         captured.linkUrl ?? context.linkUrl
       )
+
       return {
         type: 'contextResult',
         requestId: message.requestId,
@@ -804,6 +864,7 @@ export class PlaywrightBrowser {
     if (message.type === 'contextAction') {
       const context = this.contextMenu
       this.contextMenu = null
+
       if (
         !context ||
         context.id !== message.contextId ||
@@ -816,6 +877,7 @@ export class PlaywrightBrowser {
 
       if (message.action === 'openLink') {
         const url = decodeUnknownOrNull(browserUrlSchema, context.linkUrl)
+
         if (!url) {
           throw new Error('This link cannot be opened in Browser.')
         }
@@ -860,6 +922,7 @@ export class PlaywrightBrowser {
       })
       this.updateState({ url: page.url() })
       void this.refreshPageState()
+
       return
     }
 
@@ -872,6 +935,7 @@ export class PlaywrightBrowser {
       )
       this.updateState({ url: page.url() })
       void this.refreshPageState()
+
       return
     }
 
@@ -884,6 +948,7 @@ export class PlaywrightBrowser {
       )
       this.updateState({ url: page.url() })
       void this.refreshPageState()
+
       return
     }
 
@@ -900,12 +965,14 @@ export class PlaywrightBrowser {
       })
       this.updateState({ url: page.url() })
       void this.refreshPageState()
+
       return
     }
 
     if (message.type === 'stop') {
       await this.cdp?.send('Page.stopLoading')
       this.updateState({ loading: false })
+
       return
     }
 
@@ -924,6 +991,7 @@ export class PlaywrightBrowser {
       this.updateState({
         viewport: { width: message.width, height: message.height }
       })
+
       if (this.screencasting) {
         await this.video?.start(message.width, message.height)
       }
@@ -935,8 +1003,10 @@ export class PlaywrightBrowser {
       const { cssVisualViewport } = await this.cdp!.send(
         'Page.getLayoutMetrics'
       )
+
       const x = message.x / cssVisualViewport.scale
       const y = message.y / cssVisualViewport.scale
+
       // A button event at the already-positioned pointer does not need a
       // second move/compositor ACK. Explicit moves still deliver hover/drag.
       if (
@@ -968,11 +1038,13 @@ export class PlaywrightBrowser {
 
     if (message.type === 'touch') {
       await browserTouch(this.cdp!, message)
+
       return
     }
 
     if (message.type === 'wheel') {
       await browserWheel(this.cdp!, message)
+
       return
     }
 
@@ -984,6 +1056,7 @@ export class PlaywrightBrowser {
 
     if (message.type === 'insertText') {
       await page.keyboard.insertText(message.text)
+
       return
     }
 
@@ -996,6 +1069,7 @@ export class PlaywrightBrowser {
         // @ts-expect-error -- Chromium supplies the nonstandard window.find API.
         window.find(text, false, !forward, true, false, true, false)
       }, message)
+
       return
     }
 
@@ -1007,11 +1081,13 @@ export class PlaywrightBrowser {
   async agentCommand(input: BrowserAgentCommand): Promise<string> {
     this.pointerPoint = null
     const page = this.page
+
     if (!page || page.isClosed()) {
       throw new Error('The hosted browser page is unavailable.')
     }
 
     const target = (value: string) => page.locator(`aria-ref=${value}`)
+
     if (input.command === 'snapshot') {
       // eslint-disable-next-line anti-slop/no-reflect-apply -- Playwright exposes CLI element references through this internal snapshot option.
       return Reflect.apply(page.ariaSnapshot, page, [{ mode: 'ai' }])
@@ -1019,16 +1095,19 @@ export class PlaywrightBrowser {
 
     if (input.command === 'click') {
       await target(input.args[0]).click()
+
       return `Clicked ${input.args[0]}`
     }
 
     if (input.command === 'fill') {
       await target(input.args[0]).fill(input.args[1])
+
       return `Filled ${input.args[0]}`
     }
 
     if (input.command === 'press') {
       await page.keyboard.press(input.args[0])
+
       return `Pressed ${input.args[0]}`
     }
 
@@ -1036,11 +1115,13 @@ export class PlaywrightBrowser {
       const minimum = input.args[0] ?? 'info'
       const levels = ['debug', 'info', 'warning', 'error']
       const minimumIndex = Math.max(0, levels.indexOf(minimum))
+
       return (
         this.consoleMessages
           .filter((line) => {
             const level = line.slice(0, line.indexOf(':'))
             const index = levels.indexOf(level)
+
             return index < 0 || index >= minimumIndex
           })
           .join('\n') || 'No console messages.'
@@ -1056,41 +1137,49 @@ export class PlaywrightBrowser {
         this.workspacePath,
         `screenshot-${Date.now()}.png`
       )
+
       await page.screenshot({ path: screenshotPath })
+
       return `Screenshot saved to ${screenshotPath}`
     }
 
     if (input.command === 'goto') {
       await browserNavigation(page, () => page.goto(input.args[0]))
       await this.refreshPageState()
+
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-back') {
       await browserNavigation(page, () => page.goBack())
       await this.refreshPageState()
+
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-forward') {
       await browserNavigation(page, () => page.goForward())
       await this.refreshPageState()
+
       return `Navigated to ${page.url()}`
     }
 
     await browserNavigation(page, () => page.reload())
     await this.refreshPageState()
+
     return `Reloaded ${page.url()}`
   }
 
   async requestClose(force: boolean): Promise<boolean> {
     const page = this.page
+
     if (!page || page.isClosed()) {
       return true
     }
 
     const previousClosing = this.closing
     this.closing = true
+
     if (this.dialogHandler) {
       page.off('dialog', this.dialogHandler)
     }
@@ -1098,12 +1187,14 @@ export class PlaywrightBrowser {
     let timer: ReturnType<typeof setTimeout> | null = null
     let closeHandler: (() => void) | null = null
     let dialogHandler: ((dialog: Dialog) => void) | null = null
+
     try {
       return await new Promise<boolean>((resolve, reject) => {
         closeHandler = () => resolve(true)
         dialogHandler = (dialog) => {
           if (dialog.type() !== 'beforeunload') {
             void dialog.dismiss().catch(reject)
+
             return
           }
 
@@ -1113,6 +1204,7 @@ export class PlaywrightBrowser {
             void dialog.dismiss().then(() => resolve(false), reject)
           }
         }
+
         page.once('close', closeHandler)
         page.on('dialog', dialogHandler)
         timer = setTimeout(
@@ -1157,6 +1249,7 @@ export class PlaywrightBrowser {
     this.closing = true
     await this.setScreencasting(false).catch(() => undefined)
     await this.video?.stop().catch(() => undefined)
+
     if (this.titleTimer) {
       clearInterval(this.titleTimer)
       this.titleTimer = null

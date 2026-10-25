@@ -51,6 +51,7 @@ function denied(
 
 function headerValues(request: IncomingMessage, name: string): string[] {
   const values: string[] = []
+
   for (let index = 0; index < request.rawHeaders.length; index += 2) {
     if (request.rawHeaders[index]?.toLowerCase() === name) {
       values.push(request.rawHeaders[index + 1] ?? '')
@@ -62,6 +63,7 @@ function headerValues(request: IncomingMessage, name: string): string[] {
   }
 
   const value = request.headers[name]
+
   if (value === undefined) {
     return []
   }
@@ -77,6 +79,7 @@ interface HeaderValue {
 
 function singleHeader(request: IncomingMessage, name: string): HeaderValue {
   const values = headerValues(request, name)
+
   return {
     present: values.length > 0,
     valid: values.length <= 1,
@@ -87,6 +90,7 @@ function singleHeader(request: IncomingMessage, name: string): HeaderValue {
 function hasControlCharacters(value: string): boolean {
   return [...value].some((character) => {
     const code = character.codePointAt(0) ?? 0
+
     return code <= 31 || code === 127
   })
 }
@@ -102,11 +106,13 @@ function parseHost(value: string): { host: string; hostname: string } | null {
   }
 
   const candidate = `http://${value}`
+
   if (!URL.canParse(candidate)) {
     return null
   }
 
   const url = new URL(candidate)
+
   if (!url.host || url.pathname !== '/') {
     return null
   }
@@ -124,6 +130,7 @@ export function isLoopbackAddress(address: string | undefined): boolean {
   }
 
   const normalized = address.toLowerCase()
+
   if (normalized === '::1') {
     return true
   }
@@ -131,7 +138,9 @@ export function isLoopbackAddress(address: string | undefined): boolean {
   const ipv4 = normalized.startsWith('::ffff:')
     ? normalized.slice('::ffff:'.length)
     : normalized
+
   const octets = ipv4.split('.')
+
   return (
     octets.length === 4 &&
     octets[0] === '127' &&
@@ -160,6 +169,7 @@ function effectiveOriginFor(
   // Tailscale Serve overwrites these values from its inbound HTTPS request.
   const forwardedHostHeader = singleHeader(request, 'x-forwarded-host')
   const forwardedProtocolHeader = singleHeader(request, 'x-forwarded-proto')
+
   if (
     !forwardedHostHeader.valid ||
     !forwardedHostHeader.present ||
@@ -170,6 +180,7 @@ function effectiveOriginFor(
   }
 
   const forwardedHost = parseHost(forwardedHostHeader.value ?? '')
+
   if (
     !forwardedHost ||
     forwardedProtocolHeader.value?.toLowerCase() !== 'https'
@@ -191,6 +202,7 @@ function allowsOpaqueWebAppOrigin(
   }
 
   const pathname = new URL(request.url ?? '/', 'http://treeport.local').pathname
+
   if (socketUpgrade) {
     return /^\/api\/web-app-dev\/[a-f0-9]{24}\/@vite-hmr$/u.test(pathname)
   }
@@ -208,6 +220,7 @@ function originIsAllowed(
   devtoolsUpgrade: boolean
 ): boolean {
   const originHeader = singleHeader(request, 'origin')
+
   if (
     !originHeader.valid ||
     (devtoolsUpgrade && originHeader.value !== 'devtools://devtools')
@@ -217,6 +230,7 @@ function originIsAllowed(
 
   if (originHeader.present) {
     const value = originHeader.value ?? ''
+
     if (devtoolsUpgrade && value === 'devtools://devtools') {
       // Only Electron's bundled DevTools frontend may use this cross-origin
       // connection; the page target is checked by the bridge separately.
@@ -230,6 +244,7 @@ function originIsAllowed(
       }
 
       const parsed = new URL(value)
+
       if (
         (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
         parsed.origin !== value ||
@@ -241,11 +256,13 @@ function originIsAllowed(
   }
 
   const fetchSiteHeader = singleHeader(request, 'sec-fetch-site')
+
   if (!fetchSiteHeader.valid) {
     return false
   }
 
   const unsafeMethod = UNSAFE_METHODS.has(request.method?.toUpperCase() ?? '')
+
   if (
     (unsafeMethod || socketUpgrade) &&
     fetchSiteHeader.value?.toLowerCase() === 'cross-site' &&
@@ -270,36 +287,45 @@ export function authorizeRequest(
   }
 
   const hostHeader = singleHeader(request, 'host')
+
   const incomingHost =
     hostHeader.valid && hostHeader.value
       ? parseHost(hostHeader.value.toLowerCase())
       : null
+
   if (!incomingHost) {
     return denied(400, 'INVALID_REQUEST_HOST', 'The request host is invalid.')
   }
 
   const loginHeader = singleHeader(request, 'tailscale-user-login')
   const nameHeader = singleHeader(request, 'tailscale-user-name')
+
   const profilePictureHeader = singleHeader(
     request,
     'tailscale-user-profile-pic'
   )
+
   const hasTailscaleIdentity =
     loginHeader.present || nameHeader.present || profilePictureHeader.present
+
   const headersHaveSingleValues =
     loginHeader.valid && nameHeader.valid && profilePictureHeader.valid
 
   let principal: RequestPrincipal
+
   if (hasTailscaleIdentity) {
     const login = loginHeader.value ?? ''
     const name = nameHeader.value === '' ? null : nameHeader.value
+
     const profilePicture =
       profilePictureHeader.value === '' ? null : profilePictureHeader.value
+
     const validProfilePicture =
       profilePicture === null ||
       (validIdentityValue(profilePicture, MAX_PROFILE_PICTURE_BYTES) &&
         URL.canParse(profilePicture) &&
         ['http:', 'https:'].includes(new URL(profilePicture).protocol))
+
     if (
       !headersHaveSingleValues ||
       !loginHeader.present ||
@@ -342,6 +368,7 @@ export function authorizeRequest(
     principal.source,
     incomingHost
   )
+
   if (!effectiveOrigin) {
     return denied(
       400,
@@ -370,6 +397,7 @@ export function authorizeRequest(
   // Local ingress is on this host; it does not identify an OS user.
   const forwardedFor = singleHeader(request, 'x-forwarded-for')
   const address = forwardedFor.valid ? forwardedFor.value : null
+
   const deviceId =
     principal.source === 'local'
       ? 'local'
@@ -394,6 +422,7 @@ export function rejectHttpRequest(
   decision: RequestSecurityDecision
 ): void {
   const apiRequest = request.url?.startsWith('/api/') === true
+
   const body = apiRequest
     ? `${JSON.stringify({
         error: { code: decision.code, message: decision.message }

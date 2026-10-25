@@ -29,7 +29,9 @@ export const sessionRecordSchema = z.discriminatedUnion('type', [
     exitCode: z.int()
   })
 ])
+
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
+
 export type SessionRecordInput = SessionRecord extends infer Record
   ? Record extends SessionRecord
     ? Omit<Record, 'sequence' | 'at'> & { at?: number }
@@ -50,6 +52,7 @@ export const sessionManifestSchema = z.object({
   metadata: z.string(),
   journalLimitBytes: z.int().positive()
 })
+
 export type SessionManifest = z.infer<typeof sessionManifestSchema>
 
 export const sessionStatusSchema = z
@@ -77,6 +80,7 @@ export const sessionStatusSchema = z
         : status.pid > 0,
     'Only a proven aborted startup may have no command PID'
   )
+
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
 
 export const sessionRequestSchema = z.discriminatedUnion('method', [
@@ -123,6 +127,7 @@ export const sessionRequestSchema = z.discriminatedUnion('method', [
     metadata: z.string()
   })
 ])
+
 export type SessionRequest = z.infer<typeof sessionRequestSchema>
 
 export const sessionFrameSchema = z.discriminatedUnion('type', [
@@ -136,6 +141,8 @@ export const sessionFrameSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), sequence: z.int().nonnegative() }),
   z.object({ type: z.literal('fault'), message: z.string() })
 ])
+
 export type SessionFrame = z.infer<typeof sessionFrameSchema>
+
 export const SESSION_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const SESSION_DEFAULT_JOURNAL_LIMIT = 512 * 1024 * 1024

@@ -10,6 +10,7 @@ import { appendDaemonLog } from './src/server/daemon-log.ts'
 const developmentGlobal = globalThis as typeof globalThis & {
   treeportDevelopmentServer?: { stopped: Promise<void> }
 }
+
 const developmentServer = (developmentGlobal.treeportDevelopmentServer ??= {
   stopped: Promise.resolve()
 })
@@ -61,11 +62,14 @@ export default defineConfig({
         ],
         { cwd: resolvedConfig.cwd, stdio: 'inherit' }
       )
+
       let stopRequested = false
+
       const stop = () => {
         stopRequested = true
         server.kill('SIGTERM')
       }
+
       signal.addEventListener('abort', stop, { once: true })
 
       const result = await once(server, 'exit').then(
@@ -76,6 +80,7 @@ export default defineConfig({
           error: error.stack ?? error.message
         })
       )
+
       const event = `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'development_child_exit', childPid: server.pid ?? null, stopRequested, ...result })}\n`
       appendDaemonLog(
         path.resolve(
@@ -85,6 +90,7 @@ export default defineConfig({
         ),
         event
       )
+
       if (result.error) {
         console.error(result.error)
       }

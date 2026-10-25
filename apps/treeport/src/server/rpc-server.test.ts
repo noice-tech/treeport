@@ -43,6 +43,7 @@ const fixtures: RpcFixture[] = []
 async function fixture(): Promise<RpcFixture> {
   const events = new ProductEventBus()
   const presence = new WorkspacePresenceManager(events)
+
   const metadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'shell',
@@ -57,19 +58,24 @@ async function fixture(): Promise<RpcFixture> {
     },
     attention: null
   }
+
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [
     metadata
   ])
+
   const terminalMetadata = testAccess<TerminalMetadataManager>({
     initialize: vi.fn(() => Effect.void),
     snapshot: metadataSnapshot
   })
+
   const listWebApps = vi.fn<() => Effect.Effect<WebApp[]>>(() =>
     Effect.succeed([])
   )
+
   const listBrowserApps = vi.fn<() => Effect.Effect<BrowserApp[]>>(() =>
     Effect.succeed([])
   )
+
   const service = testAccess<TreeportService>({
     events,
     apps: { listWebApps, listBrowserApps },
@@ -77,15 +83,19 @@ async function fixture(): Promise<RpcFixture> {
       // SAFETY: The fixture's effects require only services installed above.
       Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
   })
+
   const scope = await Effect.runPromise(Scope.make())
+
   const app = await service.runEffect(
     Scope.extend(makeRpcHttpApp(service, terminalMetadata, presence), scope)
   )
+
   const listener = await Effect.runPromise(NodeHttpServer.makeHandler(app))
   const server = http.createServer(listener)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   // SAFETY: The server is listening on a TCP port.
   const address = server.address() as AddressInfo
+
   const value: RpcFixture = {
     url: `http://127.0.0.1:${address.port}/api/rpc`,
     server,
@@ -103,7 +113,9 @@ async function fixture(): Promise<RpcFixture> {
       )
     }
   }
+
   fixtures.push(value)
+
   return value
 }
 
@@ -111,6 +123,7 @@ function collect(url: string, count: number): Promise<ProjectEventsItem[]> {
   return Effect.runPromise(
     Effect.gen(function* () {
       const client = yield* RpcClient.make(TreeportRpcs)
+
       return yield* client
         .WatchProjectEvents({
           protocol: EVENT_PROTOCOL_VERSION
@@ -165,6 +178,7 @@ describe('Effect RPC project event stream', () => {
           attention: null
         })
       }, 0)
+
       return [
         {
           terminalId: 'term',
@@ -212,6 +226,7 @@ describe('Effect RPC project event stream', () => {
           attention: null
         })
       }
+
       return []
     })
 
@@ -256,6 +271,7 @@ describe('Effect RPC project event stream', () => {
       name: 'Alice',
       profilePicture: null
     }
+
     const viewer = {
       sessionId: '11111111-1111-4111-8111-111111111111',
       worktreeId: 'wt',
@@ -263,6 +279,7 @@ describe('Effect RPC project event stream', () => {
       visible: true,
       focused: true
     }
+
     value.presence.update(identity, viewer)
     const first = collect(value.url, 3)
     const second = collect(value.url, 3)
@@ -292,6 +309,7 @@ describe('Effect RPC project event stream', () => {
       focusedAppId: 'app_browser'
     })
     const clients = await Promise.all([first, second])
+
     for (const received of clients) {
       expect(received[0]).toMatchObject({
         _tag: 'Snapshot',
@@ -316,6 +334,7 @@ describe('Effect RPC project event stream', () => {
         }
       })
     }
+
     expect((await collect(value.url, 1))[0]).toMatchObject({
       _tag: 'Snapshot',
       snapshot: { presence: [{ identity, focusedAppId: 'app_browser' }] }

@@ -49,15 +49,18 @@ export function UpdateControl() {
     Boolean(window.treeportDesktop),
     window.location.hostname
   )
+
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [requestError, setRequestError] = useState<string | null>(null)
+
   const statusQuery = useQuery({
     queryKey: ['application-update'],
     queryFn: getApplicationUpdate,
     enabled,
     refetchInterval: (query) => {
       const data = query.state.data
+
       return activePhases.has(data?.phase ?? 'idle')
         ? 1_000
         : data?.checkedAt
@@ -67,11 +70,14 @@ export function UpdateControl() {
     refetchIntervalInBackground: true,
     staleTime: 30_000
   })
+
   const status = statusQuery.data
+
   const update = useMutation({
     mutationFn: startApplicationUpdate,
     onMutate: () => {
       setRequestError(null)
+
       if (status?.latestVersion) {
         sessionStorage.setItem(pendingUpdateStorageKey, status.latestVersion)
       }
@@ -90,6 +96,7 @@ export function UpdateControl() {
 
   useEffect(() => {
     const targetVersion = sessionStorage.getItem(pendingUpdateStorageKey)
+
     if (!targetVersion || !status) {
       return
     }
@@ -100,6 +107,7 @@ export function UpdateControl() {
     ) {
       sessionStorage.removeItem(pendingUpdateStorageKey)
       window.location.reload()
+
       return
     }
 
@@ -111,11 +119,15 @@ export function UpdateControl() {
   const updating = Boolean(
     update.isPending || (status && activePhases.has(status.phase))
   )
+
   const failed = Boolean(requestError || status?.phase === 'failed')
+
   const visible = Boolean(
     enabled && (status?.updateAvailable || updating || failed)
   )
+
   const error = requestError ?? status?.error ?? null
+
   const progress =
     update.isPending || status?.phase === 'starting'
       ? 'Starting the update…'

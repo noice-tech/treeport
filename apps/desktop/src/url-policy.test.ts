@@ -12,6 +12,7 @@ import { parseWorkspaceLink } from './workspace-link'
 function link(target: string): string {
   const value = new URL('treeport://open')
   value.searchParams.set('url', target)
+
   return value.href
 }
 
@@ -124,6 +125,7 @@ describe('desktop workspace links', () => {
       link('http://127.0.0.1:8733/projects/%2F/worktrees/w'),
       'treeport://open?url=http%3A%2F%2F127.0.0.1%3A8733%2Fprojects%2F%25ZZ%2Fworktrees%2Fw'
     ]
+
     for (const value of rejected) {
       expect(parseWorkspaceLink(value)).toBeNull()
     }

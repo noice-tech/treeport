@@ -13,6 +13,7 @@ export class ProjectFolderIdentities extends Effect.Service<ProjectFolderIdentit
       const identities = yield* Ref.make(
         new Map<string, ProjectFolderIdentity>()
       )
+
       yield* Effect.addFinalizer(() => Ref.set(identities, new Map()))
 
       return {
@@ -25,6 +26,7 @@ export class ProjectFolderIdentities extends Effect.Service<ProjectFolderIdentit
           Ref.update(identities, (current) => {
             const next = new Map(current)
             next.set(projectId, identity)
+
             return next
           }),
         remove: (projectId: string) =>
@@ -35,6 +37,7 @@ export class ProjectFolderIdentities extends Effect.Service<ProjectFolderIdentit
 
             const next = new Map(current)
             next.delete(projectId)
+
             return next
           })
       }

@@ -33,6 +33,7 @@ export class ChromiumWebCodecsReceiver {
         this.presented()
       }
     }
+
     const offscreen = canvas.transferControlToOffscreen()
     this.post({ type: 'canvas', canvas: offscreen }, [offscreen])
   }
@@ -53,12 +54,14 @@ export class ChromiumWebCodecsReceiver {
   ): Promise<void> {
     this.stop()
     const generation = this.generation
+
     const support = await VideoDecoder.isConfigSupported({
       codec: config.codec,
       codedWidth: config.width,
       codedHeight: config.height,
       optimizeForLatency: true
     })
+
     if (generation !== this.generation) {
       return
     }
@@ -87,6 +90,7 @@ export class ChromiumWebCodecsReceiver {
     }
 
     this.post({ type: 'wheel', message })
+
     return true
   }
 

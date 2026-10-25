@@ -31,6 +31,7 @@ describe('development database snapshots', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-development-database-#?%-')
     )
+
     directories.push(directory)
     const sourcePath = path.join(directory, 'source', 'treeport.db')
     const destinationPath = path.join(directory, 'destination', 'treeport.db')
@@ -78,10 +79,12 @@ describe('development database snapshots', () => {
         .where(eq(projects.id, 'project'))
         .then(([project]) => project)
     ).toMatchObject({ name: 'Main project', repositoryPath: '/repo' })
+
     const [snapshotWorktree] = await snapshot.db
       .select()
       .from(worktrees)
       .where(eq(worktrees.projectId, 'project'))
+
     expect(snapshotWorktree).toMatchObject({ path: '/repo' })
     expect(
       await snapshot.db.get<{ count: number }>(

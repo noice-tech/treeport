@@ -40,6 +40,7 @@ describe('human output color boundary', () => {
     ({ environment, tty, json, color }) => {
       const previous = kleur.enabled
       const output = humanOutput(environment, tty, json)
+
       const text = output.blocks(
         output.heading('Treeport'),
         output.summary('Healthy', 'success'),
@@ -48,10 +49,12 @@ describe('human output color boundary', () => {
         output.detail('Secondary detail'),
         output.next(['treeport start'])
       )
+
       expect(text.includes('\u001b')).toBe(color)
       expect(stripVTControlCharacters(text)).toBe(
         'Treeport\n\n✓ Healthy\n\n! Action required\n\n✖ Failed\n\nSecondary detail\n\nNext\n  treeport start'
       )
+
       if (color) {
         for (const code of [1, 2, 31, 32, 33, 36]) {
           expect(text).toContain(`\u001b[${code}m`)

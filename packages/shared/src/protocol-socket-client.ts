@@ -13,7 +13,9 @@ type EventArguments<
   Events,
   Event extends keyof Events
 > = Events[Event] extends (...args: infer Arguments) => void ? Arguments : never
+
 type ListenerMap = Map<string, Set<(...args: any[]) => void>>
+
 type ProtocolAuthValue =
   | string
   | number
@@ -21,6 +23,7 @@ type ProtocolAuthValue =
   | null
   | readonly ProtocolAuthValue[]
   | { readonly [key: string]: ProtocolAuthValue }
+
 const connectErrorPayloadSchema = Schema.Struct({ message: Schema.String })
 
 export interface ProtocolSocketOptions {
@@ -85,11 +88,13 @@ function websocketUrl(namespace: string): string {
     namespace.startsWith('http://') || namespace.startsWith('https://')
       ? new URL(namespace)
       : new URL(namespace, globalThis.location?.href ?? 'http://127.0.0.1')
+
   const channel = base.pathname.split('/').filter(Boolean).at(-1) ?? ''
   base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
   base.pathname = `${SOCKET_PATH}/${encodeURIComponent(channel)}`
   base.search = ''
   base.hash = ''
+
   return base.href
 }
 
@@ -102,6 +107,7 @@ class EffectProtocolSocket<
   readonly manager = {
     reconnection: (enabled: boolean) => {
       this.reconnectEnabled = enabled
+
       if (!enabled && this.reconnectTimer !== null) {
         clearTimeout(this.reconnectTimer)
         this.reconnectTimer = null
@@ -127,6 +133,7 @@ class EffectProtocolSocket<
     private readonly options: ProtocolSocketOptions
   ) {
     this.reconnectEnabled = options.reconnection ?? false
+
     if (options.autoConnect !== false) {
       this.connect()
     }
@@ -136,6 +143,7 @@ class EffectProtocolSocket<
     const listeners = this.listeners.get(event) ?? new Set()
     listeners.add(listener)
     this.listeners.set(event, listeners)
+
     return this
   }
 
@@ -144,12 +152,14 @@ class EffectProtocolSocket<
       this.listeners.get(event)?.delete(once)
       listener(...args)
     }
+
     return this.on(event, once)
   }
 
   removeAllListeners(): this {
     this.listeners.clear()
     this.managerListeners.clear()
+
     return this
   }
 
@@ -159,6 +169,7 @@ class EffectProtocolSocket<
     }
 
     const payload = JSON.stringify({ event, payload: args[0] ?? null })
+
     if (!Queue.unsafeOffer(this.outgoing, payload)) {
       this.disconnect()
     }
@@ -177,6 +188,7 @@ class EffectProtocolSocket<
       auth,
       query: this.options.query ?? {}
     })
+
     const program = Effect.scoped(
       Effect.gen(this, function* () {
         const socket = yield* Socket.makeWebSocket(
@@ -186,6 +198,7 @@ class EffectProtocolSocket<
             openTimeout: 10_000
           }
         )
+
         const outgoing = yield* Queue.bounded<string | Uint8Array>(512)
         this.outgoing = outgoing
         const write = yield* socket.writer
@@ -196,19 +209,25 @@ class EffectProtocolSocket<
           (data) => {
             if (data instanceof Uint8Array) {
               this.disconnect()
+
               return
             }
 
             let value: unknown
+
             try {
               value = JSON.parse(data)
             } catch {
               this.disconnect()
+
               return
             }
+
             const message = parseSocketMessage(value)
+
             if (!message) {
               this.disconnect()
+
               return
             }
 
@@ -216,6 +235,7 @@ class EffectProtocolSocket<
               this.connected = true
               this.reconnectAttempt = 0
               this.dispatch('connect')
+
               return
             }
 
@@ -224,8 +244,10 @@ class EffectProtocolSocket<
                 connectErrorPayloadSchema,
                 message.payload
               )
+
               const reason = payload?.message ?? 'websocket error'
               this.dispatch('connect_error', new Error(reason))
+
               return
             }
 
@@ -256,6 +278,7 @@ class EffectProtocolSocket<
       this.fiber = null
       this.outgoing = null
       this.connected = false
+
       if (!wasConnected) {
         this.dispatch('connect_error', new Error('websocket error'))
       }
@@ -263,11 +286,13 @@ class EffectProtocolSocket<
       this.dispatch('disconnect', 'transport close')
       this.scheduleReconnect()
     })
+
     return this
   }
 
   disconnect(): this {
     this.manuallyClosed = true
+
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -279,6 +304,7 @@ class EffectProtocolSocket<
     const wasConnected = this.connected
     this.connected = false
     fiber?.unsafeInterruptAsFork(FiberId.none)
+
     if (wasConnected) {
       this.dispatch('disconnect', 'client disconnect')
     }

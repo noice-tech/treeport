@@ -6,6 +6,7 @@ const MAX_FILE_URL_LENGTH = 16_384
 
 const filePathParser = z.unknown().transform((value): string | null => {
   const parsed = z.string().safeParse(value)
+
   if (
     !parsed.success ||
     parsed.data.length > MAX_FILE_URL_LENGTH ||
@@ -16,6 +17,7 @@ const filePathParser = z.unknown().transform((value): string | null => {
   }
 
   const url = new URL(parsed.data)
+
   if (
     url.protocol !== 'file:' ||
     url.hostname ||
@@ -30,6 +32,7 @@ const filePathParser = z.unknown().transform((value): string | null => {
 
   try {
     const filePath = fileURLToPath(url)
+
     return path.isAbsolute(filePath) && !filePath.includes('\0')
       ? filePath
       : null

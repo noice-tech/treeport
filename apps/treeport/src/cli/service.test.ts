@@ -31,6 +31,7 @@ describe('OS service definitions', () => {
       managerActive: true,
       supervised: true
     }
+
     expect(serviceHealthState(status)).toBe('unhealthy')
     expect(serviceHealthState({ ...status, requestedState: 'stopped' })).toBe(
       'stopped'
@@ -55,6 +56,7 @@ describe('OS service definitions', () => {
   it('uses a per-user LaunchAgent for the normal macOS service lifecycle', () => {
     const home = '/Users/tree port'
     const location = launchdLocation({ uid: 501, home, mode: 'user' })
+
     const definition = createLaunchdDefinition({
       label: location.name,
       mode: 'user',
@@ -118,6 +120,7 @@ describe('OS service definitions', () => {
         definitionPath: location.path
       })
     ]
+
     expect(lifecycle).toEqual([
       {
         bootout: ['bootout', location.target],
@@ -156,6 +159,7 @@ describe('OS service definitions', () => {
       PATH: '/opt/tree port/bin:/usr/bin',
       TREEPORT_DATA_DIR: '/Users/tree port/Library/Application Support/treeport'
     }
+
     const definition = createLaunchdDefinition({
       label: 'app.treeport.daemon.501',
       mode: 'headless',
@@ -237,6 +241,7 @@ describe('OS service definitions', () => {
     const temporaryDirectory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-service-command-')
     )
+
     onTestFinished(() =>
       fs.rm(temporaryDirectory, { recursive: true, force: true })
     )
@@ -245,20 +250,25 @@ describe('OS service definitions', () => {
       temporaryDirectory,
       "owner's installation with spaces"
     )
+
     const restrictedBinDirectory = path.join(
       temporaryDirectory,
       'restricted-bin'
     )
+
     const runtimeExecutable = path.join(installationDirectory, 'node runtime')
+
     const runtimeEntrypoint = path.join(
       installationDirectory,
       "treeport's cli.mjs"
     )
+
     const requestPath = path.join(
       installationDirectory,
       "request's folder",
       'apply request.json'
     )
+
     await Promise.all([
       fs.mkdir(installationDirectory, { recursive: true }),
       fs.mkdir(restrictedBinDirectory, { recursive: true })

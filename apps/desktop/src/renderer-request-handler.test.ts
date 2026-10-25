@@ -30,11 +30,13 @@ afterEach(async () => {
 describe('desktop renderer requests', () => {
   it('routes only private shell documents and modules through the desktop Vite server', async () => {
     const forwarded: string[] = []
+
     const handler = await createRendererRequestHandler({
       rendererDirectory: '.',
       developmentServerUrl: 'http://localhost:5174',
       forward: async (request) => {
         forwarded.push(request.url)
+
         return new Response(request.url)
       }
     })
@@ -71,16 +73,19 @@ describe('desktop renderer requests', () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'treeport-renderer-handler-')
     )
+
     temporaryDirectories.push(directory)
     await mkdir(path.join(directory, 'assets'))
     await writeFile(path.join(directory, 'index.html'), '<main>Treeport</main>')
     await writeFile(path.join(directory, 'assets', 'app.js'), 'app()')
+
     const forwarded: Array<{
       url: string
       method: string
       authorization: string | null
       body: string
     }> = []
+
     const forward = vi.fn(async (request: Request) => {
       forwarded.push({
         url: request.url,
@@ -88,8 +93,10 @@ describe('desktop renderer requests', () => {
         authorization: request.headers.get('authorization'),
         body: await request.text()
       })
+
       return Response.json({ forwarded: true })
     })
+
     const handler = await createRendererRequestHandler({
       rendererDirectory: directory,
       developmentServerUrl: null,
@@ -101,10 +108,13 @@ describe('desktop renderer requests', () => {
         headers: { accept: 'text/html' }
       })
     )
+
     expect(await workspace.json()).toEqual({ forwarded: true })
+
     const workspaceAsset = await handler(
       new Request('http://127.0.0.1:8733/assets/app.js')
     )
+
     expect(await workspaceAsset.json()).toEqual({ forwarded: true })
 
     const route = await handler(
@@ -112,12 +122,14 @@ describe('desktop renderer requests', () => {
         headers: { accept: 'text/html' }
       })
     )
+
     expect(await route.text()).toBe('<main>Treeport</main>')
     expect(route.headers.get('content-type')).toBe('text/html; charset=utf-8')
 
     const asset = await handler(
       new Request('treeport-app://application/assets/app.js')
     )
+
     expect(await asset.text()).toBe('app()')
     expect(asset.headers.get('content-type')).toBe(
       'text/javascript; charset=utf-8'
@@ -133,6 +145,7 @@ describe('desktop renderer requests', () => {
         body: JSON.stringify({ value: 1 })
       })
     )
+
     expect(await api.json()).toEqual({ forwarded: true })
     expect(forwarded).toContainEqual({
       url: 'http://127.0.0.1:8733/api/value',
@@ -152,10 +165,13 @@ describe('desktop renderer requests', () => {
     const malformed = await handler(
       new Request('treeport-app://application/%E0%A4%A')
     )
+
     expect(malformed.status).toBe(404)
+
     const traversal = await handler(
       new Request('treeport-app://application/%2e%2e%2fsecret')
     )
+
     expect(traversal.status).toBe(404)
   })
 })

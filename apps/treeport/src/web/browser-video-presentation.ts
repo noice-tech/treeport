@@ -17,10 +17,12 @@ export function presentBrowserVideo(
         kind: 'video'
       }) => MediaStreamTrack & { writable: WritableStream<VideoFrame> }
     }
+
   let worker: Worker | null = null
   let input: MediaStreamTrack | null = null
   let output: MediaStreamTrack | null = null
   let stopped = false
+
   const stopFrames = () => {
     worker?.terminate()
     worker = null
@@ -29,6 +31,7 @@ export function presentBrowserVideo(
     output?.stop()
     output = null
   }
+
   const play = (presentation: MediaStreamTrack) => {
     const stream = new MediaStream([presentation])
     video.srcObject = stream
@@ -38,6 +41,7 @@ export function presentBrowserVideo(
       }
     })
   }
+
   const native = () => {
     if (stopped) {
       return
@@ -58,15 +62,18 @@ export function presentBrowserVideo(
       input = track.clone()
       const generated = new MediaStreamTrackGenerator({ kind: 'video' })
       output = generated
+
       const { readable } = new MediaStreamTrackProcessor({
         track: input,
         maxBufferSize: 1
       })
+
       worker.onmessage = native
       worker.onerror = (event) => {
         event.preventDefault()
         native()
       }
+
       worker.postMessage({ readable, writable: generated.writable }, [
         readable,
         generated.writable

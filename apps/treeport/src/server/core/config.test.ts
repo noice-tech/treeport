@@ -10,6 +10,7 @@ describe('configuration', () => {
       XDG_RUNTIME_DIR: '/tmp/run',
       SHELL: '/bin/zsh'
     })
+
     expect(config.host).toBe('127.0.0.1')
     expect(config.port).toBe(8733)
     expect(config.databasePath).toBe('/tmp/data home/treeport/treeport.db')
@@ -73,6 +74,7 @@ describe('configuration', () => {
         'Treeport supports only loopback listeners'
       )
     }
+
     expect(() => loadConfig({ HOST: '0.0.0.0' })).toThrow(
       'Treeport supports only loopback listeners'
     )
