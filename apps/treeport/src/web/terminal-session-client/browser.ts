@@ -308,8 +308,17 @@ export function makeBrowser(
           return file ? [file] : []
         })
       }
+      // iOS drags a long-pressed selection with a web archive file. Dropping
+      // terminal text back onto the terminal must not upload and paste it.
+      let draggingTerminalText = false
+      wrapper.addEventListener('dragstart', () => {
+        draggingTerminalText = true
+      })
+      wrapper.addEventListener('dragend', () => {
+        draggingTerminalText = false
+      })
       wrapper.addEventListener('dragover', (event) => {
-        if (!transfersFiles(event.dataTransfer)) {
+        if (draggingTerminalText || !transfersFiles(event.dataTransfer)) {
           return
         }
 
@@ -327,7 +336,7 @@ export function makeBrowser(
         }
       })
       wrapper.addEventListener('drop', (event) => {
-        if (!transfersFiles(event.dataTransfer)) {
+        if (draggingTerminalText || !transfersFiles(event.dataTransfer)) {
           return
         }
 

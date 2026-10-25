@@ -6,8 +6,6 @@ import {
   type TerminalSessionSnapshot
 } from './state'
 
-const IOS_BROWSER_TOOLBAR_CLEARANCE = 44
-
 interface Dependencies {
   cancelControllerResizeIntent(clearPending?: boolean): void
   connect(): void
@@ -114,18 +112,10 @@ export function makeHost(
               return
             }
 
-            const standalone =
-              window.matchMedia('(display-mode: standalone)').matches ||
-              Boolean(
-                // SAFETY: The terminal protocol and xterm contracts establish this asserted value.
-                (navigator as Navigator & { standalone?: boolean }).standalone
-              )
-            const browserToolbarGap = standalone
-              ? 0
-              : IOS_BROWSER_TOOLBAR_CLEARANCE
+            // The visual viewport already excludes Safari's toolbars.
             appFrame.style.setProperty(
               '--app-visual-viewport-height',
-              `${Math.max(0, viewport.height - browserToolbarGap)}px`
+              `${viewport.height}px`
             )
             appFrame.style.setProperty(
               '--app-visual-viewport-offset-top',

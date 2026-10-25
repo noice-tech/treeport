@@ -464,9 +464,17 @@ export function TerminalView({
                 ref={hostRef}
                 onMouseDownCapture={stopLinkMouseEvent}
                 onMouseUpCapture={stopLinkMouseEvent}
-                onMouseDown={() =>
+                onMouseDown={() => {
+                  // Focusing the input collapses native terminal selections.
+                  // iOS sends mousedown during a long-press word selection;
+                  // wterm focuses on click once the selection is collapsed.
+                  if (window.getSelection()?.isCollapsed === false) {
+                    activeSession?.requestControl()
+                    return
+                  }
+
                   activeSession?.focus({ requestControl: true })
-                }
+                }}
               />
             </ContextMenuTrigger>
             <ContextMenuContent

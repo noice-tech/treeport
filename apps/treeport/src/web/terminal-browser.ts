@@ -288,14 +288,15 @@ export function trackTerminalScrolling(
   onResumeInput: () => void,
   onPasteRequest: () => void
 ): void {
-  let touchStart: { x: number; y: number } | null = null
   let touchScroll: { x: number; y: number; time: number } | null = null
   let touchScrollVelocity = 0
   let touchMomentumFrame: number | null = null
   let wheelRows = 0
   let wheelAxis: 'x' | 'y' = 'y'
+  let touchSelectionAnchor: { node: Node | null; offset: number } | null = null
+  let touchStart: { x: number; y: number } | null = null
   let touchSelectionTimer: number | null = null
-  let touchSelectionActive = false
+  let touchSelected = false
   let touchPasteTimer: number | null = null
   let touchPasteStart: Array<{ identifier: number; x: number; y: number }> = []
 
@@ -330,6 +331,8 @@ export function trackTerminalScrolling(
       window.clearTimeout(touchSelectionTimer)
       touchSelectionTimer = null
     }
+
+    touchStart = null
   }
   const clearTouchPasteTimer = () => {
     if (touchPasteTimer !== null) {
@@ -410,8 +413,6 @@ export function trackTerminalScrolling(
     event.stopImmediatePropagation()
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
-    touchStart = null
-    touchSelectionActive = false
     return true
   }
 
@@ -441,9 +442,9 @@ export function trackTerminalScrolling(
     },
     { capture: true, passive: false }
   )
-  // wterm scrolls history natively; Treeport intercepts touches while it owns
-  // a selection/paste gesture, output is frozen, or an application receives
-  // wheel reports.
+  // wterm scrolls history and the platform selects its DOM text natively;
+  // Treeport intercepts touches while it owns a paste gesture, output is
+  // frozen, or an application receives wheel reports.
   wrapper.addEventListener(
     'touchstart',
     (event) => {
@@ -453,11 +454,10 @@ export function trackTerminalScrolling(
         return
       }
 
+      touchSelected = false
+      clearTouchSelectionTimer()
       if (event.touches.length === 2) {
-        clearTouchSelectionTimer()
         clearTouchPasteTimer()
-        touchStart = null
-        touchSelectionActive = false
         touchPasteStart = Array.from(event.touches, (touch) => ({
           identifier: touch.identifier,
           x: touch.clientX,
@@ -472,32 +472,38 @@ export function trackTerminalScrolling(
         return
       }
 
+      clearTouchPasteTimer()
       if (event.touches.length !== 1) {
-        clearTouchSelectionTimer()
-        clearTouchPasteTimer()
-        touchStart = null
-        touchSelectionActive = false
         return
       }
 
-      clearTouchPasteTimer()
       const touch = event.touches[0]!
-      touchStart = { x: touch.clientX, y: touch.clientY }
+      const selection = window.getSelection()
       touchScroll = reportsWheel()
         ? { x: touch.clientX, y: touch.clientY, time: event.timeStamp }
         : null
       touchScrollVelocity = 0
-      touchSelectionActive = false
-      clearTouchSelectionTimer()
+      touchSelectionAnchor = {
+        node: selection?.anchorNode ?? null,
+        offset: selection?.anchorOffset ?? 0
+      }
+      if (
+        !(document.activeElement instanceof HTMLTextAreaElement) ||
+        !wrapper.contains(document.activeElement)
+      ) {
+        return
+      }
+
+      // iOS treats a long-press as a tap while the terminal input is focused.
+      // Select the word here instead; wterm blurs the input to keep it.
+      const start = { x: touch.clientX, y: touch.clientY }
+      touchStart = start
       touchSelectionTimer = window.setTimeout(() => {
         touchSelectionTimer = null
-        if (!touchStart) {
-          return
-        }
-
-        const anchor = terminalCellAt(touchStart.x, touchStart.y)
+        const anchor = terminalCellAt(start.x, start.y)
         if (anchor && terminal.selectWord(anchor)) {
-          touchSelectionActive = true
+          touchSelected = true
+          touchScroll = null
           navigator.vibrate?.(10)
         }
       }, TERMINAL_TOUCH_SELECTION_DELAY_MS)
@@ -534,36 +540,38 @@ export function trackTerminalScrolling(
       if (event.touches.length !== 1) {
         clearTouchSelectionTimer()
         clearTouchPasteTimer()
-        touchStart = null
         touchScroll = null
-        touchSelectionActive = false
+        touchSelected = false
+        return
+      }
+
+      if (touchSelected) {
+        // The platform adjusts the selected word with its handles.
+        event.preventDefault()
         return
       }
 
       const touch = event.touches[0]!
-      if (touchSelectionActive) {
-        event.preventDefault()
-        // wterm selections are native DOM ranges, so dragging moves their focus.
-        const end = document.caretRangeFromPoint(touch.clientX, touch.clientY)
-        const selection = window.getSelection()
-        if (
-          end &&
-          selection?.rangeCount &&
-          wrapper.contains(end.startContainer)
-        ) {
-          selection.extend(end.startContainer, end.startOffset)
-        }
-
-        return
-      }
-
       if (
         touchStart &&
         Math.hypot(touch.clientX - touchStart.x, touch.clientY - touchStart.y) >
           TERMINAL_TOUCH_SELECTION_SLOP
       ) {
         clearTouchSelectionTimer()
-        touchStart = null
+      }
+
+      // A long-press starts a native selection that follows the finger.
+      // Applications must not receive that movement as scrolling.
+      const selection = window.getSelection()
+      if (
+        touchScroll &&
+        selection &&
+        !selection.isCollapsed &&
+        wrapper.contains(selection.anchorNode) &&
+        (selection.anchorNode !== touchSelectionAnchor?.node ||
+          selection.anchorOffset !== touchSelectionAnchor.offset)
+      ) {
+        touchScroll = null
       }
 
       const cell = terminalCellSize(terminal)
@@ -597,7 +605,8 @@ export function trackTerminalScrolling(
       return
     }
 
-    if (touchSelectionActive) {
+    if (touchSelected) {
+      // Without a following tap, iOS keeps the input blurred and the selection.
       event.preventDefault()
     }
 
@@ -605,7 +614,6 @@ export function trackTerminalScrolling(
     if (
       event.type === 'touchend' &&
       momentum &&
-      !touchSelectionActive &&
       event.timeStamp - momentum.time < 100
     ) {
       let previous = performance.now()
@@ -636,9 +644,8 @@ export function trackTerminalScrolling(
 
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
-    touchStart = null
     touchScroll = null
-    touchSelectionActive = false
+    touchSelected = false
   }
   wrapper.addEventListener('touchend', resetTouchScroll, {
     capture: true,
