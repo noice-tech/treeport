@@ -20,6 +20,7 @@ describe('CLI global argument parsing', () => {
       'tool',
       '--json'
     ]
+
     expect(extractJsonOutput(args)).toBe(false)
     expect(args.slice(-2)).toEqual(['tool', '--json'])
   })

@@ -13,6 +13,7 @@ afterEach(() => {
 it('reads optional metadata without imposing a daemon release or health shape', async () => {
   const request = vi.fn<typeof fetch>()
   vi.stubGlobal('fetch', request)
+
   for (const version of ['0.1.0', '99.0.0', 'development', null]) {
     request.mockResolvedValueOnce(
       Response.json({
@@ -27,6 +28,7 @@ it('reads optional metadata without imposing a daemon release or health shape', 
       version
     })
   }
+
   request.mockResolvedValueOnce(
     Response.json({ hostname: health.hostname, version: 123 })
   )
@@ -54,12 +56,14 @@ it('cancels in-flight metadata requests when the owning connection is interrupte
   )
   const inFlight = new AbortController()
   const published = vi.fn()
+
   const abandoned = Effect.runPromiseExit(
     checkHealth(origin).pipe(
       Effect.tap((value) => Effect.sync(() => published(value)))
     ),
     { signal: inFlight.signal }
   )
+
   inFlight.abort()
   finishRequest(Response.json(health))
   expect((await abandoned)._tag).toBe('Failure')
@@ -69,6 +73,7 @@ it('cancels in-flight metadata requests when the owning connection is interrupte
 it('omits metadata for failed requests and malformed bodies', async () => {
   const request = vi.fn<typeof fetch>()
   vi.stubGlobal('fetch', request)
+
   for (const response of [
     new Response(null, { status: 503 }),
     new Response('not json'),
@@ -77,6 +82,7 @@ it('omits metadata for failed requests and malformed bodies', async () => {
     request.mockResolvedValueOnce(response)
     expect(await Effect.runPromise(checkHealth(origin))).toBeNull()
   }
+
   request.mockRejectedValueOnce(new Error('Connection refused'))
   expect(await Effect.runPromise(checkHealth(origin))).toBeNull()
   expect(request).toHaveBeenLastCalledWith(`${origin}/api/health`, {
@@ -92,6 +98,7 @@ it('bounds a stalled health response body and aborts its fetch', async () => {
     'fetch',
     vi.fn((_url, options: RequestInit) => {
       signal = options.signal ?? null
+
       return Promise.resolve(new Response(new ReadableStream({ start() {} })))
     })
   )

@@ -31,6 +31,7 @@ export function ToolPickerProvider({ children }: { children: ReactNode }) {
 
 export function useToolPicker(): ToolPickerContextValue {
   const context = useContext(ToolPickerContext)
+
   if (!context) {
     throw new Error('useToolPicker requires ToolPickerProvider')
   }

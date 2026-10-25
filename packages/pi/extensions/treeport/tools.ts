@@ -9,22 +9,26 @@ import { Type, type Static, type TSchema } from 'typebox'
 import { runTreeportJson } from './treeport-cli.ts'
 
 const identifier = Type.String({ minLength: 1, pattern: '^[^-]' })
+
 const tree = Type.Optional(
   Type.String({
     description: 'Tree ID, path, or . for the current tree. Defaults to .'
   })
 )
+
 const project = Type.Optional(
   Type.String({
     description: 'Project ID or path. Defaults to the current project.'
   })
 )
+
 const app = Type.Optional(
   Type.String({
     description:
       'Browser app ID from treeport_browser_open or treeport_browser_list. Specify it when multiple tabs are open.'
   })
 )
+
 const argv = Type.Optional(
   Type.Array(Type.String(), {
     minItems: 1,
@@ -32,9 +36,11 @@ const argv = Type.Optional(
       'Executable and arguments, without shell parsing. For shell syntax use ["bash", "-lc", "..."] instead.'
   })
 )
+
 // CLI responses are JSON objects with command-specific fields. Preserve fields
 // added by the CLI rather than coupling this separately published package to it.
 const object = Type.Record(Type.String(), Type.Unknown())
+
 const browserResult = Type.Object(
   { output: Type.String() },
   { additionalProperties: true }
@@ -53,6 +59,7 @@ export function registerTreeportTools(
   contextSchema: TSchema
 ): string[] {
   const names: string[] = []
+
   const register = <P extends TSchema, O extends TSchema>(
     command: string[],
     description: string,
@@ -86,10 +93,12 @@ export function registerTreeportTools(
             timeout: timeout(params)
           }
         )
+
         const json = JSON.stringify(result, null, 2)
         const truncated = truncateHead(json)
         let text = truncated.content
         let fullOutputPath: string | null = null
+
         if (truncated.truncated) {
           fullOutputPath = join(
             await mkdtemp(join(tmpdir(), 'treeport-tool-')),
@@ -288,6 +297,7 @@ export function registerTreeportTools(
     object,
     (p) => [...(p.url ? [p.url] : []), `--worktree=${p.tree ?? '.'}`]
   )
+
   for (const [command, description] of [
     [
       'snapshot',
@@ -311,6 +321,7 @@ export function registerTreeportTools(
       () => 90_000
     )
   }
+
   register(
     ['browser', 'goto'],
     'Navigate the shared page to an absolute HTTP, HTTPS, or file URL. Local files must exist on the browser runtime filesystem.',
@@ -358,5 +369,6 @@ export function registerTreeportTools(
     ],
     () => 90_000
   )
+
   return names
 }

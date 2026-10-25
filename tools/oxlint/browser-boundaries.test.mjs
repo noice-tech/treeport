@@ -6,6 +6,7 @@ import { beforeAll, afterAll, expect, it } from 'vitest'
 
 const oxlint = path.resolve('node_modules/.bin/oxlint')
 let root
+
 beforeAll(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'browser-boundaries-'))
   await mkdir(path.join(root, 'tools/oxlint'), { recursive: true })
@@ -27,6 +28,7 @@ beforeAll(async () => {
     })
   )
 })
+
 afterAll(async () => {
   await rm(root, { recursive: true, force: true })
 })
@@ -34,6 +36,7 @@ afterAll(async () => {
 async function lint(filename, input, directory = 'server') {
   const file = `apps/treeport/src/${directory}/${filename}`
   await writeFile(path.join(root, file), input)
+
   return spawnSync(oxlint, [file], { cwd: root, encoding: 'utf8' })
 }
 
@@ -71,6 +74,7 @@ it.each(['videoReady', 'videoAnswer'])(
       'browser-sessions.ts',
       `transport.sendMessage({ type: '${type}' })`
     )
+
     expect(result.status).toBe(1)
     expect(result.stdout + result.stderr).toContain('BrowserVideoViewer owns')
   }
@@ -90,13 +94,16 @@ it.each([
 it('allows the connection owner and read-only connection contracts', async () => {
   const source =
     "export { BrowserVideoReceiver } from './browser-video-receiver'"
+
   const owner = await lint('browser-remote-connection.ts', source, 'web')
   expect(owner.status, owner.stdout + owner.stderr).toBe(0)
+
   const consumer = await lint(
     'workspace.ts',
     "export type { BrowserAppConnection } from './browser-session-client'",
     'web'
   )
+
   expect(consumer.status, consumer.stdout + consumer.stderr).toBe(0)
 })
 
@@ -107,5 +114,6 @@ it('allows only the host to allocate unsized contexts and helper pages', async (
 export const reader = browser.newContext({ viewport: null })
 export const helper = context.newPage()`
   )
+
   expect(result.status, result.stdout + result.stderr).toBe(0)
 })

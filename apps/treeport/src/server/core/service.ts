@@ -71,6 +71,7 @@ type ProjectApi = Pick<
   | 'updateWorktreeDecoration'
   | 'updateWorktreeTitle'
 >
+
 type WorktreeApi = Pick<
   WorktreeService,
   | 'beginCreateWorktree'
@@ -79,6 +80,7 @@ type WorktreeApi = Pick<
   | 'listActiveOperations'
   | 'removePreview'
 >
+
 type TerminalApi = Pick<
   TerminalService,
   | 'createTerminal'
@@ -90,6 +92,7 @@ type TerminalApi = Pick<
   | 'reorderTerminals'
   | 'terminateAllTerminals'
 >
+
 type LauncherApi = Pick<
   LauncherService,
   | 'createLauncher'
@@ -98,6 +101,7 @@ type LauncherApi = Pick<
   | 'listLaunchers'
   | 'updateLauncher'
 >
+
 type AppApi = Pick<
   AppService,
   | 'authorizeBrowserApp'
@@ -131,10 +135,12 @@ type AppApi = Pick<
   | 'setWebAppStorage'
   | 'updateBrowserAppState'
 >
+
 type TreeFileApi = Pick<
   TreeFileService,
   'listTreeFiles' | 'readTreeFile' | 'searchTreeFiles' | 'writeTreeFile'
 >
+
 type PackageManagementApi = Pick<
   PackageService,
   | 'installPackage'

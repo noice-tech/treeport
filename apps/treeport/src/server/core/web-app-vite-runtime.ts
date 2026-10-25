@@ -68,6 +68,7 @@ const IMMUTABLE_PREFIX = '__treeport/'
 
 function isWithin(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate)
+
   return (
     relative === '' ||
     (!relative.startsWith(`..${path.sep}`) &&
@@ -134,6 +135,7 @@ export class WebAppViteRuntime {
         allow: [source.packageRoot, APP_SDK_ROOT]
       }
     }
+
     if (options.server) {
       // Vite prepends base to the HMR path itself.
       server.hmr = { server: options.server, path: '/@vite-hmr' }
@@ -143,6 +145,7 @@ export class WebAppViteRuntime {
       sourcemap: true,
       rollupOptions: { input: path.join(source.root, source.entry) }
     }
+
     if (options.outDir) {
       viteBuild.outDir = options.outDir
       viteBuild.emptyOutDir = true
@@ -182,21 +185,26 @@ export class WebAppViteRuntime {
 
   private async hashSource(source: ResolvedWebAppSource): Promise<string> {
     const hash = crypto.createHash('sha256')
+
     const visit = async (directory: string): Promise<void> => {
       const entries = await fs.readdir(directory, { withFileTypes: true })
       entries.sort((left, right) => left.name.localeCompare(right.name))
+
       for (const entry of entries) {
         if (entry.name === 'node_modules' || entry.name === '.git') {
           continue
         }
 
         const candidate = path.join(directory, entry.name)
+
         const relative = path
           .relative(source.root, candidate)
           .split(path.sep)
           .join('/')
+
         if (entry.isSymbolicLink()) {
           const real = await fs.realpath(candidate)
+
           if (!isWithin(real, await fs.realpath(source.root))) {
             throw new DomainError(
               'INVALID_ASSET_PATH',
@@ -207,6 +215,7 @@ export class WebAppViteRuntime {
         }
 
         const stat = await fs.stat(candidate)
+
         if (stat.isDirectory()) {
           await visit(candidate)
         } else if (stat.isFile()) {
@@ -220,6 +229,7 @@ export class WebAppViteRuntime {
     }
 
     await visit(source.root)
+
     for (const file of [
       path.join(source.packageRoot, 'package.json'),
       source.packageLockPath
@@ -229,10 +239,12 @@ export class WebAppViteRuntime {
       }
 
       const content = await fs.readFile(file).catch(() => null)
+
       if (content) {
         hash.update(path.basename(file)).update('\0').update(content)
       }
     }
+
     hash
       .update('@treeport/app-sdk\0')
       .update(await fs.readFile(APP_SDK_ENTRY))
@@ -255,6 +267,7 @@ export class WebAppViteRuntime {
         }
       })
     )
+
     return hash.digest('hex')
   }
 
@@ -275,53 +288,66 @@ export class WebAppViteRuntime {
       const hash = yield* this.runtimePromise('hashSource', () =>
         this.hashSource(source)
       )
+
       const parent = path.join(this.config.cacheDir, 'web-apps', COMPILER_ABI)
       const directory = path.join(parent, hash)
       const metadata = path.join(directory, BUILD_METADATA)
+
       const cached = yield* this.runtimePromise(
         'readBuildMetadata',
         async () => {
           const value = await fs.readFile(metadata, 'utf8')
+
           // SAFETY: This module writes the cache metadata with a hash field.
           return (JSON.parse(value) as { hash?: string }).hash === hash
         }
       ).pipe(Effect.orElseSucceed(() => false))
+
       if (cached) {
         return { hash, directory }
       }
 
       const existing = this.builds.get(hash)
+
       if (existing) {
         return { hash, directory: yield* Deferred.await(existing) }
       }
 
       const candidate = yield* Deferred.make<string, WebAppRuntimeError>()
+
       const pending = yield* Effect.sync(() => {
         const winner = this.builds.get(hash)
+
         if (winner) {
           return winner
         }
 
         this.builds.set(hash, candidate)
+
         return candidate
       })
+
       if (pending !== candidate) {
         return { hash, directory: yield* Deferred.await(pending) }
       }
 
       const buildEffect = this.runtimePromise('build', async () => {
         await fs.mkdir(parent, { recursive: true, mode: 0o700 })
+
         const temporary = path.join(
           parent,
           `.${hash}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
         )
+
         await fs.rm(temporary, { recursive: true, force: true })
+
         try {
           const buildSource = {
             ...source,
             root: await fs.realpath(source.root),
             packageRoot: await fs.realpath(source.packageRoot)
           }
+
           await build(this.viteConfig(buildSource, './', { outDir: temporary }))
           await fs.writeFile(
             path.join(temporary, BUILD_METADATA),
@@ -333,11 +359,13 @@ export class WebAppViteRuntime {
               throw error
             }
           })
+
           return directory
         } finally {
           await fs.rm(temporary, { recursive: true, force: true })
         }
       })
+
       yield* Effect.uninterruptible(
         Effect.exit(buildEffect).pipe(
           Effect.flatMap((exit) => Deferred.done(candidate, exit)),
@@ -350,15 +378,18 @@ export class WebAppViteRuntime {
           )
         )
       )
+
       return { hash, directory: yield* Deferred.await(candidate) }
     })
   }
 
   private errorPage(source: ResolvedWebAppSource, cause: unknown): string {
     const raw = cause instanceof Error ? cause.message : String(cause)
+
     const diagnostic = raw
       .replaceAll(source.packageRoot, '<package>')
       .replaceAll(source.root, '<app>')
+
     const stage = /resolve|not found|cannot find|failed to load|import/iu.test(
       raw
     )
@@ -375,18 +406,22 @@ export class WebAppViteRuntime {
       const canonical = yield* this.runtimePromise('canonicalizeAppRoot', () =>
         fs.realpath(source.root)
       )
+
       const key = crypto
         .createHash('sha256')
         .update(canonical)
         .update(source.allowNetworkRequests ? ':network' : ':isolated')
         .digest('hex')
         .slice(0, 24)
+
       const existing = this.developmentServers.get(key)
+
       if (existing) {
         return existing
       }
 
       const pendingExisting = this.developmentServerCreations.get(key)
+
       if (pendingExisting) {
         return yield* Deferred.await(pendingExisting)
       }
@@ -395,37 +430,47 @@ export class WebAppViteRuntime {
         DevelopmentServerEntry,
         WebAppRuntimeError
       >()
+
       const pending = yield* Effect.sync(() => {
         const winner = this.developmentServerCreations.get(key)
+
         if (winner) {
           return winner
         }
 
         this.developmentServerCreations.set(key, candidate)
+
         return candidate
       })
+
       if (pending !== candidate) {
         return yield* Deferred.await(pending)
       }
 
       const httpServer = this.httpServer
+
       const create = httpServer
         ? this.runtimePromise('createDevelopmentServer', async () => {
             const base = `/api/web-app-dev/${key}/`
+
             const developmentSource = {
               ...source,
               root: canonical,
               packageRoot: await fs.realpath(source.packageRoot)
             }
+
             const previousUpgradeListeners = new Set(
               httpServer.listeners('upgrade')
             )
+
             const server = await createServer(
               this.viteConfig(developmentSource, base, { server: httpServer })
             )
+
             const addedUpgradeListeners = httpServer
               .listeners('upgrade')
               .filter((listener) => !previousUpgradeListeners.has(listener))
+
             if (addedUpgradeListeners.length !== 1) {
               await server.close()
               throw new Error(
@@ -439,7 +484,9 @@ export class WebAppViteRuntime {
               socket: Duplex,
               head: Buffer
             ) => void
+
             httpServer.removeListener('upgrade', upgrade)
+
             return {
               base,
               server,
@@ -453,15 +500,18 @@ export class WebAppViteRuntime {
               new Error('Treeport development app server is not attached')
             )
           )
+
       return yield* Effect.uninterruptible(
         Effect.gen(this, function* () {
           const exit = yield* Effect.exit(create)
+
           if (exit._tag === 'Success') {
             this.developmentServers.set(key, exit.value)
           }
 
           yield* Deferred.done(candidate, exit)
           this.developmentServerCreations.delete(key)
+
           return yield* Deferred.await(candidate)
         })
       )
@@ -479,6 +529,7 @@ export class WebAppViteRuntime {
     return Effect.gen(this, function* () {
       if (requestedPath && !requestedPath.startsWith(IMMUTABLE_PREFIX)) {
         const candidate = path.resolve(source.root, requestedPath)
+
         if (!isWithin(candidate, path.resolve(source.root))) {
           return yield* Effect.fail(
             new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
@@ -488,9 +539,11 @@ export class WebAppViteRuntime {
         const real = yield* this.runtimePromise('canonicalizeAsset', () =>
           fs.realpath(candidate)
         ).pipe(Effect.orElseSucceed(() => null))
+
         const appRoot = yield* this.runtimePromise('canonicalizeAppRoot', () =>
           fs.realpath(source.root)
         )
+
         if (real && !isWithin(real, appRoot)) {
           return yield* Effect.fail(
             new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
@@ -500,6 +553,7 @@ export class WebAppViteRuntime {
 
       if (source.development) {
         const development = yield* this.developmentServer(source)
+
         return {
           kind: 'redirect' as const,
           location: `${development.base}${requestedPath || source.entry}`,
@@ -510,6 +564,7 @@ export class WebAppViteRuntime {
 
       if (!requestedPath.startsWith(IMMUTABLE_PREFIX)) {
         const compiled = yield* this.compiledDirectory(source)
+
         return {
           kind: 'redirect' as const,
           location: `${logicalBase}${IMMUTABLE_PREFIX}${compiled.hash}/${requestedPath || source.entry}`,
@@ -519,6 +574,7 @@ export class WebAppViteRuntime {
       }
 
       const [marker, hash, ...segments] = requestedPath.split('/')
+
       if (
         marker !== '__treeport' ||
         !/^[a-f0-9]{64}$/u.test(hash ?? '') ||
@@ -535,10 +591,12 @@ export class WebAppViteRuntime {
         COMPILER_ABI,
         hash!
       )
+
       const canonicalDirectory = yield* this.runtimePromise(
         'canonicalizeBuildDirectory',
         () => fs.realpath(directory)
       ).pipe(Effect.orElseSucceed(() => null))
+
       if (!canonicalDirectory) {
         return yield* Effect.fail(
           new DomainError(
@@ -550,6 +608,7 @@ export class WebAppViteRuntime {
       }
 
       const candidate = path.resolve(directory, ...segments)
+
       if (!isWithin(candidate, directory)) {
         return yield* Effect.fail(
           new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
@@ -559,6 +618,7 @@ export class WebAppViteRuntime {
       const real = yield* this.runtimePromise('canonicalizeAsset', () =>
         fs.realpath(candidate)
       ).pipe(Effect.orElseSucceed(() => null))
+
       if (!real || !isWithin(real, canonicalDirectory)) {
         return yield* Effect.fail(
           new DomainError(
@@ -595,12 +655,16 @@ export class WebAppViteRuntime {
   ): void {
     const pathname = new URL(request.url ?? '/', 'http://treeport.local')
       .pathname
+
     const match = /^\/api\/web-app-dev\/([a-f0-9]{24})\//u.exec(pathname)
+
     const development = match
       ? this.developmentServers.get(match[1]!)
       : undefined
+
     if (!development) {
       next()
+
       return
     }
 
@@ -608,6 +672,7 @@ export class WebAppViteRuntime {
     const forwardedHost = request.headers['x-forwarded-host']
     const host = request.headers.host
     const forwardedProtocol = request.headers['x-forwarded-proto']
+
     const browserOrigin = webAppBrowserOrigin({
       referrer: Array.isArray(referrer) ? null : referrer,
       forwardedHost: Array.isArray(forwardedHost) ? null : forwardedHost,
@@ -640,17 +705,21 @@ export class WebAppViteRuntime {
   ): boolean {
     const pathname = new URL(request.url ?? '/', 'http://treeport.local')
       .pathname
+
     const match = /^\/api\/web-app-dev\/([a-f0-9]{24})\/@vite-hmr$/u.exec(
       pathname
     )
+
     const development = match
       ? this.developmentServers.get(match[1]!)
       : undefined
+
     if (!development) {
       return false
     }
 
     development.upgrade(request, socket, head)
+
     return true
   }
 
@@ -681,11 +750,14 @@ export class WebAppViteRuntime {
         pending.map((creation) => Effect.exit(Deferred.await(creation))),
         { concurrency: 'unbounded' }
       )
+
       const servers = yield* Effect.sync(() => {
         const active = [...this.developmentServers.values()]
         this.developmentServers.clear()
+
         return active
       })
+
       yield* this.runtimePromise('disposeDevelopmentServers', () =>
         Promise.all(
           servers.map(async ({ server }) => {

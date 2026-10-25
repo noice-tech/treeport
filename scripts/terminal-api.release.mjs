@@ -50,6 +50,7 @@ async function installTarballs(tarballs, prefix) {
     ],
     { env: { ...process.env, NPM_CONFIG_CACHE: npmCache } }
   )
+
   return path.join(prefix, 'bin/treeport')
 }
 
@@ -63,6 +64,7 @@ async function availablePort() {
   assert(address)
   const port = address.port
   await new Promise((resolve) => server.close(resolve))
+
   return port
 }
 
@@ -88,6 +90,7 @@ async function fixture(name) {
   await command('git', ['add', 'fixture.txt'], { cwd: repository })
   await command('git', ['commit', '-qm', 'fixture'], { cwd: repository })
   const port = await availablePort()
+
   const env = {
     PATH: process.env.PATH,
     HOME: home,
@@ -101,7 +104,9 @@ async function fixture(name) {
     TREEPORT_DAEMON_LIFECYCLE: 'treeport',
     TREEPORT_INSTALLATION_METHOD: 'npm'
   }
+
   activeRoots.add(fixtureRoot)
+
   return { fixtureRoot, dataDir, runtimeDir, repository, env }
 }
 
@@ -113,10 +118,13 @@ async function runCli(cli, env, args) {
 
 async function readHostRecord(runtimeDir) {
   const engineDirectory = path.join(runtimeDir, 'terminal-engine')
+
   const name = (await fs.readdir(engineDirectory)).find(
     (entry) => entry.startsWith('terminal-host-') && entry.endsWith('.json')
   )
+
   assert(name, 'Terminal host record was not created')
+
   return {
     path: path.join(engineDirectory, name),
     value: JSON.parse(
@@ -131,11 +139,13 @@ async function readSessionStatus(value, terminalId) {
     .update(path.resolve(value.dataDir))
     .digest('hex')
     .slice(0, 20)
+
   const key = crypto
     .createHash('sha256')
     .update(terminalId)
     .digest('hex')
     .slice(0, 40)
+
   return JSON.parse(
     await fs.readFile(
       path.join(
@@ -154,6 +164,7 @@ async function readSessionStatus(value, terminalId) {
 async function waitForCapture(cli, env, terminalId, marker) {
   const deadline = Date.now() + 10_000
   let content = ''
+
   while (Date.now() < deadline) {
     const result = await runCli(cli, env, [
       'terminal',
@@ -161,8 +172,10 @@ async function waitForCapture(cli, env, terminalId, marker) {
       terminalId,
       '--json'
     ]).catch(() => null)
+
     if (result) {
       content = JSON.parse(result.stdout).content
+
       if (content.includes(marker)) {
         return content
       }
@@ -176,9 +189,11 @@ async function waitForCapture(cli, env, terminalId, marker) {
 
 async function fakeNpm(directory, prefix, appSdkTarball) {
   const executable = path.join(directory, 'npm')
+
   const realNpm = (
     await command('/bin/sh', ['-c', 'command -v npm'], { env: process.env })
   ).stdout.trim()
+
   await fs.writeFile(
     executable,
     `#!/usr/bin/env node
@@ -212,6 +227,7 @@ if (args[0] === 'prefix' && args[1] === '--global') {
 `,
     { mode: 0o755 }
   )
+
   return executable
 }
 
@@ -235,6 +251,7 @@ async function terminateFixture(value) {
     .readFile(path.join(value.runtimeDir, 'daemon.json'), 'utf8')
     .then((source) => JSON.parse(source).pid)
     .catch(() => null)
+
   if (Number.isInteger(pid) && pid !== process.pid) {
     try {
       process.kill(pid, 'SIGTERM')
@@ -244,9 +261,11 @@ async function terminateFixture(value) {
   }
 
   await new Promise((resolve) => setTimeout(resolve, 300))
+
   const engines = await fs
     .readdir(path.join(value.runtimeDir, 'terminal-engine'))
     .catch(() => [])
+
   for (const name of engines.filter((name) =>
     /^terminal-host-[0-9a-f]{20}$/u.test(name)
   )) {
@@ -256,6 +275,7 @@ async function terminateFixture(value) {
       name,
       'sessions'
     )
+
     for (const key of (await fs.readdir(sessions).catch(() => [])).filter(
       (name) => /^[a-f0-9]{40}$/u.test(name)
     )) {
@@ -264,6 +284,7 @@ async function terminateFixture(value) {
       await owner.terminate()
     }
   }
+
   activeRoots.delete(value.fixtureRoot)
   await fs.rm(value.fixtureRoot, { recursive: true, force: true })
 }
@@ -275,14 +296,17 @@ async function terminalHostSocket(dataDir, record, terminalId, history) {
   let buffered = Buffer.alloc(0)
   socket.on('data', (chunk) => {
     buffered = Buffer.concat([buffered, chunk])
+
     while (buffered.length >= 4) {
       const length = buffered.readUInt32BE(0)
+
       if (buffered.length < length + 4) {
         break
       }
 
       const payload = buffered.subarray(4, length + 4)
       buffered = buffered.subarray(length + 4)
+
       if (payload[0] === 0) {
         const idLength = payload.readUInt32BE(1)
         events.push({
@@ -297,9 +321,11 @@ async function terminalHostSocket(dataDir, record, terminalId, history) {
       }
 
       const frame = JSON.parse(payload.toString())
+
       if (frame.type === 'response') {
         const request = pending.get(frame.id)
         pending.delete(frame.id)
+
         if (frame.error) {
           request?.reject(new Error(frame.error.message))
         } else {
@@ -315,20 +341,25 @@ async function terminalHostSocket(dataDir, record, terminalId, history) {
     socket.once('error', reject)
   })
   let nextId = 0
+
   const request = (method, input) =>
     new Promise((resolve, reject) => {
       const id = `packaged-api-${++nextId}`
       pending.set(id, { resolve, reject })
+
       const payload = Buffer.from(
         JSON.stringify({ type: 'request', id, method, input })
       )
+
       const header = Buffer.alloc(4)
       header.writeUInt32BE(payload.length)
       socket.write(Buffer.concat([header, payload]))
     })
+
   const token = (
     await fs.readFile(path.join(dataDir, 'terminal-host.token'), 'utf8')
   ).trim()
+
   await request('handshake', { token, hostKey: record.hostKey })
   const snapshot = await request('attach', { terminalId })
   const restored = await restoreTestSnapshot(snapshot.data)
@@ -343,6 +374,7 @@ async function terminalHostSocket(dataDir, record, terminalId, history) {
     generation: 1,
     cellSize: null
   })
+
   return {
     write(data) {
       return request('write', {
@@ -354,6 +386,7 @@ async function terminalHostSocket(dataDir, record, terminalId, history) {
     },
     async waitForOutput(marker) {
       const deadline = Date.now() + 10_000
+
       while (Date.now() < deadline) {
         if (
           events.some(
@@ -451,6 +484,7 @@ afterAll(async () => {
       runtimeDir: path.join(fixtureRoot, 'runtime')
     })
   }
+
   if (root) {
     await fs.rm(root, { recursive: true, force: true })
   }
@@ -459,6 +493,7 @@ afterAll(async () => {
 describe('packaged stable terminal API lifecycle', () => {
   it('preserves a live Rust-owned shell and history across packaged daemon replacement', async () => {
     const value = await fixture('live-daemon-replacement-rust')
+
     try {
       await runCli(candidateCliA, value.env, ['start', '--json'])
       await runCli(candidateCliA, value.env, [
@@ -467,6 +502,7 @@ describe('packaged stable terminal API lifecycle', () => {
         value.repository,
         '--json'
       ])
+
       const created = await runCli(candidateCliA, value.env, [
         'terminal',
         'create',
@@ -480,23 +516,28 @@ describe('packaged stable terminal API lifecycle', () => {
         '-c',
         'printf "SHELL_PID=%s STATE=preserved-memory\\n" "$$"; while IFS= read -r line; do printf "STATE=preserved-memory INPUT=%s\\n" "$line"; done'
       ])
+
       const terminalId = JSON.parse(created.stdout).id
+
       const before = await waitForCapture(
         candidateCliA,
         value.env,
         terminalId,
         'STATE=preserved-memory'
       )
+
       const shellPid = /SHELL_PID=(\d+)/.exec(before)?.[1]
       assert(shellPid)
       const hostBefore = (await readHostRecord(value.runtimeDir)).value
       const ownerBefore = await readSessionStatus(value, terminalId)
+
       const ownerCommand = await command('ps', [
         '-p',
         String(ownerBefore.ownerPid),
         '-o',
         'comm='
       ])
+
       assert.match(ownerCommand.stdout, /keeper-[a-f0-9]+/)
       assert.equal('protocolVersion' in hostBefore, false)
 
@@ -509,12 +550,14 @@ describe('packaged stable terminal API lifecycle', () => {
       assert.equal(ownerAfter.ownerPid, ownerBefore.ownerPid)
       assert.equal(ownerAfter.pid, ownerBefore.pid)
       process.kill(Number(shellPid), 0)
+
       const after = await waitForCapture(
         candidateCliB,
         value.env,
         terminalId,
         'STATE=preserved-memory'
       )
+
       assert.match(after, new RegExp(`SHELL_PID=${shellPid}\\b`))
 
       const socket = await terminalHostSocket(
@@ -523,6 +566,7 @@ describe('packaged stable terminal API lifecycle', () => {
         terminalId,
         /STATE=preserved-memory/
       )
+
       await socket.write('AFTER_RESTART\n')
       await socket.waitForOutput('STATE=preserved-memory INPUT=AFTER_RESTART')
       socket.close()
@@ -540,6 +584,7 @@ describe('packaged stable terminal API lifecycle', () => {
         '-c',
         'echo NEW_TERMINAL_AFTER_REPLACEMENT'
       ])
+
       const nextId = JSON.parse(next.stdout).id
       await waitForCapture(
         candidateCliB,
@@ -548,12 +593,14 @@ describe('packaged stable terminal API lifecycle', () => {
         'NEW_TERMINAL_AFTER_REPLACEMENT'
       )
       const nextOwner = await readSessionStatus(value, nextId)
+
       const nextCommand = await command('ps', [
         '-p',
         String(nextOwner.ownerPid),
         '-o',
         'comm='
       ])
+
       assert.match(nextCommand.stdout, /keeper-[a-f0-9]+/)
     } finally {
       await terminateFixture(value)
@@ -562,6 +609,7 @@ describe('packaged stable terminal API lifecycle', () => {
 
   it('replaces an empty packaged engine and creates a terminal afterward', async () => {
     const value = await fixture('empty-host')
+
     try {
       await runCli(candidateCliA, value.env, ['start', '--json'])
       const hostBefore = (await readHostRecord(value.runtimeDir)).value
@@ -577,6 +625,7 @@ describe('packaged stable terminal API lifecycle', () => {
         value.repository,
         '--json'
       ])
+
       const created = await runCli(candidateCliB, value.env, [
         'terminal',
         'create',
@@ -590,6 +639,7 @@ describe('packaged stable terminal API lifecycle', () => {
         '-c',
         'echo EMPTY_HOST_ADOPTED'
       ])
+
       await waitForCapture(
         candidateCliB,
         value.env,
@@ -606,12 +656,15 @@ describe('packaged stable terminal API lifecycle', () => {
     const updaterPrefix = path.join(value.fixtureRoot, 'updater-prefix')
     const updaterCli = path.join(updaterPrefix, 'bin', 'treeport')
     const fakeBin = path.join(value.fixtureRoot, 'fake-bin')
+
     try {
       await command('cp', ['-al', candidatePrefix, updaterPrefix])
+
       const manifestPath = path.join(
         updaterPrefix,
         'lib/node_modules/@treeport/treeport/package.json'
       )
+
       const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
       await fs.rm(manifestPath)
       await fs.writeFile(
@@ -619,10 +672,13 @@ describe('packaged stable terminal API lifecycle', () => {
         `${JSON.stringify({ ...manifest, version: '0.10.0' }, null, 2)}\n`
       )
       await runCli(candidateCliA, value.env, ['start', '--json'])
+
       const daemonBefore = JSON.parse(
         await fs.readFile(path.join(value.runtimeDir, 'daemon.json'), 'utf8')
       )
+
       const engine = await readHostRecord(value.runtimeDir)
+
       // Model a live retired host in the legacy discovery location. Embedded
       // engine discovery is disposable and never gates candidate activation.
       const host = {
@@ -639,10 +695,12 @@ describe('packaged stable terminal API lifecycle', () => {
           )
         }
       }
+
       const source = `${JSON.stringify({
         ...host.value,
         protocolVersion: 4
       })}\n`
+
       await fs.writeFile(host.path, source)
       await fs.mkdir(fakeBin)
       await fakeNpm(fakeBin, updaterPrefix, candidateAppSdkTarball)
@@ -659,13 +717,16 @@ describe('packaged stable terminal API lifecycle', () => {
         () => null,
         (error) => error
       )
+
       assert(refusal)
       const output = `${refusal.stdout}\n${refusal.stderr}`
       assert.equal(refusal.code, 5, output)
       assert.match(output, /retired protocol 4/)
+
       const daemonAfter = JSON.parse(
         await fs.readFile(path.join(value.runtimeDir, 'daemon.json'), 'utf8')
       )
+
       assert.equal(daemonAfter.pid, daemonBefore.pid)
       process.kill(daemonBefore.pid, 0)
       process.kill(host.value.pid, 0)
@@ -681,6 +742,7 @@ describe('packaged stable terminal API lifecycle', () => {
         value.repository,
         '--json'
       ])
+
       const created = await runCli(candidateCliA, value.env, [
         'terminal',
         'create',
@@ -694,21 +756,26 @@ describe('packaged stable terminal API lifecycle', () => {
         '-c',
         'printf "UPDATE_PID=%s STATE=before-update\\n" "$$"; while IFS= read -r line; do printf "UPDATE_INPUT=%s\\n" "$line"; done'
       ])
+
       const terminalId = JSON.parse(created.stdout).id
+
       const before = await waitForCapture(
         candidateCliA,
         value.env,
         terminalId,
         'STATE=before-update'
       )
+
       const shellPid = Number(/UPDATE_PID=(\d+)/u.exec(before)?.[1])
       assert(shellPid)
       const ownerBefore = await readSessionStatus(value, terminalId)
+
       const updateEnvironment = {
         ...value.env,
         PATH: `${fakeBin}:${value.env.PATH}`,
         NPM_CONFIG_CACHE: npmCache
       }
+
       await runCli(updaterCli, updateEnvironment, ['update', '--yes', '--json'])
       assert.match(
         await waitForCapture(
@@ -725,12 +792,14 @@ describe('packaged stable terminal API lifecycle', () => {
       process.kill(shellPid, 0)
       const updatedHost = (await readHostRecord(value.runtimeDir)).value
       assert.notEqual(updatedHost.pid, daemonBefore.pid)
+
       const socket = await terminalHostSocket(
         value.dataDir,
         updatedHost,
         terminalId,
         /STATE=before-update/u
       )
+
       await socket.write('AFTER_UPDATE\n')
       await socket.waitForOutput('UPDATE_INPUT=AFTER_UPDATE')
       socket.close()
@@ -742,24 +811,30 @@ describe('packaged stable terminal API lifecycle', () => {
   it('cleans up the embedded candidate engine after failed startup', async () => {
     const value = await fixture('failed-startup')
     const transactionId = crypto.randomUUID()
+
     try {
       await writeStartupTransaction(value.dataDir, transactionId)
       await runCli(candidateCliA, value.env, ['start', '--json'])
       const host = (await readHostRecord(value.runtimeDir)).value
+
       const daemon = JSON.parse(
         await fs.readFile(path.join(value.runtimeDir, 'daemon.json'), 'utf8')
       )
+
       assert.equal(host.pid, daemon.pid)
       await runCli(candidateCliA, value.env, ['stop', '--json'])
       const deadline = Date.now() + 5_000
+
       while (Date.now() < deadline) {
         try {
           process.kill(host.pid, 0)
         } catch {
           break
         }
+
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
+
       assert.throws(() => process.kill(host.pid, 0))
       assert.deepEqual(
         (
@@ -777,6 +852,7 @@ describe('packaged stable terminal API lifecycle', () => {
   it('preserves pre-existing PTY owners when engine startup ownership is interrupted', async () => {
     const value = await fixture('interrupted-startup')
     const transactionId = crypto.randomUUID()
+
     try {
       await runCli(candidateCliA, value.env, ['start', '--json'])
       await runCli(candidateCliA, value.env, [
@@ -785,6 +861,7 @@ describe('packaged stable terminal API lifecycle', () => {
         value.repository,
         '--json'
       ])
+
       const created = await runCli(candidateCliA, value.env, [
         'terminal',
         'create',
@@ -798,13 +875,16 @@ describe('packaged stable terminal API lifecycle', () => {
         '-c',
         'printf "INTERRUPTED_PID=%s STATE=still-running\\n" "$$"; while :; do sleep 1; done'
       ])
+
       const terminalId = JSON.parse(created.stdout).id
+
       const before = await waitForCapture(
         candidateCliA,
         value.env,
         terminalId,
         'STATE=still-running'
       )
+
       const shellPid = /INTERRUPTED_PID=(\d+)/.exec(before)?.[1]
       assert(shellPid)
       const ownerBefore = await readSessionStatus(value, terminalId)
@@ -821,6 +901,7 @@ describe('packaged stable terminal API lifecycle', () => {
       )
       const daemonRecord = path.join(value.runtimeDir, 'daemon.json')
       const deadline = Date.now() + 5_000
+
       while (
         Date.now() < deadline &&
         (await fs
@@ -830,17 +911,20 @@ describe('packaged stable terminal API lifecycle', () => {
       ) {
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
+
       await assert.rejects(fs.access(daemonRecord))
       process.kill(ownerBefore.ownerPid, 0)
       process.kill(Number(shellPid), 0)
 
       await runCli(candidateCliA, value.env, ['start', '--json'])
+
       const recovered = await waitForCapture(
         candidateCliA,
         value.env,
         terminalId,
         'STATE=still-running'
       )
+
       assert.match(recovered, new RegExp(`INTERRUPTED_PID=${shellPid}\\b`))
       assert.equal(
         (await readSessionStatus(value, terminalId)).ownerPid,

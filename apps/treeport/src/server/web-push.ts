@@ -22,6 +22,7 @@ const stateSchema = Schema.Struct({
     })
   )
 })
+
 type PushState = Schema.Schema.Type<typeof stateSchema>
 
 // Subscription endpoints are browser-supplied URLs. Only known push services
@@ -36,11 +37,13 @@ function validateEndpoint(endpoint: string): void {
   }
 
   const url = new URL(endpoint)
+
   const allowed =
     url.hostname === 'fcm.googleapis.com' ||
     url.hostname === 'web.push.apple.com' ||
     url.hostname === 'updates.push.services.mozilla.com' ||
     url.hostname.endsWith('.notify.windows.com')
+
   if (
     !allowed ||
     url.protocol !== 'https:' ||
@@ -73,6 +76,7 @@ export class WebPushManager {
 
   static async open(dataDir: string): Promise<WebPushManager> {
     const filename = path.join(dataDir, 'web-push.json')
+
     const saved = await fs
       .readFile(filename, 'utf8')
       .catch((error: NodeJS.ErrnoException) => {
@@ -82,15 +86,19 @@ export class WebPushManager {
 
         throw error
       })
+
     // Do not silently rotate keys on corrupt state: that strands installed PWAs.
     const state =
       saved === null
         ? { ...webpush.generateVAPIDKeys(), subscriptions: [] }
         : Schema.decodeUnknownSync(stateSchema)(JSON.parse(saved))
+
     for (const record of state.subscriptions) {
       validateEndpoint(record.subscription.endpoint)
     }
+
     const manager = new WebPushManager(filename, state)
+
     if (saved === null) {
       await manager.persist(state)
     }
@@ -112,10 +120,12 @@ export class WebPushManager {
   ): Promise<void> {
     validateEndpoint(endpoint)
     const owner = JSON.stringify([identity.source, identity.login])
+
     return this.mutate((state) => {
       const existing = state.subscriptions.find(
         (record) => record.subscription.endpoint === endpoint
       )
+
       if (existing && existing.owner !== owner) {
         throw new DomainError(
           'PUSH_SUBSCRIPTION_OWNER',
@@ -127,6 +137,7 @@ export class WebPushManager {
       const subscriptions = state.subscriptions.filter(
         (record) => record.subscription.endpoint !== endpoint
       )
+
       if (subscription) {
         if (subscriptions.length >= 128) {
           throw new DomainError(
@@ -165,9 +176,11 @@ export class WebPushManager {
           JSON.stringify([viewer.identity.source, viewer.identity.login])
         )
     )
+
     const subscriptions = this.state.subscriptions.filter(
       (record) => !activeOwners.has(record.owner)
     )
+
     // Bound fan-out and network waits; expired endpoints are pruned without
     // deleting a subscription that was replaced while a delivery was in flight.
     for (
@@ -215,7 +228,9 @@ export class WebPushManager {
       await this.persist(state)
       this.state = state
     })
+
     this.writes = write.catch(() => {})
+
     return write
   }
 

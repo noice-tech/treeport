@@ -30,6 +30,7 @@ describe('runtime prerequisite checks', () => {
             args: ['--version'],
             timeoutMs: 5_000
           })
+
           return Effect.succeed({
             stdout: 'git version 2.49.0\n',
             stderr: '',
@@ -53,6 +54,7 @@ describe('runtime prerequisite checks', () => {
         )
       )
     )
+
     expect(requestFailure).toMatchObject({
       _tag: 'PrerequisiteError',
       prerequisite: 'git'
@@ -73,6 +75,7 @@ describe('runtime prerequisite checks', () => {
         )
       )
     )
+
     expect(exitFailure).toMatchObject({
       _tag: 'PrerequisiteError',
       prerequisite: 'git'

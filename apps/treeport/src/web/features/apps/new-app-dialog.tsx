@@ -77,14 +77,18 @@ export function NewAppDialog({
 }) {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+
   const [permissionDefinition, setPermissionDefinition] =
     useState<WebAppDefinition | null>(null)
+
   const [inputLauncher, setInputLauncher] = useState<LauncherDefinition | null>(
     null
   )
+
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [uploads, setUploads] = useState(0)
   const inputNames = inputLauncher ? launcherInputNames(inputLauncher.args) : []
+
   const launch = (
     launcher: LauncherDefinition,
     values: Record<string, string>
@@ -93,10 +97,12 @@ export function NewAppDialog({
     setSelectedIndex(0)
     setInputLauncher(null)
     setInputs({})
+
     const input: CreateTerminalInput = {
       name: launcher.name,
       initialTitle: launcher.name
     }
+
     if (launcher.shellCommand !== null) {
       input.shellCommand = launcher.shellCommand
     } else if (launcher.executable) {
@@ -129,18 +135,23 @@ export function NewAppDialog({
 
     onCreateTerminal(input)
   }
+
   const permissionSource = permissionDefinition
     ? permissionDefinition.source.type === 'package'
       ? `${permissionDefinition.source.scope} package ${permissionDefinition.source.source}`
       : 'this project'
     : ''
+
   const permissionDescription = describeWebAppPermissions(
     permissionDefinition?.permissions ?? []
   )
+
   const normalizedQuery = query.trim().toLocaleLowerCase()
+
   const showTerminal = ['terminal', 'shell'].some((keyword) =>
     keyword.includes(normalizedQuery)
   )
+
   const filteredLaunchers = launchers.filter((launcher) =>
     [
       launcher.name,
@@ -149,15 +160,20 @@ export function NewAppDialog({
       launcherCommand(launcher)
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
   )
+
   const showBrowser = 'browser'.includes(normalizedQuery)
+
   const filteredWebAppDefinitions = webAppDefinitions.filter((definition) =>
     [definition.title, definition.id].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery)
     )
   )
+
   const browserIndex = showTerminal ? 1 : 0
+
   const appActionCount =
     browserIndex + (showBrowser ? 1 : 0) + filteredWebAppDefinitions.length
+
   const noResults = appActionCount === 0 && filteredLaunchers.length === 0
 
   return (
@@ -191,6 +207,7 @@ export function NewAppDialog({
             autoComplete="off"
             onSubmit={(event) => {
               event.preventDefault()
+
               if (!launchDisabled && uploads === 0) {
                 launch(inputLauncher, inputs)
               }
@@ -216,6 +233,7 @@ export function NewAppDialog({
             </p>
             {inputNames.map((inputName, index) => {
               const id = `app-launcher-input-${inputName}`
+
               return (
                 <div key={inputName} className="flex flex-col gap-1.5">
                   <label
@@ -285,6 +303,7 @@ export function NewAppDialog({
                         '[data-app-launch]:not(:disabled)'
                       ) ?? []
                   )
+
                   if (actions.length === 0) {
                     return
                   }
@@ -292,6 +311,7 @@ export function NewAppDialog({
                   if (event.key === 'Enter') {
                     event.preventDefault()
                     actions[selectedIndex]?.click()
+
                     return
                   }
 
@@ -322,8 +342,10 @@ export function NewAppDialog({
                     '[data-app-launch]:not(:disabled)'
                   )
                 )
+
                 // SAFETY: The component contract supplies the asserted browser value used here.
                 const index = actions.indexOf(event.target as HTMLButtonElement)
+
                 if (index < 0 || actions.length < 2) {
                   return
                 }
@@ -400,6 +422,7 @@ export function NewAppDialog({
                 {filteredWebAppDefinitions.map((definition, index) => {
                   const actionIndex =
                     browserIndex + (showBrowser ? 1 : 0) + index
+
                   return (
                     <Button
                       key={definition.id}
@@ -420,6 +443,7 @@ export function NewAppDialog({
                           !definition.permissionsGranted
                         ) {
                           setPermissionDefinition(definition)
+
                           return
                         }
 
@@ -471,10 +495,12 @@ export function NewAppDialog({
                 ) : null}
                 {filteredLaunchers.map((launcher, index) => {
                   const actionIndex = appActionCount + index
+
                   const disambiguator = launcherDisambiguator(
                     launcher,
                     launchers
                   )
+
                   return (
                     <Button
                       key={launcher.id}
@@ -499,6 +525,7 @@ export function NewAppDialog({
                           launcherInputNames(launcher.args).length > 0
                         ) {
                           setInputLauncher(launcher)
+
                           return
                         }
 
@@ -593,6 +620,7 @@ export function NewAppDialog({
                 onClick={() => {
                   const definition = permissionDefinition
                   setPermissionDefinition(null)
+
                   if (definition) {
                     setQuery('')
                     setSelectedIndex(0)

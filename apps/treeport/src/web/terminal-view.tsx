@@ -97,12 +97,14 @@ export function TerminalView({
   const [alt, setAlt] = useState(false)
   const [shift, setShift] = useState(false)
   const [accessoryActionsOpen, setAccessoryActionsOpen] = useState(false)
+
   const [paste, setPaste] = useState({
     // SAFETY: The component contract supplies the asserted browser value used here.
     terminalId: null as string | null,
     open: false,
     value: ''
   })
+
   const [pasteUploading, setPasteUploading] = useState(false)
   const onStatusChangeRef = useRef(onStatusChange)
   const readyTraceTerminalRef = useRef<string | null>(null)
@@ -120,6 +122,7 @@ export function TerminalView({
 
     let disposed = false
     let timer: ReturnType<typeof setTimeout>
+
     const refresh = () => {
       void parseResponse(
         rpc.api.terminals[':terminalId'].$get({
@@ -138,7 +141,9 @@ export function TerminalView({
           }
         })
     }
+
     timer = setTimeout(refresh, 1000)
+
     return () => {
       disposed = true
       clearTimeout(timer)
@@ -148,10 +153,12 @@ export function TerminalView({
   useLayoutEffect(() => {
     if (!terminal || unavailable) {
       setSession(null)
+
       return
     }
 
     const correlationId = terminalCorrelation(terminal.id)
+
     if (correlationId) {
       browserTrace('terminal.render.committed', correlationId, {
         terminalId: terminal.id
@@ -160,11 +167,13 @@ export function TerminalView({
 
     const next = terminalSessions.acquire(terminal.id)
     setSession(next)
+
     return () => terminalSessions.release(terminal.id)
   }, [terminal?.id, unavailable])
 
   const activeSession =
     !unavailable && session?.terminalId === terminal?.id ? session : null
+
   const subscribeToActiveSession = useCallback(
     (onStoreChange: () => void) => {
       if (!activeSession) {
@@ -172,12 +181,14 @@ export function TerminalView({
       }
 
       let previous = activeSession.getSnapshot()
+
       if (previous.inputError) {
         toast.error(previous.inputError)
       }
 
       return activeSession.subscribe(() => {
         const next = activeSession.getSnapshot()
+
         if (next.pasteRequestSerial > previous.pasteRequestSerial) {
           setPaste((current) => ({
             terminalId: activeSession.terminalId,
@@ -203,22 +214,26 @@ export function TerminalView({
     },
     [activeSession]
   )
+
   const snapshot = useSyncExternalStore(
     subscribeToActiveSession,
     activeSession?.getSnapshot ?? (() => EMPTY_SNAPSHOT),
     () => EMPTY_SNAPSHOT
   )
+
   const pasteOpen = paste.terminalId === terminal?.id && paste.open
   const pasteValue = paste.terminalId === terminal?.id ? paste.value : ''
   const { titles: runtimeTitles } = useTerminalNavigationMetadata()
 
   useLayoutEffect(() => {
     const host = hostRef.current
+
     if (!host || !activeSession) {
       return
     }
 
     const correlationId = terminalCorrelation(activeSession.terminalId)
+
     if (correlationId) {
       browserTrace('terminal.xterm.mount.started', correlationId, {
         terminalId: activeSession.terminalId
@@ -226,6 +241,7 @@ export function TerminalView({
     }
 
     activeSession.mount(host)
+
     if (correlationId) {
       browserTrace('terminal.xterm.mount.finished', correlationId, {
         terminalId: activeSession.terminalId
@@ -252,6 +268,7 @@ export function TerminalView({
 
     readyTraceTerminalRef.current = terminal.id
     const correlationId = terminalCorrelation(terminal.id)
+
     if (!correlationId) {
       return
     }
@@ -259,12 +276,14 @@ export function TerminalView({
     browserTrace('terminal.attachment.ready', correlationId, {
       terminalId: terminal.id
     })
+
     const frame = requestAnimationFrame(() => {
       browserTrace('terminal.focus.observed', correlationId, {
         focused: document.activeElement?.matches('.wterm textarea') === true,
         terminalId: terminal.id
       })
     })
+
     return () => cancelAnimationFrame(frame)
   }, [snapshot.phase, terminal])
 
@@ -278,6 +297,7 @@ export function TerminalView({
       setAlt(false)
       setShift(false)
     })
+
     return () =>
       activeSession.setInputModifiers(
         { ctrl: false, alt: false, shift: false },
@@ -334,6 +354,7 @@ export function TerminalView({
       open: true,
       value: current.terminalId === terminal?.id ? current.value : ''
     }))
+
     if (!navigator.clipboard) {
       return
     }
@@ -371,6 +392,7 @@ export function TerminalView({
         onUploadingChange={setPasteUploading}
         onTextPaste={(event) => {
           const text = event.clipboardData.getData('text')
+
           if (!text) {
             return
           }
@@ -405,9 +427,11 @@ export function TerminalView({
       </div>
     </>
   )
+
   const visibleTitle = terminal
     ? runtimeTitles.get(terminal.id) || terminal.name
     : ''
+
   return (
     <section
       ref={shellRef}
@@ -470,6 +494,7 @@ export function TerminalView({
                   // wterm focuses on click once the selection is collapsed.
                   if (window.getSelection()?.isCollapsed === false) {
                     activeSession?.requestControl()
+
                     return
                   }
 

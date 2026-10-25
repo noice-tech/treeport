@@ -5,6 +5,7 @@ import { createServer } from 'node:net'
 
 const [socketPath, rawOwnerPid] = process.argv.slice(2)
 const ownerPid = Number(rawOwnerPid)
+
 if (!socketPath || !Number.isInteger(ownerPid) || ownerPid <= 1) {
   process.exit(1)
 }
@@ -14,6 +15,7 @@ if (!socketPath || !Number.isInteger(ownerPid) || ownerPid <= 1) {
 let working = false
 let generation = null
 let closing = false
+
 const emit = (data) => {
   // Deleting a terminal can close its PTY before the owner watcher runs.
   try {
@@ -23,12 +25,14 @@ const emit = (data) => {
     void close()
   }
 }
+
 const clear = (notify) => {
   if (working) {
     working = false
     emit('\u001b]9;4;0\u001b\\' + (notify ? '\u0007' : ''))
   }
 }
+
 const server = createServer((socket) => {
   let input = ''
   socket.setEncoding('utf8')
@@ -36,6 +40,7 @@ const server = createServer((socket) => {
   socket.on('error', () => {})
   socket.on('data', (data) => {
     input += data
+
     if (input.length > 1024) {
       socket.destroy()
     }
@@ -59,6 +64,7 @@ const server = createServer((socket) => {
       .catch(() => socket.destroy())
   })
 })
+
 const close = async () => {
   if (closing) {
     return
@@ -79,20 +85,25 @@ const ownerIdentity = () =>
     encoding: 'utf8',
     timeout: 1_000
   }).stdout?.trim() || null
+
 const identity = ownerIdentity()
+
 const ownerWatch = setInterval(() => {
   if (!identity || ownerIdentity() !== identity) {
     void close()
   }
 }, 2_000)
+
 const heartbeat = setInterval(() => {
   if (working) {
     emit('\u001b]9;4;3\u001b\\')
   }
 }, 60_000)
+
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.once(signal, () => void close())
 }
+
 server.once('error', () => {
   // Another hook may have started the per-session helper concurrently. Do not
   // unlink its socket; the caller will connect to the winning helper.
@@ -100,4 +111,5 @@ server.once('error', () => {
   clearInterval(ownerWatch)
   process.exitCode = 1
 })
+
 server.listen(socketPath, () => process.send?.('ready'))

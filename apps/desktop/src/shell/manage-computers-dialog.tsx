@@ -16,6 +16,7 @@ function ComputerEditor({
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [confirmRemoval, setConfirmRemoval] = useState(false)
+
   const changed =
     name.trim() !== (computer.nameOverride ?? '') ||
     origin.trim() !== computer.origin
@@ -31,18 +32,23 @@ function ComputerEditor({
 
   async function submit(event: FormEvent) {
     event.preventDefault()
+
     if (pending || !changed || confirmRemoval) {
       return
     }
 
     setError(null)
     setPending(true)
+
     const result = await window.treeportShell
       .updateComputer({ id: computer.id, origin, nameOverride: name })
       .catch(() => ({ ok: false, error: 'Could not save changes. Try again.' }))
+
     setPending(false)
+
     if (!result.ok) {
       setError(result.error)
+
       return
     }
 
@@ -152,12 +158,16 @@ function ComputerEditor({
 
                   setError(null)
                   setPending(true)
+
                   const removed = await window.treeportShell
                     .removeComputer(computer.id)
                     .catch(() => false)
+
                   setPending(false)
+
                   if (!removed) {
                     setError('Could not remove this computer. Try again.')
+
                     return
                   }
 
@@ -196,6 +206,7 @@ export function ManageComputersDialog({
   state: DesktopShellState
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
+
   return (
     <Dialog
       title="Manage computers"
@@ -299,9 +310,11 @@ export function ManageComputersDialog({
                   onDone={() => {
                     // Commit the collapsed editor before restoring keyboard focus.
                     flushSync(() => setEditingId(null))
+
                     const focusTarget =
                       document.getElementById(`edit-${computer.id}`) ??
                       document.getElementById('connect-computer')
+
                     focusTarget?.focus()
                   }}
                 />

@@ -95,6 +95,7 @@ function errorMessage(cause: unknown): string {
 function tokensMatch(actual: string, expected: string): boolean {
   const actualBuffer = Buffer.from(actual)
   const expectedBuffer = Buffer.from(expected)
+
   return (
     actualBuffer.byteLength === expectedBuffer.byteLength &&
     crypto.timingSafeEqual(actualBuffer, expectedBuffer)
@@ -111,6 +112,7 @@ export function makeTerminalHostServer(
 > {
   return Effect.gen(function* () {
     yield* options.sessions.initialize().pipe(Effect.mapError(serverError))
+
     const record: TerminalHostRecord = {
       hostId: options.hostId,
       hostKey: options.hostKey,
@@ -118,6 +120,7 @@ export function makeTerminalHostServer(
       socketPath: options.socketPath,
       startedAt: options.startedAt ?? new Date().toISOString()
     }
+
     if (options.launcherPath) {
       Object.assign(record, { launcherPath: options.launcherPath })
     }
@@ -129,6 +132,7 @@ export function makeTerminalHostServer(
     const socketServer = yield* NodeSocketServer.make({
       path: options.socketPath
     }).pipe(Effect.mapError(serverError))
+
     yield* nodePromise(() => fs.chmod(options.socketPath, 0o600))
     yield* nodePromise(() =>
       fs.writeFile(temporaryRecordPath, `${JSON.stringify(record)}\n`, {
@@ -141,12 +145,14 @@ export function makeTerminalHostServer(
       Effect.gen(function* () {
         const ownsRecord = yield* nodePromise<unknown>(async () => {
           const value = await fs.readFile(options.recordPath, 'utf8')
+
           return JSON.parse(value)
         }).pipe(
           Effect.flatMap(decodeTerminalHostRecord),
           Effect.map((current) => current.hostId === options.hostId),
           Effect.catchAll(() => Effect.succeed(false))
         )
+
         if (ownsRecord) {
           yield* Effect.forEach(
             [options.recordPath, options.socketPath],
@@ -168,14 +174,17 @@ export function makeTerminalHostServer(
         Effect.gen(function* () {
           const netSocket = yield* NodeSocket.NetSocket
           netSocket.setNoDelay(true)
+
           const requests = yield* Effect.acquireRelease(
             Queue.bounded<AdmittedRequest>(1024),
             Queue.shutdown
           )
+
           const outgoing = yield* Effect.acquireRelease(
             Queue.unbounded<OutboundFrame>(),
             Queue.shutdown
           )
+
           const connection: HostConnection = {
             socket: netSocket,
             authenticated: false,
@@ -194,8 +203,10 @@ export function makeTerminalHostServer(
           ) => {
             const scope = subscriptions.get(terminalId)
             subscriptions.delete(terminalId)
+
             return scope ? Scope.close(scope, Exit.void) : Effect.void
           }
+
           const closeSubscriptions = (
             subscriptions: Map<string, Scope.CloseableScope>
           ) =>
@@ -212,6 +223,7 @@ export function makeTerminalHostServer(
               yield* closeSubscriptions(connection.outputScopes)
               yield* closeSubscriptions(connection.runtimeScopes)
               yield* closeSubscriptions(connection.outputPauseScopes)
+
               if (connection.queryAuthorityTouched) {
                 yield* options.sessions
                   .restoreHostQueryAuthority()
@@ -233,14 +245,17 @@ export function makeTerminalHostServer(
           const enqueueResponse = (frame: TerminalHostResponseFrame) =>
             Effect.gen(function* () {
               const completion = yield* Deferred.make<void>()
+
               const encoded = yield* encodeTerminalHostFrame(frame).pipe(
                 Effect.mapError(serverError)
               )
+
               const offered = yield* Queue.offer(outgoing, {
                 encoded,
                 queuedEventBytes: 0,
                 completion
               })
+
               if (!offered) {
                 return yield* Effect.interrupt
               }
@@ -287,11 +302,13 @@ export function makeTerminalHostServer(
                 frame,
                 options.binaryOutput
               ).pipe(Effect.mapError(serverError))
+
               if (
                 connection.queuedEventBytes + encoded.byteLength >
                 TERMINAL_HOST_MAX_QUEUED_EVENT_BYTES
               ) {
                 connection.socket.destroy()
+
                 return yield* Effect.fail(
                   new TerminalHostServerError({
                     message: 'Terminal host event queue exceeded its hard limit'
@@ -300,16 +317,19 @@ export function makeTerminalHostServer(
               }
 
               connection.queuedEventBytes += encoded.byteLength
+
               const offered = yield* Queue.offer(outgoing, {
                 encoded,
                 queuedEventBytes: encoded.byteLength,
                 completion: null
               })
+
               if (!offered) {
                 connection.queuedEventBytes = Math.max(
                   0,
                   connection.queuedEventBytes - encoded.byteLength
                 )
+
                 return yield* Effect.interrupt
               }
 
@@ -320,10 +340,12 @@ export function makeTerminalHostServer(
                 !connection.outputPauseScopes.has(frame.data.terminalId)
               ) {
                 const pauseScope = yield* Scope.make()
+
                 const paused = yield* Scope.extend(
                   options.sessions.pauseOutput(frame.data.terminalId),
                   pauseScope
                 )
+
                 if (paused) {
                   connection.outputPauseScopes.set(
                     frame.data.terminalId,
@@ -339,12 +361,15 @@ export function makeTerminalHostServer(
             Effect.gen(function* () {
               yield* closeSubscription(connection.outputScopes, terminalId)
               const scope = yield* Scope.make()
+
               const attachment = yield* Scope.extend(
                 options.sessions.attach(terminalId),
                 scope
               )
+
               if (!attachment) {
                 yield* Scope.close(scope, Exit.void)
+
                 return null
               }
 
@@ -360,6 +385,7 @@ export function makeTerminalHostServer(
               )
               connection.outputScopes.set(terminalId, scope)
               const { output: _output, ...snapshot } = attachment
+
               return snapshot
             })
 
@@ -392,6 +418,7 @@ export function makeTerminalHostServer(
                     'Handshake is required'
                   )
                   connection.socket.destroy()
+
                   return
                 }
 
@@ -399,9 +426,11 @@ export function makeTerminalHostServer(
                   'handshake',
                   frame.input
                 )
+
                 if (!tokensMatch(input.token, options.token)) {
                   yield* fail(frame.id, 'AUTH_FAILED', 'Authentication failed')
                   connection.socket.destroy()
+
                   return
                 }
 
@@ -412,6 +441,7 @@ export function makeTerminalHostServer(
                     'Terminal host key differs'
                   )
                   connection.socket.destroy()
+
                   return
                 }
 
@@ -424,6 +454,7 @@ export function makeTerminalHostServer(
                   startedAt: record.startedAt,
                   liveSessionCount: yield* options.sessions.sessionCount
                 })
+
                 return
               }
 
@@ -433,6 +464,7 @@ export function makeTerminalHostServer(
                   'UNSUPPORTED_METHOD',
                   `Unsupported terminal host method: ${frame.method}`
                 )
+
                 return
               }
 
@@ -442,6 +474,7 @@ export function makeTerminalHostServer(
                   'HOST_SHUTTING_DOWN',
                   'The terminal host is shutting down'
                 )
+
                 return
               }
 
@@ -452,12 +485,14 @@ export function makeTerminalHostServer(
                     'ALREADY_AUTHENTICATED',
                     'Handshake is complete'
                   )
+
                   return
                 case 'create': {
                   const input = yield* decodeTerminalHostInput(
                     'create',
                     frame.input
                   )
+
                   const createInput: TerminalCreateInput = {
                     terminalId: input.terminalId,
                     worktreeId: input.worktreeId,
@@ -504,90 +539,114 @@ export function makeTerminalHostServer(
 
                   yield* options.sessions.createTerminal(createInput)
                   yield* respond<'create'>(frame.id, null)
+
                   return
                 }
+
                 case 'inventory': {
                   const input = yield* decodeTerminalHostInput(
                     'inventory',
                     frame.input
                   )
+
                   yield* respond<'inventory'>(
                     frame.id,
                     yield* options.sessions.listTerminals(input.worktreeId)
                   )
+
                   return
                 }
+
                 case 'state': {
                   const input = yield* decodeTerminalHostInput(
                     'state',
                     frame.input
                   )
+
                   yield* respond<'state'>(
                     frame.id,
                     yield* options.sessions.terminalState(input.terminalId)
                   )
+
                   return
                 }
+
                 case 'attach': {
                   const input = yield* decodeTerminalHostInput(
                     'attach',
                     frame.input
                   )
+
                   yield* respond<'attach'>(
                     frame.id,
                     yield* installOutput(input.terminalId)
                   )
+
                   return
                 }
+
                 case 'unsubscribeOutput': {
                   const input = yield* decodeTerminalHostInput(
                     'unsubscribeOutput',
                     frame.input
                   )
+
                   yield* closeSubscription(
                     connection.outputScopes,
                     input.terminalId
                   )
                   yield* respond<'unsubscribeOutput'>(frame.id, null)
+
                   return
                 }
+
                 case 'subscribeRuntime': {
                   const input = yield* decodeTerminalHostInput(
                     'subscribeRuntime',
                     frame.input
                   )
+
                   yield* installRuntime(input.terminalId)
                   yield* respond<'subscribeRuntime'>(frame.id, null)
+
                   return
                 }
+
                 case 'unsubscribeRuntime': {
                   const input = yield* decodeTerminalHostInput(
                     'unsubscribeRuntime',
                     frame.input
                   )
+
                   yield* closeSubscription(
                     connection.runtimeScopes,
                     input.terminalId
                   )
                   yield* respond<'unsubscribeRuntime'>(frame.id, null)
+
                   return
                 }
+
                 case 'runtimeState': {
                   const input = yield* decodeTerminalHostInput(
                     'runtimeState',
                     frame.input
                   )
+
                   yield* respond<'runtimeState'>(
                     frame.id,
                     yield* options.sessions.runtimeState(input.terminalId)
                   )
+
                   return
                 }
+
                 case 'write': {
                   const input = yield* decodeTerminalHostInput(
                     'write',
                     frame.input
                   )
+
                   yield* options.sessions.write(
                     input.terminalId,
                     input.encoding === 'base64'
@@ -596,13 +655,16 @@ export function makeTerminalHostServer(
                     input.authority
                   )
                   yield* respond<'write'>(frame.id, null)
+
                   return
                 }
+
                 case 'prepareQueryAuthority': {
                   const input = yield* decodeTerminalHostInput(
                     'prepareQueryAuthority',
                     frame.input
                   )
+
                   connection.queryAuthorityTouched = true
                   yield* respond<'prepareQueryAuthority'>(
                     frame.id,
@@ -610,13 +672,16 @@ export function makeTerminalHostServer(
                       input.terminalId
                     )
                   )
+
                   return
                 }
+
                 case 'activateQueryAuthority': {
                   const input = yield* decodeTerminalHostInput(
                     'activateQueryAuthority',
                     frame.input
                   )
+
                   connection.queryAuthorityTouched = true
                   yield* options.sessions.activateQueryAuthority(
                     input.terminalId,
@@ -626,38 +691,47 @@ export function makeTerminalHostServer(
                     input.cellSize ?? null
                   )
                   yield* respond<'activateQueryAuthority'>(frame.id, null)
+
                   return
                 }
+
                 case 'hostQueryAuthority': {
                   const input = yield* decodeTerminalHostInput(
                     'hostQueryAuthority',
                     frame.input
                   )
+
                   connection.queryAuthorityTouched = true
                   yield* options.sessions.useHostQueryAuthority(
                     input.terminalId
                   )
                   yield* respond<'hostQueryAuthority'>(frame.id, null)
+
                   return
                 }
+
                 case 'resize': {
                   const input = yield* decodeTerminalHostInput(
                     'resize',
                     frame.input
                   )
+
                   yield* options.sessions.resize(
                     input.terminalId,
                     input.cols,
                     input.rows
                   )
                   yield* respond<'resize'>(frame.id, null)
+
                   return
                 }
+
                 case 'capture': {
                   const input = yield* decodeTerminalHostInput(
                     'capture',
                     frame.input
                   )
+
                   yield* respond<'capture'>(
                     frame.id,
                     yield* options.sessions.captureTerminal(
@@ -665,78 +739,99 @@ export function makeTerminalHostServer(
                       input.lines
                     )
                   )
+
                   return
                 }
+
                 case 'rename': {
                   const input = yield* decodeTerminalHostInput(
                     'rename',
                     frame.input
                   )
+
                   yield* options.sessions.renameTerminal(
                     input.terminalId,
                     input.name,
                     input.updatedAt
                   )
                   yield* respond<'rename'>(frame.id, null)
+
                   return
                 }
+
                 case 'processes': {
                   const input = yield* decodeTerminalHostInput(
                     'processes',
                     frame.input
                   )
+
                   yield* respond<'processes'>(
                     frame.id,
                     yield* options.sessions.listProcesses(input.worktreeId)
                   )
+
                   return
                 }
+
                 case 'titleState': {
                   const input = yield* decodeTerminalHostInput(
                     'titleState',
                     frame.input
                   )
+
                   yield* respond<'titleState'>(
                     frame.id,
                     yield* options.sessions.terminalTitleState(input.terminalId)
                   )
+
                   return
                 }
+
                 case 'signal': {
                   const input = yield* decodeTerminalHostInput(
                     'signal',
                     frame.input
                   )
+
                   yield* options.sessions.signalTerminal(
                     input.terminalId,
                     input.signal
                   )
                   yield* respond<'signal'>(frame.id, null)
+
                   return
                 }
+
                 case 'kill': {
                   const input = yield* decodeTerminalHostInput(
                     'kill',
                     frame.input
                   )
+
                   yield* options.sessions.killTerminal(input.terminalId)
                   yield* respond<'kill'>(frame.id, null)
+
                   return
                 }
+
                 case 'killWorktree': {
                   const input = yield* decodeTerminalHostInput(
                     'killWorktree',
                     frame.input
                   )
+
                   yield* respond<'killWorktree'>(
                     frame.id,
                     yield* options.sessions.killWorktree(input.worktreeId)
                   )
+
                   return
                 }
+
                 case 'shutdown': {
                   yield* decodeTerminalHostInput('shutdown', frame.input)
                   const liveSessionCount = yield* options.sessions.sessionCount
+
                   if (liveSessionCount > 0) {
                     yield* fail(
                       frame.id,
@@ -744,18 +839,21 @@ export function makeTerminalHostServer(
                       'The terminal host still owns live or exited sessions',
                       { liveSessionCount }
                     )
+
                     return
                   }
 
                   const accepted = yield* Ref.modify(shuttingDown, (active) =>
                     active ? [false, active] : [true, true]
                   )
+
                   if (!accepted) {
                     yield* fail(
                       frame.id,
                       'HOST_SHUTTING_DOWN',
                       'The terminal host is shutting down'
                     )
+
                     return
                   }
 
@@ -776,16 +874,19 @@ export function makeTerminalHostServer(
             )
 
           const write = yield* socket.writer
+
           const writer = Effect.forever(
             Effect.gen(function* () {
               const frames = Array.from(
                 yield* Queue.takeBetween(outgoing, 1, 64)
               )
+
               // Drain only already-queued frames, preserving every sequence and
               // response fence. Bound each copy; snapshots may exceed the batch.
               for (let index = 0; index < frames.length;) {
                 const batch = [frames[index++]!]
                 let bytes = batch[0]!.encoded.length
+
                 while (
                   index < frames.length &&
                   bytes + frames[index]!.encoded.length <= 256 * 1024
@@ -794,6 +895,7 @@ export function makeTerminalHostServer(
                   bytes += frame.encoded.length
                   batch.push(frame)
                 }
+
                 yield* write(
                   batch.length === 1
                     ? batch[0]!.encoded
@@ -802,15 +904,18 @@ export function makeTerminalHostServer(
                         bytes
                       )
                 )
+
                 for (const frame of batch) {
                   connection.queuedEventBytes = Math.max(
                     0,
                     connection.queuedEventBytes - frame.queuedEventBytes
                   )
+
                   if (frame.completion) {
                     yield* Deferred.succeed(frame.completion, undefined)
                   }
                 }
+
                 if (
                   connection.queuedEventBytes <=
                     TERMINAL_HOST_EVENT_LOW_WATERMARK &&
@@ -823,6 +928,7 @@ export function makeTerminalHostServer(
           )
 
           const decode = makeTerminalHostFrameDecoder()
+
           const reader = socket.run(
             (chunk) =>
               decode(chunk).pipe(
@@ -830,6 +936,7 @@ export function makeTerminalHostServer(
                   Effect.forEach(frames, (frame) => {
                     if (frame.type !== 'request') {
                       connection.socket.destroy()
+
                       return Effect.void
                     }
 
@@ -861,6 +968,7 @@ export function makeTerminalHostServer(
             Effect.gen(function* () {
               const admitted = yield* Queue.take(requests)
               const request = executeRequest(admitted)
+
               if (
                 connection.authenticated &&
                 admitted.frame.method === 'kill'
@@ -881,6 +989,7 @@ export function makeTerminalHostServer(
           }
 
           const failure = Cause.squash(cause)
+
           return EffectSocket.isSocketError(failure)
             ? Effect.void
             : Effect.logError('Terminal host connection failed').pipe(

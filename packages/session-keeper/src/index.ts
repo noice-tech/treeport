@@ -10,6 +10,7 @@ import {
   sessionStatusSchema,
   type SessionStatus
 } from './protocol.js'
+
 export * from './protocol.js'
 
 // Release artifacts and runtime reads share this bound. A corrupt or growing
@@ -30,6 +31,7 @@ async function readNativePayload(
   expectedSize: number | null
 ): Promise<Buffer> {
   const metadata = await file.stat()
+
   if (
     !metadata.isFile() ||
     !Number.isSafeInteger(metadata.size) ||
@@ -44,6 +46,7 @@ async function readNativePayload(
 
   const bytes = Buffer.alloc(metadata.size)
   let offset = 0
+
   while (offset < bytes.length) {
     const { bytesRead } = await file.read(
       bytes,
@@ -51,16 +54,19 @@ async function readNativePayload(
       Math.min(64 * 1024, bytes.length - offset),
       offset
     )
+
     if (bytesRead === 0) {
       throw new Error('Session keeper payload changed while reading')
     }
 
     offset += bytesRead
   }
+
   // Fixed positional reads never follow an append stream indefinitely. Check
   // its boundary and metadata before using bytes from a concurrently edited file.
   const tail = await file.read(Buffer.alloc(1), 0, 1, bytes.length)
   const after = await file.stat()
+
   if (
     tail.bytesRead !== 0 ||
     after.size !== metadata.size ||
@@ -92,12 +98,14 @@ async function verifyCachedKeeper(
 
       return null
     })
+
   if (existing === null) {
     return false
   }
 
   try {
     const metadata = await existing.stat()
+
     if (
       !metadata.isFile() ||
       metadata.size !== bytes.length ||
@@ -135,6 +143,7 @@ async function sessionControl(
     const id = crypto.randomUUID()
     let buffer = ''
     let done = false
+
     const finish = (status: SessionStatus | null, error: Error | null) => {
       if (done) {
         return
@@ -142,12 +151,14 @@ async function sessionControl(
 
       done = true
       socket.destroy()
+
       if (error) {
         reject(error)
       } else if (status) {
         resolve(status)
       }
     }
+
     socket.setEncoding('utf8')
     socket.setTimeout(10000, () =>
       finish(null, new Error('Session control timed out'))
@@ -161,12 +172,15 @@ async function sessionControl(
     )
     socket.on('data', (chunk: string) => {
       buffer += chunk
+
       if (Buffer.byteLength(buffer) > 8 * 1024 * 1024) {
         finish(null, new Error('Session control frame exceeds its limit'))
+
         return
       }
 
       const boundary = buffer.indexOf('\n')
+
       if (boundary < 0) {
         return
       }
@@ -176,6 +190,7 @@ async function sessionControl(
           const frame = sessionFrameSchema.parse(
             JSON.parse(buffer.slice(0, boundary))
           )
+
           if (frame.type === 'fault') {
             throw new Error(frame.message)
           }
@@ -226,8 +241,10 @@ export async function closeSession(session: SessionControl): Promise<void> {
         method: 'close',
         metadata: null
       })
+
       return false
     })
+
   if (live) {
     await sessionControl(session, 'terminate')
   }
@@ -248,13 +265,16 @@ export async function withSessionRecovery<A>(
     getSessionKeeperPayload(),
     path.join(directory, '..', '.keeper')
   )
+
   const child = spawn(executable, ['--recover', directory], {
     stdio: ['pipe', 'pipe', 'pipe']
   })
+
   let diagnostic = ''
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
     diagnostic = (diagnostic + chunk).slice(-8192)
   })
+
   const exited = new Promise<void>((resolve, reject) => {
     child.once('error', reject)
     child.once('exit', (code, signal) => {
@@ -265,10 +285,12 @@ export async function withSessionRecovery<A>(
       }
     })
   })
+
   // Observe errors while a caller is reading retained output under the lease.
   void exited.catch(() => undefined)
   child.stdin.on('error', () => undefined)
   let timer: ReturnType<typeof setTimeout> | null = null
+
   try {
     const status = await new Promise<SessionStatus>((resolve, reject) => {
       let buffer = ''
@@ -282,12 +304,15 @@ export async function withSessionRecovery<A>(
       )
       child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
         buffer += chunk
+
         if (Buffer.byteLength(buffer) > 64 * 1024) {
           reject(new Error('Invalid session recovery status'))
+
           return
         }
 
         const boundary = buffer.indexOf('\n')
+
         if (boundary < 0) {
           return
         }
@@ -300,6 +325,7 @@ export async function withSessionRecovery<A>(
           .then(resolve, reject)
       })
     })
+
     if (timer !== null) {
       clearTimeout(timer)
     }
@@ -307,6 +333,7 @@ export async function withSessionRecovery<A>(
     const result = await use(status)
     child.stdin.end(JSON.stringify(operation) + '\n')
     await exited
+
     return result
   } finally {
     if (timer !== null) {
@@ -337,15 +364,19 @@ export async function prepareSessionKeeper(
     payload,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
   )
+
   let bytes: Buffer
+
   try {
     bytes = await readNativePayload(source, null)
   } finally {
     await source.close()
   }
+
   const hash = crypto.createHash('sha256').update(bytes).digest('hex')
   await fs.mkdir(directory, { recursive: true, mode: 0o700 })
   const parent = await fs.lstat(directory)
+
   if (
     !parent.isDirectory() ||
     parent.uid !== process.getuid?.() ||
@@ -357,19 +388,23 @@ export async function prepareSessionKeeper(
   }
 
   const binary = path.join(directory, `keeper-${hash}`)
+
   if (await verifyCachedKeeper(binary, bytes, hash, parent.uid)) {
     return binary
   }
 
   const temporary = `${binary}-${crypto.randomUUID()}.tmp`
+
   try {
     const file = await fs.open(temporary, 'wx', 0o700)
+
     try {
       await file.writeFile(bytes)
       await file.sync()
     } finally {
       await file.close()
     }
+
     // Hard-link publication is exclusive. A racing launcher may have already
     // published this hash; verify its inode instead of replacing it via rename.
     const published = await fs
@@ -384,6 +419,7 @@ export async function prepareSessionKeeper(
 
         return false
       })
+
     if (
       !published &&
       !(await verifyCachedKeeper(binary, bytes, hash, parent.uid))
@@ -393,5 +429,6 @@ export async function prepareSessionKeeper(
   } finally {
     await fs.rm(temporary, { force: true })
   }
+
   return binary
 }

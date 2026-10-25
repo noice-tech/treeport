@@ -11,6 +11,7 @@ import { prepareSessionKeeper, SESSION_KEEPER_MAX_PAYLOAD_BYTES } from './index'
 const execute = promisify(execFile)
 
 const roots: string[] = []
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))
@@ -85,6 +86,7 @@ it.each(['empty', 'directory', 'symlink', 'oversized'] as const)(
     roots.push(root)
     const payload = path.join(root, 'payload')
     const cache = path.join(root, 'cache')
+
     if (kind === 'directory') {
       await fs.mkdir(payload)
     } else if (kind === 'symlink') {
@@ -93,6 +95,7 @@ it.each(['empty', 'directory', 'symlink', 'oversized'] as const)(
       await fs.symlink(outside, payload)
     } else {
       const file = await fs.open(payload, 'wx', 0o600)
+
       try {
         if (kind === 'oversized') {
           // Sparse, owned fixture: no large allocation needed to exercise the
@@ -107,6 +110,7 @@ it.each(['empty', 'directory', 'symlink', 'oversized'] as const)(
     await expect(prepareSessionKeeper(payload, cache)).rejects.toThrow(
       'bounded'
     )
+
     if (kind === 'symlink') {
       expect(await fs.readFile(path.join(root, 'outside'), 'utf8')).toBe(
         'untouched'
@@ -114,6 +118,7 @@ it.each(['empty', 'directory', 'symlink', 'oversized'] as const)(
     }
 
     await expect(fs.lstat(cache)).rejects.toMatchObject({ code: 'ENOENT' })
+
     if (kind === 'oversized') {
       expect((await fs.stat(payload)).size).toBe(
         SESSION_KEEPER_MAX_PAYLOAD_BYTES + 1
@@ -128,9 +133,11 @@ it('refuses a FIFO source payload in an isolated, deadline-bounded launcher', as
   const payload = path.join(root, 'payload')
   const cache = path.join(root, 'cache')
   await execute('mkfifo', [payload])
+
   const module = pathToFileURL(
     path.resolve(import.meta.dirname, '../dist/index.js')
   ).href
+
   // A regression may block the filesystem worker in open/read. Confine that
   // probe to our own child launcher, rather than hanging the test runner's pool.
   const result = await execute(
@@ -148,6 +155,7 @@ it('refuses a FIFO source payload in an isolated, deadline-bounded launcher', as
     ],
     { timeout: 2000, maxBuffer: 1024 }
   )
+
   expect(result.stdout.trim()).toBe('refused')
   expect((await fs.lstat(payload)).isFIFO()).toBe(true)
   await expect(fs.lstat(cache)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -163,11 +171,13 @@ it('refuses an oversized cached inode without truncating or replacing it', async
   const hash = crypto.createHash('sha256').update('trusted-build').digest('hex')
   const binary = path.join(cache, `keeper-${hash}`)
   const file = await fs.open(binary, 'wx', 0o700)
+
   try {
     await file.truncate(SESSION_KEEPER_MAX_PAYLOAD_BYTES + 1)
   } finally {
     await file.close()
   }
+
   const before = await fs.stat(binary)
   await expect(prepareSessionKeeper(payload, cache)).rejects.toThrow(
     'does not identify'
@@ -185,12 +195,15 @@ it('publishes one immutable cache inode for concurrent launchers and leaves no t
   const cache = path.join(root, 'cache')
   const bytes = Buffer.alloc(1024 * 1024, 7)
   await fs.writeFile(payload, bytes, { mode: 0o400 })
+
   const winners = await Promise.all(
     Array.from({ length: 16 }, async () => {
       const binary = await prepareSessionKeeper(payload, cache)
+
       return { binary, inode: (await fs.stat(binary)).ino }
     })
   )
+
   expect(new Set(winners.map((value) => value.binary)).size).toBe(1)
   expect(new Set(winners.map((value) => value.inode)).size).toBe(1)
   const winner = winners[0]!

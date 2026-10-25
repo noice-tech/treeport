@@ -62,12 +62,14 @@ export function makeBrowser(
       }
 
       const options = terminalOptions(state.terminalId)
+
       if (!core) {
         // Ghostty compiles its WASM asynchronously. The session only connects
         // once the terminal is open, so no output can arrive before it exists.
         loading = true
         void loadGhosttyVtModule().then((module) => {
           loading = false
+
           if (state.disposed) {
             return
           }
@@ -75,6 +77,7 @@ export function makeBrowser(
           core = new GhosttyTerminalCore(module, options.scrollbackLines)
           openTerminal()
         }, dependencies.failRendering)
+
         return
       }
 
@@ -82,6 +85,7 @@ export function makeBrowser(
       const element = document.createElement('div')
       element.className = 'terminal-wterm'
       wrapper.appendChild(element)
+
       const terminal = new WTerm(element, {
         core,
         // Treeport owns the grid size: controllers propose it and the server
@@ -93,6 +97,7 @@ export function makeBrowser(
           }
 
           const modifiers = state.inputModifiers
+
           if (modifiers) {
             state.inputModifiers = null
 
@@ -146,11 +151,13 @@ export function makeBrowser(
           })
         }
       })
+
       setTerminalFontSize(terminal, state.fontSize)
       // wterm focuses its input during initialization; keep focus where it was.
       const focused = document.activeElement
       // With a supplied core, initialization completes synchronously.
       void terminal.init().catch(dependencies.failRendering)
+
       if (focused instanceof HTMLElement && focused !== document.body) {
         focused.focus({ preventScroll: true })
       } else {
@@ -166,12 +173,15 @@ export function makeBrowser(
       // scrolls the viewport past every row.
       const grid = element.querySelector<HTMLElement>('.term-grid')
       const input = element.querySelector<HTMLElement>('textarea')
+
       if (grid && input) {
         inputObserver = new ResizeObserver(() => {
           const row = grid.querySelector<HTMLElement>(
             '.term-row:not(.term-scrollback-row)'
           )
+
           const cursor = terminal.bridge?.getCursor()
+
           if (row && cursor) {
             input.style.top = `${grid.offsetTop + row.offsetTop + cursor.row * row.offsetHeight}px`
           }
@@ -180,12 +190,15 @@ export function makeBrowser(
       }
 
       let hoveredLink: string | null = null
+
       const hoverLink = (event: MouseEvent) => {
         const link =
           event.target instanceof Element
             ? event.target.closest<HTMLAnchorElement>('a.term-link')
             : null
+
         const href = link?.href ?? null
+
         if (href === hoveredLink) {
           return
         }
@@ -193,6 +206,7 @@ export function makeBrowser(
         hoveredLink = href
         dependencies.update({ hoveredLink: href })
       }
+
       wrapper.addEventListener('mouseover', hoverLink)
       wrapper.addEventListener('mouseleave', hoverLink)
       wrapper.addEventListener(
@@ -202,6 +216,7 @@ export function makeBrowser(
             event.target instanceof Element
               ? event.target.closest<HTMLAnchorElement>('a.term-link')
               : null
+
           if (!link) {
             return
           }
@@ -209,6 +224,7 @@ export function makeBrowser(
           // Treeport opens links itself instead of navigating the app window.
           event.preventDefault()
           options.linkHandler.activate(event, link.href)
+
           if (window.getSelection()?.isCollapsed !== false) {
             terminal.focus()
           }
@@ -236,6 +252,7 @@ export function makeBrowser(
         'keydown',
         (event) => {
           const key = event.key.toLowerCase()
+
           const modifierOnly = [
             'alt',
             'altgraph',
@@ -243,13 +260,17 @@ export function makeBrowser(
             'meta',
             'shift'
           ].includes(key)
+
           const mappedInput = terminalKeyboardInput(
             event,
             terminal.bridge?.cursorKeysApp() ?? false
           )
+
           const browserOwnedMetaShortcut = event.metaKey && mappedInput === null
+
           const copyOrPasteShortcut =
             event.ctrlKey && event.shiftKey && (key === 'c' || key === 'v')
+
           if (
             !modifierOnly &&
             !browserOwnedMetaShortcut &&
@@ -291,23 +312,28 @@ export function makeBrowser(
           dependencies.requestControl()
           dependencies.pasteResolvedFilePaths(paths)
         }) ?? null
+
       const transfersFiles = (transfer: DataTransfer | null) =>
         Boolean(
           transfer &&
           (Array.from(transfer.types).includes('Files') ||
             Array.from(transfer.items).some((item) => item.kind === 'file'))
         )
+
       const filesFromTransfer = (transfer: DataTransfer | null): File[] => {
         const files = Array.from(transfer?.files ?? [])
+
         if (files.length) {
           return files
         }
 
         return Array.from(transfer?.items ?? []).flatMap((item) => {
           const file = item.kind === 'file' ? item.getAsFile() : null
+
           return file ? [file] : []
         })
       }
+
       // iOS drags a long-pressed selection with a web archive file. Dropping
       // terminal text back onto the terminal must not upload and paste it.
       let draggingTerminalText = false
@@ -349,6 +375,7 @@ export function makeBrowser(
         'paste',
         (event) => {
           const files = filesFromTransfer(event.clipboardData)
+
           if (!files.length) {
             return
           }
@@ -368,6 +395,7 @@ export function makeBrowser(
     function restoreTerminal(snapshot: string): void {
       const terminal = state.terminal
       const terminalCore = terminal?.bridge
+
       if (!terminal || !(terminalCore instanceof GhosttyTerminalCore)) {
         return
       }
@@ -376,6 +404,7 @@ export function makeBrowser(
       // callback per byte blocks the page for most of a second.
       const binary = atob(snapshot)
       const bytes = new Uint8Array(binary.length)
+
       for (let index = 0; index < binary.length; index++) {
         bytes[index] = binary.charCodeAt(index)
       }

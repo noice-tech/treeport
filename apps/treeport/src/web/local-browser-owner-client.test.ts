@@ -11,6 +11,7 @@ afterEach(() => {
 it('bounds ownership startup, cancels abandoned claims, and keeps a granted owner connected', async () => {
   vi.useFakeTimers()
   const events = new EventEmitter()
+
   const socket = {
     connected: true,
     on: events.on.bind(events),
@@ -20,16 +21,20 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
       events.emit('disconnect')
     })
   }
+
   const socketFactory = () => {
     socket.connected = true
+
     return socket
   }
+
   const handlers = {
     setRuntimeControl: vi.fn(async () => true),
     requestClose: vi.fn(async () => true),
     closed: vi.fn(),
     disconnected: vi.fn()
   }
+
   const ticket = { ticket: 'a'.repeat(43), challenge: 'b'.repeat(43) }
 
   const timedOut = connectLocalBrowserOwner(
@@ -40,6 +45,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
     new AbortController().signal,
     socketFactory
   )
+
   const timeoutFailure = expect(timedOut).rejects.toThrow('did not respond')
   await vi.advanceTimersByTimeAsync(10_000)
   await timeoutFailure
@@ -49,6 +55,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
   events.removeAllListeners()
 
   const controller = new AbortController()
+
   const canceled = connectLocalBrowserOwner(
     'app_browser_1',
     ticket,
@@ -57,6 +64,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
     controller.signal,
     socketFactory
   )
+
   const cancelFailure = expect(canceled).rejects.toThrow('canceled')
   controller.abort()
   await cancelFailure
@@ -65,6 +73,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
   events.removeAllListeners()
 
   const activeController = new AbortController()
+
   const connecting = connectLocalBrowserOwner(
     'app_browser_1',
     ticket,
@@ -73,6 +82,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
     activeController.signal,
     socketFactory
   )
+
   const claim: BrowserOwnerServerMessage = {
     type: 'claimGranted',
     appId: 'app_browser_1',
@@ -88,6 +98,7 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
       viewport: { width: 800, height: 600 }
     }
   }
+
   events.emit('ownerMessage', claim)
   const owner = await connecting
   expect(owner.resumed).toBe(true)

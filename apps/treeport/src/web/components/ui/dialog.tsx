@@ -8,12 +8,14 @@ const DialogPortal = DialogPrimitive.Portal
 
 function subscribeToVisualViewport(onChange: () => void) {
   const viewport = window.visualViewport
+
   if (!viewport) {
     return () => undefined
   }
 
   viewport.addEventListener('resize', onChange)
   viewport.addEventListener('scroll', onChange)
+
   return () => {
     viewport.removeEventListener('resize', onChange)
     viewport.removeEventListener('scroll', onChange)
@@ -22,6 +24,7 @@ function subscribeToVisualViewport(onChange: () => void) {
 
 function getVisualViewportSnapshot() {
   const viewport = window.visualViewport
+
   return viewport ? `${viewport.offsetTop}:${viewport.height}` : null
 }
 
@@ -35,6 +38,7 @@ const DialogOverlay = React.forwardRef<
     {...props}
   />
 ))
+
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef<
@@ -63,6 +67,7 @@ const DialogContent = React.forwardRef<
       getVisualViewportSnapshot,
       () => null
     )
+
     const [viewportTop, viewportHeight] = viewportSnapshot
       ?.split(':')
       .map(Number) ?? [null, null]
@@ -93,6 +98,7 @@ const DialogContent = React.forwardRef<
           }
           onCloseAutoFocus={(event) => {
             onCloseAutoFocus?.(event)
+
             if (!event.defaultPrevented && restoreFocusTo?.isConnected) {
               event.preventDefault()
               restoreFocusTo.focus()
@@ -111,6 +117,7 @@ const DialogContent = React.forwardRef<
     )
   }
 )
+
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 function DialogHeader({
@@ -141,6 +148,7 @@ const DialogTitle = React.forwardRef<
     {...props}
   />
 ))
+
 DialogTitle.displayName = DialogPrimitive.Title.displayName
 
 const DialogDescription = React.forwardRef<
@@ -153,6 +161,7 @@ const DialogDescription = React.forwardRef<
     {...props}
   />
 ))
+
 DialogDescription.displayName = DialogPrimitive.Description.displayName
 
 export { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription }

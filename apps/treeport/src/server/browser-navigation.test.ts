@@ -8,18 +8,22 @@ it.each(['native', 'hosted'])(
     const page = new EventEmitter()
     const cdp = new EventEmitter()
     let failNavigation: (error: Error) => void = () => undefined
+
     const navigation = new Promise<void>((_resolve, reject) => {
       failNavigation = reject
     })
+
     // SAFETY: The helper only uses EventEmitter methods on these protocol fakes.
     const result = browserNavigation(
       page as never,
       () => navigation,
       owner === 'native' ? (cdp as never) : null
     )
+
     const rejected = expect(result).rejects.toThrow(
       'Navigation canceled by beforeunload'
     )
+
     if (owner === 'native') {
       cdp.emit('Treeport.navigationCanceled')
     } else {
@@ -45,6 +49,7 @@ it('ignores ordinary dialogs and cleans up after success or failure', async () =
   await expect(
     browserNavigation(page as never, async () => {
       page.emit('dialog', { type: () => 'alert' })
+
       return 'committed'
     })
   ).resolves.toBe('committed')
@@ -59,11 +64,13 @@ it('ignores ordinary dialogs and cleans up after success or failure', async () =
   const dispose = vi.fn(async () => undefined)
   const waitForFunction = vi.fn(async () => ({ dispose }))
   Object.assign(page, { waitForFunction })
+
   const failedNavigation = async () => {
     throw new Error(
       'page.goto: net::ERR_CONNECTION_REFUSED at http://localhost'
     )
   }
+
   // SAFETY: This fake implements the events and error-document probe used here.
   await expect(
     browserNavigation(page as never, failedNavigation, null, 'page')

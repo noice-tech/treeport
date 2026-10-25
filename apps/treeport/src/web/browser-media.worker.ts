@@ -13,6 +13,7 @@ const post = (event: BrowserMediaWorkerEvent) => scope.postMessage(event)
 let canvas: OffscreenCanvas | null = null
 let context: OffscreenCanvasRenderingContext2D | null = null
 let decoder: VideoDecoder | null = null
+
 let stream: {
   epoch: number
   codec: string
@@ -23,8 +24,10 @@ let stream: {
   keyRequested: boolean
   presented: boolean
 } | null = null
+
 // Decoder output timestamps map back to the packet sequence they ACK.
 const decoding = new Map<number, number>()
+
 // Decoded frames wait for the next display refresh. Painting on decoder
 // output lets network jitter put two frames into one refresh, so motion is
 // uneven even when every frame arrives.
@@ -39,6 +42,7 @@ const clear = () => {
 
 const closeDecoder = () => {
   decoding.clear()
+
   for (const frame of queue.splice(0)) {
     frame.close()
   }
@@ -53,6 +57,7 @@ const closeDecoder = () => {
 const paint = () => {
   scheduled = false
   const current = stream
+
   if (!current || !context || !canvas || queue.length === 0) {
     return
   }
@@ -67,6 +72,7 @@ const paint = () => {
   const frame = queue.shift()!
   context.drawImage(frame, 0, 0, canvas.width, canvas.height)
   frame.close()
+
   if (!current.presented) {
     current.presented = true
     post({ type: 'presented', epoch: current.epoch })
@@ -104,6 +110,7 @@ const sendMedia = (
     | { type: 'webcodecsKeyframe'; epoch: number }
 ) => {
   const data = JSON.stringify(message)
+
   if (media?.connected && media.socket) {
     media.socket.send(data)
   } else if (media && media.pending.length < 16) {
@@ -125,6 +132,7 @@ const closeMedia = () => {
   setConnected(false)
   const current = media
   media = null
+
   if (current?.timer) {
     clearTimeout(current.timer)
   }
@@ -134,6 +142,7 @@ const closeMedia = () => {
 
 const openMedia = () => {
   const current = media
+
   if (!current) {
     return
   }
@@ -150,17 +159,20 @@ const openMedia = () => {
     }
 
     current.attempts = 0
+
     for (const pending of current.pending.splice(0)) {
       socket.send(pending)
     }
 
     setConnected(true)
+
     // Packets sent while the previous socket was down are gone.
     if (stream && stream.sequence > 0) {
       stream.keyRequested = false
       requestKey()
     }
   }
+
   socket.onmessage = ({ data }: MessageEvent<ArrayBuffer | string>) => {
     if (media === current && current.socket === socket) {
       if (data instanceof ArrayBuffer) {
@@ -168,6 +180,7 @@ const openMedia = () => {
       }
     }
   }
+
   socket.onclose = () => {
     if (media !== current || current.socket !== socket) {
       return
@@ -175,10 +188,12 @@ const openMedia = () => {
 
     current.socket = null
     setConnected(false)
+
     // A rejected token belongs to an attachment that is gone, typically after
     // the session socket dropped; its replacement sends a new one.
     if (current.attempts >= 8) {
       closeMedia()
+
       return
     }
 
@@ -191,20 +206,24 @@ const openMedia = () => {
 
 const openDecoder = () => {
   const current = stream
+
   if (!current) {
     return
   }
 
   closeDecoder()
+
   const instance = new VideoDecoder({
     output: (frame) => {
       if (decoder !== instance || stream !== current || !context || !canvas) {
         frame.close()
+
         return
       }
 
       const sequence = decoding.get(frame.timestamp)
       decoding.delete(frame.timestamp)
+
       if (sequence !== undefined) {
         // ACK decoded packets: decoder throughput, not just the network,
         // bounds the sender's window.
@@ -212,6 +231,7 @@ const openDecoder = () => {
       }
 
       queue.push(frame)
+
       // Decoder buffers are pooled; a hidden page must not pin them all.
       while (queue.length > 4) {
         queue.shift()!.close()
@@ -234,6 +254,7 @@ const openDecoder = () => {
       openDecoder()
     }
   })
+
   instance.configure({
     codec: current.codec,
     codedWidth: current.width,
@@ -248,6 +269,7 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
   if (data.type === 'canvas') {
     canvas = data.canvas
     context = canvas.getContext('2d')
+
     return
   }
 
@@ -260,6 +282,7 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
       keyRequested: false,
       presented: false
     }
+
     if (
       canvas &&
       (canvas.width !== data.config.width ||
@@ -271,6 +294,7 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
 
     openDecoder()
     sendMedia({ type: 'webcodecsAck', epoch: data.config.epoch, sequence: 0 })
+
     return
   }
 
@@ -290,6 +314,7 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
       timer: null
     }
     openMedia()
+
     return
   }
 
@@ -311,11 +336,13 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
 const receive = (data: ArrayBuffer) => {
   const current = stream
   const bytes = new Uint8Array(data)
+
   if (!current || !decoder || bytes.byteLength < 18) {
     return
   }
 
   const header = new DataView(data, 0, 17)
+
   if (header.getUint32(0) !== current.epoch) {
     return
   }
@@ -323,6 +350,7 @@ const receive = (data: ArrayBuffer) => {
   const sequence = header.getUint32(4)
   const timestamp = Math.round(header.getFloat64(8))
   const key = header.getUint8(16) === 1
+
   if (sequence <= current.sequence) {
     return
   }
@@ -332,6 +360,7 @@ const receive = (data: ArrayBuffer) => {
     current.sequence = sequence
     requestKey()
     sendMedia({ type: 'webcodecsAck', epoch: current.epoch, sequence })
+
     return
   }
 

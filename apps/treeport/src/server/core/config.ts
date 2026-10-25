@@ -73,21 +73,27 @@ function defaultRuntimeDir(env: NodeJS.ProcessEnv): string {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const host = env.TREEPORT_HOST?.trim() || env.HOST?.trim() || '127.0.0.1'
   assertLoopbackHost(host)
+
   const portValue = Number.parseInt(
     env.TREEPORT_PORT?.trim() || env.PORT?.trim() || '8733',
     10
   )
+
   if (!Number.isInteger(portValue) || portValue < 1 || portValue > 65_535) {
     throw new Error('TREEPORT_PORT must be an integer between 1 and 65535')
   }
 
   const urlHost =
     host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+
   const dataDir = path.resolve(resolveDataDir(env))
+
   const runtimeDir = path.resolve(
     expandHome(env.TREEPORT_RUNTIME_DIR?.trim() || defaultRuntimeDir(env))
   )
+
   const daemonLifecycle = env.TREEPORT_DAEMON_LIFECYCLE?.trim() || 'treeport'
+
   if (
     daemonLifecycle !== 'treeport' &&
     daemonLifecycle !== 'service' &&
@@ -124,6 +130,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.TREEPORT_INSTALLATION_METHOD?.trim() || 'development',
     webDevelopment: env.TREEPORT_WEB_DEVELOPMENT?.trim() === '1'
   }
+
   if (env.TREEPORT_WEB_DIST?.trim()) {
     config.webDist = env.TREEPORT_WEB_DIST.trim()
   }

@@ -11,6 +11,7 @@ const EMPTY_ATTENTION: ReadonlyMap<string, TerminalAttentionReason> = new Map()
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_PROGRAMS: ReadonlyMap<string, TerminalProgram> = new Map()
 const EMPTY_ACTIVITY: ReadonlyMap<string, TerminalActivity> = new Map()
+
 const EMPTY_ATTENTION_METADATA_MAP: ReadonlyMap<
   string,
   TerminalAttentionMetadata
@@ -22,6 +23,7 @@ const EMPTY_NAVIGATION_METADATA = {
   programs: EMPTY_PROGRAMS,
   activity: EMPTY_ACTIVITY
 }
+
 const EMPTY_ATTENTION_METADATA = {
   attention: EMPTY_ATTENTION_METADATA_MAP,
   titles: EMPTY_TITLES
@@ -35,6 +37,7 @@ function getNavigationMetadata() {
   const titles = terminalSessions.getTitleSnapshot()
   const programs = terminalSessions.getProgramSnapshot()
   const activity = terminalSessions.getActivitySnapshot()
+
   if (
     navigationMetadata.attention !== attention ||
     navigationMetadata.titles !== titles ||
@@ -50,6 +53,7 @@ function getNavigationMetadata() {
 function getAttentionMetadata() {
   const attention = terminalSessions.getAttentionMetadataSnapshot()
   const titles = terminalSessions.getTitleSnapshot()
+
   if (
     attentionMetadata.attention !== attention ||
     attentionMetadata.titles !== titles

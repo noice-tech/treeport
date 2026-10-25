@@ -28,6 +28,7 @@ export class PackageService {
       const projectStore = yield* ProjectStore
       const projects = yield* projectStore.storedProjects()
       yield* Effect.sync(() => packages.syncProjects(projects))
+
       return yield* packages.list()
     })
   }
@@ -46,6 +47,7 @@ export class PackageService {
       const packages = yield* PackageSystemPort
       const projectStore = yield* ProjectStore
       const webAppRuntime = yield* WebAppRuntimePort
+
       if (projectId) {
         const project = yield* projectStore.getProject(projectId)
         yield* Effect.sync(() => packages.syncProjects([project]))
@@ -54,6 +56,7 @@ export class PackageService {
       const result = yield* packages.install(source, projectId)
       yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
+
       return result
     })
   }
@@ -74,6 +77,7 @@ export class PackageService {
       const apps = yield* AppOperations
       const projectStore = yield* ProjectStore
       const webAppRuntime = yield* WebAppRuntimePort
+
       if (projectId) {
         const project = yield* projectStore.getProject(projectId)
         yield* Effect.sync(() => packages.syncProjects([project]))
@@ -82,10 +86,13 @@ export class PackageService {
       const registeredProjects = projectId
         ? [yield* projectStore.getProject(projectId)]
         : yield* projectStore.storedProjects()
+
       const collectPermissionSourceKeys = Effect.gen(function* () {
         const keys = new Set<string>()
+
         for (const project of registeredProjects) {
           const worktree = project.worktrees[0]
+
           if (!worktree) {
             continue
           }
@@ -94,6 +101,7 @@ export class PackageService {
             apps.effectiveWebAppDefinitions(worktree.id),
             () => Effect.succeed([])
           )
+
           for (const definition of definitions) {
             if (definition.permissions.length > 0) {
               keys.add(
@@ -102,11 +110,14 @@ export class PackageService {
             }
           }
         }
+
         return keys
       })
+
       const before = yield* collectPermissionSourceKeys
       const result = yield* packages.remove(source, projectId)
       const after = yield* collectPermissionSourceKeys
+
       for (const sourceKey of before) {
         if (!after.has(sourceKey)) {
           yield* database
@@ -118,8 +129,10 @@ export class PackageService {
             .pipe(Effect.orDie)
         }
       }
+
       yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
+
       return result
     })
   }
@@ -142,6 +155,7 @@ export class PackageService {
       const results = yield* packages.update(source)
       yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged()
+
       return results
     })
   }
@@ -162,6 +176,7 @@ export class PackageService {
       const webAppRuntime = yield* WebAppRuntimePort
       const projects = yield* projectStore.storedProjects()
       yield* Effect.sync(() => packages.syncProjects(projects))
+
       if (projectId) {
         yield* projectStore.getProject(projectId)
       }
@@ -169,6 +184,7 @@ export class PackageService {
       const result = yield* packages.reload(projectId)
       yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
       yield* resourcesChanged(projectId)
+
       return result
     })
   }
@@ -181,9 +197,11 @@ export class PackageService {
       const projectSnapshots = yield* ProjectSnapshotOperations
       const projectStore = yield* ProjectStore
       yield* Effect.sync(() => projectSnapshots.invalidate())
+
       const projects = projectId
         ? [yield* projectStore.getProject(projectId)]
         : yield* projectStore.storedProjects(true)
+
       yield* Effect.sync(() => {
         for (const project of projects) {
           events.publish('project.updated', { projectId: project.id })

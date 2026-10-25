@@ -98,9 +98,11 @@ export function useTerminalWorkflows({
         queueWaitMs: Number((performance.now() - requestedAt).toFixed(3)),
         worktreeId
       })
+
       const json: CreateTerminalInput & { initialSize?: TerminalSize } = {
         name
       }
+
       if (initialTitle) {
         json.initialTitle = initialTitle
       }
@@ -142,6 +144,7 @@ export function useTerminalWorkflows({
           { init: { headers: { 'x-request-id': correlationId } } }
         )
       )
+
       return result.terminal
     },
     onSuccess: async (terminal, request) => {
@@ -159,18 +162,21 @@ export function useTerminalWorkflows({
           request.worktreeId,
           terminal
         )
+
         targetFound = update.found
         terminalIds =
           update.projects
             ?.flatMap((project) => project.worktrees)
             .find((worktree) => worktree.id === request.worktreeId)
             ?.terminals.map((candidate) => candidate.id) ?? []
+
         return update.projects
       })
       browserTrace('terminal.create.cache.updated', request.correlationId, {
         targetFound,
         terminalId: terminal.id
       })
+
       if (request.splitPlacement) {
         const { targetTerminalId, direction } = request.splitPlacement
         const storedLayout = terminalWorkspaceLayouts.read(request.worktreeId)
@@ -198,18 +204,22 @@ export function useTerminalWorkflows({
         browserTrace('terminal.create.cache.refetched', request.correlationId, {
           terminalId: terminal.id
         })
+
         return
       }
 
       const project = projects.find(
         (candidate) => candidate.id === request.projectId
       )
+
       const worktree = project?.worktrees.find(
         (candidate) => candidate.id === request.worktreeId
       )
+
       const shouldNavigate =
         request.sequence === nextCreateSequenceRef.current &&
         locationPathRef.current === request.originPath
+
       if (project && worktree && shouldNavigate) {
         browserTrace(
           'terminal.create.navigation.started',
@@ -261,6 +271,7 @@ export function useTerminalWorkflows({
           browserQueueWaitMs: Number((performance.now() - queuedAt).toFixed(3)),
           terminalId: terminal.id
         })
+
         return parseResponse(
           rpc.api.terminals[':terminalId'].$delete(
             { param: { terminalId: terminal.id } },
@@ -268,10 +279,12 @@ export function useTerminalWorkflows({
           )
         )
       })
+
       closeRequestTailRef.current = request.then(
         () => undefined,
         () => undefined
       )
+
       return request
     },
     onError: (error, closed) => {
@@ -293,6 +306,7 @@ export function useTerminalWorkflows({
 
             const terminals = [...worktree.terminals]
             terminals.splice(closed.index, 0, closed.terminal)
+
             return { ...worktree, terminals }
           })
         }))
@@ -308,6 +322,7 @@ export function useTerminalWorkflows({
         terminalId: closed.terminal.id
       })
       closingTerminalIdsRef.current.delete(closed.terminal.id)
+
       if (!error) {
         forgetTerminalCorrelation(closed.terminal.id)
       }
@@ -326,9 +341,11 @@ export function useTerminalWorkflows({
     const currentProject = projects.find(
       (candidate) => candidate.id === project.id
     )
+
     const currentWorktree = currentProject?.worktrees.find(
       (candidate) => candidate.id === worktree.id
     )
+
     if (
       !currentProject ||
       !currentWorktree ||
@@ -342,6 +359,7 @@ export function useTerminalWorkflows({
       selectedTerminal?.worktreeId === currentWorktree.id
         ? terminalSessions.getInitialSize(selectedTerminal.id)
         : null
+
     const sequence = ++nextCreateSequenceRef.current
     const correlationId = input.correlationId ?? newBrowserCorrelationId()
     const requestedAt = performance.now()
@@ -350,6 +368,7 @@ export function useTerminalWorkflows({
       worktreeId: currentWorktree.id
     })
     closeMobileWithoutFocusRestore()
+
     const mutation: CreateTerminalMutationInput = {
       worktreeId: currentWorktree.id,
       name: input.name,
@@ -359,6 +378,7 @@ export function useTerminalWorkflows({
       requestedAt,
       correlationId
     }
+
     if (splitPlacement) {
       mutation.splitPlacement = splitPlacement
     }
@@ -407,9 +427,11 @@ export function useTerminalWorkflows({
         (worktree) => worktree.id === terminal.worktreeId
       )
     )
+
     const worktree = project?.worktrees.find(
       (candidate) => candidate.id === terminal.worktreeId
     )
+
     if (
       !project ||
       !worktree ||
@@ -422,9 +444,11 @@ export function useTerminalWorkflows({
       runtimeMetadata?.title ??
       terminalSessions.getTitleSnapshot().get(terminal.id) ??
       terminal.name
+
     const hasForegroundProcess =
       runtimeMetadata?.hasForegroundProcess ??
       terminalSessions.getForegroundProcessSnapshot().has(terminal.id)
+
     if (
       hasForegroundProcess &&
       !window.confirm(
@@ -437,6 +461,7 @@ export function useTerminalWorkflows({
     const index = worktree.terminals.findIndex(
       (candidate) => candidate.id === terminal.id
     )
+
     const correlationId = newBrowserCorrelationId()
     const queuedAt = performance.now()
     browserTrace('terminal.remove.command.admitted', correlationId, {
@@ -445,6 +470,7 @@ export function useTerminalWorkflows({
     })
     closingTerminalIdsRef.current.add(terminal.id)
     void queryClient.cancelQueries({ queryKey: projectsQueryKey })
+
     if (selectedTerminalId === terminal.id) {
       const nextTerminal =
         worktree.terminals
@@ -456,6 +482,7 @@ export function useTerminalWorkflows({
           .slice(0, index)
           .reverse()
           .find((candidate) => !closingTerminalIdsRef.current.has(candidate.id))
+
       browserTrace('terminal.remove.navigation.started', correlationId, {
         nextTerminalId: nextTerminal?.id ?? null,
         terminalId: terminal.id
@@ -517,6 +544,7 @@ export function TerminalWorkspace({
     dialogOpen ||
     projectSwitcherOpen ||
     (isMobile && drawerOpen)
+
   const onStatusChange = () =>
     void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
 

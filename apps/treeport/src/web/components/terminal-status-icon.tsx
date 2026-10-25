@@ -8,6 +8,7 @@ import { cn } from '../lib/utils'
 // Cache the original stroke at 120 frames/second instead of repainting it on
 // every frame. Only the strip's transform animates; its mask and color stay fixed.
 const COMET_FRAMES = 132
+
 const COMET_MASK = `url("data:image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="${24 * COMET_FRAMES}" height="24">${Array.from(
     { length: COMET_FRAMES },
@@ -42,6 +43,7 @@ export function TerminalStatusIcon({
 }) {
   const state = activity?.state ?? 'idle'
   const working = state === 'working' && !attention
+
   // Done and error are outcomes to notice once; after they are read the
   // terminal looks idle. Blocked lasts until the program moves on.
   const iconColor = attention

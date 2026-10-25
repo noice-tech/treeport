@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { createBrowserDevtoolsBridge } from './browser-devtools'
 
 const servers: Array<http.Server | WebSocketServer> = []
+
 afterEach(async () => {
   await Promise.all(
     servers
@@ -27,6 +28,7 @@ it('relays only the selected page after the DevTools origin and app check', asyn
   })
 
   const appId = `app_${'a'.repeat(32)}`
+
   const bridge = createBrowserDevtoolsBridge(async (selected) => {
     if (selected !== appId) {
       throw new Error('Unknown app')
@@ -34,6 +36,7 @@ it('relays only the selected page after the DevTools origin and app check', asyn
 
     return `ws://127.0.0.1:${chromePort}`
   })
+
   const treeport = http.createServer()
   servers.push(treeport)
   treeport.on('upgrade', (request, socket, head) => {
@@ -49,6 +52,7 @@ it('relays only the selected page after the DevTools origin and app check', asyn
     new WebSocket(`ws://127.0.0.1:${port}/api/browser-devtools/${id}`, {
       origin
     })
+
   const denied = connect('https://attacker.example')
   denied.on('error', () => undefined)
   expect(

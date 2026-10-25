@@ -37,6 +37,7 @@ class FakePty {
 
   onData(listener: (data: string) => void) {
     this.dataListener = listener
+
     return {
       dispose: () => {
         this.dataDisposals += 1
@@ -47,6 +48,7 @@ class FakePty {
 
   onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
     this.exitListener = listener
+
     return {
       dispose: () => {
         this.exitDisposals += 1
@@ -86,17 +88,21 @@ class FakePty {
 
 const directories: string[] = []
 const scopes: Scope.CloseableScope[] = []
+
 const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Scope.extend(effect, scopes.at(-1)!))
+
 const acquire = async (
   options: Parameters<typeof makeTerminalHostSessions>[0]
 ) => {
   const scope = await Effect.runPromise(Scope.make())
   scopes.push(scope)
+
   return Effect.runPromise(
     Scope.extend(makeTerminalHostSessions(options), scope)
   )
 }
+
 afterEach(async () => {
   await Promise.all(
     scopes
@@ -115,14 +121,17 @@ describe('TerminalHostSessionManager', () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-batching-')
     )
+
     directories.push(runtimeDir)
     const pty = new FakePty()
+
     const manager = await acquire({
       runtimeDir,
       launcherPath: '/treeport/launcher.js',
       spawnPty: () => testAccess<IPty>(pty),
       terminateProcessTree: () => Effect.void
     })
+
     await run(
       manager.createTerminal({
         terminalId: 'term',
@@ -147,13 +156,16 @@ describe('TerminalHostSessionManager', () => {
       )
     )
     const writes = vi.spyOn(GhosttyTerminal.prototype, 'write')
+
     const chunks = Array.from(
       { length: 1024 },
       (_, index) => `${index}:` + 'x'.repeat(1000) + '\r\n'
     )
+
     for (const chunk of chunks) {
       pty.emit(chunk)
     }
+
     const snapshot = await run(manager.snapshot('term'))
     // Count parser submissions: queued PTY packets are parsed together.
     expect(writes.mock.calls.length).toBeLessThan(16)
@@ -177,13 +189,18 @@ describe('TerminalHostSessionManager', () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-')
     )
+
     directories.push(runtimeDir)
     const pty = new FakePty()
+
     const spawn = vi.fn(() => {
       queueMicrotask(() => pty.emit('immediate startup output\r\n'))
+
       return testAccess<IPty>(pty)
     })
+
     const terminate = vi.fn(async (child: IPty) => child.kill())
+
     const manager = await acquire({
       runtimeDir,
       launcherPath: '/treeport/launcher.js',
@@ -294,9 +311,11 @@ describe('TerminalHostSessionManager', () => {
     pty.emit('\u001b[?1049h\u001b[?1003h\u001b[?1006halternate Unicode: 雪\r\n')
     const alternateSnapshot = await run(manager.snapshot('term'))
     const historicalResponses: Uint8Array[] = []
+
     const browser = await restoreTestSnapshot(alternateSnapshot!.data, (data) =>
       historicalResponses.push(data)
     )
+
     expect(browser.mode(1003)).toBe(true)
     expect(browser.mode(1006)).toBe(true)
     expect(browser.text()).toContain('alternate Unicode: 雪')
@@ -304,6 +323,7 @@ describe('TerminalHostSessionManager', () => {
     expect(browser.text()).toContain('normal Unicode: λ🙂')
     expect(historicalResponses).toEqual([])
     browser.dispose()
+
     for (const [sequence, pixels, sgr] of [
       ['\u001b[?1016h', true, true],
       ['\u001b[?1016l\u001b[?1006l', false, false]
@@ -378,9 +398,11 @@ describe('TerminalHostSessionManager', () => {
     expect(pty.writes).toHaveLength(1)
 
     const pausesBeforeFlood = pty.pauses
+
     for (let index = 0; index < 18; index += 1) {
       pty.emit('x'.repeat(64 * 1024))
     }
+
     await run(
       manager.write('term', 'responsive-input', {
         attachmentId: 'viewer',
@@ -446,8 +468,10 @@ describe('TerminalHostSessionManager', () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-')
     )
+
     directories.push(runtimeDir)
     const pty = new FakePty()
+
     const manager = await acquire({
       runtimeDir,
       launcherPath: '/treeport/launcher.js',
@@ -455,6 +479,7 @@ describe('TerminalHostSessionManager', () => {
       spawnPty: (() => testAccess<IPty>(pty)) as never,
       terminateProcessTree: (child) => Effect.sync(() => child.kill())
     })
+
     await run(
       manager.createTerminal({
         terminalId: 'term',
@@ -495,9 +520,11 @@ describe('TerminalHostSessionManager', () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-')
     )
+
     directories.push(runtimeDir)
     const pty = new FakePty()
     const spawn = vi.fn(() => testAccess<IPty>(pty))
+
     const manager = await acquire({
       runtimeDir,
       launcherPath: '/treeport/launcher.js',
@@ -542,11 +569,13 @@ describe('TerminalHostSessionManager', () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-')
     )
+
     directories.push(runtimeDir)
     const pty = new FakePty()
     const cleanupStarted = await Effect.runPromise(Deferred.make<void>())
     const releaseCleanup = await Effect.runPromise(Deferred.make<void>())
     let cleanupFinished = false
+
     const manager = await acquire({
       runtimeDir,
       launcherPath: '/treeport/launcher.js',
@@ -562,6 +591,7 @@ describe('TerminalHostSessionManager', () => {
           )
         )
     })
+
     await run(
       manager.createTerminal({
         terminalId: 'term',
@@ -594,13 +624,16 @@ describe('TerminalHostSessionManager', () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-')
     )
+
     directories.push(runtimeDir)
     const ptys = [new FakePty(), new FakePty()]
     const spawn = vi.fn(() => testAccess<IPty>(ptys.shift()!))
+
     const terminate = vi
       .fn<(child: IPty) => Promise<void>>()
       .mockRejectedValueOnce(new Error('cleanup failed'))
       .mockResolvedValue(undefined)
+
     const manager = await acquire({
       runtimeDir,
       launcherPath: '/treeport/launcher.js',
@@ -612,6 +645,7 @@ describe('TerminalHostSessionManager', () => {
           catch: (cause) => cause
         })
     })
+
     const input = (name: string) => ({
       terminalId: 'term',
       worktreeId: 'worktree',

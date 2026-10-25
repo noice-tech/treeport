@@ -52,11 +52,13 @@ export class HostSession {
     this.lastUrl = computer.origin
     options.window.contentView.addChildView(this.view)
     const renderer = this.view.webContents
+
     // Browser storage and permission handlers must never be rebound to a
     // different host when another session is installed or removed.
     const storageKey = createHash('sha256')
       .update(`${computer.id}|${computer.origin}`)
       .digest('hex')
+
     this.browser = installBrowserWebviewPolicy({
       runtime: this.runtime,
       window: options.window,
@@ -71,6 +73,7 @@ export class HostSession {
         this.runtime.scope,
         Effect.sync(() => {
           this.disposed = true
+
           if (!options.window.isDestroyed()) {
             options.window.contentView.removeChildView(this.view)
           }
@@ -85,6 +88,7 @@ export class HostSession {
     // current document usable until a navigation commits or actually fails.
     renderer.on('did-navigate', (_event, url, status) => {
       this.documentAvailable = status < 400 && this.ownsUrl(url)
+
       if (this.ownsUrl(url)) {
         this.lastUrl = url
       }
@@ -127,6 +131,7 @@ export class HostSession {
       if (main && code !== -3 && this.ownsUrl(url)) {
         this.documentAvailable = false
         this.lastUrl = url
+
         if (!this.loading) {
           this.connect()
         }
@@ -184,6 +189,7 @@ export class HostSession {
         }
 
         yield* this.browser.disposeAll()
+
         if (generation !== this.generation) {
           return
         }
@@ -204,12 +210,14 @@ export class HostSession {
             this.options.changed()
           }
         )
+
         if (!loaded || generation !== this.generation) {
           return
         }
 
         this.loading = false
         const health = yield* checkHealth(this.computer.origin)
+
         if (!health || generation !== this.generation) {
           return
         }
@@ -248,6 +256,7 @@ export class HostSession {
     this.generation++
     this.deactivate()
     this.browser.detach()
+
     return this.runtime.close
   }
 }
@@ -266,6 +275,7 @@ export class HostSessions {
         return host
       }
     }
+
     return null
   }
 }

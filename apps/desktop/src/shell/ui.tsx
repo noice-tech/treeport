@@ -72,6 +72,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     )
   }
 )
+
 Button.displayName = 'Button'
 
 export const Input = forwardRef<
@@ -87,6 +88,7 @@ export const Input = forwardRef<
     {...props}
   />
 ))
+
 Input.displayName = 'Input'
 
 export function Field({
@@ -138,6 +140,7 @@ export function Dialog({
   title: string
 }) {
   const descriptionId = useId()
+
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
       <DialogPrimitive.Portal>

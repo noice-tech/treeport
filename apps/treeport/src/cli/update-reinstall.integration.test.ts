@@ -24,9 +24,11 @@ async function packFixture(root: string, version: string): Promise<string> {
     `#!/usr/bin/env node\nconsole.log(${JSON.stringify(version)})\n`,
     { mode: 0o755 }
   )
+
   const { stdout } = await execute('npm', ['pack', '--silent'], {
     cwd: packageDirectory
   })
+
   return path.join(packageDirectory, stdout.trim())
 }
 
@@ -37,6 +39,7 @@ it('lets npm reinstall replace a failed managed update without touching user dat
   const entrypoint = path.join(prefix, 'bin/treeport')
   const currentLink = path.join(prefix, 'lib/treeport/current')
   const failedTarget = path.join(prefix, 'lib/treeport/versions/1.2.4')
+
   const environment = {
     ...process.env,
     HOME: path.join(root, 'home'),

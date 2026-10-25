@@ -8,10 +8,12 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
 const execute = promisify(execFile)
+
 const packageDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
 )
+
 const temporaryDirectory = await fs.mkdtemp(
   path.join(os.tmpdir(), 'treeport-pi-package-')
 )
@@ -20,6 +22,7 @@ try {
   const manifest = JSON.parse(
     await fs.readFile(path.join(packageDirectory, 'package.json'), 'utf8')
   )
+
   if (manifest.pi?.extensions?.[0] !== './extensions/treeport/index.ts') {
     throw new Error('The Pi manifest must identify the Treeport extension')
   }
@@ -32,10 +35,12 @@ try {
     path.join(packageDirectory, 'skills/treeport/SKILL.md'),
     'utf8'
   )
+
   const canonicalSkill = await fs.readFile(
     path.join(packageDirectory, '../../skills/treeport/SKILL.md'),
     'utf8'
   )
+
   if (packagedSkill !== canonicalSkill) {
     throw new Error('The packaged Pi skill must match the Treeport skill')
   }
@@ -60,14 +65,17 @@ try {
     ],
     { cwd: packageDirectory }
   )
+
   const tarball = path.join(
     temporaryDirectory,
     `treeport-pi-${manifest.version}.tgz`
   )
+
   const files = (await execute('tar', ['-tzf', tarball])).stdout
     .trim()
     .split('\n')
     .sort()
+
   const required = [
     'package/LICENSE',
     'package/README.md',
@@ -77,6 +85,7 @@ try {
     'package/skills/treeport/SKILL.md',
     'package/package.json'
   ]
+
   for (const file of required) {
     if (!files.includes(file)) {
       throw new Error(`The npm tarball is missing ${file}`)
@@ -93,6 +102,7 @@ try {
       file.endsWith('.tsbuildinfo') ||
       /(?:^|\/)(?:playwright|node-pty|electron)(?:\/|$)/.test(file)
   )
+
   if (forbidden) {
     throw new Error(`The npm tarball contains forbidden content: ${forbidden}`)
   }

@@ -47,6 +47,7 @@ export function asEffectCommandRunner(
   runner: CommandRunner
 ): EffectCommandRunner {
   const nativeRun = runner.runEffect
+
   if (nativeRun) {
     return {
       run: (request) => runner.run(request),
@@ -230,14 +231,17 @@ function runCommandEffect(
       Effect.flatMap(([exit, close, failure]) =>
         Effect.async<ChildResource, SpawnCommandError>((resume) => {
           let child: ChildProcessWithoutNullStreams
+
           try {
             child = spawnChild(request)
           } catch (cause) {
             resume(Effect.fail(new SpawnCommandError(request, cause)))
+
             return
           }
 
           let spawned = false
+
           const resource: ChildResource = {
             child,
             processGroupId: child.pid!,
@@ -252,6 +256,7 @@ function runCommandEffect(
             },
             onProcessError: (cause) => {
               const error = new SpawnCommandError(request, cause)
+
               if (!spawned) {
                 child.removeListener('spawn', onSpawn)
                 removeResourceListeners()
@@ -259,11 +264,13 @@ function runCommandEffect(
                 // listener until that stream closes so it cannot become an
                 // uncaught EventEmitter error after acquisition has failed.
                 const ignoreStdinError = () => {}
+
                 child.stdin.on('error', ignoreStdinError)
                 child.stdin.once('close', () => {
                   child.stdin.removeListener('error', ignoreStdinError)
                 })
                 resume(Effect.fail(error))
+
                 return
               }
 
@@ -282,6 +289,7 @@ function runCommandEffect(
             stderrBytes: 0,
             terminalError: null
           }
+
           const removeResourceListeners = () => {
             child.removeListener('error', resource.onProcessError)
             child.removeListener('exit', resource.onExit)
@@ -290,15 +298,19 @@ function runCommandEffect(
             child.stderr.removeListener('data', resource.onStderr)
             child.stdin.removeListener('error', resource.onStdinError)
           }
+
           const collect = (
             stream: 'stdout' | 'stderr',
             chunk: Buffer | string
           ) => {
             const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
             const limit = stream === 'stdout' ? stdoutLimit : stderrLimit
+
             const bytes =
               stream === 'stdout' ? resource.stdoutBytes : resource.stderrBytes
+
             const remaining = Math.max(0, limit - bytes)
+
             if (remaining > 0) {
               ;(stream === 'stdout' ? resource.stdout : resource.stderr).push(
                 buffer.subarray(0, remaining)
@@ -320,6 +332,7 @@ function runCommandEffect(
               Deferred.unsafeDone(failure, Effect.fail(resource.terminalError))
             }
           }
+
           const onSpawn = () => {
             spawned = true
             child.removeListener('spawn', onSpawn)
@@ -362,11 +375,14 @@ function runCommandEffect(
         ),
         Deferred.await(resource.failure)
       )
+
       const command = Effect.try({
         try: () => resource.child.stdin.end(request.stdin),
         catch: (cause) => new StdinCommandError(request, cause)
       }).pipe(Effect.zipRight(awaitResult))
+
       const timeoutMs = request.timeoutMs
+
       if (timeoutMs === undefined || timeoutMs <= 0) {
         return command
       }
@@ -380,6 +396,7 @@ function runCommandEffect(
                 request,
                 timeoutMs
               )
+
               return resource.terminalError
             })
           ),
@@ -457,11 +474,13 @@ export class SpawnCommandRunner implements EffectCommandRunner {
 
   async run(request: CommandRequest): Promise<CommandResult> {
     const exit = await Effect.runPromiseExit(this.runEffect(request))
+
     if (Exit.isSuccess(exit)) {
       return exit.value
     }
 
     const failure = Cause.failureOption(exit.cause)
+
     if (Option.isSome(failure)) {
       throw failure.value
     }
@@ -484,6 +503,7 @@ export function runCheckedEffect(
         result.stderr.trim() ||
         result.stdout.trim() ||
         `exit ${result.exitCode}`
+
       return Effect.fail(
         new ExternalCommandError(
           `${request.executable} ${request.args[0] ?? ''} failed: ${detail}`,
@@ -500,9 +520,11 @@ export async function runChecked(
   request: CommandRequest
 ): Promise<CommandResult> {
   const result = await runner.run(request)
+
   if (result.exitCode !== 0) {
     const detail =
       result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`
+
     throw new ExternalCommandError(
       `${request.executable} ${request.args[0] ?? ''} failed: ${detail}`,
       request,

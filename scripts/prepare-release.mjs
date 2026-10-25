@@ -12,11 +12,13 @@ import {
 
 const githubRepository = 'noice-tech/treeport'
 const [version, ...extraArguments] = process.argv.slice(2)
+
 if (!version || extraArguments.length > 0) {
   fail('Usage: pnpm release:prepare <X.Y.Z>')
 }
 
 const requestedVersion = parseVersion(version)
+
 if (!requestedVersion) {
   fail(
     `Invalid version: ${version}. Expected canonical X.Y.Z without leading zeroes`
@@ -24,6 +26,7 @@ if (!requestedVersion) {
 }
 
 const originUrl = git(['config', '--get', 'remote.origin.url'])
+
 if (githubRepositoryFromUrl(originUrl) !== githubRepository) {
   fail(
     `origin must be the canonical ${githubRepository} repository; found ${originUrl}`
@@ -43,6 +46,7 @@ try {
 } catch {
   fail('Could not fetch origin/main; release preparation stopped')
 }
+
 if (
   git(['rev-parse', 'HEAD']) !== git(['rev-parse', 'refs/remotes/origin/main'])
 ) {
@@ -61,12 +65,15 @@ const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
 const appSdkManifest = JSON.parse(readFileSync(appSdkManifestPath, 'utf8'))
 const piManifest = JSON.parse(readFileSync(piManifestPath, 'utf8'))
 const cursorManifest = JSON.parse(readFileSync(cursorManifestPath, 'utf8'))
+
 const claudeCodeManifest = JSON.parse(
   readFileSync(claudeCodeManifestPath, 'utf8')
 )
+
 const reviewManifest = JSON.parse(readFileSync(reviewManifestPath, 'utf8'))
 const keeperManifest = JSON.parse(readFileSync(keeperManifestPath, 'utf8'))
 const currentVersion = parseVersion(packageManifest.version)
+
 if (!currentVersion) {
   fail(
     `The current package version is not canonical: ${packageManifest.version}`
@@ -96,6 +103,7 @@ if (compareVersions(requestedVersion, currentVersion) < 0) {
 
 const desktopManifest = JSON.parse(readFileSync(desktopManifestPath, 'utf8'))
 const currentDesktopVersion = parseVersion(desktopManifest.version)
+
 if (!currentDesktopVersion) {
   fail(
     `The current desktop version is not canonical: ${desktopManifest.version}`
@@ -109,6 +117,7 @@ if (compareVersions(requestedVersion, currentDesktopVersion) < 0) {
 }
 
 const tag = `v${version}`
+
 try {
   git(['show-ref', '--verify', '--quiet', `refs/tags/${tag}`])
   fail(`Tag already exists locally: ${tag}`)
@@ -117,6 +126,7 @@ try {
     throw error
   }
 }
+
 try {
   git(['ls-remote', '--exit-code', '--tags', 'origin', `refs/tags/${tag}`])
   fail(`Tag already exists on origin: ${tag}`)
@@ -127,6 +137,7 @@ try {
 }
 
 const expectedFiles = []
+
 if (packageManifest.version !== version) {
   packageManifest.version = version
   expectedFiles.push(packageManifestPath)
@@ -213,6 +224,7 @@ try {
 }
 
 expectedFiles.sort()
+
 const changedFiles = new Set([
   ...git(['diff', '--name-only']).split('\n').filter(Boolean),
   ...git(['diff', '--cached', '--name-only']).split('\n').filter(Boolean),
@@ -220,7 +232,9 @@ const changedFiles = new Set([
     .split('\n')
     .filter(Boolean)
 ])
+
 const actualFiles = [...changedFiles].sort()
+
 if (
   actualFiles.length !== expectedFiles.length ||
   actualFiles.some((file, index) => file !== expectedFiles[index])
@@ -231,10 +245,13 @@ if (
 }
 
 git(['add', '--all'])
+
 git(['commit', '--allow-empty', '-m', `Release ${version}`], {
   stdio: 'inherit'
 })
+
 git(['tag', '-a', tag, '-m', `Release ${version}`])
+
 try {
   git(['push', '--atomic', 'origin', 'main', tag], { stdio: 'inherit' })
 } catch {
@@ -244,8 +261,11 @@ try {
 }
 
 console.log(`\nPrepared and pushed ${tag}. Nothing has been published to npm.`)
+
 console.log('\nNext:')
+
 console.log(
   `  1. Wait for the desktop-release workflow to publish the single GitHub Release for ${tag}.`
 )
+
 console.log(`  2. Run: pnpm release:publish ${version}`)

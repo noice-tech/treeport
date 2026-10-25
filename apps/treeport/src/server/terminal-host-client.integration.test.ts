@@ -33,6 +33,7 @@ import { hasKittyImage, restoreTestSnapshot } from './test-ghostty-snapshot'
 
 async function runLegacy<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   const exit = await Effect.runPromise(Effect.exit(effect))
+
   if (Exit.isFailure(exit)) {
     throw Cause.squash(exit.cause)
   }
@@ -47,6 +48,7 @@ type Legacyify<T> = {
     ? (...args: Args) => Promise<Value>
     : T[Key]
 }
+
 type LegacyClient = Omit<
   Legacyify<EffectTerminalHostClient>,
   'attach' | 'runtimeEvents'
@@ -85,11 +87,14 @@ function legacyClient(
           listener: (data: string, sequence: number) => void
         ) => {
           const attachmentScope = await Effect.runPromise(Scope.make())
+
           const attachment = await Effect.runPromise(
             Scope.extend(client.attach(terminalId), attachmentScope)
           )
+
           if (!attachment) {
             await Effect.runPromise(Scope.close(attachmentScope, Exit.void))
+
             return null
           }
 
@@ -104,6 +109,7 @@ function legacyClient(
             )
           )
           const { output: _output, ...snapshot } = attachment
+
           return {
             ...snapshot,
             unsubscribe: () =>
@@ -128,18 +134,21 @@ function legacyClient(
               runtimeScope
             )
           )
+
           return () =>
             void Effect.runPromise(Scope.close(runtimeScope, Exit.void))
         }
       }
 
       const value = Reflect.get(target, property, receiver) as unknown
+
       if (typeof value !== 'function') {
         return value
       }
 
       return (...args: unknown[]) => {
         const result = value.apply(client, args) as unknown
+
         return Effect.isEffect(result)
           ? runLegacy(
               Scope.extend(result as Effect.Effect<unknown, unknown>, scope)
@@ -157,6 +166,7 @@ async function connectClient(
   expectedHostId?: string
 ): Promise<LegacyClient> {
   const scope = await Effect.runPromise(Scope.make())
+
   const client = await runLegacy(
     Scope.extend(
       EffectTerminalHostClient.connect(
@@ -168,6 +178,7 @@ async function connectClient(
       scope
     )
   )
+
   return legacyClient(client, scope)
 }
 
@@ -177,11 +188,13 @@ async function connectOrStartTerminalHost(
   options: TerminalHostClientOptions
 ): Promise<LegacyClient> {
   const scope = await Effect.runPromise(Scope.make())
+
   const client = await runLegacy(
     Scope.extend(connectOrStartTerminalHostEffect(options), scope).pipe(
       Effect.onError(() => Scope.close(scope, Exit.void))
     )
   )
+
   return legacyClient(client, scope)
 }
 
@@ -210,10 +223,12 @@ function adaptSessions(legacy: Record<string, any>): TerminalHostSessions {
                 (unsubscribe: () => void) => Effect.sync(unsubscribe)
               )
             )
+
             const snapshot = yield* Effect.tryPromise({
               try: () => Promise.resolve(legacy.snapshot(terminalId)),
               catch: (cause) => cause
             })
+
             return snapshot ? { ...snapshot, output } : null
           })
       }
@@ -241,6 +256,7 @@ function adaptSessions(legacy: Record<string, any>): TerminalHostSessions {
       }
 
       const value = Reflect.get(target, property, receiver) as unknown
+
       if (typeof value !== 'function') {
         return value
       }
@@ -258,6 +274,7 @@ async function startTerminalHostServer(
   options: Omit<TerminalHostServerOptions, 'sessions'> & { sessions: any }
 ) {
   const scope = await Effect.runPromise(Scope.make())
+
   const host = await Effect.runPromise(
     Scope.extend(
       makeTerminalHostServer({
@@ -267,6 +284,7 @@ async function startTerminalHostServer(
       scope
     )
   )
+
   return {
     ...host,
     close: () => Effect.runPromise(Scope.close(scope, Exit.void))
@@ -294,6 +312,7 @@ async function waitFor(
   timeoutMs = 5_000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
+
   while (Date.now() < deadline) {
     if (await predicate()) {
       return
@@ -301,12 +320,14 @@ async function waitFor(
 
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
+
   throw new Error(message)
 }
 
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch {
     return false
@@ -332,11 +353,13 @@ describe('detached terminal host lifecycle', () => {
         }
 
         const directory = path.dirname(path.join(root, name))
+
         const status = sessionStatusSchema.parse(
           JSON.parse(
             await fs.readFile(path.join(directory, 'status.json'), 'utf8')
           )
         )
+
         const session = await PersistentSession.open(directory)
         await session.terminate()
         await waitFor(
@@ -345,14 +368,17 @@ describe('detached terminal host lifecycle', () => {
         )
       }
     }
+
     for (const client of clients) {
       await client.dispose()
     }
+
     for (const pid of hostPids) {
       if (processExists(pid)) {
         process.kill(pid, 'SIGTERM')
       }
     }
+
     await Promise.all(roots.map((root) => fs.rm(root, { recursive: true })))
     roots.length = 0
     hostPids.clear()
@@ -363,11 +389,13 @@ describe('detached terminal host lifecycle', () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-client-scope-')
     )
+
     roots.push(root)
     const socketPath = path.join(root, 'host.sock')
     const hostKey = 'scope-host-key'
     const token = 'scope-token'
     const methods: string[] = []
+
     const server = net.createServer((socket) => {
       const decoder = new TerminalHostFrameDecoder()
       socket.on('data', (chunk) => {
@@ -377,6 +405,7 @@ describe('detached terminal host lifecycle', () => {
           }
 
           methods.push(frame.method)
+
           if (frame.method === 'capture') {
             continue
           }
@@ -401,6 +430,7 @@ describe('detached terminal host lifecycle', () => {
                     rows: 24
                   }
                 : null
+
           socket.write(
             encodeTerminalHostFrame({
               type: 'response',
@@ -412,18 +442,21 @@ describe('detached terminal host lifecycle', () => {
         }
       })
     })
+
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(socketPath, resolve)
     })
 
     const clientScope = await Effect.runPromise(Scope.make())
+
     const client = await runLegacy(
       Scope.extend(
         EffectTerminalHostClient.connect(socketPath, token, hostKey),
         clientScope
       )
     )
+
     const firstScope = await Effect.runPromise(Scope.make())
     const secondScope = await Effect.runPromise(Scope.make())
     await runLegacy(Scope.extend(client.attach('terminal'), firstScope))
@@ -440,6 +473,7 @@ describe('detached terminal host lifecycle', () => {
     const pending = Effect.runPromise(
       Effect.exit(client.captureTerminal('terminal', 10))
     )
+
     await waitFor(
       () => methods.includes('capture'),
       'The pending request was not admitted'
@@ -447,6 +481,7 @@ describe('detached terminal host lifecycle', () => {
     await Effect.runPromise(Scope.close(clientScope, Exit.void))
     const pendingExit = await pending
     expect(Exit.isFailure(pendingExit)).toBe(true)
+
     if (Exit.isFailure(pendingExit)) {
       expect(Cause.squash(pendingExit.cause)).toMatchObject({
         _tag: 'TerminalHostDisconnected'
@@ -462,6 +497,7 @@ describe('detached terminal host lifecycle', () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-test-')
     )
+
     roots.push(root)
     const dataDir = path.join(root, 'data')
     const runtimeDir = path.join(root, 'runtime')
@@ -486,6 +522,7 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 child.once('exit', (code) => process.exit(code ?? 1))
 `
     )
+
     const options = {
       dataDir,
       runtimeDir,
@@ -544,10 +581,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
         'terminal-host-' + firstDaemon.record.hostKey,
         'sessions'
       )
+
       const names = await fs.readdir(directory)
+
       const diagnostics = await Promise.all(
         names.map(async (name) => {
           const session = path.join(directory, name)
+
           return (
             (await fs.readFile(path.join(session, 'owner.log'), 'utf8')) +
             '\n' +
@@ -555,6 +595,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
           )
         })
       )
+
       throw new Error(error.message + '\n' + diagnostics.join('\n'))
     })
     await waitFor(
@@ -565,24 +606,30 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'The engine did not answer the live terminal query'
     )
     await firstDaemon.resize('terminal-host', 93, 27)
+
     const commandPid = (await firstDaemon.listProcesses('worktree-host'))[0]!
       .pid
+
     const sessionRoot = path.join(
       runtimeDir,
       'terminal-engine',
       'terminal-host-' + firstDaemon.record.hostKey,
       'sessions'
     )
+
     const sessionDirectory = path.join(
       sessionRoot,
       (await fs.readdir(sessionRoot)).filter((name) =>
         /^[a-f0-9]{40}$/u.test(name)
       )[0]!
     )
+
     const ownerPid = JSON.parse(
       await fs.readFile(path.join(sessionDirectory, 'status.json'), 'utf8')
     ).ownerPid as number
+
     hostPids.add(ownerPid)
+
     const keeperListing = execFileSync(
       'ps',
       ['-ww', '-p', String(ownerPid), '-o', 'args='],
@@ -590,6 +637,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         encoding: 'utf8'
       }
     )
+
     // This fixture's noncanonical terminal ID is represented by its digest.
     expect(
       keeperListing
@@ -624,19 +672,23 @@ child.once('exit', (code) => process.exit(code ?? 1))
     clients.delete(firstDaemon)
     expect(processExists(ownerPid)).toBe(true)
     expect(processExists(commandPid)).toBe(true)
+
     const detachedJournal = await fs.readFile(
       path.join(sessionDirectory, 'journal.jsonl'),
       'utf8'
     )
+
     const detachedSequence = JSON.parse(
       detachedJournal.trim().split('\n').at(-1)!
     ).sequence as number
+
     await fs.writeFile(path.join(root, 'offline-query'), '')
     await waitFor(async () => {
       const journal = await fs.readFile(
         path.join(sessionDirectory, 'journal.jsonl'),
         'utf8'
       )
+
       return journal
         .split('\n')
         .filter(Boolean)
@@ -680,12 +732,14 @@ child.once('exit', (code) => process.exit(code ?? 1))
     ).toContain('HOST_BOOT')
 
     let liveOutput = ''
+
     const attachment = await restartedDaemon.attach(
       'terminal-host',
       (output) => {
         liveOutput += output
       }
     )
+
     const restored = await restoreTestSnapshot(attachment!.data)
     expect(restored.text()).toContain('HOST_BOOT')
     expect(restored.text()).toContain('DETACHED_OUTPUT')
@@ -697,8 +751,10 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(restored.text()).toContain('NORMAL_UNICODE λ🙂')
     restored.dispose()
     expect(attachment).toMatchObject({ cols: 93, rows: 27 })
+
     const transition =
       await restartedDaemon.prepareQueryAuthority('terminal-host')
+
     // Mobile fitting can resize during the authority handshake. Keeper control
     // replies must remain readable until the viewer activates its authority.
     await restartedDaemon.resize('terminal-host', 100, 30)
@@ -729,7 +785,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
         'terminal-host',
         () => undefined
       )
+
       imageAttachment?.unsubscribe()
+
       if (!imageAttachment) {
         return false
       }
@@ -737,6 +795,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       const imageSnapshot = await restoreTestSnapshot(imageAttachment.data)
       const uploaded = hasKittyImage(imageSnapshot, 42)
       imageSnapshot.dispose()
+
       return uploaded
     }, 'The live engine did not retain the image upload')
     attachment?.unsubscribe()
@@ -756,10 +815,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
       interactiveShell: false,
       env: {}
     })
+
     const quotaNames = (await fs.readdir(sessionRoot)).filter((name) =>
       /^[a-f0-9]{40}$/u.test(name)
     )
+
     let quotaDirectory = ''
+
     for (const name of quotaNames) {
       const metadata = JSON.parse(
         (
@@ -771,17 +833,22 @@ child.once('exit', (code) => process.exit(code ?? 1))
           ) as { metadata: string }
         ).metadata
       ) as { terminalId: string }
+
       if (metadata.terminalId === 'quota-terminal') {
         quotaDirectory = path.join(sessionRoot, name)
       }
     }
+
     expect(quotaDirectory).not.toBe('')
+
     const quotaStatus = sessionStatusSchema.parse(
       JSON.parse(
         await fs.readFile(path.join(quotaDirectory, 'status.json'), 'utf8')
       )
     )
+
     hostPids.add(quotaStatus.ownerPid)
+
     const quotaListing = execFileSync(
       'ps',
       ['-ww', '-p', String(quotaStatus.ownerPid), '-o', 'args='],
@@ -789,6 +856,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         encoding: 'utf8'
       }
     )
+
     expect(quotaListing.trim()).toMatch(/^treeport-session term_[0-9a-f]{32} /u)
     expect(quotaListing.trim().slice(0, 54)).not.toBe(
       keeperListing.trim().slice(0, 54)
@@ -800,6 +868,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
           .then(
             (attachment) => {
               attachment?.unsubscribe()
+
               return false
             },
             (error) => {
@@ -821,10 +890,12 @@ child.once('exit', (code) => process.exit(code ?? 1))
 
     await restartedDaemon.dispose()
     clients.delete(restartedDaemon)
+
     const recoveredDaemon = await connectOrStartTerminalHost({
       ...options,
       journalLimitBytes: 2 * 1024 * 1024
     })
+
     clients.add(recoveredDaemon)
     await waitFor(
       async () =>
@@ -851,10 +922,12 @@ child.once('exit', (code) => process.exit(code ?? 1))
         (item) => item.terminalId === 'terminal-host'
       )?.pid
     ).toBe(commandPid)
+
     const recoveredAttachment = await recoveredDaemon.attach(
       'terminal-host',
       () => undefined
     )
+
     const recovered = await restoreTestSnapshot(recoveredAttachment!.data)
     expect(recovered.mode(1006)).toBe(true)
     expect(hasKittyImage(recovered, 42)).toBe(true)
@@ -897,17 +970,20 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'The archive fixture did not produce output',
       10_000
     )
+
     const archiveDirectory = path.join(
       sessionRoot,
       (await fs.readdir(sessionRoot))
         .filter((name) => /^[a-f0-9]{40}$/u.test(name))
         .find((name) => name !== path.basename(sessionDirectory))!
     )
+
     const archiveStatus = sessionStatusSchema.parse(
       JSON.parse(
         await fs.readFile(path.join(archiveDirectory, 'status.json'), 'utf8')
       )
     )
+
     hostPids.add(archiveStatus.ownerPid)
     process.kill(archiveStatus.ownerPid, 'SIGKILL')
     await waitFor(
@@ -915,12 +991,15 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'The private archive keeper did not exit'
     )
     hostPids.delete(archiveStatus.ownerPid)
+
     const activeJournal = await fs.readFile(
       path.join(archiveDirectory, 'journal.jsonl'),
       'utf8'
     )
+
     const lastSequence = JSON.parse(activeJournal.trim().split('\n').at(-1)!)
       .sequence as number
+
     const retainedJournal =
       activeJournal +
       JSON.stringify({
@@ -931,6 +1010,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       }) +
       '\n' +
       '{"type":"output"'
+
     await fs.writeFile(
       path.join(archiveDirectory, 'journal.jsonl'),
       retainedJournal
@@ -950,6 +1030,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       interactiveShell: false,
       env: {}
     })
+
     const unavailableDirectory = path.join(
       sessionRoot,
       (await fs.readdir(sessionRoot))
@@ -962,6 +1043,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
             ].includes(name)
         )!
     )
+
     const unavailableStatus = sessionStatusSchema.parse(
       JSON.parse(
         await fs.readFile(
@@ -970,12 +1052,14 @@ child.once('exit', (code) => process.exit(code ?? 1))
         )
       )
     )
+
     const unavailableManifest = JSON.parse(
       await fs.readFile(
         path.join(unavailableDirectory, 'manifest.json'),
         'utf8'
       )
     ) as { socketPath: string }
+
     hostPids.add(unavailableStatus.ownerPid)
     await recoveredDaemon.dispose()
     clients.delete(recoveredDaemon)
@@ -986,21 +1070,25 @@ child.once('exit', (code) => process.exit(code ?? 1))
     // Hold attach open without answering. Backend readiness must not depend
     // on a session's handshake deadline (not merely catch fast ENOENT errors).
     const stalledPeers: net.Socket[] = []
+
     const stalledOwner = net
       .createServer((socket) => {
         stalledPeers.push(socket)
         socket.unref()
       })
       .unref()
+
     await new Promise<void>((resolve, reject) => {
       stalledOwner
         .once('error', reject)
         .listen(unavailableManifest.socketPath, resolve)
     })
+
     const degradedDaemon = await connectOrStartTerminalHost({
       ...options,
       journalLimitBytes: 2 * 1024 * 1024
     })
+
     clients.add(degradedDaemon)
     await waitFor(
       async () =>
@@ -1026,9 +1114,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     expect(processExists(unavailableStatus.ownerPid)).toBe(true)
     expect(processExists(unavailableStatus.pid)).toBe(true)
+
     for (const peer of stalledPeers) {
       peer.destroy()
     }
+
     await new Promise<void>((resolve) => stalledOwner.close(() => resolve()))
     await waitFor(
       async () =>
@@ -1040,10 +1130,12 @@ child.once('exit', (code) => process.exit(code ?? 1))
       unavailableManifest.socketPath + '.unavailable',
       unavailableManifest.socketPath
     )
+
     const retried = await Promise.all([
       degradedDaemon.terminalState('unavailable-terminal'),
       degradedDaemon.terminalState('unavailable-terminal')
     ])
+
     // A concurrent refresh may observe recovery in progress, but a completed
     // retry must replace the unavailable entry, never duplicate its command.
     expect(retried.some((state) => state.status === 'running')).toBe(true)
@@ -1057,10 +1149,12 @@ child.once('exit', (code) => process.exit(code ?? 1))
     ).toHaveLength(1)
     await degradedDaemon.dispose()
     clients.delete(degradedDaemon)
+
     const archivedDaemon = await connectOrStartTerminalHost({
       ...options,
       journalLimitBytes: 2 * 1024 * 1024
     })
+
     clients.add(archivedDaemon)
     await waitFor(
       async () =>
@@ -1103,10 +1197,12 @@ child.once('exit', (code) => process.exit(code ?? 1))
     ).toBe(true)
     await archivedDaemon.dispose()
     clients.delete(archivedDaemon)
+
     const finalDaemon = await connectOrStartTerminalHost({
       ...options,
       journalLimitBytes: 2 * 1024 * 1024
     })
+
     clients.add(finalDaemon)
     await waitFor(
       async () =>
@@ -1190,13 +1286,16 @@ child.once('exit', (code) => process.exit(code ?? 1))
       ],
       { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }
     )
+
     hostPids.add(supervisor.pid!)
+
     const fixture = await new Promise<{ worker: number; keeper: number }>(
       (resolve) =>
         supervisor.stdout!.once('data', (data) =>
           resolve(JSON.parse(String(data)))
         )
     )
+
     hostPids.add(fixture.keeper)
     await waitFor(
       () =>
@@ -1207,6 +1306,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
           .startsWith('treeport-session'),
       'The private keeper title was not ready'
     )
+
     const { sendSignalToChild } = (await import(
       new URL('../../../../scripts/development.mjs', import.meta.url).href
     )) as {
@@ -1216,6 +1316,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         groups: Set<number>
       ) => void
     }
+
     const groups = new Set<number>()
     sendSignalToChild(supervisor, 'SIGTERM', groups)
     await waitFor(
@@ -1233,6 +1334,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     hostPids.delete(fixture.keeper)
     hostPids.delete(supervisor.pid!)
   }
+
   it(
     'replaces its Rust session engine while preserving the PTY, lossless checkpoints, modes, and detached output',
     qualifyKeeper,
@@ -1243,10 +1345,12 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-large-snapshot-')
     )
+
     roots.push(root)
     const socketPath = path.join(root, 'host.sock')
     const recordPath = path.join(root, 'host.json')
     const outputSubscription: OutputSubscriptionFixture = { listener: null }
+
     const sessions = {
       initialize: async () => undefined,
       get sessionCount() {
@@ -1257,12 +1361,14 @@ child.once('exit', (code) => process.exit(code ?? 1))
         listener: (data: string, sequence: number) => void
       ) {
         outputSubscription.listener = listener
+
         return () => {
           outputSubscription.listener = null
         }
       },
       snapshot: async () => {
         setImmediate(() => outputSubscription.listener?.('after-snapshot', 1))
+
         return {
           data: 'x'.repeat(5 * 1024 * 1024),
           format: 'ghostty',
@@ -1274,6 +1380,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       captureTerminal: async () => 'still-connected',
       restoreHostQueryAuthority: async () => undefined
     }
+
     const host = await startTerminalHostServer({
       hostId: 'large-snapshot-host',
       hostKey: 'large-snapshot-key',
@@ -1283,19 +1390,23 @@ child.once('exit', (code) => process.exit(code ?? 1))
       // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
       sessions: sessions as never
     })
+
     const client = await TerminalHostClient.connect(
       socketPath,
       'large-snapshot-token',
       'large-snapshot-key',
       'large-snapshot-host'
     )
+
     clients.add(client)
 
     try {
       const received: string[] = []
+
       const attachment = await client.attach('terminal', (output) => {
         received.push(output)
       })
+
       expect(attachment?.data).toHaveLength(5 * 1024 * 1024)
       await waitFor(
         () => received.length > 0,
@@ -1317,9 +1428,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-large-snapshots-')
     )
+
     roots.push(root)
     const socketPath = path.join(root, 'host.sock')
     const recordPath = path.join(root, 'host.json')
+
     const sessions = {
       initialize: async () => undefined,
       get sessionCount() {
@@ -1336,6 +1449,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       captureTerminal: async () => 'still-connected',
       restoreHostQueryAuthority: async () => undefined
     }
+
     const host = await startTerminalHostServer({
       hostId: 'concurrent-snapshots-host',
       hostKey: 'concurrent-snapshots-key',
@@ -1345,12 +1459,14 @@ child.once('exit', (code) => process.exit(code ?? 1))
       // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
       sessions: sessions as never
     })
+
     const client = await TerminalHostClient.connect(
       socketPath,
       'concurrent-snapshots-token',
       'concurrent-snapshots-key',
       'concurrent-snapshots-host'
     )
+
     clients.add(client)
 
     try {
@@ -1358,6 +1474,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         client.attach('terminal', () => undefined),
         client.attach('terminal', () => undefined)
       ])
+
       expect(attachments[0]?.data).toHaveLength(5 * 1024 * 1024)
       expect(attachments[1]?.data).toHaveLength(5 * 1024 * 1024)
       attachments.forEach((attachment) => attachment?.unsubscribe())
@@ -1375,6 +1492,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-output-flow-')
     )
+
     roots.push(root)
     const socketPath = path.join(root, 'host.sock')
     const recordPath = path.join(root, 'host.json')
@@ -1386,6 +1504,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     let pauseCount = 0
     let resumeCount = 0
     let emit = () => undefined
+
     const sessions = {
       initialize: async () => undefined,
       get sessionCount() {
@@ -1396,6 +1515,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         listener: (data: string, sequence: number) => void
       ) {
         outputSubscription.listener = listener
+
         return () => {
           outputSubscription.listener = null
         }
@@ -1404,6 +1524,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         paused = true
         pauseCount++
         let active = true
+
         return () => {
           if (!active) {
             return
@@ -1425,6 +1546,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       captureTerminal: async () => 'still-connected',
       restoreHostQueryAuthority: async () => undefined
     }
+
     const host = await startTerminalHostServer({
       hostId: 'output-flow-host',
       hostKey: 'output-flow-key',
@@ -1434,24 +1556,29 @@ child.once('exit', (code) => process.exit(code ?? 1))
       // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
       sessions: sessions as never
     })
+
     const client = await TerminalHostClient.connect(
       socketPath,
       'output-flow-token',
       'output-flow-key',
       'output-flow-host'
     )
+
     clients.add(client)
 
     try {
       let receivedBytes = 0
+
       const attachment = await client.attach('terminal', (data) => {
         receivedBytes += data.length
       })
+
       emit = () => {
         while (!paused && nextSequence <= outputChunks) {
           outputSubscription.listener?.(output, nextSequence++)
         }
       }
+
       emit()
 
       await waitFor(
@@ -1476,11 +1603,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-slow-client-')
     )
+
     roots.push(root)
     const socketPath = path.join(root, 'host.sock')
     const recordPath = path.join(root, 'host.json')
     const outputSubscription: OutputSubscriptionFixture = { listener: null }
     let unsubscribed = false
+
     const sessions = {
       initialize: async () => undefined,
       get sessionCount() {
@@ -1491,6 +1620,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         listener: (data: string, sequence: number) => void
       ) {
         outputSubscription.listener = listener
+
         return () => {
           outputSubscription.listener = null
           unsubscribed = true
@@ -1507,6 +1637,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       captureTerminal: async () => 'host-available',
       restoreHostQueryAuthority: async () => undefined
     }
+
     const host = await startTerminalHostServer({
       hostId: 'slow-client-host',
       hostKey: 'slow-client-key',
@@ -1516,17 +1647,20 @@ child.once('exit', (code) => process.exit(code ?? 1))
       // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
       sessions: sessions as never
     })
+
     const slowClient = await TerminalHostClient.connect(
       socketPath,
       'slow-client-token',
       'slow-client-key',
       'slow-client-host'
     )
+
     clients.add(slowClient)
 
     try {
       await slowClient.attach('terminal', () => undefined)
       const emitOutput = outputSubscription.listener
+
       if (!emitOutput) {
         throw new Error('The host did not subscribe the client to output')
       }
@@ -1556,6 +1690,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         'slow-client-key',
         'slow-client-host'
       )
+
       clients.add(nextClient)
       expect(await nextClient.captureTerminal('terminal', 1)).toBe(
         'host-available'
@@ -1573,8 +1708,10 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-unknown-method-')
     )
+
     roots.push(root)
     const socketPath = path.join(root, 'host.sock')
+
     const host = await startTerminalHostServer({
       hostId: 'unknown-method-host',
       hostKey: 'unknown-method-key',
@@ -1590,6 +1727,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         restoreHostQueryAuthority: async () => undefined
       }
     })
+
     const socket = net.createConnection(socketPath)
     await new Promise<void>((resolve, reject) => {
       socket.once('connect', resolve)
@@ -1598,6 +1736,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const decoder = new TerminalHostFrameDecoder()
     const responses: TerminalHostFrame[] = []
     socket.on('data', (chunk) => responses.push(...decoder.push(chunk)))
+
     const request = async (
       id: string,
       method: string,
@@ -1618,6 +1757,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
           ),
         `No response for ${method}`
       )
+
       return responses.find(
         (frame) => frame.type === 'response' && frame.id === id
       )
@@ -1655,6 +1795,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-legacy-')
     )
+
     roots.push(root)
     const dataDir = path.join(root, 'data')
     const runtimeDir = path.join(root, 'runtime')
@@ -1662,17 +1803,21 @@ child.once('exit', (code) => process.exit(code ?? 1))
       fs.mkdir(dataDir, { recursive: true }),
       fs.mkdir(runtimeDir, { recursive: true })
     ])
+
     const hostKey = (await import('node:crypto'))
       .createHash('sha256')
       .update(path.resolve(dataDir))
       .digest('hex')
       .slice(0, 20)
+
     const socketPath = path.join(
       os.tmpdir(),
       `treeport-${process.getuid?.() ?? 'user'}`,
       `terminal-${hostKey}.sock`
     )
+
     const recordPath = path.join(runtimeDir, `terminal-host-${hostKey}.json`)
+
     const source = JSON.stringify({
       protocolVersion: 4,
       hostId: 'legacy-live-host',
@@ -1681,6 +1826,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       socketPath,
       startedAt: new Date().toISOString()
     })
+
     await fs.writeFile(recordPath, source)
 
     await expect(
@@ -1700,6 +1846,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-unidentified-')
     )
+
     roots.push(root)
     const dataDir = path.join(root, 'data')
     const runtimeDir = path.join(root, 'runtime')
@@ -1707,22 +1854,27 @@ child.once('exit', (code) => process.exit(code ?? 1))
       fs.mkdir(dataDir, { recursive: true }),
       fs.mkdir(runtimeDir, { recursive: true })
     ])
+
     const hostKey = (await import('node:crypto'))
       .createHash('sha256')
       .update(path.resolve(dataDir))
       .digest('hex')
       .slice(0, 20)
+
     const socketPath = path.join(
       os.tmpdir(),
       `treeport-${process.getuid?.() ?? 'user'}`,
       `terminal-${hostKey}.sock`
     )
+
     await fs.mkdir(path.dirname(socketPath), { recursive: true })
     let connections = 0
+
     const server = net.createServer((socket) => {
       connections += 1
       socket.destroy()
     })
+
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(socketPath, resolve)
@@ -1750,6 +1902,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-stale-test-')
     )
+
     roots.push(root)
     const dataDir = path.join(root, 'data')
     const runtimeDir = path.join(root, 'runtime')
@@ -1757,11 +1910,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
       fs.mkdir(dataDir, { recursive: true }),
       fs.mkdir(runtimeDir, { recursive: true })
     ])
+
     const hostKey = (await import('node:crypto'))
       .createHash('sha256')
       .update(path.resolve(dataDir))
       .digest('hex')
       .slice(0, 20)
+
     await fs.mkdir(path.join(runtimeDir, 'terminal-engine'))
     await fs.writeFile(
       path.join(runtimeDir, 'terminal-engine', `terminal-host-${hostKey}.json`),

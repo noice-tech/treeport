@@ -42,6 +42,7 @@ export function makeMutationCoordinator<Key>(
 ): Effect.Effect<MutationCoordinator<Key>, never, Scope.Scope> {
   return Effect.gen(function* () {
     const fibers = yield* FiberSet.make<unknown, never>()
+
     const state = yield* SynchronizedRef.make<CoordinatorState<Key>>({
       keys: new Map(),
       drainWaiters: new Set()
@@ -61,6 +62,7 @@ export function makeMutationCoordinator<Key>(
           state,
           (current) => {
             const active = current.keys.get(key)
+
             if (active?.queue !== queue) {
               return Effect.succeed([false, current] as const)
             }
@@ -68,11 +70,13 @@ export function makeMutationCoordinator<Key>(
             if (active.pending > 1) {
               const keys = new Map(current.keys)
               keys.set(key, { ...active, pending: active.pending - 1 })
+
               return Effect.succeed([true, { ...current, keys }] as const)
             }
 
             const keys = new Map(current.keys)
             keys.delete(key)
+
             if (keys.size > 0 || current.drainWaiters.size === 0) {
               return Effect.succeed([false, { ...current, keys }] as const)
             }
@@ -99,13 +103,16 @@ export function makeMutationCoordinator<Key>(
     ): Effect.Effect<Result, Failure, Requirements> =>
       Effect.gen(function* () {
         const context = yield* Effect.context<Requirements>()
+
         const parent = Option.getOrUndefined(
           Context.getOption(context, Tracer.ParentSpan)
         )
+
         const result = yield* Deferred.make<unknown, unknown>()
         const started = yield* Deferred.make<void>()
         const enqueuedAt = Date.now()
         let queuedAhead = 0
+
         const queuedMutation = (position: number): QueuedMutation => ({
           effect: Effect.suspend(() => {
             const attributes = {
@@ -113,9 +120,11 @@ export function makeMutationCoordinator<Key>(
               'treeport.mutation.queued_ahead': position,
               'treeport.mutation.queue_wait_ms': Date.now() - enqueuedAt
             }
+
             const options: Tracer.SpanOptions = parent
               ? { parent, attributes }
               : { attributes }
+
             return Effect.useSpan(
               'treeport.mutation.execute',
               options,
@@ -129,12 +138,15 @@ export function makeMutationCoordinator<Key>(
           result,
           started
         })
+
         const worker = yield* SynchronizedRef.modifyEffect(state, (current) => {
           const active = current.keys.get(key)
+
           if (active) {
             queuedAhead = active.pending
             const keys = new Map(current.keys)
             keys.set(key, { ...active, pending: active.pending + 1 })
+
             return Queue.offer(active.queue, queuedMutation(queuedAhead)).pipe(
               Effect.as([null, { ...current, keys }] as const)
             )
@@ -146,6 +158,7 @@ export function makeMutationCoordinator<Key>(
             const created: KeyState = { queue, pending: 1 }
             const keys = new Map(current.keys)
             keys.set(key, created)
+
             return [created, { ...current, keys }] as const
           })
         })
@@ -170,6 +183,7 @@ export function makeMutationCoordinator<Key>(
 
     const drain = Effect.gen(function* () {
       const waiter = yield* Deferred.make<void>()
+
       const idle = yield* SynchronizedRef.modify(state, (current) => {
         if (current.keys.size === 0) {
           return [true, current] as const
@@ -177,8 +191,10 @@ export function makeMutationCoordinator<Key>(
 
         const drainWaiters = new Set(current.drainWaiters)
         drainWaiters.add(waiter)
+
         return [false, { ...current, drainWaiters }] as const
       })
+
       if (!idle) {
         yield* Deferred.await(waiter)
       }

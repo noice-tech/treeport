@@ -25,8 +25,10 @@ async function waitForOutput(
   expected: (output: string) => boolean
 ): Promise<string> {
   const deadline = Date.now() + 10_000
+
   while (Date.now() < deadline) {
     const output = read()
+
     if (expected(output)) {
       return output
     }
@@ -56,20 +58,24 @@ async function verifyCommandLifecycle(
     integration,
     true
   )
+
   const environment = Object.fromEntries(
     Object.entries(launch.env).filter(
       (entry): entry is [string, string] => entry[1] !== undefined
     )
   )
+
   const child = spawn(launch.argv[0]!, launch.argv.slice(1), {
     cwd: home,
     cols: 100,
     rows: 30,
     env: environment
   })
+
   const exited = new Promise<void>((resolve) => {
     child.onExit(() => resolve())
   })
+
   children.push({ pty: child, exited })
   let output = ''
   child.onData((data) => {
@@ -88,10 +94,12 @@ async function verifyCommandLifecycle(
   const command = `printf 'treeport-shell-result\\n'`
   child.write(`${command}\r`)
   const commandSequence = `\u001b]7740;command;${command}\u001b\\`
+
   const completed = await waitForOutput(
     () => output,
     (value) => {
       const commandIndex = value.indexOf(commandSequence)
+
       return (
         commandIndex >= 0 &&
         value.indexOf(
@@ -105,6 +113,7 @@ async function verifyCommandLifecycle(
       )
     }
   )
+
   expect(completed).toContain(commandSequence)
 }
 
@@ -132,6 +141,7 @@ it.for([
   { timeout: 30_000 },
   async ({ shell, startup, coverage }, context) => {
     const executable = await available(shell)
+
     if (!executable && coverage === 'optional') {
       context.skip(
         'Optional fish coverage: install fish and put it on PATH to enable it.'
@@ -146,6 +156,7 @@ it.for([
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-shell-title-')
     )
+
     temporary.push(root)
     const integration = path.join(root, 'integration')
     await prepareShellIntegration(integration)

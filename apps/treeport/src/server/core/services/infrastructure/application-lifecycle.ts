@@ -40,6 +40,7 @@ export class ApplicationLifecycle {
       const terminalHost = yield* TerminalHostPort
 
       yield* terminalHost.initialize().pipe(Effect.orDie)
+
       const interrupted = yield* database
         .execute('application.lifecycle.41', (db) =>
           db.all<{
@@ -54,6 +55,7 @@ export class ApplicationLifecycle {
         `)
         )
         .pipe(Effect.orDie)
+
       const timestamp = now()
       yield* database
         .execute('application.lifecycle.52', (db) =>
@@ -122,10 +124,12 @@ export class ApplicationLifecycle {
       const interrupted = this.interruptedOperations
       this.interruptedOperations = []
       const recoveries = new Map<string, OperationRecord[]>()
+
       for (const interruptedOperation of interrupted) {
         const operation = yield* projectStore.storedOperation(
           interruptedOperation.id
         )
+
         if (
           !operation?.projectId ||
           (operation.kind === 'create' && operation.status !== 'pending') ||

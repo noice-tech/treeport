@@ -3,12 +3,14 @@
 import * as Schema from 'effect/Schema'
 
 export { decodeUnknownOrNull } from './schema.js'
+
 export {
   BROWSER_VIDEO_CAPTURE_SOURCE,
   DEFAULT_BROWSER_VIDEO_SETTINGS,
   browserVideoSettingsSchema,
   type BrowserVideoSettings
 } from './browser-video.js'
+
 export { browserClipboardSchema, copyBrowserPage } from './browser-clipboard.js'
 
 export const BROWSER_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -29,6 +31,7 @@ export const browserObservedUrlSchema = Schema.String.pipe(
       }
 
       const url = new URL(value)
+
       return (
         (url.protocol === 'http:' ||
           url.protocol === 'https:' ||

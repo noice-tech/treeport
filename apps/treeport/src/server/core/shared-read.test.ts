@@ -9,13 +9,16 @@ describe('shared Git reads', () => {
     let complete!: (value: number) => void
     let sharedSignal!: AbortSignal
     let calls = 0
+
     const evaluate = (signal: AbortSignal) => {
       calls++
       sharedSignal = signal
+
       return new Promise<number>((resolve) => {
         complete = resolve
       })
     }
+
     const a = reads.run('same', first.signal, evaluate)
     const b = reads.run('same', second.signal, evaluate)
     await Promise.resolve()
@@ -32,14 +35,17 @@ describe('shared Git reads', () => {
     const reads = new SharedRead()
     const caller = new AbortController()
     let signal!: AbortSignal
+
     const pending = reads.run('key', caller.signal, async (value) => {
       signal = value
+
       return new Promise<void>((_resolve, reject) => {
         value.addEventListener('abort', () => reject(value.reason), {
           once: true
         })
       })
     })
+
     await Promise.resolve()
     caller.abort(new Error('abandoned'))
     await expect(pending).rejects.toThrow('abandoned')

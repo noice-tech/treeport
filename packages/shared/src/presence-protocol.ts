@@ -11,6 +11,7 @@ export const viewerIdentitySchema = Schema.Struct({
   name: Schema.NullOr(Schema.String),
   profilePicture: Schema.NullOr(Schema.String)
 })
+
 export type ViewerIdentity = Schema.Schema.Type<typeof viewerIdentitySchema>
 
 export const presenceUpdateSchema = Schema.Struct({
@@ -20,12 +21,14 @@ export const presenceUpdateSchema = Schema.Struct({
   visible: Schema.Boolean,
   focused: Schema.Boolean
 })
+
 export type PresenceUpdate = Schema.Schema.Type<typeof presenceUpdateSchema>
 
 export const workspacePresenceSchema = Schema.Struct({
   ...presenceUpdateSchema.fields,
   identity: viewerIdentitySchema
 })
+
 export type WorkspacePresence = Schema.Schema.Type<
   typeof workspacePresenceSchema
 >

@@ -100,7 +100,9 @@ interface TypedResponse<A> {
   readonly schema: Schema.Schema<any, any, never>
   readonly _Success?: A
 }
+
 type Query = Readonly<object>
+
 type RequestInput<Param extends object = Record<never, never>, Body = never> = {
   readonly param: Param
   readonly query?: Query
@@ -116,13 +118,16 @@ const rpcFetch: typeof fetch = async (input, init) => {
     }
 
     const request = input instanceof Request ? input : null
+
     const url = new URL(
       request?.url ?? String(input),
       globalThis.location?.href ?? 'http://localhost'
     )
+
     const method = String(init?.method ?? request?.method ?? 'GET')
       .toUpperCase()
       .slice(0, 16)
+
     throw new RpcNetworkError(method, url.pathname.slice(0, 2_048), cause)
   }
 }
@@ -136,6 +141,7 @@ function uploadRequest(
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     let stalled: ReturnType<typeof setTimeout> | null = null
+
     const cleanup = () => {
       if (stalled !== null) {
         clearTimeout(stalled)
@@ -148,12 +154,15 @@ function uploadRequest(
       request.onprogress = null
       request.upload.onprogress = null
     }
+
     const fail = (error: Error) => {
       cleanup()
       request.abort()
       reject(error)
     }
+
     const abort = () => fail(new DOMException('Upload cancelled', 'AbortError'))
+
     const resetStallTimer = () => {
       if (stalled !== null) {
         clearTimeout(stalled)
@@ -164,6 +173,7 @@ function uploadRequest(
         120_000
       )
     }
+
     request.open('POST', url.href)
     new Headers(init.headers).forEach((value, name) =>
       request.setRequestHeader(name, value)
@@ -172,6 +182,7 @@ function uploadRequest(
       onProgress(event.loaded)
       resetStallTimer()
     }
+
     request.onprogress = resetStallTimer
     request.onerror = () =>
       fail(
@@ -187,9 +198,12 @@ function uploadRequest(
         })
       )
     }
+
     init.signal?.addEventListener('abort', abort, { once: true })
+
     if (init.signal?.aborted) {
       abort()
+
       return
     }
 
@@ -206,19 +220,23 @@ function endpoint<A>(
   init?: RequestInit
 ): TypedResponse<A> {
   const url = new URL(pathname, globalThis.location?.href ?? 'http://localhost')
+
   for (const [key, value] of Object.entries(options?.query ?? {})) {
     if (value !== undefined) {
       url.searchParams.set(key, String(value))
     }
   }
+
   const headers = new Headers(init?.headers)
   let body = init?.body
+
   if (options?.json !== undefined) {
     headers.set('content-type', 'application/json')
     body = JSON.stringify(options.json)
   }
 
   const request: RequestInit = { ...init, method, headers }
+
   if (body !== undefined) {
     request.body = body
   }
@@ -232,6 +250,7 @@ export async function parseResponse<A>(
   const contract = await response
   const resolved = await contract.request
   const data: unknown = await resolved.json().catch(() => null)
+
   if (!resolved.ok) {
     const failure = decodeUnknownOrNull(apiErrorBodySchema, data)
     throw new DetailedError(
@@ -245,6 +264,7 @@ export async function parseResponse<A>(
   }
 
   const decoded = decodeUnknownOrNull(contract.schema, data)
+
   if (decoded === null) {
     throw new DetailedError('Treeport returned an invalid response', {
       statusCode: 502,

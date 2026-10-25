@@ -14,6 +14,7 @@ import { readOptionalJsonc, type OptionalJsoncResult } from './jsonc'
 import type { WorktreeSetupTask } from './setup'
 
 const DEFAULT_WORKTREE_DIRECTORY = '../worktrees'
+
 const zedSettingsSchema = z.looseObject({
   'git.worktree_directory': z.string().optional(),
   git: z
@@ -33,6 +34,7 @@ export interface ZedTask {
 
 function isPathWithin(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate)
+
   return (
     relative === '' ||
     (!relative.startsWith(`..${path.sep}`) &&
@@ -53,9 +55,11 @@ async function assertNoSymlinkComponents(
 
   const relative = path.relative(parent, candidate)
   let current = parent
+
   for (const component of relative.split(path.sep).filter(Boolean)) {
     current = path.join(current, component)
     let stat
+
     try {
       stat = await fs.lstat(current)
     } catch (error) {
@@ -66,6 +70,7 @@ async function assertNoSymlinkComponents(
 
       throw error
     }
+
     if (stat.isSymbolicLink()) {
       throw new Error(
         `Zed worktree path cannot contain a symbolic link: ${current}`
@@ -88,6 +93,7 @@ export function inferWorktreeName(
   }
 
   const checkoutName = path.basename(worktreePath)
+
   return checkoutName === path.basename(mainWorktreePath)
     ? path.basename(path.dirname(worktreePath))
     : checkoutName
@@ -104,9 +110,11 @@ async function resolveZedWorktreePathPromise(
   directorySetting: string
 }> {
   const name = normalizeWorktreeName(inputName)
+
   const settings = zedSettingsSchema.safeParse(
     settingsFile.found ? settingsFile.value : {}
   )
+
   if (!settings.success) {
     throw new Error('Zed git.worktree_directory must be a string')
   }
@@ -114,8 +122,10 @@ async function resolveZedWorktreePathPromise(
   const configured =
     settings.data['git.worktree_directory'] ??
     settings.data.git?.worktree_directory
+
   const directorySetting =
     configured === undefined ? DEFAULT_WORKTREE_DIRECTORY : configured.trim()
+
   if (
     !directorySetting ||
     directorySetting === '..' ||
@@ -127,6 +137,7 @@ async function resolveZedWorktreePathPromise(
   const main = await fs.realpath(mainWorktreePath)
   const parent = path.dirname(main)
   const resolved = path.resolve(main, directorySetting)
+
   if (resolved === parent || !isPathWithin(resolved, parent)) {
     throw new Error(
       'Zed git.worktree_directory must stay inside the repository or its parent'
@@ -138,8 +149,10 @@ async function resolveZedWorktreePathPromise(
   const repositoryBase = isPathWithin(resolved, main)
     ? resolved
     : path.join(resolved, path.basename(main))
+
   await assertNoSymlinkComponents(parent, repositoryBase)
   const wrapperPath = path.join(repositoryBase, name)
+
   return {
     name,
     path: path.join(wrapperPath, path.basename(main)),
@@ -158,8 +171,10 @@ async function prepareZedWorktreeWrapperPromise(
   await assertNoSymlinkComponents(parent, wrapper)
 
   let created = false
+
   try {
     const stat = await fs.lstat(wrapper)
+
     if (stat.isSymbolicLink()) {
       throw new Error(
         `Zed worktree wrapper cannot be a symbolic link: ${wrapper}`
@@ -179,6 +194,7 @@ async function prepareZedWorktreeWrapperPromise(
   }
 
   const stat = await fs.lstat(wrapper)
+
   if (stat.isSymbolicLink()) {
     throw new Error(
       `Zed worktree wrapper cannot be a symbolic link: ${wrapper}`
@@ -186,6 +202,7 @@ async function prepareZedWorktreeWrapperPromise(
   }
 
   const canonical = await fs.realpath(wrapper)
+
   if (!isPathWithin(canonical, parent)) {
     throw new Error('Zed worktree wrapper escaped the repository parent')
   }
@@ -195,7 +212,9 @@ async function prepareZedWorktreeWrapperPromise(
 
 const ZED_TASKS_CONFIG_PATH = path.join('.zed', 'tasks.json')
 const zedTaskInputSchema = z.unknown()
+
 type ZedTaskInput = z.input<typeof zedTaskInputSchema>
+
 const zedTaskRecordSchema = z.looseObject({
   command: z.unknown().optional(),
   args: z.unknown().optional(),
@@ -207,11 +226,13 @@ const zedTaskRecordSchema = z.looseObject({
 
 function taskArray(value: ZedTaskInput): ZedTaskInput[] | null {
   const direct = z.array(z.unknown()).safeParse(value)
+
   if (direct.success) {
     return direct.data
   }
 
   const wrapped = z.object({ tasks: z.array(z.unknown()) }).safeParse(value)
+
   return wrapped.success ? wrapped.data.tasks : null
 }
 
@@ -222,6 +243,7 @@ function parseTask(
 ): ZedTask {
   const prefix = `Zed task ${index + 1}`
   const parsedEntry = zedTaskRecordSchema.safeParse(entry)
+
   if (!parsedEntry.success) {
     throw new Error(`${prefix} must be an object`)
   }
@@ -233,7 +255,9 @@ function parseTask(
     env: environmentInput,
     label
   } = parsedEntry.data
+
   const parsedLabel = z.string().safeParse(label)
+
   if (
     (!parsedLabel.success || !parsedLabel.data.trim()) &&
     options.requireLabel
@@ -242,6 +266,7 @@ function parseTask(
   }
 
   const parsedCommand = z.string().safeParse(command)
+
   if (!parsedCommand.success || !parsedCommand.data.trim()) {
     throw new Error(`${prefix} is missing a command`)
   }
@@ -251,15 +276,18 @@ function parseTask(
   }
 
   const parsedArgs = z.array(z.string()).safeParse(argsInput ?? [])
+
   if (!parsedArgs.success) {
     throw new Error(`${prefix} has a non-string argument`)
   }
 
   const env: Record<string, string> = {}
+
   if (environmentInput !== undefined) {
     const parsedEnvironment = z
       .record(z.string(), z.unknown())
       .safeParse(environmentInput)
+
     if (!parsedEnvironment.success) {
       throw new Error(`${prefix} has invalid env`)
     }
@@ -282,6 +310,7 @@ function parseTask(
       }
 
       const parsedValue = z.string().safeParse(environmentValue)
+
       if (!parsedValue.success) {
         throw new Error(`${prefix} has a non-string env value`)
       }
@@ -298,6 +327,7 @@ function parseTask(
   }
 
   const parsedCwd = z.string().safeParse(cwd)
+
   if (cwd !== undefined && !parsedCwd.success) {
     throw new Error(`${prefix} has invalid cwd`)
   }
@@ -321,6 +351,7 @@ function parseTask(
     args: parsedArgs.data,
     env
   }
+
   if (parsedCwd.success) {
     task.cwd = parsedCwd.data
   }
@@ -332,11 +363,14 @@ async function loadCreateWorktreeTasksPromise(
   tasksFile: OptionalJsoncResult
 ): Promise<ZedTask[]> {
   const entries = taskArray(tasksFile.found ? tasksFile.value : null) ?? []
+
   return entries.flatMap((entry, index) => {
     const parsedEntry = zedTaskRecordSchema.safeParse(entry)
+
     const parsedHooks = z
       .array(z.string())
       .safeParse(parsedEntry.success ? parsedEntry.data.hooks : undefined)
+
     if (!parsedHooks.success || !parsedHooks.data.includes('create_worktree')) {
       return []
     }
@@ -383,23 +417,30 @@ function resolveTask(
     ZED_WORKTREE_ROOT: input.worktreePath,
     ZED_MAIN_GIT_WORKTREE: input.mainWorktreePath
   }
+
   const command = expand(task.command, compatibilityEnvironment)
+
   const args = task.args.map((argument) =>
     expand(argument, compatibilityEnvironment)
   )
+
   const expandedCwd = task.cwd
     ? expand(task.cwd, compatibilityEnvironment)
     : input.worktreePath
+
   const cwd = path.isAbsolute(expandedCwd)
     ? expandedCwd
     : path.resolve(input.worktreePath, expandedCwd)
+
   const taskEnvironment = Object.fromEntries(
     Object.entries(task.env).map(([key, value]) => [
       key,
       expand(value, compatibilityEnvironment)
     ])
   )
+
   const useShell = /[\s;&|<>`$()]/u.test(command)
+
   return {
     label: expand(task.label, compatibilityEnvironment),
     argv: useShell ? null : [command, ...args],
@@ -430,6 +471,7 @@ async function loadZedLauncherDefinitionsPromise(
   }
 
   const entries = taskArray(tasksFile.value)
+
   if (!entries) {
     return {
       definitions: [],
@@ -446,8 +488,10 @@ async function loadZedLauncherDefinitionsPromise(
 
   const definitions: LauncherDefinition[] = []
   const diagnostics: LauncherDefinitionDiagnostic[] = []
+
   for (const [index, entry] of entries.entries()) {
     let task: ZedTask
+
     try {
       task = parseTask(entry, index, {
         requireLabel: true,
@@ -491,6 +535,7 @@ async function resolveZedCreateWorktreeSetupTasksPromise(
   return tasks.map((task) => {
     const resolved = resolveTask(task, input, false)
     let argv = resolved.argv
+
     if (!argv) {
       if (!resolved.shellCommand) {
         throw new Error(`Zed task ${task.label} has no resolved command`)

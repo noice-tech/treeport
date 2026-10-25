@@ -41,6 +41,7 @@ it('decodes the shared API failure envelope for user-visible errors', async () =
     () => null,
     (cause: unknown) => cause
   )
+
   const details = errorDetails(failure)
   expect(details).toMatchObject({
     message: 'Unexpected server error',

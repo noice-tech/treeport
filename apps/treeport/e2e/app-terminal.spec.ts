@@ -26,6 +26,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(dialog).toHaveCount(0)
       await expect(trigger).toBeFocused()
     }
+
     {
       const releaseCreate = mocked.delayNextCreate()
       mocked.failNextCreate()
@@ -35,30 +36,37 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(
         page.getByRole('heading', { name: 'Create tree' })
       ).toHaveCount(0)
+
       const pending = page.getByRole('status', {
         name: 'Creating tree will-fail'
       })
+
       await expect(pending).toHaveText('will-fail')
 
       releaseCreate()
       await expect(pending).toHaveCount(0)
       await expect(page.getByText('create failed')).toBeVisible()
     }
+
     {
       const releaseCreate = mocked.delayNextCreate()
+
       const selectedTerminal = page.getByRole('main', {
         name: /terminal workspace$/
       })
+
       const selectedWorkspaceUrl = page.url()
       await expect(selectedTerminal).toBeVisible()
       await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Tree name').fill('New Tópic / Preview!')
+
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
           new URL(request.url()).pathname ===
             '/api/projects/proj_1/worktree-operations'
       )
+
       await page.getByLabel('Tree name').press('ControlOrMeta+Enter')
       const request = await requestPromise
       expect(request.postDataJSON()).toEqual({
@@ -75,9 +83,11 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(
         page.getByRole('heading', { name: 'Create tree' })
       ).toHaveCount(0)
+
       const pending = page.getByRole('status', {
         name: 'Creating tree new-topic-preview'
       })
+
       await expect(pending).toHaveText('new-topic-preview')
       await expect(pending).not.toBeFocused()
       const projectRequestsBeforeEvent = mocked.projectRequests()
@@ -109,6 +119,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(page).toHaveURL(selectedWorkspaceUrl)
       await expect(selectedTerminal).toBeVisible()
     }
+
     {
       await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Open with').selectOption('launcher_hunk')
@@ -117,12 +128,14 @@ test.describe('desktop worktree and terminal workflows', () => {
       await page.getByRole('button', { name: 'New tree' }).click()
       await expect(page.getByLabel('Open with')).toHaveValue('launcher_hunk')
       await page.getByLabel('Tree name').fill('launcher topic')
+
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
           new URL(request.url()).pathname ===
             '/api/projects/proj_1/worktree-operations'
       )
+
       await page.getByRole('button', { name: 'Create tree' }).click()
       expect((await requestPromise).postDataJSON()).toEqual({
         name: 'launcher topic',
@@ -145,6 +158,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(page.getByLabel('Open with')).toHaveValue('shell')
       await page.keyboard.press('Escape')
     }
+
     {
       await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Open with').selectOption('launcher_pi')
@@ -155,12 +169,14 @@ test.describe('desktop worktree and terminal workflows', () => {
         'placeholder',
         'tree'
       )
+
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
           new URL(request.url()).pathname ===
             '/api/projects/proj_1/worktree-operations'
       )
+
       await prompt.press('ControlOrMeta+Enter')
       expect((await requestPromise).postDataJSON()).toEqual({
         name: 'tree',
@@ -233,9 +249,11 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByRole('status', { name: 'Creating tree reload-topic' })
     ).toBeVisible()
+
     const activeTerminal = page.getByRole('main', {
       name: 'main tree terminal workspace'
     })
+
     await expect(activeTerminal).toBeVisible()
     releaseCreate()
     await expect(
@@ -330,9 +348,11 @@ test.describe('desktop worktree and terminal workflows', () => {
           ).length
       )
       .toBeGreaterThan(0)
+
     const controllerResize = controller.terminal.messages
       .filter((message) => message.type === 'resize')
       .at(-1)!
+
     for (const target of [page, viewer]) {
       await expect(target.locator('.xterm-rows > div')).toHaveCount(
         controllerResize.rows
@@ -359,9 +379,11 @@ test.describe('desktop worktree and terminal workflows', () => {
           ).length
       )
       .toBe(1)
+
     const takeover = observer.terminal.messages.find(
       (message) => message.type === 'take_control'
     )!
+
     for (const target of [page, viewer]) {
       await expect(target.locator('.xterm-rows > div')).toHaveCount(
         takeover.rows
@@ -378,9 +400,11 @@ test.describe('desktop worktree and terminal workflows', () => {
           ).length
       )
       .toBeGreaterThan(0)
+
     const viewerResize = observer.terminal.messages
       .filter((message) => message.type === 'resize')
       .at(-1)!
+
     for (const target of [page, viewer]) {
       await expect(target.locator('.xterm-rows > div')).toHaveCount(
         viewerResize.rows
@@ -403,6 +427,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         retryable: false
       })
     }
+
     await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
     mocked.terminal.connection.close()
     const before = mocked.terminal.connections.length
@@ -442,15 +467,19 @@ test.describe('desktop worktree and terminal workflows', () => {
       .getByRole('dialog', { name: 'New app' })
       .getByRole('button', { name: 'Terminal' })
       .click()
+
     const topicTerminals = page.getByRole('list', {
       name: 'topic terminal tabs'
     })
+
     await topicTerminals
       .getByRole('button', { name: /^zsh · \/worktrees\/topic,/ })
       .click()
+
     const closeButton = topicTerminals.getByRole('button', {
       name: /^Close zsh · \/worktrees\/topic$/
     })
+
     await expect(closeButton).toBeVisible()
 
     let confirmationShown = false
@@ -463,11 +492,13 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(closeButton).toBeVisible()
 
     page.once('dialog', (dialog) => dialog.accept())
+
     const closeRequest = page.waitForRequest(
       (request) =>
         request.method() === 'DELETE' &&
         new URL(request.url()).pathname === '/api/terminals/term_pi'
     )
+
     await closeButton.click()
     await closeRequest
     await expect(closeButton).toHaveCount(0)
@@ -487,13 +518,16 @@ test.describe('desktop worktree and terminal workflows', () => {
     const rail = page.getByRole('separator', { name: 'Resize apps panel' })
     const defaultBounds = await app.boundingBox()
     expect(defaultBounds).not.toBeNull()
+
     const terminal = page.getByRole('main', {
       name: 'main tree terminal workspace'
     })
+
     await expect
       .poll(async () => {
         const terminalWidth = (await terminal.boundingBox())?.width ?? 0
         const panelWidth = (await app.boundingBox())?.width ?? 0
+
         return Math.abs(terminalWidth - panelWidth)
       })
       .toBeLessThanOrEqual(1)
@@ -531,17 +565,21 @@ test.describe('desktop worktree and terminal workflows', () => {
       name: 'Terminal input',
       includeHidden: true
     })
+
     await expect(terminalInput).toHaveCount(1)
     await expect(exit).toBeFocused()
+
     for (let step = 0; step < 100; step += 1) {
       await page.keyboard.press('Tab')
       await expect(terminalInput).not.toBeFocused()
+
       // Stop after a full focus cycle; the assertions above run on every step.
       // oxlint-disable-next-line playwright/no-conditional-in-test
       if (await exit.evaluate((button) => button === document.activeElement)) {
         break
       }
     }
+
     await expect(exit).toBeFocused()
     await page.keyboard.press('Enter')
     await expect.poll(() => app.boundingBox()).toEqual(splitBounds)
@@ -584,6 +622,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect
       .poll(async () => {
         const bounds = await app.boundingBox()
+
         return bounds ? bounds.x + bounds.width : null
       })
       .toBe(page.viewportSize()!.width)

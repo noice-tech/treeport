@@ -55,6 +55,7 @@ const noBrowserTestState = {
             ? String(node.property.value)
             : ''
           : node.property.name
+
         if (property.startsWith('__')) {
           context.report({ messageId: 'testHook', node })
         } else if (
@@ -69,6 +70,7 @@ const noBrowserTestState = {
           node.name.startsWith('__') &&
           node.name !== '__dirname' &&
           node.name !== '__filename'
+
         if (
           !testHook &&
           node.name !== 'localStorage' &&
@@ -109,6 +111,7 @@ const noBrowserTestState = {
             ? String(node.key.value)
             : ''
           : (node.key.name ?? String(node.key.value))
+
         if (property.startsWith('__')) {
           context.report({ messageId: 'testHook', node })
         }

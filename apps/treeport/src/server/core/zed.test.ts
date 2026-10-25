@@ -13,6 +13,7 @@ import {
 } from './zed'
 
 const temporary: string[] = []
+
 afterEach(async () =>
   Promise.all(
     temporary
@@ -26,6 +27,7 @@ async function repository(name = 'example') {
   temporary.push(root)
   const main = path.join(root, name)
   await fs.mkdir(path.join(main, '.zed'), { recursive: true })
+
   return { root, main }
 }
 
@@ -91,9 +93,11 @@ describe('Zed worktree compatibility', () => {
     }
 
     const { root, main } = await repository()
+
     const outside = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-zed-outside-')
     )
+
     temporary.push(outside)
     await fs.symlink(outside, path.join(root, 'linked-trees'), 'dir')
     await fs.writeFile(
@@ -107,6 +111,7 @@ describe('Zed worktree compatibility', () => {
 
   it('loads create_worktree tasks with Zed variables', async () => {
     const { main } = await repository()
+
     const worktree = path.join(
       path.dirname(main),
       'worktrees',
@@ -114,6 +119,7 @@ describe('Zed worktree compatibility', () => {
       'topic',
       'example'
     )
+
     await fs.mkdir(path.join(worktree, '.zed'), { recursive: true })
     await fs.writeFile(
       path.join(worktree, '.zed', 'tasks.json'),
@@ -156,6 +162,7 @@ describe('Zed worktree compatibility', () => {
 
   it('discovers ordered repository tasks and resolves their launch context for a linked worktree', async () => {
     const { main } = await repository()
+
     const worktree = path.join(
       path.dirname(main),
       'worktrees',
@@ -163,6 +170,7 @@ describe('Zed worktree compatibility', () => {
       'picker',
       'example'
     )
+
     await fs.mkdir(worktree, { recursive: true })
     await fs.writeFile(
       path.join(main, '.zed', 'tasks.json'),
@@ -192,6 +200,7 @@ describe('Zed worktree compatibility', () => {
         worktreePath: worktree
       })
     )
+
     expect(listing).toEqual({
       definitions: [
         {
@@ -275,6 +284,7 @@ describe('Zed worktree compatibility', () => {
         worktreePath: first.main
       })
     )
+
     expect(listing.definitions).toEqual([
       expect.objectContaining({
         id: 'repository:first:zed-task:3',
@@ -346,6 +356,7 @@ describe('Zed worktree compatibility', () => {
 
   it('preserves hostile direct arguments and safely quotes explicit-shell arguments', async () => {
     const { main } = await repository()
+
     const worktree = path.join(
       path.dirname(main),
       'worktrees',
@@ -353,6 +364,7 @@ describe('Zed worktree compatibility', () => {
       'hostile',
       'example'
     )
+
     await fs.mkdir(path.join(worktree, '.zed'), { recursive: true })
     await fs.writeFile(
       path.join(worktree, '.zed', 'tasks.json'),
@@ -381,6 +393,7 @@ describe('Zed worktree compatibility', () => {
         worktreePath: worktree
       })
     )
+
     expect(tasks[0]).toMatchObject({
       argv: ['node', 'a b', 'semi;colon', '$cash', "quote'argument", '雪'],
       cwd: path.join(worktree, 'nested dir'),

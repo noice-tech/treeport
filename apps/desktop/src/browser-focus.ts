@@ -13,11 +13,13 @@ export function preserveDesktopFocus<A, E>(
 ) {
   return Effect.suspend(() => {
     const host = guest.hostWebContents
+
     if (!host || host.isDestroyed()) {
       return operation
     }
 
     const key = JSON.stringify(`__treeportFocus_${crypto.randomUUID()}`)
+
     return Effect.tryPromise(() =>
       host.executeJavaScript(`(async () => {
       const previous = document.activeElement;

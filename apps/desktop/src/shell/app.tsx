@@ -14,6 +14,7 @@ import { Button } from './ui'
 
 function Titlebar() {
   const state = useShellState()
+
   if (!state || (state.platform === 'darwin' && state.fullscreen)) {
     return null
   }
@@ -55,9 +56,11 @@ function Titlebar() {
 
 export function App() {
   const state = useShellState()
+
   const [dialog, setDialog] = useState<'connect' | 'manage' | 'phone' | null>(
     null
   )
+
   const [selectorOpen, setSelectorOpen] = useState(false)
   const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
 
@@ -68,13 +71,17 @@ export function App() {
       ),
     []
   )
+
   const openDialog = (nextDialog: 'connect' | 'manage' | 'phone') => {
     setSelectorOpen(false)
     setDialog(nextDialog)
   }
+
   const computer = state ? selectedComputer(state) : undefined
+
   const showTitlebar =
     state && !(state.platform === 'darwin' && state.fullscreen)
+
   const connectionReady = state?.connection.status === 'ready' && computer
 
   useEffect(() => {

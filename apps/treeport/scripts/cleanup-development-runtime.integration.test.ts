@@ -18,6 +18,7 @@ const sockets: string[] = []
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch {
     return false
@@ -26,14 +27,17 @@ function processExists(pid: number): boolean {
 
 async function waitFor<Value>(read: () => Promise<Value | null>) {
   const deadline = Date.now() + 10_000
+
   while (Date.now() < deadline) {
     const value = await read()
+
     if (value !== null) {
       return value
     }
 
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
+
   throw new Error('Timed out waiting for development runtime fixture')
 }
 
@@ -48,6 +52,7 @@ async function reservePort(): Promise<number> {
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve()))
   )
+
   return port
 }
 
@@ -58,6 +63,7 @@ async function startDaemon(
   const port = await reservePort()
   const instanceId = crypto.randomUUID()
   const apiUrl = `http://127.0.0.1:${port}`
+
   const program = `
     const http = require('node:http')
     const server = http.createServer((request, response) => {
@@ -73,16 +79,20 @@ async function startDaemon(
     server.listen(${port}, '127.0.0.1')
     process.on('SIGTERM', () => server.close(() => process.exit(0)))
   `
+
   const child = spawn(process.execPath, ['-e', program], {
     detached: true,
     stdio: 'ignore'
   })
+
   child.unref()
+
   if (!child.pid) {
     throw new Error('Daemon fixture did not start')
   }
 
   processes.push(child.pid)
+
   const record = {
     pid: child.pid,
     instanceId,
@@ -93,6 +103,7 @@ async function startDaemon(
     installationMethod: 'development',
     daemonLifecycle: 'external'
   }
+
   await Promise.all([
     fs.writeFile(path.join(runtimeDir, 'daemon.json'), JSON.stringify(record)),
     fs.writeFile(path.join(dataDir, 'daemon.lock'), JSON.stringify(record))
@@ -102,6 +113,7 @@ async function startDaemon(
       .then((response) => (response.ok ? true : null))
       .catch(() => null)
   )
+
   return child
 }
 
@@ -115,18 +127,22 @@ async function startTerminalHost(
     .update(path.resolve(dataDir))
     .digest('hex')
     .slice(0, 20)
+
   const hostId = crypto.randomUUID()
   const token = crypto.randomBytes(24).toString('base64url')
+
   const socketPath = path.join(
     os.tmpdir(),
     `treeport-${process.getuid?.() ?? 'user'}`,
     `terminal-engine-${hostKey}.sock`
   )
+
   const recordPath = path.join(
     runtimeDir,
     'terminal-engine',
     `terminal-host-${hostKey}.json`
   )
+
   const terminalPidPath = path.join(fixtureDirectory, 'terminal.pid')
   sockets.push(socketPath)
   await Promise.all([
@@ -185,23 +201,28 @@ async function startTerminalHost(
     })
     process.on('SIGTERM', () => process.exit(0))
   `
+
   const child = spawn(process.execPath, ['-e', program], {
     cwd: path.resolve(import.meta.dirname, '..'),
     detached: true,
     stdio: 'ignore'
   })
+
   child.unref()
+
   if (!child.pid) {
     throw new Error('Terminal host fixture did not start')
   }
 
   processes.push(child.pid)
+
   const terminalPid = await waitFor(() =>
     fs
       .readFile(terminalPidPath, 'utf8')
       .then((value) => Number(value))
       .catch(() => null)
   )
+
   processes.push(terminalPid)
   await waitFor(() =>
     fs
@@ -209,6 +230,7 @@ async function startTerminalHost(
       .then(() => true)
       .catch(() => null)
   )
+
   return { hostPid: child.pid, terminalPid }
 }
 
@@ -223,6 +245,7 @@ async function startPersistentSession(
     .update(path.resolve(dataDir))
     .digest('hex')
     .slice(0, 20)
+
   const directory = path.join(
     runtimeDir,
     'terminal-engine',
@@ -230,6 +253,7 @@ async function startPersistentSession(
     'sessions',
     name
   )
+
   const session = await PersistentSession.create({
     directory,
     executable: getSessionKeeperPayload(),
@@ -248,15 +272,19 @@ async function startPersistentSession(
     rows: 24,
     metadata: '{}'
   })
+
   await session.connect()
   await session.ready
   await session.activate()
+
   const status = sessionStatusSchema.parse(
     JSON.parse(await fs.readFile(path.join(directory, 'status.json'), 'utf8'))
   )
+
   processes.push(status.ownerPid, status.pid)
   sockets.push(session.manifest.socketPath)
   session.dispose()
+
   return status
 }
 
@@ -266,6 +294,7 @@ afterEach(async () => {
       process.kill(pid, 'SIGKILL')
     }
   }
+
   await Promise.all(
     sockets.splice(0).map((socket) => fs.rm(socket, { force: true }))
   )
@@ -281,23 +310,28 @@ describe('development runtime cleanup', () => {
     const temporaryRoot = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-dev-cleanup-')
     )
+
     directories.push(temporaryRoot)
     const root = await fs.realpath(temporaryRoot)
     const target = path.join(root, 'target')
     const unrelated = path.join(root, 'unrelated')
     const targetData = path.join(target, 'apps/treeport/.treeport-dev/data')
+
     const targetRuntime = path.join(
       target,
       'apps/treeport/.treeport-dev/runtime'
     )
+
     const unrelatedData = path.join(
       unrelated,
       'apps/treeport/.treeport-dev/data'
     )
+
     const unrelatedRuntime = path.join(
       unrelated,
       'apps/treeport/.treeport-dev/runtime'
     )
+
     await Promise.all([
       fs.mkdir(targetData, { recursive: true }),
       fs.mkdir(targetRuntime, { recursive: true }),
@@ -306,11 +340,13 @@ describe('development runtime cleanup', () => {
     ])
 
     const daemon = await startDaemon(targetData, targetRuntime)
+
     const targetHost = await startTerminalHost(
       targetData,
       targetRuntime,
       path.join(root, 'target-host')
     )
+
     const unrelatedHost = await startTerminalHost(
       unrelatedData,
       unrelatedRuntime,
@@ -325,6 +361,7 @@ describe('development runtime cleanup', () => {
       root,
       '0'.repeat(40)
     )
+
     process.kill(staleSession.ownerPid, 'SIGKILL')
     process.kill(staleSession.pid, 'SIGKILL')
     await waitFor(() =>
@@ -332,6 +369,7 @@ describe('development runtime cleanup', () => {
         ? true
         : null
     )
+
     const staleDirectory = path.join(
       targetRuntime,
       'terminal-engine',
@@ -350,6 +388,7 @@ describe('development runtime cleanup', () => {
       targetRuntime,
       root
     )
+
     const unrelatedSession = await startPersistentSession(
       unrelatedData,
       unrelatedRuntime,
@@ -359,6 +398,7 @@ describe('development runtime cleanup', () => {
     // A launch can leave only its manifest, and a live keeper can lose its
     // cached status. Cleanup must handle both without trusting cached PIDs.
     const sessionDirectories = await fs.readdir(path.dirname(staleDirectory))
+
     for (const name of sessionDirectories) {
       await fs.rm(
         path.join(path.dirname(staleDirectory), name, 'status.json'),

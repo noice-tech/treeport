@@ -9,6 +9,7 @@ it('keeps metadata reads Git-free, refreshes dirty state in the background, and 
   const { main, runner, service } = await fixture()
   const project = await service.registerProject(main)
   const tree = project.worktrees[0]!
+
   const gitReads = () =>
     runner.calls.filter(
       (call) =>
@@ -17,11 +18,13 @@ it('keeps metadata reads Git-free, refreshes dirty state in the background, and 
     ).length
 
   const before = gitReads()
+
   for (let i = 0; i < 4; i++) {
     await service.listProjects()
     await service.getProjectSnapshot(project.id)
     await service.getWorktreeSnapshot(tree.id)
   }
+
   expect(gitReads()).toBe(before)
 
   const external = path.join(path.dirname(main), 'external-checkout')
@@ -36,6 +39,7 @@ it('keeps metadata reads Git-free, refreshes dirty state in the background, and 
     1
   )
   runner.dirtyPaths.add(tree.path)
+
   // Explicitly execute the daemon's bounded unit of work instead of waiting
   // for its timer; the first turn reconciles, the next scans a tree.
   const refresh = () =>
@@ -44,6 +48,7 @@ it('keeps metadata reads Git-free, refreshes dirty state in the background, and 
         snapshots.refreshGitState()
       )
     )
+
   await refresh()
   expect((await service.getProjectSnapshot(project.id)).worktrees).toEqual(
     expect.arrayContaining([

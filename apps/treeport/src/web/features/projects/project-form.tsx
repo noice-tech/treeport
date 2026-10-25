@@ -36,6 +36,7 @@ export function ProjectForm({
       () => setDebouncedPath(pathValue.trim()),
       250
     )
+
     return () => window.clearTimeout(timeout)
   }, [pathValue])
 
@@ -45,6 +46,7 @@ export function ProjectForm({
       const query: DirectoryQuery = {
         input: debouncedPath
       }
+
       if (showHidden) {
         query.hidden = 'true'
       }
@@ -54,6 +56,7 @@ export function ProjectForm({
     enabled: Boolean(debouncedPath),
     retry: false
   })
+
   const openProject = useMutation({
     mutationFn: async (path: string) =>
       (await parseResponse(rpc.api.projects.$post({ json: { path } }))).project,
@@ -64,12 +67,14 @@ export function ProjectForm({
   })
 
   const inputSettled = pathValue.trim() === debouncedPath
+
   const data =
     inputSettled &&
     !directoryQuery.isError &&
     directoryQuery.data?.input === debouncedPath
       ? directoryQuery.data
       : undefined
+
   const validProject =
     inputSettled &&
     directoryQuery.isSuccess &&
@@ -78,6 +83,7 @@ export function ProjectForm({
     data.project.state === 'valid'
       ? data.project
       : null
+
   const busy = openProject.isPending
 
   const navigate = (directoryPath: string) => {
@@ -85,6 +91,7 @@ export function ProjectForm({
     const nextPath = /[\\/]$/u.test(directoryPath)
       ? directoryPath
       : `${directoryPath}${directoryPath.includes('/') ? '/' : '\\'}`
+
     setPathValue(nextPath)
     setDebouncedPath(nextPath)
     window.requestAnimationFrame(() => {
@@ -98,6 +105,7 @@ export function ProjectForm({
       className="flex flex-col gap-3 max-[700px]:gap-4"
       onSubmit={(event) => {
         event.preventDefault()
+
         if (!validProject || busy) {
           return
         }
@@ -121,6 +129,7 @@ export function ProjectForm({
             if (event.key === 'Enter' && !validProject) {
               event.preventDefault()
               setDebouncedPath(pathValue.trim())
+
               return
             }
 
@@ -128,6 +137,7 @@ export function ProjectForm({
               const firstDirectory = document.querySelector<HTMLElement>(
                 '#project-directory-list button'
               )
+
               if (firstDirectory) {
                 event.preventDefault()
                 firstDirectory.focus()
@@ -270,6 +280,7 @@ export function ProjectForm({
                     event.preventDefault()
                     event.stopPropagation()
                     pathInputRef.current?.focus()
+
                     return
                   }
 
@@ -278,16 +289,20 @@ export function ProjectForm({
                   }
 
                   event.preventDefault()
+
                   const buttons = [
                     ...document.querySelectorAll<HTMLButtonElement>(
                       '#project-directory-list button'
                     )
                   ]
+
                   const index = buttons.indexOf(event.currentTarget)
+
                   const nextIndex =
                     event.key === 'ArrowDown'
                       ? Math.min(index + 1, buttons.length - 1)
                       : index - 1
+
                   if (nextIndex >= 0) {
                     buttons[nextIndex]?.focus()
                   } else {

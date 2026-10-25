@@ -25,6 +25,7 @@ interface TerminalObservation {
 }
 
 const cleanups: Array<() => Promise<void>> = []
+
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) {
     await cleanup()
@@ -34,6 +35,7 @@ afterEach(async () => {
 async function fixture() {
   const events = new ProductEventBus()
   const presence = new WorkspacePresenceManager(events)
+
   const observation: TerminalObservation = {
     terminal: {
       id: 'term',
@@ -63,8 +65,10 @@ async function fixture() {
       attention: null
     }
   }
+
   const inspect = vi.fn(async () => observation)
   const snapshot = vi.fn(() => [observation.metadata])
+
   const service = testAccess<TreeportService>({
     events,
     apps: {
@@ -74,7 +78,9 @@ async function fixture() {
     runEffect: (effect: Effect.Effect<unknown, unknown, never>) =>
       Effect.runPromise(effect)
   })
+
   const scope = await Effect.runPromise(Scope.make())
+
   const app = await service.runEffect(
     Scope.extend(
       makeRpcHttpApp(
@@ -85,7 +91,9 @@ async function fixture() {
       scope
     )
   )
+
   const rpc = await Effect.runPromise(NodeHttpServer.makeHandler(app))
+
   const server = http.createServer((request, response) => {
     if (request.url === '/api/terminals/term') {
       void inspect().then((value) => {
@@ -96,6 +104,7 @@ async function fixture() {
       rpc(request, response)
     }
   })
+
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   // SAFETY: The fixture has just bound a TCP port on the loopback interface.
   const address = server.address() as AddressInfo
@@ -108,9 +117,11 @@ async function fixture() {
       server.close((error) => (error ? reject(error) : resolve()))
     )
   })
+
   const wait = async (until = 'exit', timeout = '3s') => {
     let stdout = ''
     let stderr = ''
+
     const code = await runCliApplication({
       args: [
         'terminal',
@@ -130,20 +141,25 @@ async function fixture() {
         stderr += value
       }
     })
+
     return { code, stdout, stderr }
   }
+
   const updated = () =>
     events.publish('terminal.updated', {
       terminalId: 'term',
       worktreeId: 'tree'
     })
+
   const metadata = () =>
     events.publish('terminal.metadata', observation.metadata)
+
   return { observation, inspect, snapshot, wait, updated, metadata, events }
 }
 
 async function runtimeFixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-wait-exit-'))
+
   const options = {
     runtimeDir: root,
     launcherPath: path.resolve(
@@ -152,10 +168,13 @@ async function runtimeFixture() {
     ),
     sessionExecutable: getSessionKeeperPayload()
   }
+
   let scope = await Effect.runPromise(Scope.make())
+
   let manager = await Effect.runPromise(
     Scope.extend(TerminalHostSessions.make(options), scope)
   )
+
   cleanups.push(async () => {
     await Effect.runPromise(manager.killWorktree('tree'))
     await Effect.runPromise(Scope.close(scope, Exit.void))
@@ -164,13 +183,16 @@ async function runtimeFixture() {
   const value = await fixture()
   value.inspect.mockImplementation(async () => {
     const terminals = await Effect.runPromise(manager.listTerminals('tree'))
+
     const {
       closeOnSuccess: _closeOnSuccess,
       closeOnExit: _closeOnExit,
       ...terminal
     } = terminals[0]!
+
     return { terminal, metadata: value.observation.metadata }
   })
+
   const subscribe = async () => {
     await Effect.runPromise(
       Scope.extend(
@@ -190,6 +212,7 @@ async function runtimeFixture() {
       )
     )
   }
+
   return {
     ...value,
     root,
@@ -236,6 +259,7 @@ async function runtimeFixture() {
       const transition = await Effect.runPromise(
         manager.prepareQueryAuthority('term')
       )
+
       await Effect.runPromise(
         manager.activateQueryAuthority(
           'term',
@@ -280,6 +304,7 @@ describe('terminal wait CLI observations and event races', () => {
     const value = await fixture()
     value.snapshot.mockImplementation(() => {
       value.observation.terminal.commandExitCode = 7
+
       // No event is delivered: it occurred before subscription's snapshot fence.
       return [value.observation.metadata]
     })
@@ -297,6 +322,7 @@ describe('terminal wait CLI observations and event races', () => {
       .mockImplementationOnce(async () => {
         value.observation.terminal.commandExitCode = 0
         value.updated()
+
         return initial
       })
     const result = await value.wait()

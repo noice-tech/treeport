@@ -19,6 +19,7 @@ interface DaemonRecord {
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (error) {
     // SAFETY: The surrounding boundary contract establishes this asserted value.
@@ -31,6 +32,7 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
   release(): Promise<void>
 }> {
   const instanceId = config.instanceId
+
   if (!instanceId) {
     throw new Error('TREEPORT_INSTANCE_ID is required to start the daemon')
   }
@@ -41,6 +43,7 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
   ])
   const lockPath = path.join(config.dataDir, 'daemon.lock')
   const statePath = path.join(config.runtimeDir, 'daemon.json')
+
   const record: DaemonRecord = {
     pid: process.pid,
     instanceId,
@@ -72,6 +75,7 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
           return JSON.parse(value) as Partial<DaemonRecord>
         })
         .catch(() => null)
+
       if (
         existing?.pid &&
         Number.isInteger(existing.pid) &&
@@ -83,9 +87,11 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
       }
 
       await fs.rm(lockPath, { force: true })
+
       return false
     }
   )
+
   if (!firstAttempt) {
     await openLock()
   }
@@ -99,6 +105,7 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
           (JSON.parse(value) as Partial<DaemonRecord>).instanceId === instanceId
       )
       .catch(() => false)
+
     if (owned) {
       await fs.rm(filePath, { force: true })
     }
@@ -107,6 +114,7 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
   return {
     async publish() {
       const temporaryPath = `${statePath}.${process.pid}.tmp`
+
       try {
         await fs.writeFile(temporaryPath, `${JSON.stringify(record)}\n`, {
           mode: 0o600

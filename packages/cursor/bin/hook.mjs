@@ -10,8 +10,10 @@ import { fileURLToPath } from 'node:url'
 
 const event = process.argv[2]
 let input = ''
+
 for await (const chunk of process.stdin) {
   input += chunk
+
   if (input.length > 1024 * 1024) {
     process.stdout.write('{"continue":true}\n')
     process.exit(0)
@@ -32,19 +34,24 @@ async function runHook() {
   }
 
   const payload = JSON.parse(input)
+
   const generation =
     typeof payload?.generation_id === 'string' ? payload.generation_id : null
+
   // Cursor captures hook stdio and detaches its shell from the controlling
   // terminal. Find the nearest terminal-owning ancestor, not /dev/tty or stdout.
   let ownerPid = process.ppid
   let tty = null
+
   for (let depth = 0; depth < 16 && ownerPid > 1; depth += 1) {
     const result = spawnSync(
       'ps',
       ['-p', String(ownerPid), '-o', 'ppid=,tty='],
       { encoding: 'utf8', timeout: 1_000 }
     )
+
     const [parent, device] = result.stdout?.trim().split(/\s+/) ?? []
+
     if (/^(?:pts\/\d+|ttys?\d+)$/.test(device ?? '')) {
       tty = '/dev/' + device
       break
@@ -60,6 +67,7 @@ async function runHook() {
   const directory = join(tmpdir(), `treeport-cursor-${process.getuid()}`)
   mkdirSync(directory, { mode: 0o700, recursive: true })
   const stat = lstatSync(directory)
+
   if (
     !stat.isDirectory() ||
     stat.uid !== process.getuid() ||
@@ -72,8 +80,10 @@ async function runHook() {
     .update(process.env.TREEPORT_TERMINAL_ID + ':' + ownerPid)
     .digest('hex')
     .slice(0, 20)
+
   const socketPath = join(directory, key + '.sock')
   const message = JSON.stringify({ event, generation })
+
   const send = () =>
     new Promise((resolve) => {
       const socket = createConnection(socketPath)
@@ -84,6 +94,7 @@ async function runHook() {
         resolve(!hadError && socket.bytesWritten > 0)
       )
     })
+
   if (await send()) {
     return { continue: true }
   }
@@ -93,8 +104,10 @@ async function runHook() {
   }
 
   const fd = openSync(tty, 'w')
+
   if (!isatty(fd)) {
     closeSync(fd)
+
     return { continue: true }
   }
 
@@ -107,27 +120,33 @@ async function runHook() {
     ],
     { detached: true, stdio: ['ignore', 'ignore', 'ignore', fd, 'ipc'] }
   )
+
   closeSync(fd)
   await new Promise((resolve) => {
     const timeout = setTimeout(resolve, 2_000)
+
     const ready = () => {
       clearTimeout(timeout)
       resolve()
     }
+
     worker.once('message', ready)
     worker.once('error', ready)
     worker.once('exit', ready)
   })
+
   if (worker.connected) {
     worker.disconnect()
   }
 
   worker.unref()
   await send()
+
   return { continue: true }
 }
 
 // Status reporting must never block a prompt, and stdout belongs to Cursor's
 // hook protocol. Fail open if a terminal disappears or a hook payload is invalid.
 const response = await runHook().catch(() => ({ continue: true }))
+
 process.stdout.write(JSON.stringify(response) + '\n')

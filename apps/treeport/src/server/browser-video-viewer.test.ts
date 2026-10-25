@@ -4,10 +4,12 @@ import { BrowserVideoViewer } from './browser-video-viewer'
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason: Error) => void
+
   const promise = new Promise<T>((done, fail) => {
     resolve = done
     reject = fail
   })
+
   return { promise, resolve, reject }
 }
 
@@ -17,6 +19,7 @@ it.each(['answer', 'failure'] as const)(
     const send = vi.fn(() => true)
     const pending = deferred<string>()
     const cleanup = deferred<void>()
+
     const old = {
       webcodecs: null,
       negotiate: vi.fn(() => pending.promise),
@@ -24,11 +27,13 @@ it.each(['answer', 'failure'] as const)(
         .fn(async (): Promise<void> => undefined)
         .mockImplementationOnce(() => cleanup.promise)
     }
+
     const next = {
       webcodecs: null,
       negotiate: vi.fn(async () => 'new-answer'),
       close: vi.fn(async () => undefined)
     }
+
     const viewer = new BrowserVideoViewer(send)
     viewer.resume(old)
     viewer.offer('old', 'offer')
@@ -39,6 +44,7 @@ it.each(['answer', 'failure'] as const)(
     viewer.offer('premature', 'offer')
     expect(next.negotiate).not.toHaveBeenCalled()
     expect(send.mock.calls).toEqual([[{ type: 'videoReady' }]])
+
     if (outcome === 'answer') {
       pending.resolve('stale-answer')
     } else {
@@ -67,6 +73,7 @@ it.each(['answer', 'failure'] as const)(
 it('revokes an activation lease even when the caller reuses the same backend', async () => {
   const send = vi.fn(() => true)
   const pending = deferred<string>()
+
   const source = {
     webcodecs: null,
     negotiate: vi
@@ -74,6 +81,7 @@ it('revokes an activation lease even when the caller reuses the same backend', a
       .mockImplementationOnce(() => pending.promise),
     close: vi.fn(async () => undefined)
   }
+
   const viewer = new BrowserVideoViewer(send)
   viewer.resume(source)
   viewer.offer('old', 'offer')
@@ -99,21 +107,25 @@ it('revokes an activation lease even when the caller reuses the same backend', a
 it('coalesces rapid visibility changes and cannot revive a disposed viewer', async () => {
   const send = vi.fn(() => true)
   const cleanup = deferred<void>()
+
   const first = {
     webcodecs: null,
     negotiate: vi.fn(async () => 'first'),
     close: vi.fn(() => cleanup.promise)
   }
+
   const skipped = {
     webcodecs: null,
     negotiate: vi.fn(async () => 'skipped'),
     close: vi.fn(async () => undefined)
   }
+
   const last = {
     webcodecs: null,
     negotiate: vi.fn(async () => 'last'),
     close: vi.fn(async () => undefined)
   }
+
   const viewer = new BrowserVideoViewer(send)
   viewer.resume(first)
   viewer.suspend()
@@ -134,6 +146,7 @@ it('coalesces rapid visibility changes and cannot revive a disposed viewer', asy
 
 it('waits for capture readiness and replaces a failed source without retaining stale answers', async () => {
   const send = vi.fn(() => true)
+
   const first = {
     webcodecs: null,
     negotiate: vi.fn(async () => {
@@ -141,6 +154,7 @@ it('waits for capture readiness and replaces a failed source without retaining s
     }),
     close: vi.fn(async () => undefined)
   }
+
   const viewer = new BrowserVideoViewer(send)
   viewer.offer('too-early', 'offer')
   expect(send).not.toHaveBeenCalled()
@@ -154,11 +168,13 @@ it('waits for capture readiness and replaces a failed source without retaining s
       message: 'capture failed'
     })
   )
+
   const next = {
     webcodecs: null,
     negotiate: vi.fn(async () => 'answer'),
     close: vi.fn(async () => undefined)
   }
+
   viewer.resume(next)
   await vi.waitFor(() =>
     expect(send).toHaveBeenLastCalledWith({ type: 'videoReady' })

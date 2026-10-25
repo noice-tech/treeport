@@ -42,11 +42,13 @@ import { GitPort } from '../../git'
 import { ProjectStore } from '../project/project-store'
 
 const now = (): string => new Date().toISOString()
+
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
 
 function causeMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause)
+
   return error instanceof Error ? error.message : String(error)
 }
 
@@ -140,6 +142,7 @@ export class WorktreeCreationService {
       const database = yield* DatabasePort
       const projectStore = yield* ProjectStore
       const filteredProjectId = filters.projectId
+
       if (filteredProjectId) {
         yield* projectStore.requireOpenProject(filteredProjectId)
       }
@@ -164,6 +167,7 @@ export class WorktreeCreationService {
             .orderBy(asc(operations.createdAt), asc(operations.id))
         )
         .pipe(Effect.orDie)
+
       return rows.map(mapOperation)
     })
   }
@@ -187,6 +191,7 @@ export class WorktreeCreationService {
       const worktreeMutations = yield* WorktreeMutations
 
       const project = yield* projectStore.requireOpenProject(projectId)
+
       if (project.kind === 'folder') {
         return yield* Effect.fail(
           new DomainError(
@@ -211,6 +216,7 @@ export class WorktreeCreationService {
             400
           )
       })
+
       if (
         (yield* locks.isProjectLocked(projectId)) &&
         !(yield* worktreeMutations.isBusy(projectId))
@@ -227,6 +233,7 @@ export class WorktreeCreationService {
       const operationId = id('op')
       const timestamp = now()
       const request: CreateOperationRequest = { name, base }
+
       if (initialTerminal) {
         request.initialTerminal = initialTerminal
       }
@@ -277,7 +284,9 @@ export class WorktreeCreationService {
             )
           )
         )
+
       yield* applicationFibers.fork(backgroundCreate)
+
       return operation
     })
   }
@@ -313,6 +322,7 @@ export class WorktreeCreationService {
         sourceWorktreeId,
         treeTitleCommand
       )
+
       yield* Effect.matchCauseEffect(creation, {
         onSuccess: (result) =>
           Effect.gen(function* () {
@@ -355,6 +365,7 @@ export class WorktreeCreationService {
             yield* Effect.sync(() =>
               events.publish('create.failed', { projectId, operationId })
             )
+
             if (!Cause.isFailure(cause)) {
               return yield* Effect.failCause(cause)
             }
@@ -369,8 +380,10 @@ export class WorktreeCreationService {
     request: CreateOperationRequest
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     let initialTerminal: CreateInitialTerminal | undefined
+
     if (request.initialTerminal) {
       initialTerminal = { name: request.initialTerminal.name }
+
       if (request.initialTerminal.initialTitle !== undefined) {
         initialTerminal.initialTitle = request.initialTerminal.initialTitle
       }
@@ -418,6 +431,7 @@ export class WorktreeCreationService {
       const projectStore = yield* ProjectStore
       const worktreeMutations = yield* WorktreeMutations
       const project = yield* projectStore.requireOpenProject(projectId)
+
       if (project.kind === 'folder') {
         return yield* Effect.fail(
           new DomainError(
@@ -473,6 +487,7 @@ export class WorktreeCreationService {
     const observeAvailableProject = this.observeAvailableProject.bind(this)
     const importWorktrees = this.importWorktrees.bind(this)
     const executeCreateTerminal = this.executeCreateTerminal.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -487,6 +502,7 @@ export class WorktreeCreationService {
         const runner = yield* CommandPort
         const setupService = yield* Setup
         const zed = yield* Zed
+
         // Acceptance requires an open project; accepted work survives closure.
         const { project, worktree } = yield* Effect.acquireUseRelease(
           locks
@@ -510,6 +526,7 @@ export class WorktreeCreationService {
                 yield* projectStore.getProject(projectId),
                 true
               )
+
               if (project.kind === 'folder') {
                 return yield* Effect.fail(
                   new DomainError(
@@ -529,6 +546,7 @@ export class WorktreeCreationService {
                     400
                   )
               })
+
               if (
                 project.worktrees.some(
                   (candidate) =>
@@ -558,12 +576,15 @@ export class WorktreeCreationService {
                       )
                   )
                 )
+
               let worktreePath = destination.path
               let wrapperPath = destination.wrapperPath
+
               const pathExists = yield* Effect.tryPromise({
                 try: () => fs.access(worktreePath).then(() => true),
                 catch: (cause) => cause
               }).pipe(Effect.orElseSucceed(() => false))
+
               if (pathExists) {
                 return yield* Effect.fail(
                   new DomainError(
@@ -575,6 +596,7 @@ export class WorktreeCreationService {
               }
 
               let commit: string
+
               if (base === 'current') {
                 if (!sourceWorktreeId) {
                   return yield* Effect.fail(
@@ -587,6 +609,7 @@ export class WorktreeCreationService {
                 }
 
                 const source = yield* projectStore.getWorktree(sourceWorktreeId)
+
                 if (source.projectId !== projectId || source.prunable) {
                   return yield* Effect.fail(
                     new DomainError(
@@ -618,6 +641,7 @@ export class WorktreeCreationService {
                       )
                   )
                 )
+
               const wrapperCreated = preparedWrapper.created
               wrapperPath = preparedWrapper.path
               worktreePath = path.join(
@@ -662,6 +686,7 @@ export class WorktreeCreationService {
             `)
                 )
                 .pipe(Effect.orDie)
+
               const [worktreeRow] = yield* database
                 .execute('worktree.creation.service.637', (db) =>
                   db
@@ -675,6 +700,7 @@ export class WorktreeCreationService {
                     .limit(1)
                 )
                 .pipe(Effect.orDie)
+
               if (!worktreeRow) {
                 return yield* Effect.fail(
                   new DomainError(
@@ -689,6 +715,7 @@ export class WorktreeCreationService {
                 worktreeRow.worktree,
                 worktreeRow.mainWorktreePath
               )
+
               // Reserve the new tree before releasing the project lock. Snapshot
               // collection can observe it as soon as importWorktrees finishes.
               yield* Effect.acquireRelease(
@@ -715,12 +742,14 @@ export class WorktreeCreationService {
                   worktreeId: worktree.id
                 })
               )
+
               return { project, worktree }
             }),
           () => locks.release({ projectId })
         )
 
         const [titleExecutable, ...titleArgs] = treeTitleCommand ?? []
+
         if (titleExecutable) {
           yield* Effect.forkDaemon(
             runCheckedEffect(runner, {
@@ -736,6 +765,7 @@ export class WorktreeCreationService {
                   .map((line) => line.trim())
                   .find(Boolean)
                   ?.slice(0, WORKTREE_TITLE_MAX_LENGTH)
+
                 if (!title) {
                   return Effect.void
                 }
@@ -772,8 +802,10 @@ export class WorktreeCreationService {
         let terminal: TerminalRecord | null = null
         let terminalError: string | null = null
         let setupError: string | null = null
+
         if (initialTerminal) {
           const launchOptions: TerminalLaunchOptions = {}
+
           if (initialTerminal.initialTitle) {
             launchOptions.initialTitle = initialTerminal.initialTitle
           }
@@ -795,6 +827,7 @@ export class WorktreeCreationService {
               })
             )
           )
+
           const initialTerminalResult = yield* Effect.exit(
             executeCreateTerminal(
               worktree.id,
@@ -803,6 +836,7 @@ export class WorktreeCreationService {
               launchOptions
             )
           )
+
           if (
             Exit.isFailure(initialTerminalResult) &&
             Cause.isInterruptedOnly(initialTerminalResult.cause)
@@ -820,6 +854,7 @@ export class WorktreeCreationService {
             const fallback = yield* Effect.exit(
               executeCreateTerminal(worktree.id, 'Terminal')
             )
+
             if (
               Exit.isFailure(fallback) &&
               Cause.isInterruptedOnly(fallback.cause)
@@ -835,6 +870,7 @@ export class WorktreeCreationService {
           }
 
           const setupResult = yield* Fiber.join(setupResolution)
+
           if (
             Exit.isFailure(setupResult) &&
             Cause.isInterruptedOnly(setupResult.cause)
@@ -854,7 +890,9 @@ export class WorktreeCreationService {
                   4_096
                 )
               }
+
           setupError = setup.error
+
           if (setup.tasks.length > 0 || setupError) {
             if (!terminal) {
               setupError ??=
@@ -866,6 +904,7 @@ export class WorktreeCreationService {
                 setup: { tasks: setup.tasks, error: setupError },
                 closeOnSuccess: true
               }
+
               if (initialTerminal.initialSize) {
                 setupOptions.initialSize = initialTerminal.initialSize
               }
@@ -878,6 +917,7 @@ export class WorktreeCreationService {
                   setupOptions
                 )
               )
+
               if (
                 Exit.isFailure(setupTerminal) &&
                 Cause.isInterruptedOnly(setupTerminal.cause)
@@ -887,11 +927,13 @@ export class WorktreeCreationService {
 
               if (Exit.isFailure(setupTerminal)) {
                 const error = Cause.squash(setupTerminal.cause)
+
                 const setupTerminalError = `Tree setup terminal${
                   error instanceof DomainError ? ` [${error.code}]` : ''
                 }: ${
                   error instanceof Error ? error.message : String(error)
                 }`.slice(0, 2_048)
+
                 setupError = setupError
                   ? `${setupError.slice(0, 2_047)}\n${setupTerminalError}`
                   : setupTerminalError
@@ -912,6 +954,7 @@ export class WorktreeCreationService {
                 )
               )
           )
+
           if (
             Exit.isFailure(setupResultsExit) &&
             Cause.isInterruptedOnly(setupResultsExit.cause)
@@ -927,6 +970,7 @@ export class WorktreeCreationService {
                   error: causeMessage(setupResultsExit.cause)
                 }
               ]
+
           const setupFailure = setupResults.find((result) => result.error)
           setupError = setupFailure
             ? `${setupFailure.label}: ${setupFailure.error}`.slice(0, 4_096)
@@ -937,6 +981,7 @@ export class WorktreeCreationService {
           const fallback = yield* Effect.exit(
             executeCreateTerminal(worktree.id, 'Terminal')
           )
+
           if (
             Exit.isFailure(fallback) &&
             Cause.isInterruptedOnly(fallback.cause)
@@ -952,6 +997,7 @@ export class WorktreeCreationService {
         }
 
         yield* invalidateProjectsSnapshot()
+
         return {
           worktree: yield* projectStore.getWorktree(worktree.id),
           terminal,

@@ -15,6 +15,7 @@ export const ACCENT_PRESETS = [
 export function storedTheme(): TreeportTheme & { accent: string } {
   const mode = localStorage.getItem(THEME_STORAGE_KEY)
   const accent = localStorage.getItem(ACCENT_STORAGE_KEY)
+
   return {
     mode: mode === 'auto' || mode === 'light' ? mode : 'dark',
     accent:
@@ -24,6 +25,7 @@ export function storedTheme(): TreeportTheme & { accent: string } {
 
 const lightScheme = window.matchMedia('(prefers-color-scheme: light)')
 let appliedTheme: ReturnType<typeof storedTheme> | null = null
+
 lightScheme.addEventListener('change', () => {
   if (appliedTheme?.mode === 'auto') {
     applyTheme(appliedTheme)
@@ -32,12 +34,14 @@ lightScheme.addEventListener('change', () => {
 
 export function applyTheme(theme: ReturnType<typeof storedTheme>) {
   appliedTheme = theme
+
   const mode =
     theme.mode === 'auto'
       ? lightScheme.matches
         ? 'light'
         : 'dark'
       : theme.mode
+
   const root = document.documentElement
   root.dataset.theme = mode
   root.style.setProperty('--accent-color', theme.accent)

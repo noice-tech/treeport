@@ -287,12 +287,15 @@ const BROWSER_IDLE_GRACE_MS = 30_000
 const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
 const LOCAL_BROWSER_OWNER_CONTROLLER = 'local-owner'
+
 // Control follows the viewer; socket IDs govern cleanup. Account/device metadata
 // describes the controller but must not change who a reconnecting viewer is.
 const attachmentController = (viewer: Pick<BrowserAttachment, 'viewerId'>) =>
   `attachment:${viewer.viewerId}`
+
 const MAX_BROWSER_SCHEDULED_OPERATIONS = 64
 const MAX_BROWSER_REGULAR_OPERATIONS = 46
+
 const defaultBrowserFactory: BrowserSessionBrowserFactory = (
   host,
   workspacePath,
@@ -337,6 +340,7 @@ export class BrowserSessionManager {
       endpoint
     ) => {
       const { chromium } = await import('playwright')
+
       return chromium.connectOverCDP(endpoint, { timeout: 10_000 })
     }
   ) {
@@ -347,6 +351,7 @@ export class BrowserSessionManager {
           cursor: (attachmentId, point) => {
             for (const session of this.sessions.values()) {
               const attachment = session.attachments.get(attachmentId)
+
               if (attachment) {
                 attachment.cursorPoint = point
                 this.trackCursor(session, attachment)
@@ -404,11 +409,13 @@ export class BrowserSessionManager {
   ): Effect.Effect<string, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
       yield* this.service.apps.authorizeBrowserApp(appId)
+
       for (const [value, ticket] of this.tickets) {
         if (ticket.expiresAt < Date.now()) {
           this.tickets.delete(value)
         }
       }
+
       if (this.tickets.size >= MAX_BROWSER_TICKETS) {
         return yield* Effect.fail(
           new Error('Too many Browser attachment requests are pending.')
@@ -423,6 +430,7 @@ export class BrowserSessionManager {
         visible,
         expiresAt: Date.now() + 30_000
       })
+
       return ticket
     })
   }
@@ -434,6 +442,7 @@ export class BrowserSessionManager {
       yield* this.service.apps.authorizeBrowserApp(appId)
       const browser = this.sessions.get(appId)?.browser
       const endpoint = browser?.devtoolsEndpoint?.()
+
       if (!endpoint) {
         return yield* Effect.fail(
           new Error('The hosted browser page is not available.')
@@ -454,11 +463,13 @@ export class BrowserSessionManager {
   > {
     return Effect.gen(this, function* () {
       yield* this.service.apps.authorizeBrowserApp(appId)
+
       for (const [value, ticket] of this.ownerTickets) {
         if (ticket.expiresAt < Date.now()) {
           this.ownerTickets.delete(value)
         }
       }
+
       if (this.ownerTickets.size >= MAX_BROWSER_TICKETS) {
         return yield* Effect.fail(
           new Error('Too many Browser owner requests are pending.')
@@ -467,16 +478,19 @@ export class BrowserSessionManager {
 
       const ticket = crypto.randomBytes(32).toString('base64url')
       const currentOwner = this.sessions.get(appId)?.localOwner
+
       const challenge =
         currentOwner?.viewerId === viewerId
           ? currentOwner.challenge
           : crypto.randomBytes(32).toString('base64url')
+
       this.ownerTickets.set(ticket, {
         appId,
         viewerId,
         challenge,
         expiresAt: Date.now() + 30_000
       })
+
       return { ticket, challenge }
     })
   }
@@ -491,9 +505,11 @@ export class BrowserSessionManager {
         candidate.transport.isConnected() &&
         attachmentController(candidate) === session.controllerId
     )
+
     const local =
       session.controllerId === LOCAL_BROWSER_OWNER_CONTROLLER &&
       session.localOwner !== null
+
     const identity: AuthenticatedViewer | null =
       controller?.identity ??
       (local
@@ -507,11 +523,13 @@ export class BrowserSessionManager {
             deviceId: 'local'
           }
         : null)
+
     const sameAccount =
       identity?.account.source === 'tailscale' &&
       attachment.identity?.account.source === 'tailscale' &&
       identity.account.login !== null &&
       identity.account.login === attachment.identity.account.login
+
     const sameDevice =
       identity !== null &&
       identity.deviceId !== null &&
@@ -549,6 +567,7 @@ export class BrowserSessionManager {
   ): void {
     const pending = session.fileChooser
     session.fileChooser = null
+
     if (!pending) {
       return
     }
@@ -570,14 +589,17 @@ export class BrowserSessionManager {
     chooser: FileChooser | null
   ): void {
     this.closeFileChooser(session)
+
     if (!chooser) {
       session.fileChooserInput = null
+
       return
     }
 
     // Only a recent action from the exact controlling socket can open a picker.
     const input = session.fileChooserInput
     const attachment = input?.attachment
+
     if (
       !input ||
       !attachment ||
@@ -592,6 +614,7 @@ export class BrowserSessionManager {
         .element()
         .dispose()
         .catch(() => undefined)
+
       return
     }
 
@@ -610,6 +633,7 @@ export class BrowserSessionManager {
         5 * 60_000
       )
     }
+
     session.fileChooser = pending
     void chooser
       .element()
@@ -628,6 +652,7 @@ export class BrowserSessionManager {
             session,
             'Folder uploads are not supported. Choose individual files instead.'
           )
+
           return
         }
 
@@ -653,6 +678,7 @@ export class BrowserSessionManager {
     type: 'state' | 'controlChanged' = 'state'
   ): void {
     const pending = session.fileChooser
+
     if (
       pending &&
       (session.closing ||
@@ -679,6 +705,7 @@ export class BrowserSessionManager {
     wake = true
   ): BrowserScheduledOperation | null {
     const scheduler = session.scheduler
+
     if (!scheduler.accepting) {
       return null
     }
@@ -686,11 +713,13 @@ export class BrowserSessionManager {
     // Only adjacent operations commute. In particular, moving the pointer can
     // change the wheel target, and a resize must not cross a button transition.
     const existing = scheduler.tail
+
     const wheelDirectionChanged =
       existing?.message?.type === 'wheel' &&
       input.message?.type === 'wheel' &&
       (Math.sign(existing.message.deltaX) !== Math.sign(input.message.deltaX) ||
         Math.sign(existing.message.deltaY) !== Math.sign(input.message.deltaY))
+
     if (
       input.coalesceKey &&
       existing?.coalesceKey === input.coalesceKey &&
@@ -711,6 +740,7 @@ export class BrowserSessionManager {
 
       existing.execute = input.execute
       networkTelemetry.droppedNow('browsers', 'coalesced')
+
       return existing
     }
 
@@ -721,6 +751,7 @@ export class BrowserSessionManager {
         : MAX_BROWSER_REGULAR_OPERATIONS)
     ) {
       networkTelemetry.droppedNow('browsers', 'dropped')
+
       return null
     }
 
@@ -730,15 +761,18 @@ export class BrowserSessionManager {
       completion: Effect.runSync(Deferred.make<void, BrowserSchedulingError>()),
       result: null
     }
+
     // Never fork producers waiting for capacity. The dropping queue's false
     // return is an explicit admission failure, not permission to lose input.
     if (!Queue.unsafeOffer(scheduler.queue, operation)) {
       networkTelemetry.droppedNow('browsers', 'dropped')
+
       return null
     }
 
     scheduler.pending.add(operation)
     scheduler.tail = operation
+
     if (input.coalesceKey?.startsWith('take-control:')) {
       scheduler.controlKey = input.coalesceKey
     } else if (
@@ -750,6 +784,7 @@ export class BrowserSessionManager {
 
     this.operationQueuedAt.set(operation, Date.now())
     networkTelemetry.queueDepthNow('browsers', scheduler.pending.size)
+
     return operation
   }
 
@@ -768,6 +803,7 @@ export class BrowserSessionManager {
       },
       options.wake ?? true
     )
+
     if (!operation) {
       return Promise.reject(
         new BrowserSchedulingError({
@@ -782,6 +818,7 @@ export class BrowserSessionManager {
     // Only admitted callers allocate an await fiber. Fire-and-forget input and
     // coalesced notifications never accumulate waiters or Promise listeners.
     operation.result = Effect.runPromise(Deferred.await(operation.completion))
+
     return operation.result
   }
 
@@ -804,12 +841,15 @@ export class BrowserSessionManager {
     const scheduler = session.scheduler
     const wheelFlights = new Set<Promise<void>>()
     let wheelKey: string | null = null
+
     return Effect.forever(
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(this, function* () {
           const operation = yield* restore(Queue.take(scheduler.queue))
+
           const wheel =
             operation.message?.type === 'wheel' ? operation.message : null
+
           // Reversals cannot merge, but may be submitted in order without
           // draining ACKs. Tiny sideways trackpad changes otherwise stall the
           // entire gesture. browserWheel keeps preparation and dispatch ordered.
@@ -831,6 +871,7 @@ export class BrowserSessionManager {
           }
 
           scheduler.active.add(operation)
+
           if (scheduler.tail === operation) {
             scheduler.tail = null
           }
@@ -842,6 +883,7 @@ export class BrowserSessionManager {
           networkTelemetry.queueDepthNow('browsers', scheduler.pending.size)
           const queuedAt = this.operationQueuedAt.get(operation)
           this.operationQueuedAt.delete(operation)
+
           if (queuedAt !== undefined) {
             networkTelemetry.durationNow(
               'browsers',
@@ -851,6 +893,7 @@ export class BrowserSessionManager {
           }
 
           const started = Date.now()
+
           const running = Effect.runPromise(
             Effect.gen(this, function* () {
               const result = yield* Effect.exit(
@@ -870,9 +913,11 @@ export class BrowserSessionManager {
                     })
                 })
               )
+
               yield* Deferred.done(operation.completion, result)
               scheduler.active.delete(operation)
               this.scheduleIdleFreeze(session)
+
               if (Exit.isFailure(result) && !operation.result) {
                 this.broadcastNavigationError(session, String(result.cause))
               }
@@ -884,6 +929,7 @@ export class BrowserSessionManager {
               )
             })
           )
+
           if (wheel) {
             wheelFlights.add(running)
             void running.then(() => wheelFlights.delete(running))
@@ -936,6 +982,7 @@ export class BrowserSessionManager {
           }
 
           const browser = session.browser
+
           if (
             !session.closing &&
             !session.localOwner &&
@@ -972,16 +1019,20 @@ export class BrowserSessionManager {
 
     const scheduler = session.scheduler
     scheduler.accepting = false
+
     const error = new BrowserSchedulingError({
       reason: 'closing',
       message: reason
     })
+
     Effect.runSync(Queue.takeAll(scheduler.queue))
+
     for (const operation of scheduler.pending) {
       this.operationQueuedAt.delete(operation)
       networkTelemetry.droppedNow('browsers', 'dropped')
       Deferred.unsafeDone(operation.completion, Effect.fail(error))
     }
+
     scheduler.pending.clear()
     scheduler.tail = null
     scheduler.controlKey = null
@@ -1002,6 +1053,7 @@ export class BrowserSessionManager {
     message: string
   ): void {
     session.videoError = message
+
     for (const attachment of session.attachments.values()) {
       attachment.video.fail(message)
     }
@@ -1009,6 +1061,7 @@ export class BrowserSessionManager {
 
   private resetVideoDelivery(session: BrowserSession): void {
     session.videoError = null
+
     for (const attachment of session.attachments.values()) {
       attachment.video.suspend()
     }
@@ -1044,16 +1097,20 @@ export class BrowserSessionManager {
       value.url === 'about:blank'
         ? 'about:blank'
         : decodeUnknownOrNull(browserObservedUrlSchema, value.url)
+
     if (!parsed) {
       return
     }
 
     const url = parsed === 'about:blank' ? parsed : new URL(parsed).href
     const requestedTitle = normalizeBrowserTitle(value.title.trim())
+
     const title =
       requestedTitle ||
       (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
+
     const persistence = session.persistence
+
     if (
       (persistence.pending?.url === url &&
         persistence.pending.title === title) ||
@@ -1063,6 +1120,7 @@ export class BrowserSessionManager {
     }
 
     persistence.pending = { url, title }
+
     if (persistence.write) {
       return
     }
@@ -1073,10 +1131,12 @@ export class BrowserSessionManager {
           while (persistence.pending !== null) {
             const pending = persistence.pending
             persistence.pending = null
+
             const app = yield* this.service.apps.updateBrowserAppState(
               session.appId,
               pending
             )
+
             persistence.persistedUrl = app.url
             persistence.persistedTitle = app.title
           }
@@ -1085,6 +1145,7 @@ export class BrowserSessionManager {
             Effect.sync(() => {
               const message =
                 cause instanceof Error ? cause.message : String(cause)
+
               for (const attachment of session.attachments.values()) {
                 attachment.transport.sendMessage({
                   type: 'navigationError',
@@ -1097,6 +1158,7 @@ export class BrowserSessionManager {
         )
       )
     })
+
     persistence.write = write
     void write.finally(() => {
       if (persistence.write !== write) {
@@ -1106,6 +1168,7 @@ export class BrowserSessionManager {
       persistence.write = null
       const pending = persistence.pending
       persistence.pending = null
+
       if (pending !== null && !session.closing) {
         this.queueAppState(session, pending)
       }
@@ -1127,10 +1190,12 @@ export class BrowserSessionManager {
         ? null
         : (decodeUnknownOrNull(browserObservedUrlSchema, authorized.app.url) ??
           'about:blank')
+
     const agentDirectory = path.join(this.config.runtimeDir, 'browsers', appId)
     await fs.rm(agentDirectory, { recursive: true, force: true })
     await fs.mkdir(agentDirectory, { recursive: true, mode: 0o700 })
     await fs.chmod(agentDirectory, 0o700)
+
     const session: BrowserSession = {
       appId,
       worktreeId: authorized.app.worktreeId,
@@ -1185,6 +1250,7 @@ export class BrowserSessionManager {
       closeOperation: null,
       closeReason: 'Browser closed.'
     }
+
     await Effect.runPromise(
       Effect.gen(this, function* () {
         yield* Effect.addFinalizer(() =>
@@ -1197,6 +1263,7 @@ export class BrowserSessionManager {
       }).pipe(Scope.extend(session.scheduler.scope))
     )
     this.sessions.set(appId, session)
+
     return session
   }
 
@@ -1214,11 +1281,13 @@ export class BrowserSessionManager {
     const runtimeGeneration = ++session.generation
     const restoredUrl = session.state.url
     const restoredTitle = session.state.title
+
     const launch = (async () => {
       await fs.rm(session.agentDirectory, { recursive: true, force: true })
       await fs.mkdir(session.agentDirectory, { recursive: true, mode: 0o700 })
       await fs.chmod(session.agentDirectory, 0o700)
       let runtimeReady = false
+
       const browser = this.browserFactory(
         this.browserHost,
         session.agentDirectory,
@@ -1260,6 +1329,7 @@ export class BrowserSessionManager {
           },
           clipboard: (clipboard) => {
             const input = session.clipboardInput
+
             if (
               !runtimeReady ||
               session.browser !== browser ||
@@ -1278,6 +1348,7 @@ export class BrowserSessionManager {
             }
 
             session.clipboardInput = null
+
             return input.attachment.transport.sendMessage({
               type: 'clipboardWrite',
               clipboard
@@ -1322,6 +1393,7 @@ export class BrowserSessionManager {
 
             this.closeFileChooser(session)
             session.crashMessage = message
+
             for (const attachment of session.attachments.values()) {
               attachment.transport.sendMessage({
                 type: 'browserCrashed',
@@ -1331,8 +1403,10 @@ export class BrowserSessionManager {
           }
         }
       )
+
       session.browser = browser
       await browser.launch()
+
       if (
         session.browser !== browser ||
         session.generation !== runtimeGeneration ||
@@ -1343,6 +1417,7 @@ export class BrowserSessionManager {
       }
 
       session.state = browser.state
+
       if (restoredUrl !== 'about:blank') {
         const restored = await browser
           .command({ type: 'navigate', url: restoredUrl })
@@ -1350,6 +1425,7 @@ export class BrowserSessionManager {
             () => true,
             () => false
           )
+
         session.state = restored
           ? browser.state
           : {
@@ -1363,6 +1439,7 @@ export class BrowserSessionManager {
       session.state = browser.state
       this.queueAppState(session, session.state)
       this.broadcastState(session)
+
       return browser
     })().catch(async (cause) => {
       if (session.generation === runtimeGeneration) {
@@ -1373,7 +1450,9 @@ export class BrowserSessionManager {
 
       throw cause
     })
+
     session.launch = launch
+
     return launch
   }
 
@@ -1395,6 +1474,7 @@ export class BrowserSessionManager {
       }
 
       const authorized = yield* this.service.apps.authorizeBrowserApp(appId)
+
       if (this.disposed) {
         return yield* Effect.fail(
           new BrowserSchedulingError({
@@ -1405,11 +1485,13 @@ export class BrowserSessionManager {
       }
 
       const existing = this.sessions.get(appId)
+
       if (existing) {
         return existing
       }
 
       const pending = this.sessionCreations.get(appId)
+
       if (pending) {
         return yield* Effect.tryPromise({
           try: () => pending,
@@ -1422,7 +1504,9 @@ export class BrowserSessionManager {
           this.sessionCreations.delete(appId)
         }
       })
+
       this.sessionCreations.set(appId, creation)
+
       return yield* Effect.tryPromise({
         try: () => creation,
         catch: (cause) => cause
@@ -1438,6 +1522,7 @@ export class BrowserSessionManager {
     return Effect.gen(this, function* () {
       const ticket = this.tickets.get(ticketValue)
       this.tickets.delete(ticketValue)
+
       if (
         !ticket ||
         ticket.expiresAt < Date.now() ||
@@ -1456,6 +1541,7 @@ export class BrowserSessionManager {
         'treeport.client.id': ticket.viewerId
       })
       const session = yield* this.getSession(ticket.appId)
+
       return yield* Effect.tryPromise({
         try: () => this.acceptSession(ticket, session, transport),
         catch: (cause) => cause
@@ -1474,6 +1560,7 @@ export class BrowserSessionManager {
       (candidate) =>
         attachmentController(candidate) === attachmentController(ticket)
     )
+
     if (supersededAttachments.length > 0) {
       networkTelemetry.reconnectNow('browsers')
     }
@@ -1488,6 +1575,7 @@ export class BrowserSessionManager {
           'This Browser already has the maximum of eight attached clients.',
         installCommand: null
       })
+
       return transport.id
     }
 
@@ -1508,6 +1596,7 @@ export class BrowserSessionManager {
       viewport: { ...session.state.viewport },
       refreshRate: null
     }
+
     session.attachments.set(attachment.id, attachment)
 
     try {
@@ -1545,8 +1634,10 @@ export class BrowserSessionManager {
         },
         { required: true }
       )
+
       if (attachment.closing || !transport.isConnected()) {
         this.close(attachment.id)
+
         return attachment.id
       }
 
@@ -1559,6 +1650,7 @@ export class BrowserSessionManager {
         mediaToken: attachment.mediaToken
       })
       this.broadcastState(session, 'controlChanged')
+
       if (session.crashMessage) {
         transport.sendMessage({
           type: 'browserCrashed',
@@ -1578,6 +1670,7 @@ export class BrowserSessionManager {
       attachment.closing = true
       attachment.video.dispose()
       session.attachments.delete(attachment.id)
+
       if (
         session.controllerId === attachmentController(attachment) &&
         ![...session.attachments.values()].some(
@@ -1598,6 +1691,7 @@ export class BrowserSessionManager {
       // Failed launch cleanup belongs to the consumer; overload or shutdown
       // must not close a shared runtime from this attachment's Promise handler.
     }
+
     return attachment.id
   }
 
@@ -1608,6 +1702,7 @@ export class BrowserSessionManager {
     return Effect.gen(this, function* () {
       const ticket = this.ownerTickets.get(auth.ticket)
       this.ownerTickets.delete(auth.ticket)
+
       if (
         !ticket ||
         ticket.expiresAt < Date.now() ||
@@ -1622,20 +1717,24 @@ export class BrowserSessionManager {
         'treeport.app.id': ticket.appId,
         'treeport.client.id': ticket.viewerId
       })
+
       const identityResult = yield* Effect.tryPromise({
         try: async (signal) => {
           const response = await fetch(new URL('identity', auth.endpoint), {
             signal: AbortSignal.any([signal, AbortSignal.timeout(3_000)]),
             redirect: 'error'
           })
+
           return { response, body: await response.json() }
         },
         catch: (cause) => cause
       })
+
       const identity = decodeUnknownOrNull(
         browserOwnerIdentitySchema,
         identityResult.body
       )
+
       if (
         !identityResult.response.ok ||
         !identity ||
@@ -1646,6 +1745,7 @@ export class BrowserSessionManager {
       }
 
       const session = yield* this.getSession(ticket.appId)
+
       return yield* Effect.tryPromise({
         try: () => this.acceptOwnerSession(ticket, auth, session, transport),
         catch: (cause) => cause
@@ -1667,27 +1767,33 @@ export class BrowserSessionManager {
       session,
       async () => {
         const previousOwner = session.localOwner
+
         if (previousOwner?.transport.isConnected()) {
           transport.send({
             type: 'claimRejected',
             message: 'This Browser is open in another local desktop app.'
           })
           transport.disconnect()
+
           return
         }
 
         const readiness = Effect.runSync(Deferred.make<void>())
         const resumed = previousOwner?.viewerId === ticket.viewerId
+
         if (resumed) {
           networkTelemetry.reconnectNow('browser-owners')
         }
 
         let owner: BrowserLocalOwner
+
         if (previousOwner) {
           Deferred.unsafeDone(previousOwner.readiness, Effect.void)
+
           for (const request of previousOwner.requests.values()) {
             Deferred.unsafeDone(request, Effect.succeed(false))
           }
+
           previousOwner.requests.clear()
 
           if (!resumed || previousOwner.endpoint !== auth.endpoint) {
@@ -1742,12 +1848,14 @@ export class BrowserSessionManager {
           resumed,
           state: session.state
         })
+
         if (!previousOwner) {
           this.broadcastState(session, 'controlChanged')
         }
       },
       { required: true }
     )
+
     return transport.id
   }
 
@@ -1755,10 +1863,13 @@ export class BrowserSessionManager {
     const session = [...this.sessions.values()].find(
       (candidate) => candidate.localOwner?.transport.id === connectionId
     )
+
     const message = parseBrowserOwnerClientMessage(value)
     const owner = session?.localOwner
+
     if (!session || !owner || !message) {
       owner?.transport.disconnect()
+
       return
     }
 
@@ -1772,14 +1883,17 @@ export class BrowserSessionManager {
       }
 
       owner.revision = message.revision
+
       const resized =
         session.state.viewport.width !== message.state.viewport.width ||
         session.state.viewport.height !== message.state.viewport.height
+
       session.state = message.state
       this.queueAppState(session, message.state)
       this.broadcastState(session)
 
       const becameReady = message.type === 'ready' && !owner.ready
+
       if (becameReady) {
         owner.ready = true
         Deferred.unsafeDone(owner.readiness, Effect.void)
@@ -1798,6 +1912,7 @@ export class BrowserSessionManager {
               )
             )
         })
+
         if (!accepted) {
           this.broadcastVideoUnavailable(
             session,
@@ -1820,6 +1935,7 @@ export class BrowserSessionManager {
           }
 
           await this.updateScreencast(session, LOCAL_BROWSER_OWNER_CONTROLLER)
+
           if (session.localOwner !== owner) {
             throw new Error('The local Browser owner changed.')
           }
@@ -1829,6 +1945,7 @@ export class BrowserSessionManager {
         },
         { required: true }
       ).catch(() => undefined)
+
       return
     }
 
@@ -1843,26 +1960,31 @@ export class BrowserSessionManager {
           cause instanceof Error ? cause.message : String(cause)
         )
       )
+
       return
     }
 
     if (message.type === 'popup') {
       void this.openPopup(session, message.url)
+
       return
     }
 
     if (message.type === 'crashed') {
       session.crashMessage = message.message
+
       for (const attachment of session.attachments.values()) {
         attachment.transport.sendMessage({
           type: 'browserCrashed',
           message: message.message
         })
       }
+
       return
     }
 
     const request = owner.requests.get(message.requestId)
+
     if (!request) {
       return
     }
@@ -1882,16 +2004,20 @@ export class BrowserSessionManager {
     const session = [...this.sessions.values()].find(
       (candidate) => candidate.localOwner?.transport.id === connectionId
     )
+
     const owner = session?.localOwner
+
     if (!session || !owner) {
       return
     }
 
     owner.ready = false
     Deferred.unsafeDone(owner.readiness, Effect.void)
+
     for (const request of owner.requests.values()) {
       Deferred.unsafeDone(request, Effect.succeed(false))
     }
+
     owner.requests.clear()
   }
 
@@ -1906,13 +2032,16 @@ export class BrowserSessionManager {
     session.localOwner = null
     owner.ready = false
     Deferred.unsafeDone(owner.readiness, Effect.void)
+
     for (const request of owner.requests.values()) {
       Deferred.unsafeDone(request, Effect.succeed(false))
     }
+
     owner.requests.clear()
     await this.closeLocalAutomation(session)
     session.generation += 1
     this.resetVideoDelivery(session)
+
     if (session.controllerId === LOCAL_BROWSER_OWNER_CONTROLLER) {
       const attachment = [...session.attachments.values()].find(
         (candidate) =>
@@ -1920,6 +2049,7 @@ export class BrowserSessionManager {
           candidate.visible &&
           candidate.transport.isConnected()
       )
+
       session.controllerId = attachment
         ? attachmentController(attachment)
         : null
@@ -1929,6 +2059,7 @@ export class BrowserSessionManager {
     session.agentProcess = null
     await this.detachAgent(session)
     this.broadcastState(session, 'controlChanged')
+
     if (
       ![...session.attachments.values()].some(
         (attachment) =>
@@ -1946,6 +2077,7 @@ export class BrowserSessionManager {
         () => null,
         (cause: unknown) => cause
       )
+
     if (runtimeError !== null) {
       for (const attachment of session.attachments.values()) {
         attachment.transport.sendMessage({
@@ -1957,6 +2089,7 @@ export class BrowserSessionManager {
           installCommand: null
         })
       }
+
       await this.closePlaywrightRuntime(session).catch(() => undefined)
     }
   }
@@ -1977,10 +2110,12 @@ export class BrowserSessionManager {
     }
 
     const requestId = crypto.randomUUID()
+
     return Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* Deferred.make<boolean>()
         owner.requests.set(requestId, result)
+
         if (
           !owner.transport.send({
             ...message,
@@ -2030,6 +2165,7 @@ export class BrowserSessionManager {
       viewport,
       retainPaint
     })
+
     if (
       !accepted ||
       session.localOwner !== owner ||
@@ -2064,11 +2200,13 @@ export class BrowserSessionManager {
       // Not a failure: interacting with the viewport takes control, and the
       // stream resumes for this viewer.
       attachment.video.suspend()
+
       return
     }
 
     const video = session.localAutomation?.video
     const browser = session.browser
+
     if (session.localOwner && video) {
       attachment.video.resume({
         webcodecs: null,
@@ -2108,23 +2246,28 @@ export class BrowserSessionManager {
           attachment: BrowserAttachment
         } => candidate.attachment !== undefined
       )
+
     if (!entry) {
       return
     }
 
     const message = parseBrowserClientMessage(value)
+
     if (!message) {
       entry.attachment.transport.disconnect()
+
       return
     }
 
     const { session, attachment } = entry
+
     if (attachment.closing) {
       return
     }
 
     if (message.type === 'fileChooserResponse') {
       const pending = session.fileChooser
+
       if (
         !pending ||
         pending.id !== message.requestId ||
@@ -2136,6 +2279,7 @@ export class BrowserSessionManager {
           requestId: message.requestId,
           error: 'This file selection is no longer active.'
         })
+
         return
       }
 
@@ -2162,11 +2306,13 @@ export class BrowserSessionManager {
               requestId: message.requestId,
               error
             })
+
           if (
             !attachment.visible ||
             session.controllerId !== attachmentController(attachment)
           ) {
             respond('Take control before changing stream settings.')
+
             return
           }
 
@@ -2174,6 +2320,7 @@ export class BrowserSessionManager {
             respond(
               'WebCodecs currently uses full-resolution capture with a 60fps target and 8Mbps. Stream-quality settings are not configurable yet.'
             )
+
             return
           }
 
@@ -2201,6 +2348,7 @@ export class BrowserSessionManager {
             )
         }
       })
+
       return
     }
 
@@ -2214,6 +2362,7 @@ export class BrowserSessionManager {
 
     if (message.type === 'refreshRate') {
       attachment.refreshRate = message.hz
+
       if (
         !session.localOwner &&
         attachment.visible &&
@@ -2231,16 +2380,19 @@ export class BrowserSessionManager {
       void this.scheduleOperation(session, async () => {
         this.relay?.barrier(attachment.id, message.id)
       }).catch(() => undefined)
+
       return
     }
 
     if (message.type === 'videoOffer') {
       attachment.video.offer(message.requestId, message.sdp)
+
       return
     }
 
     if (message.type === 'setVisible') {
       attachment.visible = message.visible
+
       if (
         !message.visible &&
         session.clipboardInput?.attachment === attachment
@@ -2258,6 +2410,7 @@ export class BrowserSessionManager {
         execute: async () => {
           const previousController = session.controllerId
           let nextController = previousController
+
           if (attachment.visible && previousController === null) {
             nextController = attachmentController(attachment)
           } else if (
@@ -2270,6 +2423,7 @@ export class BrowserSessionManager {
                 !candidate.closing &&
                 candidate.visible
             )
+
             nextController = nextAttachment
               ? attachmentController(nextAttachment)
               : session.localOwner
@@ -2279,12 +2433,14 @@ export class BrowserSessionManager {
 
           await this.updateScreencast(session, nextController)
           session.controllerId = nextController
+
           if (nextController !== previousController) {
             this.broadcastState(session, 'controlChanged')
           }
         },
         required: true
       })
+
       return
     }
 
@@ -2305,6 +2461,7 @@ export class BrowserSessionManager {
 
           try {
             await this.cancelTouches(session)
+
             if (session.localOwner) {
               await this.updateScreencast(session)
             } else {
@@ -2320,12 +2477,14 @@ export class BrowserSessionManager {
         },
         required: false
       })
+
       return
     }
 
     if (message.type === 'takeControl') {
       const scheduler = session.scheduler
       const key = `take-control:${attachment.id}`
+
       if (
         scheduler.accepting &&
         (scheduler.controlKey === key ||
@@ -2334,6 +2493,7 @@ export class BrowserSessionManager {
             session.controllerId === attachmentController(attachment)))
       ) {
         networkTelemetry.droppedNow('browsers', 'coalesced')
+
         return
       }
 
@@ -2350,6 +2510,7 @@ export class BrowserSessionManager {
 
           const previousController = session.controllerId
           const nextController = attachmentController(attachment)
+
           // Input bursts request control repeatedly; ownership already held
           // must not resize the page or restart its video stream.
           if (previousController === nextController) {
@@ -2361,6 +2522,7 @@ export class BrowserSessionManager {
 
             session.clipboardInput = null
             session.controllerId = nextController
+
             if (previousController !== nextController) {
               this.broadcastState(session, 'controlChanged')
             }
@@ -2373,6 +2535,7 @@ export class BrowserSessionManager {
         },
         required: false
       })
+
       return
     }
 
@@ -2386,6 +2549,7 @@ export class BrowserSessionManager {
             : message.type === 'wheel'
               ? `wheel:${attachment.id}:${message.modifiers}:${message.x}:${message.y}`
               : null
+
     this.queueClientOperation(session, attachment, {
       coalesceKey,
       message,
@@ -2412,12 +2576,14 @@ export class BrowserSessionManager {
                   message: 'Take control before you interact with this browser.'
                 }
           )
+
           return
         }
 
         try {
           if (queuedMessage.type === 'fileChooserResponse') {
             const pending = session.fileChooser
+
             if (
               !pending ||
               pending.id !== queuedMessage.requestId ||
@@ -2430,20 +2596,24 @@ export class BrowserSessionManager {
                 requestId: queuedMessage.requestId,
                 error: 'This file selection is no longer active.'
               })
+
               return
             }
 
             const files = queuedMessage.files
+
             if (files && !pending.chooser.isMultiple() && files.length > 1) {
               this.closeFileChooser(
                 session,
                 'This input accepts only one file.'
               )
+
               return
             }
 
             if (!files) {
               this.closeFileChooser(session)
+
               return
             }
 
@@ -2471,6 +2641,7 @@ export class BrowserSessionManager {
                   }
                 }
               )
+
             return
           }
 
@@ -2532,16 +2703,19 @@ export class BrowserSessionManager {
           }
 
           const localOwner = session.localOwner
+
           if (queuedMessage.type === 'copy') {
             const result = localOwner
               ? await (
                   await this.ensureLocalAutomation(session, localOwner)
                 ).video.send('Treeport.copy')
               : await (await this.browserFor(session)).copy()
+
             const clipboard =
               result === null
                 ? null
                 : decodeUnknownOrNull(browserClipboardSchema, result)
+
             if (result !== null && clipboard === null) {
               throw new Error('The copied content is too large or unsupported.')
             }
@@ -2552,6 +2726,7 @@ export class BrowserSessionManager {
               clipboard,
               error: null
             })
+
             return
           }
 
@@ -2564,11 +2739,13 @@ export class BrowserSessionManager {
           } else {
             const browser = await this.browserFor(session)
             const result = await browser.command(queuedMessage)
+
             if (result) {
               attachment.transport.sendMessage(result)
             }
 
             this.queueAppState(session, browser.state)
+
             // Metadata writes must not hold input slots. Keep the existing
             // persistence barrier for navigation and non-input commands.
             if (
@@ -2627,9 +2804,11 @@ export class BrowserSessionManager {
     // sampling the latest position at roughly 30 Hz at most.
     const generation = session.generation
     const localOwner = session.localOwner
+
     const update = (async () => {
       while (true) {
         await new Promise<void>((resolve) => setTimeout(resolve, 33))
+
         if (
           session.closing ||
           attachment.closing ||
@@ -2643,6 +2822,7 @@ export class BrowserSessionManager {
         }
 
         const point = attachment.cursorPoint
+
         if (!point) {
           return
         }
@@ -2655,6 +2835,7 @@ export class BrowserSessionManager {
               )
             : (await this.browserFor(session)).cursor(point)
         ).catch(() => 'default' as const)
+
         if (
           session.closing ||
           attachment.closing ||
@@ -2669,10 +2850,12 @@ export class BrowserSessionManager {
 
         if (attachment.cursorPoint === point) {
           attachment.transport.sendMessage({ type: 'cursor', cursor })
+
           return
         }
       }
     })().catch(() => undefined)
+
     attachment.cursorUpdate = update
     void update.then(() => {
       if (attachment.cursorUpdate === update) {
@@ -2689,6 +2872,7 @@ export class BrowserSessionManager {
     session.touchAttachmentId = null
     session.touchIds.clear()
     const message = { type: 'touch', phase: 'cancel', points: [] } as const
+
     if (session.localAutomation) {
       await browserTouch(session.localAutomation.cdp, message).catch(
         () => undefined
@@ -2715,6 +2899,7 @@ export class BrowserSessionManager {
     const touchAttachment = session.touchAttachmentId
       ? session.attachments.get(session.touchAttachmentId)
       : null
+
     if (
       session.touchAttachmentId &&
       (!touchAttachment ||
@@ -2731,19 +2916,24 @@ export class BrowserSessionManager {
         attachment.visible &&
         attachment.transport.isConnected()
     )
+
     const localOwner = session.localOwner
+
     if (localOwner) {
       const controller =
         controllerId && controllerId !== LOCAL_BROWSER_OWNER_CONTROLLER
           ? 'other'
           : 'none'
+
       const viewport =
         controller === 'other'
           ? ([...session.attachments.values()].find(
               (attachment) => attachmentController(attachment) === controllerId
             )?.viewport ?? null)
           : null
+
       const retainPaint = visible || session.retainLocalAgentPaint
+
       if (visible) {
         await this.setLocalOwnerRuntimeControl(
           session,
@@ -2765,9 +2955,11 @@ export class BrowserSessionManager {
       }
 
       const automation = session.localAutomation
+
       if (automation) {
         // Keep the native desktop picker when the desktop owns control.
         automation.page.off('filechooser', automation.fileChooser)
+
         if (controller === 'other') {
           automation.page.on('filechooser', automation.fileChooser)
         }
@@ -2776,6 +2968,7 @@ export class BrowserSessionManager {
       for (const attachment of session.attachments.values()) {
         this.prepareVideoViewer(session, attachment)
       }
+
       return
     }
 
@@ -2784,12 +2977,14 @@ export class BrowserSessionManager {
     }
 
     const browser = await session.launch.catch(() => null)
+
     const viewport = [...session.attachments.values()].find(
       (attachment) =>
         !attachment.closing &&
         attachment.visible &&
         attachmentController(attachment) === controllerId
     )?.viewport
+
     // Visibility and disconnect handoffs need the same viewport update as an
     // explicit takeover. An unchanged app will not emit another resize event.
     if (
@@ -2814,6 +3009,7 @@ export class BrowserSessionManager {
           cause instanceof Error ? cause.message : String(cause)
         )
       )
+
     for (const attachment of session.attachments.values()) {
       this.prepareVideoViewer(session, attachment, controllerId)
     }
@@ -2821,6 +3017,7 @@ export class BrowserSessionManager {
 
   private async detachAgent(session: BrowserSession): Promise<boolean> {
     const name = session.agentSessionName
+
     if (!session.agentAttached || !name) {
       return true
     }
@@ -2832,6 +3029,7 @@ export class BrowserSessionManager {
       () => true,
       () => false
     )
+
     if (detached) {
       session.agentAttached = false
       session.agentSessionName = null
@@ -2847,6 +3045,7 @@ export class BrowserSessionManager {
     const launch = session.launch
     const browser = await launch?.catch(() => session.browser)
     await browser?.close()
+
     if (session.launch === launch) {
       session.launch = null
       session.browser = null
@@ -2869,17 +3068,21 @@ export class BrowserSessionManager {
           Effect.sync(() => {
             this.closeFileChooser(session)
             this.resetVideoDelivery(session)
+
             if (this.sessions.get(session.appId) === session) {
               this.sessions.delete(session.appId)
             }
 
             const owner = session.localOwner
             session.localOwner = null
+
             if (owner) {
               Deferred.unsafeDone(owner.readiness, Effect.void)
+
               for (const request of owner.requests.values()) {
                 Deferred.unsafeDone(request, Effect.succeed(false))
               }
+
               owner.requests.clear()
               owner.transport.send({ type: 'closed', reason })
               owner.transport.disconnect()
@@ -2891,6 +3094,7 @@ export class BrowserSessionManager {
               attachment.transport.sendMessage({ type: 'closed', reason })
               attachment.transport.disconnect()
             }
+
             session.attachments.clear()
           })
         )
@@ -2947,6 +3151,7 @@ export class BrowserSessionManager {
   close(connectionId: string): void {
     for (const session of this.sessions.values()) {
       const attachment = session.attachments.get(connectionId)
+
       if (!attachment || attachment.closing) {
         continue
       }
@@ -2958,6 +3163,7 @@ export class BrowserSessionManager {
         async () => {
           session.attachments.delete(connectionId)
           const previousController = session.controllerId
+
           if (previousController === attachmentController(attachment)) {
             // A disconnected viewer must not leave a phantom controller behind.
             // Prefer its replacement if it reattached before cleanup ran.
@@ -2967,12 +3173,14 @@ export class BrowserSessionManager {
                 candidate.visible &&
                 candidate.transport.isConnected()
             )
+
             const nextAttachment =
               visibleAttachments.find(
                 (candidate) =>
                   attachmentController(candidate) ===
                   attachmentController(attachment)
               ) ?? visibleAttachments[0]
+
             session.controllerId = nextAttachment
               ? attachmentController(nextAttachment)
               : session.localOwner
@@ -2982,12 +3190,14 @@ export class BrowserSessionManager {
           }
 
           await this.updateScreencast(session)
+
           if (session.controllerId !== previousController) {
             this.broadcastState(session, 'controlChanged')
           }
         },
         { required: true }
       ).catch(() => undefined)
+
       return
     }
   }
@@ -2996,6 +3206,7 @@ export class BrowserSessionManager {
     const session =
       this.sessions.get(appId) ??
       (await this.sessionCreations.get(appId)?.catch(() => null))
+
     if (!session) {
       return true
     }
@@ -3006,10 +3217,12 @@ export class BrowserSessionManager {
 
     if (session.closeRequest) {
       const accepted = await session.closeRequest
+
       return accepted || !force ? accepted : this.requestAppClose(appId, true)
     }
 
     let canClose = false
+
     const operation = this.scheduleOperation(
       session,
       async () => {
@@ -3024,6 +3237,7 @@ export class BrowserSessionManager {
         } else if (session.launch || session.browser) {
           const browser = await (session.launch ??
             Promise.resolve(session.browser!))
+
           canClose = await browser.requestClose(force)
         } else {
           canClose = true
@@ -3039,12 +3253,15 @@ export class BrowserSessionManager {
 
       return canClose
     })
+
     const pending = operation.finally(() => {
       if (session.closeRequest === pending) {
         session.closeRequest = null
       }
     })
+
     session.closeRequest = pending
+
     return pending
   }
 
@@ -3052,6 +3269,7 @@ export class BrowserSessionManager {
     const session =
       this.sessions.get(appId) ??
       (await this.sessionCreations.get(appId)?.catch(() => null))
+
     if (!session) {
       return
     }
@@ -3063,11 +3281,13 @@ export class BrowserSessionManager {
     session.closing = true
     this.stopScheduler(session, reason)
     session.agentProcess?.kill('SIGTERM')
+
     if (session.localOwner) {
       this.closeOwner(session.localOwner.transport.id)
     }
 
     session.closeReason = reason
+
     for (const active of session.scheduler.active) {
       Deferred.unsafeDone(
         active.completion,
@@ -3080,13 +3300,16 @@ export class BrowserSessionManager {
     const closeOperation = Effect.runPromise(
       Scope.close(session.scheduler.scope, Exit.void)
     )
+
     session.closeOperation = closeOperation
+
     return closeOperation
   }
 
   private async playwrightCliPath(): Promise<string> {
     const require = createRequire(import.meta.url)
     const packageJsonPath = require.resolve('@playwright/cli/package.json')
+
     return path.join(path.dirname(packageJsonPath), 'playwright-cli.js')
   }
 
@@ -3112,6 +3335,7 @@ export class BrowserSessionManager {
     args: string[]
   ): Promise<string> {
     const cli = await this.playwrightCliPath()
+
     return new Promise<string>((resolve, reject) => {
       const child = spawn(process.execPath, [cli, ...args], {
         cwd: session.agentDirectory,
@@ -3120,13 +3344,16 @@ export class BrowserSessionManager {
         timeout: 120_000,
         killSignal: 'SIGTERM'
       })
+
       session.agentProcess = child
       let output = ''
+
       const append = (data: Buffer) => {
         if (output.length < 10 * 1024 * 1024) {
           output += String(data)
         }
       }
+
       child.stdout.on('data', append)
       child.stderr.on('data', append)
       child.once('error', (error) => {
@@ -3159,6 +3386,7 @@ export class BrowserSessionManager {
     owner: BrowserLocalOwner
   ): Promise<BrowserLocalAutomation> {
     const current = session.localAutomation
+
     if (
       current?.generation === owner.generation &&
       current.browser.isConnected()
@@ -3206,6 +3434,7 @@ export class BrowserSessionManager {
       const browser = await this.connectLocalAutomation(owner.endpoint)
       const context = browser.contexts()[0]
       const page = context?.pages()[0]
+
       if (!context || !page) {
         await browser.close().catch(() => undefined)
         throw new Error('The local Browser page is not available.')
@@ -3232,6 +3461,7 @@ export class BrowserSessionManager {
             .catch(() => undefined)
         }
       }
+
       const clearFileChooser = () => {
         if (
           session.localOwner === owner &&
@@ -3240,6 +3470,7 @@ export class BrowserSessionManager {
           this.openFileChooser(session, null)
         }
       }
+
       page.on('framenavigated', clearFileChooser)
       page.on('framedetached', clearFileChooser)
 
@@ -3263,6 +3494,7 @@ export class BrowserSessionManager {
           this.broadcastVideoUnavailable(session, message)
         }
       })
+
       const automation: BrowserLocalAutomation = {
         browser,
         page,
@@ -3276,6 +3508,7 @@ export class BrowserSessionManager {
         captureSettings: null,
         fileChooser
       }
+
       browser.once('disconnected', () => {
         if (session.localAutomation !== automation) {
           return
@@ -3298,32 +3531,40 @@ export class BrowserSessionManager {
       await cdp.send('Page.enable')
       page.on('console', (message) => {
         automation.console.push(`${message.type()}: ${message.text()}`)
+
         if (automation.console.length > 1_000) {
           automation.console.shift()
         }
       })
       page.on('pageerror', (error) => {
         automation.console.push(`error: ${error.message}`)
+
         if (automation.console.length > 1_000) {
           automation.console.shift()
         }
       })
       page.on('request', (request) => {
         automation.requests.push(`${request.method()} ${request.url()}`)
+
         if (automation.requests.length > 2_000) {
           automation.requests.shift()
         }
       })
       session.localAutomation = automation
+
       return automation
     })()
+
     session.localAutomationLaunch = launch
+
     const clearLaunch = () => {
       if (session.localAutomationLaunch === launch) {
         session.localAutomationLaunch = null
       }
     }
+
     void launch.then(clearLaunch, clearLaunch)
+
     return launch
   }
 
@@ -3331,10 +3572,13 @@ export class BrowserSessionManager {
     this.closeFileChooser(session)
     session.retainLocalAgentPaint = false
     const launch = session.localAutomationLaunch
+
     const automation =
       session.localAutomation ?? (await launch?.catch(() => null))
+
     session.localAutomation = null
     session.localAutomationLaunch = null
+
     if (automation) {
       await automation.video.send('Treeport.stopVideo').catch(() => undefined)
       await automation.cdp.detach().catch(() => undefined)
@@ -3351,6 +3595,7 @@ export class BrowserSessionManager {
     const automation = enabled
       ? await this.ensureLocalAutomation(session, owner)
       : session.localAutomation
+
     if (!automation || automation.generation !== owner.generation) {
       return
     }
@@ -3358,6 +3603,7 @@ export class BrowserSessionManager {
     // The session consumer owns screencast ordering, including stop/start pairs.
     const width = Math.max(1, session.state.viewport.width || 1_280)
     const height = Math.max(1, session.state.viewport.height || 800)
+
     if (
       session.localOwner !== owner ||
       session.localAutomation !== automation ||
@@ -3373,8 +3619,10 @@ export class BrowserSessionManager {
     automation.screencasting = enabled
     automation.captureViewport = enabled ? { width, height } : null
     automation.captureSettings = enabled ? settings : null
+
     if (!enabled) {
       await automation.video.send('Treeport.stopVideo').catch(() => undefined)
+
       return
     }
 
@@ -3401,6 +3649,7 @@ export class BrowserSessionManager {
   ): Promise<void> {
     const automation = await this.ensureLocalAutomation(session, owner)
     const page = automation.page
+
     if (message.type === 'navigate') {
       await browserNavigation(
         page,
@@ -3435,10 +3684,12 @@ export class BrowserSessionManager {
       const { cssVisualViewport } = await automation.cdp.send(
         'Page.getLayoutMetrics'
       )
+
       await page.mouse.move(
         message.x / cssVisualViewport.scale,
         message.y / cssVisualViewport.scale
       )
+
       if (message.phase === 'down') {
         await page.mouse.down({
           button: message.button ?? 'left',
@@ -3480,6 +3731,7 @@ export class BrowserSessionManager {
     const automation = await this.ensureLocalAutomation(session, owner)
     const page = automation.page
     const target = (value: string) => page.locator(`aria-ref=${value}`)
+
     if (input.command === 'snapshot') {
       // eslint-disable-next-line anti-slop/no-reflect-apply -- Playwright exposes CLI element references through this internal snapshot option.
       return Reflect.apply(page.ariaSnapshot, page, [{ mode: 'ai' }])
@@ -3487,16 +3739,19 @@ export class BrowserSessionManager {
 
     if (input.command === 'click') {
       await target(input.args[0]).click()
+
       return `Clicked ${input.args[0]}`
     }
 
     if (input.command === 'fill') {
       await target(input.args[0]).fill(input.args[1])
+
       return `Filled ${input.args[0]}`
     }
 
     if (input.command === 'press') {
       await page.keyboard.press(input.args[0])
+
       return `Pressed ${input.args[0]}`
     }
 
@@ -3504,11 +3759,13 @@ export class BrowserSessionManager {
       const minimum = input.args[0] ?? 'info'
       const levels = ['debug', 'info', 'warning', 'error']
       const minimumIndex = Math.max(0, levels.indexOf(minimum))
+
       return (
         automation.console
           .filter((line) => {
             const level = line.slice(0, line.indexOf(':'))
             const index = levels.indexOf(level)
+
             return index < 0 || index >= minimumIndex
           })
           .join('\n') || 'No console messages.'
@@ -3524,7 +3781,9 @@ export class BrowserSessionManager {
         session.agentDirectory,
         `screenshot-${Date.now()}.png`
       )
+
       await page.screenshot({ path: screenshotPath })
+
       return `Screenshot saved to ${screenshotPath}`
     }
 
@@ -3534,20 +3793,24 @@ export class BrowserSessionManager {
         () => page.goto(input.args[0]),
         automation.cdp
       )
+
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-back') {
       await browserNavigation(page, () => page.goBack(), automation.cdp)
+
       return `Navigated to ${page.url()}`
     }
 
     if (input.command === 'go-forward') {
       await browserNavigation(page, () => page.goForward(), automation.cdp)
+
       return `Navigated to ${page.url()}`
     }
 
     await browserNavigation(page, () => page.reload(), automation.cdp)
+
     return `Reloaded ${page.url()}`
   }
 
@@ -3557,6 +3820,7 @@ export class BrowserSessionManager {
   ): Effect.Effect<string, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
       const session = yield* this.getSession(appId)
+
       return yield* Effect.tryPromise({
         try: () => this.runAgentCommand(appId, input, session),
         catch: (cause) => cause
@@ -3572,18 +3836,21 @@ export class BrowserSessionManager {
     let result = ''
     await this.scheduleOperation(session, async () => {
       const localOwner = session.localOwner
+
       const browser = localOwner
         ? null
         : await this.browserFor(session).catch(async (error) => {
             await this.closePlaywrightRuntime(session).catch(() => undefined)
             throw error
           })
+
       try {
         if (localOwner) {
           // Keep a background local page paintable for later agent commands.
           // Agent activity does not revoke the local user's native input.
           session.retainLocalAgentPaint = true
           await this.updateScreencast(session)
+
           if (
             session.localOwner !== localOwner ||
             localOwner.generation !== session.generation
@@ -3604,7 +3871,9 @@ export class BrowserSessionManager {
             `treeport-${appId}-${session.generation}-${crypto
               .randomBytes(6)
               .toString('hex')}`
+
           session.agentSessionName = name
+
           if (!session.agentAttached) {
             await this.executeAgentCli(session, [
               'attach',
@@ -3636,6 +3905,7 @@ export class BrowserSessionManager {
         throw cause
       }
     })
+
     return result
   }
 
@@ -3654,6 +3924,7 @@ export class BrowserSessionManager {
 
     this.disposed = true
     this.disposing = this.disposeSessions()
+
     return this.disposing
   }
 

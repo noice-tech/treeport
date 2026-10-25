@@ -155,6 +155,7 @@ const UPLOAD_MIME_EXTENSIONS = new Map([
   ['image/webp', 'webp'],
   ['text/plain', 'txt']
 ])
+
 const UPLOAD_RETENTION_MS = 24 * 60 * 60_000
 const UPLOAD_DIRECTORY_MAX_BYTES = 10 * 1024 * 1024 * 1024
 
@@ -169,6 +170,7 @@ async function pruneTerminalUploads(
   preservePaths: ReadonlySet<string>
 ): Promise<void> {
   const entries = await fs.readdir(directory, { withFileTypes: true })
+
   const files = (
     await Promise.all(
       entries
@@ -177,6 +179,7 @@ async function pruneTerminalUploads(
         )
         .map(async (entry): Promise<UploadFileInfo | null> => {
           const filePath = path.join(directory, entry.name)
+
           return fs
             .stat(filePath)
             .then((stat) => ({
@@ -199,9 +202,11 @@ async function pruneTerminalUploads(
 
   const expiredBefore = Date.now() - UPLOAD_RETENTION_MS
   let retainedBytes = 0
+
   for (const file of files) {
     const expired = file.mtimeMs < expiredBefore
     const overQuota = retainedBytes + file.size > UPLOAD_DIRECTORY_MAX_BYTES
+
     if (!preservePaths.has(file.path) && (expired || overQuota)) {
       await fs.rm(file.path, { force: true })
       continue
@@ -226,6 +231,7 @@ interface AppDependencies {
 }
 
 type AppEffect<A> = Effect.Effect<A, unknown, ApplicationServices>
+
 type RouteEffect<A> = Effect.Effect<
   A,
   unknown,
@@ -264,6 +270,7 @@ function jsonContractResponse<S extends Schema.Schema<any, any, never>>(
   const decoded = Schema.decodeUnknownEither(schema, {
     onExcessProperty: 'error'
   })(body)
+
   if (Either.isLeft(decoded)) {
     throw new Error(
       `Server response violated its network schema: ${ParseResult.TreeFormatter.formatErrorSync(
@@ -278,6 +285,7 @@ function jsonContractResponse<S extends Schema.Schema<any, any, never>>(
 function requestBody<S extends Schema.Schema<any, any, never>>(schema: S) {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
+
     const value = yield* request.json.pipe(
       Effect.mapError(
         () =>
@@ -288,9 +296,11 @@ function requestBody<S extends Schema.Schema<any, any, never>>(schema: S) {
           )
       )
     )
+
     const parsed = Schema.decodeUnknownEither(schema, {
       onExcessProperty: 'error'
     })(value)
+
     if (Either.isLeft(parsed)) {
       return yield* Effect.fail(
         new DomainError(
@@ -315,9 +325,11 @@ function requestQuery<S extends Schema.Schema<any, any, never>>(
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = new URL(request.url, 'http://treeport.local')
     const value = Object.fromEntries(url.searchParams)
+
     const parsed = Schema.decodeUnknownEither(schema, {
       onExcessProperty: 'error'
     })(value)
+
     if (Either.isLeft(parsed)) {
       return yield* Effect.fail(new DomainError(errorCode, errorMessage, 400))
     }
@@ -356,6 +368,7 @@ function contentType(filePath: string): string {
     ['.woff2', 'font/woff2'],
     ['.webmanifest', 'application/manifest+json']
   ])
+
   return (
     types.get(path.extname(filePath).toLowerCase()) ??
     'application/octet-stream'
@@ -397,19 +410,23 @@ export function createApp({
   webDist
 }: AppDependencies): TreeportHttpApp {
   const activeUploadPaths = new Set<string>()
+
   const webAppAsset = Effect.gen(function* () {
     const params = yield* routeParams
     const request = yield* serverRequest
     const pathname = new URL(request.url, 'http://treeport.local').pathname
     const marker = `/api/web-apps/${encodeURIComponent(params.appId!)}/assets/`
     const markerStart = pathname.indexOf(marker)
+
     const requestedPath =
       markerStart < 0
         ? ''
         : decodeURI(pathname.slice(markerStart + marker.length))
+
     const resolution = yield* operation(() =>
       service.apps.resolveWebAppAsset(params.appId!, requestedPath)
     )
+
     if (resolution.kind === 'redirect') {
       return HttpServerResponse.redirect(resolution.location, {
         status: 307,
@@ -424,6 +441,7 @@ export function createApp({
       forwardedProtocol: request.headers['x-forwarded-proto'],
       requestProtocol: new URL(request.url, config.apiUrl).protocol
     })
+
     const commonHeaders = {
       'cache-control':
         resolution.kind === 'error'
@@ -436,6 +454,7 @@ export function createApp({
       ),
       'x-content-type-options': 'nosniff'
     }
+
     if (resolution.kind === 'error') {
       return HttpServerResponse.html(resolution.html).pipe(
         HttpServerResponse.setStatus(500),
@@ -447,6 +466,7 @@ export function createApp({
     }
 
     const body = yield* operation(() => fs.readFile(resolution.path))
+
     return HttpServerResponse.uint8Array(body, {
       headers: {
         ...commonHeaders,
@@ -455,13 +475,17 @@ export function createApp({
       }
     })
   })
+
   // A package service authenticates with the token Treeport started it with.
   const requirePackageAccess = Effect.gen(function* () {
     const request = yield* serverRequest
+
     const token = /^Bearer (\S+)$/u.exec(
       request.headers.authorization ?? ''
     )?.[1]
+
     const access = token ? (appServices?.access(token) ?? null) : null
+
     if (!token || !access) {
       return yield* Effect.fail(
         new DomainError(
@@ -474,11 +498,14 @@ export function createApp({
 
     return { token, access }
   })
+
   const pushIdentity = Effect.gen(function* () {
     const request = yield* serverRequest
+
     const identity = authenticatedViewers.get(
       NodeHttpServerRequest.toIncomingMessage(request)
     )?.account
+
     if (!identity) {
       return yield* Effect.fail(
         new DomainError(
@@ -491,6 +518,7 @@ export function createApp({
 
     return identity
   })
+
   const routes = [
     ...(push
       ? [
@@ -499,6 +527,7 @@ export function createApp({
             '/api/push/config',
             Effect.gen(function* () {
               yield* pushIdentity
+
               return jsonContractResponse(
                 pushConfigResponseSchema,
                 { publicKey: push.publicKey },
@@ -516,6 +545,7 @@ export function createApp({
               yield* operation(() =>
                 push.update(identity, subscription, subscription.endpoint)
               )
+
               return jsonContractResponse(okResponseSchema, { ok: true })
             })
           ),
@@ -526,6 +556,7 @@ export function createApp({
               const identity = yield* pushIdentity
               const body = yield* requestBody(pushUnsubscribeSchema)
               yield* operation(() => push.update(identity, null, body.endpoint))
+
               return jsonContractResponse(okResponseSchema, { ok: true })
             })
           )
@@ -536,9 +567,11 @@ export function createApp({
       '/api/presence',
       Effect.gen(function* () {
         const request = yield* serverRequest
+
         const identity = authenticatedViewers.get(
           NodeHttpServerRequest.toIncomingMessage(request)
         )?.account
+
         if (!identity) {
           return yield* Effect.fail(
             new DomainError(
@@ -550,10 +583,12 @@ export function createApp({
         }
 
         const body = yield* requestBody(presenceUpdateSchema)
+
         if (body.worktreeId !== null) {
           const worktree = yield* operation(() =>
             service.projects.getWorktreeSnapshot(body.worktreeId!)
           )
+
           if (
             body.focusedAppId !== null &&
             !worktree.workspaceItems.some((app) => app.id === body.focusedAppId)
@@ -577,6 +612,7 @@ export function createApp({
         }
 
         yield* operation(() => presence.update(identity, body))
+
         return jsonContractResponse(presenceResponseSchema, { identity }, 200, {
           'cache-control': 'no-store'
         })
@@ -587,6 +623,7 @@ export function createApp({
       '/api/apps/:appId/files',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(
           treeFileListingSchema,
           yield* operation(() => service.treeFiles.listTreeFiles(params.appId!))
@@ -599,6 +636,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(searchTreeFilesSchema)
+
         return jsonContractResponse(
           treeFileSearchResultSchema,
           yield* operation(() =>
@@ -613,6 +651,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(readTreeFileSchema)
+
         return jsonContractResponse(
           treeFileSchema,
           yield* operation(() =>
@@ -627,6 +666,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(writeTreeFileSchema)
+
         return jsonContractResponse(
           treeFileWriteResultSchema,
           yield* operation(() =>
@@ -681,6 +721,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(updateWebAppPermissionGrantSchema)
+
         const definition = yield* operation(() =>
           service.apps.setWebAppPermissionGrant(
             params.worktreeId!,
@@ -689,6 +730,7 @@ export function createApp({
             [...body.permissions]
           )
         )
+
         return jsonContractResponse(webAppDefinitionResponseSchema, {
           definition
         })
@@ -710,6 +752,7 @@ export function createApp({
 
         const params = yield* routeParams
         const input = yield* requestBody(browserAgentCommandSchema)
+
         const output = yield* operation(() =>
           browserSessions.agentCommand(params.appId!, input)
         ).pipe(
@@ -734,6 +777,7 @@ export function createApp({
                 )
           )
         )
+
         return jsonContractResponse(browserAgentResponseSchema, { output })
       })
     ),
@@ -755,11 +799,13 @@ export function createApp({
         const request = yield* serverRequest
         const body = yield* requestBody(browserOwnerTicketRequestSchema)
         const remoteAddress = Option.getOrNull(request.remoteAddress)
+
         const proxiedIdentity = [
           'tailscale-user-login',
           'tailscale-user-name',
           'tailscale-user-profile-pic'
         ].some((name) => request.headers[name] !== undefined)
+
         if (!isLoopbackAddress(remoteAddress ?? undefined) || proxiedIdentity) {
           return yield* Effect.fail(
             new DomainError(
@@ -795,9 +841,11 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(browserTicketRequestSchema)
         const request = yield* serverRequest
+
         const identity = authenticatedViewers.get(
           NodeHttpServerRequest.toIncomingMessage(request)
         )
+
         if (!identity) {
           return yield* Effect.fail(
             new DomainError(
@@ -845,10 +893,12 @@ export function createApp({
         const projects = yield* operation(() => service.projects.listProjects())
         let working = 0
         let needsAttention = 0
+
         for (const project of projects) {
           for (const worktree of project.worktrees) {
             for (const terminal of worktree.terminals) {
               const runtime = metadata.get(terminal.id)
+
               if (terminal.status !== 'running' || !runtime.program) {
                 continue
               }
@@ -899,6 +949,7 @@ export function createApp({
             )(JSON.parse(value))
           )
           .catch(() => Option.none())
+
         const remote = Option.getOrNull(saved)?.remote
 
         return remote?.target === config.apiUrl.replace(/\/$/, '')
@@ -960,6 +1011,7 @@ export function createApp({
       '/api/launcher-definitions',
       Effect.gen(function* () {
         const query = yield* requestQuery(launcherDefinitionsQuerySchema)
+
         return jsonContractResponse(
           launcherDefinitionListingSchema,
           yield* operation(() =>
@@ -973,6 +1025,7 @@ export function createApp({
       '/api/launchers',
       Effect.gen(function* () {
         const body = yield* requestBody(createLauncherSchema)
+
         return jsonContractResponse(
           launcherResponseSchema,
           {
@@ -994,6 +1047,7 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(updateLauncherSchema)
         const { expectedUpdatedAt, ...input } = body
+
         return jsonContractResponse(launcherResponseSchema, {
           launcher: yield* operation(() =>
             service.launchers.updateLauncher(
@@ -1017,6 +1071,7 @@ export function createApp({
             body.expectedUpdatedAt
           )
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1035,6 +1090,7 @@ export function createApp({
       '/api/packages/project',
       Effect.gen(function* () {
         const query = yield* requestQuery(packageProjectQuerySchema)
+
         return jsonContractResponse(packageProjectResponseSchema, {
           project: yield* operation(() =>
             service.projects.resolveRegisteredProject(query.path)
@@ -1047,6 +1103,7 @@ export function createApp({
       '/api/packages/install',
       Effect.gen(function* () {
         const body = yield* requestBody(packageInstallSchema)
+
         return jsonContractResponse(packageOperationResponseSchema, {
           result: yield* operation(() =>
             service.packageManagement.installPackage(
@@ -1062,6 +1119,7 @@ export function createApp({
       '/api/packages/remove',
       Effect.gen(function* () {
         const body = yield* requestBody(packageRemoveSchema)
+
         return jsonContractResponse(packageOperationResponseSchema, {
           result: yield* operation(() =>
             service.packageManagement.removePackage(body.source, body.projectId)
@@ -1074,6 +1132,7 @@ export function createApp({
       '/api/packages/update',
       Effect.gen(function* () {
         const body = yield* requestBody(packageUpdateSchema)
+
         return jsonContractResponse(packageOperationsResponseSchema, {
           results: yield* operation(() =>
             service.packageManagement.updatePackages(body.source)
@@ -1086,6 +1145,7 @@ export function createApp({
       '/api/packages/reload',
       Effect.gen(function* () {
         const body = yield* requestBody(packageReloadSchema)
+
         return jsonContractResponse(
           packageReloadResponseSchema,
           yield* operation(() =>
@@ -1118,6 +1178,7 @@ export function createApp({
       '/api/filesystem/directories',
       Effect.gen(function* () {
         const query = yield* requestQuery(browseDirectoryQuerySchema)
+
         return jsonContractResponse(
           directoryBrowseResponseSchema,
           yield* operation(() =>
@@ -1131,9 +1192,11 @@ export function createApp({
       '/api/projects',
       Effect.gen(function* () {
         const body = yield* requestBody(registerProjectSchema)
+
         const registered = yield* operation(() =>
           service.projects.registerProject(body.path, body.name)
         )
+
         return jsonContractResponse(
           projectResponseSchema,
           {
@@ -1150,6 +1213,7 @@ export function createApp({
       '/api/projects/:projectId/open',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(projectResponseSchema, {
           project: yield* operation(() =>
             service.projects.openProject(params.projectId!)
@@ -1163,6 +1227,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         yield* operation(() => service.projects.closeProject(params.projectId!))
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1174,6 +1239,7 @@ export function createApp({
         yield* operation(() =>
           service.projects.dismissRecentProject(params.projectId!)
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1182,9 +1248,11 @@ export function createApp({
       '/api/projects/:projectId',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         const query = yield* requestQuery(
           Schema.Struct({ freshGitWorktreeId: Schema.optional(Schema.String) })
         )
+
         return jsonContractResponse(projectResponseSchema, {
           project: yield* operation(() =>
             service.projects.getProjectSnapshot(
@@ -1200,13 +1268,17 @@ export function createApp({
       '/api/projects/:projectId/icon',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         const project = yield* operation(() =>
           service.projects.getProject(params.projectId!)
         )
+
         const iconPath = yield* operation(() =>
           findProjectIcon(project.mainWorktreePath)
         )
+
         const headers = { 'cache-control': 'private, max-age=300' }
+
         if (!iconPath) {
           return HttpServerResponse.empty({ status: 204, headers })
         }
@@ -1230,6 +1302,7 @@ export function createApp({
         yield* operation(() =>
           service.projects.updateProjectColor(params.projectId!, body.color)
         )
+
         return jsonContractResponse(projectResponseSchema, {
           project: yield* operation(() =>
             service.projects.getProjectSnapshot(params.projectId!)
@@ -1245,6 +1318,7 @@ export function createApp({
         yield* operation(() =>
           service.projects.refreshProject(params.projectId!)
         )
+
         return jsonContractResponse(projectResponseSchema, {
           project: yield* operation(() =>
             service.projects.getProjectSnapshot(params.projectId!)
@@ -1260,6 +1334,7 @@ export function createApp({
         yield* operation(() =>
           service.projects.deleteProject(params.projectId!)
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1268,9 +1343,11 @@ export function createApp({
       '/api/projects/:projectId/worktrees',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         const project = yield* operation(() =>
           service.projects.getProjectSnapshot(params.projectId!)
         )
+
         return jsonContractResponse(worktreesResponseSchema, {
           worktrees: project.worktrees
         })
@@ -1282,13 +1359,16 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(createWorktreeSchema)
+
         let initialTerminal:
           | NonNullable<
               Parameters<TreeportService['worktrees']['beginCreateWorktree']>[3]
             >
           | undefined
+
         if (body.initialTerminal) {
           initialTerminal = { name: body.initialTerminal.name }
+
           if (body.initialTerminal.initialTitle) {
             initialTerminal.initialTitle = body.initialTerminal.initialTitle
           }
@@ -1316,6 +1396,7 @@ export function createApp({
             body.treeTitleCommand
           )
         )
+
         return jsonContractResponse(
           operationResponseSchema,
           { operation: operationRecord },
@@ -1329,6 +1410,7 @@ export function createApp({
       '/api/worktrees/:worktreeId',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(worktreeResponseSchema, {
           worktree: yield* operation(() =>
             service.projects.getWorktreeSnapshot(params.worktreeId!)
@@ -1345,6 +1427,7 @@ export function createApp({
         yield* operation(() =>
           service.projects.updateWorktreeTitle(params.worktreeId!, body.title)
         )
+
         return jsonContractResponse(worktreeResponseSchema, {
           worktree: yield* operation(() =>
             service.projects.getWorktreeSnapshot(params.worktreeId!)
@@ -1367,6 +1450,7 @@ export function createApp({
       Effect.gen(function* () {
         const { access } = yield* requirePackageAccess
         const projects = yield* operation(() => service.projects.listProjects())
+
         return jsonContractResponse(packageServiceProjectsResponseSchema, {
           projects: projects
             .filter(
@@ -1404,16 +1488,20 @@ export function createApp({
       Effect.gen(function* () {
         const { token } = yield* requirePackageAccess
         const encoder = new TextEncoder()
+
         const message = (event: TreeportEvent) =>
           encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+
         const publicTypes = {
           'worktree.created': 'tree.created',
           'worktree.removed': 'tree.removed',
           'worktree.git_changed': 'tree.changed'
         } as const
+
         return HttpServerResponse.stream(
           Stream.async<Uint8Array>((emit) => {
             void emit.single(message({ type: 'resync' }))
+
             const unsubscribe = service.events.subscribe((event) => {
               if (
                 event.type !== 'worktree.created' &&
@@ -1425,6 +1513,7 @@ export function createApp({
 
               // Read scope per event: the package may be reconfigured or removed.
               const access = appServices?.access(token) ?? null
+
               if (!access) {
                 void emit.end()
               } else if (
@@ -1441,11 +1530,13 @@ export function createApp({
                 )
               }
             })
+
             // Keeps proxies from closing a quiet stream.
             const heartbeat = setInterval(
               () => void emit.single(encoder.encode(': keepalive\n\n')),
               25_000
             )
+
             return Effect.sync(() => {
               unsubscribe()
               clearInterval(heartbeat)
@@ -1464,6 +1555,7 @@ export function createApp({
         '/api/worktrees/:worktreeId/decorations/:decorationKey',
         Effect.gen(function* () {
           const params = yield* routeParams
+
           if (!TREE_DECORATION_KEY_PATTERN.test(params.decorationKey!)) {
             return yield* Effect.fail(
               new DomainError(
@@ -1476,10 +1568,13 @@ export function createApp({
 
           // A package service's token makes its package the decoration owner.
           const request = yield* serverRequest
+
           const token = /^Bearer (\S+)$/u.exec(
             request.headers.authorization ?? ''
           )?.[1]
+
           const access = token ? (appServices?.access(token) ?? null) : null
+
           if (token && !access) {
             return yield* Effect.fail(
               new DomainError(
@@ -1494,6 +1589,7 @@ export function createApp({
             const worktree = yield* operation(() =>
               service.projects.getWorktree(params.worktreeId!)
             )
+
             if (!access.projectIds.includes(worktree.projectId)) {
               return yield* Effect.fail(
                 new DomainError(
@@ -1509,6 +1605,7 @@ export function createApp({
             method === 'PUT'
               ? yield* requestBody(setTreeDecorationSchema)
               : null
+
           yield* operation(() =>
             service.projects.updateWorktreeDecoration(
               params.worktreeId!,
@@ -1517,6 +1614,7 @@ export function createApp({
               access?.packageId ?? null
             )
           )
+
           return jsonContractResponse(worktreeResponseSchema, {
             worktree: yield* operation(() =>
               service.projects.getWorktreeSnapshot(params.worktreeId!)
@@ -1537,6 +1635,7 @@ export function createApp({
             body.sourceTerminalId
           )
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1549,6 +1648,7 @@ export function createApp({
         yield* operation(() =>
           service.terminals.reorderTerminals(params.worktreeId!, body.itemIds)
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1561,6 +1661,7 @@ export function createApp({
         yield* operation(() =>
           service.apps.reorderApps(params.worktreeId!, body.itemIds)
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1570,6 +1671,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(createBrowserAppSchema)
+
         return jsonContractResponse(
           openBrowserAppResponseSchema,
           yield* operation(() =>
@@ -1591,6 +1693,7 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(openBrowserAppFromTerminalSchema)
         const request = yield* HttpServerRequest.HttpServerRequest
+
         return jsonContractResponse(
           openBrowserAppResponseSchema,
           yield* operation(() =>
@@ -1609,6 +1712,7 @@ export function createApp({
       '/api/worktrees/:worktreeId/web-app-definitions',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(webAppDefinitionsResponseSchema, {
           definitions: yield* operation(() =>
             service.apps.listWebAppDefinitions(params.worktreeId!)
@@ -1622,12 +1726,14 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(createWebAppSchema)
+
         const app = yield* operation(() =>
           service.apps.createWebApp(params.worktreeId!, body.definitionId, {
             input: body.input ?? null,
             cwd: body.launchCwd ?? null
           })
         )
+
         return jsonContractResponse(webAppResponseSchema, { app }, 201)
       })
     ),
@@ -1638,6 +1744,7 @@ export function createApp({
         const params = yield* routeParams
         const body = yield* requestBody(openWebAppSchema)
         const request = yield* serverRequest
+
         return jsonContractResponse(
           openWebAppResponseSchema,
           yield* operation(() =>
@@ -1662,6 +1769,7 @@ export function createApp({
           'treeport.app.id': params.appId!
         })
         const query = yield* requestQuery(deleteAppQuerySchema)
+
         const canClose = browserSessions
           ? yield* operation(() =>
               browserSessions.requestAppClose(
@@ -1670,6 +1778,7 @@ export function createApp({
               )
             ).pipe(Effect.withSpan('treeport.app.remove.close_guard'))
           : undefined
+
         if (canClose === false) {
           return yield* Effect.fail(
             new DomainError(
@@ -1686,6 +1795,7 @@ export function createApp({
             query.discardStoredData === 'true'
           )
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       }).pipe(Effect.withSpan('treeport.app.remove.request'))
     ),
@@ -1696,9 +1806,11 @@ export function createApp({
         Effect.gen(function* () {
           const params = yield* routeParams
           const body = yield* requestBody(appServiceRequestSchema)
+
           const context = yield* operation(() =>
             service.apps.getWebAppServiceContext(params.appId!)
           )
+
           if (!appServices) {
             return yield* Effect.fail(
               new DomainError(
@@ -1721,6 +1833,7 @@ export function createApp({
       '/api/apps/:appId/context',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(webAppContextResponseSchema, {
           context: yield* operation(() =>
             service.apps.getWebAppContext(params.appId!)
@@ -1734,6 +1847,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const query = yield* requestQuery(gitDiffRequestSchema)
+
         return jsonContractResponse(gitDiffResponseSchema, {
           diff: yield* operation(() =>
             service.apps.getWebAppDiff(params.appId!, query.scope)
@@ -1747,6 +1861,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(gitFileDiffRequestSchema)
+
         return jsonContractResponse(
           gitFileDiffResponseSchema,
           yield* operation(() =>
@@ -1761,6 +1876,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(gitDiffImageRequestSchema)
+
         return jsonContractResponse(
           gitDiffImageSchema,
           yield* operation(() =>
@@ -1774,6 +1890,7 @@ export function createApp({
       '/api/apps/:appId/network/listeners',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(listenerDiscoveryResponseSchema, {
           discovery: yield* operation(() =>
             service.apps.getAppListeners(params.appId!)
@@ -1786,6 +1903,7 @@ export function createApp({
       '/api/apps/:appId/storage',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(hasDataResponseSchema, {
           hasData: yield* operation(() =>
             service.apps.hasWebAppStorage(params.appId!)
@@ -1799,9 +1917,11 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(getWebAppStorageSchema)
+
         const value = yield* operation(() =>
           service.apps.getWebAppStorage(params.appId!, body.key, body.scope)
         )
+
         return jsonContractResponse(storageValueResponseSchema, {
           found: value !== undefined,
           value: value ?? null
@@ -1822,6 +1942,7 @@ export function createApp({
             body.scope
           )
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1834,6 +1955,7 @@ export function createApp({
         yield* operation(() =>
           service.apps.deleteWebAppStorage(params.appId!, body.key, body.scope)
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
@@ -1849,9 +1971,11 @@ export function createApp({
           'treeport.worktree.id': params.worktreeId!
         })
         const body = yield* requestBody(createTerminalSchema)
+
         const options: NonNullable<
           Parameters<TreeportService['terminals']['createTerminal']>[3]
         > = {}
+
         if (body.initialTitle) {
           options.initialTitle = body.initialTitle
         }
@@ -1892,6 +2016,7 @@ export function createApp({
             Object.keys(options).length ? options : undefined
           )
         )
+
         return jsonContractResponse(terminalResponseSchema, { terminal }, 201)
       }).pipe(Effect.withSpan('treeport.terminal.create.request'))
     ),
@@ -1900,6 +2025,7 @@ export function createApp({
       '/api/worktrees/:worktreeId/remove-preview',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(removePreviewResponseSchema, {
           preview: yield* operation(() =>
             service.worktrees.removePreview(params.worktreeId!)
@@ -1913,6 +2039,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(removeWorktreeSchema)
+
         return jsonContractResponse(
           operationResponseSchema,
           {
@@ -1930,12 +2057,15 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const query = yield* requestQuery(terminalCaptureQuerySchema)
+
         const terminal = yield* operation(() =>
           service.terminals.getTerminal(params.terminalId!)
         )
+
         const content = yield* operation(() =>
           terminalHost.captureTerminal(terminal.id, query.lines)
         )
+
         if (content === null) {
           return yield* Effect.fail(
             new DomainError(
@@ -1960,13 +2090,17 @@ export function createApp({
       '/api/terminals/:terminalId',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         const terminal = yield* operation(() =>
           service.terminals.refreshTerminalStatus(params.terminalId!)
         )
+
         const worktree = yield* operation(() =>
           service.projects.getWorktree(terminal.worktreeId)
         )
+
         yield* operation(() => metadata.trackTerminal(terminal, worktree))
+
         return jsonContractResponse(terminalObservationResponseSchema, {
           terminal,
           metadata: metadata.get(terminal.id)
@@ -1990,6 +2124,7 @@ export function createApp({
         yield* operation(() =>
           metadata.acknowledgeAttention(params.terminalId!, body.sequence)
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       }).pipe(
         Effect.withSpan('treeport.terminal.attention.acknowledge.request')
@@ -2003,6 +2138,7 @@ export function createApp({
           Effect.gen(function* () {
             const params = yield* routeParams
             const request = yield* serverRequest
+
             if (params.terminalId) {
               yield* operation(() =>
                 service.terminals.getTerminal(params.terminalId!)
@@ -2010,8 +2146,10 @@ export function createApp({
             }
 
             const contentLength = request.headers['content-length']
+
             if (contentLength) {
               const declaredBytes = Number(contentLength)
+
               if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
                 return yield* Effect.fail(
                   new DomainError(
@@ -2035,6 +2173,7 @@ export function createApp({
 
             const requestedExtension =
               request.headers['x-treeport-file-extension']?.toLowerCase()
+
             if (
               requestedExtension &&
               !/^[a-z0-9]{1,16}$/.test(requestedExtension)
@@ -2052,11 +2191,14 @@ export function createApp({
               request.headers['content-type']
                 ?.split(';', 1)[0]
                 ?.toLowerCase() ?? ''
+
             const extension =
               requestedExtension ||
               UPLOAD_MIME_EXTENSIONS.get(requestContentType) ||
               ''
+
             const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+
             const uploaded = yield* Effect.acquireUseRelease(
               operation(() =>
                 service.terminalUploadMutation(
@@ -2073,14 +2215,18 @@ export function createApp({
                     yield* Effect.promise(() =>
                       pruneTerminalUploads(uploadDirectory, activeUploadPaths)
                     )
+
                     const filePath = path.join(
                       uploadDirectory,
                       `treeport-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
                     )
+
                     const file = yield* Effect.promise(() =>
                       fs.open(filePath, 'wx', 0o600)
                     )
+
                     activeUploadPaths.add(filePath)
+
                     return { filePath, file }
                   })
                 )
@@ -2105,6 +2251,7 @@ export function createApp({
                       ),
                       (value) => {
                         receivedBytes += value.byteLength
+
                         if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
                           return Effect.fail(
                             new DomainError(
@@ -2120,6 +2267,7 @@ export function createApp({
                         )
                       }
                     )
+
                     return { file: { path: filePath } }
                   })
                 ),
@@ -2128,6 +2276,7 @@ export function createApp({
                   yield* Effect.promise(() =>
                     file.close().finally(() => {
                       activeUploadPaths.delete(filePath)
+
                       return Exit.isFailure(exit)
                         ? fs.rm(filePath, { force: true })
                         : undefined
@@ -2143,6 +2292,7 @@ export function createApp({
                   )
                 })
             )
+
             return jsonContractResponse(
               uploadedFileResponseSchema,
               uploaded,
@@ -2157,6 +2307,7 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(updateTerminalSchema)
+
         return jsonContractResponse(terminalResponseSchema, {
           terminal: yield* operation(() =>
             service.terminals.renameTerminal(params.terminalId!, body.name)
@@ -2175,6 +2326,7 @@ export function createApp({
         yield* operation(() =>
           service.terminals.deleteTerminal(params.terminalId!)
         )
+
         return jsonContractResponse(okResponseSchema, { ok: true })
       }).pipe(Effect.withSpan('treeport.terminal.remove.request'))
     ),
@@ -2187,9 +2339,11 @@ export function createApp({
           'INVALID_OPERATION_KIND',
           'Invalid operation query'
         )
+
         const filters: Parameters<
           TreeportService['worktrees']['listActiveOperations']
         >[0] = {}
+
         if (query.projectId) {
           filters.projectId = query.projectId
         }
@@ -2210,6 +2364,7 @@ export function createApp({
       '/api/operations/:operationId',
       Effect.gen(function* () {
         const params = yield* routeParams
+
         return jsonContractResponse(operationResponseSchema, {
           operation: yield* operation(() =>
             service.projects.getOperation(params.operationId!)
@@ -2224,7 +2379,9 @@ export function createApp({
         const terminated = yield* operation(() =>
           service.terminals.terminateAllTerminals()
         )
+
         yield* operation(() => terminalHost.shutdownIfEmpty())
+
         return jsonContractResponse(terminatedTerminalsResponseSchema, {
           terminated
         })
@@ -2247,22 +2404,27 @@ export function createApp({
   const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
   const builtStaticRoot = path.resolve(moduleDirectory, '../../web')
   const sourceStaticRoot = path.resolve(moduleDirectory, '../../dist/web')
+
   const staticRoot =
     webDist ??
     config.webDist ??
     (existsSync(builtStaticRoot) ? builtStaticRoot : sourceStaticRoot)
+
   routes.push(
     route(
       'GET',
       '/assets/*',
       Effect.gen(function* () {
         const request = yield* serverRequest
+
         const pathname = decodeURIComponent(
           new URL(request.url, 'http://treeport.local').pathname
         )
+
         const relative = pathname.slice('/assets/'.length)
         const candidate = path.resolve(staticRoot, 'assets', relative)
         const root = path.resolve(staticRoot, 'assets')
+
         if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
           return HttpServerResponse.empty({ status: 404 })
         }
@@ -2296,20 +2458,25 @@ export function createApp({
   )
 
   const router = HttpRouter.fromIterable(routes)
+
   const routed = Effect.flatMap(
     HttpRouter.toHttpApp(router),
     (httpApp) => httpApp
   )
+
   const httpApp = Effect.gen(function* () {
     const request = yield* serverRequest
     const started = Date.now()
+
     const requestId = (
       request.headers['x-request-id'] ?? crypto.randomUUID()
     ).slice(0, 128)
+
     const requestPath = new URL(
       request.url,
       'http://treeport.local'
     ).pathname.slice(0, 2_048)
+
     yield* Effect.annotateCurrentSpan({
       'treeport.request.id': requestId,
       'http.request.method': request.method,
@@ -2324,6 +2491,7 @@ export function createApp({
         ? declaredRequestBytes
         : 0
     )
+
     const response = yield* routed.pipe(
       Effect.provideService(
         serverRequest,
@@ -2337,8 +2505,10 @@ export function createApp({
         }
 
         const failure = Cause.failureOption(cause)
+
         if (Option.isSome(failure) && failure.value instanceof DomainError) {
           const error = failure.value
+
           const errorBody =
             error.details === undefined
               ? { code: error.code, message: error.message }
@@ -2347,6 +2517,7 @@ export function createApp({
                   message: error.message,
                   details: error.details
                 }
+
           const body: ApiErrorBody = { error: errorBody }
 
           return Effect.succeed(
@@ -2357,8 +2528,10 @@ export function createApp({
         const unexpected = Option.isSome(failure)
           ? failure.value
           : Cause.squash(cause)
+
         const error =
           unexpected instanceof Error ? unexpected.message : String(unexpected)
+
         return Effect.sync(() => {
           console.error('[Treeport] API request failed', {
             requestId,
@@ -2411,6 +2584,7 @@ export function createApp({
         ]).pipe(Effect.asVoid)
       )
     )
+
     yield* Effect.annotateCurrentSpan({
       'http.response.status_code': response.status
     })
@@ -2419,6 +2593,7 @@ export function createApp({
       'out',
       response.body.contentLength ?? 0
     )
+
     return requestPath.startsWith('/api')
       ? HttpServerResponse.setHeader(response, 'x-request-id', requestId)
       : response
@@ -2428,6 +2603,7 @@ export function createApp({
   // production passes the precisely typed httpApp to NodeHttpServer.
   const testHttpApp = httpApp as HttpApp.Default<unknown, Scope.Scope>
   const requestHandler = HttpApp.toWebHandler(testHttpApp)
+
   return {
     httpApp,
     request(input, init) {
@@ -2435,6 +2611,7 @@ export function createApp({
         input instanceof Request
           ? input
           : new Request(new URL(String(input), 'http://localhost'), init)
+
       return requestHandler(request)
     }
   }

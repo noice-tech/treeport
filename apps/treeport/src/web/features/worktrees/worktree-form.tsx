@@ -57,49 +57,63 @@ export function WorktreeForm({
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [uploads, setUploads] = useState(0)
   const initialTerminalStorageKey = `${INITIAL_LAUNCHER_STORAGE_KEY}:${project.id}`
+
   const [initialLauncherId, setInitialLauncherId] = useState(() => {
     const stored = localStorage.getItem(initialTerminalStorageKey)
 
     return stored ?? 'shell'
   })
+
   const initialLaunchers = launchers.filter(
     (launcher): launcher is LauncherDefinition & { executable: string } =>
       !launcher.closeOnSuccess &&
       launcher.executable !== null &&
       launcher.shellCommand === null
   )
+
   const initialLauncherAvailable = initialLaunchers.some(
     (launcher) => launcher.id === initialLauncherId
   )
+
   const initialLauncherUnavailable =
     initialLauncherId !== 'shell' && !initialLauncherAvailable
+
   const waitingForInitialLauncher =
     initialLauncherUnavailable && launchersLoading
+
   const initialLauncherMissing =
     initialLauncherUnavailable && !launchersLoading && !launchersError
+
   const effectiveInitialLauncherId =
     initialLauncherUnavailable && !launchersLoading
       ? 'shell'
       : initialLauncherId
+
   const selectedLauncher = initialLaunchers.find(
     (launcher) => launcher.id === effectiveInitialLauncherId
   )
+
   const inputNames = selectedLauncher
     ? launcherInputNames([
         ...selectedLauncher.args,
         ...(selectedLauncher.treeTitle?.args ?? [])
       ])
     : []
+
   const submittedInputs = Object.fromEntries(
     inputNames.flatMap((inputName) => {
       const value = inputs[inputName]?.trim()
+
       return value ? [[inputName, value]] : []
     })
   )
+
   const generatedName = availableTreeName(
     project.worktrees.map((worktree) => worktree.name)
   )
+
   const base = baseValue === 'default' ? 'default' : 'current'
+
   return (
     <form
       className="flex flex-col gap-5 max-[700px]:gap-2.5"
@@ -118,12 +132,14 @@ export function WorktreeForm({
         }
 
         event.preventDefault()
+
         if (submitButtonRef.current && !submitButtonRef.current.disabled) {
           event.currentTarget.requestSubmit(submitButtonRef.current)
         }
       }}
       onSubmit={(event) => {
         event.preventDefault()
+
         if (busy || uploads > 0) {
           return
         }
@@ -161,6 +177,7 @@ export function WorktreeForm({
     >
       {inputNames.map((inputName, index) => {
         const id = `launcher-input-${inputName}`
+
         return (
           <FormField key={inputName}>
             <Label htmlFor={id}>{launcherInputLabel(inputName)}</Label>
@@ -200,6 +217,7 @@ export function WorktreeForm({
               launcher,
               initialLaunchers
             )
+
             return (
               <option key={launcher.id} value={launcher.id}>
                 {launcher.name}

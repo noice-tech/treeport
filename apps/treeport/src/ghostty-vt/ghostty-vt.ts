@@ -42,10 +42,12 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 const GHOSTTY_SUCCESS = 0
+
 // Treeport's terminal theme defaults; keep in sync with the wterm colors in
 // styles.css.
 export const TERMINAL_FOREGROUND = 0xe4e4e7
 export const TERMINAL_BACKGROUND = 0x09090b
+
 // Hosts and browsers must match so restored snapshots keep the same images.
 export const TERMINAL_IMAGE_STORAGE_BYTES = 32 * 1024 * 1024
 const SCRATCH_BYTES = 1024
@@ -102,6 +104,7 @@ export class GhosttyVt {
     // SAFETY: libghostty-vt exports only its C API, memory, and function table.
     this.exports = Object(instance.exports) as Exports
     let layout = layouts.get(module)
+
     if (!layout) {
       const ptr = this.call('ghostty_type_json')
       const bytes = this.bytes()
@@ -136,6 +139,7 @@ export class GhosttyVt {
 
   type(name: string): LayoutType {
     const type = this.layout.types[name]
+
     if (!type) {
       throw new Error(`libghostty-vt layout is missing ${name}`)
     }
@@ -145,6 +149,7 @@ export class GhosttyVt {
 
   value(type: string, name: string): number {
     const value = this.type(type).values?.[name]
+
     if (value === undefined) {
       throw new Error(`libghostty-vt layout is missing ${type}.${name}`)
     }
@@ -154,6 +159,7 @@ export class GhosttyVt {
 
   offset(type: string, field: string): number {
     const value = this.type(type).fields?.[field]
+
     if (!value) {
       throw new Error(`libghostty-vt layout is missing ${type}.${field}`)
     }
@@ -167,6 +173,7 @@ export class GhosttyVt {
 
   bits(type: string, field: string): LayoutBits {
     const value = this.type(type).bits?.[field]
+
     if (!value) {
       throw new Error(`libghostty-vt layout is missing ${type}.${field}`)
     }
@@ -177,6 +184,7 @@ export class GhosttyVt {
   // Bits of one arm of a packed union field, relative to that field.
   armBits(type: string, field: string, arm: string, name: string): LayoutBits {
     const value = this.bits(type, field).arms?.[arm]?.bits?.[name]
+
     if (!value) {
       throw new Error(`libghostty-vt layout is missing ${type}.${field}.${arm}`)
     }
@@ -193,6 +201,7 @@ export class GhosttyVt {
 
       const size = Math.max(data.length, 64 * 1024)
       this.input = { ptr: this.call('ghostty_wasm_alloc', size), size }
+
       if (!this.input.ptr) {
         this.input = { ptr: 0, size: 0 }
         throw new Error('libghostty-vt could not allocate input')
@@ -200,12 +209,14 @@ export class GhosttyVt {
     }
 
     this.bytes().set(data, this.input.ptr)
+
     return this.input.ptr
   }
 
   // Run a constructor that writes an opaque handle through an out pointer.
   opaque(what: string, create: (out: number) => number): number {
     const handle = this.tryOpaque(create)
+
     if (handle === null) {
       throw new Error(`${what} failed`)
     }
@@ -218,6 +229,7 @@ export class GhosttyVt {
     const result = create(out)
     const handle = this.call('ghostty_wasm_take_opaque', out)
     this.call('ghostty_wasm_free_opaque', out)
+
     return result === GHOSTTY_SUCCESS ? handle : null
   }
 
@@ -230,6 +242,7 @@ export class GhosttyVt {
     const length = view.getUint32(out + 4, true)
     const data = this.bytes().slice(ptr, ptr + length)
     this.call('ghostty_free', 0, ptr, length)
+
     return data
   }
 
@@ -244,6 +257,7 @@ export class GhosttyVt {
     returns: boolean
   ): number {
     const name = [1, 0x66]
+
     const module = new Uint8Array([
       0x00,
       0x61,
@@ -277,12 +291,15 @@ export class GhosttyVt {
       0x00,
       0x00
     ])
+
     const wrapper = new WebAssembly.Instance(new WebAssembly.Module(module), {
       e: { f: fn }
     })
+
     const table = this.exports.__indirect_function_table
     const index = table.grow(1)
     table.set(index, wrapper.exports.f)
+
     return index
   }
 }
@@ -303,11 +320,14 @@ export class GhosttyTerminal {
     callbacks: GhosttyTerminalCallbacks
   ): GhosttyTerminal {
     const vt = new GhosttyVt(module)
+
     const handle = vt.opaque('ghostty_terminal_new', (out) =>
       vt.call('ghostty_terminal_new', 0, out, cols, rows)
     )
+
     const terminal = new GhosttyTerminal(vt, handle)
     terminal.configure(options, callbacks)
+
     return terminal
   }
 
@@ -321,10 +341,13 @@ export class GhosttyTerminal {
     const vt = new GhosttyVt(module)
     const ptr = vt.call('ghostty_wasm_alloc', snapshot.length)
     vt.bytes().set(snapshot, ptr)
+
     const decoder = vt.opaque('ghostty_snapshot_decoder_new_buf', (out) =>
       vt.call('ghostty_snapshot_decoder_new_buf', 0, out, ptr, snapshot.length)
     )
+
     let handle = 0
+
     try {
       handle = vt.opaque('ghostty_snapshot_decoder_decode', (out) =>
         vt.call('ghostty_snapshot_decoder_decode', decoder, out)
@@ -336,6 +359,7 @@ export class GhosttyTerminal {
 
     const terminal = new GhosttyTerminal(vt, handle)
     terminal.configure(options, callbacks)
+
     return terminal
   }
 
@@ -404,33 +428,41 @@ export class GhosttyTerminal {
 
     if (callbacks.programStatus) {
       const programStatus = callbacks.programStatus
+
       const field = (name: string) =>
         vt.offset('GhosttyTerminalProgramStatus', name)
+
       const names = <T extends string>(type: string, values: readonly T[]) =>
         new Map(
           values.map((name) => [vt.value(type, name.toUpperCase()), name])
         )
+
       const states = names<GhosttyProgramStatus['state']>(
         'GhosttyProgramStatusState',
         ['idle', 'working', 'done', 'blocked', 'error', 'clear']
       )
+
       const kinds = names<NonNullable<GhosttyProgramStatus['kind']>>(
         'GhosttyProgramStatusKind',
         ['permission', 'question', 'auth']
       )
+
       this.set(
         option('PROGRAM_STATUS'),
         vt.callback(
           (_terminal, _user, report) => {
             const view = vt.view()
+
             const string = (name: string) =>
               vt.string(
                 view.getUint32(report + field(name), true),
                 view.getUint32(report + field(name) + 4, true)
               )
+
             const state = states.get(
               view.getInt32(report + field('state'), true)
             )
+
             if (!state) {
               return
             }
@@ -464,21 +496,25 @@ export class GhosttyTerminal {
       const unknownOsc = callbacks.unknownOsc
       const osc = vt.value('GhosttyTerminalUnknownSequenceTag', 'OSC')
       const valueOffset = vt.offset('GhosttyTerminalUnknownSequence', 'value')
+
       const truncated = vt.offset(
         'GhosttyTerminalUnknownOscSequence',
         'truncated'
       )
+
       const content = vt.offset('GhosttyTerminalUnknownOscSequence', 'content')
       this.set(
         option('UNKNOWN_SEQUENCE'),
         vt.callback(
           (_terminal, _user, sequence) => {
             const view = vt.view()
+
             if (view.getInt32(sequence, true) !== osc) {
               return
             }
 
             const value = sequence + valueOffset
+
             if (view.getUint8(value + truncated)) {
               return
             }
@@ -500,8 +536,10 @@ export class GhosttyTerminal {
     if (callbacks.clipboardWrite) {
       const clipboardWrite = callbacks.clipboardWrite
       const write = (field: string) => vt.offset('GhosttyClipboardWrite', field)
+
       const content = (field: string) =>
         vt.offset('GhosttyClipboardContent', field)
+
       const contentSize = vt.size('GhosttyClipboardContent')
       const reply = vt.scratch + SCRATCH_BYTES / 2
       this.set(
@@ -511,18 +549,23 @@ export class GhosttyTerminal {
             const view = vt.view()
             const contents = view.getUint32(request + write('contents'), true)
             const count = view.getUint32(request + write('contents_len'), true)
+
             const entries = Array.from({ length: count }, (_, index) => {
               const entry = contents + index * contentSize
+
               const string = (field: string) =>
                 vt.string(
                   view.getUint32(entry + content(field), true),
                   view.getUint32(entry + content(field) + 4, true)
                 )
+
               return { mime: string('mime'), data: string('data') }
             })
+
             const text =
               entries.find((entry) => entry.mime.startsWith('text/plain')) ??
               entries[0]
+
             if (count > 0 && !text) {
               return
             }
@@ -534,11 +577,13 @@ export class GhosttyTerminal {
               reply + vt.size('GhosttyClipboardWriteReply')
             )
             view.setUint32(reply, vt.size('GhosttyClipboardWriteReply'), true)
+
             // SAFETY: reply is the request's C function pointer, an index into
             // this instance's function table.
             const answer = vt.exports.__indirect_function_table.get(
               view.getUint32(request + write('reply'), true)
             ) as (request: number, reply: number) => void
+
             answer(request, reply)
           },
           3,
@@ -606,6 +651,7 @@ export class GhosttyTerminal {
     // only redraws its frame when the grid itself changes.
     const synchronized =
       cols === this.cols && rows === this.rows && this.mode(2026)
+
     this.vt.check(
       this.vt.call(
         'ghostty_terminal_resize',
@@ -617,6 +663,7 @@ export class GhosttyTerminal {
       ),
       'ghostty_terminal_resize'
     )
+
     if (synchronized) {
       this.write('\x1b[?2026h')
     }
@@ -625,17 +672,20 @@ export class GhosttyTerminal {
   // Read GhosttyTerminalData into scratch memory. Null means no value.
   data<T>(data: string, read: (view: DataView, ptr: number) => T): T | null {
     const { vt } = this
+
     const result = vt.call(
       'ghostty_terminal_get',
       this.handle,
       vt.value('GhosttyTerminalData', data),
       vt.scratch
     )
+
     if (result === vt.value('GhosttyResult', 'NO_VALUE')) {
       return null
     }
 
     vt.check(result, `ghostty_terminal_get(${data})`)
+
     return read(vt.view(), vt.scratch)
   }
 
@@ -658,6 +708,7 @@ export class GhosttyTerminal {
   title(): string {
     const ptr = this.get('TITLE', (view, out) => view.getUint32(out, true))
     const length = this.vt.view().getUint32(this.vt.scratch + 4, true)
+
     return this.vt.string(ptr, length)
   }
 
@@ -679,6 +730,7 @@ export class GhosttyTerminal {
       ),
       `ghostty_terminal_get(MODE ${value})`
     )
+
     return (
       vt
         .view()
@@ -718,10 +770,13 @@ export class GhosttyTerminal {
     const extraPtr = ptr + vt.offset(options, 'extra')
     view.setUint32(extraPtr, vt.size(extra), true)
     view.setUint32(extraPtr + vt.offset(extra, 'screen'), vt.size(screen), true)
+
     const formatter = vt.opaque('ghostty_formatter_terminal_new', (out) =>
       vt.call('ghostty_formatter_terminal_new', 0, out, this.handle, ptr)
     )
+
     vt.call('ghostty_wasm_free', ptr, vt.size(options))
+
     try {
       return decoder.decode(
         vt.take('ghostty_formatter_format_alloc', (outPtr, outLen) =>

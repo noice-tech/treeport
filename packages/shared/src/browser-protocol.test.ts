@@ -13,9 +13,11 @@ import { testSchema } from './schema.test-support.js'
 
 const browserAgentCommandSchema = testSchema(browserAgentCommandEffectSchema)
 const browserOwnerAuthSchema = testSchema(browserOwnerAuthEffectSchema)
+
 const browserOwnerClientMessageSchema = testSchema(
   browserOwnerClientMessageEffectSchema
 )
+
 const browserOwnerServerMessageSchema = testSchema(
   browserOwnerServerMessageEffectSchema
 )
@@ -55,6 +57,7 @@ describe('hosted browser protocol', () => {
       deltaY: -40,
       modifiers: 2
     }
+
     expect(parseBrowserClientMessage(wheel)).toEqual(wheel)
     expect(
       parseBrowserClientMessage({ ...wheel, modifiers: 15 })
@@ -76,6 +79,7 @@ describe('hosted browser protocol', () => {
         { id: 2, x: 300, y: 200 }
       ]
     }
+
     expect(parseBrowserClientMessage(touch)).toEqual(touch)
     expect(
       parseBrowserClientMessage({ ...touch, phase: 'move' })
@@ -90,6 +94,7 @@ describe('hosted browser protocol', () => {
     expect(
       parseBrowserClientMessage({ ...touch, phase: 'cancel', points: [] })
     ).not.toBeNull()
+
     for (const invalid of [
       { ...touch, points: [] },
       { ...touch, phase: 'cancel' },
@@ -132,6 +137,7 @@ describe('hosted browser protocol', () => {
         url
       })
     }
+
     for (const url of [
       'file://server/share/preview.html',
       'file://user:password@localhost/tmp/preview.html',
@@ -146,6 +152,7 @@ describe('hosted browser protocol', () => {
     ]) {
       expect(parseBrowserClientMessage({ type: 'navigate', url })).toBeNull()
     }
+
     expect(
       parseBrowserClientMessage({
         type: 'navigate',
@@ -168,6 +175,7 @@ describe('hosted browser protocol', () => {
         args: ['http://localhost:5173/preview']
       }).success
     ).toBe(true)
+
     for (const url of ['file:///tmp/preview.html', 'chrome://gpu']) {
       expect(
         browserAgentCommandSchema.safeParse({
@@ -176,6 +184,7 @@ describe('hosted browser protocol', () => {
         }).success
       ).toBe(true)
     }
+
     expect(
       browserAgentCommandSchema.safeParse({
         command: 'screenshot',
@@ -200,18 +209,21 @@ describe('hosted browser protocol', () => {
     const answer = { ...offer, type: 'videoAnswer' }
     expect(parseBrowserServerMessage(answer)).toEqual(answer)
     expect(parseBrowserServerMessage({ type: 'videoReady' })).not.toBeNull()
+
     const account = {
       source: 'tailscale',
       login: 'alice@example.test',
       name: 'Alice',
       profilePicture: null
     } as const
+
     const details = {
       kind: 'viewer',
       account,
       sameAccount: true,
       sameDevice: true
     } as const
+
     expect(browserControllerDescription(details)).toBe(
       'Another window on this device controls this browser.'
     )
@@ -263,6 +275,7 @@ describe('hosted browser protocol', () => {
         endpoint: 'http://localhost:43210/private/'
       }).success
     ).toBe(false)
+
     const readyState = {
       url: 'file:///tmp/preview.html',
       title: 'Ready page',
@@ -272,6 +285,7 @@ describe('hosted browser protocol', () => {
       canGoForward: false,
       viewport: { width: 800, height: 600 }
     }
+
     expect(
       browserOwnerClientMessageSchema.safeParse({
         type: 'ready',

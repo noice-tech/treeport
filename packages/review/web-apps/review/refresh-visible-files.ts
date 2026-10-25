@@ -17,6 +17,7 @@ export async function refreshVisibleFiles(
       (file.loadState === 'idle' ||
         (!collapsed.has(file.id) && file.scope === 'uncommitted'))
   )
+
   let next = 0
   await Promise.all(
     Array.from({ length: Math.min(4, pending.length) }, async () => {

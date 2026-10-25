@@ -14,10 +14,12 @@ test.describe('desktop terminal input and removal', () => {
       'shot one.png': '/Users/example/Desktop/shot one.png',
       "notes '$draft.txt": "/Users/example/Desktop/notes '$draft.txt"
     }
+
     const mocked = await mockApp(page, [], {
       desktopBridge: true,
       desktopFilePaths: directPaths
     })
+
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     const socket = mocked.terminal.connection
@@ -28,6 +30,7 @@ test.describe('desktop terminal input and removal', () => {
     })
     mocked.terminal.messages = []
     mocked.terminal.delayTakeControl = true
+
     // Clipboard files cannot be filled through Playwright's text clipboard API.
     // Dispatch the browser event, then verify the alert or terminal protocol.
     const pasteTerminalFiles = () =>
@@ -84,6 +87,7 @@ test.describe('desktop terminal input and removal', () => {
         transfer.items.add(
           new File(['hello'], 'notes.txt', { type: 'text/plain' })
         )
+
         const dragoverPrevented = !terminalHost.dispatchEvent(
           new DragEvent('dragover', {
             bubbles: true,
@@ -91,6 +95,7 @@ test.describe('desktop terminal input and removal', () => {
             dataTransfer: transfer
           })
         )
+
         const dropPrevented = !terminalHost.dispatchEvent(
           new DragEvent('drop', {
             bubbles: true,
@@ -98,8 +103,10 @@ test.describe('desktop terminal input and removal', () => {
             dataTransfer: transfer
           })
         )
+
         return { dragoverPrevented, dropPrevented }
       })
+
     expect(drop).toEqual({
       dragoverPrevented: true,
       dropPrevented: true
@@ -122,6 +129,7 @@ test.describe('desktop terminal input and removal', () => {
     const mocked = await mockApp(page, [], {
       keyboardPlatform: 'MacIntel'
     })
+
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await requestTerminalControl(page)
     const textarea = page.locator('.xterm-helper-textarea')
@@ -129,6 +137,7 @@ test.describe('desktop terminal input and removal', () => {
     {
       mocked.terminal.messages = []
     }
+
     await page.keyboard.press('Shift+Enter')
     await page.keyboard.press('Meta+ArrowLeft')
     await page.keyboard.press('Meta+ArrowRight')
@@ -154,6 +163,7 @@ test.describe('desktop terminal input and removal', () => {
       })
       mocked.terminal.messages = []
     }
+
     const screen = page.locator('.xterm-screen')
     await screen.hover()
     await page.mouse.wheel(0, -600)
@@ -183,6 +193,7 @@ test.describe('desktop terminal input and removal', () => {
       })
       mocked.terminal.messages = []
     }
+
     await expect(screen).toContainText('fullscreen transcript selection')
     await page.mouse.move(bounds!.x + 10, bounds!.y + 10)
     await page.mouse.down()
@@ -194,6 +205,7 @@ test.describe('desktop terminal input and removal', () => {
           .filter((message) => message.type === 'input')
           .map((message) => {
             const data = String(message.data)
+
             if (data.startsWith('\u001b[<0;') && data.endsWith('M')) {
               return 'press'
             }
@@ -214,6 +226,7 @@ test.describe('desktop terminal input and removal', () => {
     {
       mocked.terminal.messages = []
     }
+
     await page.keyboard.down('Alt')
     await page.mouse.move(bounds!.x + 10, bounds!.y + 10)
     await page.mouse.down()
@@ -250,6 +263,7 @@ test.describe('desktop terminal input and removal', () => {
       })
       mocked.terminal.messages = []
     }
+
     await screen.dispatchEvent('wheel', { deltaY: -120 })
     await expect
       .poll(() =>
@@ -426,11 +440,13 @@ test.describe('desktop terminal input and removal', () => {
     ).toBeVisible()
     expect(mocked.removeRequests()).toBe(1)
     await expect(page.locator('#worktree-wt_topic')).toBeVisible()
+
     const secondRemove = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname.endsWith('/remove')
     )
+
     await page.getByRole('button', { name: 'Remove anyway' }).click()
     expect((await secondRemove).postDataJSON()).toEqual({
       confirmationToken: 'c'.repeat(64),
@@ -447,9 +463,11 @@ test.describe('desktop terminal input and removal', () => {
     await page.getByRole('button', { name: 'topic', exact: true }).click()
     await expect(page).toHaveURL(/wt_topic/)
     let acceptRemoval: () => void = () => {}
+
     const acceptance = new Promise<void>((resolve) => {
       acceptRemoval = resolve
     })
+
     await page.route('**/api/worktrees/wt_topic/remove', async (route) => {
       await acceptance
       await route.fallback()
@@ -480,6 +498,7 @@ test.describe('desktop terminal input and removal', () => {
     const pendingRefresh = page.waitForResponse(
       (response) => new URL(response.url()).pathname === '/api/projects'
     )
+
     await mocked.emitProjectEvent('worktree.updated', {
       worktreeId: 'wt_topic'
     })
@@ -501,11 +520,13 @@ test.describe('desktop terminal input and removal', () => {
     ).toHaveCount(0)
 
     mocked.completeRemoval()
+
     const removedRefresh = page.waitForResponse(
       (response) =>
         response.request().method() === 'GET' &&
         new URL(response.url()).pathname === '/api/projects'
     )
+
     await mocked.emitProjectEvent('worktree.removed', {
       projectId: 'proj_1',
       worktreeId: 'wt_topic'

@@ -30,18 +30,22 @@ function browserState(
   faviconUrl: string | null = null
 ): BrowserRuntimeState {
   const observedUrl = webview.getURL()
+
   const blankPage =
     observedUrl === 'about:blank' ||
     observedUrl.startsWith('about:blank#treeport-app=')
+
   const currentUrl =
     loading && blankPage && fallbackUrl !== 'about:blank'
       ? fallbackUrl
       : observedUrl || fallbackUrl
+
   const url =
     currentUrl === 'about:blank' ||
     decodeUnknownOrNull(browserObservedUrlSchema, currentUrl) !== null
       ? currentUrl
       : fallbackUrl
+
   return {
     url,
     title: blankPage ? '' : normalizeBrowserTitle(webview.getTitle()),
@@ -84,15 +88,18 @@ export function LocalBrowserWebview({
   inputBlockedRef.current = inputBlocked
   const initialAppRef = useRef(app)
   const ownerClientIdRef = useRef(crypto.randomUUID())
+
   const [externalController, setExternalController] = useState<'other' | null>(
     null
   )
+
   const externalControllerRef = useRef<'other' | null>(null)
   const retainPaintRef = useRef(false)
   const takeControlRef = useRef<() => void>(() => undefined)
   useEffect(() => {
     const webview = webviewRef.current
     const bridge = window.treeportDesktop
+
     if (!webview || !supportsLocalBrowser(bridge)) {
       return
     }
@@ -114,16 +121,20 @@ export function LocalBrowserWebview({
     let reconnectTimer: number | null = null
     let domReady = false
     let hasOwnedRuntime = false
+
     let pendingNavigation: Extract<
       BrowserClientMessage,
       { type: 'navigate' }
     > | null = null
+
     let commandRevision = 0
     let remoteViewport: { width: number; height: number } | null = null
+
     const applyRemoteViewport = (
       viewport: { width: number; height: number } | null
     ) => {
       remoteViewport = viewport
+
       if (viewport) {
         webview.style.setProperty(
           '--browser-viewport-width',
@@ -142,6 +153,7 @@ export function LocalBrowserWebview({
     const flushPendingNavigation = () => {
       const navigation = pendingNavigation
       pendingNavigation = null
+
       if (navigation) {
         connection.send(navigation)
       }
@@ -159,11 +171,13 @@ export function LocalBrowserWebview({
         installCommand: null
       })
     }
+
     const startupTimer = window.setTimeout(() => {
       reportError(
         'The Browser did not become ready. Select Retry to reopen it.'
       )
     }, 10_000)
+
     const sessionState = (state: BrowserRuntimeState): BrowserSessionState => ({
       ...state,
       controlled: externalControllerRef.current === null,
@@ -172,6 +186,7 @@ export function LocalBrowserWebview({
       controllerDetails: null,
       videoSettings: null
     })
+
     const emitState = (
       type: 'ready' | 'state' | 'controlChanged' = 'state',
       reportToOwner = true
@@ -181,6 +196,7 @@ export function LocalBrowserWebview({
       }
 
       let state: BrowserRuntimeState
+
       try {
         state = browserState(webview, fallbackUrl, loading, faviconUrl)
       } catch (cause) {
@@ -188,10 +204,13 @@ export function LocalBrowserWebview({
         reporting = false
         ready = false
         reportError(cause)
+
         return
       }
+
       fallbackUrl = state.url
       onMessage({ type, state: sessionState(state) })
+
       if (!reportToOwner) {
         return
       }
@@ -202,16 +221,19 @@ export function LocalBrowserWebview({
         owner?.sendState(state)
       }
     }
+
     const startLoading = () => {
       traceBrowserOpen(app.id, 'browser.local.loading_started')
       loading = true
       emitState()
     }
+
     const stopLoading = () => {
       traceBrowserOpen(app.id, 'browser.local.loading_stopped')
       loading = false
       emitState()
     }
+
     const updateFavicon = (event: Event) => {
       // SAFETY: Electron's page-favicon-updated event supplies a string array.
       const { favicons } = event as Event & { favicons: string[] }
@@ -234,6 +256,7 @@ export function LocalBrowserWebview({
           emitState()
         })
     }
+
     const refresh = (event: Event) => {
       if (event.type === 'did-navigate') {
         faviconRevision++
@@ -249,10 +272,12 @@ export function LocalBrowserWebview({
 
       emitState()
     }
+
     const clearRuntimeControl = () => {
       externalControllerRef.current = null
       retainPaintRef.current = false
       applyRemoteViewport(null)
+
       if (!disposed) {
         setExternalController(null)
       }
@@ -261,6 +286,7 @@ export function LocalBrowserWebview({
       void onPaintRetentionChange(false)
       previousExternalFocus = null
     }
+
     const setRuntimeControl = async (
       controller: 'other' | 'none',
       viewport: { width: number; height: number } | null,
@@ -270,6 +296,7 @@ export function LocalBrowserWebview({
       const previousController = externalControllerRef.current
       const previousRetainPaint = retainPaintRef.current
       const locked = controller === 'other'
+
       const previousFocus =
         locked &&
         previousController === null &&
@@ -277,36 +304,44 @@ export function LocalBrowserWebview({
         document.activeElement !== webview
           ? document.activeElement
           : null
+
       const prepareWithInputLocked = locked || retainPaint
+
       const prepared = await bridge
         .setBrowserInputControl(app.id, prepareWithInputLocked)
         .then(
           (result) => result,
           () => false
         )
+
       if (!prepared || disposed) {
         return false
       }
 
       applyRemoteViewport(locked ? viewport : null)
+
       const viewportChanged =
         previousViewport?.width !== remoteViewport?.width ||
         previousViewport?.height !== remoteViewport?.height
+
       const paintable = await onPaintRetentionChange(retainPaint).then(
         (result) => result,
         () => false
       )
+
       if (!paintable || disposed) {
         applyRemoteViewport(previousViewport)
         await bridge
           .setBrowserInputControl(app.id, previousController !== null)
           .catch(() => false)
         await onPaintRetentionChange(previousRetainPaint).catch(() => false)
+
         return false
       }
 
       if (locked && previousController === null) {
         previousExternalFocus = previousFocus
+
         if (
           (document.activeElement === webview ||
             document.activeElement === document.body) &&
@@ -327,12 +362,14 @@ export function LocalBrowserWebview({
             (result) => result,
             () => false
           )
+
         if (!unlocked || disposed) {
           applyRemoteViewport(previousViewport)
           await bridge
             .setBrowserInputControl(app.id, previousController !== null)
             .catch(() => false)
           await onPaintRetentionChange(previousRetainPaint).catch(() => false)
+
           return false
         }
       }
@@ -340,6 +377,7 @@ export function LocalBrowserWebview({
       externalControllerRef.current = locked ? 'other' : null
       retainPaintRef.current = retainPaint
       setExternalController(locked ? 'other' : null)
+
       if (!locked) {
         if (
           previousController === 'other' &&
@@ -360,15 +398,18 @@ export function LocalBrowserWebview({
       }
 
       emitState('controlChanged', viewportChanged)
+
       if (!locked) {
         flushPendingNavigation()
       }
 
       return true
     }
+
     const crashed = () => {
       const message =
         'The local Browser page stopped. Select Retry to reopen it.'
+
       ready = false
       reporting = false
       owner?.sendCrash(message)
@@ -423,6 +464,7 @@ export function LocalBrowserWebview({
           command: message.type
         })
         const revision = ++commandRevision
+
         const navigationFailed = (cause: unknown) => {
           if (disposed || revision !== commandRevision) {
             return
@@ -436,6 +478,7 @@ export function LocalBrowserWebview({
             message: cause instanceof Error ? cause.message : String(cause)
           })
         }
+
         void bridge.browserCommand(app.id, message).then((result) => {
           if (!result.ok && result.error) {
             navigationFailed(result.error)
@@ -456,6 +499,7 @@ export function LocalBrowserWebview({
         bridge.disposeBrowser(app.id)
       }
     }
+
     onConnection(connection)
 
     const queueReconnect = (cause: unknown) => {
@@ -470,6 +514,7 @@ export function LocalBrowserWebview({
       previousOwner?.dispose()
       takeControlRef.current = () => undefined
       reportError(cause)
+
       if (reconnectTimer === null) {
         reconnectTimer = window.setTimeout(() => {
           reconnectTimer = null
@@ -477,6 +522,7 @@ export function LocalBrowserWebview({
         }, 500)
       }
     }
+
     const connectOwner = () => {
       if (disposed || registering || owner || !domReady) {
         return
@@ -490,11 +536,13 @@ export function LocalBrowserWebview({
           ownerClientIdRef.current,
           abortController.signal
         )
+
         if (disposed) {
           return
         }
 
         traceBrowserOpen(app.id, 'browser.local.owner_ticket_received')
+
         if (!descriptor || descriptorChallenge !== ownerTicket.challenge) {
           descriptor = await bridge.registerBrowser(
             app.id,
@@ -541,8 +589,10 @@ export function LocalBrowserWebview({
           },
           abortController.signal
         )
+
         if (disposed) {
           connectionOwner.dispose()
+
           return
         }
 
@@ -551,6 +601,7 @@ export function LocalBrowserWebview({
         })
         owner = connectionOwner
         takeControlRef.current = () => owner?.takeControl()
+
         // A granted claim starts unlocked; the daemon reapplies external control after ready.
         if (externalControllerRef.current !== null || retainPaintRef.current) {
           if (!(await setRuntimeControl('none', null, false))) {
@@ -568,6 +619,7 @@ export function LocalBrowserWebview({
         window.clearTimeout(startupTimer)
         ready = true
         reporting = true
+
         // Keep the live webview even if a restarted daemon lost its owner
         // record. Workspace code updates are handled by the project event bridge.
         if (connectionOwner.resumed || hasOwnedRuntime) {
@@ -575,16 +627,20 @@ export function LocalBrowserWebview({
           loading = webview.isLoading()
           emitState('ready')
           flushPendingNavigation()
+
           return
         }
 
         hasOwnedRuntime = true
+
         const initialUrl =
           pendingNavigation?.url ?? connectionOwner.initialState.url
+
         pendingNavigation = null
         fallbackUrl = initialUrl
         loading = initialUrl !== 'about:blank'
         emitState('ready')
+
         if (initialUrl !== 'about:blank') {
           connection.send({ type: 'navigate', url: initialUrl })
         }
@@ -607,29 +663,35 @@ export function LocalBrowserWebview({
       dismissToolPicker()
       onFocusSurface()
     }
+
     const stopBrowserFocus = bridge.onBrowserFocus((appId) => {
       if (appId === app.id) {
         focusBrowser()
       }
     })
+
     const refreshEventNames = [
       'did-navigate',
       'did-navigate-in-page',
       'page-title-updated'
     ]
+
     webview.addEventListener('page-favicon-updated', updateFavicon)
     webview.addEventListener('focus', focusBrowser)
     webview.addEventListener('did-start-loading', startLoading)
     webview.addEventListener('did-stop-loading', stopLoading)
     webview.addEventListener('render-process-gone', crashed)
+
     for (const eventName of refreshEventNames) {
       webview.addEventListener(eventName, refresh)
     }
+
     const browserReady = () => {
       traceBrowserOpen(app.id, 'browser.local.dom_ready')
       domReady = true
       connectOwner()
     }
+
     webview.addEventListener('dom-ready', browserReady)
     const resizeObserver = new ResizeObserver(() => emitState())
     resizeObserver.observe(webview)
@@ -657,6 +719,7 @@ export function LocalBrowserWebview({
     return () => {
       onConnection(null)
       takeControlRef.current = () => undefined
+
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer)
       }
@@ -670,9 +733,11 @@ export function LocalBrowserWebview({
       webview.removeEventListener('did-start-loading', startLoading)
       webview.removeEventListener('did-stop-loading', stopLoading)
       webview.removeEventListener('render-process-gone', crashed)
+
       for (const eventName of refreshEventNames) {
         webview.removeEventListener(eventName, refresh)
       }
+
       webview.removeEventListener('dom-ready', browserReady)
       connection.dispose()
     }
@@ -687,6 +752,7 @@ export function LocalBrowserWebview({
 
   useEffect(() => {
     const bridge = window.treeportDesktop
+
     if (supportsLocalBrowser(bridge)) {
       void bridge
         .setBrowserPresentationActive(app.id, active && !inputBlocked)

@@ -96,11 +96,14 @@ export class BrowserRelay {
     const stream = crypto.randomUUID()
     let resolve: () => void = () => undefined
     let reject: (error: Error) => void = () => undefined
+
     const connected = new Promise<void>((resolved, rejected) => {
       resolve = resolved
       reject = rejected
     })
+
     void connected.catch(() => undefined)
+
     return new Promise<BrowserRelayStream>((opened, failed) => {
       let live = false
       this.#streams.set(stream, {
@@ -129,6 +132,7 @@ export class BrowserRelay {
           const error = new Error(message)
           failed(error)
           reject(error)
+
           if (live) {
             handlers.failed(message)
           }
@@ -157,7 +161,9 @@ export class BrowserRelay {
       headers: request.headers,
       head: head.toString('base64')
     }
+
     this.process().send(command, socket)
+
     return true
   }
 
@@ -190,21 +196,26 @@ export class BrowserRelay {
       execArgv: [],
       stdio: ['ignore', 'inherit', 'inherit', 'ipc']
     })
+
     this.#child = child
     child.on('message', (value) => {
       // SAFETY: Only the relay entrypoint writes to this IPC channel.
       const event = value as BrowserRelayEvent
+
       if (event.type === 'wheel') {
         this.input.wheel(event.attachment, event.message)
+
         return
       }
 
       if (event.type === 'cursor') {
         this.input.cursor(event.attachment, { x: event.x, y: event.y })
+
         return
       }
 
       const stream = this.#streams.get(event.stream)
+
       if (!stream) {
         return
       }
@@ -224,6 +235,7 @@ export class BrowserRelay {
     // Without its IPC channel the relay is unusable even if still running.
     child.once('disconnect', () => {
       child.kill()
+
       if (this.#child !== child) {
         return
       }
@@ -231,12 +243,14 @@ export class BrowserRelay {
       this.#child = null
       const streams = [...this.#streams.values()]
       this.#streams.clear()
+
       for (const stream of streams) {
         stream.failed(
           'Browser video relay stopped. Reconnect to restart video.'
         )
       }
     })
+
     return child
   }
 }

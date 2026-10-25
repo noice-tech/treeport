@@ -15,6 +15,7 @@ import {
 } from './web-app-vite-runtime'
 
 const directories: string[] = []
+
 afterEach(async () => {
   await Promise.all(
     directories.splice(0).map((directory) =>
@@ -89,6 +90,7 @@ async function fixture() {
       "throw new Error('package Vite config was executed')\n"
     )
   ])
+
   const config: AppConfig = {
     host: '127.0.0.1',
     port: 8733,
@@ -104,6 +106,7 @@ async function fixture() {
     webDevelopment: false,
     appVersion: 'test'
   }
+
   const source: ResolvedWebAppSource = {
     root: appRoot,
     entry: 'index.html',
@@ -113,6 +116,7 @@ async function fixture() {
     packageSource: 'npm:@acme/review@1.0.0',
     allowNetworkRequests: false
   }
+
   return { root, appRoot, config, source }
 }
 
@@ -130,20 +134,25 @@ describe('WebAppViteRuntime', () => {
       Effect.runPromise(runtime.resolve(source, '', logicalBase)),
       Effect.runPromise(runtime.resolve(source, '', logicalBase))
     ])
+
     expect(firstRequests[0]).toMatchObject({
       kind: 'redirect',
       development: false
     })
     expect(firstRequests[1]).toEqual(firstRequests[0])
+
     if (firstRequests[0]!.kind !== 'redirect') {
       throw new Error('expected redirect')
     }
 
     const firstPath = immutablePath(firstRequests[0].location)
+
     const document = await Effect.runPromise(
       runtime.resolve(source, firstPath, logicalBase)
     )
+
     expect(document).toMatchObject({ kind: 'asset', immutable: true })
+
     if (document.kind !== 'asset') {
       throw new Error('expected compiled document')
     }
@@ -151,6 +160,7 @@ describe('WebAppViteRuntime', () => {
     const html = await fs.readFile(document.path, 'utf8')
     const script = /src="\.\/(assets\/[^"]+\.js)"/u.exec(html)?.[1]
     expect(script).toBeTruthy()
+
     const compiledScript = await Effect.runPromise(
       runtime.resolve(
         source,
@@ -158,6 +168,7 @@ describe('WebAppViteRuntime', () => {
         logicalBase
       )
     )
+
     if (compiledScript.kind !== 'asset') {
       throw new Error('expected compiled script')
     }
@@ -173,9 +184,11 @@ describe('WebAppViteRuntime', () => {
       path.join(appRoot, 'app.tsx'),
       "document.querySelector('#root').textContent = 'source changed'\n"
     )
+
     const changed = await Effect.runPromise(
       runtime.resolve(source, '', logicalBase)
     )
+
     expect(changed).toMatchObject({ kind: 'redirect' })
     expect(changed).not.toEqual(firstRequests[0])
     expect(
@@ -195,12 +208,14 @@ describe('WebAppViteRuntime', () => {
   it('serves local source apps through Vite with sandbox-compatible headers', async () => {
     const { config, source } = await fixture()
     const runtime = new WebAppViteRuntime(config)
+
     const server = http.createServer((request, response) => {
       runtime.handleDevelopmentRequest(request, response, () => {
         response.statusCode = 404
         response.end()
       })
     })
+
     runtime.attachHttpServer(server)
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 
@@ -208,6 +223,7 @@ describe('WebAppViteRuntime', () => {
       const address = z
         .object({ port: z.number().int() })
         .safeParse(server.address())
+
       if (!address.success) {
         throw new Error('expected HTTP listener address')
       }
@@ -219,11 +235,13 @@ describe('WebAppViteRuntime', () => {
           '/api/web-apps/app/assets/'
         )
       )
+
       if (resolution.kind !== 'redirect') {
         throw new Error('expected development redirect')
       }
 
       const browserOrigin = 'https://treeport.example.ts.net:5173'
+
       const response = await fetch(
         `http://127.0.0.1:${address.data.port}${resolution.location}`,
         {
@@ -234,6 +252,7 @@ describe('WebAppViteRuntime', () => {
           }
         }
       )
+
       expect(response.status).toBe(200)
       expect(response.headers.get('access-control-allow-origin')).toBe('*')
       expect(response.headers.get('cache-control')).toBe('no-cache')
@@ -282,6 +301,7 @@ describe('WebAppViteRuntime', () => {
               .on('error', reject)
           }
         )
+
         expect(status).toBe(expectedStatus)
       }
 
@@ -295,9 +315,11 @@ describe('WebAppViteRuntime', () => {
           }
         }
       )
+
       const untrustedReferrerPolicy = untrustedReferrerResponse.headers.get(
         'content-security-policy'
       )
+
       expect(untrustedReferrerPolicy).toContain(browserOrigin)
       expect(untrustedReferrerPolicy).not.toContain('attacker.example')
     } finally {
@@ -312,10 +334,12 @@ describe('WebAppViteRuntime', () => {
     const { config, source } = await fixture()
     let runtime: WebAppViteRuntime | null = null
     let location = ''
+
     const server = http.createServer((request, response) => {
       if (!runtime) {
         response.statusCode = 503
         response.end()
+
         return
       }
 
@@ -324,6 +348,7 @@ describe('WebAppViteRuntime', () => {
         response.end()
       })
     })
+
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 
     try {
@@ -332,11 +357,13 @@ describe('WebAppViteRuntime', () => {
           Effect.gen(function* () {
             runtime = yield* WebAppRuntimePort
             runtime.attachHttpServer(server)
+
             const resolution = yield* runtime.resolve(
               { ...source, development: true },
               '',
               '/api/web-apps/app/assets/'
             )
+
             if (resolution.kind !== 'redirect') {
               throw new Error('expected development redirect')
             }
@@ -347,9 +374,11 @@ describe('WebAppViteRuntime', () => {
       )
 
       const address = z.object({ port: z.number() }).parse(server.address())
+
       const response = await fetch(
         `http://127.0.0.1:${address.port}${location}`
       )
+
       expect(response.status).toBe(404)
     } finally {
       await new Promise<void>((resolve, reject) =>
@@ -364,6 +393,7 @@ describe('WebAppViteRuntime', () => {
       path.join(appRoot, 'app.tsx'),
       "import missing from 'not-installed'; document.body.textContent = missing\n"
     )
+
     const result = await Effect.runPromise(
       new WebAppViteRuntime(config).resolve(
         source,
@@ -371,7 +401,9 @@ describe('WebAppViteRuntime', () => {
         '/api/web-apps/app/assets/'
       )
     )
+
     expect(result).toMatchObject({ kind: 'error', development: false })
+
     if (result.kind !== 'error') {
       throw new Error('expected build error')
     }

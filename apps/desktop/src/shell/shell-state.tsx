@@ -22,6 +22,7 @@ export function ShellStateProvider({ children }: { children: ReactNode }) {
             ? 'light'
             : 'dark'
           : next.theme.mode
+
       if (next.theme.accent) {
         root.style.setProperty('--accent-color', next.theme.accent)
       } else {
@@ -30,8 +31,10 @@ export function ShellStateProvider({ children }: { children: ReactNode }) {
 
       setState(next)
     }
+
     const unsubscribe = window.treeportShell.onState(receive)
     void window.treeportShell.getState().then(receive)
+
     return unsubscribe
   }, [])
 

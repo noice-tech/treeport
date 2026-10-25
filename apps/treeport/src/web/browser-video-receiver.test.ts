@@ -47,19 +47,24 @@ afterEach(() => {
 
 it('negotiates native video only when visible and ignores superseded answers', async () => {
   vi.stubGlobal('RTCPeerConnection', FakePeer)
+
   const codecs = [
     { mimeType: 'video/VP8' },
     { mimeType: 'video/H264' },
     { mimeType: 'video/rtx' }
   ]
+
   vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => ({ codecs }) })
+
   // SAFETY: This receiver only uses srcObject and play; both are provided below.
   const video = Object.assign({} as HTMLVideoElement, {
     srcObject: null,
     play: vi.fn(async () => undefined)
   })
+
   const messages: BrowserClientMessage[] = []
   const failed = vi.fn()
+
   const receiver = new BrowserVideoReceiver(
     video,
     canvas,
@@ -68,6 +73,7 @@ it('negotiates native video only when visible and ignores superseded answers', a
     vi.fn(),
     vi.fn()
   )
+
   receiver.receive({ type: 'videoReady' })
   expect(FakePeer.instances).toHaveLength(0)
   receiver.setVisible(true)
@@ -76,6 +82,7 @@ it('negotiates native video only when visible and ignores superseded answers', a
   await vi.waitFor(() => expect(messages).toHaveLength(1))
   const offer = messages[0]!
   expect(offer).toMatchObject({ type: 'videoOffer', sdp: 'offer-sdp' })
+
   if (offer.type !== 'videoOffer') {
     throw new Error('Expected a video offer')
   }
@@ -114,6 +121,7 @@ it('negotiates native video only when visible and ignores superseded answers', a
   receiver.receive({ type: 'videoReady' })
   await vi.waitFor(() => expect(messages).toHaveLength(2))
   const next = messages[1]!
+
   if (next.type !== 'videoOffer') {
     throw new Error('Expected a video offer')
   }
@@ -145,6 +153,7 @@ it('owns signaling and media visibility/disposal together even for immediate hos
     vi.fn(async () => new Response(JSON.stringify({ ticket: 'b'.repeat(43) })))
   )
   const events = new EventEmitter()
+
   const socket = {
     connected: true,
     on: events.on.bind(events),
@@ -155,8 +164,10 @@ it('owns signaling and media visibility/disposal together even for immediate hos
     }),
     disconnect: vi.fn()
   }
+
   // SAFETY: Signaling does not deliver tracks; the receiver only clears srcObject.
   const video = { srcObject: null } as HTMLVideoElement
+
   const connection = connectRemoteBrowser(
     'app-browser',
     video,
@@ -169,8 +180,10 @@ it('owns signaling and media visibility/disposal together even for immediate hos
     },
     () => socket
   )
+
   connection.setVisible(true)
   await vi.waitFor(() => expect(events.listenerCount('message')).toBe(1))
+
   const ready: BrowserServerMessage = {
     type: 'ready',
     state: {
@@ -188,6 +201,7 @@ it('owns signaling and media visibility/disposal together even for immediate hos
       viewport: { width: 390, height: 844 }
     }
   }
+
   events.emit('message', ready)
   await vi.waitFor(() =>
     expect(socket.emit).toHaveBeenCalledWith(
@@ -209,12 +223,15 @@ it('bounds connection retries and closes media when the signaling session is los
   vi.useFakeTimers()
   vi.stubGlobal('RTCPeerConnection', FakePeer)
   vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => null })
+
   // SAFETY: No track is delivered in this signaling-lifecycle test.
   const video = Object.assign({} as HTMLVideoElement, {
     srcObject: null,
     play: vi.fn(async () => undefined)
   })
+
   const failed = vi.fn()
+
   const receiver = new BrowserVideoReceiver(
     video,
     canvas,
@@ -223,6 +240,7 @@ it('bounds connection retries and closes media when the signaling session is los
     vi.fn(),
     vi.fn()
   )
+
   receiver.setVisible(true)
   receiver.receive({ type: 'videoReady' })
   await vi.advanceTimersByTimeAsync(60_000)

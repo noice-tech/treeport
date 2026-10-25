@@ -10,6 +10,7 @@ function validProtocol(
   value: string | null | undefined
 ): 'http:' | 'https:' | null {
   const protocol = value?.trim().toLowerCase().replace(/:?$/u, ':')
+
   return protocol === 'http:' || protocol === 'https:' ? protocol : null
 }
 
@@ -23,11 +24,13 @@ function originForHost(
 
   const trimmed = host.trim()
   const value = `${protocol}//${trimmed}`
+
   if (!URL.canParse(value)) {
     return null
   }
 
   const origin = new URL(value)
+
   return origin.username === '' &&
     origin.password === '' &&
     origin.pathname === '/' &&
@@ -42,6 +45,7 @@ export function webAppBrowserOrigin(input: WebAppRequestOrigin): string {
     validProtocol(input.forwardedProtocol) ??
     validProtocol(input.requestProtocol) ??
     'http:'
+
   const requestOrigin =
     originForHost(protocol, input.forwardedHost) ??
     originForHost(protocol, input.host) ??
@@ -49,6 +53,7 @@ export function webAppBrowserOrigin(input: WebAppRequestOrigin): string {
 
   if (input.referrer && URL.canParse(input.referrer)) {
     const referrer = new URL(input.referrer)
+
     if (
       validProtocol(referrer.protocol) &&
       referrer.host.toLowerCase() === requestOrigin.host.toLowerCase()
@@ -66,6 +71,7 @@ export function webAppContentSecurityPolicy(
   allowNetworkRequests = false
 ): string {
   const networkSources = allowNetworkRequests ? ' http: https:' : ''
+
   if (policy === 'development') {
     return `default-src 'self' ${browserOrigin}; script-src 'self' ${browserOrigin} 'unsafe-inline'; style-src 'self' ${browserOrigin} 'unsafe-inline'; img-src 'self' ${browserOrigin} data: blob:; connect-src 'self' ${browserOrigin} ws: wss:${networkSources}; frame-src http: https:; frame-ancestors 'self' ${browserOrigin}`
   }

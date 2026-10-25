@@ -22,6 +22,7 @@ export function WorkspaceViewers({
     presence.subscribe,
     presence.getSnapshot
   )
+
   // Display-only fixture: never sent to the daemon or used as our identity.
   const mockViewer: WorkspacePresence | null =
     import.meta.env.DEV &&
@@ -41,7 +42,9 @@ export function WorkspaceViewers({
           }
         }
       : null
+
   const people = new Map<string, WorkspacePresence[]>()
+
   if (worktree && identity) {
     for (const viewer of mockViewer ? [...viewers, mockViewer] : viewers) {
       if (
@@ -59,6 +62,7 @@ export function WorkspaceViewers({
         viewer.identity.source,
         viewer.identity.login
       ])
+
       const sessions = people.get(key) ?? []
       sessions.push(viewer)
       people.set(key, sessions)
@@ -70,6 +74,7 @@ export function WorkspaceViewers({
   }
 
   const firstPerson = people.values().next().value![0]!.identity
+
   const summary =
     people.size === 1
       ? `${firstPerson.name ?? firstPerson.login ?? 'Local user'} is here`
@@ -94,6 +99,7 @@ export function WorkspaceViewers({
             <p className="text-sm font-medium">In this workspace</p>
             {[...people].map(([key, sessions]) => {
               const person = sessions[0]!.identity
+
               const locations = new Set(
                 sessions.map((session) => {
                   if (!session.visible) {
@@ -107,9 +113,11 @@ export function WorkspaceViewers({
                   const app = worktree?.workspaceItems.find(
                     (app) => app.id === session.focusedAppId
                   )
+
                   return app ? `${app.title} · focused` : 'Viewing workspace'
                 })
               )
+
               return (
                 <div key={key} className="flex min-w-0 flex-col gap-1">
                   <p className="truncate text-sm font-medium">

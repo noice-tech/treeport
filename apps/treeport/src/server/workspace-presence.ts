@@ -27,7 +27,9 @@ export class WorkspacePresenceManager {
       identity.login,
       input.sessionId
     ])
+
     const previous = this.sessions.get(key)
+
     if (input.worktreeId === null) {
       if (this.sessions.delete(key)) {
         this.events.publish('presence.changed', { viewers: this.snapshot() })
@@ -47,10 +49,12 @@ export class WorkspacePresenceManager {
       focusedAppId: input.visible && input.focused ? input.focusedAppId : null,
       identity
     }
+
     this.sessions.set(key, {
       viewer,
       expiresAt: Date.now() + PRESENCE_TIMEOUT_MS
     })
+
     if (JSON.stringify(previous?.viewer) !== JSON.stringify(viewer)) {
       this.events.publish('presence.changed', { viewers: this.snapshot() })
     }
@@ -71,6 +75,7 @@ export class WorkspacePresenceManager {
     const next = Math.min(
       ...[...this.sessions.values()].map((session) => session.expiresAt)
     )
+
     this.expiry = setTimeout(
       () => {
         for (const [key, session] of this.sessions) {
@@ -78,6 +83,7 @@ export class WorkspacePresenceManager {
             this.sessions.delete(key)
           }
         }
+
         this.events.publish('presence.changed', { viewers: this.snapshot() })
         this.scheduleExpiry()
       },

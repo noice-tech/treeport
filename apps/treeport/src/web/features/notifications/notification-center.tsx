@@ -20,12 +20,14 @@ import { PushNotificationControl } from './push-notification-control'
 
 function formatTime(value: string): string {
   const date = new Date(value)
+
   if (Number.isNaN(date.getTime())) {
     return value
   }
 
   const now = new Date()
   const sameDay = date.toDateString() === now.toDateString()
+
   return new Intl.DateTimeFormat(
     undefined,
     sameDay
@@ -50,6 +52,7 @@ export function NotificationCenter({
 }) {
   const { attention, titles } = useTerminalAttentionMetadata()
   const [pending, setPending] = useState<Set<string>>(() => new Set())
+
   const notifications = useMemo(
     () =>
       projects
@@ -58,6 +61,7 @@ export function NotificationCenter({
             worktree.terminals.flatMap((terminal) => {
               const entry = attention.get(terminal.id)
               const target = targetForTerminal(projects, terminal)
+
               return entry?.unread && target
                 ? [
                     {
@@ -80,7 +84,9 @@ export function NotificationCenter({
         ),
     [attention, projects, titles]
   )
+
   const count = notifications.length
+
   const label =
     count === 0
       ? 'Notifications, no unread notifications'
@@ -102,6 +108,7 @@ export function NotificationCenter({
     setPending((current) => {
       const next = new Set(current)
       next.delete(terminalId)
+
       return next
     })
   }

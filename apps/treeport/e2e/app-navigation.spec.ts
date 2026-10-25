@@ -28,9 +28,11 @@ test.describe('desktop worktree terminal UI', () => {
         })
         .last()
     ).toBeVisible()
+
     const shortcutModifier = await page.evaluate(() =>
       /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control'
     )
+
     await page.keyboard.press(`${shortcutModifier}+Shift+P`)
     const search = page.getByLabel('Search projects')
     await expect(search).toBeFocused()
@@ -44,9 +46,11 @@ test.describe('desktop worktree terminal UI', () => {
     await page.locator('.xterm-screen').click()
     await expect(search).toHaveCount(0)
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
     const switcher = page.getByRole('button', {
       name: 'Switch project, current project example'
     })
+
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
 
     await switcher.click()
@@ -95,9 +99,11 @@ test.describe('desktop worktree terminal UI', () => {
         name: 'Switch project, current project example'
       })
       .click()
+
     const projectOption = page
       .getByRole('listitem')
       .filter({ hasText: 'example' })
+
     await projectOption.hover()
     page.once('dialog', (dialog) => dialog.accept())
     await page.getByRole('button', { name: 'Close project example' }).click()

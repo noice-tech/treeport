@@ -87,11 +87,13 @@ function managedContext(value: ContextOutput): ManagedContext | null {
   }
 
   let parsedApiUrl: URL
+
   try {
     parsedApiUrl = new URL(value.apiUrl)
   } catch {
     return null
   }
+
   if (!['http:', 'https:'].includes(parsedApiUrl.protocol)) {
     return null
   }
@@ -111,6 +113,7 @@ export default function treeportExtension(pi: ExtensionAPI): void {
   let refreshing = false
 
   const toolNames = registerTreeportTools(pi, ContextSchema)
+
   const enabledOnBranch = (ctx: ExtensionContext) =>
     ctx.sessionManager
       .getBranch()
@@ -119,10 +122,12 @@ export default function treeportExtension(pi: ExtensionAPI): void {
           entry.type === 'custom' &&
           entry.customType === 'treeport-tools-enabled'
       )
+
   const restoreTools = (ctx: ExtensionContext) => {
     const others = pi
       .getActiveTools()
       .filter((name) => !toolNames.includes(name))
+
     pi.setActiveTools([
       ...new Set([
         ...others,
@@ -151,6 +156,7 @@ export default function treeportExtension(pi: ExtensionAPI): void {
         signal,
         timeout: CONTEXT_TIMEOUT_MS
       })
+
       if (context.managed && !managedContext(context)) {
         throw new Error('Treeport context is invalid. Tools were not enabled.')
       }
@@ -159,6 +165,7 @@ export default function treeportExtension(pi: ExtensionAPI): void {
       pi.setActiveTools([...new Set([...pi.getActiveTools(), ...toolNames])])
       const active = new Set(pi.getActiveTools())
       const missing = toolNames.filter((name) => !active.has(name))
+
       if (missing.length > 0) {
         throw new Error(
           `Treeport tools could not be enabled: ${missing.join(', ')}`
@@ -170,6 +177,7 @@ export default function treeportExtension(pi: ExtensionAPI): void {
       }
 
       const result = { enabled: toolNames, context }
+
       return {
         content: [{ type: 'text', text: JSON.stringify(result) }],
         structuredContent: result,
@@ -196,6 +204,7 @@ export default function treeportExtension(pi: ExtensionAPI): void {
 
   const refreshContext = async (sessionContext: ExtensionContext) => {
     const currentLifecycle = lifecycle
+
     if (
       !currentLifecycle ||
       currentLifecycle.signal.aborted ||
@@ -207,8 +216,10 @@ export default function treeportExtension(pi: ExtensionAPI): void {
 
     refreshing = true
     const signal = currentLifecycle.signal
+
     try {
       let detectedValue: ContextOutput
+
       try {
         detectedValue = await runTreeportJson(pi, ['context'], ContextSchema, {
           cwd: sessionContext.cwd,
@@ -221,11 +232,13 @@ export default function treeportExtension(pi: ExtensionAPI): void {
         }
 
         clearBadge(sessionContext)
+
         const injectedIds = [
           process.env.TREEPORT_PROJECT_ID,
           process.env.TREEPORT_WORKTREE_ID,
           process.env.TREEPORT_TERMINAL_ID
         ].some((value) => Boolean(value?.trim()))
+
         if (injectedIds && sessionContext.hasUI) {
           warn(
             sessionContext,
@@ -243,17 +256,21 @@ export default function treeportExtension(pi: ExtensionAPI): void {
       if (detectedValue.managed === false) {
         lastWarning = null
         clearBadge(sessionContext)
+
         return
       }
 
       const detected = managedContext(detectedValue)
+
       if (!detected) {
         clearBadge(sessionContext)
+
         const injectedIds = [
           process.env.TREEPORT_PROJECT_ID,
           process.env.TREEPORT_WORKTREE_ID,
           process.env.TREEPORT_TERMINAL_ID
         ].some((value) => Boolean(value?.trim()))
+
         if (injectedIds && sessionContext.hasUI) {
           warn(
             sessionContext,
@@ -297,6 +314,7 @@ export default function treeportExtension(pi: ExtensionAPI): void {
     lastWarning = null
     // Discover the status badge without adding context to the transcript.
     await refreshContext(sessionContext)
+
     if (startedLifecycle.signal.aborted) {
       return
     }

@@ -10,13 +10,16 @@ export function appendDaemonLog(
   value: string | Uint8Array
 ): void {
   fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 })
+
   let bytes =
     // eslint-disable-next-line anti-slop/no-runtime-typeof -- Normalize Node's documented string/byte output contract at the file boundary.
     typeof value === 'string' ? Buffer.from(value) : Buffer.from(value)
+
   if (bytes.byteLength > LOG_LIMIT_BYTES) {
     const notice = Buffer.from(
       '[Treeport log chunk truncated; retaining its tail]\n'
     )
+
     bytes = Buffer.concat([
       notice,
       bytes.subarray(-LOG_LIMIT_BYTES + notice.length)
@@ -24,6 +27,7 @@ export function appendDaemonLog(
   }
 
   const size = fs.existsSync(logPath) ? fs.statSync(logPath).size : 0
+
   if (size > 0 && size + bytes.byteLength > LOG_LIMIT_BYTES) {
     fs.rmSync(`${logPath}.1`, { force: true })
     fs.renameSync(logPath, `${logPath}.1`)
@@ -38,6 +42,7 @@ export async function tailDaemonLog(
 ): Promise<string> {
   const parts: string[] = []
   let remaining = lines
+
   for (const filePath of [logPath, `${logPath}.1`]) {
     const file = await fs.promises
       .open(filePath, 'r')
@@ -48,6 +53,7 @@ export async function tailDaemonLog(
 
         throw error
       })
+
     if (!file) {
       continue
     }
@@ -57,6 +63,7 @@ export async function tailDaemonLog(
       const chunks: Buffer[] = []
       let newlines = 0
       let readBytes = 0
+
       // Bound reads even for legacy files containing an enormous single line.
       while (
         position > 0 &&
@@ -70,13 +77,16 @@ export async function tailDaemonLog(
         const chunk = buffer.subarray(0, bytesRead)
         readBytes += bytesRead
         chunks.unshift(chunk)
+
         for (const byte of chunk) {
           if (byte === 10) {
             newlines++
           }
         }
       }
+
       const value = Buffer.concat(chunks).toString('utf8').replace(/\n$/, '')
+
       if (value) {
         const selected = value.split('\n').slice(-remaining)
         parts.unshift(selected.join('\n'))
@@ -85,9 +95,11 @@ export async function tailDaemonLog(
     } finally {
       await file.close()
     }
+
     if (remaining === 0) {
       break
     }
   }
+
   return parts.length ? `${parts.join('\n')}\n` : ''
 }

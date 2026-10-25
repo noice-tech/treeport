@@ -16,10 +16,12 @@ import { z } from 'zod'
 
 const loopbackHost = '127.0.0.1'
 const developmentUser = process.getuid?.() ?? 'user'
+
 const startupLockPath = path.join(
   os.tmpdir(),
   `treeport-development-${developmentUser}.lock`
 )
+
 const tailscaleLeaseDirectory = path.join(
   os.tmpdir(),
   `treeport-development-tailscale-${developmentUser}`
@@ -31,6 +33,7 @@ function urlFor(host, port) {
 
 function tailscale(args) {
   const result = spawnSync('tailscale', args, { encoding: 'utf8' })
+
   if (result.error?.code === 'ENOENT') {
     throw new Error(
       'Tailscale is required for `pnpm dev:tailscale`. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
@@ -45,6 +48,7 @@ function tailscale(args) {
     const detail = [result.stderr.trim(), result.stdout.trim()]
       .filter(Boolean)
       .join('\n')
+
     throw new Error(
       `Tailscale ${args[0]} failed${detail ? `: ${detail}` : ` (status ${result.status})`}`
     )
@@ -58,6 +62,7 @@ function tailscaleJson(args) {
     const parsed = z
       .record(z.string(), z.unknown())
       .safeParse(JSON.parse(tailscale(args)))
+
     if (parsed.success) {
       return parsed.data
     }
@@ -74,6 +79,7 @@ function tailscaleJson(args) {
 
 function tailscaleDnsName() {
   const status = tailscaleJson(['status', '--json'])
+
   if (status.BackendState !== 'Running') {
     throw new Error(
       'Tailscale is not connected. Run `tailscale up`, then retry `pnpm dev:tailscale`.'
@@ -85,6 +91,7 @@ function tailscaleDnsName() {
     .safeParse(
       z.record(z.string(), z.unknown()).safeParse(status.Self).data?.DNSName
     )
+
   if (!parsedDnsName.success || !parsedDnsName.data.trim()) {
     throw new Error(
       'Tailscale did not report a DNS name. Enable MagicDNS, then retry `pnpm dev:tailscale`.'
@@ -96,11 +103,13 @@ function tailscaleDnsName() {
 
 function tailscalePortIsServed(config, port) {
   const tcp = z.record(z.string(), z.unknown()).safeParse(config.TCP)
+
   if (tcp.success && Object.hasOwn(tcp.data, String(port))) {
     return true
   }
 
   const web = z.record(z.string(), z.unknown()).safeParse(config.Web)
+
   if (
     web.success &&
     Object.keys(web.data).some((hostPort) => hostPort.endsWith(`:${port}`))
@@ -111,6 +120,7 @@ function tailscalePortIsServed(config, port) {
   const foreground = z
     .record(z.string(), z.record(z.string(), z.unknown()))
     .safeParse(config.Foreground)
+
   return (
     foreground.success &&
     Object.values(foreground.data).some((value) =>
@@ -121,6 +131,7 @@ function tailscalePortIsServed(config, port) {
 
 function tailscaleProxyForPort(config, port) {
   const web = z.record(z.string(), z.unknown()).safeParse(config.Web)
+
   if (!web.success) {
     return null
   }
@@ -128,8 +139,10 @@ function tailscaleProxyForPort(config, port) {
   const serverSchema = z.object({
     Handlers: z.object({ '/': z.object({ Proxy: z.string() }) })
   })
+
   for (const [hostPort, server] of Object.entries(web.data)) {
     const parsedServer = serverSchema.safeParse(server)
+
     if (hostPort.endsWith(`:${port}`) && parsedServer.success) {
       return parsedServer.data.Handlers['/'].Proxy
     }
@@ -140,18 +153,22 @@ function tailscaleProxyForPort(config, port) {
 
 async function cleanStaleTailscaleLeases(config) {
   await mkdir(tailscaleLeaseDirectory, { recursive: true })
+
   const entries = await readdir(tailscaleLeaseDirectory, {
     withFileTypes: true
   })
+
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.json')) {
       continue
     }
 
     const leasePath = path.join(tailscaleLeaseDirectory, entry.name)
+
     let lease = await readFile(leasePath, 'utf8')
       .then(JSON.parse)
       .catch(() => null)
+
     const parsedLease = z
       .object({
         pid: z.number().int(),
@@ -159,12 +176,14 @@ async function cleanStaleTailscaleLeases(config) {
         target: z.string()
       })
       .safeParse(lease)
+
     if (!parsedLease.success) {
       await rm(leasePath, { force: true })
       continue
     }
 
     lease = parsedLease.data
+
     if (await processIsRunning(lease.pid)) {
       continue
     }
@@ -182,6 +201,7 @@ async function cleanStaleTailscaleLeases(config) {
 
 function developmentMode() {
   const mode = process.argv[2]
+
   if (!mode) {
     return { name: 'local', appHost: loopbackHost }
   }
@@ -200,6 +220,7 @@ function developmentMode() {
 async function processIsRunning(pid) {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (error) {
     if (error?.code === 'ESRCH') {
@@ -215,6 +236,7 @@ async function acquireStartupLock() {
     try {
       const lock = await open(startupLockPath, 'wx', 0o600)
       await lock.writeFile(String(process.pid))
+
       return async () => {
         await lock.close()
         await unlink(startupLockPath).catch(() => undefined)
@@ -228,6 +250,7 @@ async function acquireStartupLock() {
         await readFile(startupLockPath, 'utf8').catch(() => ''),
         10
       )
+
       if (Number.isInteger(owner) && !(await processIsRunning(owner))) {
         await unlink(startupLockPath).catch(() => undefined)
         continue
@@ -247,6 +270,7 @@ async function portIsAvailable(port, host) {
     server.once('error', (error) => {
       if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
         resolve(false)
+
         return
       }
 
@@ -256,6 +280,7 @@ async function portIsAvailable(port, host) {
       server.close((error) => {
         if (error) {
           reject(error)
+
           return
         }
 
@@ -271,18 +296,21 @@ export async function findAvailablePort(
   excludedPorts = new Set()
 ) {
   const checkedHosts = Array.isArray(hosts) ? hosts : [hosts]
+
   for (let port = startPort; port <= 65_535; port += 1) {
     if (excludedPorts.has(port)) {
       continue
     }
 
     let available = true
+
     for (const host of checkedHosts) {
       if (!(await portIsAvailable(port, host))) {
         available = false
         break
       }
     }
+
     if (available) {
       return port
     }
@@ -303,8 +331,10 @@ export function sendSignalToChild(child, signal, ownedProcessGroups) {
   const processes = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid=,args='], {
     encoding: 'utf8'
   })
+
   if (processes.status === 0) {
     const descendants = new Set([child.pid])
+
     const rows = processes.stdout
       .trim()
       .split('\n')
@@ -312,6 +342,7 @@ export function sendSignalToChild(child, signal, ownedProcessGroups) {
         const [pid, parentPid, processGroupId, ...command] = line
           .trim()
           .split(/\s+/)
+
         return {
           pid: Number(pid),
           parentPid: Number(parentPid),
@@ -319,9 +350,12 @@ export function sendSignalToChild(child, signal, ownedProcessGroups) {
           command: command.join(' ')
         }
       })
+
     let foundDescendant = true
+
     while (foundDescendant) {
       foundDescendant = false
+
       for (const { pid, parentPid, processGroupId, command } of rows) {
         // Independent terminal owners (including a bootstrap not yet orphaned)
         // are lifetime boundaries, not development workers. Do not walk their
@@ -329,12 +363,14 @@ export function sendSignalToChild(child, signal, ownedProcessGroups) {
         // reserved prefix, not a particular terminal's display title.
         const keeper =
           processGroupId === pid && command.startsWith('treeport-session')
+
         if (!keeper && descendants.has(parentPid) && !descendants.has(pid)) {
           descendants.add(pid)
           foundDescendant = true
         }
       }
     }
+
     for (const { pid, processGroupId } of rows) {
       if (descendants.has(pid)) {
         ownedProcessGroups.add(processGroupId)
@@ -360,6 +396,7 @@ async function waitForStackPorts(ports, childExit) {
     const portsAreClaimed = await Promise.all(
       ports.map(({ port, host }) => portIsAvailable(port, host))
     )
+
     if (portsAreClaimed.every((available) => !available)) {
       return true
     }
@@ -368,6 +405,7 @@ async function waitForStackPorts(ports, childExit) {
       new Promise((resolve) => setTimeout(() => resolve('retry'), 250)),
       childExit.then(() => 'exit')
     ])
+
     if (result === 'exit') {
       return false
     }
@@ -379,16 +417,19 @@ async function waitForStackPorts(ports, childExit) {
 export async function main() {
   const mode = developmentMode()
   const releaseStartupLock = await acquireStartupLock()
+
   let tailscaleServeConfig =
     mode.name === 'tailscale'
       ? tailscaleJson(['serve', 'status', '--json'])
       : null
+
   if (tailscaleServeConfig) {
     await cleanStaleTailscaleLeases(tailscaleServeConfig)
     tailscaleServeConfig = tailscaleJson(['serve', 'status', '--json'])
   }
 
   let appPort = await findAvailablePort(8733, mode.appHost)
+
   while (
     tailscaleServeConfig &&
     tailscalePortIsServed(tailscaleServeConfig, appPort) &&
@@ -397,15 +438,20 @@ export async function main() {
   ) {
     appPort = await findAvailablePort(appPort + 1, mode.appHost)
   }
+
   const appUrl = urlFor(loopbackHost, appPort)
+
   const desktopDebugPort = await findAvailablePort(
     9222,
     loopbackHost,
     new Set([appPort])
   )
+
   let tailscaleRemote = null
+
   if (mode.name === 'tailscale') {
     let leasePath = null
+
     if (
       tailscaleProxyForPort(tailscaleServeConfig, appPort)?.replace(
         /\/$/,
@@ -433,6 +479,7 @@ export async function main() {
     path.dirname(fileURLToPath(import.meta.url)),
     '..'
   )
+
   const environment = {
     ...process.env,
     TREEPORT_HOST: mode.appHost,
@@ -447,6 +494,7 @@ export async function main() {
       'apps/treeport/.treeport-dev/desktop'
     )
   }
+
   delete environment.TREEPORT_WEB_HOST
   delete environment.TREEPORT_WEB_PORT
   delete environment.TREEPORT_DESKTOP_RENDERER_PORT
@@ -454,6 +502,7 @@ export async function main() {
   console.log('\nTreeport development')
   console.log(`Local:     ${appUrl}`)
   console.log(`Desktop:   CDP on ${loopbackHost}:${desktopDebugPort}`)
+
   if (tailscaleRemote) {
     console.log(`Tailscale: ${tailscaleRemote.url}`)
   }
@@ -476,6 +525,7 @@ export async function main() {
       detached: process.platform !== 'win32'
     }
   )
+
   const childExit = new Promise((resolve) => {
     child.once('error', (error) => resolve({ code: 1, signal: null, error }))
     child.once('exit', (code, signal) => resolve({ code, signal, error: null }))
@@ -484,6 +534,7 @@ export async function main() {
   let requestedSignal = null
   let forceKillTimer = null
   const ownedProcessGroups = new Set()
+
   const stop = (signal) => {
     if (requestedSignal) {
       // Terminal teardown signals every session member, so pnpm forwards a
@@ -504,6 +555,7 @@ export async function main() {
     )
     forceKillTimer.unref()
   }
+
   const stopOnSigint = () => stop('SIGINT')
   const stopOnSigterm = () => stop('SIGTERM')
   const stopOnSighup = () => stop('SIGHUP')
@@ -518,7 +570,9 @@ export async function main() {
     ],
     childExit
   )
+
   await releaseStartupLock()
+
   if (!portsClaimed && child.exitCode === null && child.signalCode === null) {
     console.warn(
       'The development stack did not claim its ports within 30 seconds.'
@@ -526,12 +580,14 @@ export async function main() {
   }
 
   const result = await childExit
+
   if (requestedSignal) {
     // Turbo can exit before its workers, including a backend still restoring
     // sessions that has not opened a listener. Keep escalation alive until the
     // owned worker groups are gone, not merely until their ports are free.
     for (let attempt = 0; attempt < 140; attempt += 1) {
       let workersAreRunning = false
+
       for (const processGroupId of ownedProcessGroups) {
         try {
           process.kill(-processGroupId, 0)
@@ -544,12 +600,14 @@ export async function main() {
           }
         }
       }
+
       const portsAreAvailable = await Promise.all(
         [
           { port: appPort, host: mode.appHost },
           { port: desktopDebugPort, host: loopbackHost }
         ].map(({ port, host }) => portIsAvailable(port, host))
       )
+
       if (!workersAreRunning && portsAreAvailable.every(Boolean)) {
         break
       }
@@ -560,8 +618,10 @@ export async function main() {
 
   if (tailscaleRemote?.leasePath) {
     let cleanupComplete = false
+
     try {
       const serveConfig = tailscaleJson(['serve', 'status', '--json'])
+
       if (
         tailscaleProxyForPort(serveConfig, tailscaleRemote.port)?.replace(
           /\/$/,

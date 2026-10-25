@@ -68,6 +68,7 @@ export function connectBrowserApp(
   if (browserViewerId === null) {
     // Keep this viewer stable across app remounts and server-switch reloads.
     browserViewerId = crypto.randomUUID()
+
     try {
       browserViewerId =
         sessionStorage.getItem('treeport-browser-client-id') || browserViewerId
@@ -97,11 +98,14 @@ export function connectBrowserApp(
     reject(error: Error): void
     timer: ReturnType<typeof setTimeout>
   } | null = null
+
   const finishVideoSettings = (error: Error | null) => {
     const pending = pendingVideoSettings
     pendingVideoSettings = null
+
     if (pending) {
       clearTimeout(pending.timer)
+
       if (error) {
         pending.reject(error)
       } else {
@@ -114,6 +118,7 @@ export function connectBrowserApp(
     finishVideoSettings(
       cause instanceof Error ? cause : new Error(String(cause))
     )
+
     if (disposed) {
       return
     }
@@ -149,6 +154,7 @@ export function connectBrowserApp(
     }
 
     connecting = true
+
     const response = await fetch(
       `/api/apps/${encodeURIComponent(appId)}/browser-ticket`,
       {
@@ -158,13 +164,17 @@ export function connectBrowserApp(
         signal: AbortSignal.timeout(10_000)
       }
     )
+
     const body: unknown = await response.json().catch(() => null)
+
     if (disposed) {
       connecting = false
+
       return
     }
 
     const result = decodeUnknownOrNull(browserTicketResponseSchema, body)
+
     if (response.ok && !result) {
       reconnectAllowed = false
       throw new Error('The host sent an invalid Browser ticket response.')
@@ -183,6 +193,7 @@ export function connectBrowserApp(
       reconnection: false,
       auth: { ticket: result.ticket }
     })
+
     socket = connectedSocket
     connecting = false
     connectedSocket.on('message', (value) => {
@@ -191,6 +202,7 @@ export function connectBrowserApp(
       }
 
       const message = parseBrowserServerMessage(value)
+
       if (!message) {
         reconnectAllowed = false
         pendingCommands.length = 0
@@ -198,6 +210,7 @@ export function connectBrowserApp(
         socket = null
         connectedSocket.disconnect()
         reportError(new Error('The host sent an invalid Browser message.'))
+
         return
       }
 
@@ -213,6 +226,7 @@ export function connectBrowserApp(
       }
 
       handlers.message(message)
+
       if (message.type !== 'ready') {
         return
       }
@@ -227,6 +241,7 @@ export function connectBrowserApp(
         type: 'setVisible',
         visible: currentVisible
       })
+
       // A new attachment starts with the server viewport, not this app's.
       // Send layout even when no ResizeObserver notification follows readiness.
       if (viewport) {
@@ -244,6 +259,7 @@ export function connectBrowserApp(
 
       socket = null
       ready = false
+
       if (readyAt !== null && Date.now() - readyAt >= 30_000) {
         reconnectAttempts = 0
       }
@@ -300,16 +316,19 @@ export function connectBrowserApp(
       }
 
       const requestId = crypto.randomUUID()
+
       const command = parseBrowserClientMessage({
         type: 'setVideoSettings',
         requestId,
         settings
       })
+
       if (!command) {
         return Promise.reject(new Error('Invalid stream settings.'))
       }
 
       const connectedSocket = socket
+
       return new Promise<void>((resolve, reject) => {
         pendingVideoSettings = {
           requestId,
@@ -330,6 +349,7 @@ export function connectBrowserApp(
     },
     send(value) {
       const command = parseBrowserClientMessage(value)
+
       if (disposed) {
         return
       }
@@ -342,11 +362,13 @@ export function connectBrowserApp(
               ? `Paste was not sent. The limit is ${BROWSER_MAX_INSERT_TEXT_LENGTH.toLocaleString('en-US')} UTF-16 code units; paste smaller portions. No text was inserted.`
               : 'Browser command was not sent because it is invalid.'
         })
+
         return
       }
 
       if (command.type === 'resize') {
         viewport = command
+
         if (socket?.connected && ready) {
           socket.emit('command', command)
         }
@@ -356,6 +378,7 @@ export function connectBrowserApp(
 
       if (socket?.connected && ready) {
         socket.emit('command', command)
+
         return
       }
 
@@ -390,6 +413,7 @@ export function connectBrowserApp(
     },
     setVisible(nextVisible) {
       currentVisible = nextVisible
+
       if (ready) {
         socket?.emit('command', { type: 'setVisible', visible: nextVisible })
       }
@@ -402,6 +426,7 @@ export function connectBrowserApp(
       disposed = true
       finishVideoSettings(new Error('Browser connection closed.'))
       pendingCommands.length = 0
+
       if (reconnectTimer) {
         clearTimeout(reconnectTimer)
       }

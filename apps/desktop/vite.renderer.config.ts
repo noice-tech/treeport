@@ -7,12 +7,16 @@ const configuredRendererPort = Number.parseInt(
   process.env.TREEPORT_DESKTOP_RENDERER_PORT ?? '',
   10
 )
+
 const fixedRendererPort = Number.isInteger(configuredRendererPort)
+
 interface RendererHmr {
   host: string
   port?: number
 }
+
 const rendererHmr: RendererHmr = { host: 'localhost' }
+
 if (fixedRendererPort) {
   rendererHmr.port = configuredRendererPort
 }
@@ -27,6 +31,7 @@ export default defineConfig({
         // transitive dependencies must not bundle the workspace or privileged
         // desktop implementation into the shell.
         const file = id.split('?')[0]!
+
         if (!path.isAbsolute(file)) {
           return
         }
@@ -35,6 +40,7 @@ export default defineConfig({
           .relative(path.resolve('../..'), file)
           .split(path.sep)
           .join('/')
+
         if (
           !repositoryPath.startsWith('../') &&
           !repositoryPath.startsWith('node_modules/') &&

@@ -99,23 +99,28 @@ export function makeProtocol(
 
       if (event === 'input_ack') {
         const message = parseTerminalServerEvent('input_ack', value)
+
         if (!message) {
           dependencies.failProtocol(
             'The terminal server sent an invalid input acknowledgement'
           )
+
           return
         }
 
         dependencies.acknowledgeInput(message.generation)
+
         return
       }
 
       if (event === 'ready') {
         const message = parseTerminalServerEvent('ready', value)
+
         if (!message) {
           dependencies.failProtocol(
             'The terminal server sent an invalid ready event'
           )
+
           return
         }
 
@@ -160,8 +165,10 @@ export function makeProtocol(
               revision,
               true
             )
+
             if (state.wrapper) {
               state.wrapper.style.visibility = ''
+
               if (state.focusAfterRender && state.host) {
                 dependencies.focus()
               }
@@ -178,6 +185,7 @@ export function makeProtocol(
               controlPending: false,
               error: null
             })
+
             if (
               message.controller &&
               state.controllerGeneration === message.generation
@@ -187,15 +195,18 @@ export function makeProtocol(
             }
           })
         )
+
         return
       }
 
       if (event === 'dimensions') {
         const message = parseTerminalServerEvent('dimensions', value)
+
         if (!message) {
           dependencies.failProtocol(
             'The terminal server sent invalid dimensions'
           )
+
           return
         }
 
@@ -223,13 +234,16 @@ export function makeProtocol(
             dependencies.flushControllerResize()
           })
         )
+
         return
       }
 
       if (event === 'output') {
         const message = parseTerminalServerEvent('output', value)
+
         if (!message) {
           dependencies.failProtocol('The terminal server sent invalid output')
+
           return
         }
 
@@ -238,32 +252,39 @@ export function makeProtocol(
           message.sequence,
           message.data
         )
+
         return
       }
 
       if (event === 'title') {
         const message = parseTerminalServerEvent('title', value)
+
         if (!message) {
           dependencies.failProtocol('The terminal server sent an invalid title')
+
           return
         }
 
         dependencies.update({ title: message.title.trim().slice(0, 256) })
+
         return
       }
 
       if (event === 'control') {
         const message = parseTerminalServerEvent('control', value)
+
         if (!message) {
           dependencies.failProtocol(
             'The terminal server sent invalid controller state'
           )
+
           return
         }
 
         const controllerChanged =
           message.controller !== state.snapshotValue.controller ||
           message.generation !== state.controllerGeneration
+
         if (controllerChanged) {
           // A pending paste may be the user action requesting initial control.
           // Only discard it when losing control or replacing an existing lease.
@@ -315,10 +336,12 @@ export function makeProtocol(
 
       if (event === 'query_authority') {
         const message = parseTerminalServerEvent('query_authority', value)
+
         if (!message) {
           dependencies.failProtocol(
             'The terminal server sent invalid query authority state'
           )
+
           return
         }
 
@@ -331,6 +354,7 @@ export function makeProtocol(
 
         state.queryAuthorityActive =
           message.active && message.transitionId === null
+
         if (state.queryAuthorityActive) {
           dependencies.flushInput()
         }
@@ -361,24 +385,29 @@ export function makeProtocol(
           dependencies.failProtocol(
             'The terminal server sent an invalid exit event'
           )
+
           return
         }
 
         dependencies.cancelInput()
         dependencies.update({ exitSerial: state.snapshotValue.exitSerial + 1 })
+
         return
       }
 
       const message = parseTerminalServerEvent('terminal_error', value)
+
       if (!message) {
         dependencies.failProtocol(
           'The terminal server sent an invalid error event'
         )
+
         return
       }
 
       state.reconnectAllowed = message.retryable
       state.terminal?.write(`\r\n\x1b[31m${message.message}\x1b[0m\r\n`)
+
       if (message.retryable) {
         state.controlRequestGeneration = null
         dependencies.update({ controlPending: false, error: message.message })

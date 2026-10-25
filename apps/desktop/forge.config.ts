@@ -11,6 +11,7 @@ import { notarize } from '@electron/notarize'
 
 const execute = promisify(execFile)
 const releaseBuild = process.env.TREEPORT_DESKTOP_RELEASE === '1'
+
 const releaseEnvironment = {
   signingIdentity: process.env.TREEPORT_MAC_SIGNING_IDENTITY?.trim(),
   appleApiKey: process.env.APPLE_API_KEY_PATH?.trim(),
@@ -22,6 +23,7 @@ if (releaseBuild) {
   const missing = Object.entries(releaseEnvironment)
     .filter(([, value]) => !value)
     .map(([name]) => name)
+
   if (missing.length > 0) {
     throw new Error(
       `A desktop release build requires signing and notarization credentials. Missing: ${missing.join(', ')}`
@@ -64,6 +66,7 @@ const packagerConfig: NonNullable<ForgeConfig['packagerConfig']> = {
         identityValidation: false
       }
 }
+
 if (releaseBuild) {
   packagerConfig.osxNotarize = notarizationCredentials
 }
@@ -136,8 +139,10 @@ const config: ForgeConfig = {
         }
 
         const normalizedArtifacts: string[] = []
+
         for (const artifact of result.artifacts) {
           const extension = path.extname(artifact)
+
           if (extension !== '.dmg' && extension !== '.zip') {
             normalizedArtifacts.push(artifact)
             continue
@@ -161,6 +166,7 @@ const config: ForgeConfig = {
             path.dirname(artifact),
             `Treeport-${result.packageJSON.version}-${result.platform}-${result.arch}${extension}`
           )
+
           if (normalizedPath !== artifact) {
             await rm(normalizedPath, { force: true })
             await rename(artifact, normalizedPath)
@@ -168,6 +174,7 @@ const config: ForgeConfig = {
 
           normalizedArtifacts.push(normalizedPath)
         }
+
         result.artifacts = normalizedArtifacts
       }
 

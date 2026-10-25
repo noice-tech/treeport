@@ -63,6 +63,7 @@ export function makeLayout(
       // A smaller host leaves wterm's scroll offset above the live screen
       // without a scroll event; follow output unless the user scrolled away.
       const element = state.terminal?.element
+
       if (element && !state.wrapper?.classList.contains('terminal-scrolling')) {
         element.scrollTop = element.scrollHeight
       }
@@ -81,6 +82,7 @@ export function makeLayout(
       keepLiveOutputVisible()
       state.terminal.resize(cols, rows)
       state.appliedRevision = revision
+
       if (state.wrapper) {
         state.wrapper.dataset.terminalCols = String(cols)
         state.wrapper.dataset.terminalRows = String(rows)
@@ -122,6 +124,7 @@ export function makeLayout(
 
     function flushControllerResize(): void {
       const proposed = state.proposedDimensions
+
       if (
         !resizeIntentDirty ||
         !resizeQuietElapsed ||
@@ -143,6 +146,7 @@ export function makeLayout(
       ) {
         resizeIntentDirty = false
         resizeQuietElapsed = false
+
         return
       }
 
@@ -174,14 +178,17 @@ export function makeLayout(
       const result = Effect.runSyncExit(
         Effect.sync(() => {
           const terminal = state.terminal
+
           if (state.disposed || !state.host || !terminal) {
             return
           }
 
           keepLiveOutputVisible()
+
           if (!state.ready) {
             setTerminalFontSize(terminal, state.fontSize)
             terminal.fit()
+
             if (
               terminal.cols >= TERMINAL_MIN_COLS &&
               terminal.rows >= TERMINAL_MIN_ROWS
@@ -200,11 +207,13 @@ export function makeLayout(
           }
 
           setTerminalFontSize(terminal, state.fontSize)
+
           // SAFETY: The pinned wterm exposes measurement only through fit(),
           // which also resizes. The server owns the grid, so only measure.
           const proposedDimensions = (
             Object(terminal) as WTermMeasurement
           )._measureGridSize()
+
           if (
             !proposedDimensions ||
             !Number.isFinite(proposedDimensions.cols) ||
@@ -221,6 +230,7 @@ export function makeLayout(
 
           const proposed = normalizeTerminalDimensions(proposedDimensions)
           state.proposedDimensions = proposed
+
           if (state.snapshotValue.controller) {
             if (!queueControllerResize) {
               return
@@ -235,10 +245,12 @@ export function makeLayout(
 
               resizeIntentDirty = false
               resizeQuietElapsed = false
+
               return
             }
 
             queueControllerResizeIntent()
+
             return
           }
 
@@ -247,6 +259,7 @@ export function makeLayout(
             proposed.cols / state.canonicalCols,
             proposed.rows / state.canonicalRows
           )
+
           setTerminalFontSize(
             terminal,
             Math.max(
@@ -254,6 +267,7 @@ export function makeLayout(
               Math.floor(state.fontSize * scale * 100) / 100
             )
           )
+
           if (
             terminal.cols !== state.canonicalCols ||
             terminal.rows !== state.canonicalRows
@@ -262,6 +276,7 @@ export function makeLayout(
           }
         })
       )
+
       if (Exit.isFailure(result)) {
         // Missing dimensions are represented above; actual wterm measurement
         // defects close the session instead of masquerading as a hidden host.

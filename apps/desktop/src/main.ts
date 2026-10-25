@@ -73,7 +73,9 @@ const themeSchema = z.object({
     .regex(/^#[0-9a-f]{6}$/)
     .nullable()
 }) satisfies z.ZodType<TreeportTheme>
+
 const defaultTheme: TreeportTheme = { mode: 'dark', accent: null }
+
 // Hex copies of each mode's zinc-200/zinc-900 from @treeport/theme.
 const windowChrome = {
   dark: { background: '#151920', symbol: '#dfe4eb' },
@@ -105,10 +107,14 @@ protocol.registerSchemesAsPrivileged([
     }
   }
 ])
+
 const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
+
 const desktopUpdateReady =
   desktopE2e && process.env.TREEPORT_DESKTOP_E2E_UPDATE_READY === '1'
+
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
+
 if (desktopE2e && process.platform === 'darwin') {
   app.dock?.hide()
 }
@@ -131,6 +137,7 @@ if (!app.isPackaged) {
 const defaultComputerUrl = app.isPackaged
   ? 'http://127.0.0.1:8733'
   : 'http://127.0.0.1:5173'
+
 const seedComputerUrl =
   process.env.TREEPORT_DESKTOP_URL?.trim() || defaultComputerUrl
 
@@ -156,6 +163,7 @@ let frameFlashing = false
 function rendererDevelopmentServerUrl(): string | null {
   try {
     const parsed = z.string().url().safeParse(MAIN_WINDOW_VITE_DEV_SERVER_URL)
+
     return parsed.success ? parsed.data : null
   } catch (error) {
     if (error instanceof ReferenceError) {
@@ -168,11 +176,13 @@ function rendererDevelopmentServerUrl(): string | null {
 
 const installRendererRequestRouting = Effect.gen(function* () {
   const rendererSession = session.fromPartition(RENDERER_PARTITION)
+
   const handler = yield* createRendererRequestHandler({
     rendererDirectory: path.join(dirname, '../renderer/main_window'),
     developmentServerUrl: rendererDevelopmentServerUrl(),
     forward: (request) => fetch(request)
   })
+
   yield* Effect.acquireRelease(
     Effect.sync(() =>
       rendererSession.protocol.handle('treeport-app', (request) =>
@@ -185,6 +195,7 @@ const installRendererRequestRouting = Effect.gen(function* () {
 
 function navigationState(): DesktopNavigationState {
   const renderer = hostSessions?.active?.view.webContents
+
   if (
     !renderer ||
     renderer.isDestroyed() ||
@@ -213,6 +224,7 @@ function shellState(): DesktopShellState {
     navigation: navigationState(),
     theme
   }
+
   if (store?.selectedComputer) {
     state.selectedComputerId = store.selectedComputer.id
   }
@@ -239,6 +251,7 @@ function layoutWorkspace(): void {
   workspace?.setVisible(host?.connection.status === 'ready')
   // Raise the transparent shell for menus/dialogs without tearing down guests.
   const topView = shellOverlayOpen || !workspace ? shellView : workspace
+
   if (mainWindow.contentView.children.at(-1) !== topView) {
     mainWindow.contentView.addChildView(topView)
   }
@@ -252,6 +265,7 @@ function broadcastState(): void {
   const menu = Menu.getApplicationMenu()
   const backItem = menu?.getMenuItemById('navigate-back')
   const forwardItem = menu?.getMenuItemById('navigate-forward')
+
   if (backItem) {
     backItem.enabled = state.navigation.canGoBack
   }
@@ -261,6 +275,7 @@ function broadcastState(): void {
   }
 
   const renderer = shellView?.webContents
+
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('shell:state', state)
   }
@@ -271,6 +286,7 @@ function isTrustedRendererEvent(
   event: IpcMainEvent | IpcMainInvokeEvent
 ): boolean {
   const host = hostSessions?.sender(event)
+
   return Boolean(host && host === hostSessions?.active && !shellOverlayOpen)
 }
 
@@ -291,6 +307,7 @@ function selectedOrigin(): string | null {
 
 function setTerminalSelectionActive(active: boolean): void {
   const renderer = shellView?.webContents
+
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('terminal-selection:active', active)
   }
@@ -299,6 +316,7 @@ function setTerminalSelectionActive(active: boolean): void {
 function releaseTerminalSelection(): void {
   setTerminalSelectionActive(false)
   const renderer = hostSessions?.active?.view.webContents
+
   if (renderer && !renderer.isDestroyed()) {
     renderer.send('terminal-selection:release')
   }
@@ -318,6 +336,7 @@ function stopWindowAttention(): void {
 
 function requestWindowAttention(): void {
   const window = mainWindow
+
   if (!window || window.isFocused()) {
     return
   }
@@ -338,6 +357,7 @@ function navigateRendererHistory(direction: DesktopNavigationDirection): void {
   }
 
   const renderer = hostSessions?.active?.view.webContents
+
   if (
     !renderer ||
     renderer.isDestroyed() ||
@@ -347,6 +367,7 @@ function navigateRendererHistory(direction: DesktopNavigationDirection): void {
   }
 
   const offset = direction === 'back' ? -1 : 1
+
   if (renderer.navigationHistory.canGoToOffset(offset)) {
     renderer.navigationHistory.goToOffset(offset)
   }
@@ -354,6 +375,7 @@ function navigateRendererHistory(direction: DesktopNavigationDirection): void {
 
 function zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset'): void {
   const renderer = hostSessions?.active?.view.webContents
+
   if (!renderer || renderer.isDestroyed()) {
     return
   }
@@ -367,6 +389,7 @@ function zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset'): void {
 
 function sendDesktopCommand(command: DesktopCommand): void {
   const window = mainWindow
+
   if (!window || !window.isFocused() || shellOverlayOpen) {
     return
   }
@@ -395,17 +418,20 @@ function installRendererSecurity(
       const foreground = shellOverlayOpen
         ? shellView
         : (hostSessions?.active?.view ?? shellView)
+
       foreground?.webContents.focus()
     }
   })
   renderer.on('before-input-event', (event, input) => {
     if (host && (hostSessions?.active !== host || shellOverlayOpen)) {
       event.preventDefault()
+
       return
     }
 
     const key = input.key.toLowerCase()
     const code = input.code.toLowerCase()
+
     if (
       process.platform === 'darwin' &&
       input.type === 'keyDown' &&
@@ -419,11 +445,13 @@ function installRendererSecurity(
     ) {
       event.preventDefault()
       navigateRendererHistory(key === '[' ? 'back' : 'forward')
+
       return
     }
 
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
+
     const zoomCommand =
       key === '+' || key === '='
         ? 'zoom-in'
@@ -432,6 +460,7 @@ function installRendererSecurity(
           : !input.shift && key === '0'
             ? 'zoom-reset'
             : null
+
     if (
       input.type === 'keyDown' &&
       !input.isComposing &&
@@ -443,6 +472,7 @@ function installRendererSecurity(
       // Prevent the native menu accelerator too, so each press zooms once.
       event.preventDefault()
       sendDesktopCommand(zoomCommand)
+
       return
     }
 
@@ -468,6 +498,7 @@ function installRendererSecurity(
               : /^[1-9]$/.test(key)
                 ? (`select-tab-${key}` as DesktopCommand)
                 : undefined
+
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
@@ -495,11 +526,13 @@ function installRendererSecurity(
     }
 
     event.preventDefault()
+
     if (
       (!host || (hostSessions?.active === host && !shellOverlayOpen)) &&
       URL.canParse(targetUrl)
     ) {
       const targetProtocol = new URL(targetUrl).protocol
+
       if (targetProtocol === 'http:' || targetProtocol === 'https:') {
         windowRuntime?.fork(
           Effect.tryPromise(() => shell.openExternal(targetUrl))
@@ -507,6 +540,7 @@ function installRendererSecurity(
       }
     }
   }
+
   renderer.on('will-navigate', preventUntrustedNavigation)
   renderer.on('will-redirect', (event) => {
     if (event.isMainFrame) {
@@ -519,6 +553,7 @@ function installRendererSecurity(
       URL.canParse(url)
     ) {
       const targetProtocol = new URL(url).protocol
+
       if (targetProtocol === 'http:' || targetProtocol === 'https:') {
         windowRuntime?.fork(Effect.tryPromise(() => shell.openExternal(url)))
       }
@@ -526,6 +561,7 @@ function installRendererSecurity(
 
     return { action: 'deny' }
   })
+
   // The trusted workspace can copy sanitized text, HTML and images, but never
   // read the native clipboard. Subframes and browser guests keep their own policy.
   const canWriteClipboard = (
@@ -539,6 +575,7 @@ function installRendererSecurity(
     contents === hostSessions?.active?.view.webContents &&
     URL.canParse(url) &&
     new URL(url).origin === selectedOrigin()
+
   renderer.session.setPermissionCheckHandler(
     (contents, permission, origin, details) =>
       canWriteClipboard(contents, permission, origin, details.isMainFrame)
@@ -568,25 +605,32 @@ const computerUpdateSchema = z.object({
   origin: z.string(),
   nameOverride: z.string().optional()
 })
+
 const nativeBrowserAppSchema = z.strictObject({
   appId: z.string().min(1).max(128)
 })
+
 const nativeBrowserRegisterSchema = nativeBrowserAppSchema.extend({
   webContentsId: z.number().int().positive(),
   challenge: z.string().min(32).max(256)
 })
+
 const nativeBrowserCloseSchema = nativeBrowserAppSchema.extend({
   force: z.boolean()
 })
+
 const nativeBrowserUrlSchema = z.string().transform((value, context) => {
   const parsed = decodeUnknownOrNull(browserUrlSchema, value)
+
   if (parsed) {
     return parsed
   }
 
   context.addIssue({ code: 'custom', message: 'Invalid Browser URL' })
+
   return z.NEVER
 })
+
 const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('navigate'), url: nativeBrowserUrlSchema }),
   z.strictObject({ type: z.literal('back') }),
@@ -594,9 +638,11 @@ const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('reload') }),
   z.strictObject({ type: z.literal('stop') })
 ]) satisfies z.ZodType<DesktopBrowserToolbarCommand>
+
 const nativeBrowserInputControlSchema = nativeBrowserAppSchema.extend({
   locked: z.boolean()
 })
+
 const nativeBrowserPresentationSchema = nativeBrowserAppSchema.extend({
   active: z.boolean()
 })
@@ -604,6 +650,7 @@ const nativeBrowserPresentationSchema = nativeBrowserAppSchema.extend({
 function connectSelected(options: { url?: string } = {}): void {
   const hosts = hostSessions
   const runtime = windowRuntime
+
   if (!hosts || !runtime) {
     return
   }
@@ -612,6 +659,7 @@ function connectSelected(options: { url?: string } = {}): void {
   for (const [id, host] of hosts.visited) {
     if (store?.getComputer(id)?.origin !== host.computer.origin) {
       hosts.visited.delete(id)
+
       if (hosts.active === host) {
         hosts.active = null
       }
@@ -622,6 +670,7 @@ function connectSelected(options: { url?: string } = {}): void {
 
   const computer = store?.selectedComputer
   let host = computer ? (hosts.visited.get(computer.id) ?? null) : null
+
   if (computer && !host) {
     const created = new HostSession(
       { id: computer.id, origin: computer.origin },
@@ -652,6 +701,7 @@ function connectSelected(options: { url?: string } = {}): void {
           )
       }
     )
+
     host = created
     hosts.visited.set(computer.id, host)
     installRendererSecurity(host.view.webContents, host)
@@ -664,9 +714,11 @@ function connectSelected(options: { url?: string } = {}): void {
   }
 
   broadcastState()
+
   if (host) {
     host.view.webContents.send('fullscreen-change', fullscreen)
     host.connect(options.url)
+
     if (!shellOverlayOpen && host.connection.status === 'ready') {
       host.view.webContents.focus()
     } else {
@@ -690,6 +742,7 @@ function rendererWindowPreferences(): Electron.WebPreferences {
 
 function installMenu(): void {
   const navigation = navigationState()
+
   const template: MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
       ? ([{ role: 'appMenu' }] satisfies MenuItemConstructorOptions[])
@@ -764,12 +817,14 @@ function installMenu(): void {
           enabled: navigation.canGoBack,
           click: () => navigateRendererHistory('back')
         }
+
         const forward: MenuItemConstructorOptions = {
           id: 'navigate-forward',
           label: 'Forward',
           enabled: navigation.canGoForward,
           click: () => navigateRendererHistory('forward')
         }
+
         if (process.platform === 'darwin') {
           back.accelerator = 'Command+['
           forward.accelerator = 'Command+]'
@@ -835,27 +890,32 @@ function installMenu(): void {
       ]
     }
   ]
+
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 const loadWindowState = Effect.gen(function* () {
   const filePath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
+
   const contents = yield* Effect.tryPromise(() =>
     fs.readFile(filePath, 'utf8')
   ).pipe(
     Effect.catchAll((error) => {
       const parsed = z.object({ code: z.string() }).safeParse(error.cause)
+
       return parsed.success && parsed.data.code === 'ENOENT'
         ? Effect.succeed(null)
         : Effect.fail(error)
     })
   )
+
   if (contents === null) {
     return null
   }
 
   return yield* Effect.try(() => {
     const parsed = windowStateSchema.safeParse(JSON.parse(contents))
+
     return parsed.success ? parsed.data : null
   }).pipe(Effect.catchAll(() => Effect.succeed(null)))
 })
@@ -869,19 +929,24 @@ function restoredWindowBounds(): WindowState['bounds'] | null {
   const saved = windowState.bounds
   let target = screen.getPrimaryDisplay()
   let largestIntersection = 0
+
   for (const display of displays) {
     const workArea = display.workArea
+
     const intersectionWidth = Math.max(
       0,
       Math.min(saved.x + saved.width, workArea.x + workArea.width) -
         Math.max(saved.x, workArea.x)
     )
+
     const intersectionHeight = Math.max(
       0,
       Math.min(saved.y + saved.height, workArea.y + workArea.height) -
         Math.max(saved.y, workArea.y)
     )
+
     const intersection = intersectionWidth * intersectionHeight
+
     if (intersection > largestIntersection) {
       largestIntersection = intersection
       target = display
@@ -889,14 +954,17 @@ function restoredWindowBounds(): WindowState['bounds'] | null {
   }
 
   const workArea = target.workArea
+
   const width = Math.max(
     Math.min(MINIMUM_WINDOW_WIDTH, workArea.width),
     Math.min(saved.width, workArea.width)
   )
+
   const height = Math.max(
     Math.min(MINIMUM_WINDOW_HEIGHT, workArea.height),
     Math.min(saved.height, workArea.height)
   )
+
   if (largestIntersection === 0) {
     return {
       x: Math.round(workArea.x + (workArea.width - width) / 2),
@@ -929,6 +997,7 @@ function persistWindowState(window: BrowserWindow): void {
   }
   const filePath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
   const temporaryPath = `${filePath}.${process.pid}.tmp`
+
   try {
     mkdirSync(path.dirname(filePath), { recursive: true })
     writeFileSync(temporaryPath, `${JSON.stringify(windowState, null, 2)}\n`, {
@@ -942,8 +1011,10 @@ function persistWindowState(window: BrowserWindow): void {
 
 function createWindow(url?: string): BrowserWindow {
   const restoredBounds = restoredWindowBounds()
+
   const chrome =
     windowChrome[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
+
   const options: BrowserWindowConstructorOptions = {
     show: !desktopE2e,
     width: restoredBounds?.width ?? DEFAULT_WINDOW_WIDTH,
@@ -976,6 +1047,7 @@ function createWindow(url?: string): BrowserWindow {
   // buttons using their actual size, which varies between macOS versions.
 
   const window = new BrowserWindow(options)
+
   if (windowState?.maximized) {
     window.maximize()
   }
@@ -986,9 +1058,11 @@ function createWindow(url?: string): BrowserWindow {
   shellOverlayOpen = false
   const hosts = new HostSessions(window)
   hostSessions = hosts
+
   const shell = new WebContentsView({
     webPreferences: { ...rendererWindowPreferences(), webviewTag: false }
   })
+
   shellView = shell
   shell.setBackgroundColor('#00000000')
   window.contentView.addChildView(shell)
@@ -998,17 +1072,21 @@ function createWindow(url?: string): BrowserWindow {
 
   window.on('enter-full-screen', () => {
     fullscreen = true
+
     for (const host of hosts.visited.values()) {
       host.view.webContents.send('fullscreen-change', true)
     }
+
     shell.webContents.send('fullscreen-change', true)
     broadcastState()
   })
   window.on('leave-full-screen', () => {
     fullscreen = false
+
     for (const host of hosts.visited.values()) {
       host.view.webContents.send('fullscreen-change', false)
     }
+
     shell.webContents.send('fullscreen-change', false)
     broadcastState()
   })
@@ -1018,10 +1096,12 @@ function createWindow(url?: string): BrowserWindow {
   })
   window.on('closed', () => {
     stopWindowAttention()
+
     if (mainWindow === window) {
       mainWindow = null
       hostSessions = null
       shellView = null
+
       if (!shell.webContents.isDestroyed()) {
         shell.webContents.close()
       }
@@ -1029,6 +1109,7 @@ function createWindow(url?: string): BrowserWindow {
       for (const host of hosts.visited.values()) {
         desktopRuntime.fork(host.dispose())
       }
+
       hosts.visited.clear()
       hosts.active = null
       windowRuntime = null
@@ -1043,6 +1124,7 @@ function createWindow(url?: string): BrowserWindow {
     loadRenderer(shell.webContents, PRIVATE_RENDERER_URL).pipe(Effect.asVoid)
   )
   void connectSelected(url ? { url } : {})
+
   return window
 }
 
@@ -1057,7 +1139,9 @@ function mutationError(cause: unknown): ComputerMutationResult {
 function applyWindowChrome(): void {
   const chrome =
     windowChrome[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
+
   mainWindow?.setBackgroundColor(chrome.background)
+
   // macOS draws native traffic lights without an overlay color.
   if (process.platform !== 'darwin') {
     mainWindow?.setTitleBarOverlay({
@@ -1085,13 +1169,16 @@ function registerIpc(): void {
   })
   ipcMain.on('shell:set-overlay-open', (event, value) => {
     const parsed = z.boolean().safeParse(value)
+
     if (isTrustedShellEvent(event) && parsed.success) {
       shellOverlayOpen = parsed.data
+
       if (shellOverlayOpen) {
         hostSessions?.active?.browser.suspendPresentation()
       }
 
       layoutWorkspace()
+
       if (
         !shellOverlayOpen &&
         hostSessions?.active?.connection.status === 'ready'
@@ -1112,8 +1199,10 @@ function registerIpc(): void {
       })
       .strict()
       .safeParse(value)
+
     const host = hostSessions?.sender(event)
     const origin = host?.computer.origin
+
     if (!isTrustedRendererEvent(event) || !target.success || !origin || !host) {
       return false
     }
@@ -1132,11 +1221,14 @@ function registerIpc(): void {
       maxPayload: 16 * 1024 * 1024,
       perMessageDeflate: false
     })
+
     const listening = await new Promise<boolean>((resolve) => {
       relay.once('listening', () => resolve(true))
       relay.once('error', () => resolve(false))
     })
+
     const address = relay.address()
+
     // ws exposes Node's AddressInfo | string result at this I/O boundary.
     if (
       !listening ||
@@ -1147,17 +1239,20 @@ function registerIpc(): void {
       !isTrustedRendererEvent(event)
     ) {
       relay.close()
+
       return false
     }
 
     const frontend = new URL('devtools://devtools/bundled/inspector.html')
     frontend.searchParams.set('ws', `127.0.0.1:${address.port}/devtools`)
+
     const window = new BrowserWindow({
       width: 1100,
       height: 750,
       title: 'Browser DevTools',
       webPreferences: { sandbox: true, nodeIntegration: false }
     })
+
     relay.on('connection', (viewer, request) => {
       if (
         request.url !== '/devtools' ||
@@ -1165,6 +1260,7 @@ function registerIpc(): void {
         window.isDestroyed()
       ) {
         viewer.close(1008, 'Invalid DevTools connection')
+
         return
       }
 
@@ -1173,6 +1269,7 @@ function registerIpc(): void {
         maxPayload: 16 * 1024 * 1024,
         perMessageDeflate: false
       })
+
       const pending: Array<{ data: Buffer; binary: boolean }> = []
       let pendingBytes = 0
       let inspectNode = target.data.backendNodeId
@@ -1181,6 +1278,7 @@ function registerIpc(): void {
       viewer.on('message', (data, binary) => {
         // SAFETY: ws delivers Node Buffer payloads in the Electron main process.
         const message = Buffer.from(data as Buffer)
+
         if (inspectNode !== null && !binary) {
           // CDP is an untrusted JSON boundary even for the bundled frontend.
           try {
@@ -1191,6 +1289,7 @@ function registerIpc(): void {
                 sessionId: z.string().optional()
               })
               .safeParse(JSON.parse(message.toString()))
+
             if (
               command.success &&
               (target.data.targetId === null
@@ -1215,6 +1314,7 @@ function registerIpc(): void {
           }
         } else if (upstream.readyState === WebSocket.CONNECTING) {
           pendingBytes += message.length
+
           if (pendingBytes > 1024 * 1024) {
             viewer.close(1009, 'DevTools input overflow')
           } else {
@@ -1226,6 +1326,7 @@ function registerIpc(): void {
         for (const message of pending) {
           upstream.send(message.data, { binary: message.binary })
         }
+
         pending.length = 0
       })
       upstream.on('message', (data, binary) => {
@@ -1234,9 +1335,11 @@ function registerIpc(): void {
             viewer.close(1009, 'DevTools output overflow')
           } else {
             viewer.send(data, { binary })
+
             if (inspectNode !== null && !binary) {
               try {
                 const payload: unknown = JSON.parse(data.toString())
+
                 const attached = z
                   .object({
                     method: z.literal('Target.attachedToTarget'),
@@ -1246,6 +1349,7 @@ function registerIpc(): void {
                     })
                   })
                   .safeParse(payload)
+
                 if (
                   attached.success &&
                   attached.data.params.targetInfo.targetId ===
@@ -1261,6 +1365,7 @@ function registerIpc(): void {
                     sessionId: z.string().optional()
                   })
                   .safeParse(payload)
+
                 if (
                   response.success &&
                   response.data.id === documentRequest &&
@@ -1303,7 +1408,9 @@ function registerIpc(): void {
           for (const viewer of relay.clients) {
             viewer.terminate()
           }
+
           relay.close()
+
           if (!window.isDestroyed()) {
             window.destroy()
           }
@@ -1318,6 +1425,7 @@ function registerIpc(): void {
       }
     })
     void window.loadURL(frontend.href)
+
     return true
   })
   ipcMain.handle('shell:get-state', (event) =>
@@ -1352,11 +1460,13 @@ function registerIpc(): void {
     }
 
     const parsed = z.url().safeParse(value)
+
     if (!parsed.success) {
       return false
     }
 
     const url = new URL(parsed.data)
+
     if (
       url.protocol !== 'https:' ||
       isLoopbackUrl(url) ||
@@ -1370,12 +1480,14 @@ function registerIpc(): void {
     }
 
     clipboard.writeText(url.href)
+
     return true
   })
   ipcMain.handle('shell:phone-access', (event, id) =>
     desktopRuntime.run(
       Effect.gen(function* () {
         const computer = store?.selectedComputer
+
         if (!isTrustedShellEvent(event) || !computer || computer.id !== id) {
           return {
             url: null,
@@ -1392,6 +1504,7 @@ function registerIpc(): void {
     desktopRuntime.run(
       Effect.gen(function* () {
         const parsedId = z.string().safeParse(id)
+
         if (!isTrustedShellEvent(event) || !parsedId.success || !store) {
           return false
         }
@@ -1399,6 +1512,7 @@ function registerIpc(): void {
         // Admit every request to the store's mutation queue. A same-host click
         // may be the newest intent while an earlier switch is still persisting.
         const selected = yield* store.select(parsedId.data)
+
         if (selected) {
           void connectSelected()
         }
@@ -1411,6 +1525,7 @@ function registerIpc(): void {
     desktopRuntime.run(
       Effect.gen(function* () {
         const parsedInput = z.string().safeParse(input)
+
         if (!isTrustedShellEvent(event) || !parsedInput.success || !store) {
           return { ok: false, error: 'Could not save the computer.' }
         }
@@ -1418,7 +1533,9 @@ function registerIpc(): void {
         const { origin } = yield* Effect.try(() =>
           parseComputerUrl(parsedInput.data)
         )
+
         const duplicate = store.findByOrigin(origin)
+
         if (duplicate) {
           return {
             ok: false,
@@ -1432,6 +1549,7 @@ function registerIpc(): void {
 
         yield* store.add(origin)
         connectSelected()
+
         return { ok: true }
       }).pipe(
         Effect.catchAll((error) => Effect.succeed(mutationError(error.cause)))
@@ -1446,6 +1564,7 @@ function registerIpc(): void {
         }
 
         const parsed = computerUpdateSchema.safeParse(value)
+
         if (!parsed.success) {
           return { ok: false, error: 'Could not save the computer.' }
         }
@@ -1454,11 +1573,13 @@ function registerIpc(): void {
           id: parsed.data.id,
           origin: parsed.data.origin
         }
+
         if (parsed.data.nameOverride !== undefined) {
           update.nameOverride = parsed.data.nameOverride
         }
 
         const result = yield* store.update(update.id, update)
+
         if (!result) {
           return { ok: false, error: 'That computer no longer exists.' }
         }
@@ -1479,11 +1600,13 @@ function registerIpc(): void {
     desktopRuntime.run(
       Effect.gen(function* () {
         const parsedId = z.string().safeParse(id)
+
         if (!isTrustedShellEvent(event) || !parsedId.success || !store) {
           return false
         }
 
         const computerId = parsedId.data
+
         if (!store.getComputer(computerId)) {
           return false
         }
@@ -1518,6 +1641,7 @@ function registerIpc(): void {
               cancelId: 1
             })
           )
+
           if (response === 0) {
             yield* Effect.tryPromise(() =>
               shell.openExternal(
@@ -1527,6 +1651,7 @@ function registerIpc(): void {
           }
         })
       )
+
       return
     }
 
@@ -1537,6 +1662,7 @@ function registerIpc(): void {
     if (desktopE2e) {
       updateReady = false
       broadcastState()
+
       return
     }
 
@@ -1545,6 +1671,7 @@ function registerIpc(): void {
   })
   ipcMain.on('shell:navigate-history', (event, direction) => {
     const parsed = z.enum(['back', 'forward']).safeParse(direction)
+
     if (isTrustedShellEvent(event) && parsed.success) {
       navigateRendererHistory(parsed.data)
     }
@@ -1575,6 +1702,7 @@ function registerIpc(): void {
 
         const filePath = filePathFromUrl(value)
         const origin = selectedOrigin()
+
         if (!filePath || !origin) {
           return 'rejected'
         }
@@ -1591,12 +1719,14 @@ function registerIpc(): void {
   )
   ipcMain.handle('terminal-file:resolve-source-path', (event, value) => {
     const parsedPath = localSourcePathSchema.safeParse(value)
+
     return isTrustedRendererEvent(event) && parsedPath.success
       ? resolveLocalSourcePath(selectedOrigin(), parsedPath.data)
       : null
   })
   ipcMain.on('terminal-file:read-clipboard-source-paths', (event) => {
     event.returnValue = []
+
     if (!isTrustedRendererEvent(event) || process.platform !== 'darwin') {
       return
     }
@@ -1604,15 +1734,18 @@ function registerIpc(): void {
     // ponytail: This fallback reads one macOS file URL. Parse NSFilenamesPboardType if Electron omits multiple files from ClipboardEvent.
     const filePath = filePathFromUrl(clipboard.read('public.file-url'))
     const parsedPath = localSourcePathSchema.safeParse(filePath)
+
     const resolvedPath = parsedPath.success
       ? resolveLocalSourcePath(selectedOrigin(), parsedPath.data)
       : null
+
     event.returnValue = resolvedPath ? [resolvedPath] : []
   })
   ipcMain.handle('native-browser:register', (event, value) => {
     const host = hostSessions?.sender(event)
     const browserWebviews = host?.browser
     const parsed = nativeBrowserRegisterSchema.safeParse(value)
+
     return parsed.success && host && browserWebviews
       ? host.runtime.run(
           browserWebviews.register(
@@ -1627,12 +1760,14 @@ function registerIpc(): void {
   ipcMain.handle('native-browser:command', (event, value) => {
     const host = hostSessions?.sender(event)
     const browserWebviews = host?.browser
+
     const parsed = z
       .strictObject({
         appId: z.string().min(1).max(128),
         command: nativeBrowserCommandSchema
       })
       .safeParse(value)
+
     return parsed.success && host && browserWebviews
       ? host.runtime.run(
           browserWebviews.command(event, parsed.data.appId, parsed.data.command)
@@ -1643,6 +1778,7 @@ function registerIpc(): void {
     const host = hostSessions?.sender(event)
     const browserWebviews = host?.browser
     const parsed = nativeBrowserInputControlSchema.safeParse(value)
+
     return parsed.success && host && browserWebviews
       ? host.runtime.run(
           browserWebviews.setInputControl(
@@ -1657,6 +1793,7 @@ function registerIpc(): void {
     const host = hostSessions?.sender(event)
     const browserWebviews = host?.browser
     const parsed = nativeBrowserPresentationSchema.safeParse(value)
+
     return parsed.success && host && browserWebviews
       ? host.runtime.run(
           browserWebviews.setPresentationActive(
@@ -1671,6 +1808,7 @@ function registerIpc(): void {
     const host = hostSessions?.sender(event)
     const browserWebviews = host?.browser
     const parsed = nativeBrowserCloseSchema.safeParse(value)
+
     if (!parsed.success) {
       return false
     }
@@ -1688,18 +1826,21 @@ function registerIpc(): void {
   ipcMain.handle('native-browser:permissions', (event, value) => {
     const browserWebviews = hostSessions?.sender(event)?.browser
     const parsed = nativeBrowserAppSchema.safeParse(value)
+
     return parsed.success && browserWebviews
       ? browserWebviews.permissions(event, parsed.data.appId)
       : null
   })
   ipcMain.handle('native-browser:reset-permissions', (event, value) => {
     const browserWebviews = hostSessions?.sender(event)?.browser
+
     const parsed = nativeBrowserAppSchema
       .extend({
         origin: z.string().max(2048),
         capability: z.string().max(80).nullable()
       })
       .safeParse(value)
+
     return parsed.success && browserWebviews
       ? browserWebviews.resetPermissions(
           event,
@@ -1713,12 +1854,14 @@ function registerIpc(): void {
     const browserWebviews = isTrustedRendererEvent(event)
       ? hostSessions?.sender(event)?.browser
       : null
+
     const parsed = z
       .strictObject({
         id: z.string().uuid(),
         allow: z.boolean()
       })
       .safeParse(value)
+
     if (parsed.success) {
       browserWebviews?.respondPermission(
         event,
@@ -1731,6 +1874,7 @@ function registerIpc(): void {
     const host = hostSessions?.sender(event)
     const browserWebviews = host?.browser
     const parsed = nativeBrowserAppSchema.safeParse(value)
+
     if (!parsed.success) {
       return
     }
@@ -1743,12 +1887,14 @@ function registerIpc(): void {
     const parsed = z
       .enum(['zoom-in', 'zoom-out', 'zoom-reset'])
       .safeParse(value)
+
     if (isTrustedRendererEvent(event) && parsed.success) {
       zoomPage(parsed.data)
     }
   })
   ipcMain.on('terminal-selection:set-active', (event, active) => {
     const parsedActive = z.boolean().safeParse(active)
+
     if (!isTrustedRendererEvent(event) || !parsedActive.success) {
       return
     }
@@ -1767,6 +1913,7 @@ function registerIpc(): void {
   })
   ipcMain.on('desktop:set-theme', (event, value) => {
     const parsed = themeSchema.safeParse(value)
+
     if (!isTrustedRendererEvent(event) || !parsed.success) {
       return
     }
@@ -1781,12 +1928,15 @@ function registerIpc(): void {
 function openWorkspaceTarget(target: WorkspaceTarget) {
   return Effect.gen(function* () {
     const currentStore = store
+
     if (!currentStore) {
       pendingWorkspaceTarget = target
+
       return
     }
 
     const existing = currentStore.findByOrigin(target.origin)
+
     if (existing) {
       yield* currentStore.select(existing.id)
     } else {
@@ -1814,6 +1964,7 @@ function openWorkspaceTarget(target: WorkspaceTarget) {
 function queueWorkspaceTarget(target: WorkspaceTarget): void {
   if (!store) {
     pendingWorkspaceTarget = target
+
     return
   }
 
@@ -1827,11 +1978,13 @@ function receiveWorkspaceLink(
   value: Parameters<typeof parseWorkspaceLink>[0]
 ): boolean {
   const target = parseWorkspaceLink(value)
+
   if (!target) {
     return false
   }
 
   queueWorkspaceTarget(target)
+
   return true
 }
 
@@ -1839,14 +1992,17 @@ app.on('open-url', (event, url) => {
   event.preventDefault()
   receiveWorkspaceLink(url)
 })
+
 for (const argument of process.argv) {
   const target = parseWorkspaceLink(argument)
+
   if (target) {
     pendingWorkspaceTarget = target
   }
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
 if (!hasSingleInstanceLock) {
   app.quit()
 } else {
@@ -1856,6 +2012,7 @@ if (!hasSingleInstanceLock) {
     }
 
     const window = mainWindow ?? createWindow()
+
     if (!desktopE2e) {
       if (window.isMinimized()) {
         window.restore()
@@ -1870,6 +2027,7 @@ if (!hasSingleInstanceLock) {
   desktopRuntime.fork(
     Effect.gen(function* () {
       yield* Effect.tryPromise(() => app.whenReady())
+
       if (!app.isPackaged && process.platform === 'darwin') {
         app.dock?.setIcon(
           path.join(app.getAppPath(), 'assets/treeport-dev-icon.png')
@@ -1889,6 +2047,7 @@ if (!hasSingleInstanceLock) {
       installMenu()
       const startupTarget = pendingWorkspaceTarget
       pendingWorkspaceTarget = null
+
       if (startupTarget) {
         yield* openWorkspaceTarget(startupTarget)
       } else {
@@ -1909,6 +2068,7 @@ if (!hasSingleInstanceLock) {
         updateReady = true
         broadcastState()
       })
+
       if (app.isPackaged && process.platform === 'darwin' && !desktopE2e) {
         const updater = updateElectronApp({
           updateSource: {
@@ -1919,6 +2079,7 @@ if (!hasSingleInstanceLock) {
           updateInterval: '10 minutes',
           notifyUser: false
         })
+
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => updater.stopUpdates())
         )
@@ -1945,6 +2106,7 @@ if (!hasSingleInstanceLock) {
     }
 
     event.preventDefault()
+
     if (quitting) {
       return
     }
@@ -1957,6 +2119,7 @@ if (!hasSingleInstanceLock) {
       }
 
       quitReady = true
+
       if (installUpdateOnQuit) {
         autoUpdater.quitAndInstall()
       } else {

@@ -19,6 +19,7 @@ const sockets = new Set<string>()
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (cause) {
     // ESRCH is the expected result for a departed fixture, not an I/O fallback.
@@ -35,6 +36,7 @@ async function waitFor(
   condition: () => boolean | Promise<boolean>
 ): Promise<void> {
   const deadline = Date.now() + 8000
+
   while (!(await condition())) {
     if (Date.now() >= deadline) {
       throw new Error('Session fixture did not reach its expected state')
@@ -48,8 +50,10 @@ async function fixture(argv: string[]) {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-session-review-')
   )
+
   roots.push(root)
   const directory = path.join(root, 'session')
+
   const session = await PersistentSession.create({
     directory,
     executable: getSessionKeeperPayload(),
@@ -64,6 +68,7 @@ async function fixture(argv: string[]) {
     rows: 24,
     metadata: '{}'
   })
+
   handles.push(session)
   sockets.add(session.manifest.socketPath)
   let output = ''
@@ -73,11 +78,14 @@ async function fixture(argv: string[]) {
   await session.connect()
   await session.ready
   await session.activate()
+
   const status = sessionStatusSchema.parse(
     JSON.parse(await fs.readFile(path.join(directory, 'status.json'), 'utf8'))
   )
+
   pids.add(status.ownerPid)
   pids.add(status.pid)
+
   return { root, directory, session, status, output: () => output }
 }
 
@@ -85,6 +93,7 @@ afterEach(async () => {
   for (const handle of handles.splice(0)) {
     handle.dispose()
   }
+
   // These are exclusively fixture PIDs captured at creation, never discovery
   // data belonging to a user instance. Stop commands before their keepers.
   for (const pid of [...pids].reverse()) {
@@ -92,6 +101,7 @@ afterEach(async () => {
       process.kill(pid, 'SIGKILL')
     }
   }
+
   await waitFor(() => [...pids].every((pid) => !alive(pid)))
   pids.clear()
   await Promise.all(
@@ -110,6 +120,7 @@ describe('Rust persistent session control and cleanup', () => {
       '-e',
       "console.log('READY'); setInterval(()=>{},1000)"
     ])
+
     await waitFor(() => value.output().includes('READY'))
     const socket = value.session.manifest.socketPath
     await fs.rename(socket, socket + '.hidden')
@@ -155,6 +166,7 @@ describe('Rust persistent session control and cleanup', () => {
       '-e',
       'setInterval(()=>{},1000)'
     ])
+
     // Live old keepers still use authenticated control. Only disconnected
     // legacy sessions need explicit cutover; absence of a lease is not death.
     await value.session.terminate()
@@ -180,6 +192,7 @@ describe('Rust persistent session control and cleanup', () => {
       '-e',
       "process.stdin.setEncoding('utf8'); process.stdin.on('data',data=>console.log('INPUT:'+data)); setInterval(()=>console.log('OUTPUT'),10)"
     ])
+
     await waitFor(() => value.output().includes('OUTPUT'))
     const processed = value.session.flushRequests(value.session.sequence)
     value.session.pause()
@@ -205,11 +218,13 @@ describe('Rust persistent session control and cleanup', () => {
   it('retains dead-keeper evidence while its command or orphaned children survive', async () => {
     const child =
       "process.on('SIGHUP',()=>{}); console.log('CHILD:'+process.pid); setInterval(()=>{},1000)"
+
     const value = await fixture([
       process.execPath,
       '-e',
       `process.on('SIGHUP',()=>{}); require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}], {stdio:'inherit'}); setInterval(()=>{},1000)`
     ])
+
     await waitFor(() => /CHILD:\d+/u.test(value.output()))
     const childPid = Number(/CHILD:(\d+)/u.exec(value.output())![1])
     pids.add(childPid)

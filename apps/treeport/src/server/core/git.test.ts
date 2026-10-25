@@ -39,6 +39,7 @@ HEAD def456
 detached
 locked editor owns it
 `)
+
     expect(result).toEqual([
       {
         path: '/tmp/main repo',
@@ -76,6 +77,7 @@ locked editor owns it
     const dirty = parseDirtyStatus(
       'M  staged.ts\0 M unstaged.ts\0MM both.ts\0?? untracked file.txt\0'
     )
+
     expect(dirty).toEqual({
       dirty: true,
       staged: 2,
@@ -105,18 +107,22 @@ describe('worktree review diff', () => {
   it('shares review scans, bounds subprocesses, and caches only immutable patches', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-diff-load-'))
     const runner = new SpawnCommandRunner()
+
     const run = async (...args: string[]) => {
       const result = await runner.run({ executable: 'git', args, cwd })
       expect(result.exitCode, result.stderr).toBe(0)
     }
+
     try {
       await run('init', '-b', 'main')
       await run('config', 'user.name', 'Test')
       await run('config', 'user.email', 'test@example.test')
+
       const files = Array.from(
         { length: 20 },
         (_, index) => `file-${index}.txt`
       )
+
       await Promise.all(
         files.map((file) => fs.writeFile(path.join(cwd, file), 'base\n'))
       )
@@ -129,16 +135,19 @@ describe('worktree review diff', () => {
       let active = 0
       let peak = 0
       const recorded: string[][] = []
+
       const git = new GitAdapter({
         run: async (request) => {
           active++
           peak = Math.max(peak, active)
           recorded.push([...request.args])
+
           return runner.run(request).finally(() => {
             active--
           })
         }
       })
+
       const patches = await Promise.all(
         files.map((file) =>
           Effect.runPromise(
@@ -146,6 +155,7 @@ describe('worktree review diff', () => {
           )
         )
       )
+
       expect(
         patches.every((patch) => patch.unified?.includes('+changed'))
       ).toBe(true)
@@ -157,11 +167,13 @@ describe('worktree review diff', () => {
         0
       )
       recorded.length = 0
+
       const summaries = await Promise.all(
         Array.from({ length: 8 }, () =>
           Effect.runPromise(git.worktreeDiff(cwd, 'main', 'uncommitted'))
         )
       )
+
       expect(summaries.every((summary) => summary.files.length === 20)).toBe(
         true
       )
@@ -176,9 +188,11 @@ describe('worktree review diff', () => {
       ).toContain('+fresh')
       await run('add', '.')
       await run('commit', '-m', 'changes')
+
       const first = await Effect.runPromise(
         git.worktreeFileDiff(cwd, 'main', files[0]!, 'committed')
       )
+
       recorded.length = 0
       expect(
         await Effect.runPromise(
@@ -204,6 +218,7 @@ describe('worktree review diff', () => {
   it('lists every changed file while returning an explicit bounded oversized patch', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-diff-'))
     const runner = new SpawnCommandRunner()
+
     const run = async (...args: string[]) => {
       const result = await runner.run({ executable: 'git', args, cwd })
       expect(result.exitCode, result.stderr).toBe(0)
@@ -270,9 +285,11 @@ describe('worktree review diff', () => {
       const committed = await Effect.runPromise(
         git.worktreeDiff(cwd, 'main', 'committed')
       )
+
       const uncommitted = await Effect.runPromise(
         git.worktreeDiff(cwd, 'main', 'uncommitted')
       )
+
       const combined = await Effect.runPromise(git.worktreeDiff(cwd, 'main'))
       expect(committed.files.map((file) => file.path)).toEqual([
         'huge.txt',
@@ -297,28 +314,37 @@ describe('worktree review diff', () => {
       expect(
         uncommitted.files.find((file) => file.path === 'renamed.txt')
       ).toMatchObject({ previousPath: null, status: 'modified' })
+
       const committedPatch = await Effect.runPromise(
         git.worktreeFileDiff(cwd, 'main', 'renamed.txt', 'committed')
       )
+
       const localPatch = await Effect.runPromise(
         git.worktreeFileDiff(cwd, 'main', 'renamed.txt', 'uncommitted')
       )
+
       expect(committedPatch.unified).toContain('rename from old.txt')
       expect(committedPatch.unified).not.toContain('staged only')
       expect(localPatch.unified).toContain('+staged only')
       expect(localPatch.unified).toContain('+unstaged only')
+
       const revertedPatch = await Effect.runPromise(
         git.worktreeFileDiff(cwd, 'main', 'reverted.txt', 'committed')
       )
+
       expect(revertedPatch.unified).toContain('+committed version')
+
       const localRevertedPatch = await Effect.runPromise(
         git.worktreeFileDiff(cwd, 'main', 'reverted.txt', 'uncommitted')
       )
+
       expect(localRevertedPatch.unified).toContain('-committed version')
       expect(localRevertedPatch.unified).toContain('+base version')
+
       const untrackedPatch = await Effect.runPromise(
         git.worktreeFileDiff(cwd, 'main', 'untracked.txt', 'uncommitted')
       )
+
       expect(untrackedPatch.unified).toContain('+untracked')
     } finally {
       await fs.rm(cwd, { recursive: true, force: true })

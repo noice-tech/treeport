@@ -8,6 +8,7 @@ import path from 'node:path'
 import { z } from 'zod'
 
 const [appPath, releaseVersion, ...extra] = process.argv.slice(2)
+
 if (
   !appPath ||
   !releaseVersion ||
@@ -21,17 +22,22 @@ if (
 
 const absoluteAppPath = path.resolve(appPath)
 const executable = path.join(absoluteAppPath, 'Contents', 'MacOS', 'Treeport')
+
 const userData = await fs.mkdtemp(
   path.join(os.tmpdir(), 'treeport-desktop-release-smoke-')
 )
+
 const baseEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !name.startsWith('TREEPORT_'))
 )
+
 let loadedWorkspace = false
 const requests = []
+
 const server = http.createServer((request, response) => {
   requests.push(request.url ?? '/')
   response.setHeader('content-type', 'application/json')
+
   if (request.url === '/api/health') {
     response.end(
       JSON.stringify({
@@ -41,6 +47,7 @@ const server = http.createServer((request, response) => {
         hostname: 'release-smoke'
       })
     )
+
     return
   }
 
@@ -49,33 +56,40 @@ const server = http.createServer((request, response) => {
     response.end(`<!doctype html><title>Daemon-owned workspace</title>
       <main>Workspace from the selected daemon, not the desktop bundle</main>
       <script src="/workspace.js"></script>`)
+
     return
   }
 
   if (request.url === '/workspace.js') {
     response.setHeader('content-type', 'text/javascript')
     response.end('fetch("/workspace-loaded")')
+
     return
   }
 
   if (request.url === '/workspace-loaded') {
     loadedWorkspace = true
     response.end('{}')
+
     return
   }
 
   response.statusCode = 404
   response.end(JSON.stringify({ error: { message: 'Not found' } }))
 })
+
 let child
+
 try {
   await new Promise((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
   })
+
   const address = z
     .object({ port: z.number().int().positive() })
     .safeParse(server.address())
+
   if (!address.success) {
     throw new Error('Could not allocate a desktop release smoke-test port')
   }
@@ -94,9 +108,11 @@ try {
   child.stderr.on('data', (chunk) => output.push(chunk.toString()))
 
   const deadline = Date.now() + 15_000
+
   while (!loadedWorkspace && child.exitCode === null && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
+
   if (!loadedWorkspace) {
     throw new Error(
       `Packaged desktop ${releaseVersion} did not run the selected daemon's own workspace. Requests: ${requests.join(', ') || 'none'}${output.length ? `\n${output.join('')}` : ''}`
@@ -112,6 +128,7 @@ try {
       exited,
       new Promise((resolve) => setTimeout(resolve, 3_000))
     ])
+
     if (child.exitCode === null) {
       child.kill('SIGKILL')
       await exited

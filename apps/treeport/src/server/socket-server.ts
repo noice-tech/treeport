@@ -48,9 +48,11 @@ import { networkTelemetry } from './network-telemetry'
 const HANDSHAKE_TIMEOUT_MS = 10_000
 const OUTBOUND_QUEUE_CAPACITY = 512
 const CHANNELS = new Set(['terminals', 'browsers', 'browser-owners'])
+
 // The media socket's capability travels as its second WebSocket subprotocol,
 // so it never appears in URLs or logs.
 const MEDIA_PROTOCOL = 'treeport-media'
+
 const TERMINAL_EVENTS = new Set<TerminalClientEvent>([
   'input',
   'binary',
@@ -132,12 +134,15 @@ export function createSocketServer({
       TERMINAL_MAX_CLIENT_MESSAGE_BYTES
     )
   })
+
   const attachments =
     attachmentManager ??
     new TerminalAttachmentManager(service, terminalMetadata, terminalHost)
+
   const hostedBrowsers =
     browserSessions ??
     new BrowserSessionManager(service, { ...config, browserRelayEntry: null })
+
   const connectionFibers = new Set<Fiber.RuntimeFiber<void, unknown>>()
   let closing = false
 
@@ -161,6 +166,7 @@ export function createSocketServer({
           }>(64),
           Queue.shutdown
         )
+
         const outgoing = yield* Effect.acquireRelease(
           Queue.bounded<{
             message: string | Uint8Array
@@ -168,6 +174,7 @@ export function createSocketServer({
           }>(OUTBOUND_QUEUE_CAPACITY),
           Queue.shutdown
         )
+
         const socket = yield* EffectSocket.fromWebSocket(
           Effect.acquireRelease(
             // SAFETY: ws implements the WebSocket operations consumed by Effect Socket.
@@ -182,7 +189,9 @@ export function createSocketServer({
           ),
           { closeCodeIsError: () => false }
         )
+
         const write = yield* socket.writer
+
         const rejectHandshake = (message: string) =>
           write(
             JSON.stringify({
@@ -190,6 +199,7 @@ export function createSocketServer({
               payload: { message }
             })
           ).pipe(Effect.zipRight(Effect.fail(new Error(message))))
+
         const reader = yield* Effect.forkScoped(
           socket.runRaw((message) =>
             Queue.offer(incoming, { message, queuedAt: Date.now() }).pipe(
@@ -201,6 +211,7 @@ export function createSocketServer({
             )
           )
         )
+
         // Acceptance can enqueue ready/claimGranted and even binary frames.
         // Do not drain them until acceptance finishes: their handlers must be
         // able to reply, so connected must be the first successful wire event.
@@ -234,6 +245,7 @@ export function createSocketServer({
             })
           )
         )
+
         const send = (
           event: string,
           payload:
@@ -243,39 +255,48 @@ export function createSocketServer({
             | null
         ): boolean => {
           const message = JSON.stringify({ event, payload })
+
           const offered = Queue.unsafeOffer(outgoing, {
             message,
             queuedAt: Date.now()
           })
+
           if (!offered) {
             networkTelemetry.droppedNow(channel, 'dropped')
           }
 
           return offered
         }
+
         yield* networkTelemetry.connectionOpened(channel)
         telemetryOpened = true
+
         const first = yield* Queue.take(incoming).pipe(
           Effect.timeoutFail({
             duration: HANDSHAKE_TIMEOUT_MS,
             onTimeout: () => new Error('Socket handshake timed out')
           })
         )
+
         yield* networkTelemetry.duration(
           channel,
           'queue_wait',
           Date.now() - first.queuedAt
         )
         const handshake = parseSocketHandshake(json(first.message))
+
         if (!handshake) {
           yield* networkTelemetry.decodeFailure(channel)
+
           return yield* rejectHandshake('INVALID_SOCKET_HANDSHAKE')
         }
 
         let closeConnection: (() => void) | null = null
         let protocolConnectionId: string | null = null
+
         if (channel === 'terminals') {
           const auth = parseTerminalAuth(handshake.auth)
+
           if (!auth) {
             return yield* rejectHandshake('INVALID_TERMINAL_AUTH')
           }
@@ -300,6 +321,7 @@ export function createSocketServer({
                 retryable ? 'Terminal reconnect required' : 'Terminal rejected'
               )
           }
+
           protocolConnectionId = yield* attachments.accept(
             auth,
             transport,
@@ -308,6 +330,7 @@ export function createSocketServer({
           closeConnection = () => attachments.close(protocolConnectionId!)
         } else if (channel === 'browsers') {
           const auth = parseBrowserAuth(handshake.auth)
+
           if (!auth) {
             return yield* rejectHandshake('INVALID_BROWSER_AUTH')
           }
@@ -318,6 +341,7 @@ export function createSocketServer({
             sendMessage: (message) => send('message', message),
             disconnect: () => accepted.close(4001, 'Browser rejected')
           }
+
           protocolConnectionId = yield* Effect.raceFirst(
             hostedBrowsers.accept(auth.ticket, transport, identity),
             Fiber.join(reader).pipe(
@@ -331,6 +355,7 @@ export function createSocketServer({
           closeConnection = () => hostedBrowsers.close(protocolConnectionId!)
         } else {
           const auth = parseBrowserOwnerAuth(handshake.auth)
+
           if (!auth) {
             return yield* rejectHandshake('INVALID_BROWSER_OWNER_AUTH')
           }
@@ -341,6 +366,7 @@ export function createSocketServer({
             send: (message) => send('ownerMessage', message),
             disconnect: () => accepted.close(4001, 'Browser owner rejected')
           }
+
           protocolConnectionId = yield* Effect.raceFirst(
             hostedBrowsers.acceptOwner(auth, transport),
             Fiber.join(reader).pipe(
@@ -356,6 +382,7 @@ export function createSocketServer({
         }
 
         yield* Effect.addFinalizer(() => Effect.sync(() => closeConnection?.()))
+
         const messages = Effect.forever(
           Effect.gen(function* () {
             const raw = yield* Queue.take(incoming)
@@ -365,8 +392,10 @@ export function createSocketServer({
               Date.now() - raw.queuedAt
             )
             const parsed = parseSocketMessage(json(raw.message))
+
             if (!parsed) {
               yield* networkTelemetry.decodeFailure(channel)
+
               return
             }
 
@@ -377,30 +406,37 @@ export function createSocketServer({
               )
                 ? (parsed.event as TerminalClientEvent)
                 : null
+
               const payload = event
                 ? parseTerminalClientEvent(event, parsed.payload)
                 : null
+
               if (!event || !payload) {
                 yield* networkTelemetry.decodeFailure(channel)
                 accepted.close(1007, 'Invalid terminal message')
+
                 return
               }
 
               attachments.message(protocolConnectionId!, event, payload)
             } else if (channel === 'browsers') {
               const payload = parseBrowserClientMessage(parsed.payload)
+
               if (!payload) {
                 yield* networkTelemetry.decodeFailure(channel)
                 accepted.close(1007, 'Invalid Browser message')
+
                 return
               }
 
               hostedBrowsers.message(protocolConnectionId!, payload)
             } else if (channel === 'browser-owners') {
               const payload = parseBrowserOwnerClientMessage(parsed.payload)
+
               if (!payload) {
                 yield* networkTelemetry.decodeFailure(channel)
                 accepted.close(1007, 'Invalid Browser owner message')
+
                 return
               }
 
@@ -408,6 +444,7 @@ export function createSocketServer({
             }
           })
         )
+
         // A failed writer must end the connection too, rather than leaving a
         // live reader and a black/frozen browser behind a dead output fiber.
         yield* Effect.raceFirst(
@@ -428,6 +465,7 @@ export function createSocketServer({
                 }
               : { closeCode: observedClose.code }
             : undefined
+
           const closed = networkTelemetry.connectionClosed(
             channel,
             Exit.isInterrupted(exit)
@@ -439,6 +477,7 @@ export function createSocketServer({
                   : 'peer_closed',
             details
           )
+
           return Exit.isInterrupted(exit)
             ? Effect.zipRight(networkTelemetry.interrupted(channel), closed)
             : closed
@@ -466,37 +505,45 @@ export function createSocketServer({
   ): boolean {
     const pathname = new URL(request.url ?? '/', 'http://treeport.local')
       .pathname
+
     if (!pathname.startsWith(`${SOCKET_PATH}/`)) {
       return false
     }
 
     const channel = pathname.slice(SOCKET_PATH.length + 1)
+
     if (!CHANNELS.has(channel) && channel !== 'browser-media') {
       socket.destroy()
+
       return true
     }
 
     const security = authorizeRequest(request, { socketUpgrade: true })
+
     const reject = (status: number) => {
       socket.write(
         `HTTP/1.1 ${status} ${status === 503 ? 'Service Unavailable' : 'Unauthorized'}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n`
       )
       socket.destroy()
     }
+
     if (!security.allowed || closing) {
       reject(security.allowed ? 503 : security.status)
+
       return true
     }
 
     const identity = security.principal
       ? { account: security.principal, deviceId: security.deviceId }
       : null
+
     if (channel === 'browser-media') {
       const [protocol, mediaToken] = (
         request.headers['sec-websocket-protocol'] ?? ''
       )
         .split(',')
         .map((value) => value.trim())
+
       if (
         protocol !== MEDIA_PROTOCOL ||
         !mediaToken ||
@@ -516,12 +563,15 @@ export function createSocketServer({
 
     websocketServer.handleUpgrade(request, socket, head, (accepted) => {
       websocketServer.emit('connection', accepted, request)
+
       const fiber = service.forkEffect(
         runConnection(channel, accepted, identity)
       )
+
       connectionFibers.add(fiber)
       fiber.addObserver(() => connectionFibers.delete(fiber))
     })
+
     return true
   }
 
@@ -537,14 +587,17 @@ export function createSocketServer({
     close: async () => {
       closing = true
       attachments.dispose()
+
       for (const client of websocketServer.clients) {
         client.close(1001, 'Treeport is shutting down')
       }
+
       const forceClose = setTimeout(() => {
         for (const client of websocketServer.clients) {
           client.terminate()
         }
       }, 250)
+
       forceClose.unref()
       await Promise.all(
         [...connectionFibers].map(

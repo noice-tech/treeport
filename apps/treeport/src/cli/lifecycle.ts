@@ -59,6 +59,7 @@ export interface DoctorCheck {
 function listenerUrl(host: string, port: number): string {
   const urlHost =
     host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+
   return `http://${urlHost}:${port}`
 }
 
@@ -83,9 +84,11 @@ export function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
     : process.platform === 'darwin'
       ? path.join(os.homedir(), 'Library', 'Application Support', 'treeport')
       : path.join(os.homedir(), '.local', 'share', 'treeport')
+
   const dataDir = path.resolve(
     expandHome(env.TREEPORT_DATA_DIR?.trim() || defaultDataDir)
   )
+
   const runtimeDir = path.resolve(
     expandHome(
       env.TREEPORT_RUNTIME_DIR?.trim() ||
@@ -94,6 +97,7 @@ export function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
           : path.join(os.tmpdir(), `treeport-${process.getuid?.() ?? 'user'}`))
     )
   )
+
   return {
     dataDir,
     runtimeDir,
@@ -161,6 +165,7 @@ export async function resolveLocalApiUrl(
   const explicit = env.TREEPORT_API_URL?.trim()
   const managedApiUrl = env.TREEPORT_MANAGED_API_URL?.trim()
   const daemonRecordPath = env.TREEPORT_DAEMON_RECORD?.trim()
+
   if (explicit && explicit !== managedApiUrl) {
     return explicit.replace(/\/$/, '')
   }
@@ -170,6 +175,7 @@ export async function resolveLocalApiUrl(
       path.resolve(expandHome(daemonRecordPath)),
       daemonRecordSchema
     )
+
     if (record) {
       return record.apiUrl.replace(/\/$/, '')
     }
@@ -180,14 +186,17 @@ export async function resolveLocalApiUrl(
   }
 
   const saved = await preferences(env)
+
   const host =
     env.TREEPORT_HOST?.trim() || env.HOST?.trim() || saved.host || DEFAULT_HOST
+
   const port = Number.parseInt(
     env.TREEPORT_PORT?.trim() ||
       env.PORT?.trim() ||
       String(saved.port ?? DEFAULT_PORT),
     10
   )
+
   return listenerUrl(host, port)
 }
 
@@ -200,11 +209,13 @@ export async function resolvePackagePath(
     fileURLToPath(new URL('../../../', import.meta.url)),
     fileURLToPath(new URL('../../', import.meta.url))
   ]
+
   for (const candidate of candidates) {
     const manifest = await fs
       .access(path.join(candidate, 'package.json'))
       .then(() => true)
       .catch(() => false)
+
     if (manifest) {
       return path.join(candidate, ...segments)
     }
@@ -218,12 +229,14 @@ export async function treeportVersion(): Promise<string> {
     await resolvePackagePath('package.json'),
     z.looseObject({ version: z.string().optional() })
   )
+
   return manifest?.version ?? 'development'
 }
 
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (error) {
     // SAFETY: The validated CLI or Node contract establishes this asserted value.
@@ -236,6 +249,7 @@ export async function daemonHealth(
   timeoutMs = 1_500
 ): Promise<HealthRecord | null> {
   const signal = AbortSignal.timeout(timeoutMs)
+
   return fetch(`${apiUrl}/api/health`, { signal })
     .then(async (response) => {
       if (!response.ok) {
@@ -260,6 +274,7 @@ function matchesOwnership(
 
 async function readState(): Promise<DaemonRecord | null> {
   const paths = localPaths()
+
   // The ownership lock exists during migrations, before daemon.json is published.
   const starting = await fs
     .readFile(paths.lockPath, 'utf8')
@@ -274,16 +289,19 @@ async function readState(): Promise<DaemonRecord | null> {
         { cause: error }
       )
     })
+
   return starting ?? readJson(paths.statePath, daemonRecordSchema)
 }
 
 async function removeStaleState(state: DaemonRecord): Promise<void> {
   const paths = localPaths()
+
   for (const filePath of [paths.statePath, paths.lockPath]) {
     const value = await readJson(
       filePath,
       z.looseObject({ instanceId: z.string() })
     )
+
     if (value?.instanceId === state.instanceId) {
       await fs.rm(filePath, { force: true })
     }
@@ -293,10 +311,12 @@ async function removeStaleState(state: DaemonRecord): Promise<void> {
 async function stopOwned(state: DaemonRecord): Promise<void> {
   if (!processExists(state.pid)) {
     await removeStaleState(state)
+
     return
   }
 
   const observed = await daemonHealth(state.apiUrl)
+
   if (!observed || !matchesOwnership(state, observed)) {
     throw new Error(
       `Refusing to stop PID ${state.pid}: Treeport could not verify ownership. Check ${localPaths().statePath}.`
@@ -305,9 +325,11 @@ async function stopOwned(state: DaemonRecord): Promise<void> {
 
   process.kill(state.pid, 'SIGTERM')
   const deadline = Date.now() + 7_000
+
   while (Date.now() < deadline) {
     if (!processExists(state.pid)) {
       await removeStaleState(state)
+
       return
     }
 
@@ -327,6 +349,7 @@ async function executableCheck(
     const child = spawn(executable, args, {
       stdio: ['ignore', 'pipe', 'pipe']
     })
+
     let output = ''
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
@@ -401,6 +424,7 @@ async function tailscale(args: string[]): Promise<string> {
     const child = spawn('tailscale', args, {
       stdio: ['ignore', 'pipe', 'pipe']
     })
+
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -424,6 +448,7 @@ async function tailscale(args: string[]): Promise<string> {
     child.once('close', (code) => {
       if (code === 0) {
         resolve(stdout)
+
         return
       }
 
@@ -443,6 +468,7 @@ function tailscaleJson<Output>(
   schema: z.ZodType<Output>
 ): Output {
   const result = schema.safeParse(JSON.parse(value))
+
   if (!result.success) {
     throw new Error(`Tailscale ${command} returned an invalid JSON response`)
   }
@@ -473,6 +499,7 @@ function localProxyTarget(apiUrl: string): string {
   }
 
   const url = new URL(apiUrl)
+
   if (
     url.protocol !== 'http:' ||
     !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname)
@@ -490,6 +517,7 @@ function portIsServed(
   port: number
 ): boolean {
   const tcp = config.TCP
+
   if (tcp && Object.hasOwn(tcp, String(port))) {
     return true
   }
@@ -509,6 +537,7 @@ function rootProxyForPort(
     }
 
     const proxy = server.Handlers?.['/']?.Proxy
+
     if (proxy !== undefined) {
       return proxy
     }
@@ -542,6 +571,7 @@ async function tailscaleRemoteUrl(port: number): Promise<string> {
     'status',
     tailscaleStatusResponseSchema
   )
+
   if (status.BackendState !== 'Running') {
     throw new Error(
       'Tailscale is not connected. Run `tailscale up` then try again.'
@@ -549,6 +579,7 @@ async function tailscaleRemoteUrl(port: number): Promise<string> {
   }
 
   const dnsName = status.Self?.DNSName
+
   if (!dnsName?.trim()) {
     throw new Error(
       'Tailscale did not report a DNS name. Enable MagicDNS, then try again.'
@@ -574,6 +605,7 @@ export async function enableTailscaleRemote(options: {
   const saved = await preferences()
   const remote = remotePreference(saved)
   const port = options.port ?? remote?.port ?? DEFAULT_PORT
+
   if (remote && remote.port !== port) {
     throw new Error(
       `Treeport remote access is already configured on port ${remote.port}. Run \`treeport remote disable\` before choosing another port.`
@@ -581,14 +613,18 @@ export async function enableTailscaleRemote(options: {
   }
 
   const current = await daemonStatus()
+
   const expectedTarget = localProxyTarget(
     current.state?.apiUrl ?? (await resolveLocalApiUrl())
   )
+
   const [url, config] = await Promise.all([
     tailscaleRemoteUrl(port),
     tailscaleServeConfig()
   ])
+
   const existingTarget = rootProxyForPort(config, port)
+
   if (
     (portIsServed(config, port) || existingTarget !== null) &&
     !proxyMatches(existingTarget, expectedTarget) &&
@@ -602,17 +638,20 @@ export async function enableTailscaleRemote(options: {
   const daemon = options.daemon ?? (await daemonUp({}))
   const target = localProxyTarget(daemon.apiUrl)
   const alreadyEnabled = proxyMatches(existingTarget, target)
+
   if (!alreadyEnabled) {
     await tailscale(['serve', '--bg', `--https=${port}`, target])
   }
 
   await savePreferences({ ...saved, remote: { port, target, url } })
+
   return { alreadyEnabled, port, url }
 }
 
 export async function tailscaleRemoteStatus(): Promise<TailscaleRemoteStatus> {
   const saved = await preferences()
   const remote = remotePreference(saved)
+
   if (!remote) {
     return { configured: false, active: false, port: null, url: null }
   }
@@ -621,6 +660,7 @@ export async function tailscaleRemoteStatus(): Promise<TailscaleRemoteStatus> {
     tailscaleRemoteUrl(remote.port),
     tailscaleServeConfig()
   ])
+
   return {
     configured: true,
     active: proxyMatches(rootProxyForPort(config, remote.port), remote.target),
@@ -635,20 +675,24 @@ export async function disableTailscaleRemote(): Promise<{
 }> {
   const saved = await preferences()
   const remote = remotePreference(saved)
+
   if (!remote) {
     return { wasEnabled: false, changedTailscale: false }
   }
 
   const config = await tailscaleServeConfig()
+
   if (proxyMatches(rootProxyForPort(config, remote.port), remote.target)) {
     await tailscale(['serve', `--https=${remote.port}`, 'off'])
     delete saved.remote
     await savePreferences(saved)
+
     return { wasEnabled: true, changedTailscale: true }
   }
 
   delete saved.remote
   await savePreferences(saved)
+
   return { wasEnabled: false, changedTailscale: false }
 }
 
@@ -665,6 +709,7 @@ export async function runDoctor(): Promise<DoctorCheck[]> {
         ok: false,
         detail: `${directoryPath}: ${error instanceof Error ? error.message : String(error)}`
       }))
+
   const [dataDirectory, runtimeDirectory] = await Promise.all([
     checkDirectory(paths.dataDir),
     checkDirectory(paths.runtimeDir)
@@ -685,16 +730,19 @@ export async function daemonStatus(): Promise<{
   verified: boolean
 }> {
   const state = await readState()
+
   if (!state) {
     return { running: false, state: null, health: null, verified: false }
   }
 
   if (!processExists(state.pid)) {
     await removeStaleState(state)
+
     return { running: false, state: null, health: null, verified: false }
   }
 
   const observed = await daemonHealth(state.apiUrl)
+
   return {
     running: Boolean(observed),
     state,
@@ -720,17 +768,21 @@ export async function daemonUp(options: {
 
   const paths = localPaths()
   const saved = await preferences()
+
   const next: Preferences = {
     ...saved,
     host: options.host?.trim() || saved.host || DEFAULT_HOST,
     port: options.port ?? saved.port ?? DEFAULT_PORT
   }
+
   const host =
     options.host?.trim() ||
     process.env.TREEPORT_HOST?.trim() ||
     process.env.HOST?.trim() ||
     next.host!
+
   assertLoopbackHost(host)
+
   if (options.host !== undefined || options.port !== undefined) {
     await savePreferences(next)
   }
@@ -743,12 +795,15 @@ export async function daemonUp(options: {
       : String(options.port),
     10
   )
+
   const apiUrl =
     options.host !== undefined || options.port !== undefined
       ? listenerUrl(host, port)
       : process.env.TREEPORT_API_URL?.trim() || listenerUrl(host, port)
+
   const currentVersion = await treeportVersion()
   const existing = await daemonStatus()
+
   if (existing.state) {
     if (!existing.running || !existing.verified) {
       throw new Error(
@@ -771,6 +826,7 @@ export async function daemonUp(options: {
   }
 
   const failedChecks = (await runDoctor()).filter((check) => !check.ok)
+
   if (failedChecks.length) {
     throw new Error(
       failedChecks.map((check) => `${check.name}: ${check.detail}`).join('\n')
@@ -783,6 +839,7 @@ export async function daemonUp(options: {
     'server',
     'index.js'
   )
+
   const webDist = await resolvePackagePath('dist', 'web')
   await fs.access(serverEntry)
   await fs.mkdir(path.dirname(paths.logPath), {
@@ -790,6 +847,7 @@ export async function daemonUp(options: {
     mode: 0o700
   })
   const instanceId = crypto.randomUUID()
+
   const childEnvironment: NodeJS.ProcessEnv = {
     ...process.env,
     TREEPORT_HOST: host,
@@ -808,20 +866,24 @@ export async function daemonUp(options: {
   if (options.foreground) {
     const output =
       options.output ?? humanOutput(process.env, Boolean(process.stdout.isTTY))
+
     console.log(
       output.blocks(
         output.summary('Treeport is starting', 'warning'),
         output.rows([['URL', apiUrl]])
       )
     )
+
     const child = spawn(process.execPath, [serverEntry], {
       env: childEnvironment,
       stdio: 'inherit'
     })
+
     const code = await new Promise<number>((resolve, reject) => {
       child.once('error', reject)
       child.once('close', (value) => resolve(value ?? 1))
     })
+
     if (code !== 0) {
       throw new Error(`Treeport exited with status ${code}`)
     }
@@ -835,16 +897,19 @@ export async function daemonUp(options: {
     'logs',
     'daemon-launcher.log'
   )
+
   appendDaemonLog(
     launcherLogPath,
     `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'launcher_starting', instanceId, version: currentVersion, lifecycle: 'treeport' })}\n`
   )
   const log = fsSync.openSync(launcherLogPath, 'a', 0o600)
+
   const child = spawn(process.execPath, [serverEntry], {
     env: { ...childEnvironment, TREEPORT_DAEMON_LOG_ONLY: '1' },
     detached: true,
     stdio: ['ignore', 'ignore', log]
   })
+
   let launchError: Error | null = null
   child.once('error', (error) => {
     launchError = error
@@ -863,8 +928,10 @@ export async function daemonUp(options: {
   fsSync.closeSync(log)
 
   const deadline = Date.now() + 15_000
+
   while (Date.now() < deadline) {
     const observed = await daemonHealth(apiUrl, 500)
+
     if (
       observed &&
       observed.pid === child.pid &&
@@ -893,11 +960,13 @@ export async function daemonUp(options: {
 
 export async function daemonDown(): Promise<{ wasRunning: boolean }> {
   const state = await readState()
+
   if (!state) {
     return { wasRunning: false }
   }
 
   await stopOwned(state)
+
   return { wasRunning: true }
 }
 
@@ -905,12 +974,14 @@ export async function resolveDaemonLogPaths(
   targetApiUrl?: string
 ): Promise<LocalPaths> {
   const inheritedRecordPath = process.env.TREEPORT_DAEMON_RECORD?.trim()
+
   const inherited = inheritedRecordPath
     ? await readJson(
         path.resolve(expandHome(inheritedRecordPath)),
         daemonRecordSchema
       )
     : null
+
   if (
     inheritedRecordPath &&
     !inherited &&
@@ -931,10 +1002,12 @@ export async function resolveDaemonLogPaths(
         }
       : process.env
   )
+
   if (targetApiUrl) {
     const record =
       (await readJson(paths.lockPath, daemonRecordSchema)) ??
       (await readJson(paths.statePath, daemonRecordSchema))
+
     const localApiUrl =
       record?.apiUrl ??
       (await resolveLocalApiUrl({
@@ -944,6 +1017,7 @@ export async function resolveDaemonLogPaths(
         TREEPORT_DAEMON_RECORD: undefined,
         TREEPORT_DATA_DIR: paths.dataDir
       }))
+
     if (targetApiUrl.replace(/\/$/, '') !== localApiUrl.replace(/\/$/, '')) {
       throw new Error(
         `Cannot read local logs for ${targetApiUrl}. Run treeport logs on that host. For offline local logs, clear TREEPORT_API_URL and select TREEPORT_DATA_DIR.`
@@ -959,17 +1033,22 @@ export async function readDaemonLogs(
   targetApiUrl?: string
 ): Promise<string> {
   const paths = await resolveDaemonLogPaths(targetApiUrl)
+
   const sources = [
     paths.logPath,
     path.join(paths.dataDir, 'logs', 'daemon-launcher.log')
   ]
+
   const sections: string[] = []
+
   for (const logPath of sources) {
     const value = await tailDaemonLog(logPath, lines)
+
     if (value) {
       sections.push(`=== ${logPath} (including retained history) ===\n${value}`)
     }
   }
+
   return sections.length
     ? `${sections.join('\n')}\nAn absent exit event does not prove a crash; termination may be unknown. For service-manager evidence, run treeport logs --service; also check OS logs.\n`
     : `No daemon logs found at ${paths.logPath}. For service-manager diagnostics, run treeport logs --service.\n`

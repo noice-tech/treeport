@@ -15,6 +15,7 @@ const TERMINAL_TOUCH_PASTE_DELAY_MS = 550
 const TERMINAL_TOUCH_SELECTION_SLOP = 10
 const TERMINAL_TOUCH_MOMENTUM_DECAY = 0.95
 const TERMINAL_TOUCH_MOMENTUM_MIN_ROWS_PER_FRAME = 0.05
+
 // Matches wterm's tolerance for treating the viewport as following live output.
 const TERMINAL_SCROLLBACK_BOTTOM_TOLERANCE = 5
 
@@ -41,6 +42,7 @@ export function terminalCellSize(
   const { _charWidth: width, _rowHeight: height } = Object(
     terminal
   ) as WTermMetrics
+
   return width > 0 && height > 0 ? { width, height } : null
 }
 
@@ -69,6 +71,7 @@ export function terminalActivityLabel(activity: TerminalActivity): string {
               ? 'needs sign-in'
               : 'needs attention'
         : activity.state
+
   return activity.message ? `${label}: ${activity.message}` : label
 }
 
@@ -108,6 +111,7 @@ export function terminalInputWithModifiers(
     (data.startsWith('\u001b[') || data.startsWith('\u001bO'))
       ? data[2]
       : null
+
   if (
     arrow &&
     'ABCDHF'.includes(arrow) &&
@@ -118,6 +122,7 @@ export function terminalInputWithModifiers(
       Number(modifiers.shift) +
       2 * Number(modifiers.alt) +
       4 * Number(modifiers.ctrl)
+
     return `\u001b[1;${modifier}${arrow}`
   }
 
@@ -174,6 +179,7 @@ export function terminalKeyboardInput(
         ArrowRight: 'C',
         ArrowLeft: 'D'
       }[event.key]
+
       if (final) {
         return `\u001b[1;5${final}`
       }
@@ -187,6 +193,7 @@ export function terminalKeyboardInput(
   }
 
   const prefix = applicationCursorKeysMode ? '\u001bO' : '\u001b['
+
   if (event.key === 'ArrowLeft') {
     return `${prefix}H`
   }
@@ -216,13 +223,16 @@ function activateTerminalLink(
   }
 
   let parsedUrl: URL
+
   try {
     parsedUrl = new URL(url)
   } catch {
     return
   }
+
   if (parsedUrl.protocol === 'file:') {
     void window.treeportDesktop?.openFileUrl?.(url).catch(() => undefined)
+
     return
   }
 
@@ -233,6 +243,7 @@ function activateTerminalLink(
     const requestId = browserTracingEnabled() ? newBrowserCorrelationId() : null
     const startedAt = performance.now()
     const headers = new Headers({ 'content-type': 'application/json' })
+
     if (requestId) {
       headers.set('x-request-id', requestId)
       browserTrace('browser.open.click', requestId, { terminalId })
@@ -279,6 +290,7 @@ export function trackTerminalSelection(
   }
 
   wrapper.addEventListener('mousedown', handleMouseDown, true)
+
   return () => wrapper.removeEventListener('mousedown', handleMouseDown, true)
 }
 
@@ -302,6 +314,7 @@ export function trackTerminalScrolling(
 
   const terminalCellAt = (clientX: number, clientY: number) => {
     const cell = terminalCellSize(terminal)
+
     if (!cell || !terminal.bridge) {
       return null
     }
@@ -312,11 +325,13 @@ export function trackTerminalScrolling(
     const bounds = element.getBoundingClientRect()
     const style = getComputedStyle(element)
     const x = clientX - bounds.left - (parseFloat(style.paddingLeft) || 0)
+
     const y =
       clientY -
       bounds.top -
       (parseFloat(style.paddingTop) || 0) +
       element.scrollTop
+
     return {
       col: Math.min(terminal.cols - 1, Math.max(0, Math.floor(x / cell.width))),
       row: Math.min(
@@ -334,6 +349,7 @@ export function trackTerminalScrolling(
 
     touchStart = null
   }
+
   const clearTouchPasteTimer = () => {
     if (touchPasteTimer !== null) {
       window.clearTimeout(touchPasteTimer)
@@ -342,6 +358,7 @@ export function trackTerminalScrolling(
 
     touchPasteStart = []
   }
+
   const stopTouchMomentum = () => {
     if (touchMomentumFrame !== null) {
       window.cancelAnimationFrame(touchMomentumFrame)
@@ -353,12 +370,14 @@ export function trackTerminalScrolling(
     // wterm reports wheels to mouse-aware applications such as Pi fullscreen
     // unless the user has scrolled back into local history.
     const element = terminal.element
+
     return (
       Boolean(terminal.bridge?.mouseTracking?.()) &&
       element.scrollHeight - element.clientHeight - element.scrollTop <=
         TERMINAL_SCROLLBACK_BOTTOM_TOLERANCE
     )
   }
+
   // wterm sends one report per wheel event whatever its delta, so trackpads
   // and touch would scroll applications far too fast. Pace reports to one per
   // row of travel through untrusted events that wterm encodes as usual.
@@ -374,6 +393,7 @@ export function trackTerminalScrolling(
   ) => {
     if (terminal.bridge?.synchronizedOutput?.()) {
       wheelRows = 0
+
       return
     }
 
@@ -385,6 +405,7 @@ export function trackTerminalScrolling(
     wheelRows += rows
     const count = Math.trunc(wheelRows)
     wheelRows -= count
+
     for (let index = 0; index < Math.abs(count); index += 1) {
       terminal.element.dispatchEvent(
         new WheelEvent('wheel', {
@@ -413,6 +434,7 @@ export function trackTerminalScrolling(
     event.stopImmediatePropagation()
     clearTouchSelectionTimer()
     clearTouchPasteTimer()
+
     return true
   }
 
@@ -432,12 +454,14 @@ export function trackTerminalScrolling(
       event.stopImmediatePropagation()
       const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY)
       const delta = horizontal ? event.deltaX : event.deltaY
+
       const rows =
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
           ? delta
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? delta * terminal.rows
             : delta / (terminalCellSize(terminal)?.height ?? 16)
+
       reportWheelRows(rows, horizontal ? 'x' : 'y', event)
     },
     { capture: true, passive: false }
@@ -450,12 +474,14 @@ export function trackTerminalScrolling(
     (event) => {
       stopTouchMomentum()
       touchScroll = null
+
       if (suppressSynchronizedScroll(event)) {
         return
       }
 
       touchSelected = false
       clearTouchSelectionTimer()
+
       if (event.touches.length === 2) {
         clearTouchPasteTimer()
         touchPasteStart = Array.from(event.touches, (touch) => ({
@@ -469,10 +495,12 @@ export function trackTerminalScrolling(
           navigator.vibrate?.(10)
           onPasteRequest()
         }, TERMINAL_TOUCH_PASTE_DELAY_MS)
+
         return
       }
 
       clearTouchPasteTimer()
+
       if (event.touches.length !== 1) {
         return
       }
@@ -487,6 +515,7 @@ export function trackTerminalScrolling(
         node: selection?.anchorNode ?? null,
         offset: selection?.anchorOffset ?? 0
       }
+
       if (
         !(document.activeElement instanceof HTMLTextAreaElement) ||
         !wrapper.contains(document.activeElement)
@@ -501,6 +530,7 @@ export function trackTerminalScrolling(
       touchSelectionTimer = window.setTimeout(() => {
         touchSelectionTimer = null
         const anchor = terminalCellAt(start.x, start.y)
+
         if (anchor && terminal.selectWord(anchor)) {
           touchSelected = true
           touchScroll = null
@@ -522,12 +552,14 @@ export function trackTerminalScrolling(
           const touch = Array.from(event.touches).find(
             (candidate) => candidate.identifier === start.identifier
           )
+
           return (
             !touch ||
             Math.hypot(touch.clientX - start.x, touch.clientY - start.y) >
               TERMINAL_TOUCH_SELECTION_SLOP
           )
         })
+
         if (moved) {
           clearTouchPasteTimer()
         } else {
@@ -542,16 +574,19 @@ export function trackTerminalScrolling(
         clearTouchPasteTimer()
         touchScroll = null
         touchSelected = false
+
         return
       }
 
       if (touchSelected) {
         // The platform adjusts the selected word with its handles.
         event.preventDefault()
+
         return
       }
 
       const touch = event.touches[0]!
+
       if (
         touchStart &&
         Math.hypot(touch.clientX - touchStart.x, touch.clientY - touchStart.y) >
@@ -563,6 +598,7 @@ export function trackTerminalScrolling(
       // A long-press starts a native selection that follows the finger.
       // Applications must not receive that movement as scrolling.
       const selection = window.getSelection()
+
       if (
         touchScroll &&
         selection &&
@@ -575,11 +611,13 @@ export function trackTerminalScrolling(
       }
 
       const cell = terminalCellSize(terminal)
+
       if (touchScroll && cell) {
         event.preventDefault()
         // Content follows the finger, so dragging up scrolls toward newer rows.
         const rows = (touchScroll.y - touch.clientY) / cell.height
         const elapsed = event.timeStamp - touchScroll.time
+
         if (elapsed > 0) {
           touchScrollVelocity = rows / elapsed
         }
@@ -599,9 +637,11 @@ export function trackTerminalScrolling(
     },
     { capture: true, passive: false }
   )
+
   const resetTouchScroll = (event: TouchEvent) => {
     if (suppressSynchronizedScroll(event)) {
       touchScroll = null
+
       return
     }
 
@@ -611,23 +651,27 @@ export function trackTerminalScrolling(
     }
 
     const momentum = touchScroll
+
     if (
       event.type === 'touchend' &&
       momentum &&
       event.timeStamp - momentum.time < 100
     ) {
       let previous = performance.now()
+
       const glide = (now: number) => {
         const elapsed = now - previous
         previous = now
         const rows = touchScrollVelocity * elapsed
         touchScrollVelocity *= TERMINAL_TOUCH_MOMENTUM_DECAY ** (elapsed / 16)
+
         if (
           Math.abs(touchScrollVelocity * 16) <
             TERMINAL_TOUCH_MOMENTUM_MIN_ROWS_PER_FRAME ||
           !reportsWheel()
         ) {
           touchMomentumFrame = null
+
           return
         }
 
@@ -639,6 +683,7 @@ export function trackTerminalScrolling(
         })
         touchMomentumFrame = window.requestAnimationFrame(glide)
       }
+
       touchMomentumFrame = window.requestAnimationFrame(glide)
     }
 
@@ -647,6 +692,7 @@ export function trackTerminalScrolling(
     touchScroll = null
     touchSelected = false
   }
+
   wrapper.addEventListener('touchend', resetTouchScroll, {
     capture: true,
     passive: false

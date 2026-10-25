@@ -21,9 +21,11 @@ export function ComputerSelector({
   onOpenOnPhone: () => void
 }) {
   const [activity, setActivity] = useState<ComputerActivity[]>([])
+
   const computerOrigins = JSON.stringify(
     state.computers.map(({ id, origin }) => [id, origin])
   )
+
   useEffect(() => {
     if (!open || computerOrigins === '[]') {
       return
@@ -31,18 +33,23 @@ export function ComputerSelector({
 
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
+
     const refresh = async () => {
       const result = await window.treeportShell
         .computerActivity()
         .catch(() => [])
+
       if (!cancelled) {
         setActivity(result)
         timer = setTimeout(() => void refresh(), 5_000)
       }
     }
+
     void refresh()
+
     return () => {
       cancelled = true
+
       if (timer !== null) {
         clearTimeout(timer)
       }
@@ -52,10 +59,12 @@ export function ComputerSelector({
   const selected = selectedComputer(state)
   const label = selected?.name ?? 'Connect to a computer'
   const localLabel = state.platform === 'darwin' ? 'This Mac' : 'This computer'
+
   const computers = [
     ...state.computers.filter((computer) => computer.loopback),
     ...state.computers.filter((computer) => !computer.loopback)
   ]
+
   const trigger = (
     <Button
       variant="ghost"
@@ -103,12 +112,15 @@ export function ComputerSelector({
                 (item) =>
                   item.id === computer.id && item.origin === computer.origin
               )
+
               const counts = observation?.activity
+
               const status = counts?.needsAttention
                 ? 'Needs attention'
                 : counts?.working
                   ? 'Working'
                   : null
+
               const iconClassName = cn(
                 'size-4 shrink-0',
                 status === 'Working' && 'motion-safe:animate-pulse',
@@ -118,6 +130,7 @@ export function ComputerSelector({
                     ? 'stroke-accent-400'
                     : 'stroke-zinc-400'
               )
+
               return (
                 <DropdownMenu.RadioItem
                   key={computer.id}

@@ -43,6 +43,7 @@ describe('launcher command lines', () => {
       'back\\slash',
       '世界'
     ]
+
     expect(parseCommandLine(formatCommandLine(argv))).toEqual({
       argv,
       error: null

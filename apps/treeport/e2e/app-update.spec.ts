@@ -19,6 +19,7 @@ test('updates a local backend and restores the selected workspace', async ({
   page
 }) => {
   const pathname = '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
+
   const mocked = await mockApp(page, [], {
     applicationUpdate: availableUpdate,
     desktopBridge: true,
@@ -28,6 +29,7 @@ test('updates a local backend and restores the selected workspace', async ({
   const updateAvailable = page.getByRole('button', {
     name: 'Treeport 0.5.0 update available'
   })
+
   await expect(updateAvailable).toBeVisible()
   await page.setViewportSize({ width: 390, height: 700 })
   await expect(updateAvailable).toBeVisible()

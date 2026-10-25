@@ -9,6 +9,7 @@ afterEach(() => vi.useRealTimers())
 
 it('retries a failed initial document load until the renderer is available', async () => {
   vi.useFakeTimers()
+
   const renderer = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
     loadURL: vi
@@ -19,6 +20,7 @@ it('retries a failed initial document load until the renderer is available', asy
       })
       .mockResolvedValue(undefined)
   })
+
   const onFailure = vi.fn()
   const loaded = Effect.runPromise(loadRenderer(renderer, url, onFailure))
   await vi.advanceTimersByTimeAsync(999)
@@ -33,16 +35,20 @@ it('retries a failed initial document load until the renderer is available', asy
 
 it('cancels retries when the owning connection is interrupted', async () => {
   vi.useFakeTimers()
+
   const renderer = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
     loadURL: vi.fn(async () => {
       throw new Error('Renderer unavailable')
     })
   })
+
   const controller = new AbortController()
+
   const loaded = Effect.runPromiseExit(loadRenderer(renderer, url), {
     signal: controller.signal
   })
+
   await vi.advanceTimersByTimeAsync(0)
   controller.abort()
   expect((await loaded)._tag).toBe('Failure')
@@ -59,6 +65,7 @@ it('does not retry a superseded navigation or a destroyed renderer', async () =>
       })
     })
   })
+
   expect(await Effect.runPromise(loadRenderer(renderer, url))).toBe(false)
   expect(renderer.loadURL).toHaveBeenCalledTimes(1)
   renderer.isDestroyed.mockReturnValue(true)

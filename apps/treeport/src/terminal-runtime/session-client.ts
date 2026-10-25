@@ -35,6 +35,7 @@ type EnginePty = Pick<
   | 'onData'
   | 'onExit'
 >
+
 type RequestInput = SessionRequest extends infer Request
   ? Request extends SessionRequest
     ? Omit<Request, 'id'>
@@ -47,6 +48,7 @@ function sessionSocketPath(directory: string): string {
     .update(path.resolve(directory))
     .digest('hex')
     .slice(0, 24)
+
   return path.join(
     os.tmpdir(),
     `treeport-${process.getuid?.() ?? 'user'}`,
@@ -131,6 +133,7 @@ export class PersistentSession implements EnginePty {
     journalLimitBytes?: number | undefined
   }): Promise<PersistentSession> {
     const socketPath = sessionSocketPath(options.directory)
+
     // Fail before allocating a command or leaving discovery artifacts when a
     // custom TMPDIR exceeds the portable Unix socket pathname limit.
     if (Buffer.byteLength(socketPath) > 103) {
@@ -145,11 +148,14 @@ export class PersistentSession implements EnginePty {
       mode: 0o700
     })
     await fs.mkdir(options.directory, { mode: 0o700 })
+
     const ipcDirectory = path.join(
       os.tmpdir(),
       `treeport-${process.getuid?.() ?? 'user'}`
     )
+
     await fs.mkdir(ipcDirectory, { recursive: true, mode: 0o700 })
+
     const manifest: SessionManifest = {
       version: 1,
       ownership: 'lease-v1',
@@ -164,16 +170,19 @@ export class PersistentSession implements EnginePty {
       journalLimitBytes:
         options.journalLimitBytes ?? SESSION_DEFAULT_JOURNAL_LIMIT
     }
+
     await fs.writeFile(
       path.join(options.directory, 'manifest.json'),
       JSON.stringify(manifest),
       { flag: 'wx', mode: 0o600 }
     )
+
     const log = await fs.open(
       path.join(options.directory, 'owner.log'),
       'a',
       0o600
     )
+
     // Display only a stable opaque identity, never labels, commands, or env.
     // Canonical IDs remain recognizable; other IDs are bounded and sanitized
     // by hashing. Renames and engine reconnections leave this title unchanged.
@@ -183,6 +192,7 @@ export class PersistentSession implements EnginePty {
         : /^term_[0-9a-f]{32}$/u.test(options.terminalId)
           ? options.terminalId
           : `term_${crypto.createHash('sha256').update(options.terminalId).digest('hex').slice(0, 32)}`
+
     const child = spawn(options.executable, ['--detach', options.directory], {
       argv0:
         terminalId === null
@@ -192,8 +202,10 @@ export class PersistentSession implements EnginePty {
       stdio: ['ignore', log.fd, log.fd],
       env: process.env
     })
+
     child.unref()
     let launchError: Error | null = null
+
     const bootstrapped = new Promise<void>((resolve) => {
       child.once('error', (error) => {
         launchError = error
@@ -209,6 +221,7 @@ export class PersistentSession implements EnginePty {
         resolve()
       })
     })
+
     await log.close()
     // The keeper must already be outside the daemon's descendant tree before
     // create returns, not merely scheduled to become orphaned later.
@@ -221,11 +234,13 @@ export class PersistentSession implements EnginePty {
           ),
         10000
       )
+
       void bootstrapped.then(() => {
         clearTimeout(timer)
         resolve()
       })
     })
+
     while (Date.now() < deadline) {
       if (launchError) {
         throw launchError
@@ -241,8 +256,10 @@ export class PersistentSession implements EnginePty {
 
           return null
         })
+
       if (published !== null) {
         const status = sessionStatusSchema.parse(JSON.parse(published))
+
         // An aborted owner publishes its proof before exiting. Wait until it
         // is gone so connect cannot attach to its not-yet-closed listener.
         if (
@@ -257,6 +274,7 @@ export class PersistentSession implements EnginePty {
 
       await new Promise((resolve) => setTimeout(resolve, 25))
     }
+
     // Do not kill a possibly live owner on a timeout. Discovery can reconnect it.
     throw new Error(`Session owner startup timed out: ${options.directory}`)
   }
@@ -270,6 +288,7 @@ export class PersistentSession implements EnginePty {
         await fs.readFile(path.join(directory, 'manifest.json'), 'utf8')
       )
     )
+
     if (manifest.socketPath !== sessionSocketPath(directory)) {
       throw new Error('Session manifest does not identify its socket')
     }
@@ -289,25 +308,32 @@ export class PersistentSession implements EnginePty {
     let buffer = ''
     socket.on('data', (chunk) => {
       buffer += chunk
+
       if (Buffer.byteLength(buffer) > SESSION_MAX_FRAME_BYTES) {
         this.fail(new Error('Session frame exceeds size limit'))
+
         return
       }
 
       let boundary: number
+
       try {
         while ((boundary = buffer.indexOf('\n')) !== -1) {
           const frame = sessionFrameSchema.parse(
             JSON.parse(buffer.slice(0, boundary))
           )
+
           buffer = buffer.slice(boundary + 1)
+
           if (frame.type === 'response') {
             const pending = this.pending.get(frame.id)
+
             if (!pending) {
               throw new Error('Unexpected session response')
             }
 
             this.pending.delete(frame.id)
+
             if (pending.timer !== null) {
               clearTimeout(pending.timer)
             }
@@ -319,6 +345,7 @@ export class PersistentSession implements EnginePty {
             } else {
               if (frame.status) {
                 this.status = frame.status
+
                 if (this.replaying && this.sequence === 0) {
                   this.processedSequence = frame.status.processedSequence
                 }
@@ -386,6 +413,7 @@ export class PersistentSession implements EnginePty {
         // The native recovery lease excludes a keeper or concurrent close
         // while retained output is read. A PID is never recovery authority.
         this.processedSequence = Number.MAX_SAFE_INTEGER
+
         for await (const record of SessionJournal.readRetained(
           this.directory
         )) {
@@ -394,6 +422,7 @@ export class PersistentSession implements EnginePty {
               this.archiveResume = resolve
             })
           }
+
           if (this.closed) {
             throw new Error('Archived session replay detached')
           }
@@ -403,8 +432,10 @@ export class PersistentSession implements EnginePty {
       })
       this.replaying = false
       this.readyResolve?.()
+
       return false
     })
+
     if (!connected) {
       return
     }
@@ -423,6 +454,7 @@ export class PersistentSession implements EnginePty {
 
     this.sequence = record.sequence
     this.recordTime = record.at
+
     if (record.type === 'output') {
       for (const listener of this.dataListeners) {
         listener(record.data)
@@ -448,21 +480,25 @@ export class PersistentSession implements EnginePty {
 
   onData(listener: (data: string) => void): IDisposable {
     this.dataListeners.add(listener)
+
     return { dispose: () => this.dataListeners.delete(listener) }
   }
   onExit(
     listener: (event: { exitCode: number; signal?: number }) => void
   ): IDisposable {
     this.exitListeners.add(listener)
+
     return { dispose: () => this.exitListeners.delete(listener) }
   }
   onResize(listener: (cols: number, rows: number) => void): IDisposable {
     this.resizeListeners.add(listener)
+
     return { dispose: () => this.resizeListeners.delete(listener) }
   }
 
   onMarker(listener: (data: string) => void): IDisposable {
     this.markerListeners.add(listener)
+
     return { dispose: () => this.markerListeners.delete(listener) }
   }
 
@@ -481,6 +517,7 @@ export class PersistentSession implements EnginePty {
           metadata: input.metadata
         }).then((status) => {
           this.manifest.metadata = input.metadata
+
           return status
         })
       }
@@ -499,11 +536,13 @@ export class PersistentSession implements EnginePty {
     }
 
     const socket = this.socket
+
     if (!socket || socket.destroyed) {
       return Promise.reject(this.fault ?? new Error('Session is not connected'))
     }
 
     const id = crypto.randomUUID()
+
     return new Promise((resolve, reject) => {
       const pending: PendingRequest = {
         resolve,
@@ -514,7 +553,9 @@ export class PersistentSession implements EnginePty {
           this.replaying || input.method === 'attach' ? 120000 : 10000,
         method: input.method
       }
+
       this.pending.set(id, pending)
+
       if (input.method === 'write') {
         this.pauseRequestTimeouts()
       }
@@ -614,6 +655,7 @@ export class PersistentSession implements EnginePty {
       this.processingAcknowledgementSequence,
       sequence
     )
+
     if (this.processingAcknowledgement !== null) {
       return
     }
@@ -624,10 +666,12 @@ export class PersistentSession implements EnginePty {
     // This never advances past parsed output or coalesces input/control.
     this.processingAcknowledgement = (async () => {
       let acknowledged = -1
+
       while (acknowledged < this.processingAcknowledgementSequence) {
         acknowledged = this.processingAcknowledgementSequence
         await this.request({ method: 'processed', sequence: acknowledged })
       }
+
       this.processingAcknowledgement = null
     })().catch((error) => {
       this.processingAcknowledgement = null
@@ -653,6 +697,7 @@ export class PersistentSession implements EnginePty {
     this.termination ??= this.terminateOwnedSession().finally(() => {
       this.termination = null
     })
+
     return this.termination
   }
 
@@ -689,6 +734,7 @@ export class PersistentSession implements EnginePty {
 
       pending.reject(error)
     }
+
     this.pending.clear()
   }
   private fail(error: Error): void {

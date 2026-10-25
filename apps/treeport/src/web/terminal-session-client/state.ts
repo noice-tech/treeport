@@ -12,12 +12,16 @@ import {
 } from '@treeport/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
+
 export type TerminalSocketFactory = (
   namespace: string,
   options: ProtocolSocketOptions
 ) => ProtocolSocket<TerminalServerToClientEvents, TerminalClientToServerEvents>
+
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
+
 export type TerminalFontZoom = 'zoom-in' | 'zoom-out' | 'zoom-reset'
+
 export type TerminalFileTransfer = {
   state: 'uploading' | 'error'
   message: string
@@ -28,6 +32,7 @@ export const TERMINAL_MIN_COLS = 2
 const TERMINAL_MAX_COLS = 1_000
 export const TERMINAL_MIN_ROWS = 2
 const TERMINAL_MAX_ROWS = 500
+
 export function normalizeTerminalDimensions(
   dimensions: TerminalSize,
   fallback: TerminalSize = { cols: 100, rows: 30 }
@@ -126,6 +131,7 @@ export class TerminalSessionState {
   constructor(readonly terminalId: string) {
     try {
       const stored = Number(localStorage.getItem(this.fontSizeStorageKey))
+
       if (Number.isInteger(stored) && stored >= 8 && stored <= 32) {
         this.fontSize = stored
       }

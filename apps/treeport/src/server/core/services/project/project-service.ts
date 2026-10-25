@@ -155,11 +155,13 @@ export class ProjectService {
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       const direct = yield* projectStore.storedProject(identifier)
+
       if (direct) {
         return direct
       }
 
       const canonical = yield* canonicalPath(identifier)
+
       const match = (yield* projectStore.storedProjects()).find(
         (project) =>
           isPathWithin(canonical, project.rootPath) ||
@@ -167,6 +169,7 @@ export class ProjectService {
             isPathWithin(canonical, worktree.path)
           )
       )
+
       if (!match) {
         return yield* Effect.fail(
           new DomainError(
@@ -206,6 +209,7 @@ export class ProjectService {
       yield* Effect.sync(() => {
         events.publish('project.updated', { projectId })
       })
+
       return yield* projectStore.getProject(projectId)
     })
   }
@@ -259,6 +263,7 @@ export class ProjectService {
       const worktree = yield* projectStore.getWorktree(worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
       const current = worktree.decorations.find((entry) => entry.key === key)
+
       if (
         current &&
         current.source !== source &&
@@ -323,12 +328,14 @@ export class ProjectService {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
       const active = JSON.stringify(activeSources)
+
       const stale = sql`
         SELECT 1 FROM json_each(worktrees.decorations) AS decoration
         WHERE json_extract(decoration.value, '$.source') IS NOT NULL
           AND json_extract(decoration.value, '$.source')
             NOT IN (SELECT value FROM json_each(${active}))
       `
+
       const updated = yield* database
         .execute('project.service.prune-decorations', (db) =>
           db.all<{ projectId: string }>(sql`
@@ -345,6 +352,7 @@ export class ProjectService {
           `)
         )
         .pipe(Effect.orDie)
+
       if (!updated.length) {
         return
       }
@@ -398,11 +406,13 @@ export class ProjectService {
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       const direct = yield* projectStore.storedProject(identifier)
+
       if (direct) {
         return yield* projectStore.requireOpenProject(direct.id)
       }
 
       const canonical = yield* canonicalPath(identifier)
+
       const match = (yield* projectStore.storedProjects()).find(
         (project) =>
           isPathWithin(canonical, project.rootPath) ||
@@ -410,6 +420,7 @@ export class ProjectService {
             isPathWithin(canonical, worktree.path)
           )
       )
+
       if (!match) {
         return yield* Effect.fail(
           new DomainError(
@@ -421,6 +432,7 @@ export class ProjectService {
       }
 
       yield* projectStore.requireOpenProject(match.id)
+
       return match
     })
   }
@@ -431,17 +443,22 @@ export class ProjectService {
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       const direct = yield* projectStore.storedWorktree(identifier)
+
       if (direct) {
         yield* projectStore.requireOpenProject(direct.projectId)
+
         return direct
       }
 
       const canonical = yield* canonicalPath(identifier)
+
       const matches = (yield* projectStore.storedProjects())
         .flatMap((project) => project.worktrees)
         .filter((worktree) => isPathWithin(canonical, worktree.path))
         .sort((a, b) => b.path.length - a.path.length)
+
       const match = matches[0]
+
       if (!match) {
         return yield* Effect.fail(
           new DomainError(
@@ -453,6 +470,7 @@ export class ProjectService {
       }
 
       yield* projectStore.requireOpenProject(match.projectId)
+
       return match
     })
   }
@@ -484,6 +502,7 @@ export class ProjectService {
       const projectStore = yield* ProjectStore
       const worktreeMutations = yield* WorktreeMutations
       yield* projectStore.requireOpenProject(projectId)
+
       if (yield* worktreeMutations.isBusy(projectId)) {
         return yield* Effect.fail(
           new DomainError(
@@ -515,10 +534,12 @@ export class ProjectService {
             const project = yield* observations.observeAvailableProject(
               yield* projectStore.getProject(projectId)
             )
+
             if (project.kind === 'repository') {
               const defaultBranch = yield* git
                 .defaultBranch(project.repositoryPath)
                 .pipe(Effect.orDie)
+
               yield* database
                 .execute('project.service.446', (db) =>
                   db.run(sql`
@@ -537,6 +558,7 @@ export class ProjectService {
             yield* Effect.sync(() => {
               events.publish('project.updated', { projectId })
             })
+
             return yield* projectStore.getProject(projectId)
           }),
         () => locks.release({ projectId })
@@ -583,6 +605,7 @@ export class ProjectService {
           })
         })
       )
+
       return yield* projectSnapshots.getProjectSnapshot(projectId)
     })
   }
@@ -604,6 +627,7 @@ export class ProjectService {
         projectId,
         Effect.gen(function* () {
           yield* projectStore.getProject(projectId)
+
           if ((yield* projectStore.projectOpenState(projectId)) !== true) {
             return
           }
@@ -637,6 +661,7 @@ export class ProjectService {
         projectId,
         Effect.gen(function* () {
           yield* projectStore.getProject(projectId)
+
           if ((yield* projectStore.projectOpenState(projectId)) !== false) {
             return yield* Effect.fail(
               new DomainError(
@@ -680,6 +705,7 @@ export class ProjectService {
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
       const worktreeMutations = yield* WorktreeMutations
+
       if (yield* worktreeMutations.isBusy(projectId)) {
         return yield* Effect.fail(
           new DomainError(
@@ -711,9 +737,11 @@ export class ProjectService {
         () =>
           Effect.gen(function* () {
             project = yield* observations.observeAvailableProject(project, true)
+
             const additionalWorktrees = project.worktrees
               .map((worktree) => worktree.id)
               .filter((worktreeId) => !lockedWorktrees.includes(worktreeId))
+
             if (yield* worktreeMutations.isBusy(projectId)) {
               return yield* Effect.fail(
                 new DomainError(
@@ -744,9 +772,11 @@ export class ProjectService {
                 )
             )
             project = yield* projectStore.getProject(projectId)
+
             const linked = project.worktrees.filter(
               (worktree) => worktree.kind === 'linked'
             )
+
             if (linked.length) {
               return yield* Effect.fail(
                 new DomainError(
@@ -758,12 +788,14 @@ export class ProjectService {
             }
 
             const terminalIdsByWorktree = new Map<string, string[]>()
+
             for (const worktree of project.worktrees) {
               terminalIdsByWorktree.set(
                 worktree.id,
                 yield* terminalHost.killWorktree(worktree.id).pipe(Effect.orDie)
               )
             }
+
             yield* database
               .execute('project.service.759', (db) =>
                 db.run(sql`DELETE FROM projects WHERE id=${projectId}`)
@@ -771,11 +803,13 @@ export class ProjectService {
               .pipe(Effect.orDie)
             yield* folderIdentities.remove(projectId)
             yield* Effect.sync(() => packages.forgetProject(projectId))
+
             for (const worktree of project.worktrees) {
               const terminalIds = yield* terminalState.clearWorktree(
                 worktree.id,
                 terminalIdsByWorktree.get(worktree.id)
               )
+
               yield* Effect.sync(() => {
                 for (const terminalId of terminalIds) {
                   events.publish('terminal.removed', {
@@ -785,6 +819,7 @@ export class ProjectService {
                 }
               })
             }
+
             yield* invalidateProjectsSnapshot()
             yield* Effect.sync(() => {
               events.publish('project.removed', { projectId })
@@ -802,6 +837,7 @@ export class ProjectService {
 
 function canonicalPath(identifier: string): Effect.Effect<string> {
   const resolved = path.resolve(identifier)
+
   return Effect.tryPromise(() => fs.realpath(resolved))
     .pipe(Effect.orDie)
     .pipe(Effect.orElseSucceed(() => resolved))
@@ -809,6 +845,7 @@ function canonicalPath(identifier: string): Effect.Effect<string> {
 
 function isPathWithin(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate)
+
   return (
     relative === '' ||
     (!relative.startsWith(`..${path.sep}`) &&

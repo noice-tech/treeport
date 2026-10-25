@@ -66,6 +66,7 @@ export function createBrowserCdpBridge(
     }
 
     const runtime = new DesktopRuntime(parent)
+
     return yield* Effect.gen(function* () {
       const attachedByBridge = !guest.debugger.isAttached()
 
@@ -97,8 +98,10 @@ export function createBrowserCdpBridge(
         canAccessOpener: false,
         browserContextId: 'treeport-default-context'
       })
+
       const responseSession = (request: CdpRequest) =>
         request.sessionId ? { sessionId: request.sessionId } : {}
+
       const sendResult = (
         socket: WebSocket,
         request: CdpRequest,
@@ -114,6 +117,7 @@ export function createBrowserCdpBridge(
           )
         }
       }
+
       const sendEvent = (
         socket: WebSocket,
         method: string,
@@ -130,6 +134,7 @@ export function createBrowserCdpBridge(
           )
         }
       }
+
       const sendError = (
         socket: WebSocket,
         request: CdpRequest,
@@ -145,6 +150,7 @@ export function createBrowserCdpBridge(
           )
         }
       }
+
       const resolveDebuggerSession = (sessionId?: string) =>
         sessionId &&
         !pageSessions.has(sessionId) &&
@@ -163,8 +169,10 @@ export function createBrowserCdpBridge(
         // automatic accept path (which has an unobserved rejection).
         if (method === 'Page.javascriptDialogOpening') {
           const dialog = params as { type?: string }
+
           if (dialog.type === 'beforeunload') {
             nativeBeforeUnload = true
+
             return
           }
         }
@@ -172,6 +180,7 @@ export function createBrowserCdpBridge(
         if (method === 'Page.javascriptDialogClosed' && nativeBeforeUnload) {
           nativeBeforeUnload = false
           const dialog = params as { result?: boolean }
+
           if (dialog.result === false) {
             onDebuggerMessage(
               _event,
@@ -185,6 +194,7 @@ export function createBrowserCdpBridge(
         }
 
         const socket = client
+
         if (!socket || socket.readyState !== WebSocket.OPEN) {
           return
         }
@@ -198,6 +208,7 @@ export function createBrowserCdpBridge(
               : primaryPageSession
                 ? [primaryPageSession]
                 : [null]
+
         for (const recipient of recipients) {
           socket.send(
             JSON.stringify({
@@ -208,19 +219,23 @@ export function createBrowserCdpBridge(
           )
         }
       }
+
       const cleanup = Effect.gen(function* () {
         stopping = true
         yield* video.stop
         guest.removeListener('destroyed', onDestroyed)
+
         if (!guest.isDestroyed()) {
           guest.debugger.removeListener('message', onDebuggerMessage)
           guest.debugger.removeListener('detach', onDebuggerDetach)
+
           if (guest.debugger.isAttached()) {
             yield* Effect.tryPromise(() =>
               guest.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
                 enabled: false
               })
             ).pipe(Effect.timeout('1 second'), Effect.ignore)
+
             if (
               attachedByBridge &&
               !guest.isDestroyed() &&
@@ -241,6 +256,7 @@ export function createBrowserCdpBridge(
           for (const socket of sockets.clients) {
             socket.terminate()
           }
+
           sockets.close(() => resume(Effect.void))
           sockets = null
         })
@@ -254,14 +270,19 @@ export function createBrowserCdpBridge(
           server = null
         })
       })
+
       const stop = runtime.close
+
       const onDebuggerDetach = () => {
         parent.fork(stop)
       }
+
       const onDestroyed = () => {
         parent.fork(stop)
       }
+
       yield* Scope.addFinalizer(runtime.scope, cleanup)
+
       if (runtime.isClosed || guest.isDestroyed()) {
         return yield* Effect.interrupt
       }
@@ -281,24 +302,29 @@ export function createBrowserCdpBridge(
           enabled: true
         })
       )
+
       const initialFrameTree = (yield* Effect.tryPromise(() =>
         guest.debugger.sendCommand('Page.getFrameTree')
       ).pipe(Effect.catchAll(() => Effect.succeed(null)))) as {
         frameTree?: { frame?: { id?: string } }
       } | null
+
       targetId = initialFrameTree?.frameTree?.frame?.id ?? targetId
 
       server = createServer((request, response) => {
         const address = request.url ?? '/'
         const base = `http://127.0.0.1:${port}`
+
         const pathname = URL.canParse(address, base)
           ? new URL(address, base).pathname
           : ''
+
         response.setHeader('cache-control', 'no-store')
         response.setHeader('content-type', 'application/json')
 
         if (pathname === `${basePath}identity`) {
           response.end(JSON.stringify(identity))
+
           return
         }
 
@@ -313,6 +339,7 @@ export function createBrowserCdpBridge(
               webSocketDebuggerUrl: `ws://127.0.0.1:${port}${basePath}devtools/browser`
             })
           )
+
           return
         }
 
@@ -331,6 +358,7 @@ export function createBrowserCdpBridge(
               }
             ])
           )
+
           return
         }
 
@@ -343,6 +371,7 @@ export function createBrowserCdpBridge(
         // as base64. Leave room for the CDP envelope and file metadata too.
         maxPayload: 4 * Math.ceil(BROWSER_MAX_UPLOAD_BYTES / 3) + 1024 * 1024
       })
+
       const failed = (error: Error) => {
         parent.fork(
           Effect.logError('Browser bridge transport failed', error).pipe(
@@ -350,13 +379,16 @@ export function createBrowserCdpBridge(
           )
         )
       }
+
       server.on('error', failed)
       sockets.on('error', failed)
       server.on('upgrade', (request, socket, head) => {
         const address = request.url ?? '/'
+
         const pathname = URL.canParse(address, 'http://127.0.0.1')
           ? new URL(address, 'http://127.0.0.1').pathname
           : ''
+
         if (
           stopping ||
           runtime.isClosed ||
@@ -364,6 +396,7 @@ export function createBrowserCdpBridge(
           client
         ) {
           socket.destroy()
+
           return
         }
 
@@ -385,8 +418,10 @@ export function createBrowserCdpBridge(
           }
 
           let request: CdpRequest
+
           try {
             const value = JSON.parse(data.toString()) as Partial<CdpRequest>
+
             if (
               !Number.isInteger(value.id) ||
               typeof value.method !== 'string' ||
@@ -413,10 +448,12 @@ export function createBrowserCdpBridge(
 
           if (pendingRequests >= 256) {
             sendError(socket, request, 'The Browser command queue is full.')
+
             return
           }
 
           pendingRequests += 1
+
           const operation = Effect.gen(function* () {
             if (
               socket !== client ||
@@ -434,6 +471,7 @@ export function createBrowserCdpBridge(
                   request,
                   'Browser commands require an attached page session.'
                 )
+
                 return
               }
 
@@ -444,11 +482,13 @@ export function createBrowserCdpBridge(
                       send: (method, params?) =>
                         guest.debugger.sendCommand(method, params)
                     })
+
                     if (!copied) {
                       return null
                     }
 
                     const image = clipboard.readImage()
+
                     const result = decodeUnknownOrNull(browserClipboardSchema, {
                       text: clipboard.readText() || null,
                       html: clipboard.readHTML() || null,
@@ -456,6 +496,7 @@ export function createBrowserCdpBridge(
                         ? null
                         : image.toPNG().toString('base64')
                     })
+
                     if (!result) {
                       throw new Error(
                         'The copied content is too large or unsupported.'
@@ -465,7 +506,9 @@ export function createBrowserCdpBridge(
                     return result
                   })
                 )
+
                 sendResult(socket, request, result)
+
                 return
               }
 
@@ -481,10 +524,12 @@ export function createBrowserCdpBridge(
 
                   if (request.method === 'Treeport.startVideo') {
                     const { width, height } = request.params
+
                     const settings = decodeUnknownOrNull(
                       browserVideoSettingsSchema,
                       request.params.settings
                     )
+
                     if (
                       !settings ||
                       typeof width !== 'number' ||
@@ -517,6 +562,7 @@ export function createBrowserCdpBridge(
                         )
                       }
                     })
+
                     if (stopping || socket !== client) {
                       yield* video.stop
                     }
@@ -532,6 +578,7 @@ export function createBrowserCdpBridge(
                     videoSession === request.sessionId
                   ) {
                     const { peerId, sdp } = request.params
+
                     if (typeof peerId !== 'string' || peerId.length > 128) {
                       throw new Error('Invalid Browser video peer.')
                     }
@@ -552,7 +599,9 @@ export function createBrowserCdpBridge(
                   }
                 })
               )
+
               sendResult(socket, request, videoResult ?? {})
+
               return
             }
 
@@ -564,11 +613,13 @@ export function createBrowserCdpBridge(
                 userAgent: guest.session.getUserAgent(),
                 jsVersion: process.versions.v8 ?? ''
               })
+
               return
             }
 
             if (request.method === 'Browser.setDownloadBehavior') {
               sendResult(socket, request, {})
+
               return
             }
 
@@ -582,6 +633,7 @@ export function createBrowserCdpBridge(
                 request,
                 'This Browser target cannot be replaced.'
               )
+
               return
             }
 
@@ -606,6 +658,7 @@ export function createBrowserCdpBridge(
               }
 
               sendResult(socket, request, {})
+
               return
             }
 
@@ -627,16 +680,19 @@ export function createBrowserCdpBridge(
               }
 
               sendResult(socket, request, { targetId })
+
               return
             }
 
             if (request.method === 'Target.getTargets') {
               sendResult(socket, request, { targetInfos: [targetInfo()] })
+
               return
             }
 
             if (request.method === 'Target.getTargetInfo') {
               const requestedTarget = request.params.targetId
+
               if (requestedTarget && requestedTarget !== targetId) {
                 sendError(
                   socket,
@@ -654,6 +710,7 @@ export function createBrowserCdpBridge(
               const sessionId = `treeport-browser-session-${++browserSessionOrdinal}`
               browserSessions.add(sessionId)
               sendResult(socket, request, { sessionId })
+
               return
             }
 
@@ -664,6 +721,7 @@ export function createBrowserCdpBridge(
                   request,
                   'The Browser target is not available.'
                 )
+
                 return
               }
 
@@ -671,11 +729,13 @@ export function createBrowserCdpBridge(
               pageSessions.add(sessionId)
               primaryPageSession ??= sessionId
               sendResult(socket, request, { sessionId })
+
               return
             }
 
             if (request.method === 'Target.detachFromTarget') {
               const sessionId = request.params.sessionId
+
               if (typeof sessionId === 'string') {
                 if (videoSession === sessionId) {
                   videoSession = null
@@ -684,6 +744,7 @@ export function createBrowserCdpBridge(
 
                 pageSessions.delete(sessionId)
                 browserSessions.delete(sessionId)
+
                 if (primaryPageSession === sessionId) {
                   primaryPageSession =
                     pageSessions.values().next().value ?? null
@@ -691,16 +752,19 @@ export function createBrowserCdpBridge(
               }
 
               sendResult(socket, request, {})
+
               return
             }
 
             if (request.method === 'Target.setDiscoverTargets') {
               sendResult(socket, request, {})
+
               return
             }
 
             if (request.method === 'Runtime.runIfWaitingForDebugger') {
               sendResult(socket, request, {})
+
               return
             }
 
@@ -713,12 +777,14 @@ export function createBrowserCdpBridge(
                 )
               ).pipe(Effect.ignore)
               sendResult(socket, request, {})
+
               return
             }
 
             if (request.method === 'Page.bringToFront') {
               // Automation must not move desktop focus or select/reveal a app.
               sendResult(socket, request, {})
+
               return
             }
 
@@ -734,11 +800,13 @@ export function createBrowserCdpBridge(
                   transitionType: 'typed'
                 }))
               })
+
               return
             }
 
             if (request.method === 'Page.navigateToHistoryEntry') {
               const entryId = request.params.entryId
+
               if (
                 typeof entryId !== 'number' ||
                 !Number.isInteger(entryId) ||
@@ -749,18 +817,22 @@ export function createBrowserCdpBridge(
                   request,
                   'The Browser history entry is not available.'
                 )
+
                 return
               }
 
               guest.navigationHistory.goToIndex(entryId - 1)
               sendResult(socket, request, {})
+
               return
             }
 
             if (request.method === 'Page.navigate') {
               const url = request.params.url
+
               if (typeof url !== 'string') {
                 sendError(socket, request, 'The Browser address is invalid.')
+
                 return
               }
 
@@ -783,6 +855,7 @@ export function createBrowserCdpBridge(
                 ],
                 { concurrency: 'unbounded' }
               )
+
               const result = yield* Effect.tryPromise(() =>
                 guest.debugger.sendCommand(
                   'Page.navigate',
@@ -790,7 +863,9 @@ export function createBrowserCdpBridge(
                   sessionId
                 )
               )
+
               sendResult(socket, request, result)
+
               return
             }
 
@@ -802,6 +877,7 @@ export function createBrowserCdpBridge(
               }
 
               sendResult(socket, request, {})
+
               return
             }
 
@@ -812,12 +888,14 @@ export function createBrowserCdpBridge(
                     `[...document.querySelectorAll('webview')].some((element) => element.getWebContentsId() === ${guest.id} && element.checkVisibility())`
                   )
                 )) ?? false
+
               if (!visible) {
                 sendError(
                   socket,
                   request,
                   'The Browser app is not visible. Open it in the Treeport desktop app, then retry the screenshot.'
                 )
+
                 return
               }
 
@@ -829,6 +907,7 @@ export function createBrowserCdpBridge(
                     height?: unknown
                   }
                 | undefined
+
               const rectangle =
                 clip &&
                 [clip.x, clip.y, clip.width, clip.height].every(
@@ -841,9 +920,11 @@ export function createBrowserCdpBridge(
                       height: Math.max(1, Math.ceil(clip.height as number))
                     }
                   : undefined
+
               const image = yield* Effect.tryPromise(() =>
                 guest.capturePage(rectangle)
               )
+
               const data =
                 request.params.format === 'jpeg'
                   ? image.toJPEG(
@@ -852,14 +933,18 @@ export function createBrowserCdpBridge(
                         : 80
                     )
                   : image.toPNG()
+
               sendResult(socket, request, { data: data.toString('base64') })
+
               return
             }
 
             if (request.method === 'Input.insertText') {
               const text = request.params.text
+
               if (typeof text !== 'string') {
                 sendError(socket, request, 'The Browser input text is invalid.')
+
                 return
               }
 
@@ -867,12 +952,15 @@ export function createBrowserCdpBridge(
               // the guest directly so terminal focus cannot swallow agent input.
               yield* Effect.tryPromise(() => guest.insertText(text))
               sendResult(socket, request, {})
+
               return
             }
 
             const domain = request.method.split('.', 1)[0] ?? ''
+
             if (!ALLOWED_DOMAINS.has(domain) || domain === 'Browser') {
               sendError(socket, request, 'This CDP command is not available.')
+
               return
             }
 
@@ -883,15 +971,19 @@ export function createBrowserCdpBridge(
                 resolveDebuggerSession(request.sessionId)
               )
             )
+
             const result = yield* request.method === 'Input.dispatchKeyEvent'
               ? preserveDesktopFocus(guest, command, true)
               : request.method === 'Input.dispatchMouseEvent' ||
                   request.method === 'Input.dispatchTouchEvent'
                 ? preserveDesktopFocus(guest, command)
                 : command
+
             sendResult(socket, request, result)
+
             if (request.method === 'Page.getFrameTree') {
               const frameTree = result as { frameTree?: { frame?: unknown } }
+
               if (frameTree.frameTree?.frame) {
                 sendEvent(
                   socket,
@@ -902,6 +994,7 @@ export function createBrowserCdpBridge(
               }
             }
           })
+
           connection.fork(
             (request.method.startsWith('Input.')
               ? inputOperations.withPermits(1)(operation)
@@ -932,6 +1025,7 @@ export function createBrowserCdpBridge(
         })
         socket.once('close', () => {
           runtime.fork(connection.close)
+
           if (client === socket) {
             videoSession = null
             runtime.fork(
@@ -958,6 +1052,7 @@ export function createBrowserCdpBridge(
           port = (listeningServer.address() as AddressInfo).port
           resume(Effect.void)
         })
+
         return Effect.sync(() =>
           listeningServer.removeListener('error', failed)
         )

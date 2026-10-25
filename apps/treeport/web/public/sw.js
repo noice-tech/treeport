@@ -4,17 +4,20 @@
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting())
 })
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim())
 })
 
 self.addEventListener('push', (event) => {
   let payload = {}
+
   try {
     payload = event.data?.json() ?? {}
   } catch {
     // A malformed delivery still needs a visible notification on iOS.
   }
+
   // Always display received pushes: iOS may revoke subscriptions when the
   // worker silently consumes a push. Focused BELs are suppressed by the daemon.
   event.waitUntil(
@@ -41,9 +44,11 @@ self.addEventListener('notificationclick', (event) => {
     (async () => {
       let target = new URL('/', self.location.origin)
       const requested = event.notification.data?.url
+
       if (typeof requested === 'string') {
         try {
           const candidate = new URL(requested, self.location.origin)
+
           if (
             candidate.origin === self.location.origin &&
             candidate.pathname.startsWith('/projects/')
@@ -59,13 +64,16 @@ self.addEventListener('notificationclick', (event) => {
         type: 'window',
         includeUncontrolled: true
       })
+
       clients.sort(
         (left, right) =>
           Number(right.url === target.href) - Number(left.url === target.href)
       )
+
       for (const client of clients) {
         // Do not replace auxiliary app pages on the same origin.
         const pathname = new URL(client.url).pathname
+
         if (pathname !== '/' && !pathname.startsWith('/projects/')) {
           continue
         }
@@ -75,16 +83,19 @@ self.addEventListener('notificationclick', (event) => {
             client.url === target.href
               ? client
               : await client.navigate(target.href)
+
           if (!navigated) {
             continue
           }
 
           await navigated.focus()
+
           return
         } catch {
           // A client can close between enumeration and navigation.
         }
       }
+
       await self.clients.openWindow(target.href)
     })()
   )

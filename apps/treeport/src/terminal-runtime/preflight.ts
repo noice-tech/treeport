@@ -23,6 +23,7 @@ export async function probeTerminalHostCompatibility(
   runtimeDir: string
 ): Promise<TerminalHostCompatibilityProbe> {
   const legacy = await inspectLegacyTerminalHost(dataDir, runtimeDir)
+
   if (legacy.reason !== null) {
     return {
       compatible: false,
@@ -38,12 +39,14 @@ export async function probeTerminalHostCompatibility(
     .update(path.resolve(dataDir))
     .digest('hex')
     .slice(0, 20)
+
   const directory = path.join(
     runtimeDir,
     'terminal-engine',
     'terminal-host-' + hostKey,
     'sessions'
   )
+
   const names = await fs.readdir(directory).catch((error) => {
     // SAFETY: Node filesystem errors expose their standard errno code.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -52,18 +55,22 @@ export async function probeTerminalHostCompatibility(
 
     throw error
   })
+
   for (const name of names.sort()) {
     if (!/^[a-f0-9]{40}$/u.test(name)) {
       continue
     }
 
     const sessionDirectory = path.join(directory, name)
+
     try {
       const session = await PersistentSession.open(sessionDirectory)
       const manifest = session.manifest
+
       const metadata = await Effect.runPromise(
         decodeTerminalEngineMetadata(manifest.metadata)
       )
+
       if (
         name !==
         crypto
@@ -103,6 +110,7 @@ export async function probeTerminalHostCompatibility(
       }
     }
   }
+
   return {
     compatible: true,
     running: legacy.running || names.length > 0,
@@ -115,24 +123,29 @@ export async function probeTerminalHostCompatibility(
 async function main(): Promise<void> {
   const dataDir = process.env.TREEPORT_DATA_DIR?.trim()
   const runtimeDir = process.env.TREEPORT_RUNTIME_DIR?.trim()
+
   if (!dataDir || !runtimeDir) {
     throw new Error('TREEPORT_DATA_DIR and TREEPORT_RUNTIME_DIR are required')
   }
 
   const result = await probeTerminalHostCompatibility(dataDir, runtimeDir)
   process.stdout.write(`${JSON.stringify(result)}\n`)
+
   if (!result.compatible) {
     process.exitCode = 42
   }
 }
 
 const entrypoint = process.argv[1]
+
 const invokedPath = entrypoint
   ? await fs.realpath(entrypoint).catch(() => path.resolve(entrypoint))
   : null
+
 const modulePath = await fs
   .realpath(fileURLToPath(import.meta.url))
   .catch(() => path.resolve(fileURLToPath(import.meta.url)))
+
 if (invokedPath === modulePath) {
   await main()
 }

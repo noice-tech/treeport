@@ -52,8 +52,10 @@ import { ProjectStore } from '../project/project-store'
 import { AppDefinitionService } from './app-definition-service'
 
 const now = (): string => new Date().toISOString()
+
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
+
 const WEB_APP_STORAGE_MAX_ENTRIES = 256
 const WEB_APP_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_APP_STORAGE_MAX_VALUE_BYTES = 64 * 1024
@@ -79,6 +81,7 @@ export class AppService {
       const store = yield* ProjectStore
       const observations = yield* ProjectObservationOperations
       const worktree = yield* store.getWorktree(worktreeId)
+
       if (worktree.prunable) {
         return yield* Effect.fail(
           new DomainError(
@@ -163,6 +166,7 @@ export class AppService {
 
   reorderApps(worktreeId: string, appIds: readonly string[]): AppEffect<void> {
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -170,6 +174,7 @@ export class AppService {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
       yield* requireAvailableWorktree(worktreeId)
+
       const [browserRows, webRows] = yield* Effect.all(
         [
           database
@@ -191,9 +196,11 @@ export class AppService {
         ],
         { concurrency: 'unbounded' }
       )
+
       const currentIds = new Set(
         [...browserRows, ...webRows].map((app) => app.id)
       )
+
       if (
         appIds.length !== currentIds.size ||
         appIds.some((appId) => !currentIds.has(appId))
@@ -251,6 +258,7 @@ export class AppService {
     requestedUrl?: string
   ): AppEffect<BrowserApp> {
     const requireAvailableWorktree = this.requireBrowserWorktree.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -258,9 +266,11 @@ export class AppService {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
       yield* requireAvailableWorktree(worktreeId)
+
       const parsedUrl = requestedUrl
         ? decodeUnknownOrNull(browserUrlSchema, requestedUrl)
         : null
+
       if (requestedUrl && !parsedUrl) {
         return yield* Effect.fail(
           new DomainError(
@@ -273,6 +283,7 @@ export class AppService {
 
       const url = parsedUrl ? new URL(parsedUrl).href : 'about:blank'
       const timestamp = now()
+
       const app: BrowserApp = {
         id: id('app'),
         kind: 'browser',
@@ -283,6 +294,7 @@ export class AppService {
         createdAt: timestamp,
         updatedAt: timestamp
       }
+
       yield* database
         .execute('app.service.290', (db) =>
           db.insert(browserApps).values({
@@ -299,6 +311,7 @@ export class AppService {
       yield* Effect.sync(() => {
         events.publish('app.created', { worktreeId, appId: app.id })
       })
+
       return app
     })
   }
@@ -319,10 +332,12 @@ export class AppService {
       const events = yield* EventBusPort
       const terminals = yield* TerminalOperations
       let targetWorktreeId = worktreeId
+
       if (sourceTerminalId) {
         const terminal = yield* terminals
           .getTerminalFromBindings(sourceTerminalId)
           .pipe(Effect.withSpan('treeport.browser.open.resolve_terminal'))
+
         if (targetWorktreeId && terminal.worktreeId !== targetWorktreeId) {
           return yield* Effect.fail(
             new DomainError(
@@ -338,6 +353,7 @@ export class AppService {
 
       if (sourceAppId) {
         const sourceApp = yield* getBrowserApp(sourceAppId)
+
         if (targetWorktreeId && sourceApp.worktreeId !== targetWorktreeId) {
           return yield* Effect.fail(
             new DomainError(
@@ -362,8 +378,10 @@ export class AppService {
       }
 
       let existingApp: BrowserApp | null = null
+
       if (reuseExistingUrl && requestedUrl) {
         const parsedUrl = decodeUnknownOrNull(browserUrlSchema, requestedUrl)
+
         if (!parsedUrl) {
           return yield* Effect.fail(
             new DomainError(
@@ -375,6 +393,7 @@ export class AppService {
         }
 
         const url = new URL(parsedUrl).href
+
         const [existing] = yield* database
           .execute('app.service.380', (db) =>
             db
@@ -391,6 +410,7 @@ export class AppService {
           )
           .pipe(Effect.orDie)
           .pipe(Effect.withSpan('treeport.browser.open.lookup_app'))
+
         existingApp = existing ? mapBrowserApp(existing) : null
       }
 
@@ -399,6 +419,7 @@ export class AppService {
         (yield* createBrowserApp(targetWorktreeId, requestedUrl).pipe(
           Effect.withSpan('treeport.browser.open.create_app')
         ))
+
       yield* Effect.annotateCurrentSpan({
         'treeport.app.id': app.id,
         'treeport.browser.app_reused': existingApp !== null
@@ -413,6 +434,7 @@ export class AppService {
           requestId
         })
       ).pipe(Effect.withSpan('treeport.browser.open.publish'))
+
       return { app }
     }).pipe(Effect.withSpan('treeport.browser.open'))
   }
@@ -444,6 +466,7 @@ export class AppService {
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const [row] = yield* database
         .execute('app.service.446', (db) =>
           db
@@ -453,6 +476,7 @@ export class AppService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       if (!row) {
         return yield* Effect.fail(
           new DomainError('APP_NOT_FOUND', 'Browser not found', 404)
@@ -460,6 +484,7 @@ export class AppService {
       }
 
       yield* requireAvailableWorktree(row.worktreeId)
+
       return mapBrowserApp(row)
     })
   }
@@ -473,6 +498,7 @@ export class AppService {
     return Effect.gen(function* () {
       const app = yield* getBrowserApp(appId)
       const worktree = yield* getWorktree(app.worktreeId)
+
       return { app, worktreePath: worktree.path }
     })
   }
@@ -482,6 +508,7 @@ export class AppService {
     state: { url: string; title: string }
   ): AppEffect<BrowserApp> {
     const getBrowserApp = this.getBrowserApp.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -489,10 +516,12 @@ export class AppService {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
       const app = yield* getBrowserApp(appId)
+
       const parsedUrl =
         state.url === 'about:blank'
           ? 'about:blank'
           : decodeUnknownOrNull(browserObservedUrlSchema, state.url)
+
       if (!parsedUrl) {
         return yield* Effect.fail(
           new DomainError(
@@ -505,19 +534,24 @@ export class AppService {
 
       const url =
         parsedUrl === 'about:blank' ? parsedUrl : new URL(parsedUrl).href
+
       const requestedTitle = normalizeBrowserTitle(state.title.trim())
+
       const title =
         requestedTitle ||
         (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
+
       if (app.url === url && app.title === title) {
         return app
       }
 
       const observedAt = now()
+
       const updatedAt =
         observedAt > app.updatedAt
           ? observedAt
           : new Date(Date.parse(app.updatedAt) + 1).toISOString()
+
       yield* database
         .execute('app.service.518', (db) =>
           db
@@ -534,6 +568,7 @@ export class AppService {
           appId
         })
       })
+
       return updated
     })
   }
@@ -545,6 +580,7 @@ export class AppService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
+
       const [row] = yield* database
         .execute('app.service.543', (db) =>
           db
@@ -555,6 +591,7 @@ export class AppService {
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.browser.remove.lookup'))
+
       if (!row) {
         return yield* Effect.fail(
           new DomainError('APP_NOT_FOUND', 'Browser not found', 404)
@@ -590,6 +627,7 @@ export class AppService {
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const [browserApp] = yield* database
         .execute('app.service.582', (db) =>
           db
@@ -600,9 +638,11 @@ export class AppService {
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.app.remove.resolve_kind'))
+
       yield* Effect.annotateCurrentSpan({
         'treeport.app.kind': browserApp ? 'browser' : 'web'
       })
+
       return yield* browserApp
         ? deleteBrowserApp(appId)
         : deleteWebApp(appId, discardStoredData)
@@ -619,16 +659,20 @@ export class AppService {
     launch: WebAppLaunch = { input: null, cwd: null }
   ): AppEffect<WebApp> {
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const requireWebAppPermissions = this.requireWebAppPermissions.bind(this)
     const createValidatedWebApp = this.createValidatedWebApp.bind(this)
 
     return Effect.gen(function* () {
       const worktree = yield* requireAvailableWorktree(worktreeId)
+
       const definition = (yield* effectiveWebAppDefinitions(worktreeId)).find(
         (candidate) => candidate.id === definitionId
       )
+
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
@@ -640,6 +684,7 @@ export class AppService {
       }
 
       yield* requireWebAppPermissions(worktreeId, definition)
+
       return yield* createValidatedWebApp(worktree, definition, launch)
     })
   }
@@ -652,8 +697,10 @@ export class AppService {
     launch: WebAppLaunch
   ): AppEffect<WebApp> {
     const normalizeWebAppLaunch = this.normalizeWebAppLaunch.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
+
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
@@ -661,6 +708,7 @@ export class AppService {
       const definitionId = definition.id
       const normalized = yield* normalizeWebAppLaunch(worktree, launch)
       const timestamp = now()
+
       const app: WebApp = {
         id: id('app'),
         kind: 'web',
@@ -673,6 +721,7 @@ export class AppService {
         createdAt: timestamp,
         updatedAt: timestamp
       }
+
       yield* database
         .execute('app.service.663', (db) =>
           db.insert(webApps).values({
@@ -693,6 +742,7 @@ export class AppService {
         events.publish('app.created', { worktreeId, appId: app.id })
       })
       yield* Effect.annotateCurrentSpan({ 'treeport.app.id': app.id })
+
       return app
     }).pipe(Effect.withSpan('treeport.web_app.create'))
   }
@@ -706,11 +756,14 @@ export class AppService {
     requestId: string | null = null
   ): AppEffect<OpenWebAppResult> {
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const requireWebAppPermissions = this.requireWebAppPermissions.bind(this)
     const createValidatedWebApp = this.createValidatedWebApp.bind(this)
     const normalizeWebAppLaunch = this.normalizeWebAppLaunch.bind(this)
+
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
 
@@ -718,9 +771,11 @@ export class AppService {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
       const worktree = yield* requireAvailableWorktree(worktreeId)
+
       const definition = (yield* effectiveWebAppDefinitions(worktreeId)).find(
         (candidate) => candidate.id === definitionId
       )
+
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
@@ -732,6 +787,7 @@ export class AppService {
       }
 
       yield* requireWebAppPermissions(worktreeId, definition)
+
       const finish = (result: OpenWebAppResult): OpenWebAppResult => {
         events.publish('app.open_requested', {
           worktreeId,
@@ -741,6 +797,7 @@ export class AppService {
           sourceAppId: null,
           requestId
         })
+
         return result
       }
 
@@ -768,6 +825,7 @@ export class AppService {
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_app.open.lookup'))
+
       if (!existing) {
         return finish({
           app: yield* createValidatedWebApp(worktree, definition, launch),
@@ -778,10 +836,12 @@ export class AppService {
 
       const normalized = yield* normalizeWebAppLaunch(worktree, launch)
       const observedAt = now()
+
       const updatedAt =
         observedAt > existing.updatedAt
           ? observedAt
           : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
+
       yield* database
         .execute('app.service.767', (db) =>
           db
@@ -796,6 +856,7 @@ export class AppService {
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_app.open.persist'))
+
       const app = mapWebApp(
         {
           ...existing,
@@ -808,10 +869,12 @@ export class AppService {
         true,
         definition.sandbox.enabled
       )
+
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('app.updated', { worktreeId, appId: app.id })
       })
+
       return finish({ app, created: false, reused: true })
     }).pipe(
       Effect.tap((result) =>
@@ -832,12 +895,14 @@ export class AppService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const events = yield* EventBusPort
+
       const [app] = yield* database
         .execute('app.service.816', (db) =>
           db.select().from(webApps).where(eq(webApps.id, appId)).limit(1)
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_app.remove.lookup'))
+
       if (!app) {
         return yield* Effect.fail(
           new DomainError('APP_NOT_FOUND', 'App not found', 404)
@@ -847,6 +912,7 @@ export class AppService {
       yield* Effect.annotateCurrentSpan({
         'treeport.worktree.id': app.worktreeId
       })
+
       const [storedValue] = yield* database
         .execute('app.service.832', (db) =>
           db
@@ -857,6 +923,7 @@ export class AppService {
         )
         .pipe(Effect.orDie)
         .pipe(Effect.withSpan('treeport.web_app.remove.storage_check'))
+
       if (!discardStoredData && storedValue) {
         return yield* Effect.fail(
           new DomainError(
@@ -892,17 +959,20 @@ export class AppService {
   ): AppEffect<{ project: ProjectRecord; worktree: WorktreeRecord }> {
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const requireWebAppPermissions = this.requireWebAppPermissions.bind(this)
     const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
     const getProject = this.getProject.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const [app] = yield* database
         .execute('app.service.878', (db) =>
           db.select().from(webApps).where(eq(webApps.id, appId)).limit(1)
         )
         .pipe(Effect.orDie)
+
       if (!app) {
         return yield* Effect.fail(
           new DomainError('APP_NOT_FOUND', 'App not found', 404)
@@ -912,6 +982,7 @@ export class AppService {
       const definition = (yield* effectiveWebAppDefinitions(
         app.worktreeId
       )).find((candidate) => candidate.id === app.definitionId)
+
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
@@ -923,6 +994,7 @@ export class AppService {
       }
 
       yield* requireWebAppPermissions(app.worktreeId, definition)
+
       if (!definition.permissions.includes('tree-files')) {
         return yield* Effect.fail(
           new DomainError(
@@ -935,6 +1007,7 @@ export class AppService {
 
       const worktree = yield* requireAvailableWorktree(app.worktreeId)
       const project = yield* getProject(worktree.projectId)
+
       return { project, worktree }
     })
   }
@@ -945,9 +1018,11 @@ export class AppService {
     return Effect.gen(this, function* () {
       const context = yield* this.getWebAppContext(appId)
       const worktree = yield* this.requireAvailableWorktree(context.worktree.id)
+
       const definition = (yield* this.effectiveWebAppDefinitions(
         worktree.id
       )).find((candidate) => candidate.id === context.app.definitionId)
+
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
@@ -965,17 +1040,20 @@ export class AppService {
   getWebAppContext(appId: string): AppEffect<WebAppContext> {
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const webAppPermissionsGranted = this.webAppPermissionsGranted.bind(this)
     const getWorktree = this.getWorktree.bind(this)
     const getProject = this.getProject.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const [appRow] = yield* database
         .execute('app.service.931', (db) =>
           db.select().from(webApps).where(eq(webApps.id, appId)).limit(1)
         )
         .pipe(Effect.orDie)
+
       if (!appRow) {
         return yield* Effect.fail(
           new DomainError('APP_NOT_FOUND', 'App not found', 404)
@@ -985,17 +1063,21 @@ export class AppService {
       const definition = (yield* effectiveWebAppDefinitions(
         appRow.worktreeId
       )).find((candidate) => candidate.id === appRow.definitionId)
+
       const permissionsGranted = definition
         ? yield* webAppPermissionsGranted(appRow.worktreeId, definition)
         : false
+
       const app = mapWebApp(
         appRow,
         definition?.permissions ?? [],
         permissionsGranted,
         definition?.sandbox.enabled ?? true
       )
+
       const worktree = yield* getWorktree(app.worktreeId)
       const project = yield* getProject(worktree.projectId)
+
       return {
         apiVersion: 1,
         app,
@@ -1025,6 +1107,7 @@ export class AppService {
     return Effect.gen(function* () {
       const git = yield* GitPort
       const context = yield* getWebAppContext(appId)
+
       if (
         context.project.kind !== 'repository' ||
         !context.project.defaultBranch
@@ -1039,6 +1122,7 @@ export class AppService {
       }
 
       const worktree = yield* getWorktree(context.app.worktreeId)
+
       return yield* git
         .worktreeDiff(worktree.path, context.project.defaultBranch!, scope)
         .pipe(
@@ -1065,6 +1149,7 @@ export class AppService {
     return Effect.gen(function* () {
       const git = yield* GitPort
       const context = yield* getWebAppContext(appId)
+
       if (
         context.project.kind !== 'repository' ||
         !context.project.defaultBranch
@@ -1079,6 +1164,7 @@ export class AppService {
       }
 
       const worktree = yield* getWorktree(context.app.worktreeId)
+
       return yield* git
         .worktreeFileDiff(
           worktree.path,
@@ -1106,6 +1192,7 @@ export class AppService {
     return Effect.gen(function* () {
       const git = yield* GitPort
       const context = yield* getWebAppContext(appId)
+
       if (context.project.kind !== 'repository') {
         return yield* Effect.fail(
           new DomainError(
@@ -1117,6 +1204,7 @@ export class AppService {
       }
 
       const worktree = yield* requireAvailableWorktree(context.app.worktreeId)
+
       return yield* git
         .diffImage(worktree.path, input)
         .pipe(
@@ -1141,9 +1229,11 @@ export class AppService {
       const networkListeners = yield* NetworkListenerPort
       const app = yield* getBrowserApp(appId)
       const worktree = yield* getWorktree(app.worktreeId)
+
       const terminalProcesses = yield* terminalHost
         .listProcesses(worktree.id)
         .pipe(Effect.orDie)
+
       return yield* networkListeners
         .listeners({ worktreePath: worktree.path, terminalProcesses })
         .pipe(Effect.orDie)
@@ -1156,6 +1246,7 @@ export class AppService {
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const [browserApp] = yield* database
         .execute('app.service.1065', (db) =>
           db
@@ -1165,6 +1256,7 @@ export class AppService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       return yield* browserApp
         ? getBrowserAppListeners(appId)
         : getWebAppListeners(appId)
@@ -1180,9 +1272,11 @@ export class AppService {
       const networkListeners = yield* NetworkListenerPort
       const context = yield* getWebAppContext(appId)
       const worktree = yield* getWorktree(context.app.worktreeId)
+
       const terminalProcesses = yield* terminalHost
         .listProcesses(worktree.id)
         .pipe(Effect.orDie)
+
       return yield* networkListeners
         .listeners({ worktreePath: worktree.path, terminalProcesses })
         .pipe(Effect.orDie)
@@ -1195,6 +1289,7 @@ export class AppService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       yield* getWebAppContext(appId)
+
       const [row] = yield* database
         .execute('app.service.1107', (db) =>
           db
@@ -1204,6 +1299,7 @@ export class AppService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       return row !== undefined
     })
   }
@@ -1218,10 +1314,12 @@ export class AppService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const context = yield* getWebAppContext(appId)
+
       const owner =
         scope === 'definition'
           ? eq(webAppStorage.definitionId, context.app.definitionId)
           : eq(webAppStorage.appId, appId)
+
       const [row] = yield* database
         .execute('app.service.1127', (db) =>
           db
@@ -1231,6 +1329,7 @@ export class AppService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       // SAFETY: The surrounding boundary contract establishes this asserted value.
       return row ? (JSON.parse(row.valueJson) as JsonValue) : undefined
     })
@@ -1247,12 +1346,15 @@ export class AppService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const context = yield* getWebAppContext(appId)
+
       const owner =
         scope === 'definition'
           ? eq(webAppStorage.definitionId, context.app.definitionId)
           : eq(webAppStorage.appId, appId)
+
       const valueJson = JSON.stringify(value)
       const valueBytes = Buffer.byteLength(valueJson)
+
       if (valueBytes > WEB_APP_STORAGE_MAX_VALUE_BYTES) {
         return yield* Effect.fail(
           new DomainError(
@@ -1271,10 +1373,12 @@ export class AppService {
             .where(and(owner, ne(webAppStorage.key, key)))
         )
         .pipe(Effect.orDie)
+
       const storedBytes = storedValues.reduce(
         (total, row) => total + Buffer.byteLength(row.valueJson),
         0
       )
+
       if (
         storedValues.length >= WEB_APP_STORAGE_MAX_ENTRIES ||
         storedBytes + valueBytes > WEB_APP_STORAGE_MAX_TOTAL_BYTES
@@ -1325,10 +1429,12 @@ export class AppService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const context = yield* getWebAppContext(appId)
+
       const owner =
         scope === 'definition'
           ? eq(webAppStorage.definitionId, context.app.definitionId)
           : eq(webAppStorage.appId, appId)
+
       yield* database
         .execute('app.service.1213', (db) =>
           db.delete(webAppStorage).where(and(owner, eq(webAppStorage.key, key)))
@@ -1343,17 +1449,20 @@ export class AppService {
   ): AppEffect<WebAppAssetResolution> {
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const requireWebAppPermissions = this.requireWebAppPermissions.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const webAppRuntime = yield* WebAppRuntimePort
       yield* Effect.annotateCurrentSpan({ 'treeport.app.id': appId })
+
       const [app] = yield* database
         .execute('app.service.1239', (db) =>
           db.select().from(webApps).where(eq(webApps.id, appId)).limit(1)
         )
         .pipe(Effect.orDie)
+
       if (!app) {
         return yield* Effect.fail(
           new DomainError('APP_NOT_FOUND', 'App not found', 404)
@@ -1363,6 +1472,7 @@ export class AppService {
       const definition = (yield* effectiveWebAppDefinitions(
         app.worktreeId
       )).find((candidate) => candidate.id === app.definitionId)
+
       if (!definition) {
         return yield* Effect.fail(
           new DomainError(
@@ -1375,6 +1485,7 @@ export class AppService {
 
       yield* requireWebAppPermissions(app.worktreeId, definition)
       const encodedAppId = encodeURIComponent(appId)
+
       return yield* webAppRuntime
         .resolve(
           definition,
@@ -1397,6 +1508,7 @@ export class AppService {
   listBrowserApps(): AppEffect<BrowserApp[]> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const rows = yield* database
         .execute('app.service.1291', (db) =>
           db
@@ -1405,6 +1517,7 @@ export class AppService {
             .orderBy(asc(browserApps.createdAt), asc(browserApps.id))
         )
         .pipe(Effect.orDie)
+
       return rows.map(mapBrowserApp)
     })
   }
@@ -1412,10 +1525,12 @@ export class AppService {
   listWebApps(): AppEffect<WebApp[]> {
     const effectiveWebAppDefinitions =
       this.effectiveWebAppDefinitions.bind(this)
+
     const webAppPermissionsGranted = this.webAppPermissionsGranted.bind(this)
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const rows = yield* database
         .execute('app.service.1309', (db) =>
           db
@@ -1424,15 +1539,18 @@ export class AppService {
             .orderBy(asc(webApps.createdAt), asc(webApps.id))
         )
         .pipe(Effect.orDie)
+
       return yield* Effect.forEach(rows, (row) =>
         Effect.gen(function* () {
           const definitions = yield* Effect.catchAll(
             effectiveWebAppDefinitions(row.worktreeId),
             () => Effect.succeed([])
           )
+
           const definition = definitions.find(
             (candidate) => candidate.id === row.definitionId
           )
+
           return mapWebApp(
             row,
             definition?.permissions ?? [],
@@ -1469,6 +1587,7 @@ function mapWebApp(
     Schema.NullOr(webAppInputSchema),
     JSON.parse(row.inputJson)
   )
+
   if (parsedInput === null && row.inputJson !== 'null') {
     throw new Error(`Web app ${row.id} has invalid stored launch input`)
   }

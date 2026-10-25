@@ -29,16 +29,20 @@ export function WorkspaceSurfaceFocusProvider({
 }) {
   const [focusedSurface, setFocusedSurface] =
     useState<WorkspaceSurface>('terminal')
+
   const focusedSurfaceRef = useRef<WorkspaceSurface>('terminal')
   const [emptyToolFocusRevision, setEmptyToolFocusRevision] = useState(0)
+
   const focusSurface = useCallback((surface: WorkspaceSurface) => {
     focusedSurfaceRef.current = surface
     setFocusedSurface(surface)
   }, [])
+
   const restoreEmptyToolFocus = useCallback(
     () => setEmptyToolFocusRevision((current) => current + 1),
     []
   )
+
   const value = useMemo(
     () => ({
       focusedSurface,
@@ -64,6 +68,7 @@ export function WorkspaceSurfaceFocusProvider({
 
 export function useWorkspaceSurfaceFocus(): WorkspaceSurfaceFocusContextValue {
   const context = useContext(WorkspaceSurfaceFocusContext)
+
   if (!context) {
     throw new Error(
       'useWorkspaceSurfaceFocus requires WorkspaceSurfaceFocusProvider'

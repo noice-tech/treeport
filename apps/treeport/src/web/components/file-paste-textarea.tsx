@@ -32,7 +32,9 @@ export function FilePasteTextarea({
     state: 'uploading' | 'error'
     message: string
   } | null>(null)
+
   const statusId = `${id}-upload-status`
+
   return (
     <>
       <Textarea
@@ -53,18 +55,23 @@ export function FilePasteTextarea({
         }}
         onPaste={(event) => {
           const clipboardFiles = Array.from(event.clipboardData.files)
+
           const files = clipboardFiles.length
             ? clipboardFiles
             : Array.from(event.clipboardData.items).flatMap((item) => {
                 const file = item.kind === 'file' ? item.getAsFile() : null
+
                 return file ? [file] : []
               })
+
           if (!files.length) {
             onTextPaste?.(event)
+
             return
           }
 
           event.preventDefault()
+
           if (upload?.state === 'uploading') {
             return
           }
@@ -85,14 +92,17 @@ export function FilePasteTextarea({
                 window.treeportDesktop?.getPathForFile?.(file) ??
                 Promise.resolve(null)
               ).catch(() => null)
+
               if (localPath) {
                 return localPath
               }
 
               const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+
               const headers = new Headers({
                 'content-type': file.type || 'application/octet-stream'
               })
+
               if (extension) {
                 headers.set(
                   'x-treeport-file-extension',
@@ -106,6 +116,7 @@ export function FilePasteTextarea({
                   onProgress: () => {}
                 })
               )
+
               return result.file.path
             })
           )

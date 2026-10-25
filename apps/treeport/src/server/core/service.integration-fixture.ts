@@ -339,6 +339,7 @@ export async function persistedProject(
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1)
+
   if (!project) {
     return null
   }
@@ -352,6 +353,7 @@ export async function persistedProject(
       asc(worktrees.createdAt),
       sql`rowid`
     )
+
   return mapProject(project, rows)
 }
 
@@ -364,6 +366,7 @@ export async function persistedProjectOpen(
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1)
+
   return row ? Boolean(row.isOpen) : null
 }
 
@@ -381,6 +384,7 @@ export async function persistedProjectMetadata(
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1)
+
   return row ? { ...row, nameIsCustom: Boolean(row.nameIsCustom) } : null
 }
 
@@ -449,28 +453,33 @@ class SystemDouble implements CommandRunner {
   async run(request: CommandRequest): Promise<CommandResult> {
     this.calls.push(structuredClone(request))
     const args = [...request.args]
+
     const ok = (stdout = ''): CommandResult => ({
       stdout,
       stderr: '',
       exitCode: 0
     })
+
     const fail = (stderr: string): CommandResult => ({
       stdout: '',
       stderr,
       exitCode: 1
     })
+
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') {
       if (
         args.includes('--git-common-dir') &&
         args.includes('--absolute-git-dir')
       ) {
         this.worktreeLaunchIdentityAttempts += 1
+
         if (this.worktreeLaunchIdentityGate) {
           await this.worktreeLaunchIdentityGate
         }
       }
 
       const cwd = request.cwd ?? ''
+
       const containingWorktree = (
         await Promise.all(
           [this.main, ...this.worktrees.map((worktree) => worktree.path)].map(
@@ -484,6 +493,7 @@ class SystemDouble implements CommandRunner {
         )
       ).find((candidate) => {
         const relative = path.relative(candidate.canonicalPath, cwd)
+
         return (
           relative === '' ||
           (!relative.startsWith(`..${path.sep}`) &&
@@ -491,6 +501,7 @@ class SystemDouble implements CommandRunner {
             !path.isAbsolute(relative))
         )
       })
+
       if (!containingWorktree) {
         return fail(
           'fatal: not a git repository (or any parent directory): .git'
@@ -501,6 +512,7 @@ class SystemDouble implements CommandRunner {
         const worktree = this.worktrees.find(
           (candidate) => candidate.path === containingWorktree.worktreePath
         )
+
         if (!worktree) {
           return fail('missing')
         }
@@ -508,10 +520,12 @@ class SystemDouble implements CommandRunner {
         const canonicalMain = await fs
           .realpath(this.main)
           .catch(() => path.resolve(this.main))
+
         const canonicalGitDirectory = path.resolve(
           canonicalMain,
           path.relative(this.main, worktree.gitWorktreeKey)
         )
+
         return ok(
           `${containingWorktree.canonicalPath}\n${path.join(canonicalMain, '.git')}\n${canonicalGitDirectory}\n`
         )
@@ -550,17 +564,20 @@ class SystemDouble implements CommandRunner {
             )
           )
         ).includes(request.cwd ?? '')
+
         return this.repositoryIdentity && isKnownRepository
           ? ok(`${this.repositoryIdentity}\n`)
           : fail('missing')
       }
 
       const value = args.at(-1)!
+
       if (args.includes('--add') && this.repositoryIdentity) {
         return ok()
       }
 
       this.repositoryIdentity = value
+
       return ok()
     }
 
@@ -575,6 +592,7 @@ class SystemDouble implements CommandRunner {
           }))
         )
       ).find(({ canonicalPath }) => canonicalPath === request.cwd)?.candidate
+
       return worktree ? ok(`${worktree.gitWorktreeKey}\n`) : fail('missing')
     }
 
@@ -590,6 +608,7 @@ class SystemDouble implements CommandRunner {
             ? path.join(this.main, '.git')
             : path.join(this.main, '.git', 'worktrees', adminName)
       }
+
       return ok()
     }
 
@@ -599,6 +618,7 @@ class SystemDouble implements CommandRunner {
       }
 
       const worktrees = structuredClone(this.worktrees)
+
       if (this.worktreeListGate) {
         await this.worktreeListGate
       }
@@ -621,19 +641,23 @@ class SystemDouble implements CommandRunner {
 
     if (args[0] === 'worktree' && args[1] === 'add') {
       const worktreePath = args.at(-2)!
+
       const addGate =
         this.worktreeAddGates.get(worktreePath) ?? this.worktreeAddGate
+
       if (addGate) {
         await addGate
       }
 
       const head = args.at(-1)!
+
       const gitWorktreeKey = path.join(
         this.main,
         '.git',
         'worktrees',
         path.basename(path.dirname(worktreePath))
       )
+
       await fs.mkdir(worktreePath, { recursive: true })
       await fs.writeFile(
         path.join(worktreePath, '.git'),
@@ -645,6 +669,7 @@ class SystemDouble implements CommandRunner {
         head,
         branch: null
       })
+
       return ok()
     }
 
@@ -654,6 +679,7 @@ class SystemDouble implements CommandRunner {
           this.worktrees.splice(index, 1)
         }
       }
+
       return ok()
     }
 
@@ -663,9 +689,11 @@ class SystemDouble implements CommandRunner {
       }
 
       const worktreePath = args.at(-1)!
+
       const index = this.worktrees.findIndex(
         (worktree) => worktree.path === worktreePath
       )
+
       if (index === -1) {
         return fail('missing')
       }
@@ -673,11 +701,13 @@ class SystemDouble implements CommandRunner {
       this.worktrees.splice(index, 1)
       this.worktreeDeregistered?.(worktreePath)
       const removeGate = this.removeAfterDeregisterGates.get(worktreePath)
+
       if (removeGate) {
         await removeGate
       }
 
       await fs.rm(worktreePath, { recursive: true, force: true })
+
       return ok()
     }
 
@@ -713,8 +743,10 @@ class SystemDouble implements CommandRunner {
     }
 
     const lifecycleResult = this.lifecycleCommandResults.get(request.executable)
+
     if (lifecycleResult) {
       this.lifecycleCommandStarted?.(request)
+
       if (lifecycleResult instanceof Error) {
         throw lifecycleResult
       }
@@ -748,6 +780,7 @@ export class TerminalHostDouble implements TerminalSessionBackend {
   createTerminal(input: TerminalCreateInput) {
     return Effect.gen(this, function* () {
       this.system.terminalCreateAttempts += 1
+
       if (this.system.terminalCreateGate) {
         yield* Effect.promise(() => this.system.terminalCreateGate!)
       }
@@ -782,6 +815,7 @@ export class TerminalHostDouble implements TerminalSessionBackend {
   listTerminals(worktreeId: string): Effect.Effect<HostedTerminal[], Error> {
     return Effect.gen(this, function* () {
       this.system.terminalInventoryAttempts += 1
+
       if (this.system.terminalInventoryGate) {
         yield* Effect.promise(() => this.system.terminalInventoryGate!)
       }
@@ -802,6 +836,7 @@ export class TerminalHostDouble implements TerminalSessionBackend {
   terminalState(terminalId: string): Effect.Effect<TerminalSessionState> {
     return Effect.gen(this, function* () {
       this.system.terminalStateAttempts += 1
+
       if (this.system.terminalStateGate) {
         yield* Effect.promise(() => this.system.terminalStateGate!)
       }
@@ -809,6 +844,7 @@ export class TerminalHostDouble implements TerminalSessionBackend {
       const terminal = [...this.system.sessions.values()].find(
         (candidate) => candidate.id === terminalId
       )
+
       return terminal
         ? {
             status: terminal.alive ? ('running' as const) : ('exited' as const),
@@ -824,6 +860,7 @@ export class TerminalHostDouble implements TerminalSessionBackend {
       const terminal = [...this.system.sessions.values()].find(
         (candidate) => candidate.id === terminalId
       )
+
       if (terminal) {
         terminal.name = name
         terminal.updatedAt = updatedAt
@@ -867,12 +904,14 @@ export class TerminalHostDouble implements TerminalSessionBackend {
       }
 
       const removed: string[] = []
+
       for (const [key, terminal] of this.system.sessions) {
         if (terminal.worktreeId === worktreeId) {
           removed.push(terminal.id)
           this.system.sessions.delete(key)
         }
       }
+
       return removed
     })
   }
@@ -882,6 +921,7 @@ export async function fixture() {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport integration with spaces ')
   )
+
   directories.push(root)
   const main = path.join(root, 'main checkout')
   const runtime = path.join(root, 'runtime')
@@ -892,6 +932,7 @@ export async function fixture() {
   await fs.copyFile(databaseTemplate, databasePath)
   const database = await openDatabaseForTest(databasePath)
   databases.push(database)
+
   const config: AppConfig = {
     host: '127.0.0.1',
     port: 8733,
@@ -906,13 +947,17 @@ export async function fixture() {
     daemonLifecycle: 'external',
     webDevelopment: false
   }
+
   const terminalHost = new TerminalHostDouble(runner)
+
   const service = integrationService(
     new TreeportService({ config, runner, terminalHost })
   )
+
   services.push(service)
   await service.runEffect(service.prepareStartup())
   await service.runEffect(service.activateStartup())
   service.attachHttpServer(http.createServer())
+
   return { root, main, runner, service, database, config }
 }

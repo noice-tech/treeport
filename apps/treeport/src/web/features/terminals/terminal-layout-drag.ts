@@ -15,6 +15,7 @@ class TerminalLayoutDragStore {
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
+
     return () => this.listeners.delete(listener)
   }
 
@@ -22,6 +23,7 @@ class TerminalLayoutDragStore {
 
   update(terminal: TerminalRecord, clientX: number, clientY: number): void {
     this.snapshot = { terminal, clientX, clientY }
+
     for (const listener of this.listeners) {
       listener()
     }
@@ -31,6 +33,7 @@ class TerminalLayoutDragStore {
     const snapshot = { terminal, clientX, clientY }
     const handled = this.dropHandler?.(snapshot) ?? false
     this.clear()
+
     return handled
   }
 
@@ -40,6 +43,7 @@ class TerminalLayoutDragStore {
 
   registerDropHandler(handler: DropHandler): () => void {
     this.dropHandler = handler
+
     return () => {
       if (this.dropHandler === handler) {
         this.dropHandler = null
@@ -53,6 +57,7 @@ class TerminalLayoutDragStore {
     }
 
     this.snapshot = null
+
     for (const listener of this.listeners) {
       listener()
     }

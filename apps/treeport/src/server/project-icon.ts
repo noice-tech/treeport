@@ -13,6 +13,7 @@ const ICON_NAMES = [
   'favicon.png',
   'favicon.ico'
 ]
+
 const ICON_DIRECTORIES = [
   '',
   'public',
@@ -21,6 +22,7 @@ const ICON_DIRECTORIES = [
   'src/app',
   'web/public'
 ]
+
 const MAX_MONOREPO_APPS = 16
 const MAX_ICON_BYTES = 1024 * 1024
 
@@ -32,6 +34,7 @@ export async function findProjectIcon(
   const apps = await fs
     .readdir(path.join(rootPath, 'apps'), { withFileTypes: true })
     .catch(() => [])
+
   const roots = [
     rootPath,
     ...apps
@@ -40,9 +43,11 @@ export async function findProjectIcon(
       .sort()
       .slice(0, MAX_MONOREPO_APPS)
   ]
+
   const directories = roots.flatMap((root) =>
     ICON_DIRECTORIES.map((directory) => path.join(root, directory))
   )
+
   const listings = await Promise.all(
     directories.map((directory) =>
       fs.readdir(directory).catch((): string[] => [])
@@ -57,10 +62,12 @@ export async function findProjectIcon(
 
       const iconPath = path.join(directories[index]!, name)
       const stats = await fs.stat(iconPath).catch(() => null)
+
       if (stats?.isFile() && stats.size <= MAX_ICON_BYTES) {
         return iconPath
       }
     }
   }
+
   return null
 }

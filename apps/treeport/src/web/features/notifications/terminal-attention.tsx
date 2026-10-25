@@ -22,6 +22,7 @@ function terminalTitle(
       const terminal = worktree.terminals.find(
         (candidate) => candidate.id === terminalId
       )
+
       if (terminal) {
         return runtimeTitles.get(terminalId) ?? terminal.name
       }
@@ -39,6 +40,7 @@ export function TerminalAttention({
   selectedTerminalId: string | null
 }) {
   const { attention, titles } = useTerminalAttentionMetadata()
+
   const latest = useRef({
     projects,
     selectedTerminalId,
@@ -49,6 +51,7 @@ export function TerminalAttention({
       visible: document.visibilityState === 'visible'
     } as Presence
   })
+
   latest.current.projects = projects
   latest.current.selectedTerminalId = selectedTerminalId
   latest.current.titles = titles
@@ -56,6 +59,7 @@ export function TerminalAttention({
   const acknowledgeSelectedTerminal = () => {
     const current = latest.current
     const terminalId = current.selectedTerminalId
+
     if (!terminalId || !current.presence.focused || !current.presence.visible) {
       return
     }
@@ -63,6 +67,7 @@ export function TerminalAttention({
     const attention = terminalSessions
       .getAttentionMetadataSnapshot()
       .get(terminalId)
+
     if (!attention?.unread) {
       return
     }
@@ -91,6 +96,7 @@ export function TerminalAttention({
     document.addEventListener('visibilitychange', updatePresence)
     window.addEventListener('focus', updatePresence)
     window.addEventListener('blur', updatePresence)
+
     return () => {
       document.removeEventListener('visibilitychange', updatePresence)
       window.removeEventListener('focus', updatePresence)
@@ -107,16 +113,19 @@ export function TerminalAttention({
   useEffect(() => {
     const handleAttention = (event: TerminalAttentionEvent) => {
       const current = latest.current
+
       const activelyViewed =
         current.selectedTerminalId === event.terminalId &&
         current.presence.focused &&
         current.presence.visible
+
       if (activelyViewed) {
         const title = terminalTitle(
           current.projects,
           terminalSessions.getTitleSnapshot(),
           event.terminalId
         )
+
         void terminalSessions
           .acknowledgeAttention(event.terminalId, event.sequence)
           .catch((error) => {
@@ -126,6 +135,7 @@ export function TerminalAttention({
                 : 'acknowledge terminal notification'
             })
           })
+
         return
       }
 

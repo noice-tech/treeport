@@ -31,6 +31,7 @@ export class ProjectObservationService {
       const projectObservations = yield* ProjectObservations
       const projectStore = yield* ProjectStore
       const worktreeMutations = yield* WorktreeMutations
+
       const observation =
         project.kind === 'repository'
           ? importWorktrees(
@@ -64,6 +65,7 @@ export class ProjectObservationService {
                       .limit(1)
                   )
                   .pipe(Effect.orDie)
+
                 const [canonicalPath, folderStat] = yield* Effect.all(
                   [
                     Effect.tryPromise(() => fs.realpath(project.rootPath)).pipe(
@@ -75,6 +77,7 @@ export class ProjectObservationService {
                   ],
                   { concurrency: 'unbounded' }
                 )
+
                 if (
                   !metadata ||
                   canonicalPath !== project.rootPath ||
@@ -88,6 +91,7 @@ export class ProjectObservationService {
                 const device = folderStat.dev.toString()
                 const inode = folderStat.ino.toString()
                 const observedIdentity = yield* folderIdentities.get(project.id)
+
                 if (
                   observedIdentity &&
                   (observedIdentity.device !== device ||
@@ -103,6 +107,7 @@ export class ProjectObservationService {
                     worktree.kind === 'folder' &&
                     worktree.path === project.rootPath
                 )
+
                 if (
                   folderWorktrees.length !== 1 ||
                   project.worktrees.length !== 1
@@ -136,6 +141,7 @@ export class ProjectObservationService {
         }
 
         const error = Cause.squash(cause)
+
         return Effect.fail(
           new DomainError(
             'PROJECT_UNAVAILABLE',
@@ -144,6 +150,7 @@ export class ProjectObservationService {
           )
         )
       })
+
       return yield* projectStore.getProject(project.id)
     })
   }
@@ -156,6 +163,7 @@ export class ProjectObservationService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const git = yield* GitPort
+
       const [metadata] = yield* database
         .execute('project.observation.service.150', (db) =>
           db
@@ -173,6 +181,7 @@ export class ProjectObservationService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       if (!metadata) {
         return yield* Effect.fail(
           new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
@@ -191,6 +200,7 @@ export class ProjectObservationService {
 
       const unavailable = (message: string) =>
         new DomainError('WORKTREE_UNAVAILABLE', message, 409)
+
       const [
         canonicalWorktree,
         worktreeStat,
@@ -245,7 +255,9 @@ export class ProjectObservationService {
         const identity = yield* git
           .worktreeLaunchIdentity(binding.path)
           .pipe(Effect.mapError((error) => unavailable(error.message)))
+
         const expectedCommonPath = path.join(metadata.repositoryPath, '.git')
+
         const expectedCommonDirectory = yield* Effect.tryPromise({
           try: () =>
             fs
@@ -254,10 +266,12 @@ export class ProjectObservationService {
           catch: (error) =>
             unavailable(error instanceof Error ? error.message : String(error))
         })
+
         const relativeGitDirectory = path.relative(
           identity.commonDirectory,
           identity.gitDirectory
         )
+
         const observedKey =
           relativeGitDirectory === ''
             ? 'main'
@@ -306,6 +320,7 @@ export class ProjectObservationService {
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
       const binding = yield* projectStore.storedWorktree(worktreeId)
+
       if (!binding) {
         return yield* Effect.fail(
           new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
@@ -315,9 +330,11 @@ export class ProjectObservationService {
       const project = yield* observeAvailableProject(
         yield* projectStore.requireOpenProject(binding.projectId)
       )
+
       const worktree = project.worktrees.find(
         (candidate) => candidate.id === worktreeId
       )
+
       if (!worktree) {
         return yield* Effect.fail(
           new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
@@ -366,6 +383,7 @@ export class ProjectObservationService {
 
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
+
       for (const project of yield* projectStore.storedProjects(true)) {
         yield* Effect.either(observeAvailableProject(project))
       }

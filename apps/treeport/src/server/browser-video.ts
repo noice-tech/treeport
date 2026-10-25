@@ -9,7 +9,9 @@ export async function prepareBrowserVideoExtension(directory: string) {
   const { publicKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048
   })
+
   const key = publicKey.export({ format: 'der', type: 'spki' })
+
   const id = crypto
     .createHash('sha256')
     .update(key)
@@ -18,6 +20,7 @@ export async function prepareBrowserVideoExtension(directory: string) {
     .replace(/[0-9a-f]/g, (value) =>
       String.fromCharCode(97 + Number.parseInt(value, 16))
     )
+
   await fs.mkdir(directory, { recursive: true, mode: 0o700 })
   await Promise.all([
     fs.writeFile(
@@ -62,6 +65,7 @@ export async function prepareBrowserVideoExtension(directory: string) {
       { mode: 0o600 }
     )
   ])
+
   return { id, directory }
 }
 

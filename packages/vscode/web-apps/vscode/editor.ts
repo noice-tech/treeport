@@ -26,13 +26,16 @@ function openEditor() {
       status.textContent =
         error instanceof Error ? error.message : String(error)
       retry.hidden = false
+
       const service = await treeport.services
         .status('code-server')
         .catch(() => null)
+
       logs.textContent = service?.logs ?? ''
       output.hidden = !service?.logs
     })
 }
 
 retry.addEventListener('click', openEditor)
+
 openEditor()

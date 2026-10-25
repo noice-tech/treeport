@@ -36,12 +36,14 @@ async function createPage(
 ): Promise<Page> {
   const url = `about:blank#treeport-${crypto.randomUUID()}`
   const session = await browser.newBrowserCDPSession()
+
   const [page] = await Promise.all([
     context.waitForEvent('page', { predicate: (page) => page.url() === url }),
     session
       .send('Target.createTarget', { url, ...options })
       .finally(() => session.detach())
   ])
+
   return page
 }
 
@@ -91,15 +93,18 @@ export class PlaywrightBrowserHost {
     }
 
     this.pendingOpens += 1
+
     return this.schedule(async () => {
       let context = this.context
       let browser = this.browser
       let initialPage: Page | null = null
+
       if (!context || !browser?.isConnected()) {
         await fs.mkdir(this.profilePath, { recursive: true, mode: 0o700 })
         await fs.chmod(this.profilePath, 0o700)
         const { chromium } = await import('playwright')
         const runtime = await browserRuntime()
+
         if (runtime.launchError || !runtime.executablePath) {
           throw new Error(
             runtime.launchError ?? 'Browser executable is unavailable.'
@@ -109,7 +114,9 @@ export class PlaywrightBrowserHost {
         const extension = await prepareBrowserVideoExtension(
           path.join(this.profilePath, 'treeport-capture-extension')
         )
+
         const env = { ...process.env }
+
         const args = [
           // Only the private loopback CDP connection can load our extension.
           // Modern branded Chrome does not support --load-extension.
@@ -121,6 +128,7 @@ export class PlaywrightBrowserHost {
           // rejects such browsers as insecure.
           '--disable-blink-features=AutomationControlled'
         ]
+
         // WSLg exposes Windows GPUs through Mesa's D3D12 OpenGL driver, not
         // native Linux Vulkan. Daemons often lack DISPLAY, and headless Chrome
         // otherwise forces SwiftShader. Scope these defaults to the child and
@@ -155,6 +163,7 @@ export class PlaywrightBrowserHost {
         }
 
         const display = await startBrowserDisplay(this.profilePath)
+
         if (display) {
           env.DISPLAY = display.name
           delete env.WAYLAND_DISPLAY
@@ -193,6 +202,7 @@ export class PlaywrightBrowserHost {
         this.display = display
         browser?.once('disconnected', () => {
           display?.close()
+
           if (this.display === display) {
             this.display = null
           }
@@ -208,11 +218,14 @@ export class PlaywrightBrowserHost {
           })
         await extensionSession.detach()
         this.captureExtensionId = extension.id
+
         const activePort = await fs.readFile(
           path.join(this.profilePath, 'DevToolsActivePort'),
           'utf8'
         )
+
         const [port, endpoint] = activePort.trim().split('\n')
+
         if (
           !port ||
           !/^\d+$/.test(port) ||
@@ -251,17 +264,21 @@ export class PlaywrightBrowserHost {
         initialPage && !initialPage.isClosed()
           ? initialPage
           : await createPage(browser, context, { newWindow: true })
+
       this.pages.add(page)
       const display = this.display
       const input = display?.input ?? null
+
       if (display && input) {
         // Native input addresses screen pixels. A fullscreen window has no
         // toolbar, so the viewport's corner sits at the screen's origin.
         // Without a window manager, fullscreen keeps the window's size.
         const cdp = await context.newCDPSession(page)
+
         const { targetInfo } = await cdp
           .send('Target.getTargetInfo')
           .finally(() => cdp.detach())
+
         const session = await browser.newBrowserCDPSession()
         await session
           .send('Browser.getWindowForTarget', {
@@ -303,9 +320,11 @@ export class PlaywrightBrowserHost {
             }
 
             const cdp = await context.newCDPSession(page)
+
             const { targetInfo } = await cdp
               .send('Target.getTargetInfo')
               .finally(() => cdp.detach())
+
             return {
               page: await createPage(browser, context, { background: true }),
               targetId: targetInfo.targetId
@@ -341,6 +360,7 @@ export class PlaywrightBrowserHost {
         }
       }
     }
+
     return clientPage._connection
       .toImpl(page)
       .delegate._mainFrameSession._client.send(
@@ -353,14 +373,17 @@ export class PlaywrightBrowserHost {
     return this.schedule(() =>
       browserClipboard(page, async (read) => {
         const browser = this.browser
+
         if (!browser || !this.pages.has(page)) {
           throw new Error('The hosted browser page is unavailable.')
         }
 
         // Clipboard reads need a script-free context, never the user's tab.
         const context = await browser.newContext({ viewport: null })
+
         try {
           const reader = await context.newPage()
+
           return await read({
             page: reader,
             cdp: await context.newCDPSession(reader)
@@ -384,6 +407,7 @@ export class PlaywrightBrowserHost {
 
   closePage(page: Page): Promise<void> {
     const pending = this.closingPages.get(page)
+
     if (pending) {
       return pending
     }
@@ -400,7 +424,9 @@ export class PlaywrightBrowserHost {
     }).finally(() => {
       this.closingPages.delete(page)
     })
+
     this.closingPages.set(page, result)
+
     return result
   }
 
@@ -419,6 +445,7 @@ export class PlaywrightBrowserHost {
       this.relay?.close()
       await context?.close().catch(() => undefined)
     })
+
     return this.closeOperation
   }
 }

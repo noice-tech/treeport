@@ -28,6 +28,7 @@ export function parseCommandLine(input: string): ParsedCommandLine {
         quote = null
       } else if (character === '\\') {
         index += 1
+
         if (index >= input.length) {
           return {
             argv: null,
@@ -54,12 +55,14 @@ export function parseCommandLine(input: string): ParsedCommandLine {
     }
 
     started = true
+
     if (character === "'") {
       quote = 'single'
     } else if (character === '"') {
       quote = 'double'
     } else if (character === '\\') {
       index += 1
+
       if (index >= input.length) {
         return {
           argv: null,

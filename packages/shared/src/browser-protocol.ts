@@ -10,6 +10,7 @@ import {
   browserObservedUrlSchema,
   browserUrlSchema
 } from './browser-host.js'
+
 export {
   BROWSER_MAX_UPLOAD_BYTES,
   browserAppIdSchema,
@@ -19,6 +20,7 @@ export {
 
 export const BROWSER_MAX_UPLOAD_FILES = 100
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
+
 // Observed Chromium addresses can be megabytes long (including JSON escaping).
 export const BROWSER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
@@ -28,15 +30,18 @@ const opaqueTokenSchema = Schema.String.pipe(
   Schema.minLength(32),
   Schema.maxLength(256)
 )
+
 const browserRequestIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)
 )
+
 const browserGenerationSchema = Schema.Int.pipe(Schema.positive())
 const browserRevisionSchema = Schema.NonNegativeInt
 
 export function normalizeBrowserTitle(title: string): string {
   const end = title.charCodeAt(255)
+
   return title.slice(0, end >= 0xd800 && end <= 0xdbff ? 255 : 256)
 }
 
@@ -48,6 +53,7 @@ export function normalizeBrowserFaviconUrl(
   }
 
   const url = new URL(value)
+
   if (url.protocol === 'data:') {
     return /^data:image\/(?:png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon|svg\+xml);base64,/i.test(
       value
@@ -71,6 +77,7 @@ export const browserContextActionSchema = Schema.Literal(
   'reload',
   'inspect'
 )
+
 export type BrowserContextAction = Schema.Schema.Type<
   typeof browserContextActionSchema
 >
@@ -83,6 +90,7 @@ export const browserContextResultSchema = Schema.Struct({
   canOpenLink: Schema.Boolean,
   canInspect: Schema.Boolean
 })
+
 export type BrowserContextResult = Schema.Schema.Type<
   typeof browserContextResultSchema
 >
@@ -97,6 +105,7 @@ export const browserContextActionResultSchema = Schema.Struct({
     Schema.String.pipe(Schema.pattern(/^[a-fA-F0-9]{32}$/))
   )
 })
+
 export type BrowserContextActionResult = Schema.Schema.Type<
   typeof browserContextActionResultSchema
 >
@@ -261,6 +270,7 @@ export const browserClientMessageSchema = Schema.Union(
     sdp: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(65_536))
   })
 )
+
 export type BrowserClientMessage = Schema.Schema.Type<
   typeof browserClientMessageSchema
 >
@@ -283,6 +293,7 @@ export const browserMediaClientMessageSchema = Schema.Union(
     barrier: Schema.Int.pipe(Schema.between(0, 0xffffffff))
   })
 )
+
 export type BrowserMediaClientMessage = Schema.Schema.Type<
   typeof browserMediaClientMessageSchema
 >
@@ -310,6 +321,7 @@ export const browserRuntimeStateSchema = Schema.Struct({
     height: Schema.Finite.pipe(Schema.between(0, 2_160))
   })
 })
+
 export type BrowserRuntimeState = Schema.Schema.Type<
   typeof browserRuntimeStateSchema
 >
@@ -320,6 +332,7 @@ export const browserControllerDetailsSchema = Schema.Struct({
   sameAccount: Schema.Boolean,
   sameDevice: Schema.Boolean
 })
+
 export type BrowserControllerDetails = Schema.Schema.Type<
   typeof browserControllerDetailsSchema
 >
@@ -342,6 +355,7 @@ export function browserControllerDescription(
   }
 
   const name = details?.account?.name ?? details?.account?.login
+
   return name
     ? `${name} controls this browser.`
     : 'Another window or device controls this browser.'
@@ -355,6 +369,7 @@ export const browserSessionStateSchema = Schema.Struct({
   controller: Schema.Literal('you', 'other', 'none'),
   controllerDetails: Schema.NullOr(browserControllerDetailsSchema)
 })
+
 export type BrowserSessionState = Schema.Schema.Type<
   typeof browserSessionStateSchema
 >
@@ -487,6 +502,7 @@ export const browserServerMessageSchema = Schema.Union(
   }),
   Schema.Struct({ type: Schema.Literal('closed'), reason: Schema.String })
 )
+
 export type BrowserServerMessage = Schema.Schema.Type<
   typeof browserServerMessageSchema
 >
@@ -497,16 +513,20 @@ export const browserTicketRequestSchema = Schema.Struct({
   clientId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
   visible: Schema.Boolean
 })
+
 export const browserOwnerTicketRequestSchema = Schema.Struct({
   clientId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
 })
+
 export const browserTicketResponseSchema = Schema.Struct({
   ticket: opaqueTokenSchema
 })
+
 export const browserOwnerTicketResponseSchema = Schema.Struct({
   ticket: opaqueTokenSchema,
   challenge: opaqueTokenSchema
 })
+
 export const browserOwnerIdentitySchema = Schema.Struct({
   appId: browserAppIdSchema,
   challenge: opaqueTokenSchema
@@ -521,6 +541,7 @@ export const browserOwnerEndpointSchema = Schema.String.pipe(
       }
 
       const url = new URL(value)
+
       return (
         url.protocol === 'http:' &&
         url.hostname === '127.0.0.1' &&
@@ -536,6 +557,7 @@ export const browserOwnerEndpointSchema = Schema.String.pipe(
 )
 
 const browserAgentArgumentSchema = Schema.String.pipe(Schema.maxLength(4_096))
+
 export const browserAgentCommandSchema = Schema.Union(
   Schema.Struct({ command: Schema.Literal('snapshot'), args: Schema.Tuple() }),
   Schema.Struct({
@@ -573,6 +595,7 @@ export const browserAgentCommandSchema = Schema.Union(
   }),
   Schema.Struct({ command: Schema.Literal('reload'), args: Schema.Tuple() })
 )
+
 export type BrowserAgentCommand = Schema.Schema.Type<
   typeof browserAgentCommandSchema
 >
@@ -580,6 +603,7 @@ export type BrowserAgentCommand = Schema.Schema.Type<
 export const browserAuthSchema = Schema.Struct({
   ticket: opaqueTokenSchema
 })
+
 export type BrowserAuth = Schema.Schema.Type<typeof browserAuthSchema>
 
 export const browserOwnerAuthSchema = Schema.Struct({
@@ -587,6 +611,7 @@ export const browserOwnerAuthSchema = Schema.Struct({
   endpoint: browserOwnerEndpointSchema,
   challenge: opaqueTokenSchema
 })
+
 export type BrowserOwnerAuth = Schema.Schema.Type<typeof browserOwnerAuthSchema>
 
 export const browserOwnerClientMessageSchema = Schema.Union(
@@ -633,6 +658,7 @@ export const browserOwnerClientMessageSchema = Schema.Union(
     canClose: Schema.Boolean
   })
 )
+
 export type BrowserOwnerClientMessage = Schema.Schema.Type<
   typeof browserOwnerClientMessageSchema
 >
@@ -673,6 +699,7 @@ export const browserOwnerServerMessageSchema = Schema.Union(
     reason: Schema.String.pipe(Schema.maxLength(1_024))
   })
 )
+
 export type BrowserOwnerServerMessage = Schema.Schema.Type<
   typeof browserOwnerServerMessageSchema
 >
@@ -680,12 +707,15 @@ export type BrowserOwnerServerMessage = Schema.Schema.Type<
 export interface BrowserClientToServerEvents {
   command: (message: BrowserClientMessage) => void
 }
+
 export interface BrowserServerToClientEvents {
   message: (message: BrowserServerMessage) => void
 }
+
 export interface BrowserOwnerClientToServerEvents {
   ownerMessage: (message: BrowserOwnerClientMessage) => void
 }
+
 export interface BrowserOwnerServerToClientEvents {
   ownerMessage: (message: BrowserOwnerServerMessage) => void
 }
@@ -697,35 +727,42 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
   const result = Schema.decodeUnknownEither(schema, {
     onExcessProperty: 'error'
   })(value)
+
   return Either.isRight(result) ? result.right : null
 }
 
 export function parseBrowserAuth(value: unknown): BrowserAuth | null {
   return decodeOrNull(browserAuthSchema, value)
 }
+
 export function parseBrowserMediaClientMessage(
   value: unknown
 ): BrowserMediaClientMessage | null {
   return decodeOrNull(browserMediaClientMessageSchema, value)
 }
+
 export function parseBrowserOwnerAuth(value: unknown): BrowserOwnerAuth | null {
   return decodeOrNull(browserOwnerAuthSchema, value)
 }
+
 export function parseBrowserClientMessage(
   value: unknown
 ): BrowserClientMessage | null {
   return decodeOrNull(browserClientMessageSchema, value)
 }
+
 export function parseBrowserOwnerClientMessage(
   value: unknown
 ): BrowserOwnerClientMessage | null {
   return decodeOrNull(browserOwnerClientMessageSchema, value)
 }
+
 export function parseBrowserServerMessage(
   value: unknown
 ): BrowserServerMessage | null {
   return decodeOrNull(browserServerMessageSchema, value)
 }
+
 export function parseBrowserOwnerServerMessage(
   value: unknown
 ): BrowserOwnerServerMessage | null {

@@ -17,6 +17,7 @@ export function shouldRetryApiQuery(
   }
 
   const status = cause.statusCode ?? 500
+
   return status === 408 || status === 429 || status >= 500
 }
 
@@ -40,22 +41,26 @@ export function createInvalidationCoalescer(
 
   const run = async () => {
     timer = null
+
     if (disposed) {
       return
     }
 
     if (running) {
       trailing = true
+
       return
     }
 
     running = true
+
     try {
       await invalidate()
     } catch {
       // TanStack Query owns the visible error state.
     } finally {
       running = false
+
       if (trailing && !disposed) {
         trailing = false
         timer = setTimeout(() => void run(), delayMs)
@@ -71,6 +76,7 @@ export function createInvalidationCoalescer(
 
       if (running) {
         trailing = true
+
         return
       }
 
@@ -83,6 +89,7 @@ export function createInvalidationCoalescer(
     dispose() {
       disposed = true
       trailing = false
+
       if (timer !== null) {
         clearTimeout(timer)
       }

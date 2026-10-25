@@ -11,6 +11,7 @@ export const localSourcePathSchema = z
   .refine((filePath) =>
     Array.from(filePath).every((character) => {
       const codePoint = character.codePointAt(0)!
+
       return codePoint > 31 && codePoint !== 127
     })
   )

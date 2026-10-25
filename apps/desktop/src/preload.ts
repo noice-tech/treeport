@@ -31,11 +31,13 @@ import type {
 const localSourcePathResultSchema = z.string().nullable().catch(null)
 const localSourcePathsResultSchema = z.array(z.string()).max(1).catch([])
 const localFilePasteListeners = new Set<(paths: string[]) => void>()
+
 const desktopBrowserPopupSchema: z.ZodType<DesktopBrowserPopup> =
   z.strictObject({
     appId: z.string(),
     url: z.string()
   })
+
 const desktopBrowserPermissionsSchema: z.ZodType<DesktopBrowserPermissions> =
   z.strictObject({
     origin: z.string().nullable(),
@@ -47,6 +49,7 @@ const desktopBrowserPermissionsSchema: z.ZodType<DesktopBrowserPermissions> =
       })
     )
   })
+
 const desktopBrowserPermissionPromptSchema: z.ZodType<DesktopBrowserPermissionPrompt> =
   z.strictObject({
     id: z.string().uuid(),
@@ -55,14 +58,17 @@ const desktopBrowserPermissionPromptSchema: z.ZodType<DesktopBrowserPermissionPr
     capability: z.string(),
     destination: z.string().nullable()
   })
+
 const desktopBrowserUnavailableSchema: z.ZodType<DesktopBrowserUnavailable> =
   z.strictObject({ appId: z.string(), message: z.string() })
+
 const desktopBrowserBridgeDescriptorSchema: z.ZodType<DesktopBrowserBridgeDescriptor> =
   z.strictObject({
     endpoint: z.string().url(),
     appId: z.string(),
     challenge: z.string()
   })
+
 const desktopBrowserCommandResultSchema: z.ZodType<DesktopBrowserCommandResult> =
   z.strictObject({ ok: z.boolean(), error: z.string().nullable() })
 
@@ -74,6 +80,7 @@ window.addEventListener(
     }
 
     const files = Array.from(event.clipboardData?.files ?? [])
+
     if (
       files.length > 1 ||
       (files.length === 1 && webUtils.getPathForFile(files[0]!)) ||
@@ -91,12 +98,14 @@ window.addEventListener(
     const paths = localSourcePathsResultSchema.parse(
       ipcRenderer.sendSync('terminal-file:read-clipboard-source-paths')
     )
+
     if (!paths.length) {
       return
     }
 
     event.preventDefault()
     event.stopPropagation()
+
     for (const listener of localFilePasteListeners) {
       listener(paths)
     }
@@ -145,6 +154,7 @@ const desktopBridge = Object.freeze({
   },
   getPathForFile(file: File): Promise<string | null> {
     const filePath = webUtils.getPathForFile(file)
+
     if (!filePath) {
       return Promise.resolve(null)
     }
@@ -155,6 +165,7 @@ const desktopBridge = Object.freeze({
   },
   onLocalFilePaste(listener: (paths: string[]) => void) {
     localFilePasteListeners.add(listener)
+
     return () => localFilePasteListeners.delete(listener)
   },
   onFullscreenChange(listener: (fullscreen: boolean) => void) {
@@ -163,11 +174,14 @@ const desktopBridge = Object.freeze({
       value
     ) => {
       const parsed = z.boolean().safeParse(value)
+
       if (parsed.success) {
         listener(parsed.data)
       }
     }
+
     ipcRenderer.on('fullscreen-change', receive)
+
     return () => ipcRenderer.removeListener('fullscreen-change', receive)
   },
   onCommand(listener: (command: DesktopCommand) => void) {
@@ -205,11 +219,14 @@ const desktopBridge = Object.freeze({
           'select-tab-9'
         ])
         .safeParse(value)
+
       if (parsed.success) {
         listener(parsed.data)
       }
     }
+
     ipcRenderer.on('desktop-command', receive)
+
     return () => ipcRenderer.removeListener('desktop-command', receive)
   },
   zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset') {
@@ -221,6 +238,7 @@ const desktopBridge = Object.freeze({
   onTerminalSelectionRelease(listener: () => void) {
     const receive = () => listener()
     ipcRenderer.on('terminal-selection:release', receive)
+
     return () =>
       ipcRenderer.removeListener('terminal-selection:release', receive)
   },
@@ -271,21 +289,27 @@ const desktopBridge = Object.freeze({
   onBrowserFocus(listener: (appId: string) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
       const parsed = z.string().safeParse(value)
+
       if (parsed.success) {
         listener(parsed.data)
       }
     }
+
     ipcRenderer.on('native-browser:focus', receive)
+
     return () => ipcRenderer.removeListener('native-browser:focus', receive)
   },
   onBrowserPopup(listener: (popup: DesktopBrowserPopup) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
       const parsed = desktopBrowserPopupSchema.safeParse(value)
+
       if (parsed.success) {
         listener(parsed.data)
       }
     }
+
     ipcRenderer.on('native-browser:popup', receive)
+
     return () => ipcRenderer.removeListener('native-browser:popup', receive)
   },
   browserPermissions(appId: string): Promise<DesktopBrowserPermissions | null> {
@@ -312,15 +336,19 @@ const desktopBridge = Object.freeze({
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
       if (value === null) {
         listener(null)
+
         return
       }
 
       const parsed = desktopBrowserPermissionPromptSchema.safeParse(value)
+
       if (parsed.success) {
         listener(parsed.data)
       }
     }
+
     ipcRenderer.on('native-browser:permission-prompt', receive)
+
     return () =>
       ipcRenderer.removeListener('native-browser:permission-prompt', receive)
   },
@@ -330,11 +358,14 @@ const desktopBridge = Object.freeze({
   onBrowserUnavailable(listener: (failure: DesktopBrowserUnavailable) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
       const parsed = desktopBrowserUnavailableSchema.safeParse(value)
+
       if (parsed.success) {
         listener(parsed.data)
       }
     }
+
     ipcRenderer.on('native-browser:unavailable', receive)
+
     return () =>
       ipcRenderer.removeListener('native-browser:unavailable', receive)
   },
@@ -359,13 +390,17 @@ const shellBridge = Object.freeze({
   onState(listener: (state: DesktopShellState) => void) {
     const receive = (_event: IpcRendererEvent, state: DesktopShellState) =>
       listener(state)
+
     ipcRenderer.on('shell:state', receive)
+
     return () => ipcRenderer.removeListener('shell:state', receive)
   },
   onTerminalSelectionActive(listener: (active: boolean) => void) {
     const receive = (_event: IpcRendererEvent, active: boolean) =>
       listener(active)
+
     ipcRenderer.on('terminal-selection:active', receive)
+
     return () =>
       ipcRenderer.removeListener('terminal-selection:active', receive)
   },

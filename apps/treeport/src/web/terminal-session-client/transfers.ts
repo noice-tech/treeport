@@ -19,16 +19,19 @@ import {
 } from './state'
 
 const TERMINAL_UPLOAD_CONCURRENCY = 3
+
 const BROWSER_LOCAL_FILE_PATH_SCHEMA = Schema.String.pipe(
   Schema.maxLength(16_384),
   Schema.startsWith('/'),
   Schema.filter((filePath) =>
     Array.from(filePath).every((character) => {
       const codePoint = character.codePointAt(0)!
+
       return codePoint > 31 && codePoint !== 127
     })
   )
 )
+
 const LOOPBACK_BROWSER_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
 class TerminalTransferError extends Data.TaggedError('TerminalTransferError')<{
@@ -65,9 +68,12 @@ export function makeTransfers(
 ) {
   return Effect.gen(function* () {
     const fileTransferQueue = yield* Queue.unbounded<FileTransferRequest>()
+
     let activeTransfer: Fiber.RuntimeFiber<void, TerminalTransferError> | null =
       null
+
     let queuedFiles = 0
+
     const transfers = Effect.forever(
       Effect.gen(function* () {
         const request = yield* Queue.take(fileTransferQueue)
@@ -104,6 +110,7 @@ export function makeTransfers(
         streamId: state.streamId,
         generation: state.controllerGeneration
       })
+
       if (state.snapshotValue.fileTransfer?.state === 'uploading') {
         dependencies.update({
           fileTransfer: {
@@ -122,6 +129,7 @@ export function makeTransfers(
 
       Effect.runSync(Queue.takeAll(fileTransferQueue))
       queuedFiles = 0
+
       if (activeTransfer) {
         Effect.runFork(Fiber.interruptFork(activeTransfer))
       }
@@ -135,6 +143,7 @@ export function makeTransfers(
     ): Effect.Effect<void, TerminalTransferError> {
       return Effect.gen(function* () {
         const { files, streamId, generation } = request
+
         if (!files.length || state.disposed) {
           return
         }
@@ -164,6 +173,7 @@ export function makeTransfers(
 
         dependencies.cancelTimer('fileTransfer')
         const desktopBridge = window.treeportDesktop
+
         const sourcePaths = yield* Effect.forEach(
           files,
           (file) => {
@@ -176,6 +186,7 @@ export function makeTransfers(
             if (LOOPBACK_BROWSER_HOSTNAMES.has(window.location.hostname)) {
               // SAFETY: Privileged browser platforms can add this read-only File capability.
               const platformFile = file as File & { readonly path?: string }
+
               return Effect.succeed(
                 decodeUnknownOrNull(
                   BROWSER_LOCAL_FILE_PATH_SCHEMA,
@@ -193,6 +204,7 @@ export function makeTransfers(
         // to files whose contents must be sent to the instance.
         const uploadFiles = files.filter((_, index) => !sourcePaths[index])
         const uploadCount = uploadFiles.length
+
         if (uploadFiles.some((file) => file.size > TERMINAL_MAX_UPLOAD_BYTES)) {
           return yield* new TerminalTransferError({
             message: 'Uploaded files are limited to 50 GiB each'
@@ -203,13 +215,17 @@ export function makeTransfers(
           (total, file) => total + file.size,
           0
         )
+
         const sentBytes = files.map(() => 0)
         let completedFiles = 0
         let activeUploads = 0
+
         const updateProgress = () => {
           const bytes = sentBytes.reduce((total, sent) => total + sent, 0)
+
           const percent =
             totalBytes > 0 ? Math.floor((bytes / totalBytes) * 100) : 0
+
           dependencies.update({
             fileTransfer: {
               state: 'uploading',
@@ -219,6 +235,7 @@ export function makeTransfers(
             }
           })
         }
+
         if (uploadCount > 0) {
           updateProgress()
         }
@@ -228,6 +245,7 @@ export function makeTransfers(
           (file, index) =>
             Effect.gen(function* () {
               const sourcePath = sourcePaths[index]
+
               if (sourcePath) {
                 return sourcePath
               }
@@ -235,9 +253,11 @@ export function makeTransfers(
               activeUploads += 1
               updateProgress()
               const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+
               const headers = new Headers({
                 'content-type': file.type || 'application/octet-stream'
               })
+
               if (extension) {
                 headers.set(
                   'x-treeport-file-extension',
@@ -262,10 +282,12 @@ export function makeTransfers(
                 catch: (cause) =>
                   new TerminalTransferError({ message: errorMessage(cause) })
               })
+
               sentBytes[index] = file.size
               completedFiles += 1
               activeUploads -= 1
               updateProgress()
+
               return result.file.path
             }),
           { concurrency: TERMINAL_UPLOAD_CONCURRENCY }
@@ -304,11 +326,13 @@ export function makeTransfers(
               ? 'taking control; try again in a moment'
               : 'interact with the terminal to take control first')
         )
+
         return
       }
 
       if (!dependencies.canInput()) {
         showFileTransferError('Wait for the terminal resize to finish')
+
         return
       }
 
@@ -319,11 +343,13 @@ export function makeTransfers(
             : `'${filePath.replaceAll("'", "'\\''")}'`
         )
         .join(' ')
+
       if (
         new TextEncoder().encode(input).byteLength >
         TERMINAL_MAX_INPUT_BYTES - 32
       ) {
         showFileTransferError('The file paths are too long')
+
         return
       }
 

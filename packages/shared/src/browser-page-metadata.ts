@@ -3,6 +3,7 @@
 export function readBrowserPageMetadata() {
   let faviconUrl: string | null = null
   let bestPriority = -1
+
   for (const link of document.querySelectorAll<HTMLLinkElement>(
     'link[rel~="icon"]'
   )) {
@@ -14,17 +15,21 @@ export function readBrowserPageMetadata() {
           ? '(min-width: 0px)'
           : '(max-width: 0px)'
     )
+
     if (media && !matchMedia(media).matches) {
       continue
     }
 
     const dark = /prefers-color-scheme\s*:\s*dark/i.test(link.media)
+
     const svg =
       link.type === 'image/svg+xml' || /\.svg(?:[?#]|$)/i.test(link.href)
+
     const priority =
       (dark ? 4 : 0) +
       (svg ? 2 : 0) +
       (link.relList.contains('alternate') ? 0 : 1)
+
     if (link.href && priority >= bestPriority) {
       bestPriority = priority
       faviconUrl = link.href

@@ -1,6 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreBinaries": ["tailscale", "Xorg", "xrandr"],
+  "ignoreIssues": {
+    "tools/oxlint/anti-slop/vendor/**": ["types"]
+  },
   "workspaces": {
     ".": {
       "ignoreDependencies": ["@treeport/treeport"]

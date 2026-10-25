@@ -6,6 +6,7 @@ import {
 } from './browser-session-client'
 
 type SocketEvent = 'message' | 'disconnect' | 'connect_error'
+
 type SocketEventValue = BrowserServerMessage | Error | undefined
 
 class FakeSocket implements BrowserAppSocket {
@@ -49,9 +50,11 @@ class FakeSocket implements BrowserAppSocket {
 
 beforeEach(() => {
   vi.stubGlobal('window', { location: { reload: vi.fn() } })
+
   const storage = new Map<string, string>([
     ['treeport-browser-client-id', '12121212-1212-4212-9212-121212121212']
   ])
+
   vi.stubGlobal('sessionStorage', {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value)
@@ -78,6 +81,7 @@ it('preserves control and video signaling and reconnects without replaying offer
   const reconnectedSocket = new FakeSocket()
   let socketCount = 0
   const messages: BrowserServerMessage[] = []
+
   const connection = connectBrowserApp(
     'app-one',
     true,
@@ -86,6 +90,7 @@ it('preserves control and video signaling and reconnects without replaying offer
     },
     () => (socketCount++ === 0 ? socket : reconnectedSocket)
   )
+
   connection.send({ type: 'resize', width: 900, height: 600 })
   connection.send({ type: 'resize', width: 280, height: 180 })
   connection.send({ type: 'navigate', url: 'https://example.com/' })
@@ -118,6 +123,7 @@ it('preserves control and video signaling and reconnects without replaying offer
       viewport: { width: 1_280, height: 800 }
     }
   }
+
   socket.emitServer('message', ready)
   socket.emitServer('message', { type: 'videoReady' })
   expect(window.location.reload).not.toHaveBeenCalled()
@@ -162,12 +168,14 @@ it('preserves control and video signaling and reconnects without replaying offer
   expect(reconnectedSocket.disconnect).toHaveBeenCalledOnce()
 
   const clientId = sessionStorage.getItem('treeport-browser-client-id')
+
   const remounted = connectBrowserApp(
     'app-one',
     true,
     { message: vi.fn() },
     () => new FakeSocket()
   )
+
   expect(fetch).toHaveBeenCalledTimes(3)
   expect(
     JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))
@@ -178,12 +186,14 @@ it('preserves control and video signaling and reconnects without replaying offer
   // sessionStorage in the desktop workspace's WebContents.
   vi.resetModules()
   const restoredClient = await import('./browser-session-client')
+
   const restored = restoredClient.connectBrowserApp(
     'app-one',
     true,
     { message: vi.fn() },
     () => new FakeSocket()
   )
+
   expect(fetch).toHaveBeenCalledTimes(4)
   expect(
     JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))
@@ -193,12 +203,14 @@ it('preserves control and video signaling and reconnects without replaying offer
   vi.resetModules()
   vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: vi.fn() })
   const otherWindowClient = await import('./browser-session-client')
+
   const otherWindow = otherWindowClient.connectBrowserApp(
     'app-one',
     true,
     { message: vi.fn() },
     () => new FakeSocket()
   )
+
   expect(fetch).toHaveBeenCalledTimes(5)
   expect(
     JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))

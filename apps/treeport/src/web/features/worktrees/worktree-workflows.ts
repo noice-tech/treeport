@@ -82,6 +82,7 @@ export function useWorktreeWorkflows({
   selectedTerminalId: string | null
 }) {
   const queryClient = useQueryClient()
+
   const creationsQuery = useQuery({
     queryKey: ['worktree-creations'],
     queryFn: async () =>
@@ -94,9 +95,11 @@ export function useWorktreeWorkflows({
     refetchOnReconnect: true,
     refetchOnWindowFocus: true
   })
+
   const [trackedCreations, setTrackedCreations] = useState<TrackedCreation[]>(
     []
   )
+
   const serverPendingWorktrees: PendingWorktreeCreation[] = (
     creationsQuery.data ?? []
   ).flatMap((operation) => {
@@ -105,15 +108,18 @@ export function useWorktreeWorkflows({
     }
 
     const name = operation.request.name
+
     return operation.projectId
       ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
       : []
   })
+
   useEffect(() => {
     setTrackedCreations((current) => {
       const additions = serverPendingWorktrees.filter(
         (pending) => !current.some((creation) => creation.id === pending.id)
       )
+
       return additions.length === 0
         ? current
         : [
@@ -123,6 +129,7 @@ export function useWorktreeWorkflows({
     })
   }, [serverPendingWorktrees])
   const handledCreationsRef = useRef(new Set<string>())
+
   const trackedCreationQueries = useQueries({
     queries: trackedCreations.map((creation) => ({
       queryKey: ['operation', creation.id] as const,
@@ -137,14 +144,17 @@ export function useWorktreeWorkflows({
       refetchInterval: 500
     }))
   })
+
   const materializedCreationIds = new Set(
     trackedCreationQueries.flatMap((query) => {
       const operation = query.data
+
       if (operation?.status !== 'completed' || operation.kind !== 'create') {
         return []
       }
 
       const worktreeId = operation.result?.worktreeId ?? operation.worktreeId
+
       return worktreeId &&
         projects.some((project) =>
           project.worktrees.some((worktree) => worktree.id === worktreeId)
@@ -153,12 +163,15 @@ export function useWorktreeWorkflows({
         : []
     })
   )
+
   const visibleServerPendingWorktrees = serverPendingWorktrees.filter(
     (pending) => !materializedCreationIds.has(pending.id)
   )
+
   const serverPendingIds = new Set(
     visibleServerPendingWorktrees.map((pending) => pending.id)
   )
+
   const pendingWorktrees = [
     ...visibleServerPendingWorktrees,
     ...trackedCreations
@@ -169,9 +182,11 @@ export function useWorktreeWorkflows({
       )
       .map(({ id, projectId, typedName }) => ({ id, projectId, typedName }))
   ]
+
   const [localPendingRemovals, setLocalPendingRemovals] = useState<
     Record<string, RemovalStage>
   >({})
+
   const pendingRemovals = removals.operations.reduce<
     Record<string, RemovalStage>
   >(
@@ -187,12 +202,14 @@ export function useWorktreeWorkflows({
     },
     { ...localPendingRemovals }
   )
+
   const removalGuardsRef = useRef(new Set<string>())
   const shownRemovalsRef = useRef(new Map<string, RemoveOperationRecord>())
   /* eslint-disable react-you-might-not-need-an-effect/no-pass-data-to-parent -- External operation updates drive progress and failure dialogs, including after refresh. */
   useEffect(() => {
     for (const operation of removals.operations) {
       const preview = operation.request.preview
+
       if (
         !preview ||
         shownRemovalsRef.current.get(operation.id) === operation
@@ -204,6 +221,7 @@ export function useWorktreeWorkflows({
       shownRemovalsRef.current.set(operation.id, operation)
       const worktree = { id: preview.worktreeId, name: preview.name }
       const id = `remove-${operation.id}`
+
       const action = {
         label: 'Review failure',
         onClick: (event: MouseEvent<HTMLButtonElement>) => {
@@ -211,6 +229,7 @@ export function useWorktreeWorkflows({
           onRemovalProgress(worktree, preview, operation, true)
         }
       }
+
       if (operation.status === 'pending' || operation.status === 'running') {
         continue
       }
@@ -221,6 +240,7 @@ export function useWorktreeWorkflows({
 
       void queryClient.invalidateQueries({ queryKey: ['worktree-removals'] })
       void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+
       if (operation.status === 'failed') {
         toast.error(`Couldn’t remove tree “${preview.name}”`, {
           id,
@@ -232,6 +252,7 @@ export function useWorktreeWorkflows({
         onRemovalProgress(worktree, preview, operation, true)
       } else {
         const cleanup = operation.result?.cleanup
+
         if (cleanup?.status === 'preserved') {
           toast.error(`Couldn’t finish cleanup for “${preview.name}”`, {
             id,
@@ -253,6 +274,7 @@ export function useWorktreeWorkflows({
         base: request.base,
         initialTerminal: request.initialTerminal
       }
+
       if (request.sourceWorktreeId) {
         Object.assign(json, { sourceWorktreeId: request.sourceWorktreeId })
       }
@@ -271,8 +293,10 @@ export function useWorktreeWorkflows({
     onSuccess: (operation, request) => {
       const name =
         operation.kind === 'create' ? operation.request.name : request.typedName
+
       setTrackedCreations((current) => {
         const tracked = current.find((creation) => creation.id === operation.id)
+
         return tracked
           ? current.map((creation) =>
               creation.id === operation.id
@@ -303,6 +327,7 @@ export function useWorktreeWorkflows({
     trackedCreationQueries.forEach((query, index) => {
       const operation = query.data
       const tracked = trackedCreations[index]
+
       if (
         !operation ||
         operation.kind !== 'create' ||
@@ -335,14 +360,17 @@ export function useWorktreeWorkflows({
         await queryClient.invalidateQueries({
           queryKey: ['worktree-creations']
         })
+
         if (operation.status === 'failed') {
           notifyError(operation.error ?? 'Tree creation failed', {
             operation: `create tree “${tracked.typedName}”`
           })
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+
           const projects = (await parseResponse(rpc.api.projects.$get()))
             .projects
+
           queryClient.setQueryData(projectsQueryKey, projects)
           const result = operation.result
           setDrawerOpen(false)
@@ -387,9 +415,11 @@ export function useWorktreeWorkflows({
     const initialSize = selectedTerminalId
       ? terminalSessions.getInitialSize(selectedTerminalId)
       : null
+
     const pendingInitialTerminal: WorktreeCreationRequest['initialTerminal'] = {
       name: initialTerminal.name
     }
+
     if (initialTerminal.initialTitle) {
       pendingInitialTerminal.initialTitle = initialTerminal.initialTitle
     }
@@ -412,6 +442,7 @@ export function useWorktreeWorkflows({
       base,
       initialTerminal: pendingInitialTerminal
     }
+
     if (sourceWorktreeId) {
       pending.sourceWorktreeId = sourceWorktreeId
     }
@@ -439,6 +470,7 @@ export function useWorktreeWorkflows({
 
       const next = { ...current }
       delete next[worktreeId]
+
       return next
     })
   }
@@ -451,6 +483,7 @@ export function useWorktreeWorkflows({
     skipCleanup = false
   ): Promise<void> => {
     setRemovalStage(worktree.id, 'removing')
+
     try {
       const acceptedOperation = (
         await parseResponse(
@@ -464,11 +497,13 @@ export function useWorktreeWorkflows({
           })
         )
       ).operation
+
       if (acceptedOperation.kind !== 'remove') {
         throw new Error('Tree removal returned an unexpected operation')
       }
 
       removals.trackRemoval(acceptedOperation)
+
       for (const previous of removals.operations) {
         if (
           previous.status === 'failed' &&
@@ -477,6 +512,7 @@ export function useWorktreeWorkflows({
           toast.dismiss(`remove-${previous.id}`)
         }
       }
+
       releaseRemoval(worktree.id)
       onRemovalDismiss(worktree.id)
       void queryClient.invalidateQueries({ queryKey: ['worktree-removals'] })
@@ -486,6 +522,7 @@ export function useWorktreeWorkflows({
         staleRetriesRemaining > 0
       ) {
         setRemovalStage(worktree.id, 'checking')
+
         try {
           const freshPreview = (
             await parseResponse(
@@ -494,6 +531,7 @@ export function useWorktreeWorkflows({
               })
             )
           ).preview
+
           if (freshPreview.eligible && freshPreview.warnings.length === 0) {
             await submitRemoval(
               worktree,
@@ -502,6 +540,7 @@ export function useWorktreeWorkflows({
               staleRetriesRemaining - 1,
               skipCleanup
             )
+
             return
           }
 
@@ -512,12 +551,14 @@ export function useWorktreeWorkflows({
             undefined,
             skipCleanup
           )
+
           return
         } catch (refreshError) {
           releaseRemoval(worktree.id)
           notifyError(refreshError, {
             operation: `refresh removal details for tree “${worktree.name}”`
           })
+
           return
         }
       }
@@ -540,6 +581,7 @@ export function useWorktreeWorkflows({
 
     removalGuardsRef.current.add(worktree.id)
     setRemovalStage(worktree.id, 'checking')
+
     try {
       const preview = (
         await parseResponse(
@@ -548,8 +590,10 @@ export function useWorktreeWorkflows({
           })
         )
       ).preview
+
       if (preview.eligible && preview.warnings.length === 0) {
         await submitRemoval(worktree, preview, false, 1)
+
         return
       }
 
@@ -594,6 +638,7 @@ export function useWorktreeWorkflows({
 
     removalGuardsRef.current.add(worktree.id)
     setRemovalStage(worktree.id, 'checking')
+
     try {
       const preview = (
         await parseResponse(
@@ -602,6 +647,7 @@ export function useWorktreeWorkflows({
           })
         )
       ).preview
+
       releaseRemoval(worktree.id)
       onRemovalNeedsConfirmation(worktree, preview)
     } catch (error) {

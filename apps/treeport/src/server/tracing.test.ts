@@ -25,16 +25,19 @@ describe('agent trace export', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-tracing-')
     )
+
     directories.push(directory)
     const tracePath = path.join(directory, 'treeport.jsonl')
     await fs.writeFile(tracePath, 'previous')
     await fs.truncate(tracePath, 10 * 1024 * 1024)
     await fs.writeFile(`${tracePath}.1`, 'older')
     await fs.writeFile(`${tracePath}.2`, 'oldest')
+
     const environment = {
       TREEPORT_TRACE: 'jsonl',
       TREEPORT_TRACE_DIR: directory
     }
+
     await Effect.runPromise(
       Effect.void.pipe(
         Effect.withSpan('rotation'),
@@ -68,6 +71,7 @@ describe('agent trace export', () => {
     )
     expect(await fs.readFile(explicitPath, 'utf8')).toContain('preserved\n')
     const before = await fs.readFile(tracePath, 'utf8')
+
     for (const TREEPORT_TRACE of ['off', undefined]) {
       await Effect.runPromise(
         Effect.void.pipe(
@@ -81,6 +85,7 @@ describe('agent trace export', () => {
         )
       )
     }
+
     expect(await fs.readFile(tracePath, 'utf8')).toBe(before)
   })
 
@@ -88,6 +93,7 @@ describe('agent trace export', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-tracing-')
     )
+
     directories.push(directory)
     const tracePath = path.join(directory, 'trace.jsonl')
     vi.stubEnv('TREEPORT_TRACE', 'jsonl')
@@ -135,9 +141,11 @@ describe('agent trace export', () => {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
+
     const parent = records.find(
       (record) => record.name === 'treeport.test.parent'
     )
+
     const child = records.find(
       (record) => record.name === 'treeport.test.child'
     )

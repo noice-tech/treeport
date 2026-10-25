@@ -4,6 +4,7 @@ import { ShellStateProvider } from './shell-state'
 import './styles.css'
 
 const root = document.querySelector<HTMLDivElement>('#app')
+
 if (!root) {
   throw new Error('Missing desktop shell root')
 }

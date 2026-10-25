@@ -23,9 +23,11 @@ const require = createRequire(import.meta.url)
 export async function prepareDevelopmentApp() {
   const electronExecutable = require('electron')
   const electronVersion = require('electron/package.json').version
+
   const icon = fileURLToPath(
     new URL('../assets/TreeportDev.icns', import.meta.url)
   )
+
   const fingerprint = createHash('sha256')
     .update(electronExecutable)
     .update(electronVersion)
@@ -33,10 +35,13 @@ export async function prepareDevelopmentApp() {
     .update(await readFile(fileURLToPath(import.meta.url)))
     .digest('hex')
     .slice(0, 16)
+
   const cache = fileURLToPath(
     new URL('../.treeport-dev/electron/', import.meta.url)
   )
+
   const distribution = path.join(cache, fingerprint)
+
   const ready = await access(distribution).then(
     () => true,
     () => false
@@ -45,6 +50,7 @@ export async function prepareDevelopmentApp() {
   if (!ready) {
     await mkdir(cache, { recursive: true })
     const temporary = await mkdtemp(path.join(cache, 'prepare-'))
+
     try {
       const bundle = path.join(temporary, 'Treeport Dev.app')
       await cp(path.resolve(electronExecutable, '../../..'), bundle, {
@@ -53,6 +59,7 @@ export async function prepareDevelopmentApp() {
         mode: constants.COPYFILE_FICLONE
       })
       const plist = path.join(bundle, 'Contents/Info.plist')
+
       for (const [key, value] of [
         ['CFBundleName', 'Treeport Dev'],
         ['CFBundleDisplayName', 'Treeport Dev'],
@@ -61,6 +68,7 @@ export async function prepareDevelopmentApp() {
       ]) {
         await execute('plutil', ['-replace', key, '-string', value, plist])
       }
+
       await cp(icon, path.join(bundle, 'Contents/Resources/electron.icns'))
       await execute('codesign', ['--force', '--deep', '--sign', '-', bundle])
       await rename(temporary, distribution)

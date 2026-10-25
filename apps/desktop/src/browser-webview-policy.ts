@@ -46,6 +46,7 @@ import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
 
 const BROWSER_PARTITION = 'persist:treeport-browser'
+
 const capabilities = {
   'clipboard-read': 'read your clipboard',
   geolocation: 'know your location',
@@ -54,6 +55,7 @@ const capabilities = {
   microphone: 'use your microphone',
   'loopback-network': 'connect to services on your computer (localhost)'
 } as const
+
 type Capability = keyof typeof capabilities
 
 function browserBootstrapAppId(value: string): string | null {
@@ -137,19 +139,24 @@ export function installBrowserWebviewPolicy(options: {
   const guestEntries = new Map<number, BrowserEntry>()
   const partition = `${BROWSER_PARTITION}-${options.storageKey}`
   const browserSession = session.fromPartition(partition)
+
   const decisionsPath = path.join(
     app.getPath('userData'),
     `browser-site-permissions-${options.storageKey}.json`
   )
+
   const decisions = new Map<string, boolean>()
+
   // The file is data, not authority: only exact, known origin/capability keys are loaded.
   try {
     const saved = z
       .record(z.string(), z.boolean())
       .safeParse(JSON.parse(readFileSync(decisionsPath, 'utf8')))
+
     if (saved.success) {
       for (const [key, value] of Object.entries(saved.data)) {
         const [origin, capability, extra] = key.split('|')
+
         if (
           !extra &&
           origin &&
@@ -166,6 +173,7 @@ export function installBrowserWebviewPolicy(options: {
   } catch {
     // Missing or corrupt preferences are treated as no grants.
   }
+
   const saveDecisions = () => {
     const temporary = `${decisionsPath}.tmp`
     writeFileSync(temporary, JSON.stringify(Object.fromEntries(decisions)), {
@@ -173,11 +181,13 @@ export function installBrowserWebviewPolicy(options: {
     })
     renameSync(temporary, decisionsPath)
   }
+
   const clearDecisions = (
     origin: string,
     capability: string | null
   ): boolean => {
     const previous = new Map(decisions)
+
     for (const key of decisions.keys()) {
       if (
         key === `${origin}|${capability}` ||
@@ -191,24 +201,30 @@ export function installBrowserWebviewPolicy(options: {
       saveDecisions()
     } catch {
       decisions.clear()
+
       for (const [key, allowed] of previous) {
         decisions.set(key, allowed)
       }
+
       return false
     }
 
     for (const entry of guestEntries.values()) {
       cancelPending(entry)
     }
+
     return true
   }
+
   let contextMenu: Menu | null = null
   let promptQueue = Promise.resolve()
+
   let pendingPrompt: {
     id: string
     entry: BrowserEntry
     finish: (allow: boolean) => void
   } | null = null
+
   const askSite = (
     entry: BrowserEntry,
     origin: string,
@@ -227,6 +243,7 @@ export function installBrowserWebviewPolicy(options: {
     return new Promise<boolean>((resolve) => {
       const id = randomUUID()
       const timer = setTimeout(() => finish(false), 45_000)
+
       const finish = (allow: boolean) => {
         if (pendingPrompt?.id !== id) {
           return
@@ -234,12 +251,14 @@ export function installBrowserWebviewPolicy(options: {
 
         clearTimeout(timer)
         pendingPrompt = null
+
         if (!options.trustedRenderer.isDestroyed()) {
           options.trustedRenderer.send('native-browser:permission-prompt', null)
         }
 
         resolve(allow)
       }
+
       pendingPrompt = { id, entry, finish }
       options.trustedRenderer.send('native-browser:permission-prompt', {
         id,
@@ -250,12 +269,14 @@ export function installBrowserWebviewPolicy(options: {
       })
     })
   }
+
   const registered = (contents: WebContents | null): BrowserEntry | null => {
     if (!contents || contents.isDestroyed()) {
       return null
     }
 
     const entry = guestEntries.get(contents.id)
+
     return entry &&
       entry.guest === contents &&
       entry.appId &&
@@ -266,6 +287,7 @@ export function installBrowserWebviewPolicy(options: {
       ? entry
       : null
   }
+
   const siteOrigin = (
     entry: BrowserEntry,
     url: string | undefined,
@@ -276,6 +298,7 @@ export function installBrowserWebviewPolicy(options: {
     }
 
     const parsed = new URL(url)
+
     if (
       !['https:', 'http:'].includes(parsed.protocol) ||
       parsed.origin === 'null'
@@ -290,6 +313,7 @@ export function installBrowserWebviewPolicy(options: {
       ? parsed.origin
       : null
   }
+
   const osAllows = (capability: Capability): boolean => {
     if (capability !== 'camera' && capability !== 'microphone') {
       return true
@@ -300,11 +324,14 @@ export function installBrowserWebviewPolicy(options: {
     }
 
     const status = systemPreferences.getMediaAccessStatus(capability)
+
     return status !== 'denied' && status !== 'restricted'
   }
+
   options.trustedRenderer.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) {
       pendingPrompt?.finish(false)
+
       for (const entry of guestEntries.values()) {
         for (const cancel of entry.pendingPermissions) {
           cancel()
@@ -312,6 +339,7 @@ export function installBrowserWebviewPolicy(options: {
       }
     }
   })
+
   const cancelPending = (entry: BrowserEntry) => {
     if (pendingPrompt?.entry === entry) {
       pendingPrompt.finish(false)
@@ -320,6 +348,7 @@ export function installBrowserWebviewPolicy(options: {
     for (const cancel of entry.pendingPermissions) {
       cancel()
     }
+
     entry.pendingPermissions.clear()
   }
 
@@ -339,6 +368,7 @@ export function installBrowserWebviewPolicy(options: {
 
   const releasePresentation = (entry: BrowserEntry) => {
     entry.fullscreenOrigin = null
+
     if (entry.guest.isDestroyed()) {
       return
     }
@@ -366,7 +396,9 @@ export function installBrowserWebviewPolicy(options: {
             : null,
         isMainFrame: details.isMainFrame
       }
+
       const logPath = process.env.TREEPORT_BROWSER_PERMISSION_LOG
+
       if (logPath) {
         // Diagnostic I/O must never change the permission decision. Fall back
         // to the console if the daemon log cannot be written.
@@ -385,6 +417,7 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       const entry = registered(contents)
+
       if (!entry) {
         return false
       }
@@ -408,11 +441,13 @@ export function installBrowserWebviewPolicy(options: {
             : details.mediaType === 'audio'
               ? 'microphone'
               : null
+
         const origin = siteOrigin(
           entry,
           details.requestingUrl ?? details.securityOrigin ?? requestingOrigin,
           details.isMainFrame
         )
+
         return (
           !!capability &&
           !!origin &&
@@ -427,6 +462,7 @@ export function installBrowserWebviewPolicy(options: {
           details.requestingUrl ?? requestingOrigin,
           details.isMainFrame
         )
+
         return !!origin && decisions.get(`${origin}|${permission}`) === true
       }
 
@@ -435,6 +471,7 @@ export function installBrowserWebviewPolicy(options: {
         details.requestingUrl ?? requestingOrigin,
         isPresentationEligible(entry)
       )
+
       if (permission === 'fullscreen' && origin) {
         entry.fullscreenOrigin = origin
       }
@@ -458,12 +495,15 @@ export function installBrowserWebviewPolicy(options: {
         permitsBrowserVideoCapture(contents, permission, details)
       ) {
         callback(true)
+
         return
       }
 
       const entry = registered(contents)
+
       if (!entry) {
         callback(false)
+
         return
       }
 
@@ -471,6 +511,7 @@ export function installBrowserWebviewPolicy(options: {
         callback(
           siteOrigin(entry, details.requestingUrl, details.isMainFrame) !== null
         )
+
         return
       }
 
@@ -478,10 +519,12 @@ export function installBrowserWebviewPolicy(options: {
       let requested: Capability[] = Object.hasOwn(capabilities, permission)
         ? [permission as Capability]
         : []
+
       if (permission === 'media') {
         // SAFETY: Electron supplies MediaAccessPermissionRequest for media requests.
         const types = (details as Electron.MediaAccessPermissionRequest)
           .mediaTypes
+
         requested =
           types?.length &&
           types.every((type) => type === 'video' || type === 'audio')
@@ -501,32 +544,40 @@ export function installBrowserWebviewPolicy(options: {
           details.requestingUrl,
           details.isMainFrame
         )
+
         if (!origin || !requested.every(osAllows)) {
           callback(false)
+
           return
         }
 
         const keys = requested.map((capability) => `${origin}|${capability}`)
+
         if (keys.some((key) => decisions.get(key) === false)) {
           callback(false)
+
           return
         }
 
         const missing = requested.filter(
           (capability) => !decisions.has(`${origin}|${capability}`)
         )
+
         if (!missing.length) {
           callback(true)
+
           return
         }
 
         if (!options.isForeground()) {
           callback(false)
+
           return
         }
 
         const version = entry.navigationVersion
         let settled = false
+
         const resolve = (allowed: boolean) => {
           if (settled) {
             return
@@ -543,8 +594,10 @@ export function installBrowserWebviewPolicy(options: {
               requested.every(osAllows)
           )
         }
+
         const cancel = () => resolve(false)
         entry.pendingPermissions.add(cancel)
+
         const prompt = async () => {
           if (
             settled ||
@@ -552,11 +605,13 @@ export function installBrowserWebviewPolicy(options: {
             entry.navigationVersion !== version
           ) {
             cancel()
+
             return
           }
 
           if (keys.every((key) => decisions.has(key))) {
             resolve(keys.every((key) => decisions.get(key) === true))
+
             return
           }
 
@@ -569,6 +624,7 @@ export function installBrowserWebviewPolicy(options: {
                 .join(' and '),
               null
             )
+
             if (
               settled ||
               registered(contents) !== entry ||
@@ -577,10 +633,12 @@ export function installBrowserWebviewPolicy(options: {
                 origin
             ) {
               cancel()
+
               return
             }
 
             let allowed = approved
+
             if (allowed && process.platform === 'darwin') {
               for (const capability of missing) {
                 if (
@@ -601,27 +659,34 @@ export function installBrowserWebviewPolicy(options: {
               entry.navigationVersion !== version
             ) {
               cancel()
+
               return
             }
 
             for (const capability of missing) {
               decisions.set(`${origin}|${capability}`, allowed)
             }
+
             try {
               saveDecisions()
             } catch {
               for (const capability of missing) {
                 decisions.delete(`${origin}|${capability}`)
               }
+
               cancel()
+
               return
             }
+
             resolve(allowed)
           } catch {
             cancel()
           }
         }
+
         promptQueue = promptQueue.then(prompt, prompt)
+
         return
       }
 
@@ -630,6 +695,7 @@ export function installBrowserWebviewPolicy(options: {
         details.requestingUrl,
         isPresentationEligible(entry)
       )
+
       if (permission === 'fullscreen' && origin) {
         entry.fullscreenOrigin = origin
       }
@@ -651,15 +717,18 @@ export function installBrowserWebviewPolicy(options: {
         details.resourceType === 'subFrame'
       ) {
         callback({})
+
         return
       }
 
       const target = new URL(details.url)
+
       if (
         !['http:', 'https:', 'ws:', 'wss:'].includes(target.protocol) ||
         !isBrowserLoopbackHostname(target.hostname)
       ) {
         callback({})
+
         return
       }
 
@@ -668,38 +737,47 @@ export function installBrowserWebviewPolicy(options: {
         (details.webContentsId
           ? guestEntries.get(details.webContentsId)?.guest
           : null)
+
       const entry = registered(contents ?? null)
 
       // A referrer is page-controlled; use Electron's actual requesting frame.
       const frame = details.frame
+
       const origin =
         entry && frame === entry.guest.mainFrame
           ? siteOrigin(entry, frame.url, true)
           : null
+
       if (!entry || !origin) {
         callback({ cancel: true })
+
         return
       }
 
       if (isBrowserLoopbackHostname(new URL(origin).hostname)) {
         callback({})
+
         return
       }
 
       const key = `${origin}|loopback-network`
       const remembered = decisions.get(key)
+
       if (remembered !== undefined) {
         callback({ cancel: !remembered })
+
         return
       }
 
       if (!options.isForeground()) {
         callback({ cancel: true })
+
         return
       }
 
       const version = entry.navigationVersion
       let settled = false
+
       const resolve = (allowed: boolean) => {
         if (settled) {
           return
@@ -717,8 +795,10 @@ export function installBrowserWebviewPolicy(options: {
           )
         })
       }
+
       const cancel = () => resolve(false)
       entry.pendingPermissions.add(cancel)
+
       const prompt = async () => {
         if (
           settled ||
@@ -726,12 +806,15 @@ export function installBrowserWebviewPolicy(options: {
           entry.navigationVersion !== version
         ) {
           cancel()
+
           return
         }
 
         const current = decisions.get(key)
+
         if (current !== undefined) {
           resolve(current)
+
           return
         }
 
@@ -742,6 +825,7 @@ export function installBrowserWebviewPolicy(options: {
             capabilities['loopback-network'],
             target.origin
           )
+
           if (
             settled ||
             registered(entry.guest) !== entry ||
@@ -750,23 +834,28 @@ export function installBrowserWebviewPolicy(options: {
             siteOrigin(entry, frame.url, true) !== origin
           ) {
             cancel()
+
             return
           }
 
           const allowed = approved
           decisions.set(key, allowed)
+
           try {
             saveDecisions()
           } catch {
             decisions.delete(key)
             cancel()
+
             return
           }
+
           resolve(allowed)
         } catch {
           cancel()
         }
       }
+
       promptQueue = promptQueue.then(prompt, prompt)
     }
   )
@@ -777,6 +866,7 @@ export function installBrowserWebviewPolicy(options: {
     callback({})
   )
   browserSession.setDevicePermissionHandler(() => false)
+
   const denyDevice = (
     event: Electron.Event,
     _details: Electron.SelectUsbDeviceDetails | Electron.SelectHidDeviceDetails,
@@ -785,6 +875,7 @@ export function installBrowserWebviewPolicy(options: {
     event.preventDefault()
     callback('')
   }
+
   const denySerial = (
     event: Electron.Event,
     _ports: Electron.SerialPort[],
@@ -794,23 +885,28 @@ export function installBrowserWebviewPolicy(options: {
     event.preventDefault()
     callback('')
   }
+
   browserSession.on('select-usb-device', denyDevice)
   browserSession.on('select-hid-device', denyDevice)
   browserSession.on('select-serial-port', denySerial)
 
   let detached = false
+
   const detach = () => {
     if (detached) {
       return
     }
 
     detached = true
+
     for (const entry of guestEntries.values()) {
       cancelPending(entry)
+
       if (!entry.guest.isDestroyed()) {
         entry.guest.close({ waitForBeforeUnload: false })
       }
     }
+
     browserSession.setPermissionCheckHandler(() => false)
     browserSession.setPermissionRequestHandler(
       (_contents, _permission, callback) => callback(false)
@@ -820,12 +916,14 @@ export function installBrowserWebviewPolicy(options: {
     browserSession.removeListener('select-hid-device', denyDevice)
     browserSession.removeListener('select-serial-port', denySerial)
   }
+
   Effect.runSync(Scope.addFinalizer(options.runtime.scope, Effect.sync(detach)))
 
   const disposeEntry = (entry: BrowserEntry) =>
     Effect.gen(function* () {
       cancelPending(entry)
       releasePresentation(entry)
+
       if (entry.appId && entries.get(entry.appId) === entry) {
         entries.delete(entry.appId)
       }
@@ -840,9 +938,12 @@ export function installBrowserWebviewPolicy(options: {
     'will-attach-webview',
     (event, webPreferences, params) => {
       const computer = options.computer
+
       const requestedPartition =
         params.partition ?? webPreferences.partition ?? ''
+
       const appId = browserBootstrapAppId(params.src ?? '') ?? ''
+
       if (
         !computer?.loopback ||
         requestedPartition !== BROWSER_PARTITION ||
@@ -855,6 +956,7 @@ export function installBrowserWebviewPolicy(options: {
           message:
             'The desktop app rejected this Browser. Select Retry to reopen it.'
         })
+
         return
       }
 
@@ -875,12 +977,14 @@ export function installBrowserWebviewPolicy(options: {
 
   options.trustedRenderer.on('did-attach-webview', (_event, guest) => {
     const computer = options.computer
+
     if (
       !computer?.loopback ||
       guest.hostWebContents !== options.trustedRenderer ||
       guest.session !== browserSession
     ) {
       guest.close({ waitForBeforeUnload: false })
+
       return
     }
 
@@ -896,6 +1000,7 @@ export function installBrowserWebviewPolicy(options: {
       navigationVersion: 0,
       pendingPermissions: new Set()
     }
+
     Effect.runSync(
       Scope.addFinalizer(
         entry.runtime.scope,
@@ -903,11 +1008,13 @@ export function installBrowserWebviewPolicy(options: {
           cancelPending(entry)
           pendingGuests.delete(guest.id)
           guestEntries.delete(guest.id)
+
           if (entry.appId && entries.get(entry.appId) === entry) {
             entries.delete(entry.appId)
           }
 
           entry.bridge = null
+
           if (!guest.isDestroyed()) {
             guest.close({ waitForBeforeUnload: false })
           }
@@ -920,27 +1027,32 @@ export function installBrowserWebviewPolicy(options: {
       event.preventDefault()
       callback('')
     })
+
     const refreshErrorPage = (
       errorDescription: string,
       validatedUrl: string
     ) => {
       const parsedUrl = decodeUnknownOrNull(browserUrlSchema, validatedUrl)
+
       if (!parsedUrl) {
         return
       }
 
       const failedUrl = new URL(parsedUrl).href
+
       if (guest.getURL() !== failedUrl) {
         return
       }
 
       const isFile = new URL(failedUrl).protocol === 'file:'
       const host = new URL(failedUrl).hostname || 'Local file'
+
       const detail = isFile
         ? 'Treeport could not load this file on the desktop computer.'
         : errorDescription === 'ERR_CONNECTION_REFUSED'
           ? `${host} refused the connection.`
           : 'Treeport could not load this page.'
+
       const script = `(() => {
         if (window.location.href !== 'chrome-error://chromewebdata/') return false
         document.documentElement.lang = 'en'
@@ -975,6 +1087,7 @@ export function installBrowserWebviewPolicy(options: {
         document.body.replaceChildren(main)
         return true
       })()`
+
       entry.runtime.fork(
         Effect.tryPromise(() => guest.executeJavaScript(script))
       )
@@ -988,6 +1101,7 @@ export function installBrowserWebviewPolicy(options: {
         }
       }
     )
+
     const preventUnsupportedNavigation = (
       event: Electron.Event,
       targetUrl: string
@@ -999,6 +1113,7 @@ export function installBrowserWebviewPolicy(options: {
         event.preventDefault()
       }
     }
+
     guest.on('will-navigate', preventUnsupportedNavigation)
     guest.on('will-redirect', preventUnsupportedNavigation)
     guest.on('did-start-navigation', (details) => {
@@ -1008,9 +1123,11 @@ export function installBrowserWebviewPolicy(options: {
         releasePresentation(entry)
       }
     })
+
     const openInNewApp = (url: string) => {
       const popup = decodeUnknownOrNull(browserUrlSchema, url)
       const appId = entry.appId
+
       if (!popup || !appId || options.trustedRenderer.isDestroyed()) {
         return
       }
@@ -1020,21 +1137,26 @@ export function installBrowserWebviewPolicy(options: {
         url: new URL(popup).href
       })
     }
+
     guest.setWindowOpenHandler(({ url }) => {
       openInNewApp(url)
+
       return { action: 'deny' }
     })
     guest.on('enter-html-full-screen', () => {
       if (!isPresentationEligible(entry)) {
         releasePresentation(entry)
+
         return
       }
 
       const origin =
         entry.fullscreenOrigin ??
         browserPresentationOrigin('fullscreen', guest.getURL(), true)
+
       if (!origin) {
         releasePresentation(entry)
+
         return
       }
 
@@ -1060,6 +1182,7 @@ export function installBrowserWebviewPolicy(options: {
     guest.on('leave-html-full-screen', () => {
       entry.fullscreenOrigin = null
     })
+
     const reportBrowserFocus = () => {
       if (
         entry.appId &&
@@ -1070,10 +1193,12 @@ export function installBrowserWebviewPolicy(options: {
         options.trustedRenderer.send('native-browser:focus', entry.appId)
       }
     }
+
     guest.on('focus', () => {
       if (!options.isForeground()) {
         // The workspace focus guard redirects to the visible host or shell.
         options.trustedRenderer.focus()
+
         return
       }
 
@@ -1089,14 +1214,17 @@ export function installBrowserWebviewPolicy(options: {
       // accelerators, not the input itself (CDP must work while a host is hidden).
       const backgroundInput = entry.inputLocked || !options.isForeground()
       guest.setIgnoreMenuShortcuts(backgroundInput)
+
       if (backgroundInput) {
         return
       }
 
       const commandModifier =
         process.platform === 'darwin' ? input.meta : input.control
+
       const key = input.key.toLowerCase()
       const code = input.code.toLowerCase()
+
       // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
       const command: DesktopCommand | undefined = input.alt
         ? !input.shift && code === 'keyb'
@@ -1121,6 +1249,7 @@ export function installBrowserWebviewPolicy(options: {
                   : /^[1-9]$/.test(key)
                     ? (`select-tab-${key}` as DesktopCommand)
                     : undefined
+
       if (
         input.type !== 'keyDown' ||
         input.isAutoRepeat ||
@@ -1132,6 +1261,7 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       event.preventDefault()
+
       if (!options.trustedRenderer.isDestroyed()) {
         options.trustedRenderer.send('desktop-command', command)
       }
@@ -1139,11 +1269,13 @@ export function installBrowserWebviewPolicy(options: {
     guest.on('context-menu', (event, params) => {
       if (entry.inputLocked || !options.isForeground()) {
         event.preventDefault()
+
         return
       }
 
       const template: MenuItemConstructorOptions[] = []
       const link = decodeUnknownOrNull(browserUrlSchema, params.linkURL)
+
       if (params.linkURL) {
         if (link) {
           template.push({
@@ -1198,10 +1330,12 @@ export function installBrowserWebviewPolicy(options: {
           }
         }
       )
+
       const popupOptions: PopupOptions = {
         window: options.window,
         sourceType: params.menuSourceType
       }
+
       if (params.frame) {
         popupOptions.frame = params.frame
       }
@@ -1222,6 +1356,7 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       contextMenu = null
+
       for (const entry of guestEntries.values()) {
         cancelPending(entry)
         releasePresentation(entry)
@@ -1234,8 +1369,10 @@ export function installBrowserWebviewPolicy(options: {
         }
 
         let entry = entries.get(appId)
+
         if (!entry) {
           const pending = pendingGuests.get(webContentsId)
+
           if (
             pending &&
             browserBootstrapAppId(pending.guest.getURL()) === appId &&
@@ -1258,6 +1395,7 @@ export function installBrowserWebviewPolicy(options: {
         }
 
         const registered = entry
+
         return yield* registered.registrations.withPermits(1)(
           Effect.gen(function* () {
             // Validate after admission, not only before waiting for a replacement.
@@ -1271,6 +1409,7 @@ export function installBrowserWebviewPolicy(options: {
 
             const previousBridge = registered.bridge
             registered.bridge = null
+
             if (previousBridge) {
               yield* previousBridge.stop
             }
@@ -1280,16 +1419,19 @@ export function installBrowserWebviewPolicy(options: {
               { appId, challenge },
               registered.runtime
             )
+
             if (
               registered.runtime.isClosed ||
               entries.get(appId) !== registered ||
               registered.guest.isDestroyed()
             ) {
               yield* bridge.stop
+
               return null
             }
 
             registered.bridge = bridge
+
             return bridge.descriptor
           })
         )
@@ -1298,6 +1440,7 @@ export function installBrowserWebviewPolicy(options: {
     command(event, appId, command) {
       return Effect.gen(function* () {
         const entry = entries.get(appId)
+
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -1330,6 +1473,7 @@ export function installBrowserWebviewPolicy(options: {
                 Effect.gen(function* () {
                   const error: NodeJS.ErrnoException =
                     cause instanceof Error ? cause : new Error(String(cause))
+
                   if (!error.code?.startsWith('ERR_')) {
                     return yield* Effect.fail(cause)
                   }
@@ -1341,6 +1485,7 @@ export function installBrowserWebviewPolicy(options: {
                       "window.location.href === 'chrome-error://chromewebdata/'"
                     )
                   ).pipe(Effect.orElseSucceed(() => false))
+
                   if (errorPage === true) {
                     return
                   }
@@ -1370,6 +1515,7 @@ export function installBrowserWebviewPolicy(options: {
             onFailure: (cause: unknown) => {
               const error: NodeJS.ErrnoException =
                 cause instanceof Error ? cause : new Error(String(cause))
+
               // Chromium aborts the previous load when the user stops or replaces it.
               return error.code === 'ERR_ABORTED'
                 ? { ok: true, error: null }
@@ -1382,6 +1528,7 @@ export function installBrowserWebviewPolicy(options: {
     setInputControl(event, appId, locked) {
       return Effect.sync(() => {
         const entry = entries.get(appId)
+
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -1391,6 +1538,7 @@ export function installBrowserWebviewPolicy(options: {
         }
 
         entry.inputLocked = locked
+
         if (locked) {
           releasePresentation(entry)
         }
@@ -1401,6 +1549,7 @@ export function installBrowserWebviewPolicy(options: {
     setPresentationActive(event, appId, active) {
       return Effect.sync(() => {
         const entry = entries.get(appId)
+
         if (
           !options.isTrustedEvent(event) ||
           !entry ||
@@ -1410,6 +1559,7 @@ export function installBrowserWebviewPolicy(options: {
         }
 
         entry.presentationActive = active
+
         if (!active) {
           releasePresentation(entry)
         }
@@ -1424,6 +1574,7 @@ export function installBrowserWebviewPolicy(options: {
         }
 
         const entry = entries.get(appId)
+
         if (!entry || entry.guest.isDestroyed()) {
           return true
         }
@@ -1433,10 +1584,12 @@ export function installBrowserWebviewPolicy(options: {
             entry.guest.removeListener('destroyed', closed)
             entry.guest.removeListener('will-prevent-unload', prevented)
           }
+
           const closed = () => {
             cleanup()
             resume(Effect.succeed(true))
           }
+
           const prevented = (closeEvent: Electron.Event) => {
             if (force) {
               closeEvent.preventDefault()
@@ -1445,9 +1598,11 @@ export function installBrowserWebviewPolicy(options: {
               resume(Effect.succeed(false))
             }
           }
+
           entry.guest.once('destroyed', closed)
           entry.guest.once('will-prevent-unload', prevented)
           entry.guest.close({ waitForBeforeUnload: true })
+
           return Effect.sync(cleanup)
         }).pipe(
           Effect.timeoutTo({
@@ -1465,6 +1620,7 @@ export function installBrowserWebviewPolicy(options: {
         }
 
         const entry = entries.get(appId)
+
         return entry ? disposeEntry(entry) : Effect.void
       })
     },
@@ -1479,6 +1635,7 @@ export function installBrowserWebviewPolicy(options: {
     },
     permissions(event, appId) {
       const entry = entries.get(appId)
+
       if (
         !options.isTrustedEvent(event) ||
         !entry ||
@@ -1488,11 +1645,13 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       const origin = siteOrigin(entry, entry.guest.getURL(), true)
+
       return {
         origin,
         decisions: origin
           ? Object.entries(capabilities).flatMap(([capability, label]) => {
               const allowed = decisions.get(`${origin}|${capability}`)
+
               return allowed === undefined
                 ? []
                 : [{ capability, label, allowed }]
@@ -1502,6 +1661,7 @@ export function installBrowserWebviewPolicy(options: {
     },
     resetPermissions(event, appId, origin, capability) {
       const entry = entries.get(appId)
+
       if (
         !options.isTrustedEvent(event) ||
         !entry ||

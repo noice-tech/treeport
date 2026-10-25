@@ -16,6 +16,7 @@ export const projectEventsItemSchema = Schema.Union(
     event: productEventSchema
   })
 )
+
 export type ProjectEventsItem = Schema.Schema.Type<
   typeof projectEventsItemSchema
 >
@@ -24,6 +25,7 @@ export const projectEventsFailureSchema = Schema.Struct({
   _tag: Schema.Literal('ProjectEventsFailure'),
   message: Schema.String
 })
+
 export type ProjectEventsFailure = Schema.Schema.Type<
   typeof projectEventsFailureSchema
 >

@@ -26,6 +26,7 @@ export function makeTimers(
     function cancelTimer(key: SessionTimer): void {
       const fiber = timers.get(key)
       timers.delete(key)
+
       if (fiber) {
         Effect.runSync(Fiber.interruptFork(fiber))
       }
@@ -37,6 +38,7 @@ export function makeTimers(
       delay: number
     ): void {
       cancelTimer(key)
+
       if (state.disposed) {
         return
       }
@@ -51,6 +53,7 @@ export function makeTimers(
                 }
 
                 timers.delete(key)
+
                 if (!state.disposed) {
                   callback()
                 }
@@ -67,6 +70,7 @@ export function makeTimers(
           scope
         )
       )
+
       timers.set(key, fiber)
     }
 

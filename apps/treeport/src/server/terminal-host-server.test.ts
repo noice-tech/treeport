@@ -10,6 +10,7 @@ import { makeTerminalHostServer } from '../terminal-runtime/server'
 import type { TerminalHostSessions } from '../terminal-runtime/sessions'
 
 const directories: string[] = []
+
 afterEach(async () => {
   await Promise.all(
     directories
@@ -23,16 +24,21 @@ describe('terminal host request scheduling', () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-server-')
     )
+
     directories.push(root)
     let releaseKill!: () => void
     let markKillStarted!: () => void
+
     const killGate = new Promise<void>((resolve) => {
       releaseKill = resolve
     })
+
     const killStarted = new Promise<void>((resolve) => {
       markKillStarted = resolve
     })
+
     const createTerminal = vi.fn(() => Effect.void)
+
     // SAFETY: This test exercises only the explicitly mocked server session methods.
     const sessions = {
       sessionCount: Effect.succeed(0),
@@ -41,11 +47,13 @@ describe('terminal host request scheduling', () => {
       killTerminal: () =>
         Effect.promise(() => {
           markKillStarted()
+
           return killGate
         }),
       restoreHostQueryAuthority: () => Effect.void,
       shutdown: () => Effect.void
     } as unknown as TerminalHostSessions
+
     const input = (terminalId: string) => ({
       terminalId,
       worktreeId: 'worktree',
@@ -69,13 +77,16 @@ describe('terminal host request scheduling', () => {
             recordPath: path.join(root, 'host.json'),
             sessions
           })
+
           const client = yield* TerminalHostClient.connect(
             host.record.socketPath,
             'token',
             'key',
             'host'
           )
+
           yield* client.createTerminal(input('old'))
+
           const killing = yield* Effect.fork(
             client.killTerminal('old', {
               traceId: '1234567890abcdef1234567890abcdef',
@@ -83,6 +94,7 @@ describe('terminal host request scheduling', () => {
               sampled: true
             })
           )
+
           yield* Effect.promise(() => killStarted)
           yield* client.createTerminal(input('new'))
           expect(createTerminal).toHaveBeenCalledTimes(2)

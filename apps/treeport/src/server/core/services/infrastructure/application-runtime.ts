@@ -115,6 +115,7 @@ export class ApplicationDaemons extends Effect.Service<ApplicationDaemons>()(
   {
     scoped: Effect.gen(function* () {
       const fibers = yield* FiberSet.make<unknown, never>()
+
       return {
         fork: <Requirements>(
           effect: Effect.Effect<unknown, never, Requirements>
@@ -130,6 +131,7 @@ export class ApplicationFibers extends Effect.Service<ApplicationFibers>()(
   {
     scoped: Effect.gen(function* () {
       const fibers = yield* FiberSet.make<unknown, never>()
+
       return {
         // The application scope owns accepted work, not the request's
         // interruption mask. Inheriting that mask can deadlock races while
@@ -215,6 +217,7 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
 }
 
 export type ApplicationRuntime = ReturnType<typeof makeApplicationRuntime>
+
 export type ApplicationServices =
   | ConfigPort
   | DatabasePort
@@ -255,11 +258,13 @@ export async function runApplicationEffect<Result, Failure>(
   effect: Effect.Effect<Result, Failure, ApplicationServices>
 ): Promise<Result> {
   const exit = await runtime.runPromiseExit(effect)
+
   if (Exit.isSuccess(exit)) {
     return exit.value
   }
 
   const failure = Cause.failureOption(exit.cause)
+
   if (Option.isSome(failure)) {
     throw failure.value
   }

@@ -27,8 +27,10 @@ export async function createLauncherMock(page: Page) {
 
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
+
     if (route.request().method() !== 'GET') {
       await route.fallback()
+
       return
     }
 
@@ -50,11 +52,13 @@ export async function createLauncherMock(page: Page) {
           diagnostics: []
         }
       })
+
       return
     }
 
     if (pathname === '/api/launchers') {
       await route.fulfill({ json: { launchers: launchers } })
+
       return
     }
 

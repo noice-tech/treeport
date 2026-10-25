@@ -9,6 +9,7 @@ export function decodeUnknownOrNull<S extends Schema.Schema<any, any, never>>(
   const result = Schema.decodeUnknownEither(schema, {
     onExcessProperty: 'error'
   })(value)
+
   return Either.isRight(result) ? result.right : null
 }
 

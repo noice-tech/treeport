@@ -27,12 +27,14 @@ async function checkPackage(
   const manifest = JSON.parse(
     await fs.readFile(path.join(packageDirectory, 'package.json'), 'utf8')
   )
+
   if (manifest.name === '@treeport/session-keeper') {
     return checkSessionKeeperPackage(packageDirectory)
   }
 
   const cli = manifest.name === '@treeport/treeport'
   assert(cli || manifest.name === '@treeport/app-sdk', 'Unexpected package')
+
   for (const kind of [
     'dependencies',
     'optionalDependencies',
@@ -94,13 +96,16 @@ async function checkPackage(
         'LICENSE',
         'README.md'
       ]
+
   for (const file of required) {
     assert(
       (await fs.stat(path.join(packageDirectory, file))).size > 0,
       `Empty required file: ${file}`
     )
   }
+
   assert.equal(manifest.main, cli ? 'dist/node/cli/index.js' : 'dist/index.js')
+
   if (cli) {
     assert.deepEqual(manifest.bin, { treeport: 'bin/treeport.mjs' })
     assert.equal(
@@ -111,12 +116,14 @@ async function checkPackage(
       manifest.dependencies['@treeport/session-keeper'],
       published ? keeperVersion : 'workspace:*'
     )
+
     for (const entrypoint of [
       manifest.bin.treeport,
       manifest.main,
       'dist/node/server/core/launcher.js'
     ]) {
       const entrypointPath = path.join(packageDirectory, entrypoint)
+
       // pnpm normalizes non-bin modes; the CLI and daemon launcher run via Node.
       if (entrypoint === manifest.bin.treeport) {
         assert(
@@ -132,10 +139,12 @@ async function checkPackage(
         `Entrypoint must have a Node shebang: ${entrypoint}`
       )
     }
+
     const binSource = await fs.readFile(
       path.join(packageDirectory, manifest.bin.treeport),
       'utf8'
     )
+
     assert(
       binSource.includes('TREEPORT_CLI_ENTRYPOINT'),
       'The CLI must preserve its stable bin entrypoint'
@@ -151,13 +160,16 @@ async function checkPackage(
       ),
       'The packaged CLI skill must match the Treeport skill'
     )
+
     const journal = JSON.parse(
       await fs.readFile(
         path.join(packageDirectory, 'drizzle/meta/_journal.json'),
         'utf8'
       )
     )
+
     assert(journal.entries.length > 0, 'Missing migration history')
+
     for (const entry of journal.entries) {
       assert(
         (
@@ -168,27 +180,34 @@ async function checkPackage(
         `Missing migration: ${entry.tag}`
       )
     }
+
     const html = await fs.readFile(
       path.join(packageDirectory, 'dist/web/index.html'),
       'utf8'
     )
+
     assert(html.includes('<div id="root">'), 'Missing web app root')
+
     const assets = [...html.matchAll(/(?:src|href)="(\/[^"#?]+)"/g)].map(
       (match) => match[1]
     )
+
     assert(
       assets.some((asset) => asset.endsWith('.js')),
       'Missing web JavaScript'
     )
+
     // The bootstrap loads workspace styles and optional chunks dynamically,
     // so they need not appear as stylesheet or script links in the HTML.
     const bundledAssets = await fs.readdir(
       path.join(packageDirectory, 'dist/web/assets')
     )
+
     assert(
       bundledAssets.some((asset) => asset.endsWith('.css')),
       'Missing web styles'
     )
+
     for (const asset of [
       ...assets,
       ...bundledAssets.map((asset) => `/assets/${asset}`)
@@ -214,6 +233,7 @@ async function checkPackage(
     published ? packageDirectory : path.join(packageDirectory, 'dist'),
     { recursive: true }
   )
+
   const forbidden = files.filter(
     (file) =>
       /(?:^|\/)(?:tests?|__tests__|fixtures|apps\/desktop|\.vite|electron(?:-forge)?)(?:\/|$)/.test(
@@ -224,13 +244,16 @@ async function checkPackage(
       ) ||
       (cli && /^(?:dist\/)?native(?:\/|$)/.test(file))
   )
+
   assert.deepEqual(
     forbidden,
     [],
     'Publish output contains tests, build metadata, desktop content or CLI-owned native payloads'
   )
+
   if (cli) {
     const privateWorkspaceImports = []
+
     for (const file of files.filter((file) => file.endsWith('.js'))) {
       const source = await fs.readFile(
         path.join(
@@ -239,10 +262,12 @@ async function checkPackage(
         ),
         'utf8'
       )
+
       if (source.includes('@treeport/shared')) {
         privateWorkspaceImports.push(file)
       }
     }
+
     assert.deepEqual(
       privateWorkspaceImports,
       [],
@@ -262,12 +287,15 @@ if (!packed) {
   const temporaryDirectory = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-package-contract-')
   )
+
   try {
     const manifests = []
+
     for (const source of [sdkDirectory, keeperDirectory, directory]) {
       const sourceManifest = JSON.parse(
         await fs.readFile(path.join(source, 'package.json'), 'utf8')
       )
+
       await execute(
         'pnpm',
         [
@@ -278,16 +306,20 @@ if (!packed) {
         ],
         { cwd: source }
       )
+
       const tarball = path.join(
         temporaryDirectory,
         `${sourceManifest.name.replace('@', '').replace('/', '-')}-${sourceManifest.version}.tgz`
       )
+
       const extracted = path.join(
         temporaryDirectory,
         sourceManifest.name.split('/')[1]
       )
+
       await fs.mkdir(extracted)
       await execute('tar', ['-xzf', tarball, '-C', extracted])
+
       if (source === keeperDirectory) {
         const keeperManifest = JSON.parse(
           await fs.readFile(
@@ -295,6 +327,7 @@ if (!packed) {
             'utf8'
           )
         )
+
         await fs.writeFile(
           path.join(temporaryDirectory, 'package.json'),
           JSON.stringify({
@@ -315,10 +348,12 @@ if (!packed) {
         manifests[0]?.version,
         manifests[1]?.version
       )
+
       assert.equal(manifest.name, sourceManifest.name)
       assert.equal(manifest.version, sourceManifest.version)
       manifests.push(manifest)
     }
+
     console.log(
       `Packed artifact checks passed for ${manifests.map((manifest) => `${manifest.name}@${manifest.version}`).join(' and ')} (no application installation or daemon)`
     )

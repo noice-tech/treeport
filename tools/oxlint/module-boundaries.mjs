@@ -5,15 +5,18 @@ import { fileURLToPath } from 'node:url'
 import { ResolverFactory } from 'oxc-resolver'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
+
 // Package ownership must be known even on a clean checkout, before exported
 // declaration files have been built.
 const workspaceOwners = new Map()
+
 for (const directory of ['apps', 'packages']) {
   for (const entry of readdirSync(path.join(root, directory), {
     withFileTypes: true
   })) {
     const owner = `${directory}/${entry.name}`
     const manifest = path.join(root, owner, 'package.json')
+
     if (entry.isDirectory() && existsSync(manifest)) {
       workspaceOwners.set(
         JSON.parse(readFileSync(manifest, 'utf8')).name,
@@ -22,21 +25,25 @@ for (const directory of ['apps', 'packages']) {
     }
   }
 }
+
 const resolver = new ResolverFactory({
   tsconfig: 'auto',
   conditionNames: ['types', 'import', 'node', 'default'],
   extensions: ['.ts', '.tsx', '.d.ts', '.js', '.mjs', '.json', '.css'],
   extensionAlias: { '.js': ['.ts', '.js'] }
 })
+
 const webResolver = resolver.cloneWithOptions({
   tsconfig: { configFile: path.join(root, 'apps/treeport/tsconfig.web.json') }
 })
+
 const desktopPackages = new Set([
   '@treeport/desktop-bridge',
   '@treeport/theme/styles.css',
   '@treeport/shared/browser-host',
   '@treeport/shared/tracing'
 ])
+
 // Keep these leaf modules independent too: a facade must not smuggle the
 // application protocol back into desktop through a transitive dependency.
 const nativeUtilities = new Set([
@@ -73,6 +80,7 @@ export default {
     const shell = source.startsWith('apps/desktop/src/shell/')
     const bridge = source.startsWith('packages/desktop-bridge/src/')
     const nativeUtility = nativeUtilities.has(source)
+
     if (!owner) {
       return {}
     }
@@ -83,8 +91,10 @@ export default {
         sourceNode.expressions.length === 0
           ? sourceNode.quasis[0].value.cooked
           : sourceNode?.value
+
       if (bridge) {
         context.report({ node, messageId: 'declaration' })
+
         return
       }
 
@@ -105,18 +115,23 @@ export default {
         (specifier.startsWith('.') || path.isAbsolute(specifier)
           ? path.resolve(path.dirname(filename), specifier)
           : null)
+
       const target = resolved
         ? path.relative(root, resolved).replaceAll(path.sep, '/')
         : null
+
       const packageName = specifier
         .split('/')
         .slice(0, specifier.startsWith('@') ? 2 : 1)
         .join('/')
+
       const targetOwner =
         target?.match(/^(apps|packages)\/[^/]+/)?.[0] ??
         workspaceOwners.get(packageName) ??
         null
+
       let reason = null
+
       if (targetOwner?.startsWith('apps/') && targetOwner !== owner) {
         reason =
           'Applications are independent release units; packages and other applications must not import their implementation.'
@@ -258,6 +273,7 @@ export default {
             statement.type === 'ExportNamedDeclaration'
               ? statement.declaration
               : statement
+
           if (
             !['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(
               declaration?.type
@@ -279,6 +295,7 @@ export default {
 
         const outer = node.typeAnnotation
         const inner = outer.typeArguments?.params[0]
+
         if (
           outer.typeName?.name !== 'Readonly' ||
           inner?.typeName?.name !== 'Partial'

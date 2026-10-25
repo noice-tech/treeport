@@ -31,11 +31,14 @@ function rendererFiles(
 ): Effect.Effect<Map<string, string>, Cause.UnknownException> {
   return Effect.gen(function* () {
     const files = new Map<string, string>()
+
     const entries = yield* Effect.tryPromise(() =>
       readdir(path.join(directory, relativeDirectory), { withFileTypes: true })
     )
+
     for (const entry of entries) {
       const relativePath = path.posix.join(relativeDirectory, entry.name)
+
       if (entry.isDirectory()) {
         for (const [urlPath, filePath] of yield* rendererFiles(
           directory,
@@ -47,17 +50,20 @@ function rendererFiles(
         files.set(`/${relativePath}`, path.join(directory, relativePath))
       }
     }
+
     return files
   })
 }
 
 function requestPath(url: URL): string | null {
   let decoded: string
+
   try {
     decoded = decodeURIComponent(url.pathname)
   } catch {
     return null
   }
+
   if (
     decoded.includes('\\') ||
     decoded.split('/').some((segment) => segment === '..' || segment === '.')
@@ -66,6 +72,7 @@ function requestPath(url: URL): string | null {
   }
 
   const normalized = path.posix.normalize(decoded)
+
   return normalized.startsWith('/') ? normalized : null
 }
 
@@ -85,7 +92,9 @@ export function createRendererRequestHandler(
     const files = options.developmentServerUrl
       ? new Map<string, string>()
       : yield* rendererFiles(options.rendererDirectory)
+
     const indexPath = files.get('/index.html') ?? null
+
     const forward = (request: Request) =>
       Effect.tryPromise((signal) =>
         options.forward(
@@ -94,11 +103,13 @@ export function createRendererRequestHandler(
           })
         )
       )
+
     const localFileResponse = (filePath: string, head: boolean) =>
       Effect.gen(function* () {
         const content = yield* Effect.tryPromise((signal) =>
           readFile(filePath, { signal })
         )
+
         return new Response(head ? null : new Uint8Array(content), {
           headers: {
             'content-type':
@@ -108,9 +119,11 @@ export function createRendererRequestHandler(
           }
         })
       })
+
     return (request: Request) =>
       Effect.gen(function* () {
         const url = new URL(request.url)
+
         // Only the private shell is bundled. Workspace documents and assets
         // always belong to the selected daemon, never to the desktop release.
         if (url.protocol !== 'treeport-app:') {
@@ -118,6 +131,7 @@ export function createRendererRequestHandler(
         }
 
         const pathname = requestPath(url)
+
         if (!pathname) {
           return new Response('Not found', { status: 404 })
         }
@@ -127,13 +141,16 @@ export function createRendererRequestHandler(
             isDocumentRequest(request) ? '/' : `${pathname}${url.search}`,
             options.developmentServerUrl
           )
+
           const requestInit: RequestInit & { duplex?: 'half' } = {
             method: request.method,
             headers: request.headers,
             signal: request.signal
           }
+
           if (request.method !== 'GET' && request.method !== 'HEAD') {
             requestInit.body = request.body
+
             if (request.body) {
               requestInit.duplex = 'half'
             }
@@ -143,6 +160,7 @@ export function createRendererRequestHandler(
         }
 
         const filePath = files.get(pathname)
+
         if (
           (request.method === 'GET' || request.method === 'HEAD') &&
           filePath

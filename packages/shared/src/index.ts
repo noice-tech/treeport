@@ -51,20 +51,35 @@ export type {
   TreeportServiceSdk,
   TreeportTree
 } from '@treeport/app-sdk'
+
 export * from './browser-protocol.js'
+
 export * from './browser-clipboard.js'
+
 export * from './browser-page-metadata.js'
+
 export * from './browser-video.js'
+
 export * from './http-protocol.js'
+
 export * from './json-schema.js'
+
 export * from './network-rpc.js'
+
 export * from './network-rpc-client.js'
+
 export * from './protocol-socket-client.js'
+
 export * from './presence-protocol.js'
+
 export * from './push-protocol.js'
+
 export * from './schema.js'
+
 export * from './socket-protocol.js'
+
 export * from './terminal-protocol.js'
+
 export * from './web-app-protocol.js'
 
 export const PRODUCT_NAME = 'Treeport'
@@ -102,9 +117,13 @@ export function formatCommandLine(argv: readonly string[]): string {
 }
 
 export type ProjectKind = 'repository' | 'folder'
+
 export type WorktreeKind = 'main' | 'linked' | 'folder'
+
 export type TerminalStatus = 'running' | 'exited' | 'missing' | 'unavailable'
+
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
+
 export type OperationKind =
   | 'create'
   | 'finish'
@@ -157,6 +176,7 @@ export interface Launcher {
 }
 
 export type PackageScope = 'global' | 'project'
+
 export type PackageResourceType = 'web-app' | 'launcher'
 
 export interface PackageResourceDiagnostic {
@@ -263,6 +283,7 @@ export interface BrowserApp {
 }
 
 export type App = WebApp | BrowserApp
+
 export type WorkspaceItem = TerminalWorkspaceItem | App
 
 export type WebAppSource =
@@ -594,6 +615,7 @@ export const apiErrorBodySchema = Schema.Struct({
     details: Schema.optional(Schema.Unknown)
   })
 })
+
 export type ApiErrorBody = Schema.Schema.Type<typeof apiErrorBodySchema>
 
 export interface DirectoryBreadcrumb {
@@ -670,13 +692,16 @@ const terminalNameSchema = Schema.Trim.pipe(
   Schema.minLength(1),
   Schema.maxLength(TERMINAL_NAME_MAX_LENGTH)
 )
+
 const terminalArgvSchema = Schema.Array(Schema.String).pipe(
   Schema.minItems(1),
   Schema.maxItems(TERMINAL_ARGV_MAX_COUNT)
 )
+
 const launcherArgumentSchema = Schema.String.pipe(
   Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH)
 )
+
 const launcherExecutableSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(TERMINAL_EXECUTABLE_MAX_LENGTH),
@@ -684,15 +709,18 @@ const launcherExecutableSchema = Schema.String.pipe(
     message: () => 'Executable cannot be blank'
   })
 )
+
 const launcherArgsSchema = Schema.Array(launcherArgumentSchema).pipe(
   Schema.maxItems(LAUNCHER_ARGUMENT_MAX_COUNT)
 )
+
 const launcherTreeTitleSchema = Schema.NullOr(
   Schema.Struct({
     executable: launcherExecutableSchema,
     args: launcherArgsSchema
   })
 )
+
 const launcherFields = {
   name: terminalNameSchema,
   executable: launcherExecutableSchema,
@@ -704,13 +732,16 @@ const launcherFields = {
     default: () => null
   })
 }
+
 export const repositoryLauncherSchema = Schema.Struct(launcherFields)
+
 const repositoryLauncherIdSchema = Schema.String.pipe(
   Schema.pattern(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
     message: () =>
       'Launcher IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
   })
 )
+
 export const repositoryLaunchersSettingsSchema = Schema.Struct({
   launchers: Schema.optionalWith(
     Schema.Record({
@@ -720,6 +751,7 @@ export const repositoryLaunchersSettingsSchema = Schema.Struct({
     { default: () => ({}) }
   )
 })
+
 const launcherRevisionSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(64)
@@ -750,6 +782,7 @@ export function resolveLauncherArgs(
 ): string[] {
   return args.flatMap((arg) => {
     const whole = LAUNCHER_WHOLE_INPUT_PATTERN.exec(arg)
+
     if (whole && !inputs[whole[1]!]) {
       return []
     }
@@ -770,6 +803,7 @@ export function normalizeWorktreeName(input: string): string {
     .toLowerCase()
     .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
     .replace(/^-+|-+$/gu, '')
+
   if (!name) {
     throw new Error('Tree name is required')
   }
@@ -785,6 +819,7 @@ export function normalizeWorktreeName(input: string): string {
 export function availableTreeName(takenNames: readonly string[]): string {
   const taken = new Set(takenNames.map((name) => name.toLowerCase()))
   let name = 'tree'
+
   for (let suffix = 2; taken.has(name); suffix += 1) {
     name = `tree-${suffix}`
   }
@@ -824,6 +859,7 @@ const terminalCwdSchema = Schema.String.pipe(
     message: () => 'Working directory cannot be blank or contain NUL'
   })
 )
+
 const terminalEnvironmentKeySchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(256),
@@ -831,6 +867,7 @@ const terminalEnvironmentKeySchema = Schema.String.pipe(
     message: () => 'Environment keys cannot contain equals or NUL'
   })
 )
+
 const terminalShellCommandSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH),
@@ -838,6 +875,7 @@ const terminalShellCommandSchema = Schema.String.pipe(
     message: () => 'Shell command cannot be blank or contain NUL'
   })
 )
+
 const terminalEnvironmentSchema = Schema.Record({
   key: terminalEnvironmentKeySchema,
   value: Schema.String.pipe(
@@ -880,6 +918,7 @@ export const createTerminalSchema = Schema.Struct({
 export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })
 
 export const WORKTREE_TITLE_MAX_LENGTH = 120
+
 export const updateWorktreeTitleSchema = Schema.Struct({
   title: Schema.NullOr(
     Schema.Trim.pipe(
@@ -891,6 +930,7 @@ export const updateWorktreeTitleSchema = Schema.Struct({
 
 export const TREE_DECORATION_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/
 export const TREE_DECORATION_TEXT_MAX_LENGTH = 32
+
 export const setTreeDecorationSchema = Schema.Struct({
   text: Schema.Trim.pipe(
     Schema.minLength(1),
@@ -952,10 +992,12 @@ export const createWebAppSchema = Schema.Struct({
     Schema.NullOr(Schema.String.pipe(Schema.maxLength(4_096)))
   )
 })
+
 export const updateWebAppPermissionGrantSchema = Schema.Struct({
   granted: Schema.Boolean,
   permissions: Schema.Array(webAppPermissionSchema)
 })
+
 export const createBrowserAppSchema = Schema.Struct({
   url: Schema.optional(browserUrlSchema),
   sourceTerminalId: Schema.optional(
@@ -964,9 +1006,11 @@ export const createBrowserAppSchema = Schema.Struct({
     )
   )
 })
+
 export const openBrowserAppFromTerminalSchema = Schema.Struct({
   url: browserUrlSchema
 })
+
 export const openWebAppSchema = Schema.Struct({
   ...createWebAppSchema.fields,
   newInstance: Schema.optional(Schema.Boolean),
@@ -976,6 +1020,7 @@ export const openWebAppSchema = Schema.Struct({
     )
   )
 })
+
 export const requestWorkspaceOpenSchema = Schema.Struct({
   sourceTerminalId: Schema.String.pipe(
     Schema.minLength(1),
@@ -987,15 +1032,18 @@ export const webAppStorageKeySchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(128)
 )
+
 export const getWebAppStorageSchema = Schema.Struct({
   scope: Schema.optional(webAppStorageScopeSchema),
   key: webAppStorageKeySchema
 })
+
 export const setWebAppStorageSchema = Schema.Struct({
   scope: Schema.optional(webAppStorageScopeSchema),
   key: webAppStorageKeySchema,
   value: jsonValueSchema
 })
+
 export const deleteWebAppStorageSchema = Schema.Struct({
   scope: Schema.optional(webAppStorageScopeSchema),
   key: webAppStorageKeySchema
@@ -1012,7 +1060,9 @@ export const treeFilePathSchema = Schema.String.pipe(
     { message: () => 'File path must be a relative path inside the tree' }
   )
 )
+
 export const readTreeFileSchema = Schema.Struct({ path: treeFilePathSchema })
+
 export const searchTreeFilesSchema = Schema.Struct({
   query: Schema.String.pipe(
     Schema.minLength(1),
@@ -1022,6 +1072,7 @@ export const searchTreeFilesSchema = Schema.Struct({
     })
   )
 })
+
 export const writeTreeFileSchema = Schema.Struct({
   path: treeFilePathSchema,
   content: Schema.String,
@@ -1032,12 +1083,14 @@ export const writeTreeFileSchema = Schema.Struct({
 })
 
 export const createLauncherSchema = Schema.Struct(launcherFields)
+
 export const updateLauncherSchema = Schema.Struct({
   ...launcherFields,
   closeOnSuccess: Schema.optional(Schema.Boolean),
   treeTitle: Schema.optional(launcherTreeTitleSchema),
   expectedUpdatedAt: launcherRevisionSchema
 })
+
 export const deleteLauncherSchema = Schema.Struct({
   expectedUpdatedAt: launcherRevisionSchema
 })
@@ -1045,22 +1098,27 @@ export const deleteLauncherSchema = Schema.Struct({
 export const packageProjectQuerySchema = Schema.Struct({
   path: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096))
 })
+
 export const packageInstallSchema = Schema.Struct({
   source: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096)),
   projectId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
 })
+
 export const packageRemoveSchema = Schema.Struct({
   source: Schema.String.pipe(Schema.minLength(1)),
   projectId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
 })
+
 export const packageUpdateSchema = Schema.Struct({
   source: Schema.optional(
     Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096))
   )
 })
+
 export const packageReloadSchema = Schema.Struct({
   projectId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
 })
+
 export const removeWorktreeSchema = Schema.Struct({
   confirmationToken: Schema.String.pipe(Schema.length(64)),
   confirmDestructive: Schema.Boolean,
@@ -1068,6 +1126,7 @@ export const removeWorktreeSchema = Schema.Struct({
     default: () => false
   })
 })
+
 export const spawnSchema = Schema.Struct({
   project: Schema.String.pipe(Schema.minLength(1)),
   worktreeName: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(120)),

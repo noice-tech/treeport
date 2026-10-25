@@ -17,6 +17,7 @@ import { testAccess } from './test-access'
 it('keeps the attempted HTTP URL when Chromium navigates to an internal error page', async () => {
   let currentUrl = 'about:blank'
   const frame = {}
+
   const cdp = Object.assign(new EventEmitter(), {
     send: vi.fn(async () => ({
       currentIndex: 0,
@@ -24,8 +25,10 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
       cssVisualViewport: { scale: 2 }
     }))
   })
+
   let committedUrl = currentUrl
   let commitNavigation: () => void = () => undefined
+
   const navigate = vi.fn(
     () =>
       new Promise<void>((resolve) => {
@@ -35,6 +38,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
         }
       })
   )
+
   const page = Object.assign(new EventEmitter(), {
     url: () => currentUrl,
     title: vi.fn(async () => 'localhost'),
@@ -54,6 +58,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     addInitScript: vi.fn(async () => undefined),
     setViewportSize: vi.fn(async () => undefined)
   })
+
   const host = testAccess<PlaywrightBrowserHost>({
     openPage: async () => ({
       browser: new EventEmitter(),
@@ -63,8 +68,10 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     setPageFocus: vi.fn(async () => undefined),
     closePage: vi.fn(async () => undefined)
   })
+
   const states: BrowserRuntimeState[] = []
   const navigationError = vi.fn()
+
   const browser = new PlaywrightBrowser(host, '/unused', {
     state: (state) => states.push(state),
     popup: () => undefined,
@@ -73,6 +80,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     navigationError,
     crashed: () => undefined
   })
+
   onTestFinished(() => browser.close())
   expectTypeOf<PlaywrightBrowser>().not.toHaveProperty('webcodecs')
   expectTypeOf<PlaywrightBrowser>().not.toHaveProperty('negotiateVideo')
@@ -100,6 +108,7 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     expect(browser.state.loading).toBe(false)
     expect(browser.state.url).toBe(attemptedUrl)
   })
+
   // Every emitted state must remain usable in the desktop ownership handshake.
   for (const state of states) {
     expect(
@@ -135,12 +144,14 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   // delayed metadata from older navigations must not overwrite newer results.
   const titles: Array<() => void> = []
   onTestFinished(() => titles.forEach((resolve) => resolve()))
+
   const commands = [
     { type: 'navigate', url: 'https://example.com/start' },
     { type: 'back' },
     { type: 'forward' },
     { type: 'reload' }
   ] as const
+
   for (const [index, message] of commands.entries()) {
     committedUrl =
       message.type === 'back'
@@ -154,9 +165,11 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
         })
     )
     let completed = false
+
     const command = browser.command(message).then(() => {
       completed = true
     })
+
     expect(navigate).toHaveBeenCalledTimes(index + 1)
     expect(completed).toBe(false)
     expect(browser.state.url).toBe(previousUrl)
@@ -187,9 +200,11 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
       modifiers: 0
     })
   }
+
   for (const resolve of [...titles].reverse()) {
     resolve()
   }
+
   await vi.waitFor(() => expect(browser.state.title).toBe('Navigation 3'))
 
   // Native button events reuse the correctly scaled position. Navigation,
@@ -221,10 +236,13 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
   const cdp = Object.assign(new EventEmitter(), {
     send: async () => ({ currentIndex: 0, entries: [] })
   })
+
   const dismiss = vi.fn(async () => {
     throw new Error('No dialog is showing')
   })
+
   let rejectReload: (error: Error) => void = () => undefined
+
   const page = Object.assign(new EventEmitter(), {
     url: () => 'https://example.com/unsaved',
     title: async () => 'Unsaved work',
@@ -240,6 +258,7 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
         )
       })
   })
+
   const host = testAccess<PlaywrightBrowserHost>({
     openPage: async () => ({
       browser: new EventEmitter(),
@@ -249,6 +268,7 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
     setPageFocus: vi.fn(async () => undefined),
     closePage: vi.fn(async () => undefined)
   })
+
   const browser = new PlaywrightBrowser(host, '/unused', {
     state: () => undefined,
     popup: () => undefined,
@@ -257,6 +277,7 @@ it('dismisses hosted beforeunload safely and settles canceled reload without los
     navigationError: () => undefined,
     crashed: () => undefined
   })
+
   onTestFinished(() => browser.close())
   await browser.launch()
   await expect(browser.command({ type: 'reload' })).rejects.toThrow(
@@ -287,9 +308,11 @@ it('prepares a private exact-tab capture extension without website entry points'
   onTestFinished(() => fs.rm(directory, { recursive: true, force: true }))
   const extension = await prepareBrowserVideoExtension(directory)
   expect(extension.id).toMatch(/^[a-p]{32}$/)
+
   const manifest = JSON.parse(
     await fs.readFile(path.join(directory, 'manifest.json'), 'utf8')
   )
+
   expect(manifest.permissions).toEqual(['tabCapture', 'debugger'])
   expect(manifest.externally_connectable).toBeUndefined()
   expect(manifest.web_accessible_resources).toBeUndefined()

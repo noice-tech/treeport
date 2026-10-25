@@ -78,13 +78,16 @@ export function useReorderableItems<Item extends { id: string }>({
   const pendingCommit = useRef<readonly Item[] | null>(null)
 
   const itemsById = new Map(items.map((item) => [item.id, item]))
+
   const orderedItems = (draftIds ?? itemIds).flatMap((itemId) => {
     const item = itemsById.get(itemId)
+
     return item ? [item] : []
   })
 
   const cleanUpDrag = () => {
     const drag = dragRef.current
+
     if (drag?.holdTimer) {
       clearTimeout(drag.holdTimer)
     }
@@ -109,6 +112,7 @@ export function useReorderableItems<Item extends { id: string }>({
 
   const moveDraggedItem = (pointerCoordinate: number) => {
     const drag = dragRef.current
+
     if (!drag) {
       return
     }
@@ -118,18 +122,24 @@ export function useReorderableItems<Item extends { id: string }>({
       pointerCoordinate -
       drag.startCoordinate +
       drag.itemSize / 2
+
     const remainingIds = drag.draftIds.filter((itemId) => itemId !== drag.id)
+
     const targetIndex = remainingIds.findIndex((itemId) => {
       const rect = itemElements.current.get(itemId)?.getBoundingClientRect()
+
       const center = rect
         ? orientation === 'horizontal'
           ? rect.left + rect.width / 2
           : rect.top + rect.height / 2
         : Number.POSITIVE_INFINITY
+
       return draggedCenter <= center
     })
+
     const nextIds = [...remainingIds]
     nextIds.splice(targetIndex < 0 ? nextIds.length : targetIndex, 0, drag.id)
+
     if (nextIds.every((itemId, index) => itemId === drag.draftIds[index])) {
       return
     }
@@ -139,17 +149,20 @@ export function useReorderableItems<Item extends { id: string }>({
         .filter(([itemId]) => itemId !== drag.id)
         .map(([itemId, element]) => [itemId, element.getBoundingClientRect()])
     )
+
     for (const element of itemElements.current.values()) {
       for (const animation of element.getAnimations()) {
         animation.cancel()
       }
     }
+
     drag.draftIds = nextIds
     setDraftIds(nextIds)
   }
 
   const continueDrag = (clientX: number, clientY: number) => {
     const drag = dragRef.current
+
     if (!drag?.started || !drag.overlay) {
       return
     }
@@ -161,6 +174,7 @@ export function useReorderableItems<Item extends { id: string }>({
     }px, 0)`
     moveDraggedItem(orientation === 'horizontal' ? clientX : clientY)
     const item = itemsById.get(drag.id)
+
     if (item) {
       onDragMove?.(item, clientX, clientY)
     }
@@ -168,19 +182,24 @@ export function useReorderableItems<Item extends { id: string }>({
 
   const commit = () => {
     const drag = dragRef.current
+
     if (!drag?.started) {
       cleanUpDrag()
+
       return
     }
 
     const changed = drag.draftIds.some(
       (itemId, index) => itemId !== drag.originalIds[index]
     )
+
     const draggedId = drag.id
     const item = itemsById.get(draggedId)
+
     const handled = item
       ? (onDragEnd?.(item, drag.lastX, drag.lastY) ?? false)
       : false
+
     suppressClick.current = draggedId
     window.setTimeout(() => {
       if (suppressClick.current === draggedId) {
@@ -189,8 +208,10 @@ export function useReorderableItems<Item extends { id: string }>({
     })
     cleanUpDrag()
     setDraggingId(null)
+
     if (handled || !changed) {
       setDraftIds(null)
+
       return
     }
 
@@ -206,15 +227,19 @@ export function useReorderableItems<Item extends { id: string }>({
   const startDrag = (itemId: string, capturePointer: boolean) => {
     const drag = dragRef.current
     const item = itemElements.current.get(itemId)
+
     if (!drag || !item) {
       cancel()
+
       return
     }
 
     const rect = item.getBoundingClientRect()
     const overlay = item.cloneNode(true)
+
     if (!(overlay instanceof HTMLElement)) {
       cancel()
+
       return
     }
 
@@ -248,6 +273,7 @@ export function useReorderableItems<Item extends { id: string }>({
     })
     const listeners = new AbortController()
     const listenerOptions = { signal: listeners.signal }
+
     if (capturePointer) {
       shield.addEventListener(
         'pointermove',
@@ -298,6 +324,7 @@ export function useReorderableItems<Item extends { id: string }>({
     drag.listeners = listeners
     setDraftIds(drag.draftIds)
     setDraggingId(itemId)
+
     if (capturePointer) {
       drag.handle.releasePointerCapture(drag.pointerId)
       shield.setPointerCapture(drag.pointerId)
@@ -314,6 +341,7 @@ export function useReorderableItems<Item extends { id: string }>({
   useLayoutEffect(() => {
     const rects = previousRects.current
     previousRects.current = null
+
     if (
       !rects ||
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -323,6 +351,7 @@ export function useReorderableItems<Item extends { id: string }>({
 
     for (const [itemId, previousRect] of rects) {
       const element = itemElements.current.get(itemId)
+
       if (!element) {
         continue
       }
@@ -330,6 +359,7 @@ export function useReorderableItems<Item extends { id: string }>({
       const nextRect = element.getBoundingClientRect()
       const x = previousRect.left - nextRect.left
       const y = previousRect.top - nextRect.top
+
       if (x || y) {
         element.animate(
           [
@@ -365,17 +395,20 @@ export function useReorderableItems<Item extends { id: string }>({
         }
 
         const item = itemElements.current.get(itemId)
+
         if (!item) {
           return
         }
 
         const touch = event.touches[0]
+
         if (!touch) {
           return
         }
 
         const rect = item.getBoundingClientRect()
         const touchListeners = new AbortController()
+
         const drag: DragState = {
           id: itemId,
           pointerId: touch.identifier,
@@ -397,10 +430,12 @@ export function useReorderableItems<Item extends { id: string }>({
           holdTimer: null,
           touchListeners
         }
+
         dragRef.current = drag
         const signal = touchListeners.signal
         drag.holdTimer = setTimeout(() => {
           drag.holdTimer = null
+
           if (dragRef.current === drag) {
             startDrag(itemId, false)
           }
@@ -414,12 +449,14 @@ export function useReorderableItems<Item extends { id: string }>({
 
             if (nextEvent.touches.length !== 1) {
               cancel()
+
               return
             }
 
             const movingTouch = Array.from(nextEvent.changedTouches).find(
               (candidate) => candidate.identifier === drag.pointerId
             )
+
             if (!movingTouch) {
               return
             }
@@ -494,6 +531,7 @@ export function useReorderableItems<Item extends { id: string }>({
         }
 
         const item = itemElements.current.get(itemId)
+
         if (!item) {
           return
         }
@@ -524,6 +562,7 @@ export function useReorderableItems<Item extends { id: string }>({
       },
       onPointerMove: (event: PointerEvent<HTMLElement>) => {
         const drag = dragRef.current
+
         if (
           event.pointerType === 'touch' ||
           !drag ||
@@ -543,6 +582,7 @@ export function useReorderableItems<Item extends { id: string }>({
           }
 
           startDrag(itemId, true)
+
           if (!dragRef.current?.started) {
             return
           }
@@ -553,6 +593,7 @@ export function useReorderableItems<Item extends { id: string }>({
       },
       onPointerUp: (event: PointerEvent<HTMLElement>) => {
         const drag = dragRef.current
+
         if (
           event.pointerType !== 'touch' &&
           drag?.pointerId === event.pointerId
@@ -579,6 +620,7 @@ export function useReorderableItems<Item extends { id: string }>({
         if (event.key === 'Escape' && dragRef.current?.started) {
           event.preventDefault()
           cancel()
+
           return
         }
 
@@ -588,14 +630,17 @@ export function useReorderableItems<Item extends { id: string }>({
 
         const previousKey =
           orientation === 'horizontal' ? 'ArrowLeft' : 'ArrowUp'
+
         const nextKey =
           orientation === 'horizontal' ? 'ArrowRight' : 'ArrowDown'
+
         if (event.key !== previousKey && event.key !== nextKey) {
           return
         }
 
         const currentIndex = itemIds.indexOf(itemId)
         const targetIndex = currentIndex + (event.key === previousKey ? -1 : 1)
+
         if (targetIndex < 0 || targetIndex >= itemIds.length) {
           return
         }

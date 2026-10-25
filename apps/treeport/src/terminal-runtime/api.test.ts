@@ -20,28 +20,35 @@ describe('stable terminal host API', () => {
         output: '\u001b[32m🌲\r\n'.repeat(100)
       }
     }
+
     const runtime = {
       type: 'event' as const,
       event: 'runtime' as const,
       data: { terminalId: 'term-🌲', value: { commandExitCode: 0 } }
     }
+
     const compact = await Effect.runPromise(
       encodeTerminalHostFrame(output, true)
     )
+
     const json = await Effect.runPromise(encodeTerminalHostFrame(output))
     expect(compact.length).toBeLessThan(json.length)
+
     const wire = Buffer.concat([
       compact,
       await Effect.runPromise(encodeTerminalHostFrame(runtime)),
       json
     ])
+
     const decode = makeTerminalHostFrameDecoder()
     const frames = []
+
     for (let offset = 0; offset < wire.length; offset += 7) {
       frames.push(
         ...(await Effect.runPromise(decode(wire.subarray(offset, offset + 7))))
       )
     }
+
     expect(frames).toEqual([output, runtime, output])
     const invalid = Buffer.from(compact)
     invalid.writeUInt32BE(0xffffffff, 5)
@@ -60,11 +67,13 @@ describe('stable terminal host API', () => {
     expect(
       await Effect.runPromise(decodeTerminalHostResult('state', state))
     ).toEqual(state)
+
     const frame = {
       type: 'event' as const,
       event: 'runtime' as const,
       data: { terminalId: 'term', value: { commandExitCode: 0 } }
     }
+
     const encoded = await Effect.runPromise(encodeTerminalHostFrame(frame))
     expect(
       await Effect.runPromise(makeTerminalHostFrameDecoder()(encoded))
@@ -130,6 +139,7 @@ describe('stable terminal host API', () => {
         })
       )
     )
+
     expect(Exit.isFailure(invalid)).toBe(true)
   })
 
@@ -143,11 +153,14 @@ describe('stable terminal host API', () => {
         futureFrameField: true
       })
     )
+
     const header = Buffer.alloc(4)
     header.writeUInt32BE(payload.byteLength)
+
     const frames = await Effect.runPromise(
       makeTerminalHostFrameDecoder()(Buffer.concat([header, payload]))
     )
+
     expect(frames).toEqual([
       {
         type: 'request',
@@ -171,6 +184,7 @@ describe('stable terminal host API', () => {
         })
       )
     )
+
     expect(Exit.isFailure(invalid)).toBe(true)
   })
 })

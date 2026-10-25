@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const pageHost = 'apps/treeport/src/server/browser-page-host.ts'
+
 const allocationMethods = new Set([
   'newPage',
   'newContext',
@@ -33,8 +34,10 @@ export default {
     const source = path
       .relative(root, context.filename)
       .replaceAll(path.sep, '/')
+
     const server = source.startsWith('apps/treeport/src/server/')
     const web = source.startsWith('apps/treeport/src/web/')
+
     if ((!server && !web) || /\.test\.tsx?$/.test(source)) {
       return {}
     }
@@ -51,6 +54,7 @@ export default {
       }
 
       const specifier = sourceNode?.value
+
       if (
         /(?:^|\/)browser-video-receiver(?:\.[jt]s)?$/.test(specifier) ||
         (!typeOnly &&
@@ -123,15 +127,18 @@ export default {
         }
 
         const method = propertyName(node.callee)
+
         if (method !== 'newContext' && method !== 'launchPersistentContext') {
           return
         }
 
         const options = node.arguments[method === 'newContext' ? 0 : 1]
+
         const viewport =
           options?.type === 'ObjectExpression'
             ? options.properties.at(-1)
             : null
+
         if (
           viewport?.type !== 'Property' ||
           viewport.computed ||

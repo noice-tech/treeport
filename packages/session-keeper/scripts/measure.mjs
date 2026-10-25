@@ -13,15 +13,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const exec = promisify(execFile)
+
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../..'
 )
+
 const results = path.resolve(
   process.argv[2] ??
     path.join(os.tmpdir(), `treeport-keeper-results-${Date.now()}`)
 )
+
 await fs.mkdir(results, { recursive: true })
+
 const rustEntry = path.resolve(
   process.env.TREEPORT_KEEPER_RUST_BINARY ??
     path.join(
@@ -29,9 +33,11 @@ const rustEntry = path.resolve(
       `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
     )
 )
+
 const dist = path.join(root, 'apps/treeport/dist')
 const journalEntry = path.join(dist, 'session-journal.js')
 const protocolEntry = path.join(dist, 'session-protocol.js')
+
 await Promise.all([fs.access(journalEntry), fs.access(protocolEntry)]).catch(
   () => {
     throw new Error(
@@ -39,24 +45,32 @@ await Promise.all([fs.access(journalEntry), fs.access(protocolEntry)]).catch(
     )
   }
 )
+
 const { SessionJournal } = await import(pathToFileURL(journalEntry).href)
+
 const { sessionFrameSchema, sessionManifestSchema } = await import(
   pathToFileURL(protocolEntry).href
 )
+
 const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tp-keeper-'))
 const fixtures = []
 const observations = []
+
 const outputInterval = Number(
   process.env.TREEPORT_KEEPER_OUTPUT_INTERVAL ?? '0.004'
 )
+
 assert.ok(Number.isFinite(outputInterval) && outputInterval > 0)
+
 const python = (await exec('which', ['python3'])).stdout.trim()
 const orphanProbe = process.env.TREEPORT_KEEPER_ORPHAN_PROBE ?? null
+
 assert.ok(
   orphanProbe === null ||
     orphanProbe === 'independent-session' ||
     orphanProbe === 'same-session'
 )
+
 // No emulator here. The fake engine supplies query replies, as the TS engine does.
 const workload = `
 import os,sys,time,tty
@@ -106,10 +120,12 @@ while True:
   os.write(1,b'ANCESTOR_REAPED\\n')
  else: os.write(1,b'INPUT:'+c+b'\\n')
 `
+
 await fs.writeFile(path.join(fixtureRoot, 'workload.py'), workload)
 
 async function waitFor(condition, timeout = 15000) {
   const deadline = Date.now() + timeout
+
   while (!(await condition())) {
     if (Date.now() > deadline) {
       throw new Error('Fixture deadline exceeded')
@@ -135,10 +151,12 @@ class Wire {
     socket.on('data', (data) => {
       buffered += data
       let boundary
+
       while ((boundary = buffered.indexOf('\n')) !== -1) {
         const frame = JSON.parse(buffered.slice(0, boundary))
         buffered = buffered.slice(boundary + 1)
         this.frames.push(frame)
+
         if (
           frame.type === 'output' ||
           frame.type === 'resize' ||
@@ -151,6 +169,7 @@ class Wire {
 
         if (frame.type === 'output') {
           this.output += frame.data
+
           if (
             this.queryReply &&
             this.output.includes('\x1b[6n') &&
@@ -172,6 +191,7 @@ class Wire {
           for (const pending of this.pending.values()) {
             pending.reject(new Error(frame.message))
           }
+
           this.pending.clear()
         }
       }
@@ -179,11 +199,13 @@ class Wire {
   }
   request(method, fields = {}) {
     const id = crypto.randomUUID()
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`Request timed out: ${method}`))
       }, 15000)
+
       this.pending.set(id, {
         resolve: (value) => {
           clearTimeout(timer)
@@ -200,6 +222,7 @@ class Wire {
   async ok(method, fields) {
     const response = await this.request(method, fields)
     assert.equal(response.error, null)
+
     return response.status
   }
   async write(data) {
@@ -223,11 +246,13 @@ async function wire(
     socket.once('error', reject)
   })
   const value = new Wire(socket, method !== 'attach')
+
   if (duringReplay) {
     socket.pause()
   }
 
   const pending = value.request(method, { token, ...fields })
+
   if (duringReplay) {
     await delay(500)
     await sample(fixture, 'replay-socket-backpressure')
@@ -238,6 +263,7 @@ async function wire(
     value.close()
     throw error
   })
+
   if (method === 'attach' && response.error === null) {
     await waitFor(() => value.frames.some((frame) => frame.type === 'ready'))
     await value.ok('pause', { paused: false })
@@ -253,10 +279,12 @@ async function fixture(limit = 512 * 1024 * 1024) {
   // create caches (macOS Library, for example); these are not journal payload
   // and must never grant close authority to traverse arbitrary subdirectories.
   const home = await fs.mkdtemp(path.join(fixtureRoot, `${kind}-home-`))
+
   const socketPath = path.join(
     fixtureRoot,
     `${crypto.randomUUID().slice(0, 8)}.sock`
   )
+
   const token = crypto.randomBytes(32).toString('hex')
   await fs.writeFile(
     path.join(directory, 'manifest.json'),
@@ -275,13 +303,16 @@ async function fixture(limit = 512 * 1024 * 1024) {
     }),
     { mode: 0o600 }
   )
+
   const bootstrap = spawn(rustEntry, ['--detach', directory], {
     stdio: ['ignore', 'ignore', 'pipe']
   })
+
   let stderr = ''
   bootstrap.stderr.on('data', (data) => {
     stderr += data
   })
+
   const fixture = {
     kind,
     directory,
@@ -291,12 +322,14 @@ async function fixture(limit = 512 * 1024 * 1024) {
     closeAcknowledged: false,
     stderr: () => stderr
   }
+
   fixtures.push(fixture)
   await waitFor(async () => {
     fixture.status = await fs
       .readFile(path.join(directory, 'status.json'), 'utf8')
       .then(JSON.parse)
       .catch(() => null)
+
     return fixture.status !== null
   })
   await waitFor(() => bootstrap.exitCode === 0)
@@ -307,6 +340,7 @@ async function fixture(limit = 512 * 1024 * 1024) {
   fixture.engine = value
   fixture.status = await value.ok('status')
   assert.equal((await fs.stat(socketPath)).mode & 0o777, 0o600)
+
   return fixture
 }
 
@@ -315,12 +349,16 @@ async function memory(pid, label) {
     Number(
       (await exec('ps', ['-o', 'rss=', '-p', String(pid)])).stdout.trim()
     ) * 1024
+
   if (process.platform === 'linux') {
     const rollup = await fs.readFile(`/proc/${pid}/smaps_rollup`, 'utf8')
+
     const field = (name) =>
       Number(new RegExp(`^${name}:\\s+(\\d+)`, 'm').exec(rollup)?.[1] ?? 0) *
       1024
+
     await fs.writeFile(path.join(results, `${label}-${pid}.smaps`), rollup)
+
     return {
       pid,
       rssBytes,
@@ -332,14 +370,17 @@ async function memory(pid, label) {
   }
 
   assert.equal(process.platform, 'darwin')
+
   const map = (
     await exec('vmmap', ['-w', '-pages', String(pid)], {
       maxBuffer: 16 * 1024 * 1024
     })
   ).stdout
+
   const footprint = (
     await exec('footprint', ['-p', String(pid), '--format', 'bytes', '--wide'])
   ).stdout
+
   await fs.writeFile(path.join(results, `${label}-${pid}.vmmap`), map)
   await fs.writeFile(path.join(results, `${label}-${pid}.footprint`), footprint)
   // PRV resident + COW dirty resident, fractional pages discarded: lower bound, NOT macOS USS.
@@ -348,11 +389,13 @@ async function memory(pid, label) {
   let privateRegionCount = 0
   const pageSize = Number(/VM page size:\s*(\d+) bytes/.exec(map)?.[1])
   assert.ok(Number.isFinite(pageSize))
+
   for (const line of map.split('\n')) {
     const match =
       /\[\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\].*SM=(PRV|COW)/.exec(
         line
       )
+
     if (!match) {
       continue
     }
@@ -361,11 +404,15 @@ async function memory(pid, label) {
     privateResidentLowerBoundBytes +=
       Math.floor(Number(match[match[5] === 'PRV' ? 2 : 3])) * pageSize
   }
+
   assert.ok(privateRegionCount > 0)
+
   const footprintBytes = Number(
     /phys_footprint:\s*(\d+) B/.exec(footprint)?.[1]
   )
+
   assert.ok(Number.isFinite(footprintBytes))
+
   return {
     pid,
     rssBytes,
@@ -381,6 +428,7 @@ async function sample(fixture, phase) {
     fixture.status.ownerPid,
     `${fixture.kind}-${phase}`
   )
+
   observations.push({ kind: fixture.kind, phase, ...value })
   console.log(JSON.stringify(observations.at(-1)))
 }
@@ -388,6 +436,7 @@ async function sample(fixture, phase) {
 function alive(pid) {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (error) {
     if (error.code !== 'ESRCH') {
@@ -400,6 +449,7 @@ function alive(pid) {
 
 async function stop(fixture) {
   fixture.engine?.close()
+
   if (!fixture.status) {
     return
   }
@@ -409,6 +459,7 @@ async function stop(fixture) {
       () => !alive(fixture.status.ownerPid) && !alive(fixture.status.pid)
     )
     fixture.status = null
+
     return
   }
 
@@ -441,9 +492,11 @@ try {
           orphaned.engine.output.includes('ORPHAN_PID:')
       )
       const pid = Number(/ORPHAN_PID:(\d+)/.exec(orphaned.engine.output)[1])
+
       const topology = (
         await exec('ps', ['-p', String(pid), '-o', 'pid=,ppid=,pgid='])
       ).stdout.trim()
+
       assert.ok(alive(pid))
       const ownerPid = orphaned.status.ownerPid
       const leaderPid = orphaned.status.pid
@@ -455,8 +508,10 @@ try {
         closeElapsedMs < 4000,
         'Self-expiry must not masquerade as cleanup'
       )
+
       const contractSatisfied =
         orphanProbe === 'same-session' ? !survived : survived
+
       observations.push({
         kind,
         phase: `pre-orphaned-${orphanProbe}-cleanup`,
@@ -489,18 +544,23 @@ try {
     assert.ok(second.response.error)
     second.value.close()
     await delay(1500)
+
     for (let n = 0; n < 3; n++) {
       await sample(value, `idle-${n}`)
     }
+
     const cpuSeconds = async () => {
       const source = (
         await exec('ps', ['-o', 'time=', '-p', String(value.status.ownerPid)])
       ).stdout.trim()
+
       const parts = source.split(':').map(Number)
+
       return parts.length === 3
         ? parts[0] * 3600 + parts[1] * 60 + parts[2]
         : parts[0] * 60 + parts[1]
     }
+
     const cpuBefore = await cpuSeconds()
     const started = performance.now()
     await delay(5000)
@@ -534,15 +594,19 @@ try {
     const outputCpuBefore = await cpuSeconds()
     const outputStarted = performance.now()
     await value.engine.write('o')
+
     for (let n = 0; n < 3; n++) {
       await delay(1000)
       await sample(value, `output-${n}`)
     }
+
     await waitFor(() => value.engine.output.includes('OUTPUT_DONE'), 30000)
     const outputElapsedSeconds = (performance.now() - outputStarted) / 1000
     const outputCpuAfter = await cpuSeconds()
+
     const outputBytes =
       Buffer.byteLength(value.engine.output) - outputBytesBefore
+
     assert.equal(outputBytes, 2048 * 4110 + Buffer.byteLength('OUTPUT_DONE\n'))
     observations.push({
       kind,
@@ -563,11 +627,13 @@ try {
     // or machine load delay the command's background thread beyond 700ms.
     await waitFor(async () => {
       let tail = ''
+
       for await (const record of SessionJournal.readRetained(value.directory)) {
         if (record.type === 'output') {
           tail = (tail + record.data).slice(-'DETACHED_OUTPUT\n'.length)
         }
       }
+
       return tail === 'DETACHED_OUTPUT\n'
     })
     const afterDetach = `${before}DETACHED_OUTPUT\n`
@@ -587,12 +653,15 @@ try {
       caveats:
         'Includes deliberate 500ms socket read pause, suspending backpressure memory probe and 20ms readiness polling; not unconstrained replay throughput'
     })
+
     const resizeIndex = value.engine.frames.findIndex(
       (f) => f.type === 'resize' && f.cols === 101
     )
+
     const sizeOutputIndex = value.engine.frames.findIndex(
       (f) => f.type === 'output' && f.data.includes('SIZE:101x31')
     )
+
     assert.ok(resizeIndex >= 0 && sizeOutputIndex > resizeIndex)
     assert.ok(
       value.engine.frames.some(
@@ -615,18 +684,24 @@ try {
       caveats:
         'Wall interval includes input admission, three suspending memory probes and 20ms completion polling; configured target duration is not measured duration'
     })
+
     let retained = '',
       sequence = 0
+
     for await (const record of SessionJournal.readRetained(value.directory)) {
       assert.equal(record.sequence, ++sequence)
+
       if (record.type === 'output') {
         retained += record.data
       }
     }
+
     assert.equal(retained, afterDetach)
+
     for (const frame of value.engine.frames) {
       sessionFrameSchema.parse(frame)
     }
+
     sessionManifestSchema.parse(
       JSON.parse(
         await fs.readFile(path.join(value.directory, 'manifest.json'), 'utf8')
@@ -666,24 +741,30 @@ try {
     const quotaSequence = (await quota.engine.ok('status')).sequence
     await delay(500)
     assert.equal((await quota.engine.ok('status')).sequence, quotaSequence)
+
     const residentBefore = await memory(
       quota.status.ownerPid,
       `${kind}-quota-before`
     )
+
     await delay(1000)
+
     const residentAfter = await memory(
       quota.status.ownerPid,
       `${kind}-quota-after`
     )
+
     observations.push(
       { kind, phase: 'quota-blocked-before', ...residentBefore },
       { kind, phase: 'quota-blocked-after', ...residentAfter }
     )
     quota.engine.close()
     await delay(200)
+
     const resumed = await wire(quota, quota.token, 'attach', {
       journalLimitBytes: 512 * 1024 * 1024
     })
+
     assert.equal(resumed.response.error, null)
     quota.engine = resumed.value
     await waitFor(() => quota.engine.output.includes('QUOTA_DONE'), 30000)
@@ -696,18 +777,24 @@ try {
     await waitFor(() =>
       exiting.engine.frames.some((frame) => frame.type === 'exit')
     )
+
     const exitFrame = exiting.engine.frames.find(
       (frame) => frame.type === 'exit'
     )
+
     assert.equal(exitFrame.exitCode, 7)
     assert.ok(exiting.engine.output.endsWith('FINAL_OUTPUT\n'))
+
     for (const frame of exiting.engine.frames) {
       sessionFrameSchema.parse(frame)
     }
+
     const records = []
+
     for await (const record of SessionJournal.readRetained(exiting.directory)) {
       records.push(record)
     }
+
     assert.equal(records.at(-1).type, 'exit')
     assert.equal(records.at(-1).exitCode, 7)
     assert.ok(
@@ -725,12 +812,15 @@ try {
     const concurrent = await Promise.all(
       Array.from({ length: 8 }, () => fixture())
     )
+
     await delay(1500)
+
     const group = await Promise.all(
       concurrent.map((value, n) =>
         memory(value.status.ownerPid, `${kind}-concurrent-${n}`)
       )
     )
+
     observations.push({
       kind,
       phase: '8-concurrent-idle',
@@ -752,10 +842,12 @@ try {
           ? group.reduce((sum, item) => sum + item.footprintBytes, 0)
           : null
     })
+
     for (const value of concurrent) {
       await stop(value)
     }
   }
+
   // Optional read-only accounting of the current Pi and its actual launcher.
   // A launcher may be a shell rather than Node; retain its observed command.
   // These PIDs are NEVER added to fixtures or signalled by cleanup.
@@ -766,9 +858,11 @@ try {
     if (process.env[name]) {
       const pid = Number(process.env[name])
       assert.ok(Number.isSafeInteger(pid) && pid > 1)
+
       const command = (
         await exec('ps', ['-o', 'comm=', '-p', String(pid)])
       ).stdout.trim()
+
       observations.push({
         kind: 'separate-runtime',
         phase: label,
@@ -777,6 +871,7 @@ try {
       })
     }
   }
+
   const environment = {
     platform: process.platform,
     release: os.release(),
@@ -809,6 +904,7 @@ try {
         ? 'Conservative lower bound, not USS; retained raw vmmap and footprint'
         : 'USS from smaps_rollup'
   }
+
   await fs.writeFile(
     path.join(results, 'results.json'),
     JSON.stringify({ environment, observations }, null, 2)
@@ -816,6 +912,7 @@ try {
   console.log(`Results: ${results}`)
 } catch (error) {
   console.error(error)
+
   for (const value of fixtures) {
     if (!value.status) {
       continue
@@ -832,6 +929,7 @@ try {
         .readFile(path.join(value.directory, 'status.json'), 'utf8')
         .catch(() => 'status unavailable')
     )
+
     const retained = await fs.stat(value.directory).catch((cause) => {
       if (cause.code !== 'ENOENT') {
         throw cause
@@ -839,6 +937,7 @@ try {
 
       return null
     })
+
     await fs.writeFile(
       path.join(results, `${value.kind}-failure.json`),
       JSON.stringify(
@@ -854,6 +953,7 @@ try {
         2
       )
     )
+
     if (retained !== null) {
       await fs.cp(
         value.directory,
@@ -862,12 +962,15 @@ try {
       )
     }
   }
+
   throw error
 } finally {
   const cleanup = await Promise.allSettled(fixtures.map(stop))
+
   const failures = cleanup
     .filter((result) => result.status === 'rejected')
     .map((result) => result.reason)
+
   if (failures.length) {
     console.error(
       new AggregateError(

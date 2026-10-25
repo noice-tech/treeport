@@ -35,12 +35,16 @@ export function connectRemoteBrowser(
   // frame is shown exactly once. The window can move between displays.
   let visible = false
   let refreshRate = 0
+
   const sampleRefreshRate = () => {
     const times: number[] = []
+
     const step = (time: number) => {
       times.push(time)
+
       if (times.length <= 30) {
         requestAnimationFrame(step)
+
         return
       }
 
@@ -50,9 +54,12 @@ export function connectRemoteBrowser(
         .slice(1)
         .map((value, index) => value - times[index]!)
         .sort((a, b) => a - b)
+
       const span = times.at(-1)! - times[0]!
+
       const hz =
         Math.round(((Math.round(span / gaps[15]!) * 1000) / span) * 100) / 100
+
       if (
         visible &&
         hz >= 24 &&
@@ -63,13 +70,16 @@ export function connectRemoteBrowser(
         connection.send({ type: 'refreshRate', hz })
       }
     }
+
     requestAnimationFrame(step)
   }
+
   const sampler = setInterval(() => {
     if (visible) {
       sampleRefreshRate()
     }
   }, 5_000)
+
   const receiver = new BrowserVideoReceiver(
     video,
     canvas,
@@ -78,6 +88,7 @@ export function connectRemoteBrowser(
     handlers.statusChanged,
     handlers.presented
   )
+
   const connection = connectBrowserApp(
     appId,
     false,
@@ -91,12 +102,14 @@ export function connectRemoteBrowser(
           ordered = false
           // A new attachment starts without a known rate.
           refreshRate = 0
+
           if (visible) {
             sampleRefreshRate()
           }
         }
 
         receiver.receive(message)
+
         if (
           message.type !== 'videoReady' &&
           message.type !== 'videoAnswer' &&
@@ -109,6 +122,7 @@ export function connectRemoteBrowser(
     },
     socketFactory
   )
+
   return {
     configureVideo: (settings) => connection.configureVideo(settings),
     send: (message) => {
@@ -138,6 +152,7 @@ export function connectRemoteBrowser(
       visible = nextVisible
       receiver.setVisible(nextVisible)
       connection.setVisible(nextVisible)
+
       if (nextVisible) {
         sampleRefreshRate()
       }

@@ -37,6 +37,7 @@ function inWorktree(cwd: string | null, worktreePath: string): boolean {
   }
 
   const relative = path.relative(worktreePath, cwd)
+
   return (
     relative === '' ||
     (!relative.startsWith('..') && !path.isAbsolute(relative))
@@ -50,8 +51,10 @@ function terminalForProcess(
 ): string | null {
   const visited = new Set<number>()
   let current = pid
+
   while (current > 0 && !visited.has(current)) {
     const terminalId = terminalPids.get(current)
+
     if (terminalId) {
       return terminalId
     }
@@ -69,17 +72,22 @@ function ipv6Address(hex: string): string | null {
   }
 
   const bytes: number[] = []
+
   for (let word = 0; word < 4; word += 1) {
     const value = hex.slice(word * 8, word * 8 + 8)
+
     for (let byte = 3; byte >= 0; byte -= 1) {
       bytes.push(Number.parseInt(value.slice(byte * 2, byte * 2 + 2), 16))
     }
   }
+
   const groups = Array.from({ length: 8 }, (_, index) =>
     ((bytes[index * 2]! << 8) | bytes[index * 2 + 1]!).toString(16)
   )
+
   let bestStart = -1
   let bestLength = 0
+
   for (let index = 0; index < groups.length;) {
     if (groups[index] !== '0') {
       index += 1
@@ -87,6 +95,7 @@ function ipv6Address(hex: string): string | null {
     }
 
     let end = index
+
     while (groups[end] === '0') {
       end += 1
     }
@@ -105,6 +114,7 @@ function ipv6Address(hex: string): string | null {
 
   const left = groups.slice(0, bestStart).join(':')
   const right = groups.slice(bestStart + bestLength).join(':')
+
   return `${left}::${right}`
 }
 
@@ -113,8 +123,10 @@ function parseProcSockets(
   ipv6: boolean
 ): Map<string, Omit<SocketInfo, 'pid' | 'command'>> {
   const sockets = new Map<string, Omit<SocketInfo, 'pid' | 'command'>>()
+
   for (const line of source.split('\n').slice(1)) {
     const fields = line.trim().split(/\s+/u)
+
     if (fields.length < 10 || fields[3] !== '0A') {
       continue
     }
@@ -123,6 +135,7 @@ function parseProcSockets(
     const port = Number.parseInt(portHex ?? '', 16)
     const inode = fields[9]!
     let host: string | null = null
+
     if (ipv6) {
       host = ipv6Address(addressHex ?? '')
     } else if (/^[a-f\d]{8}$/iu.test(addressHex ?? '')) {
@@ -144,8 +157,10 @@ function parseEndpoint(value: string): { host: string; port: number } | null {
   const endpoint = value.replace(/\s+\(LISTEN\)$/u, '').trim()
   let host: string
   let portText: string
+
   if (endpoint.startsWith('[')) {
     const close = endpoint.lastIndexOf(']:')
+
     if (close < 0) {
       return null
     }
@@ -154,6 +169,7 @@ function parseEndpoint(value: string): { host: string; port: number } | null {
     portText = endpoint.slice(close + 2)
   } else {
     const separator = endpoint.lastIndexOf(':')
+
     if (separator < 1) {
       return null
     }
@@ -163,6 +179,7 @@ function parseEndpoint(value: string): { host: string; port: number } | null {
   }
 
   const port = Number.parseInt(portText, 10)
+
   return host && port > 0 && port <= 65_535 ? { host, port } : null
 }
 
@@ -175,14 +192,18 @@ function finalListeners(
   const terminalPids = new Map(
     terminalProcesses.map((terminal) => [terminal.pid, terminal.terminalId])
   )
+
   const listeners = new Map<string, WorktreeListener>()
+
   for (const socket of sockets) {
     const process = processes.get(socket.pid)
+
     if (!process) {
       continue
     }
 
     const terminalId = terminalForProcess(socket.pid, processes, terminalPids)
+
     if (!terminalId && !inWorktree(process.cwd, worktreePath)) {
       continue
     }
@@ -194,6 +215,7 @@ function finalListeners(
       port: socket.port,
       terminalId
     }
+
     listeners.set(
       `${listener.pid}\0${listener.host}\0${listener.port}`,
       listener
@@ -228,6 +250,7 @@ class PromiseNetworkListenerAdapter {
     }
 
     const worktreePath = await fs.realpath(scope.worktreePath)
+
     if (this.platform === 'linux') {
       const [tcp, tcp6, entries] = await Promise.all([
         fs.readFile(path.join(this.procRoot, 'net/tcp'), 'utf8'),
@@ -236,10 +259,12 @@ class PromiseNetworkListenerAdapter {
           .catch(() => ''),
         fs.readdir(this.procRoot, { withFileTypes: true })
       ])
+
       const socketByInode = new Map([
         ...parseProcSockets(tcp, false),
         ...parseProcSockets(tcp6, true)
       ])
+
       const processes = new Map<number, ProcessInfo>()
       await Promise.all(
         entries
@@ -247,6 +272,7 @@ class PromiseNetworkListenerAdapter {
           .map(async (entry) => {
             const pid = Number(entry.name)
             const processRoot = path.join(this.procRoot, entry.name)
+
             const [stat, command, cwd] = await Promise.all([
               fs
                 .readFile(path.join(processRoot, 'stat'), 'utf8')
@@ -256,11 +282,13 @@ class PromiseNetworkListenerAdapter {
                 .catch(() => ''),
               fs.realpath(path.join(processRoot, 'cwd')).catch(() => null)
             ])
+
             if (!stat) {
               return
             }
 
             const close = stat.lastIndexOf(')')
+
             const afterCommand =
               close >= 0
                 ? stat
@@ -268,23 +296,28 @@ class PromiseNetworkListenerAdapter {
                     .trim()
                     .split(/\s+/u)
                 : []
+
             const ppid = Number.parseInt(afterCommand[1] ?? '', 10)
+
             if (Number.isInteger(ppid)) {
               processes.set(pid, { pid, ppid, command: command.trim(), cwd })
             }
           })
       )
+
       const terminalPids = new Map(
         scope.terminalProcesses.map((terminal) => [
           terminal.pid,
           terminal.terminalId
         ])
       )
+
       const candidates = [...processes.values()].filter(
         (process) =>
           inWorktree(process.cwd, worktreePath) ||
           terminalForProcess(process.pid, processes, terminalPids) !== null
       )
+
       const sockets: SocketInfo[] = []
       await Promise.all(
         candidates.map(async (process) => {
@@ -295,8 +328,10 @@ class PromiseNetworkListenerAdapter {
               const target = await fs
                 .readlink(path.join(fdRoot, descriptor))
                 .catch(() => '')
+
               const match = /^socket:\[(\d+)\]$/u.exec(target)
               const socket = match ? socketByInode.get(match[1]!) : undefined
+
               if (socket) {
                 sockets.push({
                   ...socket,
@@ -308,6 +343,7 @@ class PromiseNetworkListenerAdapter {
           )
         })
       )
+
       return {
         supported: true,
         message: null,
@@ -332,6 +368,7 @@ class PromiseNetworkListenerAdapter {
         timeoutMs: 10_000
       })
     ])
+
     if (lsofResult.exitCode !== 0) {
       throw new Error(
         lsofResult.stderr.trim() || 'Failed to enumerate listening TCP sockets'
@@ -345,9 +382,11 @@ class PromiseNetworkListenerAdapter {
     const sockets: SocketInfo[] = []
     let pid = 0
     let command = ''
+
     for (const line of lsofResult.stdout.split('\n')) {
       const field = line[0]
       const value = line.slice(1)
+
       if (field === 'p') {
         pid = Number.parseInt(value, 10)
         command = ''
@@ -355,6 +394,7 @@ class PromiseNetworkListenerAdapter {
         command = value
       } else if (field === 'n' && pid > 0) {
         const endpoint = parseEndpoint(value)
+
         if (endpoint) {
           sockets.push({ pid, command, ...endpoint })
         }
@@ -362,8 +402,10 @@ class PromiseNetworkListenerAdapter {
     }
 
     const processes = new Map<number, ProcessInfo>()
+
     for (const line of psResult.stdout.split('\n')) {
       const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line)
+
       if (!match) {
         continue
       }
@@ -379,18 +421,22 @@ class PromiseNetworkListenerAdapter {
     }
 
     const listenerPids = [...new Set(sockets.map((socket) => socket.pid))]
+
     for (let start = 0; start < listenerPids.length; start += 100) {
       const chunk = listenerPids.slice(start, start + 100)
+
       const cwdResult = await this.runner.run({
         executable: '/usr/sbin/lsof',
         args: ['-a', '-d', 'cwd', '-p', chunk.join(','), '-Fpn'],
         timeoutMs: 10_000
       })
+
       if (cwdResult.exitCode !== 0) {
         continue
       }
 
       let cwdPid = 0
+
       for (const line of cwdResult.stdout.split('\n')) {
         if (line[0] === 'p') {
           cwdPid = Number.parseInt(line.slice(1), 10)
@@ -398,6 +444,7 @@ class PromiseNetworkListenerAdapter {
 
         if (line[0] === 'n' && cwdPid > 0) {
           const process = processes.get(cwdPid)
+
           if (process) {
             process.cwd = await fs.realpath(line.slice(1)).catch(() => null)
           }

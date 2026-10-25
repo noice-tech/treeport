@@ -15,6 +15,7 @@ import {
 } from './setup'
 
 const temporary: string[] = []
+
 afterEach(async () =>
   Promise.all(
     temporary
@@ -30,6 +31,7 @@ async function repository() {
   const worktree = path.join(root, 'worktrees', 'topic', 'main checkout')
   await fs.mkdir(path.join(worktree, '.treeport'), { recursive: true })
   await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
+
   return {
     main: await fs.realpath(main),
     worktree: await fs.realpath(worktree)
@@ -42,6 +44,7 @@ class Runner implements CommandRunner {
 
   async run(request: CommandRequest): Promise<CommandResult> {
     this.calls.push(request)
+
     return this.results.shift() ?? { stdout: '', stderr: '', exitCode: 0 }
   }
 }
@@ -145,6 +148,7 @@ describe('worktree setup', () => {
         worktreePath: worktree
       })
     )
+
     expect(first.tasks).toEqual([
       {
         label: 'Drop database',
@@ -236,6 +240,7 @@ describe('worktree setup', () => {
 
   it('rejects invalid native setup and command fields', async () => {
     const { main, worktree } = await repository()
+
     const invalidFiles: unknown[] = [
       null,
       [],
@@ -364,6 +369,7 @@ describe('worktree setup', () => {
       mainWorktreePath: main,
       worktreePath: worktree
     }
+
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))
     ).resolves.toEqual([
@@ -461,6 +467,7 @@ describe('worktree setup', () => {
   it('preserves interruption while a setup command is running', async () => {
     let started = false
     let cancelled = false
+
     const runner: CommandRunner = {
       run: () => new Promise<CommandResult>(() => undefined),
       runEffect: () =>
@@ -475,6 +482,7 @@ describe('worktree setup', () => {
           )
         )
     }
+
     const fiber = Effect.runFork(
       runWorktreeSetupTasks({
         runner,
@@ -505,6 +513,7 @@ describe('worktree setup', () => {
       { stdout: 'done', stderr: '', exitCode: 0 },
       { stdout: '', stderr: 'failed'.repeat(2_000), exitCode: 17 }
     )
+
     const tasks: WorktreeSetupTask[] = [
       {
         label: 'First',
@@ -532,6 +541,7 @@ describe('worktree setup', () => {
     const results = await Effect.runPromise(
       runWorktreeSetupTasks({ runner, tasks })
     )
+
     expect(results).toEqual([
       { label: 'First', error: null },
       { label: 'Second', error: expect.any(String) }

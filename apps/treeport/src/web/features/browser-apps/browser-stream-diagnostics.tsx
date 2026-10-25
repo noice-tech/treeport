@@ -66,6 +66,7 @@ export function BrowserStreamDiagnostics({
   const selected = draft ?? settings
   const validSettings = isSchemaValue(browserVideoSettingsSchema, selected)
   const { captureScale, frameRate, maxBitrate } = settings
+
   const apply = async (next: BrowserVideoSettings) => {
     if (!canConfigure || applying) {
       return
@@ -88,6 +89,7 @@ export function BrowserStreamDiagnostics({
 
   useEffect(() => {
     const video = videoRef.current
+
     if (!video) {
       return
     }
@@ -95,10 +97,12 @@ export function BrowserStreamDiagnostics({
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | null = null
     let frameId: number | null = null
+
     let previous: {
       connectionId: string
       inbound: RTCInboundRtpStreamStats
     } | null = null
+
     let lastCounter: number | null = null
     let nextRead = 0
     let pending: { started: number; counter: number } | null = null
@@ -106,6 +110,7 @@ export function BrowserStreamDiagnostics({
     const canvas = document.createElement('canvas')
     canvas.width = 32
     canvas.height = 1
+
     const context = probe
       ? canvas.getContext('2d', { willReadFrequently: true })
       : null
@@ -132,32 +137,39 @@ export function BrowserStreamDiagnostics({
       )
       const pixels = context.getImageData(0, 0, 32, 1).data
       let word = 0
+
       for (let i = 0; i < 32; i++) {
         const luminance =
           (pixels[i * 4]! + pixels[i * 4 + 1]! + pixels[i * 4 + 2]!) / 3
+
         if (luminance > 70 && luminance < 185) {
           return null
         }
 
         word = (word << 1) | (luminance >= 185 ? 1 : 0)
       }
+
       const value = (word >>> 8) & 255
+
       return word >>> 16 === 0xa69c && (word & 255) === (value ^ 255)
         ? value
         : null
     }
+
     const input = (event: PointerEvent) => {
       if (!probe || event.button !== 0 || event.pointerType !== 'mouse') {
         return
       }
 
       const started = performance.now()
+
       if (pending || ambiguous) {
         pending = null
         ambiguous = true
         setStatus(
           'Ambiguous clicks discarded. Stop and restart test-click measurement, then click once and wait for the result.'
         )
+
         return
       }
 
@@ -170,6 +182,7 @@ export function BrowserStreamDiagnostics({
           : 'Waiting for the changed video frame…'
       )
     }
+
     const frame = (now: number) => {
       if (disposed) {
         return
@@ -181,12 +194,14 @@ export function BrowserStreamDiagnostics({
       if (!document.hidden && !ambiguous && (pending || now >= nextRead)) {
         const value = counter()
         nextRead = now + 250
+
         if (!pending) {
           lastCounter = value
         } else if (value === pending.counter) {
           const elapsed = performance.now() - pending.started
           pending = null
           lastCounter = value
+
           if (elapsed >= 0 && elapsed <= 5_000) {
             setClicks((values) => [
               ...values.slice(-59),
@@ -209,6 +224,7 @@ export function BrowserStreamDiagnostics({
 
       frameId = requestAnimationFrame(frame)
     }
+
     const reset = () => {
       previous = null
       pending = null
@@ -219,11 +235,13 @@ export function BrowserStreamDiagnostics({
       setClicks([])
       history.current = []
     }
+
     const visibility = () => {
       if (document.hidden) {
         reset()
       }
     }
+
     const poll = async () => {
       if (pending && performance.now() - pending.started > 5_000) {
         pending = null
@@ -234,6 +252,7 @@ export function BrowserStreamDiagnostics({
       const snapshot = document.hidden
         ? null
         : await receiverRef.current?.stats()
+
       if (disposed) {
         return
       }
@@ -249,6 +268,7 @@ export function BrowserStreamDiagnostics({
             entry.kind === 'video' &&
             entry.framesDecoded !== undefined
         )
+
         if (current) {
           if (previous && previous.connectionId !== snapshot.connectionId) {
             reset()
@@ -259,33 +279,43 @@ export function BrowserStreamDiagnostics({
             previous.inbound.id === current.id
               ? previous.inbound
               : null
+
           const delta = (a: number | undefined, b: number | undefined) =>
             a !== undefined && b !== undefined && a >= b ? a - b : null
+
           const average = (
             a: number | undefined,
             b: number | undefined,
             count: number | null
           ) => {
             const difference = delta(a, b)
+
             return difference !== null && count !== null && count > 0
               ? (1000 * difference) / count
               : null
           }
+
           const elapsed = old ? current.timestamp - old.timestamp : 0
           const frames = delta(current.framesDecoded, old?.framesDecoded)
+
           const emitted = delta(
             current.jitterBufferEmittedCount,
             old?.jitterBufferEmittedCount
           )
+
           const bytes = delta(current.bytesReceived, old?.bytesReceived)
+
           const codec: { mimeType?: string } | undefined = snapshot.report.get(
             current.codecId ?? ''
           )
+
           const transport: RTCTransportStats | undefined = snapshot.report.get(
             current.transportId ?? ''
           )
+
           const pair: RTCIceCandidatePairStats | undefined =
             snapshot.report.get(transport?.selectedCandidatePairId ?? '')
+
           const next: StreamSample = {
             time: new Date().toISOString(),
             settings: { captureScale, frameRate, maxBitrate },
@@ -328,6 +358,7 @@ export function BrowserStreamDiagnostics({
             framesDropped: delta(current.framesDropped, old?.framesDropped),
             freezes: delta(current.freezeCount, old?.freezeCount)
           }
+
           previous = { connectionId: snapshot.connectionId, inbound: current }
           history.current = [...history.current.slice(-59), next]
           setSample(next)
@@ -338,10 +369,12 @@ export function BrowserStreamDiagnostics({
         void poll()
       }, 1_000)
     }
+
     // A new native-video measurement session owns its sampling baseline.
     // eslint-disable-next-line react-you-might-not-need-an-effect/no-adjust-state-on-prop-change, react-you-might-not-need-an-effect/no-external-store-subscription -- This effect owns asynchronous browser instrumentation, not a React external store.
     reset()
     void poll()
+
     if (probe) {
       frameId = requestAnimationFrame(frame)
     }
@@ -349,8 +382,10 @@ export function BrowserStreamDiagnostics({
     video.addEventListener('pointerdown', input, true)
     video.addEventListener('emptied', reset)
     document.addEventListener('visibilitychange', visibility)
+
     return () => {
       disposed = true
+
       if (timer) {
         clearTimeout(timer)
       }
@@ -366,6 +401,7 @@ export function BrowserStreamDiagnostics({
   }, [probe, receiverRef, videoRef, captureScale, frameRate, maxBitrate])
 
   const sorted = clicks.map((value) => value.totalMs).sort((a, b) => a - b)
+
   const metrics = [
     ['ICE RTT', sample?.rttMs, 'ms'],
     ['Network jitter', sample?.jitterMs, 'ms'],
@@ -375,6 +411,7 @@ export function BrowserStreamDiagnostics({
     ['Decoded rate', sample?.fps, 'fps'],
     ['Video payload', sample?.mbps, 'Mbps']
   ] as const
+
   return (
     <section
       aria-label="Stream diagnostics"

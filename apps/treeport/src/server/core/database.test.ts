@@ -38,6 +38,7 @@ async function restoreVersion7WorktreeSchema(
   await database.db.run(sql`
     ALTER TABLE worktrees ADD COLUMN pr_state TEXT NOT NULL DEFAULT 'unknown'
   `)
+
   for (const column of [
     'pr_number INTEGER',
     'pr_url TEXT',
@@ -48,6 +49,7 @@ async function restoreVersion7WorktreeSchema(
   ]) {
     await database.db.run(sql.raw(`ALTER TABLE worktrees ADD COLUMN ${column}`))
   }
+
   await database.db.run(sql`
     UPDATE worktrees SET tmux_socket_name='legacy-' || id
   `)
@@ -102,10 +104,12 @@ async function removeFolderProjectSchema(
   const [table] = await database.db.all<{ sql: string }>(sql`
     SELECT sql FROM sqlite_master WHERE type='table' AND name='projects'
   `)
+
   const legacySql = table?.sql.replace(
     /,\s*`project_kind` text DEFAULT 'repository' NOT NULL CONSTRAINT `projects_kind_check` CHECK\(`project_kind` IN \('repository','folder'\)\)/u,
     ''
   )
+
   if (!table || legacySql === table.sql) {
     throw new Error('Could not prepare the legacy project schema')
   }
@@ -113,6 +117,7 @@ async function removeFolderProjectSchema(
   const [versionRow] = await database.db.all<{ schemaVersion: number }>(
     sql`PRAGMA schema_version`
   )
+
   if (!versionRow) {
     throw new Error('Could not read the legacy schema version')
   }
@@ -143,10 +148,13 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-#?%-')
     )
+
     directories.push(directory)
+
     const database = await openDatabaseForTest(
       path.join(directory, 'metadata.db')
     )
+
     databases.push(database)
 
     expect(
@@ -163,6 +171,7 @@ describe('SQLite migration and catalog ordering', () => {
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     }
+
     await database.db.insert(projects).values([
       {
         id: 'legacy-a',
@@ -207,6 +216,7 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-bells-')
     )
+
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
     const database = await openDatabaseForTest(filePath)
@@ -260,9 +270,11 @@ describe('SQLite migration and catalog ordering', () => {
   it('keeps the main worktree first and linked worktrees in creation order', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
     directories.push(directory)
+
     const database = await openDatabaseForTest(
       path.join(directory, 'metadata.db')
     )
+
     databases.push(database)
     await database.db.insert(projects).values({
       id: 'p_order',
@@ -302,6 +314,7 @@ describe('SQLite migration and catalog ordering', () => {
         asc(worktrees.createdAt),
         sql`rowid`
       )
+
     expect(rows.map((worktree) => worktree.id)).toEqual([
       'wt_main',
       'wt_oldest',
@@ -314,9 +327,11 @@ describe('SQLite migration and catalog ordering', () => {
   it('persists ordered WebApp and BrowserApp records with their worktree lifecycle', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-apps-'))
     directories.push(directory)
+
     const database = await openDatabaseForTest(
       path.join(directory, 'metadata.db')
     )
+
     databases.push(database)
     await database.db.insert(projects).values({
       id: 'p',
@@ -338,6 +353,7 @@ describe('SQLite migration and catalog ordering', () => {
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
+
     for (const [id, createdAt] of [
       ['later', '2026-02-02'],
       ['earlier', '2026-02-01']
@@ -351,6 +367,7 @@ describe('SQLite migration and catalog ordering', () => {
         updatedAt: createdAt
       })
     }
+
     await database.db.insert(browserApps).values({
       id: 'browser',
       worktreeId: 'wt',
@@ -443,6 +460,7 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-v7-')
     )
+
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
     const initial = await openDatabaseForTest(filePath)
@@ -511,24 +529,29 @@ describe('SQLite migration and catalog ordering', () => {
 
     const reopened = await openDatabaseForTest(filePath)
     databases.push(reopened)
+
     const [projectRow] = await reopened.db
       .select()
       .from(projects)
       .where(eq(projects.id, 'p_existing'))
+
     const worktreeRows = await reopened.db
       .select()
       .from(worktrees)
       .where(eq(worktrees.projectId, 'p_existing'))
+
     expect(mapProject(projectRow!, worktreeRows)).toMatchObject({
       id: 'p_existing',
       name: 'Existing',
       repositoryPath: '/existing',
       worktrees: [{ id: 'wt_existing', path: '/existing-linked' }]
     })
+
     const [operationRow] = await reopened.db
       .select()
       .from(operations)
       .where(eq(operations.id, 'op_existing'))
+
     expect(mapOperation(operationRow!)).toMatchObject({
       id: 'op_existing',
       projectId: 'p_existing',
@@ -560,11 +583,14 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-folder-project-migration-')
     )
+
     directories.push(directory)
     const oldMigrations = path.join(directory, 'old-migrations')
+
     const packagedMigrations = fileURLToPath(
       new URL('../../../drizzle', import.meta.url)
     )
+
     await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
     await Promise.all([
       fs.rm(path.join(oldMigrations, '0009_open_folders.sql')),
@@ -577,17 +603,21 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, 'meta', '0011_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+
     // SAFETY: The copied migration journal has the asserted test shape.
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }
+
     journal.entries.splice(9)
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
+
     const oldDatabase = await openDatabaseForTest(filePath, {
       migrationsFolder: oldMigrations
     })
+
     await oldDatabase.db.run(sql`
       INSERT INTO projects(
         id,name,repository_path,main_worktree_path,default_branch,
@@ -657,6 +687,7 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-v8-')
     )
+
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
     const initial = await openDatabaseForTest(filePath)
@@ -742,28 +773,35 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-migration-')
     )
+
     directories.push(directory)
     const oldMigrations = path.join(directory, 'old-migrations')
+
     const packagedMigrations = fileURLToPath(
       new URL('../../../drizzle', import.meta.url)
     )
+
     await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
     await Promise.all([
       fs.rm(path.join(oldMigrations, '0012_terminal_host_cutover.sql')),
       fs.rm(path.join(oldMigrations, 'meta', '0012_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+
     // SAFETY: The copied migration journal has the asserted test shape.
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }
+
     journal.entries.splice(12)
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
+
     const oldDatabase = await openDatabaseForTest(filePath, {
       migrationsFolder: oldMigrations
     })
+
     await oldDatabase.db.run(sql`
       INSERT INTO projects(
         id,name,repository_path,main_worktree_path,default_branch,
@@ -876,12 +914,15 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-newer-')
     )
+
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
     const current = await openDatabaseForTest(filePath)
+
     const { supported } = (await current.db.get<{ supported: number }>(sql`
       SELECT max(created_at) AS supported FROM __drizzle_migrations
     `))!
+
     await current.db.run(sql`
       INSERT INTO __drizzle_migrations(hash, created_at)
       VALUES('future-migration', ${supported + 1})
@@ -903,11 +944,14 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-cleanup-cutover-')
     )
+
     directories.push(directory)
     const oldMigrations = path.join(directory, 'old-migrations')
+
     const packagedMigrations = fileURLToPath(
       new URL('../../../drizzle', import.meta.url)
     )
+
     await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
     await Promise.all([
       fs.rm(path.join(oldMigrations, '0005_git_authoritative_worktrees.sql')),
@@ -928,17 +972,21 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, 'meta', '0011_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+
     // SAFETY: The test fixture provides the asserted contract used here.
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }
+
     journal.entries.splice(5)
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
+
     const oldDatabase = await openDatabaseForTest(filePath, {
       migrationsFolder: oldMigrations
     })
+
     await oldDatabase.db.run(sql`
       INSERT INTO projects(
         id,name,repository_path,main_worktree_path,default_branch,
@@ -990,6 +1038,7 @@ describe('SQLite migration and catalog ordering', () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-failure-')
     )
+
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
     const initial = await openDatabaseForTest(filePath)
@@ -1042,12 +1091,15 @@ describe('SQLite migration and catalog ordering', () => {
     const validMigrations = fileURLToPath(
       new URL('../../../drizzle', import.meta.url)
     )
+
     const brokenMigrations = path.join(directory, 'broken-migrations')
     await fs.cp(validMigrations, brokenMigrations, { recursive: true })
+
     const migrationFile = path.join(
       brokenMigrations,
       '0000_public_baseline.sql'
     )
+
     await fs.appendFile(
       migrationFile,
       '--> statement-breakpoint\nCREATE TABLE partial_migration_table(id TEXT);\n--> statement-breakpoint\nTHIS IS NOT SQL;\n'

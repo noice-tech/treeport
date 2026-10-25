@@ -12,6 +12,7 @@ export function ConnectDialog({
   const [url, setUrl] = useState('')
   const [error, setError] = useState('')
   const [duplicateId, setDuplicateId] = useState<string>()
+
   const duplicate = state.computers.find(
     (computer) => computer.id === duplicateId
   )
@@ -19,8 +20,10 @@ export function ConnectDialog({
   async function submit(event: FormEvent) {
     event.preventDefault()
     const result = await window.treeportShell.addComputer(url)
+
     if (result.ok) {
       onClose()
+
       return
     }
 

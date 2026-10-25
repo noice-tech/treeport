@@ -27,6 +27,7 @@ import ghosttyVtWasmUrl from '../../ghostty-vt/ghostty-vt.wasm?url'
 
 const DEFAULT_COLOR = 256
 const TEXT_BYTES = 4096
+
 const BLANK_CELL: CellData = {
   char: 32,
   fg: DEFAULT_COLOR,
@@ -34,6 +35,7 @@ const BLANK_CELL: CellData = {
   flags: 0,
   width: 1
 }
+
 const UNDERLINE_STYLES: readonly UnderlineStyle[] = [
   'none',
   'single',
@@ -42,12 +44,16 @@ const UNDERLINE_STYLES: readonly UnderlineStyle[] = [
   'dotted',
   'dashed'
 ]
+
 const decoder = new TextDecoder()
+
 // Plain-text URLs, as xterm's web links addon matched them.
 const URL_PATTERN =
   /https?:\/\/[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/g
+
 // Rows joined to find a wrapped URL in either direction.
 const URL_ROW_LIMIT = 8
+
 // Decoded history rows kept between frames, so wrapped neighbours are decoded
 // once while scrolling.
 const HISTORY_ROW_CACHE = 512
@@ -62,6 +68,7 @@ export function loadGhosttyVtModule(): Promise<WebAssembly.Module> {
 
     return WebAssembly.compile(await response.arrayBuffer())
   })
+
   return compiled
 }
 
@@ -109,6 +116,7 @@ function bits(lo: number, hi: number, { lsb, width }: LayoutBits): number {
       : lsb + width <= 32
         ? lo >>> lsb
         : (lo >>> lsb) | (hi << (32 - lsb))
+
   return value & (2 ** width - 1)
 }
 
@@ -186,8 +194,10 @@ export class GhosttyTerminalCore implements TerminalCore {
     this.dispose()
     const { vt } = terminal
     const alloc = (size: number) => vt.call('ghostty_wasm_alloc', size)
+
     const handle = (name: string) =>
       vt.opaque(name, (out) => vt.call(name, 0, out))
+
     this.layout = readLayout(vt)
     this.session = {
       terminal,
@@ -262,12 +272,14 @@ export class GhosttyTerminalCore implements TerminalCore {
   private ensureViewport(): void {
     const session = this.session
     const layout = this.layout
+
     if (!this.stale || !session || !layout) {
       return
     }
 
     this.stale = false
     const { vt } = session
+
     const renderData = (name: string, out: number) =>
       vt.call(
         'ghostty_render_state_get',
@@ -275,6 +287,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         vt.value('GhosttyRenderStateData', name),
         out
       )
+
     vt.check(
       vt.call(
         'ghostty_render_state_update',
@@ -287,9 +300,11 @@ export class GhosttyTerminalCore implements TerminalCore {
     renderData('ROWS', session.out + 4)
     let view = vt.view()
     const rows = view.getUint16(session.out + 4, true)
+
     const full =
       view.getInt32(session.out, true) === layout.dirtyFull ||
       rows !== this.viewport.length
+
     if (rows !== this.viewport.length) {
       this.viewport.length = rows
       this.dirty = Array.from({ length: rows }, () => true)
@@ -298,6 +313,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     if (full || view.getInt32(session.out, true) !== layout.dirtyFalse) {
       view.setUint32(session.out, session.rows, true)
       renderData('ROW_ITERATOR', session.out)
+
       const rowData = (name: string, out: number) =>
         vt.call(
           'ghostty_render_state_row_get',
@@ -305,6 +321,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           vt.value('GhosttyRenderStateRowData', name),
           out
         )
+
       for (
         let y = 0;
         y < rows &&
@@ -312,14 +329,17 @@ export class GhosttyTerminalCore implements TerminalCore {
         y++
       ) {
         rowData('DIRTY', session.out)
+
         if (!full && !vt.view().getUint8(session.out) && this.viewport[y]) {
           continue
         }
 
         rowData('RAW', session.out)
+
         const metadata = this.rowMetadata(
           vt.view().getBigUint64(session.out, true)
         )
+
         rowData('CELLS_RAW', session.out)
         view = vt.view()
         const cellsPtr = view.getUint32(session.out, true)
@@ -331,6 +351,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           metadata,
           (x) => {
             const cell = vt.view()
+
             return [
               cell.getUint32(cellsPtr + x * 8, true),
               cell.getUint32(cellsPtr + x * 8 + 4, true)
@@ -340,16 +361,19 @@ export class GhosttyTerminalCore implements TerminalCore {
             style: (x) => {
               vt.call('ghostty_render_state_row_cells_select', session.cells, x)
               vt.view().setUint32(session.style, vt.size('GhosttyStyle'), true)
+
               const result = vt.call(
                 'ghostty_render_state_row_cells_get',
                 session.cells,
                 vt.value('GhosttyRenderStateRowCellsData', 'STYLE'),
                 session.style
               )
+
               return result === 0 ? this.readStyle(session.style) : null
             },
             graphemes: (x) => {
               vt.call('ghostty_render_state_row_cells_select', session.cells, x)
+
               const cellsData = (name: string, out: number) =>
                 vt.call(
                   'ghostty_render_state_row_cells_get',
@@ -357,17 +381,21 @@ export class GhosttyTerminalCore implements TerminalCore {
                   vt.value('GhosttyRenderStateRowCellsData', name),
                   out
                 )
+
               cellsData('GRAPHEMES_LEN', session.out)
               const length = vt.view().getUint32(session.out, true)
+
               if (length * 4 > TEXT_BYTES) {
                 return undefined
               }
 
               cellsData('GRAPHEMES_BUF', session.text)
+
               return this.codepoints(session.text, length)
             },
             link: (x) => {
               this.writePoint(session.point, 'VIEWPORT', x, y)
+
               return this.hyperlinkAt(session.point)
             }
           }
@@ -376,8 +404,10 @@ export class GhosttyTerminalCore implements TerminalCore {
       }
 
       vt.call('ghostty_render_state_clean', session.state)
+
       for (let start = 0; start < this.viewport.length;) {
         let end = start
+
         while (
           end < this.viewport.length - 1 &&
           this.viewport[end]!.metadata.wrapsToNext
@@ -389,6 +419,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         const linked = linkUrls(group)
         group.forEach((row, index) => {
           const cells = linked[index]!
+
           if (
             cells.length !== row.cells.length ||
             cells.some((cell, x) => cell.linkUri !== row.cells[x]!.linkUri)
@@ -405,8 +436,10 @@ export class GhosttyTerminalCore implements TerminalCore {
     vt.view().setUint32(session.out, vt.size('GhosttyRenderStateCursor'), true)
     renderData('CURSOR', session.out)
     view = vt.view()
+
     const cursor = (field: string) =>
       session.out + vt.offset('GhosttyRenderStateCursor', field)
+
     const style = view.getInt32(cursor('visual_style'), true)
     this.cursor = {
       row: view.getUint16(cursor('viewport_y'), true),
@@ -428,6 +461,7 @@ export class GhosttyTerminalCore implements TerminalCore {
   private rowMetadata(row: bigint): TerminalRowMetadata {
     const session = this.session!
     const { vt } = session
+
     // SAFETY: ghostty_row_get takes the packed GhosttyRow by value, which
     // wasm32 passes as an i64.
     const rowGet = Object(vt.exports.ghostty_row_get) as (
@@ -435,10 +469,13 @@ export class GhosttyTerminalCore implements TerminalCore {
       data: number,
       out: number
     ) => number
+
     const flag = (name: string) => {
       rowGet(row, vt.value('GhosttyRowData', name), session.out + 8)
+
       return vt.view().getUint8(session.out + 8) !== 0
     }
+
     return {
       wrapsToNext: flag('WRAP'),
       continuesPrevious: flag('WRAP_CONTINUATION')
@@ -459,6 +496,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     const styles = new Map<number, CellStyle | null>()
     const cells: CellData[] = []
     let length = 0
+
     for (let x = 0; x < count; x++) {
       const [lo, hi] = raw(x)
       const tag = bits(lo, hi, layout.tag)
@@ -466,10 +504,12 @@ export class GhosttyTerminalCore implements TerminalCore {
       const styleId = bits(lo, hi, layout.styleId)
       const wide = bits(lo, hi, layout.wide)
       const hyperlink = bits(lo, hi, layout.hyperlink) !== 0
+
       const codepoint =
         tag === layout.tagCodepoint || tag === layout.tagGrapheme
           ? content & (2 ** layout.codepoint.width - 1)
           : 0
+
       if (
         tag === layout.tagCodepoint &&
         codepoint === 0 &&
@@ -482,6 +522,7 @@ export class GhosttyTerminalCore implements TerminalCore {
       }
 
       length = x + 1
+
       const cell: CellData = {
         char: codepoint || 32,
         fg: DEFAULT_COLOR,
@@ -490,18 +531,21 @@ export class GhosttyTerminalCore implements TerminalCore {
         width:
           wide === layout.wideWide ? 2 : wide === layout.wideSpacerTail ? 0 : 1
       }
+
       if (wide === layout.wideSpacerHead) {
         cell.spacerHead = true
       }
 
       if (tag === layout.tagGrapheme) {
         const chars = read.graphemes(x)
+
         if (chars !== undefined) {
           cell.chars = chars
         }
       } else if (tag === layout.tagBgPalette) {
         const index = bits(content, 0, layout.bgPalette)
         const bgRgb = index < 16 ? null : this.paletteColor(index)
+
         if (bgRgb === null) {
           cell.bg = index
         } else {
@@ -516,6 +560,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
       if (styleId !== 0) {
         let style = styles.get(styleId)
+
         if (style === undefined) {
           style = read.style(x)
           styles.set(styleId, style)
@@ -523,6 +568,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
         if (style) {
           cell.flags = style.flags
+
           if (style.fg !== null) {
             cell.fg = style.fg
           }
@@ -545,11 +591,13 @@ export class GhosttyTerminalCore implements TerminalCore {
 
           if (style.underline !== 'none') {
             cell.underlineStyle = style.underline
+
             const underline =
               style.underlineColor.rgb ??
               (style.underlineColor.palette === null
                 ? null
                 : this.paletteColor(style.underlineColor.palette))
+
             if (underline !== null) {
               cell.underlineRgb = underline
             }
@@ -559,6 +607,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
       if (hyperlink) {
         const uri = read.link(x)
+
         if (uri) {
           cell.linkUri = uri
           cell.linkKey = uri
@@ -576,8 +625,10 @@ export class GhosttyTerminalCore implements TerminalCore {
     const layout = this.layout!
     const view = vt.view()
     const field = (name: string) => ptr + vt.offset('GhosttyStyle', name)
+
     const flag = (name: string, value: number) =>
       view.getUint8(field(name)) ? value : 0
+
     // wterm themes the 16 ANSI colors but builds indices 16-255 from a
     // 51-step cube instead of xterm's, so those resolve through Ghostty's palette.
     const color = (name: string) => {
@@ -585,6 +636,7 @@ export class GhosttyTerminalCore implements TerminalCore {
       const tag = view.getInt32(base, true)
       const value = base + layout.colorValue
       const palette = tag === layout.colorPalette ? view.getUint8(value) : null
+
       return {
         palette: palette !== null && palette < 16 ? palette : null,
         rgb:
@@ -595,10 +647,13 @@ export class GhosttyTerminalCore implements TerminalCore {
               : this.paletteColor(palette)
       }
     }
+
     const underline =
       UNDERLINE_STYLES[view.getInt32(field('underline'), true)] ?? 'single'
+
     const fg = color('fg_color')
     const bg = color('bg_color')
+
     return {
       flags:
         flag('bold', 0x01) |
@@ -625,6 +680,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         new Uint8Array(view.buffer, ptr, 256 * 3).slice()
       ) ?? null
     const palette = this.palette
+
     return palette
       ? (palette[index * 3]! << 16) |
           (palette[index * 3 + 1]! << 8) |
@@ -634,6 +690,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
   private codepoints(ptr: number, length: number): string {
     const view = this.session!.vt.view()
+
     return String.fromCodePoint(
       ...Array.from({ length }, (_, index) =>
         view.getUint32(ptr + index * 4, true)
@@ -662,6 +719,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     const session = this.session!
     const { vt } = session
     vt.view().setUint32(session.ref, vt.size('GhosttyGridRef'), true)
+
     return (
       vt.call(
         'ghostty_terminal_grid_ref',
@@ -675,6 +733,7 @@ export class GhosttyTerminalCore implements TerminalCore {
   private hyperlinkAt(point: number): string | null {
     const session = this.session!
     const { vt } = session
+
     if (!this.gridRef(point)) {
       return null
     }
@@ -686,6 +745,7 @@ export class GhosttyTerminalCore implements TerminalCore {
       TEXT_BYTES,
       session.out
     )
+
     return result === 0
       ? vt.string(session.text, vt.view().getUint32(session.out, true)) || null
       : null
@@ -701,13 +761,16 @@ export class GhosttyTerminalCore implements TerminalCore {
     }
 
     const row = this.decodeHistoryRow(offset)
+
     if (row) {
       const above: DecodedRow[] = []
+
       for (
         let current = row;
         current.metadata.continuesPrevious && above.length < URL_ROW_LIMIT;
       ) {
         const previous = this.decodeHistoryRow(offset + above.length + 1)
+
         if (!previous) {
           break
         }
@@ -717,11 +780,13 @@ export class GhosttyTerminalCore implements TerminalCore {
       }
 
       const below: DecodedRow[] = []
+
       for (
         let current = row;
         current.metadata.wrapsToNext && below.length < URL_ROW_LIMIT;
       ) {
         const nextOffset = offset - below.length - 1
+
         if (nextOffset < 0) {
           this.ensureViewport()
         }
@@ -730,6 +795,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           nextOffset >= 0
             ? this.decodeHistoryRow(nextOffset)
             : this.viewport[-nextOffset - 1]
+
         if (!next) {
           break
         }
@@ -742,11 +808,13 @@ export class GhosttyTerminalCore implements TerminalCore {
     }
 
     this.history = { offset, row }
+
     return row
   }
 
   private decodeHistoryRow(offset: number): DecodedRow | null {
     const cached = this.historyRows.get(offset)
+
     if (cached !== undefined) {
       return cached
     }
@@ -756,12 +824,16 @@ export class GhosttyTerminalCore implements TerminalCore {
     const total = terminal.scrollbackRows
     let row: DecodedRow | null = null
     this.writePoint(session.point, 'HISTORY', 0, total - 1 - offset)
+
     if (offset < total && this.gridRef(session.point)) {
       vt.call('ghostty_grid_ref_row', session.ref, session.out)
+
       const metadata = this.rowMetadata(
         vt.view().getBigUint64(session.out, true)
       )
+
       const cols = terminal.cols
+
       const x = (column: number) =>
         vt
           .view()
@@ -770,6 +842,7 @@ export class GhosttyTerminalCore implements TerminalCore {
             column,
             true
           )
+
       row = this.decodeRow(
         cols,
         metadata,
@@ -777,6 +850,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           x(column)
           vt.call('ghostty_grid_ref_cell', session.ref, session.out)
           const view = vt.view()
+
           return [
             view.getUint32(session.out, true),
             view.getUint32(session.out + 4, true)
@@ -786,6 +860,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           style: (column) => {
             x(column)
             vt.view().setUint32(session.style, vt.size('GhosttyStyle'), true)
+
             return vt.call(
               'ghostty_grid_ref_style',
               session.ref,
@@ -796,6 +871,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           },
           graphemes: (column) => {
             x(column)
+
             const result = vt.call(
               'ghostty_grid_ref_graphemes',
               session.ref,
@@ -803,6 +879,7 @@ export class GhosttyTerminalCore implements TerminalCore {
               TEXT_BYTES / 4,
               session.out
             )
+
             return result === 0
               ? this.codepoints(
                   session.text,
@@ -817,6 +894,7 @@ export class GhosttyTerminalCore implements TerminalCore {
               column,
               total - 1 - offset
             )
+
             return this.hyperlinkAt(session.point)
           }
         }
@@ -828,21 +906,25 @@ export class GhosttyTerminalCore implements TerminalCore {
     }
 
     this.historyRows.set(offset, row)
+
     return row
   }
 
   getCell(row: number, col: number): CellData {
     this.ensureViewport()
+
     return this.viewport[row]?.cells[col] ?? BLANK_CELL
   }
 
   getRowMetadata(row: number): TerminalRowMetadata | null {
     this.ensureViewport()
+
     return this.viewport[row]?.metadata ?? null
   }
 
   isDirtyRow(row: number): boolean {
     this.ensureViewport()
+
     return this.dirty[row] ?? false
   }
 
@@ -860,6 +942,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
   trackPosition(position: TerminalPosition): TrackedTerminalPosition | null {
     const session = this.session
+
     if (
       !session ||
       !Number.isInteger(position.row) ||
@@ -873,6 +956,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
     const { vt, terminal } = session
     this.writePoint(session.point, 'SCREEN', position.col, position.row)
+
     const handle = vt.tryOpaque((out) =>
       vt.call(
         'ghostty_terminal_grid_ref_track',
@@ -881,6 +965,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         out
       )
     )
+
     if (handle === null) {
       return null
     }
@@ -888,6 +973,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     const owner = this.owner
     const alternate = this.usingAltScreen()
     let disposed = false
+
     return {
       resolve: () => {
         if (
@@ -905,6 +991,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         }
 
         const view = vt.view()
+
         return {
           row: view.getUint32(
             session.out + vt.offset('GhosttyPointCoordinate', 'y'),
@@ -922,6 +1009,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         }
 
         disposed = true
+
         if (owner === this.owner) {
           vt.call('ghostty_tracked_grid_ref_free', handle)
         }
@@ -931,12 +1019,14 @@ export class GhosttyTerminalCore implements TerminalCore {
 
   getCursor(): CursorState {
     this.ensureViewport()
+
     return this.cursor
   }
 
   getColorOverrides(): TerminalColorOverrides {
     const terminal = this.session?.terminal
     const colors: TerminalColorOverrides = {}
+
     if (!terminal) {
       return colors
     }
@@ -944,6 +1034,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     const foreground = terminal.data('COLOR_FOREGROUND', rgb)
     const background = terminal.data('COLOR_BACKGROUND', rgb)
     const cursor = terminal.data('COLOR_CURSOR', rgb)
+
     if (foreground !== null && foreground !== TERMINAL_FOREGROUND) {
       colors.foreground = foreground
     }
@@ -973,6 +1064,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
   usingAltScreen(): boolean {
     const layout = this.layout
+
     return (
       layout !== null &&
       this.session?.terminal.data('ACTIVE_SCREEN', (view, ptr) =>
@@ -1034,18 +1126,21 @@ export class GhosttyTerminalCore implements TerminalCore {
     }
 
     this.titleChanged = false
+
     return this.session.terminal.title()
   }
 
   getBellCount(): number {
     const bells = this.bells
     this.bells = 0
+
     return bells
   }
 
   getClipboardWrite(): string | null {
     const text = this.clipboard
     this.clipboard = null
+
     return text
   }
 
@@ -1056,6 +1151,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
     const response = this.responses.join('')
     this.responses = []
+
     return response
   }
 
@@ -1079,6 +1175,7 @@ export class GhosttyTerminalCore implements TerminalCore {
   // their text in scrollback. Unicode placeholder placements are not shown.
   getGraphicsState(): TerminalGraphicsState | null {
     const session = this.session
+
     if (!session) {
       return null
     }
@@ -1090,10 +1187,13 @@ export class GhosttyTerminalCore implements TerminalCore {
     const { vt, terminal } = session
     const images = new Map<number, TerminalImageDescriptor>()
     const placements: TerminalImagePlacement[] = []
+
     const storage = terminal.data('KITTY_GRAPHICS', (view, ptr) =>
       view.getUint32(ptr, true)
     )
+
     vt.view().setUint32(session.out, session.placements, true)
+
     if (
       storage &&
       vt.call(
@@ -1110,8 +1210,10 @@ export class GhosttyTerminalCore implements TerminalCore {
           vt.value('GhosttyKittyGraphicsPlacementData', name),
           session.out
         )
+
         return vt.view().getUint32(session.out, true)
       }
+
       const info = (name: string) =>
         vt
           .view()
@@ -1120,6 +1222,7 @@ export class GhosttyTerminalCore implements TerminalCore {
               vt.offset('GhosttyKittyGraphicsPlacementRenderInfo', name),
             true
           )
+
       while (
         vt.call('ghostty_kitty_graphics_placement_next', session.placements)
       ) {
@@ -1129,6 +1232,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           vt.value('GhosttyKittyGraphicsPlacementData', 'IS_VIRTUAL'),
           session.out
         )
+
         if (vt.view().getUint8(session.out)) {
           continue
         }
@@ -1146,6 +1250,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           vt.size('GhosttySelection'),
           true
         )
+
         if (
           !descriptor ||
           vt.call(
@@ -1174,14 +1279,17 @@ export class GhosttyTerminalCore implements TerminalCore {
         }
 
         const view = vt.view()
+
         const row = view.getUint32(
           session.point + vt.offset('GhosttyPointCoordinate', 'y'),
           true
         )
+
         const col = view.getUint16(
           session.point + vt.offset('GhosttyPointCoordinate', 'x'),
           true
         )
+
         images.set(imageId, descriptor)
         placements.push({
           placementKey: `${imageId}:${placement('PLACEMENT_ID')}:${row}:${col}`,
@@ -1205,6 +1313,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     }
 
     const key = JSON.stringify(placements)
+
     if (key !== this.graphicsKey) {
       this.graphicsKey = key
       this.graphicsGeneration += 1
@@ -1215,6 +1324,7 @@ export class GhosttyTerminalCore implements TerminalCore {
       images: [...images.values()],
       placements
     }
+
     return this.graphics
   }
 
@@ -1222,11 +1332,13 @@ export class GhosttyTerminalCore implements TerminalCore {
     const session = this.session
     const descriptor = this.imageDescriptor(imageId)
     const image = this.kittyImage(imageId)
+
     if (!session || !descriptor || descriptor.version !== version) {
       return null
     }
 
     const { vt } = session
+
     const get = (name: string) =>
       vt.call(
         'ghostty_kitty_graphics_image_get',
@@ -1236,17 +1348,21 @@ export class GhosttyTerminalCore implements TerminalCore {
       ) === 0
         ? vt.view().getUint32(session.out, true)
         : null
+
     const format = get('FORMAT')
     const ptr = get('DATA_PTR')
     const length = get('DATA_LEN')
+
     if (ptr === null || length === null) {
       return null
     }
 
     const source = vt.bytes().subarray(ptr, ptr + length)
     const { width, height } = descriptor
+
     const formatValue = (name: string) =>
       vt.value('GhosttyKittyImageFormat', name)
+
     const channels =
       format === formatValue('RGBA')
         ? 4
@@ -1257,6 +1373,7 @@ export class GhosttyTerminalCore implements TerminalCore {
             : format === formatValue('GRAY')
               ? 1
               : 0
+
     if (channels === 0 || length !== width * height * channels) {
       return null
     }
@@ -1266,6 +1383,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     }
 
     const rgba = new Uint8Array(width * height * 4)
+
     for (let pixel = 0; pixel < width * height; pixel++) {
       const input = pixel * channels
       const gray = channels < 3
@@ -1280,9 +1398,11 @@ export class GhosttyTerminalCore implements TerminalCore {
 
   private kittyImage(imageId: number): number {
     const terminal = this.session?.terminal
+
     const storage = terminal?.data('KITTY_GRAPHICS', (view, ptr) =>
       view.getUint32(ptr, true)
     )
+
     return storage
       ? terminal!.vt.call('ghostty_kitty_graphics_image', storage, imageId)
       : 0
@@ -1292,11 +1412,13 @@ export class GhosttyTerminalCore implements TerminalCore {
   private imageDescriptor(imageId: number): TerminalImageDescriptor | null {
     const session = this.session
     const image = this.kittyImage(imageId)
+
     if (!session || !image) {
       return null
     }
 
     const { vt } = session
+
     const get = (name: string) =>
       vt.call(
         'ghostty_kitty_graphics_image_get',
@@ -1304,6 +1426,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         vt.value('GhosttyKittyGraphicsImageData', name),
         session.out
       ) === 0
+
     if (!get('DATA_PTR') || !get('WIDTH')) {
       return null
     }
@@ -1313,6 +1436,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     const height = vt.view().getUint32(session.out, true)
     get('GENERATION')
     const version = Number(vt.view().getBigUint64(session.out, true))
+
     return { imageId, version, width, height }
   }
 
@@ -1329,6 +1453,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
 function readLayout(vt: GhosttyVt) {
   const value = (type: string, name: string) => vt.value(type, name)
+
   return {
     tag: vt.bits('GhosttyCell', 'content_tag'),
     content: vt.bits('GhosttyCell', 'content'),
@@ -1378,21 +1503,25 @@ function linkUrls(rows: readonly DecodedRow[]): CellData[][] {
 
       const chars = cell.chars ?? String.fromCodePoint(cell.char)
       text += chars
+
       for (let index = 0; index < chars.length; index++) {
         positions.push([row, col])
       }
     })
   )
+
   if (!text.includes('://')) {
     return result
   }
 
   const openStart = rows[0]!.metadata.continuesPrevious
   const openEnd = rows.at(-1)!.metadata.wrapsToNext
+
   for (const match of text.matchAll(URL_PATTERN)) {
     const first = match.index
     const last = first + match[0].length - 1
     const span = positions.slice(first, last + 1)
+
     if (
       (openStart && first === 0) ||
       (openEnd && last === text.length - 1) ||

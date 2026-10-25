@@ -5,6 +5,7 @@ const MOBILE_QUERY = '(max-width: 700px)'
 function subscribe(onChange: () => void) {
   const media = window.matchMedia(MOBILE_QUERY)
   media.addEventListener('change', onChange)
+
   return () => media.removeEventListener('change', onChange)
 }
 

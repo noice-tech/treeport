@@ -13,6 +13,7 @@ import type { TerminalLaunchSpec } from './terminal'
 class FakeChild extends EventEmitter {
   readonly kill = vi.fn((signal: NodeJS.Signals) => {
     queueMicrotask(() => this.emit('exit', null, signal))
+
     return true
   })
 }
@@ -23,6 +24,7 @@ type SpawnOptions = Parameters<
 
 function writable() {
   let value = ''
+
   return {
     stream: {
       write: (chunk: string | Uint8Array) => ((value += String(chunk)), true)
@@ -47,17 +49,22 @@ describe('terminal launcher setup pipeline', () => {
       args: readonly string[]
       options: SpawnOptions
     }> = []
+
     const results = [0, 0, 7]
+
     const spawnProcess = vi.fn(
       (executable: string, args: readonly string[], options: SpawnOptions) => {
         calls.push({ executable, args, options })
         const child = new FakeChild()
         queueMicrotask(() => child.emit('exit', results.shift(), null))
+
         return child
       }
     )
+
     const output = writable()
     const error = writable()
+
     const code = await Effect.runPromise(
       runLaunchSpec(
         spec({
@@ -110,14 +117,18 @@ describe('terminal launcher setup pipeline', () => {
       const command = new FakeChild()
       const shell = new FakeChild()
       const onCommandExit = vi.fn(async () => {})
+
       const spawnProcess = vi
         .fn()
         .mockReturnValueOnce(command)
         .mockImplementationOnce(() => {
           expect(onCommandExit).toHaveBeenCalledExactlyOnceWith(exitCode)
+
           return shell
         })
+
       let finished = false
+
       const launch = Effect.runPromise(
         runLaunchSpec(spec({ fallbackArgv: ['/bin/bash', '-i'] }), {
           spawnProcess,
@@ -126,8 +137,10 @@ describe('terminal launcher setup pipeline', () => {
         })
       ).then((code) => {
         finished = true
+
         return code
       })
+
       command.emit('exit', exitCode, null)
       await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(2))
       expect(finished).toBe(false)
@@ -142,7 +155,9 @@ describe('terminal launcher setup pipeline', () => {
       argv: string[]
       env: NodeJS.ProcessEnv
     }> = []
+
     const results = [23, 0]
+
     const spawnProcess = vi.fn(
       (
         executable: string,
@@ -152,6 +167,7 @@ describe('terminal launcher setup pipeline', () => {
         calls.push({ argv: [executable, ...args], env: options.env })
         const child = new FakeChild()
         queueMicrotask(() => child.emit('exit', results.shift(), null))
+
         return child
       }
     )
@@ -192,6 +208,7 @@ describe('terminal launcher setup pipeline', () => {
 
   it('integrates supported shells without changing direct or unsupported commands', async () => {
     const calls: Array<{ argv: string[]; env: NodeJS.ProcessEnv }> = []
+
     const spawnProcess = vi.fn(
       (
         executable: string,
@@ -201,13 +218,16 @@ describe('terminal launcher setup pipeline', () => {
         calls.push({ argv: [executable, ...args], env: options.env })
         const child = new FakeChild()
         queueMicrotask(() => child.emit('exit', 0, null))
+
         return child
       }
     )
+
     const dependencies = {
       spawnProcess,
       signalSource: new EventEmitter()
     }
+
     const integration = {
       shellIntegrationDir: '/treeport/integration'
     }
@@ -270,6 +290,7 @@ describe('terminal launcher setup pipeline', () => {
 
   it('starts a fallback shell after the final command cannot be spawned', async () => {
     const calls: string[][] = []
+
     const spawnProcess = vi.fn(
       (executable: string, args: readonly string[]) => {
         calls.push([executable, ...args])
@@ -279,9 +300,11 @@ describe('terminal launcher setup pipeline', () => {
             ? child.emit('error', new Error('not found'))
             : child.emit('exit', 0, null)
         )
+
         return child
       }
     )
+
     const error = writable()
 
     await expect(
@@ -303,20 +326,25 @@ describe('terminal launcher setup pipeline', () => {
   it('starts a fallback shell after Ctrl-C but not terminal teardown', async () => {
     const firstChild = new FakeChild()
     const shell = new FakeChild()
+
     const spawnProcess = vi
       .fn()
       .mockReturnValueOnce(firstChild)
       .mockImplementationOnce(() => {
         queueMicrotask(() => shell.emit('exit', 0, null))
+
         return shell
       })
+
     const signalSource = new EventEmitter()
+
     const launch = Effect.runPromise(
       runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
         spawnProcess,
         signalSource
       })
     )
+
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
     signalSource.emit('SIGINT')
     await expect(launch).resolves.toBe(0)
@@ -325,12 +353,14 @@ describe('terminal launcher setup pipeline', () => {
     const teardownChild = new FakeChild()
     const teardownSpawn = vi.fn(() => teardownChild)
     const teardownSignals = new EventEmitter()
+
     const teardown = Effect.runPromise(
       runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
         spawnProcess: teardownSpawn,
         signalSource: teardownSignals
       })
     )
+
     await vi.waitFor(() => expect(teardownSpawn).toHaveBeenCalledTimes(1))
     teardownSignals.emit('SIGHUP')
     await expect(teardown).resolves.toBe(1)
@@ -341,9 +371,12 @@ describe('terminal launcher setup pipeline', () => {
     const spawnProcess = vi.fn(() => {
       const child = new FakeChild()
       queueMicrotask(() => child.emit('exit', 23, null))
+
       return child
     })
+
     const error = writable()
+
     const code = await Effect.runPromise(
       runLaunchSpec(
         spec({
@@ -382,9 +415,11 @@ describe('terminal launcher setup pipeline', () => {
     const child = new FakeChild()
     const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
+
     const launch = Effect.runPromise(
       runLaunchSpec(spec(), { spawnProcess, signalSource })
     )
+
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
     signalSource.emit('SIGINT')
     await expect(launch).resolves.toBe(1)
@@ -395,6 +430,7 @@ describe('terminal launcher setup pipeline', () => {
     const child = new FakeChild()
     const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
+
     const fiber = Effect.runFork(
       runLaunchSpec(spec(), { spawnProcess, signalSource })
     )
@@ -406,6 +442,7 @@ describe('terminal launcher setup pipeline', () => {
       true
     )
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+
     for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
       expect(signalSource.listenerCount(signal)).toBe(0)
     }
@@ -415,11 +452,13 @@ describe('terminal launcher setup pipeline', () => {
     const child = new FakeChild()
     child.kill.mockImplementation(() => {
       queueMicrotask(() => child.emit('exit', 0, null))
+
       return true
     })
     const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
     const error = writable()
+
     const launch = Effect.runPromise(
       runLaunchSpec(
         spec({
@@ -441,6 +480,7 @@ describe('terminal launcher setup pipeline', () => {
         }
       )
     )
+
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
     signalSource.emit('SIGTERM')
     await expect(launch).resolves.toBe(1)
@@ -452,8 +492,10 @@ describe('terminal launcher setup pipeline', () => {
     const spawnProcess = vi.fn(() => {
       const child = new FakeChild()
       queueMicrotask(() => child.emit('exit', 2, null))
+
       return child
     })
+
     const output = writable()
     const error = writable()
     await Effect.runPromise(
@@ -501,6 +543,7 @@ describe('terminal launcher setup pipeline', () => {
     const child = new FakeChild()
     const spawnProcess = vi.fn(() => child)
     const error = writable()
+
     const code = await Effect.runPromise(
       runLaunchSpec(
         spec({
@@ -522,6 +565,7 @@ describe('terminal launcher setup pipeline', () => {
         }
       )
     )
+
     expect(code).toBe(124)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     expect(spawnProcess).toHaveBeenCalledTimes(1)

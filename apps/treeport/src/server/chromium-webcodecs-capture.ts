@@ -12,6 +12,7 @@ export async function captureChromiumWebCodecs(
       maxBufferSize: number
     }) => { readable: ReadableStream<VideoFrame> }
   }
+
   if (!MediaStreamTrackProcessor || !globalThis.VideoEncoder) {
     throw new Error(
       'Browser video requires the window track processor and VideoEncoder.'
@@ -19,6 +20,7 @@ export async function captureChromiumWebCodecs(
   }
 
   const { width, height } = track.getSettings()
+
   if (!width || !height) {
     throw new Error('Exact-tab capture did not report its dimensions.')
   }
@@ -26,6 +28,7 @@ export async function captureChromiumWebCodecs(
   // H.264 level 4.2 covers 1080p60; larger captures need the macroblock
   // throughput of level 5.1 or 5.2 (up to the protocol's 3840×2160 limit).
   const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16)
+
   const config: VideoEncoderConfig = {
     codec:
       macroblocks <= 8704
@@ -46,8 +49,10 @@ export async function captureChromiumWebCodecs(
     hardwareAcceleration: 'prefer-hardware',
     avc: { format: 'annexb' }
   }
+
   const hardwareSupported =
     (await VideoEncoder.isConfigSupported(config)).supported === true
+
   if (!hardwareSupported) {
     config.hardwareAcceleration = 'no-preference'
   }
@@ -64,10 +69,12 @@ export async function captureChromiumWebCodecs(
   const WINDOW = 4
   const MAX_SOCKET_BUFFER = 1024 * 1024
   const socket = new WebSocket(url)
+
   const reader = new MediaStreamTrackProcessor({
     track,
     maxBufferSize: 1
   }).readable.getReader()
+
   let encoder: VideoEncoder | null = null
   let stopped = false
   let latest: VideoFrame | null = null
@@ -85,12 +92,14 @@ export async function captureChromiumWebCodecs(
   let dropped = 0
   let retry: ReturnType<typeof setTimeout> | null = null
   let idle: ReturnType<typeof setTimeout> | null = null
+
   const reset = () => {
     epoch = 0
     sequence = 0
     encoding = 0
     acknowledged = 0
     announced = false
+
     for (const timer of [retry, idle]) {
       if (timer) {
         clearTimeout(timer)
@@ -99,12 +108,14 @@ export async function captureChromiumWebCodecs(
 
     retry = null
     idle = null
+
     if (encoder?.state !== 'closed') {
       encoder?.close()
     }
 
     encoder = null
   }
+
   const stop = () => {
     if (stopped) {
       return
@@ -119,6 +130,7 @@ export async function captureChromiumWebCodecs(
     track.stop()
     socket.close()
   }
+
   const fail = (message: string) => {
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(
@@ -128,6 +140,7 @@ export async function captureChromiumWebCodecs(
 
     stop()
   }
+
   const encode = () => {
     if (
       stopped ||
@@ -146,11 +159,13 @@ export async function captureChromiumWebCodecs(
         retry = null
         encode()
       }, 4)
+
       return
     }
 
     if (latest.displayWidth !== width || latest.displayHeight !== height) {
       fail('Capture dimensions changed without restarting the video epoch.')
+
       return
     }
 
@@ -159,6 +174,7 @@ export async function captureChromiumWebCodecs(
     latestEncoded = true
     encoding++
     encoder.encode(latest, { keyFrame })
+
     if (idle) {
       clearTimeout(idle)
     }
@@ -168,11 +184,14 @@ export async function captureChromiumWebCodecs(
     idle = setTimeout(
       () => {
         idle = null
+
         if (latest && refinements < 2) {
           refinements++
+
           const copy = new VideoFrame(latest, {
             timestamp: latest.timestamp + refinements
           })
+
           latest.close()
           latest = copy
           latestEncoded = false
@@ -182,6 +201,7 @@ export async function captureChromiumWebCodecs(
       150 * (refinements + 1)
     )
   }
+
   // A lost or stalled viewer must not freeze capture forever. Treat
   // unacknowledged packets as lost and restart the GOP after a quiet period.
   const watchdog = setInterval(() => {
@@ -197,6 +217,7 @@ export async function captureChromiumWebCodecs(
       encode()
     }
   }, 1_000)
+
   track.addEventListener('ended', () => {
     if (!stopped) {
       fail('Exact-tab capture ended.')
@@ -207,8 +228,10 @@ export async function captureChromiumWebCodecs(
   socket.onerror = () => fail('Capture media socket failed.')
   socket.onmessage = ({ data }) => {
     const command = JSON.parse(data)
+
     if (command.type === 'stop') {
       reset()
+
       return
     }
 
@@ -257,8 +280,10 @@ export async function captureChromiumWebCodecs(
         }
 
         encoding--
+
         if (chunk.byteLength > 4 * 1024 * 1024 - 17) {
           fail('Encoded packet exceeded the media lane limit.')
+
           return
         }
 
@@ -269,6 +294,7 @@ export async function captureChromiumWebCodecs(
             metadata.decoderConfig.description
           ) {
             fail('Expected an initial Annex-B keyframe with decoder metadata.')
+
             return
           }
 
@@ -307,9 +333,11 @@ export async function captureChromiumWebCodecs(
     latestEncoded = false
     encode()
   }
+
   const pump = async () => {
     while (!stopped) {
       const { value: frame, done } = await reader.read()
+
       if (done) {
         if (!stopped) {
           fail('Exact-tab capture ended.')
@@ -320,10 +348,12 @@ export async function captureChromiumWebCodecs(
 
       if (stopped) {
         frame.close()
+
         return
       }
 
       captured++
+
       // The processor holds at most one raw frame, plus this replaceable
       // latest frame. Count only frames replaced before they were encoded.
       if (latest && !latestEncoded) {
@@ -337,7 +367,9 @@ export async function captureChromiumWebCodecs(
       encode()
     }
   }
+
   void pump().catch((error) => fail(String(error)))
+
   return {
     stop,
     // Privileged local diagnostics only; never return frames or encoded bytes.

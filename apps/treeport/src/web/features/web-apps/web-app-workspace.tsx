@@ -39,6 +39,7 @@ export function WebAppWorkspace({
   const appWindowRef = useRef<Window | null>(null)
   // Sandbox changes only take effect on a new document, so remount on policy changes.
   const appRevision = `${app.id}:${reloadRevision}:${app.sandbox.enabled}:${app.sandbox.allowSameOrigin}`
+
   const [loadedAppRevision, setLoadedAppRevision] = useState<string | null>(
     null
   )
@@ -60,6 +61,7 @@ export function WebAppWorkspace({
     }
 
     const frame = window.requestAnimationFrame(() => frameRef.current?.focus())
+
     return () => window.cancelAnimationFrame(frame)
   }, [active, autoFocusBlocked, loadedAppRevision, appRevision])
 
@@ -75,7 +77,9 @@ export function WebAppWorkspace({
         }
       })
     }
+
     window.addEventListener('blur', detectFrameFocus)
+
     return () => window.removeEventListener('blur', detectFrameFocus)
   }, [active, onFocusSurface])
 
@@ -108,6 +112,7 @@ export function WebAppWorkspace({
     }
 
     window.addEventListener('keydown', forwardFindShortcut, true)
+
     return () =>
       window.removeEventListener('keydown', forwardFindShortcut, true)
   }, [active])
@@ -115,6 +120,7 @@ export function WebAppWorkspace({
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       const appWindow = frameRef.current?.contentWindow ?? appWindowRef.current
+
       if (event.source !== appWindow) {
         return
       }
@@ -127,8 +133,10 @@ export function WebAppWorkspace({
         appTitleMessageSchema,
         event.data
       )
+
       if (titleMessage) {
         onTitleChange(app.id, titleMessage.title?.trim().slice(0, 256) || null)
+
         return
       }
 
@@ -136,8 +144,10 @@ export function WebAppWorkspace({
         appDirtyMessageSchema,
         event.data
       )
+
       if (dirtyMessage) {
         onDirtyChange(app.id, dirtyMessage.dirty)
+
         return
       }
 
@@ -145,12 +155,15 @@ export function WebAppWorkspace({
         workspaceSelectionMessageSchema,
         event.data
       )
+
       if (selectionMessage) {
         onSelectWorkspace(selectionMessage.index)
+
         return
       }
 
       const message = decodeUnknownOrNull(appRequestMessageSchema, event.data)
+
       if (!message) {
         return
       }
@@ -159,6 +172,7 @@ export function WebAppWorkspace({
       const startedAt = performance.now()
       traceWebAppOpen(app.id, 'web_app.sdk.request', { method })
       let request: Promise<unknown>
+
       if (method === 'context') {
         request = parseResponse(
           rpc.api.apps[':appId'].context.$get({
@@ -176,6 +190,7 @@ export function WebAppWorkspace({
             : method === 'services.stop'
               ? 'stop'
               : 'ensure'
+
         request = parseResponse(
           rpc.api.apps[':appId'].services.$post({
             param: { appId: app.id, action },
@@ -191,6 +206,7 @@ export function WebAppWorkspace({
         ).then((result) => result.diff)
       } else if (method === 'diff.file') {
         const input: GitFileDiffRequest = { path: message.path }
+
         if (message.scope) {
           input.scope = message.scope
         }
@@ -306,7 +322,9 @@ export function WebAppWorkspace({
         }
       )
     }
+
     window.addEventListener('message', receive)
+
     return () => window.removeEventListener('message', receive)
   }, [
     active,

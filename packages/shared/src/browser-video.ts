@@ -6,6 +6,7 @@ export const browserVideoSettingsSchema = Schema.Struct({
   frameRate: Schema.Int.pipe(Schema.between(1, 60)),
   maxBitrate: Schema.Int.pipe(Schema.between(250_000, 48_000_000))
 })
+
 export type BrowserVideoSettings = Schema.Schema.Type<
   typeof browserVideoSettingsSchema
 >
@@ -27,21 +28,25 @@ export function gatherBrowserIce(peer: RTCPeerConnection): Promise<void> {
     const finish = (error: Error | null) => {
       clearTimeout(timer)
       peer.removeEventListener('icegatheringstatechange', changed)
+
       if (error) {
         reject(error)
       } else {
         resolve()
       }
     }
+
     const changed = () => {
       if (peer.iceGatheringState === 'complete') {
         finish(null)
       }
     }
+
     const timer = setTimeout(
       () => finish(new Error('Browser video ICE gathering timed out.')),
       5_000
     )
+
     peer.addEventListener('icegatheringstatechange', changed)
     changed()
   })
@@ -63,44 +68,55 @@ async function captureBrowserVideo(
   let size = { width: 0, height: 0 }
   let stopped = false
   let pending = Promise.resolve()
+
   // Only source replacement and sender attachment share this short queue.
   // ICE gathering must not hold up resize or disposal.
   const serialize = (operation: () => Promise<void>) => {
     const result = pending.then(operation)
     pending = result.catch(() => undefined)
+
     return result
   }
+
   const closePeer = (id: string) => {
     peers.get(id)?.close()
     peers.delete(id)
   }
+
   const stop = () => {
     stopped = true
+
     for (const peer of peers.values()) {
       peer.close()
     }
+
     peers.clear()
     track?.stop()
     track = null
   }
+
   const configureSender = async (
     sender: RTCRtpSender,
     settings: BrowserVideoSettings
   ) => {
     const parameters = sender.getParameters()
+
     // A peer may still be negotiating while its source is replaced.
     if (parameters.encodings.length === 0) {
       return
     }
 
     parameters.degradationPreference = 'maintain-framerate'
+
     for (const encoding of parameters.encodings) {
       // Ceilings, not fixed rates: Chromium still owns congestion adaptation.
       encoding.maxBitrate = settings.maxBitrate
       encoding.maxFramerate = settings.frameRate
     }
+
     await sender.setParameters(parameters)
   }
+
   const resize = (
     width: number,
     height: number,
@@ -132,6 +148,7 @@ async function captureBrowserVideo(
         }
 
         settings = nextSettings
+
         return
       }
 
@@ -144,6 +161,7 @@ async function captureBrowserVideo(
         2,
         Math.round((width * captureScale) / 2) * 2
       )
+
       const captureHeight = Math.max(
         2,
         Math.round((height * captureScale) / 2) * 2
@@ -156,6 +174,7 @@ async function captureBrowserVideo(
       track = null
       previous?.stop()
       const sourceId = await source()
+
       if (stopped) {
         throw new Error('Browser video capture is stopped.')
       }
@@ -175,6 +194,7 @@ async function captureBrowserVideo(
           } as MediaTrackConstraints)
         }
       })
+
       const next = stream.getVideoTracks()[0]!
       await (async () => {
         await next.applyConstraints({
@@ -182,6 +202,7 @@ async function captureBrowserVideo(
           height: { exact: captureHeight },
           frameRate: { max: frameRate }
         })
+
         if (stopped) {
           throw new Error('Browser video capture is stopped.')
         }
@@ -193,6 +214,7 @@ async function captureBrowserVideo(
             failed('Browser video capture ended. Reconnect to restart it.')
           }
         })
+
         for (const [id, peer] of peers) {
           for (const sender of peer.getSenders()) {
             await sender
@@ -206,6 +228,7 @@ async function captureBrowserVideo(
               })
           }
         }
+
         if (stopped || next.readyState === 'ended') {
           throw new Error('Browser video capture is stopped.')
         }
@@ -220,6 +243,7 @@ async function captureBrowserVideo(
     })
 
   await resize(width, height)
+
   return {
     stop,
     closePeer,
@@ -230,6 +254,7 @@ async function captureBrowserVideo(
       }
 
       closePeer(id)
+
       if (peers.size >= 8) {
         throw new Error('Browser video has too many viewers.')
       }
@@ -237,6 +262,7 @@ async function captureBrowserVideo(
       // This is a send-only video service, not an audio/input/data-channel
       // endpoint. Viewer input remains on Treeport's authorized control path.
       const media = sdp.split(/\r?\n/).filter((line) => line.startsWith('m='))
+
       if (media.length !== 1 || !media[0]!.startsWith('m=video ')) {
         throw new Error('Browser video requires one video track.')
       }
@@ -248,6 +274,7 @@ async function captureBrowserVideo(
           closePeer(id)
         }
       }
+
       try {
         await peer.setRemoteDescription({ type: 'offer', sdp })
         const transceiver = peer.getTransceivers()[0]!
@@ -262,6 +289,7 @@ async function captureBrowserVideo(
         await peer.setLocalDescription(await peer.createAnswer())
         await serialize(() => configureSender(transceiver.sender, settings))
         await gatherBrowserIce(peer)
+
         if (stopped || peers.get(id) !== peer) {
           throw new Error('Browser video negotiation was superseded.')
         }

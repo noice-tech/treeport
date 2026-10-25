@@ -7,6 +7,7 @@ import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import { NetworkListenerAdapter } from './network-listeners'
 
 const temporary: string[] = []
+
 afterEach(async () => {
   await Promise.all(
     temporary
@@ -50,8 +51,10 @@ describe('NetworkListenerAdapter', () => {
       fs.mkdir(worktree),
       fs.mkdir(otherWorktree)
     ])
+
     const header =
       'sl local_address rem_address st tx_queue tr tm->when retrnsmt uid timeout inode\n'
+
     await fs.writeFile(
       path.join(procRoot, 'net/tcp'),
       `${header} 0: 0100007F:0BB8 00000000:0000 0A 0:0 00:0 0 1000 0 111\n 1: 00000000:143D 00000000:0000 0A 0:0 00:0 0 1000 0 222\n 2: 0100007F:1F90 00000000:0000 01 0:0 00:0 0 1000 0 999\n 3: 0100007F:2328 00000000:0000 0A 0:0 00:0 0 1000 0 333\n`
@@ -100,6 +103,7 @@ describe('NetworkListenerAdapter', () => {
     temporary.push(root)
     const worktree = path.join(root, 'repo')
     await fs.mkdir(worktree)
+
     class Runner implements CommandRunner {
       async run(request: CommandRequest): Promise<CommandResult> {
         if (request.executable === '/bin/ps') {
@@ -161,6 +165,7 @@ describe('NetworkListenerAdapter', () => {
         throw new Error('must not run')
       }
     }
+
     await expect(
       Effect.runPromise(
         new NetworkListenerAdapter(runner, 'win32').listeners({

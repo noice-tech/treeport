@@ -29,24 +29,28 @@ afterEach(async () => {
 async function temporaryRoot(): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-command-'))
   roots.push(root)
+
   return root
 }
 
 async function waitForFile(file: string): Promise<string> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const value = await fs.readFile(file, 'utf8').catch(() => '')
+
     if (value) {
       return value
     }
 
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
+
   throw new Error(`Timed out waiting for ${file}`)
 }
 
 describe('SpawnCommandRunner', () => {
   it('provides the Promise-compatible successful command boundary', async () => {
     const runner = new SpawnCommandRunner()
+
     const result = await runner.run({
       executable: process.execPath,
       args: [
@@ -68,6 +72,7 @@ describe('SpawnCommandRunner', () => {
         args: ['-e', "process.stdout.write('effect')"]
       })
     )
+
     expect(effectResult).toEqual({
       stdout: 'effect',
       stderr: '',
@@ -78,6 +83,7 @@ describe('SpawnCommandRunner', () => {
   it('observes output and close events emitted immediately after spawn', async () => {
     const stdout = new PassThrough()
     const stderr = new PassThrough()
+
     const child: ChildProcessWithoutNullStreams = Object.assign(
       Object.create(EventEmitter.prototype),
       {
@@ -87,6 +93,7 @@ describe('SpawnCommandRunner', () => {
         stderr
       }
     )
+
     const runner = new SpawnCommandRunner(() => {
       process.nextTick(() => {
         child.emit('spawn')
@@ -95,6 +102,7 @@ describe('SpawnCommandRunner', () => {
         child.emit('exit', 0, null)
         child.emit('close', 0, null)
       })
+
       return child
     })
 
@@ -111,6 +119,7 @@ describe('SpawnCommandRunner', () => {
 
   it('reports spawn failures with a stable tag and the original cause', async () => {
     const runner = new SpawnCommandRunner()
+
     const request = {
       executable: path.join(
         os.tmpdir(),
@@ -134,11 +143,13 @@ describe('SpawnCommandRunner', () => {
           )
         )
     )
+
     expect(caughtTag).toBe('SpawnCommandError')
   })
 
   it('reports checked exits and unsolicited signals with typed errors', async () => {
     const runner = new SpawnCommandRunner()
+
     const checkedError = await Effect.runPromise(
       Effect.flip(
         runCheckedEffect(runner, {
@@ -163,6 +174,7 @@ describe('SpawnCommandRunner', () => {
         args: ['-e', "process.kill(process.pid, 'SIGTERM')"]
       })
       .catch((cause) => cause)
+
     expect(signalError).toBeInstanceOf(SignalCommandError)
     expect(signalError).toMatchObject({
       _tag: 'SignalCommandError',
@@ -173,10 +185,12 @@ describe('SpawnCommandRunner', () => {
   it('times out after cooperative SIGTERM and escalates an uncooperative process to SIGKILL', async () => {
     const root = await temporaryRoot()
     const cooperativeSignalFile = path.join(root, 'cooperative-term-received')
+
     const uncooperativeSignalFile = path.join(
       root,
       'uncooperative-term-received'
     )
+
     const runner = new SpawnCommandRunner()
 
     const cooperativeError = await runner
@@ -190,10 +204,12 @@ describe('SpawnCommandRunner', () => {
         killGraceMs: 1_000
       })
       .catch((cause) => cause)
+
     expect(cooperativeError).toBeInstanceOf(TimeoutCommandError)
     expect(await fs.readFile(cooperativeSignalFile, 'utf8')).toBe('yes')
 
     const startedAt = Date.now()
+
     const uncooperativeError = await runner
       .run({
         executable: process.execPath,
@@ -232,11 +248,13 @@ describe('SpawnCommandRunner', () => {
         killGraceMs: 100
       })
       .catch((cause) => cause)
+
     const descendantPid = Number(await waitForFile(descendantPidFile))
 
     expect(error).toBeInstanceOf(TimeoutCommandError)
 
     let descendantAlive = true
+
     for (let attempt = 0; attempt < 100; attempt += 1) {
       try {
         process.kill(descendantPid, 0)
@@ -244,8 +262,10 @@ describe('SpawnCommandRunner', () => {
         descendantAlive = false
         break
       }
+
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
+
     if (descendantAlive) {
       process.kill(descendantPid, 'SIGKILL')
     }
@@ -255,6 +275,7 @@ describe('SpawnCommandRunner', () => {
 
   it('reports a broken stdin pipe and terminates the child', async () => {
     const runner = new SpawnCommandRunner()
+
     const error = await runner
       .run({
         executable: process.execPath,
@@ -272,6 +293,7 @@ describe('SpawnCommandRunner', () => {
     const root = await temporaryRoot()
     const pidFile = path.join(root, 'pid')
     const runner = new SpawnCommandRunner()
+
     const fiber = Effect.runFork(
       runner.runEffect({
         executable: process.execPath,
@@ -282,6 +304,7 @@ describe('SpawnCommandRunner', () => {
         killGraceMs: 100
       })
     )
+
     const pid = Number(await waitForFile(pidFile))
     const interruptedAt = Date.now()
 
@@ -293,6 +316,7 @@ describe('SpawnCommandRunner', () => {
 
   it('accepts exact output limits and terminates producers that exceed either stream limit', async () => {
     const runner = new SpawnCommandRunner()
+
     const exactResult = await runner.run({
       executable: process.execPath,
       args: [
@@ -302,6 +326,7 @@ describe('SpawnCommandRunner', () => {
       maxStdoutBytes: 8,
       maxStderrBytes: 8
     })
+
     expect(exactResult).toMatchObject({
       stdout: '12345678',
       stderr: 'abcdefgh',

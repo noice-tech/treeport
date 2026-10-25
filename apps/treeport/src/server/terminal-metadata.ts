@@ -74,6 +74,7 @@ export function acquireTerminalMetadataManager(
     const store =
       attentionStateStore ??
       new DatabaseTerminalAttentionStateStore(yield* DatabasePort)
+
     const manager = new TerminalMetadataManager(service, terminalHost, store)
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => manager.dispose()).pipe(
@@ -81,6 +82,7 @@ export function acquireTerminalMetadataManager(
       )
     )
     yield* manager.initialize()
+
     return manager
   }).pipe(Effect.orDie)
 }
@@ -117,6 +119,7 @@ export class TerminalMetadataManager {
 
       this.initialized = true
       const states = yield* this.attentionStateStore.load().pipe(Effect.orDie)
+
       for (const state of states) {
         this.persistedAttention.set(state.terminalId, state)
       }
@@ -146,6 +149,7 @@ export class TerminalMetadataManager {
 
   get(terminalId: string): TerminalRuntimeMetadata {
     const entry = this.entries.get(terminalId)
+
     return entry
       ? this.metadata(entry)
       : {
@@ -164,10 +168,13 @@ export class TerminalMetadataManager {
   subscribe(terminalId: string, listener: MetadataListener): () => void {
     const listeners =
       this.listeners.get(terminalId) ?? new Set<MetadataListener>()
+
     listeners.add(listener)
     this.listeners.set(terminalId, listeners)
+
     return () => {
       listeners.delete(listener)
+
       if (!listeners.size) {
         this.listeners.delete(terminalId)
       }
@@ -178,6 +185,7 @@ export class TerminalMetadataManager {
     listener: (metadata: TerminalRuntimeMetadata) => void
   ): () => void {
     this.attentionListeners.add(listener)
+
     return () => {
       this.attentionListeners.delete(listener)
     }
@@ -193,14 +201,17 @@ export class TerminalMetadataManager {
       }
 
       let entry = this.entries.get(terminal.id)
+
       if (!entry) {
         const launchCommand = path
           .basename(terminal.argv[0] ?? '')
           .replace(/^-/, '')
+
         const launchProgram =
           !terminal.interactiveShell && terminal.shellCommand === null
             ? (PROGRAM_COMMANDS.get(launchCommand) ?? null)
             : null
+
         const launchCommandLine = terminal.interactiveShell
           ? null
           : (
@@ -211,7 +222,9 @@ export class TerminalMetadataManager {
             )
               .trim()
               .slice(0, 256) || null
+
         const persisted = this.persistedAttention.get(terminal.id)
+
         const attention =
           persisted?.worktreeId === terminal.worktreeId
             ? {
@@ -221,6 +234,7 @@ export class TerminalMetadataManager {
                 reason: persisted.reason
               }
             : null
+
         this.attentionDeletionVersions.set(
           terminal.id,
           (this.attentionDeletionVersions.get(terminal.id) ?? 0) + 1
@@ -278,6 +292,7 @@ export class TerminalMetadataManager {
       terminalId,
       Effect.gen(this, function* () {
         const entry = this.entries.get(terminalId)
+
         if (!entry) {
           return yield* Effect.fail(
             new DomainError(
@@ -289,6 +304,7 @@ export class TerminalMetadataManager {
         }
 
         const latestSequence = entry.attention?.sequence ?? 0
+
         if (sequence > latestSequence) {
           return yield* Effect.fail(
             new DomainError(
@@ -316,6 +332,7 @@ export class TerminalMetadataManager {
             )
           yield* Effect.sync(() => {
             const persisted = this.persistedAttention.get(terminalId)
+
             if (persisted?.sequence === sequence) {
               this.persistedAttention.set(terminalId, {
                 ...persisted,
@@ -331,6 +348,7 @@ export class TerminalMetadataManager {
           }).pipe(
             Effect.withSpan('treeport.terminal.attention.acknowledge.publish')
           )
+
           return
         }
 
@@ -343,17 +361,20 @@ export class TerminalMetadataManager {
 
   removeTerminal(terminalId: string): void {
     const entry = this.entries.get(terminalId)
+
     if (!entry && !this.persistedAttention.has(terminalId)) {
       return
     }
 
     this.entries.delete(terminalId)
+
     if (entry) {
       this.stopRuntime(entry)
     }
 
     const deletionVersion =
       (this.attentionDeletionVersions.get(terminalId) ?? 0) + 1
+
     this.attentionDeletionVersions.set(terminalId, deletionVersion)
     this.service.forkApplicationEffect(
       this.service
@@ -391,6 +412,7 @@ export class TerminalMetadataManager {
         activity: IDLE_ACTIVITY,
         attention: null
       } satisfies TerminalRuntimeMetadata
+
       this.listeners.get(terminalId)?.forEach((listener) => listener(cleared))
     }
   }
@@ -403,9 +425,11 @@ export class TerminalMetadataManager {
     this.disposed = true
     this.unsubscribeEvents?.()
     this.unsubscribeEvents = null
+
     for (const entry of this.entries.values()) {
       this.stopRuntime(entry)
     }
+
     this.entries.clear()
     this.listeners.clear()
     this.attentionListeners.clear()
@@ -418,6 +442,7 @@ export class TerminalMetadataManager {
   private handleProductEvent(event: ProductEvent): void {
     if (event.type === 'terminal.removed') {
       this.removeTerminal(event.data.terminalId)
+
       return
     }
 
@@ -427,6 +452,7 @@ export class TerminalMetadataManager {
           this.removeTerminal(entry.terminalId)
         }
       }
+
       return
     }
 
@@ -444,9 +470,11 @@ export class TerminalMetadataManager {
           event.type === 'terminal.created'
             ? event.data.terminal
             : yield* this.service.terminals.getTerminal(terminalId)
+
         const worktree = yield* this.service.projects.getWorktree(
           terminal.worktreeId
         )
+
         yield* this.trackTerminal(terminal, worktree)
       }).pipe(
         Effect.catchAll((error) => {
@@ -544,16 +572,19 @@ export class TerminalMetadataManager {
       )
       // Ensure the scoped runtime subscription is installed before returning.
       yield* Effect.yieldNow()
+
       const [state, titleState] = yield* Effect.all([
         this.terminalHost.runtimeState(entry.terminalId),
         this.terminalHost.terminalTitleState(entry.terminalId)
       ])
+
       if (this.entries.get(entry.terminalId) !== entry) {
         return
       }
 
       if (state) {
         this.update(entry, { activity: state.activity })
+
         if (state.attention) {
           yield* this.recordAttention(entry, state.attention)
         }
@@ -573,6 +604,7 @@ export class TerminalMetadataManager {
   private stopRuntime(entry: TerminalMetadataEntry): void {
     const runtimeScope = entry.runtimeScope
     entry.runtimeScope = null
+
     if (runtimeScope) {
       this.service.forkApplicationEffect(Scope.close(runtimeScope, Exit.void))
     }
@@ -597,6 +629,7 @@ export class TerminalMetadataManager {
         // The host may restate its latest attention with a more specific
         // reason; that is not a new event.
         const restated = observed.sequence === entry.attention?.sequence
+
         if (
           this.entries.get(entry.terminalId) !== entry ||
           observed.sequence < (entry.attention?.sequence ?? 0) ||
@@ -611,12 +644,14 @@ export class TerminalMetadataManager {
             (this.attentionDeletionVersions.get(entry.terminalId) ?? 0) + 1
           )
         })
+
         const attention = {
           sequence: observed.sequence,
           at: observed.at,
           unread: restated ? entry.attention!.unread : true,
           reason: observed.reason
         }
+
         const state = {
           terminalId: entry.terminalId,
           worktreeId: entry.worktreeId,
@@ -625,12 +660,15 @@ export class TerminalMetadataManager {
           reason: attention.reason,
           unread: attention.unread
         }
+
         yield* this.attentionStateStore.upsert(state).pipe(Effect.orDie)
         yield* Effect.sync(() => {
           this.persistedAttention.set(entry.terminalId, state)
+
           if (this.entries.get(entry.terminalId) === entry) {
             entry.attention = attention
             this.publish(entry)
+
             if (live && !restated) {
               const metadata = this.metadata(entry)
               this.attentionListeners.forEach((listener) => listener(metadata))
@@ -650,6 +688,7 @@ export class TerminalMetadataManager {
     // A cleared command after launch completion is the fallback shell's idle
     // report, not a reason to resurrect the original launch command.
     entry.commandLine = state.commandLine?.trim().slice(0, 256) || null
+
     const commandLine =
       entry.commandLine ??
       (entry.commandExitCode === null ? entry.launchCommandLine : null)
@@ -657,18 +696,22 @@ export class TerminalMetadataManager {
     const token = commandLine?.match(
       /^(?:exec\s+|command\s+)?(?:"([^"]+)"|'([^']+)'|(\S+))/
     )
+
     const executable = token
       ? token[1] || token[2] || token[3] || null
       : entry.currentCommand
+
     const observedProgram =
       PROGRAM_COMMANDS.get(path.basename(executable ?? '').replace(/^-/, '')) ??
       null
+
     const shellIdle =
       ((entry.interactiveShellCommand !== null ||
         entry.commandExitCode !== null) &&
         commandLine === null) ||
       (entry.interactiveShellCommand !== null &&
         commandLine === entry.interactiveShellCommand)
+
     this.update(entry, {
       title: shellIdle
         ? (entry.terminalTitle ?? entry.interactiveShellCommand)
@@ -704,12 +747,15 @@ export class TerminalMetadataManager {
       patch.title === undefined
         ? entry.title
         : patch.title?.trim().slice(0, 256) || null
+
     const program = patch.program === undefined ? entry.program : patch.program
     const activity = patch.activity ?? entry.activity
+
     const hasForegroundProcess =
       patch.hasForegroundProcess === undefined
         ? entry.hasForegroundProcess
         : patch.hasForegroundProcess
+
     if (
       title === entry.title &&
       program === entry.program &&

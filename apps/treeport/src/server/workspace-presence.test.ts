@@ -21,12 +21,14 @@ it('renews quiet viewers without broadcasts, expires lost tabs, and bounds memor
     unsubscribe()
     vi.useRealTimers()
   })
+
   const alice: ViewerIdentity = {
     source: 'tailscale',
     login: 'alice@example.test',
     name: 'Alice',
     profilePicture: null
   }
+
   const tab = {
     sessionId: crypto.randomUUID(),
     worktreeId: 'wt',
@@ -34,6 +36,7 @@ it('renews quiet viewers without broadcasts, expires lost tabs, and bounds memor
     visible: true,
     focused: true
   }
+
   manager.update(alice, tab)
   manager.update(alice, { ...tab, sessionId: crypto.randomUUID() })
   expect(manager.snapshot()).toHaveLength(2)
@@ -56,6 +59,7 @@ it('renews quiet viewers without broadcasts, expires lost tabs, and bounds memor
   for (let index = 0; index < 256; index++) {
     manager.update(alice, { ...tab, sessionId: crypto.randomUUID() })
   }
+
   expect(() => manager.update(alice, tab)).toThrow('Too many workspace viewers')
   vi.advanceTimersByTime(PRESENCE_TIMEOUT_MS)
   manager.update(alice, tab)

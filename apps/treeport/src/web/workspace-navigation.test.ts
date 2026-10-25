@@ -99,9 +99,11 @@ describe('workspace route resolution', () => {
 
   it('selects WebApp and BrowserApp routes without a terminal and repairs stale routes', () => {
     const projects = projectGraph()
+
     const app = projects[0]!.worktrees[0]!.workspaceItems.find(
       (candidate) => candidate.kind === 'web'
     )!
+
     const target = appTarget('project-a', 'worktree-a', 'app-a')
 
     expect(resolveWorkspaceRoute(projects, target.pathname)).toMatchObject({
@@ -110,9 +112,11 @@ describe('workspace route resolution', () => {
       selection: { terminal: null, app: { id: 'app-a' } }
     })
     expect(targetForApp(projects, app)).toEqual(target)
+
     const browser = projects[0]!.worktrees[0]!.workspaceItems.find(
       (candidate) => candidate.kind === 'browser'
     )!
+
     const browserTarget = appTarget('project-a', 'worktree-a', 'app-browser')
     expect(targetForApp(projects, browser)).toEqual(browserTarget)
     expect(
@@ -197,11 +201,13 @@ describe('workspace route resolution', () => {
 
   it('keeps an empty worktree route canonical', () => {
     const projects = projectGraph()
+
     const emptyWorktree = {
       ...projects[0]!.worktrees[0]!,
       id: 'worktree-empty',
       terminals: []
     }
+
     projects[0] = {
       ...projects[0]!,
       worktrees: [emptyWorktree]

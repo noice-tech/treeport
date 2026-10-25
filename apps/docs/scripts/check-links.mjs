@@ -6,15 +6,19 @@ const docsDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
 )
+
 const publicContentDirectory = path.join(docsDirectory, 'src/content/docs')
 const errors = []
 
 const markdownFiles = []
 const directories = [publicContentDirectory]
+
 while (directories.length > 0) {
   const directory = directories.pop()
+
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const entryPath = path.join(directory, entry.name)
+
     if (entry.isDirectory()) {
       directories.push(entryPath)
     } else if (/\.mdx?$/.test(entry.name)) {
@@ -66,20 +70,24 @@ function getAnchors(content) {
 }
 
 const pages = new Map()
+
 for (const file of markdownFiles) {
   const relativePath = path.relative(publicContentDirectory, file)
   const withoutExtension = relativePath.replace(/\.mdx?$/, '')
+
   const route =
     withoutExtension === 'index'
       ? '/'
       : withoutExtension === '404'
         ? '/404.html'
         : `/${withoutExtension}/`
+
   const page = {
     file,
     route,
     anchors: getAnchors(fs.readFileSync(file, 'utf8'))
   }
+
   pages.set(route, page)
   pages.set(route.endsWith('/') ? route.slice(0, -1) || '/' : route, page)
 }
@@ -91,6 +99,7 @@ function validatePublicTarget(sourceFile, sourceRoute, target) {
 
   if (!page) {
     const staticFile = path.join(docsDirectory, 'public', route.slice(1))
+
     if (!fs.existsSync(staticFile)) {
       errors.push(
         `${path.relative(docsDirectory, sourceFile)}: missing route ${route}`
@@ -102,6 +111,7 @@ function validatePublicTarget(sourceFile, sourceRoute, target) {
 
   if (resolved.hash) {
     const anchor = decodeURIComponent(resolved.hash.slice(1))
+
     if (!page.anchors.has(anchor)) {
       errors.push(
         `${path.relative(docsDirectory, sourceFile)}: missing anchor ${resolved.hash} on ${route}`
@@ -111,6 +121,7 @@ function validatePublicTarget(sourceFile, sourceRoute, target) {
 }
 
 const markdownLinkPattern = /!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)/g
+
 for (const file of markdownFiles) {
   const content = fs.readFileSync(file, 'utf8')
   let match
@@ -124,13 +135,16 @@ for (const file of markdownFiles) {
 
     const relativePath = path.relative(publicContentDirectory, file)
     const withoutExtension = relativePath.replace(/\.mdx?$/, '')
+
     const sourceRoute =
       withoutExtension === 'index' ? '/' : `/${withoutExtension}/`
+
     validatePublicTarget(file, sourceRoute, target)
   }
 }
 
 const redirectsPath = path.join(docsDirectory, 'public/_redirects')
+
 for (const line of fs.readFileSync(redirectsPath, 'utf8').split('\n')) {
   const trimmed = line.trim()
 

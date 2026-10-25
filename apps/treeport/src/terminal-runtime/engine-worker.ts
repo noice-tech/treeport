@@ -19,9 +19,11 @@ export interface EngineWorkerOptions {
 // SAFETY: Only the daemon creates this worker, with EngineWorkerOptions.
 const options = workerData as EngineWorkerOptions
 const port = parentPort!
+
 const stop = Effect.async<void>((resume) => {
   const shutdown = () => resume(Effect.void)
   port.once('message', shutdown)
+
   return Effect.sync(() => port.off('message', shutdown))
 })
 

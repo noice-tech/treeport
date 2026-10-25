@@ -15,6 +15,7 @@ test.describe('mobile terminal UI', () => {
     {
       mocked.terminal.messages = []
     }
+
     await page.getByRole('button', { name: 'Esc' }).click()
     await waitForTerminalControl(page)
     await page.getByRole('button', { name: 'Esc' }).click()
@@ -26,6 +27,7 @@ test.describe('mobile terminal UI', () => {
         data: '\u001b[?1h'
       })
     }
+
     await page.getByRole('button', { name: 'Arrow up' }).click()
     await expect
       .poll(() => mocked.terminal.messages)
@@ -46,9 +48,11 @@ test.describe('mobile terminal UI', () => {
     {
       mocked.terminal.messages = []
     }
+
     const appsPanelToggle = page.getByRole('button', {
       name: 'Toggle apps panel'
     })
+
     for (let cycle = 0; cycle < 2; cycle++) {
       await appsPanelToggle.click()
       await expect(
@@ -66,6 +70,7 @@ test.describe('mobile terminal UI', () => {
       await page.clock.runFor(250)
       expect(await screen.boundingBox()).toEqual(screenBounds)
     }
+
     expect(
       mocked.terminal.messages.filter((message) => message.type === 'resize')
     ).toEqual([])
@@ -73,6 +78,7 @@ test.describe('mobile terminal UI', () => {
     {
       mocked.terminal.messages = []
     }
+
     await page.getByRole('button', { name: 'More terminal actions' }).click()
     const fileChooserPromise = page.waitForEvent('filechooser')
     await page.getByRole('button', { name: 'Upload', exact: true }).click()
@@ -100,6 +106,7 @@ test.describe('mobile terminal UI', () => {
     {
       mocked.terminal.messages = []
     }
+
     await ctrl.click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await page.keyboard.type('c')
@@ -119,6 +126,7 @@ test.describe('mobile terminal UI', () => {
     {
       mocked.terminal.messages = []
     }
+
     await shift.click()
     await tab.scrollIntoViewIfNeeded()
     await tab.click()
@@ -135,6 +143,7 @@ test.describe('mobile terminal UI', () => {
     {
       mocked.terminal.messages = []
     }
+
     await esc.click()
     await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
     await expect
@@ -146,11 +155,13 @@ test.describe('mobile terminal UI', () => {
       .toEqual(['\u001b'])
 
     await page.setViewportSize({ width: 412, height: 915 })
+
     const launcherRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
+
     await page.getByLabel('Open tree drawer').click()
     await page.getByRole('button', { name: /^New app/ }).click()
     await page
@@ -165,6 +176,7 @@ test.describe('mobile terminal UI', () => {
     const shortcutModifier = await page.evaluate(() =>
       /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control'
     )
+
     await page.keyboard.press(`${shortcutModifier}+Shift+P`)
     await expect(page.getByLabel('Search projects')).toBeVisible()
     await expect(page.getByLabel('Search projects')).not.toBeFocused()
@@ -195,6 +207,7 @@ test.describe('mobile terminal UI', () => {
       })
       mocked.terminal.messages = []
     }
+
     const screen = page.locator('.xterm-screen')
     await expect(screen).toContainText('mobile-history-119')
     await page.clock.install()
@@ -234,9 +247,11 @@ test.describe('mobile terminal UI', () => {
     }
 
     const firstRow = page.locator('.xterm-rows > div').first()
+
     const historyRowBeforeScroll = Number(
       (await firstRow.textContent())?.match(/mobile-history-(\d+)/)?.[1]
     )
+
     expect(Number.isFinite(historyRowBeforeScroll)).toBe(true)
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
@@ -280,6 +295,7 @@ test.describe('mobile terminal UI', () => {
       })
       mocked.terminal.messages = []
     }
+
     await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
     // Taking control refits the terminal, so use its current cell height.
     const mouseBounds = (await screen.boundingBox())!
@@ -318,6 +334,7 @@ test.describe('mobile terminal UI', () => {
         data: '\u001b[?1000l\u001b[?1049l'
       })
     }
+
     const inputMessagesBeforeModeChange = mocked.terminal.messages.filter(
       (message) => message.type === 'input'
     ).length
@@ -365,9 +382,11 @@ test.describe('mobile terminal UI', () => {
         type: 'touchEnd',
         touchPoints: []
       })
+
       const pasteDialog = page.getByRole('dialog', {
         name: 'Paste into terminal'
       })
+
       await expect(pasteDialog).toBeVisible()
       await pasteDialog.getByLabel('Paste text here').evaluate((element) => {
         const clipboardData = new DataTransfer()

@@ -33,6 +33,7 @@ it('discovers native Chrome or Chromium on macOS and Linux without downloading a
   ] as const) {
     access.mockImplementation(async (candidate, mode) => {
       expect(mode).toBe(fs.constants.X_OK)
+
       if (candidate !== executablePath) {
         throw new Error('ENOENT')
       }
@@ -65,6 +66,7 @@ it('uses an explicit native executable and reports invalid executable paths with
   expect(access).not.toHaveBeenCalled()
 
   vi.stubEnv('TREEPORT_BROWSER_EXECUTABLE', '/custom/chromium')
+
   for (const reason of ['ENOENT', 'EACCES']) {
     access.mockClear().mockRejectedValue(new Error(reason))
     const runtime = await browserRuntime('linux')
@@ -77,6 +79,7 @@ it('uses an explicit native executable and reports invalid executable paths with
       fs.constants.X_OK
     )
   }
+
   access.mockResolvedValue(undefined)
   expect((await browserRuntime('linux')).launchError).toBeNull()
 })

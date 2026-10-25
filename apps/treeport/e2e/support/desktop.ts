@@ -15,6 +15,7 @@ export async function installDesktopBridge(
 ) {
   await page.addInitScript((filePaths) => {
     const scope = window
+
     type DesktopCommand =
       | 'new-worktree'
       | 'new-terminal'
@@ -27,6 +28,7 @@ export async function installDesktopBridge(
       | 'select-previous-worktree'
       | 'select-next-worktree'
       | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
+
     const listeners = new Set<(command: DesktopCommand) => void>()
     const terminalSelectionReleaseListeners = new Set<() => void>()
     let fullscreenListener: ((fullscreen: boolean) => void) | null = null
@@ -40,6 +42,7 @@ export async function installDesktopBridge(
         },
         openFileUrl(url: string) {
           scope.__openedDesktopFileUrls.push(url)
+
           return Promise.resolve('opened')
         },
         getPathForFile(file: File) {
@@ -47,6 +50,7 @@ export async function installDesktopBridge(
         },
         onFullscreenChange(next: (fullscreen: boolean) => void) {
           fullscreenListener = next
+
           return () => {
             if (fullscreenListener === next) {
               fullscreenListener = null
@@ -55,11 +59,13 @@ export async function installDesktopBridge(
         },
         onCommand(next: (command: DesktopCommand) => void) {
           listeners.add(next)
+
           return () => listeners.delete(next)
         },
         setTerminalSelectionActive() {},
         onTerminalSelectionRelease(next: () => void) {
           terminalSelectionReleaseListeners.add(next)
+
           return () => terminalSelectionReleaseListeners.delete(next)
         },
         requestAttention() {

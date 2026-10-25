@@ -10,11 +10,14 @@ export function PushNotificationControl() {
     'serviceWorker' in navigator &&
     'PushManager' in window &&
     'Notification' in window
+
   const [subscription, setSubscription] = useState<PushSubscription | null>(
     null
   )
+
   const [checking, setChecking] = useState(supported)
   const [pending, setPending] = useState(false)
+
   const [denied, setDenied] = useState(
     supported && Notification.permission === 'denied'
   )
@@ -30,6 +33,7 @@ export function PushNotificationControl() {
       .then(async (registration) => {
         const current =
           (await registration?.pushManager.getSubscription()) ?? null
+
         if (!cancelled) {
           setSubscription(
             registration?.active && Notification.permission === 'granted'
@@ -48,6 +52,7 @@ export function PushNotificationControl() {
           setChecking(false)
         }
       })
+
     return () => {
       cancelled = true
     }
@@ -57,9 +62,11 @@ export function PushNotificationControl() {
     // The permission request must be the first async browser call in this user
     // gesture. In particular, iOS disallows asking after registering a worker.
     setPending(true)
+
     try {
       const permission = await Notification.requestPermission()
       setDenied(permission === 'denied')
+
       if (permission !== 'granted') {
         return
       }
@@ -67,6 +74,7 @@ export function PushNotificationControl() {
       const { publicKey } = await parseResponse(rpc.api.push.config.$get())
       await navigator.serviceWorker.register('/sw.js', { scope: '/' })
       let timeout: ReturnType<typeof setTimeout> | null = null
+
       const registration = await Promise.race([
         navigator.serviceWorker.ready,
         new Promise<never>((_, reject) => {
@@ -83,17 +91,21 @@ export function PushNotificationControl() {
           clearTimeout(timeout)
         }
       })
+
       const bytes = Uint8Array.from(
         atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')),
         (character) => character.charCodeAt(0)
       )
+
       const current =
         (await registration.pushManager.getSubscription()) ??
         (await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: bytes
         }))
+
       const keys = current.toJSON().keys
+
       if (!keys?.p256dh || !keys.auth) {
         throw new Error('Browser returned an invalid push subscription')
       }

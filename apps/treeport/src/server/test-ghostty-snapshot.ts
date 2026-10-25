@@ -39,6 +39,7 @@ export function hasKittyImage(
   const storage = terminal.data('KITTY_GRAPHICS', (view, ptr) =>
     view.getUint32(ptr, true)
   )
+
   return (
     storage !== null &&
     terminal.vt.call('ghostty_kitty_graphics_image', storage, imageId) !== 0

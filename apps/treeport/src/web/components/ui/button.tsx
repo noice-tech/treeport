@@ -47,6 +47,7 @@ function Button({
     asChild?: boolean
   }) {
   const Component = asChild ? Slot : 'button'
+
   return (
     <Component
       data-slot="button"

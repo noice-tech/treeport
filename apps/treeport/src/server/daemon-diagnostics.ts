@@ -17,11 +17,13 @@ export function installDaemonDiagnostics(entrypoint: URL) {
   // invocation is external, not a daemon started by `treeport start`.
   process.env.TREEPORT_DAEMON_LIFECYCLE ||= 'external'
   process.env.TREEPORT_INSTALLATION_METHOD ||= 'unknown'
+
   // Every built server entrypoint lives at <package>/dist/node/server/index.js,
   // including the development output directory. Do not report a production
   // direct launch as "development" merely because no CLI supplied its version.
   if (!process.env.TREEPORT_APP_VERSION?.trim()) {
     const manifestPath = new URL('../../../package.json', entrypoint)
+
     if (fs.existsSync(manifestPath)) {
       const manifest = z
         .looseObject({
@@ -29,6 +31,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
           version: z.string()
         })
         .parse(JSON.parse(fs.readFileSync(manifestPath, 'utf8')))
+
       process.env.TREEPORT_APP_VERSION = manifest.version
     }
   }
@@ -39,6 +42,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
   delete process.env.TREEPORT_DAEMON_LOG_ONLY
   const build = crypto.createHash('sha256').update(fs.readFileSync(entrypoint))
   const applicationEntrypoint = new URL('./main.js', entrypoint)
+
   if (fs.existsSync(applicationEntrypoint)) {
     build.update(fs.readFileSync(applicationEntrypoint))
   }
@@ -57,9 +61,11 @@ export function installDaemonDiagnostics(entrypoint: URL) {
       process.env.TREEPORT_INSTALLATION_METHOD?.trim() === 'development' ||
       process.env.TREEPORT_WEB_DEVELOPMENT?.trim() === '1'
   }
+
   let loggingFailed = false
   let fatal = false
   let shutdownReason: string | null = null
+
   const buffered = createBufferedDaemonLog(
     new URL('./daemon-log-worker.js', entrypoint),
     logPath,
@@ -70,6 +76,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
       )
     }
   )
+
   const persist = (
     value: string | Uint8Array,
     synchronous = false
@@ -90,15 +97,18 @@ export function installDaemonDiagnostics(entrypoint: URL) {
       }
 
       appendDaemonLog(logPath, value)
+
       return true
     } catch (error) {
       loggingFailed = true
       originalErrorWrite(
         `Treeport could not persist daemon logs at ${logPath}: ${inspect(error)}\n`
       )
+
       return false
     }
   }
+
   const event = (
     name: string,
     details: {
@@ -113,6 +123,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
     } = {}
   ) => {
     const value = `${JSON.stringify({ timestamp: new Date().toISOString(), event: name, ...context, ...details })}\n`
+
     if (!persist(value, fatal || name === 'exit')) {
       originalErrorWrite(value)
     }
@@ -127,9 +138,11 @@ export function installDaemonDiagnostics(entrypoint: URL) {
     ): boolean => {
       const encoding =
         typeof encodingOrCallback === 'string' ? encodingOrCallback : undefined
+
       const persisted = persist(
         typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk
       )
+
       // Detached launchers retain stderr for loader/native errors. Their normal
       // output is already persisted here; do not copy it into the fallback log.
       if (persisted && logOnly) {
@@ -137,6 +150,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
           typeof encodingOrCallback === 'function'
             ? encodingOrCallback
             : callback
+
         if (done) {
           process.nextTick(done)
         }
@@ -163,6 +177,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
     event('exit', { code, fatal, shutdownReason })
   })
   event('starting')
+
   return {
     event,
     shutdown(reason: string) {

@@ -36,21 +36,27 @@ export function makeRpcHttpApp(
         Stream.unwrapScoped(
           Effect.gen(function* () {
             const started = Date.now()
+
             const queue = yield* Queue.bounded<{
               item: ProjectEventsItem
               queuedAt: number
             }>(EVENT_QUEUE_CAPACITY)
+
             const overflow = yield* Deferred.make<never, ProjectEventsFailure>()
             const queuedEvents: NetworkProductEvent[] = []
             let snapshotted = false
+
             let closeReason: 'stream_closed' | 'slow_client' | 'interrupted' =
               'stream_closed'
+
             let queuedCount = 0
+
             const offer = (item: ProjectEventsItem) => {
               const offered = Queue.unsafeOffer(queue, {
                 item,
                 queuedAt: Date.now()
               })
+
               if (offered) {
                 queuedCount += 1
                 networkTelemetry.queueDepthNow('rpc', queuedCount)
@@ -58,6 +64,7 @@ export function makeRpcHttpApp(
 
               return offered
             }
+
             const overflowSlowClient = () => {
               closeReason = 'slow_client'
               networkTelemetry.droppedNow('rpc', 'dropped')
@@ -69,10 +76,13 @@ export function makeRpcHttpApp(
                 })
               )
             }
+
             const unsubscribe = service.events.subscribe((event) => {
               const parsed = parseProductEvent(event)
+
               if (!parsed) {
                 networkTelemetry.decodeFailureNow('rpc')
+
                 return
               }
 
@@ -96,6 +106,7 @@ export function makeRpcHttpApp(
                 overflowSlowClient()
               }
             })
+
             yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribe()))
             yield* networkTelemetry.connectionOpened('rpc')
             yield* Effect.addFinalizer((exit) => {
@@ -119,6 +130,7 @@ export function makeRpcHttpApp(
             const terminalMetadataSnapshot = terminalMetadata.snapshot()
             const presenceSnapshot = presence.snapshot()
             const representedEventCount = queuedEvents.length
+
             const [webApps, browserApps] = yield* Effect.all([
               service.apps.listWebApps(),
               service.apps.listBrowserApps()
@@ -133,6 +145,7 @@ export function makeRpcHttpApp(
                 })
               )
             )
+
             queuedCount = 0
             networkTelemetry.queueDepthNow('rpc', 0)
             offer({
@@ -146,6 +159,7 @@ export function makeRpcHttpApp(
               }
             })
             queuedEvents.splice(0, representedEventCount)
+
             for (const event of queuedEvents) {
               if (
                 !offer({
@@ -156,12 +170,14 @@ export function makeRpcHttpApp(
                 overflowSlowClient()
               }
             }
+
             snapshotted = true
             yield* networkTelemetry.duration(
               'rpc',
               'snapshot_setup',
               Date.now() - started
             )
+
             const items = Stream.fromQueue(queue).pipe(
               Stream.mapEffect(({ item, queuedAt }) =>
                 Effect.gen(function* () {
@@ -177,10 +193,12 @@ export function makeRpcHttpApp(
                     'out',
                     Buffer.byteLength(JSON.stringify(item))
                   )
+
                   return item
                 })
               )
             )
+
             return Stream.merge(
               items,
               Stream.fromEffect(Deferred.await(overflow))

@@ -20,12 +20,14 @@ export class ProjectDirectoryService {
     return Effect.gen(function* () {
       const git = yield* GitPort
       const homePath = os.homedir()
+
       const expandedPath =
         inputPath === '~'
           ? homePath
           : /^~[\\/]/u.test(inputPath)
             ? path.join(homePath, inputPath.slice(2))
             : inputPath
+
       if (!path.isAbsolute(expandedPath)) {
         return yield* Effect.fail(
           new DomainError(
@@ -39,18 +41,22 @@ export class ProjectDirectoryService {
       const requestedPath = path.resolve(expandedPath)
       let exact = true
       let entryQuery = ''
+
       const requestedRealpath = yield* Effect.either(
         Effect.tryPromise({
           try: () => fs.realpath(requestedPath),
           catch: (error) => error
         })
       )
+
       let directoryPath: string
+
       if (Either.isRight(requestedRealpath)) {
         directoryPath = requestedRealpath.right
       } else {
         // SAFETY: Node filesystem failures can carry the standard errno code.
         const code = (requestedRealpath.left as NodeJS.ErrnoException).code
+
         if (code !== 'ENOENT') {
           return yield* Effect.fail(
             new DomainError(
@@ -68,6 +74,7 @@ export class ProjectDirectoryService {
           catch: (error) => {
             // SAFETY: Node filesystem failures can carry the standard errno code.
             const parentCode = (error as NodeJS.ErrnoException).code
+
             return new DomainError(
               parentCode === 'ENOENT'
                 ? 'DIRECTORY_NOT_FOUND'
@@ -86,6 +93,7 @@ export class ProjectDirectoryService {
         catch: (error) => {
           // SAFETY: Node filesystem failures can carry the standard errno code.
           const code = (error as NodeJS.ErrnoException).code
+
           return new DomainError(
             code === 'ENOENT' ? 'DIRECTORY_NOT_FOUND' : 'DIRECTORY_UNREADABLE',
             code === 'ENOENT'
@@ -95,6 +103,7 @@ export class ProjectDirectoryService {
           )
         }
       })
+
       if (!directoryStat.isDirectory()) {
         return yield* Effect.fail(
           new DomainError(
@@ -114,7 +123,9 @@ export class ProjectDirectoryService {
             403
           )
       })
+
       const normalizedQuery = entryQuery.toLocaleLowerCase()
+
       const candidates = rawEntries
         .filter(
           (entry) =>
@@ -133,8 +144,10 @@ export class ProjectDirectoryService {
 
       const entries: DirectoryBrowseResponse['directory']['entries'] = []
       let truncated = false
+
       for (const entry of candidates) {
         const entryPath = path.join(directoryPath, entry.name)
+
         const isDirectory =
           entry.isDirectory() ||
           (entry.isSymbolicLink() &&
@@ -147,6 +160,7 @@ export class ProjectDirectoryService {
                 onSuccess: (stat) => stat.isDirectory()
               })
             )))
+
         if (!isDirectory) {
           continue
         }
@@ -160,10 +174,13 @@ export class ProjectDirectoryService {
       }
 
       const rootPath = path.parse(directoryPath).root
+
       const breadcrumbs: DirectoryBrowseResponse['directory']['breadcrumbs'] = [
         { name: rootPath, path: rootPath }
       ]
+
       let breadcrumbPath = rootPath
+
       for (const segment of directoryPath
         .slice(rootPath.length)
         .split(path.sep)) {
@@ -176,14 +193,17 @@ export class ProjectDirectoryService {
       }
 
       let repositoryPath: string | null = null
+
       if (exact) {
         const checkout = yield* git
           .findProjectRepositoryRoot(directoryPath)
           .pipe(Effect.orDie)
+
         if (checkout) {
           const mainCheckout = yield* git
             .resolveMainCheckout(checkout)
             .pipe(Effect.orDie)
+
           repositoryPath = yield* Effect.tryPromise(() =>
             fs.realpath(mainCheckout)
           ).pipe(Effect.orDie)

@@ -14,6 +14,7 @@ export function loadRenderer(
   return Effect.gen(function* () {
     while (!renderer.isDestroyed()) {
       let httpStatus = 200
+
       const navigated = (
         _event: Electron.Event,
         _url: string,
@@ -21,6 +22,7 @@ export function loadRenderer(
       ) => {
         httpStatus = status
       }
+
       const loaded = yield* Effect.acquireUseRelease(
         Effect.sync(() => renderer.on('did-navigate', navigated)),
         () =>
@@ -32,6 +34,7 @@ export function loadRenderer(
               const failure = z
                 .object({ code: z.string() })
                 .safeParse(error.cause)
+
               // A newer navigation superseded this one; never navigate back to it.
               if (failure.success && failure.data.code === 'ERR_ABORTED') {
                 return Effect.succeed(null)
@@ -48,6 +51,7 @@ export function loadRenderer(
             renderer.removeListener('did-navigate', navigated)
           })
       )
+
       if (loaded !== false) {
         return loaded === true
       }
@@ -55,6 +59,7 @@ export function loadRenderer(
       onFailure()
       yield* Effect.sleep('500 millis')
     }
+
     return false
   })
 }

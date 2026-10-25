@@ -49,6 +49,7 @@ const updateStartupTransactionSchema = z.looseObject({
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (cause) {
     // SAFETY: Node reports process signaling failures as ErrnoException objects.
@@ -61,10 +62,12 @@ export async function main(
   entrypoint: URL
 ): Promise<void> {
   const config = loadConfig()
+
   const journalLimitBytes =
     process.env.TREEPORT_TERMINAL_JOURNAL_LIMIT_BYTES === undefined
       ? undefined
       : Number(process.env.TREEPORT_TERMINAL_JOURNAL_LIMIT_BYTES)
+
   if (
     journalLimitBytes !== undefined &&
     (!Number.isSafeInteger(journalLimitBytes) || journalLimitBytes <= 0)
@@ -91,13 +94,17 @@ export async function main(
     const ownership = await Effect.runPromise(
       Scope.extend(acquireDaemonOwnership(config), resourceScope)
     )
+
     const runner = new SpawnCommandRunner()
+
     const prerequisites = await Effect.runPromise(
       checkRuntimePrerequisites(config, runner)
     )
+
     const launcherPath = fileURLToPath(
       new URL('./core/launcher.js', entrypoint)
     )
+
     const terminalHost = await Effect.runPromise(
       Scope.extend(
         connectOrStartTerminalHost({
@@ -117,6 +124,7 @@ export async function main(
         resourceScope
       )
     )
+
     const service = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
@@ -145,12 +153,14 @@ export async function main(
         resourceScope
       )
     )
+
     const terminalMetadata = await service.runEffect(
       Scope.extend(
         acquireTerminalMetadataManager(service, terminalHost),
         resourceScope
       )
     )
+
     const applicationUpdate = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
@@ -160,6 +170,7 @@ export async function main(
         resourceScope
       )
     )
+
     const browserSessions = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
@@ -216,6 +227,7 @@ export async function main(
         resourceScope
       )
     )
+
     const push = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
@@ -228,10 +240,13 @@ export async function main(
         resourceScope
       )
     )
+
     const pendingAttention = new Set<string>()
+
     const unsubscribePush = terminalMetadata.subscribeLiveAttention(
       (metadata) => {
         const terminalId = metadata.terminalId
+
         if (
           !push.hasSubscriptions ||
           pendingAttention.has(terminalId) ||
@@ -248,6 +263,7 @@ export async function main(
             yield* Effect.sleep('750 millis')
             const current = terminalMetadata.get(terminalId)
             const { attention } = current
+
             if (!attention?.unread || !push.hasSubscriptions) {
               return
             }
@@ -263,9 +279,11 @@ export async function main(
                   }[attention.reason])
 
             const terminal = yield* service.terminals.getTerminal(terminalId)
+
             const worktree = yield* service.projects.getWorktree(
               terminal.worktreeId
             )
+
             yield* Effect.tryPromise(() =>
               push.notify(
                 {
@@ -291,18 +309,21 @@ export async function main(
         )
       }
     )
+
     await Effect.runPromise(
       Scope.extend(
         Effect.addFinalizer(() => Effect.sync(unsubscribePush)),
         resourceScope
       )
     )
+
     const rpcHttpApp = await service.runEffect(
       Scope.extend(
         makeRpcHttpApp(service, terminalMetadata, presence),
         resourceScope
       )
     )
+
     const app = createApp({
       service,
       config,
@@ -315,21 +336,27 @@ export async function main(
       push,
       rpcHttpApp
     })
+
     const effectListener = await service.runEffect(
       NodeHttpServer.makeHandler(app.httpApp)
     )
+
     let vite: ViteDevServer | null = null
+
     let viteUpgrade:
       | ((request: IncomingMessage, socket: Duplex, head: Buffer) => void)
       | null = null
+
     const server = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
           Effect.sync(() =>
             createServer((request, response) => {
               const security = authorizeRequest(request)
+
               if (!security.allowed) {
                 rejectHttpRequest(request, response, security)
+
                 return
               }
 
@@ -349,6 +376,7 @@ export async function main(
                   vite.middlewares(request, response, () => {
                     effectListener(request, response)
                   })
+
                   return
                 }
 
@@ -364,6 +392,7 @@ export async function main(
                 Effect.async<void>((resume) => {
                   if (!httpServer.listening) {
                     resume(Effect.void)
+
                     return
                   }
 
@@ -375,16 +404,20 @@ export async function main(
         resourceScope
       )
     )
+
     let socketServer: ReturnType<typeof createSocketServer> | null = null
+
     const devtoolsBridge = createBrowserDevtoolsBridge((appId) =>
       service.runEffect(browserSessions.devtoolsEndpoint(appId))
     )
+
     server.on('upgrade', (request, socket, head) => {
       if (devtoolsBridge.handleUpgrade(request, socket, head)) {
         return
       }
 
       const security = authorizeRequest(request, { socketUpgrade: true })
+
       if (security.allowed) {
         if (appServices.handleRequest(request, null, socket, head)) {
           return
@@ -400,12 +433,15 @@ export async function main(
 
         const pathname = new URL(request.url ?? '/', 'http://treeport.local')
           .pathname
+
         if (pathname === '/@vite-hmr' && viteUpgrade) {
           viteUpgrade(request, socket, head)
+
           return
         }
 
         socket.destroy()
+
         return
       }
 
@@ -415,11 +451,13 @@ export async function main(
           : security.status === 403
             ? 'Forbidden'
             : 'Unauthorized'
+
       socket.write(
         `HTTP/1.1 ${security.status} ${statusText}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n`
       )
       socket.destroy()
     })
+
     if (config.webDevelopment) {
       const { createServer: createViteServer } = await import('vite')
       const previousUpgradeListeners = new Set(server.listeners('upgrade'))
@@ -447,9 +485,11 @@ export async function main(
           resourceScope
         )
       )
+
       const addedUpgradeListeners = server
         .listeners('upgrade')
         .filter((listener) => !previousUpgradeListeners.has(listener))
+
       if (addedUpgradeListeners.length !== 1) {
         throw new Error('Vite did not register one HMR upgrade handler')
       }
@@ -464,6 +504,7 @@ export async function main(
     }
 
     service.attachHttpServer(server)
+
     const socketDependencies: Parameters<typeof createSocketServer>[0] = {
       service,
       config,
@@ -491,6 +532,7 @@ export async function main(
     })
 
     let shuttingDown = false
+
     function shutdown(signal: string): void {
       if (shuttingDown) {
         return
@@ -534,14 +576,17 @@ export async function main(
       'updates',
       'startup-transaction.json'
     )
+
     const startupDescriptor = await fs
       .readFile(startupDescriptorPath, 'utf8')
       .then((source) =>
         updateStartupTransactionSchema.safeParse(JSON.parse(source))
       )
       .catch(() => null)
+
     const requestedTransaction =
       process.env.TREEPORT_UPDATE_STARTUP_TRANSACTION?.trim()
+
     const externallyVerifiedStartup =
       startupDescriptor?.success &&
       Date.now() - startupDescriptor.data.createdAt < 5 * 60_000 &&
@@ -559,12 +604,14 @@ export async function main(
     }
 
     await Effect.runPromise(ownership.publish())
+
     if (externallyVerifiedStartup) {
       const requestPath = path.join(
         config.dataDir,
         'updates',
         `startup-commit-${externallyVerifiedStartup.operationId}`
       )
+
       const acknowledgementPath = `${requestPath}.ack`
       await Effect.runPromise(
         Scope.extend(
@@ -577,6 +624,7 @@ export async function main(
                   Effect.as(true),
                   Effect.catchAll(() => Effect.succeed(false))
                 )
+
                 if (commitRequested) {
                   yield* Effect.tryPromise(() =>
                     service.runEffect(service.activateStartup())
@@ -589,6 +637,7 @@ export async function main(
                   yield* Effect.tryPromise(() =>
                     fs.rm(requestPath, { force: true })
                   )
+
                   return
                 }
 
@@ -610,10 +659,12 @@ export async function main(
                         processExists(parsed.data.ownerPid)
                     )
                 ).pipe(Effect.catchAll(() => Effect.succeed(false)))
+
                 if (!transactionStillOwned) {
                   yield* Effect.sync(() =>
                     shutdown('startup_transaction_aborted')
                   )
+
                   return
                 }
 

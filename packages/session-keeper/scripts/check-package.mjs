@@ -19,6 +19,7 @@ export async function checkSessionKeeperPackage(
   const manifest = JSON.parse(
     await fs.readFile(path.join(packageDirectory, 'package.json'), 'utf8')
   )
+
   assert.equal(manifest.name, '@treeport/session-keeper')
   assert.equal(manifest.main, 'dist/index.js')
   assert.equal(manifest.types, 'dist/index.d.ts')
@@ -28,10 +29,12 @@ export async function checkSessionKeeperPackage(
   assert.deepEqual(Object.keys(manifest.dependencies ?? {}), ['zod'])
   assert.equal(manifest.scripts.install, undefined)
   assert.equal(manifest.scripts.postinstall, undefined)
+
   const keeper = path.join(
     packageDirectory,
     `dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
   )
+
   for (const file of [
     'dist/index.js',
     'dist/index.d.ts',
@@ -45,6 +48,7 @@ export async function checkSessionKeeperPackage(
       `Empty required file: ${file}`
     )
   }
+
   const {
     getSessionKeeperPayload,
     prepareSessionKeeper,
@@ -52,13 +56,17 @@ export async function checkSessionKeeperPackage(
   } = await import(
     pathToFileURL(path.join(packageDirectory, 'dist/index.js')).href
   )
+
   assert.equal(SESSION_KEEPER_MAX_PAYLOAD_BYTES, 64 * 1024 * 1024)
+
   // This checks target format, source association and bound licenses, NOT
   // runtime behavior, minimum ABI, signing or performance qualification.
   const platforms = allTargets
     ? ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64']
     : [`${process.platform}-${process.arch}`]
+
   const expectedSource = await nativeSourceFingerprint()
+
   for (const platform of platforms) {
     const payload = path.join(
       packageDirectory,
@@ -66,6 +74,7 @@ export async function checkSessionKeeperPackage(
       platform,
       'treeport-session-keeper'
     )
+
     const metadata = await fs.lstat(payload)
     assert(
       metadata.isFile(),
@@ -81,6 +90,7 @@ export async function checkSessionKeeperPackage(
       metadata.size,
       `Native payload changed: ${platform}`
     )
+
     if (platform.startsWith('darwin-')) {
       assert(
         bytes.readUInt32LE(0) === 0xfeedfacf && bytes.readUInt32LE(12) === 2,
@@ -113,6 +123,7 @@ export async function checkSessionKeeperPackage(
       path.join(path.dirname(payload), 'THIRD_PARTY_NOTICES'),
       'utf8'
     )
+
     assert(
       notices.startsWith(`Treeport session keeper: ${platform}\n`),
       `Target notices mismatch: ${platform}`
@@ -126,6 +137,7 @@ export async function checkSessionKeeperPackage(
       notices.includes(`Build source SHA256: ${expectedSource}\n`),
       `Stale native source: ${platform}`
     )
+
     for (const name of ['portable-pty', 'tokio', 'Rust standard runtime']) {
       assert(
         notices.includes(name),
@@ -133,6 +145,7 @@ export async function checkSessionKeeperPackage(
       )
     }
   }
+
   // Exercise the public API and actual packed bytes. pnpm strips executable
   // modes from non-bin payloads; consumers must not edit their npm installation.
   assert.equal(
@@ -140,11 +153,13 @@ export async function checkSessionKeeperPackage(
     await fs.realpath(keeper)
   )
   const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'tp-native-package-'))
+
   try {
     const executable = await prepareSessionKeeper(
       keeper,
       path.join(fixture, 'cache')
     )
+
     const inode = (await fs.stat(executable)).ino
     assert.equal(
       await prepareSessionKeeper(keeper, path.join(fixture, 'cache')),
@@ -158,9 +173,11 @@ export async function checkSessionKeeperPackage(
   } finally {
     await fs.rm(fixture, { recursive: true, force: true })
   }
+
   const files = await fs.readdir(path.join(packageDirectory, 'dist'), {
     recursive: true
   })
+
   assert.deepEqual(
     files.filter((file) =>
       /(?:^|\/)(?:target|src|scripts|tests?|fixtures)(?:\/|$)|\.(?:rs|map|tsbuildinfo)$|\.test\./.test(
@@ -170,6 +187,7 @@ export async function checkSessionKeeperPackage(
     [],
     'Native publish output contains sources, tests or build metadata'
   )
+
   return manifest
 }
 
@@ -179,6 +197,7 @@ if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
       directory,
       process.argv.includes('--all-targets')
     )
+
     console.log(
       `Native build output checks passed for ${manifest.name}@${manifest.version}`
     )
@@ -186,10 +205,12 @@ if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
     const temporary = await fs.mkdtemp(
       path.join(os.tmpdir(), 'tp-native-pack-')
     )
+
     try {
       const manifest = JSON.parse(
         await fs.readFile(path.join(directory, 'package.json'), 'utf8')
       )
+
       await execute(
         'pnpm',
         [
@@ -200,14 +221,18 @@ if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
         ],
         { cwd: directory }
       )
+
       const tarball = path.join(
         temporary,
         `treeport-session-keeper-${manifest.version}.tgz`
       )
+
       await execute('tar', ['-xzf', tarball, '-C', temporary])
+
       const packedManifest = JSON.parse(
         await fs.readFile(path.join(temporary, 'package/package.json'), 'utf8')
       )
+
       await fs.writeFile(
         path.join(temporary, 'package.json'),
         JSON.stringify({
@@ -220,13 +245,16 @@ if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
         ['install', '--offline', '--ignore-scripts', '--prod'],
         { cwd: temporary }
       )
+
       const packaged = await checkSessionKeeperPackage(
         path.join(temporary, 'package'),
         process.argv.includes('--all-targets')
       )
+
       const allFiles = await fs.readdir(path.join(temporary, 'package'), {
         recursive: true
       })
+
       assert.deepEqual(
         allFiles.filter(
           (file) =>

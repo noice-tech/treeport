@@ -11,6 +11,7 @@ import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 export const phoneAccess = (origin: string) =>
   Effect.tryPromise(async (signal): Promise<PhoneAccessResponse> => {
     const computer = parseComputerUrl(origin)
+
     if (!isLoopbackUrl(computer)) {
       return { url: computer.href, error: null, setupCommand: null }
     }
@@ -19,9 +20,11 @@ export const phoneAccess = (origin: string) =>
       redirect: 'error',
       signal
     })
+
     const result = response.ok
       ? phoneAccessResponseSchema.safeParse(await response.json()).data
       : null
+
     if (!result) {
       throw new Error(
         response.status === 404
@@ -32,6 +35,7 @@ export const phoneAccess = (origin: string) =>
 
     if (result.url) {
       const remote = parseComputerUrl(result.url)
+
       if (remote.protocol !== 'https:' || isLoopbackUrl(remote)) {
         throw new Error('This instance did not report a remote HTTPS URL.')
       }
@@ -60,6 +64,7 @@ export const checkActivity = (origin: string) =>
       redirect: 'error',
       signal
     })
+
     return response.ok
       ? (workspaceActivityResponseSchema.safeParse(await response.json())
           .data ?? null)
@@ -76,6 +81,7 @@ export const checkHealth = (origin: string) =>
       redirect: 'error',
       signal
     })
+
     return response.ok
       ? z
           .object({

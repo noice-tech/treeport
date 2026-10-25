@@ -34,6 +34,7 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     window.remoteClicks = 0
     window.remoteTouches = []
     document.addEventListener('click', () => window.remoteClicks++)
+
     for (const type of [
       'touchstart',
       'touchmove',
@@ -97,6 +98,7 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
   const bounds = (await video.boundingBox())!
   const x = bounds.x + bounds.width / 2
   const y = bounds.y + bounds.height / 2
+
   const messages = () =>
     page.evaluate(() =>
       window.browserMessages.filter(
@@ -106,6 +108,7 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
           message.type === 'touch'
       )
     )
+
   const replay = async () => {
     for (const message of (await messages()).filter(
       (message) => message.type === 'touch'
@@ -113,11 +116,14 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
       await browserTouch(remoteCdp, message)
     }
   }
+
   const clear = () =>
     page.evaluate(() => {
       window.browserMessages = []
     })
+
   const cdp = await page.context().newCDPSession(page)
+
   const touch = (
     type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel',
     points: { x: number; y: number; id?: number }[]
@@ -229,12 +235,14 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     { x: x - 20, y, id: 1 },
     { x: x + 20, y, id: 2 }
   ])
+
   for (let step = 1; step <= 8; step++) {
     await touch('touchMove', [
       { x: x - 20 - step * 6, y, id: 1 },
       { x: x + 20 + step * 6, y, id: 2 }
     ])
   }
+
   await touch('touchEnd', [])
   await replay()
   await expect
@@ -294,13 +302,16 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     deltaY: -40,
     modifiers: 2
   })
+
   const wheels = (await messages()).filter(
     (message) => message.type === 'wheel'
   )
+
   const wheelPoint = {
     x: 400 + (Math.floor(x) - x) / scale,
     y: 300 + (Math.floor(y) - y) / scale
   }
+
   expect(wheels).toEqual([
     {
       type: 'wheel',
@@ -312,6 +323,7 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     }
   ])
   await browserWheel(remoteCdp, wheels[0]!)
+
   const focalPoint = await remote.evaluate(
     ({ x, y }) => ({
       x: window.visualViewport!.offsetLeft + x / window.visualViewport!.scale,
@@ -320,6 +332,7 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     }),
     wheelPoint
   )
+
   await expect
     .poll(() => remote.evaluate(() => window.remoteWheel))
     .toEqual({
@@ -351,9 +364,11 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     ['pointer', 'move'],
     ['pointer', 'up']
   ])
+
   const pointers = (await messages()).filter(
     (message) => message.type === 'pointer'
   )
+
   expect(pointers[1]).toMatchObject({
     x: pointers[2]!.x,
     y: pointers[2]!.y
@@ -374,12 +389,14 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
   await page.getByRole('spinbutton', { name: 'Viewport height' }).fill('915')
   await page.getByRole('spinbutton', { name: 'Viewport height' }).press('Enter')
   await page.reload()
+
   const resizes = () =>
     page.evaluate(() =>
       (window.browserMessages ?? []).filter(
         (message) => message.type === 'resize'
       )
     )
+
   await expect
     .poll(resizes)
     .toEqual([{ type: 'resize', width: 412, height: 915 }])

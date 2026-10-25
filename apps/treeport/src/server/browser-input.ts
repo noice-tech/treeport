@@ -11,6 +11,7 @@ export async function browserKey(
   message: Extract<BrowserClientMessage, { type: 'key' }>
 ): Promise<void> {
   let state = keyboardStates.get(page)
+
   if (!state) {
     state = {
       // Local Electron guests can run on a different OS from the daemon.
@@ -23,10 +24,12 @@ export async function browserKey(
   }
 
   const meta = Boolean(message.modifiers & 4)
+
   // Match the remote platform's primary shortcut modifier, so Command+Z/K
   // from a Mac also works in a Linux/Windows browser and its web apps.
   const modifiers =
     !state.mac && meta ? (message.modifiers & ~4) | 2 : message.modifiers
+
   for (const [key, bit] of [
     ['Alt', 1],
     ['Control', 2],
@@ -52,6 +55,7 @@ export async function browserKey(
     for (const key of state.keys) {
       await page.keyboard.up(key)
     }
+
     state.keys.clear()
   }
 
@@ -80,6 +84,7 @@ export async function browserWheel(
   // preparation and dispatch ordered, including reversals, even if CDP metrics
   // respond at different speeds; do not serialize on the compositor's input ACK.
   let dispatched: Promise<unknown> | null = null
+
   const preparation = (wheelPreparations.get(cdp) ?? Promise.resolve())
     .catch(() => undefined)
     .then(async () => {
@@ -97,7 +102,9 @@ export async function browserWheel(
       // original promise and reports errors through the input scheduler.
       void dispatched.catch(() => undefined)
     })
+
   wheelPreparations.set(cdp, preparation)
+
   try {
     await preparation
     await dispatched
@@ -118,6 +125,7 @@ export async function browserTouch(
     message.points.length > 0
       ? (await cdp.send('Page.getLayoutMetrics')).cssVisualViewport.scale
       : 1
+
   await cdp.send('Input.dispatchTouchEvent', {
     type:
       message.phase === 'start'

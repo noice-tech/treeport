@@ -13,6 +13,7 @@ import { DatabasePort } from '../../database'
 import { ProjectStore } from '../project/project-store'
 
 const now = (): string => new Date().toISOString()
+
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
 
@@ -20,6 +21,7 @@ export class LauncherService {
   listLaunchers(): Effect.Effect<Launcher[], never, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const rows = yield* database
         .execute('launcher.service.33', (db) =>
           db
@@ -28,6 +30,7 @@ export class LauncherService {
             .orderBy(asc(launchers.createdAt), asc(launchers.id))
         )
         .pipe(Effect.orDie)
+
       return rows.map(mapLauncher)
     })
   }
@@ -47,14 +50,19 @@ export class LauncherService {
       const zed = yield* Zed
       const packages = yield* PackageSystemPort
       const projectStore = yield* ProjectStore
+
       const worktree = context?.worktreeId
         ? yield* projectStore.getWorktree(context.worktreeId)
         : null
+
       const projectId = worktree?.projectId ?? context?.projectId
+
       const project = projectId
         ? yield* projectStore.getProject(projectId)
         : null
+
       const worktreePath = worktree?.path ?? project?.mainWorktreePath ?? null
+
       if (project) {
         yield* Effect.sync(() => packages.syncProjects([project]))
       }
@@ -86,11 +94,13 @@ export class LauncherService {
         ] as const,
         { concurrency: 'unbounded' }
       )
+
       const repositoryPackageLaunchers = packageLaunchers.filter(
         (launcher) =>
           launcher.source.type === 'package' &&
           launcher.source.scope === 'project'
       )
+
       const globalPackageLaunchers = packageLaunchers.filter(
         (launcher) =>
           launcher.source.type === 'package' &&
@@ -131,6 +141,7 @@ export class LauncherService {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const timestamp = now()
+
       const launcher: Launcher = {
         id: id('launcher'),
         name: input.name,
@@ -141,6 +152,7 @@ export class LauncherService {
         createdAt: timestamp,
         updatedAt: timestamp
       }
+
       yield* database
         .execute('launcher.service.142', (db) =>
           db.insert(launchers).values({
@@ -157,6 +169,7 @@ export class LauncherService {
           })
         )
         .pipe(Effect.orDie)
+
       return launcher
     })
   }
@@ -171,6 +184,7 @@ export class LauncherService {
   ): Effect.Effect<Launcher, DomainError<unknown>, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const [existingRow] = yield* database
         .execute('launcher.service.166', (db) =>
           db
@@ -180,6 +194,7 @@ export class LauncherService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       if (!existingRow) {
         return yield* Effect.fail(
           new DomainError('LAUNCHER_NOT_FOUND', 'Launcher not found', 404)
@@ -187,6 +202,7 @@ export class LauncherService {
       }
 
       const existing = mapLauncher(existingRow)
+
       if (existing.updatedAt !== expectedUpdatedAt) {
         return yield* Effect.fail(
           new DomainError(
@@ -198,6 +214,7 @@ export class LauncherService {
       }
 
       const timestamp = now()
+
       const launcher: Launcher = {
         ...existing,
         name: input.name,
@@ -211,6 +228,7 @@ export class LauncherService {
             ? timestamp
             : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
       }
+
       const result = yield* database
         .execute('launcher.service.206', (db) =>
           db
@@ -233,6 +251,7 @@ export class LauncherService {
             )
         )
         .pipe(Effect.orDie)
+
       if (result.rowsAffected === 0) {
         return yield* Effect.fail(
           new DomainError(
@@ -253,6 +272,7 @@ export class LauncherService {
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
+
       const [existing] = yield* database
         .execute('launcher.service.243', (db) =>
           db
@@ -262,6 +282,7 @@ export class LauncherService {
             .limit(1)
         )
         .pipe(Effect.orDie)
+
       if (!existing) {
         return yield* Effect.fail(
           new DomainError('LAUNCHER_NOT_FOUND', 'Launcher not found', 404)
@@ -280,6 +301,7 @@ export class LauncherService {
             )
         )
         .pipe(Effect.orDie)
+
       if (
         existing.updatedAt !== expectedUpdatedAt ||
         result.rowsAffected === 0

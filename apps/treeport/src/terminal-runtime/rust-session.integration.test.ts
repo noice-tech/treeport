@@ -25,6 +25,7 @@ const volumes: string[] = []
 const roots: string[] = []
 const sessions: PersistentSession[] = []
 const pids = new Set<number>()
+
 const keepers = new Map<
   string,
   { token: string; ownerPid: number; pid: number }
@@ -33,6 +34,7 @@ const keepers = new Map<
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0)
+
     return true
   } catch (cause) {
     // SAFETY: Node signaling errors carry errno codes; only ESRCH proves absence.
@@ -46,6 +48,7 @@ function alive(pid: number): boolean {
 
 async function until(condition: () => boolean | Promise<boolean>) {
   const deadline = Date.now() + 8000
+
   while (!(await condition())) {
     if (Date.now() >= deadline) {
       throw new Error('Rust session fixture timed out')
@@ -68,6 +71,7 @@ async function fixture(
   roots.push(root)
   const directory = path.join(root, 'session')
   const executable = launch === null ? binary : path.join(root, 'launch-keeper')
+
   if (launch !== null) {
     await fs.writeFile(
       executable,
@@ -95,10 +99,13 @@ os.execv(${JSON.stringify(launch.executable)}, ${JSON.stringify([launch.executab
     metadata,
     journalLimitBytes: limit
   })
+
   sessions.push(session)
+
   const status = sessionStatusSchema.parse(
     JSON.parse(await fs.readFile(path.join(directory, 'status.json'), 'utf8'))
   )
+
   keepers.set(session.manifest.socketPath, {
     token: session.manifest.token,
     ownerPid: status.ownerPid,
@@ -113,6 +120,7 @@ os.execv(${JSON.stringify(launch.executable)}, ${JSON.stringify([launch.executab
   await session.connect()
   await session.ready
   await session.activate()
+
   return { root, directory, session, status, terminalId, output: () => output }
 }
 
@@ -120,6 +128,7 @@ async function bundledJournalUrl() {
   const dist = path.resolve(import.meta.dirname, '../../dist')
   const entry = path.join(dist, 'session-journal.js')
   await fs.access(entry)
+
   return pathToFileURL(entry).href
 }
 
@@ -129,10 +138,12 @@ async function* frames(socket: net.Socket) {
     socket.destroy(new Error('Raw fixture peer timed out'))
   })
   let buffer = ''
+
   // setEncoding keeps incremental UTF-8 decoding in Node's readable stream.
   for await (const chunk of socket) {
     buffer += String(chunk)
     let boundary: number
+
     while ((boundary = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, boundary)
       buffer = buffer.slice(boundary + 1)
@@ -141,6 +152,7 @@ async function* frames(socket: net.Socket) {
       )
       yield sessionFrameSchema.parse(JSON.parse(line))
     }
+
     expect(Buffer.byteLength(buffer)).toBeLessThanOrEqual(
       SESSION_MAX_FRAME_BYTES
     )
@@ -153,9 +165,11 @@ async function control(
 ) {
   const socket = net.createConnection(socketPath)
   socket.write(`${JSON.stringify(input)}\n`)
+
   for await (const frame of frames(socket)) {
     return frame
   }
+
   throw new Error('Raw fixture control disconnected before its response')
 }
 
@@ -168,11 +182,14 @@ afterEach(async () => {
     roots: roots.splice(0),
     volumes: volumes.splice(0)
   }
+
   keepers.clear()
   pids.clear()
+
   for (const session of sessions.splice(0)) {
     session.dispose()
   }
+
   // Authentication, not a cached PID, authorizes fixture cleanup. If ownership
   // cannot be established, retain the fixture/evidence instead of signaling a
   // potentially reused PID or hiding a keeper lifecycle regression.
@@ -187,31 +204,37 @@ afterEach(async () => {
 
         return null
       })
+
       if (socketStat !== null) {
         const inspected = await control(socket, {
           method: 'inspect',
           id: 'fixture-cleanup-inspect',
           token: keeper.token
         })
+
         expect(inspected).toMatchObject({
           type: 'response',
           status: { ownerPid: keeper.ownerPid, pid: keeper.pid },
           error: null
         })
+
         const closed = await control(socket, {
           method: 'terminate',
           id: 'fixture-cleanup-close',
           token: keeper.token
         })
+
         expect(closed).toMatchObject({ type: 'response', error: null })
       }
 
       await until(() => !alive(keeper.ownerPid) && !alive(keeper.pid))
     })
   )
+
   const failures = cleanup.flatMap((result) =>
     result.status === 'rejected' ? [result.reason] : []
   )
+
   if (failures.length) {
     throw new AggregateError(
       failures,
@@ -223,11 +246,13 @@ afterEach(async () => {
   await Promise.all(
     retained.keepers.map(([socket]) => fs.rm(socket, { force: true }))
   )
+
   // Only our unique image mountpoints, and only after authenticated cleanup
   // proves every fixture process exited. Never force-unmount a live keeper.
   for (const mount of retained.volumes) {
     await execute('hdiutil', ['detach', mount])
   }
+
   await Promise.all(
     retained.roots.map((root) => fs.rm(root, { recursive: true, force: true }))
   )
@@ -240,9 +265,11 @@ describe('Rust keeper with the production TypeScript client and journal', () => 
       const root = await fs.mkdtemp(
         path.join(os.tmpdir(), 'tp-journal-sparse-')
       )
+
       roots.push(root)
       const file = path.join(root, 'journal.jsonl')
       const descriptor = await fs.open(file, 'wx', 0o600)
+
       try {
         await descriptor.write(
           JSON.stringify({
@@ -256,8 +283,10 @@ describe('Rust keeper with the production TypeScript client and journal', () => 
       } finally {
         await descriptor.close()
       }
+
       const before = await fs.stat(file)
       const module = await bundledJournalUrl()
+
       const result = await execute(
         process.execPath,
         [
@@ -282,6 +311,7 @@ describe('Rust keeper with the production TypeScript client and journal', () => 
         ],
         { timeout: 3000, maxBuffer: 2048 }
       )
+
       expect(result.stdout.trim()).toBe('bounded after one complete record')
       const after = await fs.stat(file)
       expect([after.ino, after.size, after.mtimeMs]).toEqual([
@@ -297,12 +327,15 @@ describe('Rust keeper with the production TypeScript client and journal', () => 
     async (kind) => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tp-journal-fifo-'))
       roots.push(root)
+
       const file = path.join(
         root,
         kind === 'active' ? 'journal.jsonl' : 'checkpoint-0000000001.gz'
       )
+
       await execute('mkfifo', [file])
       const module = await bundledJournalUrl()
+
       // A regression can block open/read in libuv. Only this owned launcher is
       // subject to the deadline, never the Pi session or a keeper process.
       const result = await execute(
@@ -324,6 +357,7 @@ describe('Rust keeper with the production TypeScript client and journal', () => 
         ],
         { timeout: 2000, maxBuffer: 1024 }
       )
+
       expect(result.stdout.trim()).toBe('refused')
       expect((await fs.lstat(file)).isFIFO()).toBe(true)
       expect(await fs.readdir(root)).toEqual([path.basename(file)])
@@ -336,6 +370,7 @@ describe('Rust keeper with the production TypeScript client and journal', () => 
     'discovers reparented descendants and reaps the leader without spare descriptors (%s)',
     async (kind) => {
       const python = (await execute('which', ['python3'])).stdout.trim()
+
       const value = await fixture(
         '',
         undefined,
@@ -370,17 +405,21 @@ os._exit(7)
           ]
         }
       )
+
       await until(() => value.output().includes('READY'))
+
       const descendant =
         kind === 'descendant'
           ? Number(/DESCENDANT:(\d+)/.exec(value.output())?.[1])
           : null
+
       if (descendant !== null) {
         expect(Number.isSafeInteger(descendant)).toBe(true)
         pids.add(descendant)
       }
 
       const peers: net.Socket[] = []
+
       try {
         // Leave these admitted peers unauthenticated. Only this fixture's
         // inherited RLIMIT is reduced; never alter another process's limits.
@@ -390,19 +429,23 @@ os._exit(7)
           peer.on('error', () => {})
           await once(peer, 'connect')
         }
+
         await new Promise((resolve) => setTimeout(resolve, 150))
         value.session.write('exit')
         // Native enumeration needs neither a spawned /bin/ps nor pipe FDs.
         // Reaping proves exit-time discovery completed under this pressure;
         // the previous subprocess path retained a zombie after EMFILE instead.
         await until(() => !alive(value.status.pid))
+
         const evidence = await fs.readFile(
           path.join(value.directory, 'owner.log'),
           'utf8'
         )
+
         expect(evidence).not.toContain(
           'Cannot retain exited session descendants:'
         )
+
         if (descendant !== null) {
           expect(alive(descendant)).toBe(true)
           expect(value.session.exitCode).toBeNull()
@@ -417,6 +460,7 @@ os._exit(7)
               new Promise<void>((resolve) => {
                 if (peer.destroyed) {
                   resolve()
+
                   return
                 }
 
@@ -427,9 +471,11 @@ os._exit(7)
           )
         )
       }
+
       // Resource pressure has gone. Without descendants, verify the natural
       // exit code and output fence via a fresh production-client replay first.
       let session = value.session
+
       if (descendant === null) {
         value.session.dispose()
         let output = ''
@@ -444,12 +490,15 @@ os._exit(7)
           candidate.onData((data) => {
             output += data
           })
+
           const failure = await candidate.connect().then(
             () => null,
             (cause: unknown) => cause
           )
+
           if (failure !== null) {
             candidate.dispose()
+
             if (
               !(failure instanceof Error) ||
               failure.message !==
@@ -462,6 +511,7 @@ os._exit(7)
           }
 
           session = candidate
+
           return true
         })
         await session.ready
@@ -470,22 +520,26 @@ os._exit(7)
         await until(() => session.exitCode === code)
         expect(output).toBe('DESCENDANT:0\nREADY\nFINAL🌲\n')
         const records = []
+
         for await (const record of SessionJournal.readRetained(
           value.directory
         )) {
           records.push(record)
         }
+
         expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: code })
       }
 
       // Discovery retained the separate group's birth identity before reaping
       // its leader. The 20-second self-expiry cannot masquerade as cleanup.
       const start = performance.now()
+
       for (let attempt = 0; ; attempt++) {
         const failure = await session.terminate().then(
           () => null,
           (cause: unknown) => cause
         )
+
         if (failure === null) {
           break
         }
@@ -504,6 +558,7 @@ os._exit(7)
         }
 
         expect(alive(value.status.pid)).toBe(false)
+
         if (descendant !== null) {
           expect(alive(descendant)).toBe(false)
         }
@@ -513,6 +568,7 @@ os._exit(7)
           id: 'pressure-close-retained-operation',
           token: session.manifest.token
         })
+
         expect(inspected).toMatchObject({
           type: 'response',
           error: null,
@@ -523,6 +579,7 @@ os._exit(7)
           }
         })
       }
+
       await until(
         () =>
           !alive(value.status.ownerPid) &&
@@ -535,6 +592,7 @@ os._exit(7)
 
   it('round-trips opaque UTF-16 IDs and ignores valid extensions with the Rust owner', async () => {
     const terminalId = 'quote"line\nnul\0🌲\ud800' + 'long'.repeat(1000)
+
     const value = await fixture(
       `
         process.stdin.setRawMode(true);
@@ -549,7 +607,9 @@ os._exit(7)
       '{}',
       terminalId
     )
+
     await until(() => value.output().includes('READY'))
+
     const listing = await execute('ps', [
       '-ww',
       '-p',
@@ -557,23 +617,27 @@ os._exit(7)
       '-o',
       'args='
     ])
+
     const identity = crypto
       .createHash('sha256')
       .update(terminalId)
       .digest('hex')
       .slice(0, 32)
+
     expect(
       listing.stdout.trim().startsWith(`treeport-session term_${identity} `)
     ).toBe(true)
     expect(listing.stdout).not.toContain('quote"line')
     expect(listing.stdout).not.toContain(value.session.manifest.token)
     const ids = ['\ud800', '\udfff', '\ud800X\udc00', 'quote"line\nnul\0🌲']
+
     for (const id of ids) {
       const request = JSON.stringify({
         method: 'inspect',
         id,
         token: value.session.manifest.token
       })
+
       // These are valid JSON/Zod extensions, not decoded command arguments:
       // an unpaired property name, unpaired string, overflow number and deep
       // unused field must not change authentication or the attached lease.
@@ -582,12 +646,15 @@ os._exit(7)
         '['.repeat(1000) +
         '0' +
         ']'.repeat(1000)
+
       const socket = net.createConnection(value.session.manifest.socketPath)
       socket.write(`${request.slice(0, -1)}${extensions}}\n`)
       const received = []
+
       for await (const frame of frames(socket)) {
         received.push(frame)
       }
+
       expect(received).toHaveLength(1)
       expect(received[0]).toMatchObject({
         type: 'response',
@@ -600,6 +667,7 @@ os._exit(7)
         }
       })
     }
+
     value.session.write('continue')
     await until(() => value.output().includes('AFTER_IDS🌲'))
     expect(value.session.fault).toBeNull()
@@ -607,14 +675,17 @@ os._exit(7)
     await new Promise((resolve) => setTimeout(resolve, 100))
     const socket = net.createConnection(value.session.manifest.socketPath)
     const incoming = frames(socket)
+
     try {
       socket.write(
         `${JSON.stringify({ method: 'attach', id: ids[0], token: value.session.manifest.token })}\n`
       )
+
       while (true) {
         const next = await incoming.next()
         expect(next.done).toBe(false)
         const frame = next.value!
+
         if (frame.type === 'response') {
           expect(frame).toMatchObject({ id: ids[0], error: null })
         }
@@ -623,14 +694,17 @@ os._exit(7)
           break
         }
       }
+
       socket.write(
         `${JSON.stringify({ method: 'marker', id: ids[1], data: 'opaque-id-fence' })}\n`
       )
       let marker = false
+
       while (true) {
         const next = await incoming.next()
         expect(next.done).toBe(false)
         const frame = next.value!
+
         if (frame.type === 'marker') {
           marker = frame.data === 'opaque-id-fence'
         }
@@ -641,6 +715,7 @@ os._exit(7)
           break
         }
       }
+
       expect(
         await control(value.session.manifest.socketPath, {
           method: 'terminate',
@@ -656,6 +731,7 @@ os._exit(7)
 
   it('retains opaque UTF-16 markers and metadata through gzip replay with the Rust owner', async () => {
     const initial = 'initial\ud800'
+
     const value = await fixture(
       `console.log('READY'); setInterval(()=>{},1000);`,
       undefined,
@@ -664,10 +740,13 @@ os._exit(7)
       null,
       initial
     )
+
     await until(() => value.output().includes('READY'))
+
     const units = Array.from({ length: 65536 }, (_, unit) =>
       String.fromCharCode(unit)
     ).join('')
+
     const expected = [
       '\ud800',
       '\udfff',
@@ -677,26 +756,33 @@ os._exit(7)
       'z'.repeat(1024 * 1024),
       'after-checkpoint\ud800🌲\udfff'
     ]
+
     const captured: string[] = []
     value.session.onMarker((data) => captured.push(data))
+
     for (const data of expected) {
       await value.session.recordMarker(data)
       await value.session.setMetadata(data)
+
       const manifest = JSON.parse(
         await fs.readFile(path.join(value.directory, 'manifest.json'), 'utf8')
       )
+
       expect(manifest.metadata).toBe(data)
     }
+
     expect(captured).toEqual(expected)
     expect(
       (await fs.readdir(value.directory)).some((name) => name.endsWith('.gz'))
     ).toBe(true)
     const retained = []
+
     for await (const record of SessionJournal.readRetained(value.directory)) {
       if (record.type === 'marker') {
         retained.push(record.data)
       }
     }
+
     expect(retained).toEqual(expected)
     value.session.dispose()
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -721,6 +807,7 @@ os._exit(7)
       process.stdin.on('data',()=>console.log('AFTER_REJECTION🌲'));
       setInterval(()=>{},1000);
     `)
+
     await until(() => value.output().includes('READY'))
     value.session.dispose()
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -734,10 +821,12 @@ os._exit(7)
       })}\n`
     )
     let sequence = 0
+
     while (true) {
       const next = await incoming.next()
       expect(next.done).toBe(false)
       const frame = next.value!
+
       if (frame.type === 'response') {
         expect(frame.error).toBeNull()
       }
@@ -747,6 +836,7 @@ os._exit(7)
         break
       }
     }
+
     const pathToJournal = path.join(value.directory, 'journal.jsonl')
     const committed = await fs.readFile(pathToJournal)
     // The v1 protocol permits an empty ID. Its smaller request envelope can
@@ -759,9 +849,11 @@ os._exit(7)
     expect(Buffer.byteLength(encoded)).toBe(SESSION_MAX_FRAME_BYTES)
     socket.write(encoded)
     const received = []
+
     for await (const frame of incoming) {
       received.push(frame)
     }
+
     expect(await fs.readFile(pathToJournal)).toEqual(committed)
     expect(
       await control(value.session.manifest.socketPath, {
@@ -813,12 +905,15 @@ os._exit(7)
       process.stdin.on('data',()=>console.log('AFTER_LIMIT🌲'));
       setInterval(()=>{},1000);
     `)
+
     await until(() => value.output().includes('READY'))
+
     const request = {
       method: 'inspect',
       id: '',
       token: value.session.manifest.token
     }
+
     // A legal, exactly bounded request has less envelope overhead than its
     // status response. The original attached engine must not lose its lease.
     request.id = 'x'.repeat(
@@ -829,19 +924,23 @@ os._exit(7)
     const socket = net.createConnection(value.session.manifest.socketPath)
     socket.write(encoded)
     const received = []
+
     for await (const frame of frames(socket)) {
       received.push(frame)
     }
+
     expect(received).toHaveLength(1)
     expect(received[0]).toMatchObject({ type: 'fault' })
     expect(received[0]?.type === 'fault' && received[0].message).toMatch(
       /frame.*limit/
     )
+
     const inspected = await control(value.session.manifest.socketPath, {
       method: 'inspect',
       id: 'after-oversized-reply',
       token: value.session.manifest.token
     })
+
     expect(inspected).toMatchObject({
       type: 'response',
       error: null,
@@ -870,8 +969,10 @@ os._exit(7)
       });
       const ticker=setInterval(()=>console.log('TICK'),50);
     `)
+
     await until(() => value.output().includes('🌲'))
     expect(value.output()).not.toContain('\ufffd')
+
     const listing = await execute('ps', [
       '-ww',
       '-p',
@@ -879,6 +980,7 @@ os._exit(7)
       '-o',
       'args='
     ])
+
     expect(
       listing.stdout.trim().startsWith(`treeport-session ${value.terminalId} `)
     ).toBe(true)
@@ -930,9 +1032,11 @@ os._exit(7)
     await until(() => reconnect.exitCode === 7)
     expect(replay).toContain('x'.repeat(2 * 1024 * 1024) + 'FINAL🌲')
     const fence = reconnect.sequence
+
     for (let sequence = 1; sequence <= fence; sequence++) {
       reconnect.markProcessed(sequence)
     }
+
     await reconnect.flushRequests(fence)
     expect(
       await control(reconnect.manifest.socketPath, {
@@ -942,9 +1046,11 @@ os._exit(7)
       })
     ).toMatchObject({ status: { processedSequence: fence } })
     const records = []
+
     for await (const record of SessionJournal.readRetained(value.directory)) {
       records.push(record)
     }
+
     expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: 7 })
     expect(
       records
@@ -965,6 +1071,7 @@ os._exit(7)
   it('captures a command that exits immediately after exec', async () => {
     // Signoff covers both commands once; the explicit stress gate repeats the races.
     const attempts = process.env.SESSION_KEEPER_STRESS === '1' ? 10 : 1
+
     for (let attempt = 0; attempt < attempts; attempt++) {
       const value = await fixture('', undefined, ['/usr/bin/true'])
       await until(() => value.session.exitCode === 0)
@@ -972,12 +1079,14 @@ os._exit(7)
       await value.session.terminate()
       await until(() => !alive(value.status.ownerPid))
     }
+
     for (let attempt = 0; attempt < attempts; attempt++) {
       const value = await fixture('', undefined, [
         '/bin/sh',
         '-c',
         'printf IMMEDIATE; exit 9'
       ])
+
       await until(() => value.session.exitCode === 9)
       expect(value.output()).toBe('IMMEDIATE')
       await value.session.terminate()
@@ -990,13 +1099,16 @@ os._exit(7)
       console.log('READY');
       setInterval(()=>{},1000);
     `)
+
     await until(() => value.output().includes('READY'))
     value.session.kill('SIGTERM')
     await until(() => value.session.exitCode === 0)
     const records = []
+
     for await (const record of SessionJournal.readRetained(value.directory)) {
       records.push(record)
     }
+
     expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: 0 })
     expect(
       records
@@ -1011,19 +1123,25 @@ os._exit(7)
     const value = await fixture(
       "console.log('READY'); setInterval(()=>console.log('OUTPUT'),1)"
     )
+
     await until(() => value.output().includes('READY'))
+
     const rejected = await control(value.session.manifest.socketPath, {
       method: 'inspect',
       id: 'bad',
       token: 'wrong'
     })
+
     expect(rejected).toMatchObject({ type: 'response', status: null })
+
     const duplicate = await control(value.session.manifest.socketPath, {
       method: 'attach',
       id: 'second',
       token: value.session.manifest.token
     })
+
     expect(duplicate).toMatchObject({ type: 'response', status: null })
+
     const malformed: Record<string, string | number>[] = [
       { method: 'resize', cols: -1, rows: 24 },
       { method: 'pause', paused: 0 },
@@ -1038,6 +1156,7 @@ os._exit(7)
       { method: 'metadata' },
       { method: 'unknown' }
     ]
+
     for (const request of malformed) {
       expect(
         await control(value.session.manifest.socketPath, {
@@ -1046,6 +1165,7 @@ os._exit(7)
         })
       ).toMatchObject({ type: 'fault' })
     }
+
     expect(alive(value.status.pid)).toBe(true)
     value.session.pause()
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -1055,12 +1175,14 @@ os._exit(7)
 
   it('acknowledges attached close after replay before shutting down the owner', async () => {
     const attempts = process.env.SESSION_KEEPER_STRESS === '1' ? 3 : 1
+
     for (let attempt = 0; attempt < attempts; attempt++) {
       const value = await fixture(`
         process.stdout.write('r'.repeat(2*1024*1024));
         console.log('READY');
         setInterval(()=>console.log('LIVE'),10);
       `)
+
       await until(() => value.output().includes('READY'))
       value.session.dispose()
       await new Promise((resolve) => setTimeout(resolve, 150))
@@ -1073,8 +1195,10 @@ os._exit(7)
         })}\n`
       )
       let status: ReturnType<typeof sessionStatusSchema.parse> | null = null
+
       for await (const frame of frames(socket)) {
         expect(frame.type).not.toBe('fault')
+
         if (frame.type === 'response') {
           expect(frame.error).toBeNull()
         }
@@ -1093,6 +1217,7 @@ os._exit(7)
           break
         }
       }
+
       expect(status).toMatchObject({
         ownerPid: value.status.ownerPid,
         pid: value.status.pid
@@ -1117,6 +1242,7 @@ os._exit(7)
     await once(replacement, 'connect')
     const engine = net.createConnection(value.session.manifest.socketPath)
     const reader = frames(engine)
+
     try {
       engine.write(
         `${JSON.stringify({
@@ -1125,14 +1251,17 @@ os._exit(7)
           token: value.session.manifest.token
         })}\n`
       )
+
       for (;;) {
         const next = await reader.next()
         expect(next.done).toBe(false)
+
         if (next.done) {
           throw new Error('Raw engine disconnected before ready')
         }
 
         expect(next.value.type).not.toBe('fault')
+
         if (next.value.type === 'response') {
           expect(next.value.error).toBeNull()
         }
@@ -1141,6 +1270,7 @@ os._exit(7)
           break
         }
       }
+
       engine.pause()
       engine.write(
         `${JSON.stringify({ method: 'terminate', id: 't'.repeat(2 * 1024 * 1024) })}\n`
@@ -1154,6 +1284,7 @@ os._exit(7)
 
           return null
         })
+
         return retained === null
       })
       replacement.write(
@@ -1164,6 +1295,7 @@ os._exit(7)
         })}\n`
       )
       let acknowledged = false
+
       for await (const frame of frames(replacement)) {
         expect(frame).toMatchObject({
           type: 'response',
@@ -1174,6 +1306,7 @@ os._exit(7)
         acknowledged = true
         break
       }
+
       expect(acknowledged).toBe(true)
       await until(
         () => !alive(value.status.ownerPid) && !alive(value.status.pid)
@@ -1193,12 +1326,15 @@ os._exit(7)
       const child=spawn(process.execPath,['-e',"process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('background.pid',String(process.pid));process.send('ready');setInterval(()=>{},1000)"],{stdio:['ignore','ignore','ignore','ipc']});
       child.once('message',()=>{child.disconnect();child.unref();process.exit(0)});
     `)
+
     await until(async () =>
       (await fs.readdir(value.root)).includes('background.pid')
     )
+
     const background = Number(
       await fs.readFile(path.join(value.root, 'background.pid'), 'utf8')
     )
+
     pids.add(background)
     await until(() => value.session.exitCode === 0)
     expect(alive(background)).toBe(true)
@@ -1213,12 +1349,15 @@ os._exit(7)
       const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('detached.pid',String(process.pid));setTimeout(()=>process.exit(0),4000)"],{detached:true,stdio:'ignore'});
       child.unref();setInterval(()=>{},1000);
     `)
+
     await until(async () =>
       (await fs.readdir(separate.root)).includes('detached.pid')
     )
+
     const detached = Number(
       await fs.readFile(path.join(separate.root, 'detached.pid'), 'utf8')
     )
+
     pids.add(detached)
     await separate.session.terminate()
     expect(alive(detached)).toBe(true)
@@ -1236,12 +1375,15 @@ os._exit(7)
       process.execPath,
       "process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('separate-group.pid',String(process.pid));setTimeout(()=>process.exit(0),8000)"
     ])
+
     await until(async () =>
       (await fs.readdir(value.root)).includes('separate-group.pid')
     )
+
     const background = Number(
       await fs.readFile(path.join(value.root, 'separate-group.pid'), 'utf8')
     )
+
     pids.add(background)
     await until(() => value.session.exitCode === 0)
     expect(alive(background)).toBe(true)
@@ -1255,11 +1397,13 @@ os._exit(7)
   it('matches Buffer encodings for opaque UTF-16 input with the Rust owner', async () => {
     const units = Array.from({ length: 65536 }, (_, unit) => unit)
     const allCodeUnits = String.fromCharCode(...units)
+
     // Padding ends Node's decode early. Omit its low-byte aliases from this
     // corpus so base64 conversion also exercises units after the first page.
     const allBase64CodeUnits = String.fromCharCode(
       ...units.filter((unit) => (unit & 0xff) !== 0x3d)
     )
+
     const cases = [
       ...[
         '\ud800Z',
@@ -1283,6 +1427,7 @@ os._exit(7)
       ...value,
       bytes: Buffer.from(value.data, value.encoding)
     }))
+
     const value = await fixture(
       `
         process.stdin.setRawMode(true);
@@ -1303,19 +1448,23 @@ os._exit(7)
       os.tmpdir(),
       null
     )
+
     await until(() => value.output().includes('READY'))
     value.session.dispose()
     const socket = net.createConnection(value.session.manifest.socketPath)
     const iterator = frames(socket)
     let output = ''
+
     async function receiveUntil(done: (frame: SessionFrame) => boolean) {
       while (true) {
         const next = await iterator.next()
+
         if (next.done) {
           throw new Error('Input fixture disconnected before its fence')
         }
 
         const frame = next.value
+
         if (frame.type === 'output') {
           output += frame.data
         }
@@ -1345,6 +1494,7 @@ os._exit(7)
       await receiveUntil(
         (frame) => frame.type === 'response' && frame.id === 'input-live'
       )
+
       for (const [index, input] of cases.entries()) {
         const id = `input-${index}`
         const expected = `HEX:${index}:${input.bytes.toString('hex')}\n`
@@ -1360,6 +1510,7 @@ os._exit(7)
           return replied && output.replaceAll('\r\n', '\n').includes(expected)
         })
       }
+
       await value.session.terminate()
     } finally {
       await iterator.return(undefined)
@@ -1377,6 +1528,7 @@ os._exit(7)
       });
       console.log('READY');
     `)
+
     await until(() => value.output().includes('READY'))
     const input = Buffer.from(Array.from({ length: 256 }, (_, index) => index))
     value.session.write(input)
@@ -1395,6 +1547,7 @@ os._exit(7)
     `,
       1024
     )
+
     await until(() => value.session.fault !== null)
     expect(value.output()).not.toContain('TAIL🌲')
     expect(
@@ -1405,10 +1558,12 @@ os._exit(7)
       })
     ).toMatchObject({ status: { exitCode: null } })
     value.session.dispose()
+
     const resumed = await PersistentSession.open(
       value.directory,
       2 * 1024 * 1024
     )
+
     sessions.push(resumed)
     let output = ''
     resumed.onData((data) => {
@@ -1423,12 +1578,15 @@ os._exit(7)
         id: 'exit-fence',
         token: resumed.manifest.token
       })
+
       return inspected.type === 'response' && inspected.status?.exitCode === 7
     })
     const records = []
+
     for await (const record of SessionJournal.readRetained(value.directory)) {
       records.push(record)
     }
+
     expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: 7 })
     expect(
       records
@@ -1450,13 +1608,16 @@ os._exit(7)
     `,
       120
     )
+
     await until(() => value.output().includes('READY'))
     await expect(value.session.resizeAndWait(101, 37)).rejects.toThrow()
+
     const before = await control(value.session.manifest.socketPath, {
       method: 'inspect',
       id: 'uncommitted-resize',
       token: value.session.manifest.token
     })
+
     expect(before).toMatchObject({
       type: 'response',
       status: { cols: 80, rows: 24 }
@@ -1474,11 +1635,13 @@ os._exit(7)
     await resumed.ready
     await resumed.activate()
     expect(sizes).toEqual([[101, 37]])
+
     const after = await control(resumed.manifest.socketPath, {
       method: 'inspect',
       id: 'committed-resize',
       token: resumed.manifest.token
     })
+
     expect(after).toMatchObject({
       type: 'response',
       status: { cols: 101, rows: 37, error: null, incomplete: false }
@@ -1504,11 +1667,14 @@ os._exit(7)
         process.stdout.write('STORAGE_RECOVERED🌲',()=>process.exit(7));
       }));
     `)
+
       await until(() => value.output().includes('READY'))
+
       const obstruction = path.join(
         value.directory,
         'checkpoint-0000000001.gz.tmp'
       )
+
       if (kind === 'directory') {
         await fs.mkdir(obstruction)
       } else if (kind === 'fifo') {
@@ -1520,15 +1686,18 @@ os._exit(7)
       value.session.write('GO')
       await until(() => value.session.fault !== null)
       expect(value.output()).not.toContain('STORAGE_RECOVERED')
+
       const inspected = await control(value.session.manifest.socketPath, {
         method: 'inspect',
         id: 'storage-fault',
         token: value.session.manifest.token
       })
+
       expect(inspected).toMatchObject({
         type: 'response',
         status: { incomplete: false, exitCode: null }
       })
+
       if (kind === 'fifo' || kind === 'directory') {
         expect(
           inspected.type === 'response' && inspected.status?.error
@@ -1540,20 +1709,25 @@ os._exit(7)
           inspected.type === 'response' && inspected.status?.error
         ).toMatch(/Permission denied|os error 13/)
         expect(await fs.readFile(obstruction, 'utf8')).toBe('unchanged')
+
         const committed =
           inspected.type === 'response' ? inspected.status?.sequence : null
+
         const before = await fs.stat(
           path.join(value.directory, 'journal.jsonl')
         )
+
         await new Promise((resolve) => setTimeout(resolve, 250))
         const after = await fs.stat(path.join(value.directory, 'journal.jsonl'))
         expect(after.size).toBe(before.size)
         expect(after.mtimeMs).toBe(before.mtimeMs)
+
         const stable = await control(value.session.manifest.socketPath, {
           method: 'inspect',
           id: 'permission-stable-fence',
           token: value.session.manifest.token
         })
+
         expect(stable).toMatchObject({
           type: 'response',
           status: { sequence: committed, incomplete: false, exitCode: null }
@@ -1577,9 +1751,11 @@ os._exit(7)
         `READY\r\n${'f'.repeat(2 * 1024 * 1024)}STORAGE_RECOVERED🌲`
       )
       const records = []
+
       for await (const record of SessionJournal.readRetained(value.directory)) {
         records.push(record)
       }
+
       expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: 7 })
       expect(
         records
@@ -1598,15 +1774,19 @@ os._exit(7)
       process.stdin.on('data',()=>console.log('ORIGINAL_OWNER'));
       setInterval(()=>{},1000);
     `)
+
     await until(() => value.output().includes('READY'))
+
     const manifest = await fs.readFile(
       path.join(value.directory, 'manifest.json'),
       'utf8'
     )
+
     const journal = await fs.readFile(
       path.join(value.directory, 'journal.jsonl'),
       'utf8'
     )
+
     await expect(
       PersistentSession.create({
         directory: value.directory,
@@ -1628,11 +1808,13 @@ os._exit(7)
     expect(
       await fs.readFile(path.join(value.directory, 'journal.jsonl'), 'utf8')
     ).toBe(journal)
+
     const inspected = await control(value.session.manifest.socketPath, {
       method: 'inspect',
       id: 'original-owner-after-refused-bootstrap',
       token: value.session.manifest.token
     })
+
     expect(inspected).toMatchObject({
       type: 'response',
       error: null,
@@ -1654,6 +1836,7 @@ os._exit(7)
       roots.push(root)
       const file = path.join(root, 'manifest.json')
       const descriptor = await fs.open(file, 'wx', 0o600)
+
       try {
         // Sparse invalid JSON: no implementation can launch a real child from
         // this fixture, including the pre-fix reference used for the red run.
@@ -1662,6 +1845,7 @@ os._exit(7)
       } finally {
         await descriptor.close()
       }
+
       const before = await fs.stat(file)
       await expect(execute(binary, [root], { timeout: 2000 })).rejects.toThrow(
         /Session manifest exceeds the byte limit/
@@ -1690,13 +1874,17 @@ os._exit(7)
       const value = await fixture(
         "console.log('READY');setInterval(()=>{},1000)"
       )
+
       await until(() => value.output().includes('READY'))
+
       const original = await fs.readFile(
         path.join(value.directory, 'manifest.json'),
         'utf8'
       )
+
       const obstruction = path.join(value.directory, 'manifest.json.tmp')
       const outside = path.join(value.root, 'outside')
+
       if (kind === 'fifo') {
         await execute('mkfifo', [obstruction])
       } else {
@@ -1711,6 +1899,7 @@ os._exit(7)
               constants.O_RDONLY | constants.O_NONBLOCK
             )
           : null
+
       try {
         await expect(
           value.session.setMetadata('{"retry":true}')
@@ -1718,6 +1907,7 @@ os._exit(7)
         expect(
           await fs.readFile(path.join(value.directory, 'manifest.json'), 'utf8')
         ).toBe(original)
+
         if (reader !== null) {
           expect((await reader.read(Buffer.alloc(1024))).bytesRead).toBe(0)
         } else {
@@ -1729,6 +1919,7 @@ os._exit(7)
           id: 'fifo-metadata-inspect',
           token: value.session.manifest.token
         })
+
         expect(inspected).toMatchObject({
           type: 'response',
           error: null,
@@ -1738,6 +1929,7 @@ os._exit(7)
             exitCode: null
           }
         })
+
         // Do not repair the obstruction before exercising independently
         // authenticated close: a failed metadata operation must not strand it.
         const closed = await control(value.session.manifest.socketPath, {
@@ -1745,10 +1937,12 @@ os._exit(7)
           id: 'fifo-metadata-close',
           token: value.session.manifest.token
         })
+
         expect(closed).toMatchObject({ type: 'response', error: null })
         await until(
           () => !alive(value.status.ownerPid) && !alive(value.status.pid)
         )
+
         if (kind === 'symlink') {
           expect(await fs.readFile(outside, 'utf8')).toBe('untouched')
         }
@@ -1764,11 +1958,14 @@ os._exit(7)
       const value = await fixture(
         "console.log('READY');setInterval(()=>{},1000)"
       )
+
       await until(() => value.output().includes('READY'))
+
       const original = await fs.readFile(
         path.join(value.directory, 'manifest.json'),
         'utf8'
       )
+
       const obstruction = path.join(value.directory, 'manifest.json.tmp')
       await fs.writeFile(obstruction, 'unchanged', { mode: 0o400 })
       await expect(value.session.setMetadata('{"retry":true}')).rejects.toThrow(
@@ -1778,11 +1975,13 @@ os._exit(7)
         await fs.readFile(path.join(value.directory, 'manifest.json'), 'utf8')
       ).toBe(original)
       expect(await fs.readFile(obstruction, 'utf8')).toBe('unchanged')
+
       const inspected = await control(value.session.manifest.socketPath, {
         method: 'inspect',
         id: 'metadata-denied',
         token: value.session.manifest.token
       })
+
       expect(inspected).toMatchObject({
         type: 'response',
         error: null,
@@ -1818,12 +2017,16 @@ os._exit(7)
       const value = await fixture(
         "console.log('READY');setInterval(()=>{},1000)"
       )
+
       await until(() => value.output().includes('READY'))
+
       const original = await fs.readFile(
         path.join(value.directory, 'manifest.json'),
         'utf8'
       )
+
       await fs.chmod(value.directory, 0o500)
+
       try {
         await expect(value.session.terminate()).rejects.toThrow(
           /Permission denied|os error 13/
@@ -1841,6 +2044,7 @@ os._exit(7)
             id: 'failed-close-exit-fence',
             token: value.session.manifest.token
           })
+
           expect(inspected).toMatchObject({
             type: 'response',
             error: null,
@@ -1850,16 +2054,19 @@ os._exit(7)
               incomplete: false
             }
           })
+
           return (
             inspected.type === 'response' && inspected.status?.exitCode === 0
           )
         })
         const records = []
+
         for await (const record of SessionJournal.readRetained(
           value.directory
         )) {
           records.push(record)
         }
+
         expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: 0 })
         expect(
           records
@@ -1872,6 +2079,7 @@ os._exit(7)
         // even if an assertion fails. Never delete a live owner's evidence.
         await fs.chmod(value.directory, 0o700)
       }
+
       value.session.dispose()
       const resumed = await PersistentSession.open(value.directory)
       sessions.push(resumed)
@@ -1896,14 +2104,17 @@ os._exit(7)
     const blocked = path.join(value.directory, 'unexpected')
     await fs.mkdir(blocked)
     await fs.writeFile(path.join(blocked, 'sentinel'), 'not keeper payload')
+
     const manifest = await fs.readFile(
       path.join(value.directory, 'manifest.json'),
       'utf8'
     )
+
     const bootstrap = await fs.readFile(
       path.join(value.directory, 'owner.log'),
       'utf8'
     )
+
     try {
       await expect(value.session.terminate()).rejects.toThrow(
         /unexpected directory/
@@ -1919,20 +2130,24 @@ os._exit(7)
       expect(
         await fs.readFile(path.join(value.directory, 'owner.log'), 'utf8')
       ).toBe(bootstrap)
+
       const inspected = await control(value.session.manifest.socketPath, {
         method: 'inspect',
         id: 'unexpected-subtree-inspect',
         token: value.session.manifest.token
       })
+
       expect(inspected).toMatchObject({
         type: 'response',
         error: null,
         status: { ownerPid: value.status.ownerPid, incomplete: false }
       })
       const records = []
+
       for await (const record of SessionJournal.readRetained(value.directory)) {
         records.push(record)
       }
+
       expect(
         records
           .filter((record) => record.type === 'output')
@@ -1944,6 +2159,7 @@ os._exit(7)
       // the keeper itself never receives recursive deletion authority.
       await fs.rm(blocked, { recursive: true })
     }
+
     await value.session.terminate()
     await until(() => !alive(value.status.ownerPid))
   })
@@ -1955,14 +2171,18 @@ os._exit(7)
       const value = await fixture(
         "console.log('READY');setInterval(()=>{},1000)"
       )
+
       await until(() => value.output().includes('READY'))
+
       const original = JSON.parse(
         await fs.readFile(path.join(value.directory, 'manifest.json'), 'utf8')
       )
+
       const blocked =
         kind === 'discovery'
           ? path.join(value.directory, 'status.json')
           : value.root
+
       if (kind === 'discovery') {
         // Payload deletion succeeds before unlink of this discovery path fails.
         // Close must retain the token and never recurse into the replacement.
@@ -1972,6 +2192,7 @@ os._exit(7)
       }
 
       await fs.chmod(blocked, 0o500)
+
       try {
         await expect(value.session.terminate()).rejects.toThrow(
           kind === 'discovery'
@@ -1990,11 +2211,13 @@ os._exit(7)
             )
           )
         ).toEqual(original)
+
         const inspected = await control(value.session.manifest.socketPath, {
           method: 'inspect',
           id: 'partial-close-inspect',
           token: value.session.manifest.token
         })
+
         expect(inspected).toMatchObject({
           type: 'response',
           error: null,
@@ -2007,18 +2230,23 @@ os._exit(7)
         expect(
           inspected.type === 'response' && inspected.status?.error
         ).toMatch(/close partially removed storage/)
+
         const sequence =
           inspected.type === 'response' ? inspected.status?.sequence : null
+
         await new Promise((resolve) => setTimeout(resolve, 250))
+
         const stable = await control(value.session.manifest.socketPath, {
           method: 'inspect',
           id: 'partial-close-stable-fence',
           token: value.session.manifest.token
         })
+
         expect(stable).toMatchObject({
           type: 'response',
           status: { sequence, incomplete: true }
         })
+
         if (kind === 'discovery') {
           expect(
             await fs.readFile(path.join(blocked, 'retained'), 'utf8')
@@ -2035,6 +2263,7 @@ os._exit(7)
 
                 return null
               })
+
             return source !== null && JSON.parse(source).incomplete === true
           })
         }
@@ -2048,10 +2277,12 @@ os._exit(7)
         // Only this private fixture's blocked path, so authenticated teardown
         // remains possible after a failed assertion. No cached-PID signaling.
         await fs.chmod(blocked, 0o700)
+
         if (kind === 'discovery') {
           await fs.rm(blocked, { recursive: true })
         }
       }
+
       value.session.dispose()
       const resumed = await PersistentSession.open(value.directory)
       sessions.push(resumed)
@@ -2098,6 +2329,7 @@ os._exit(7)
         image
       ])
       volumes.push(mount)
+
       const value = await fixture(
         `
         process.stdin.setRawMode(true);
@@ -2110,12 +2342,14 @@ os._exit(7)
         undefined,
         mount
       )
+
       const independent = await fixture(
         "console.log('CLOSE_READY');setInterval(()=>{},1000)",
         undefined,
         undefined,
         mount
       )
+
       await until(
         () =>
           value.output().includes('READY') &&
@@ -2126,31 +2360,37 @@ os._exit(7)
       let failureCode: string | null = null
       let written = 0
       const block = Buffer.alloc(64 * 1024, 0x61)
+
       // Even a misconfigured mount cannot exhaust the host: never write more
       // than 48 MiB to this unique fixture, and require a real ENOSPC result.
       while (written < 48 * 1024 * 1024) {
         const result = await filler.write(block).catch((cause: unknown) => {
           // SAFETY: Node filesystem write errors expose errno codes.
           failureCode = (cause as NodeJS.ErrnoException).code ?? null
+
           return null
         })
+
         if (result === null || result.bytesWritten === 0) {
           break
         }
 
         written += result.bytesWritten
       }
+
       await filler.close()
       expect(failureCode).toBe('ENOSPC')
       value.session.write('GO')
       await until(() => value.session.fault !== null)
       expect(value.output()).not.toContain('DISK_RECOVERED')
       const started = Date.now()
+
       const inspected = await control(value.session.manifest.socketPath, {
         method: 'inspect',
         id: 'disk-full',
         token: value.session.manifest.token
       })
+
       expect(Date.now() - started).toBeLessThan(2000)
       expect(inspected).toMatchObject({
         type: 'response',
@@ -2187,9 +2427,11 @@ os._exit(7)
         `READY\r\n${'d'.repeat(2 * 1024 * 1024)}DISK_RECOVERED🌲`
       )
       const records = []
+
       for await (const record of SessionJournal.readRetained(value.directory)) {
         records.push(record)
       }
+
       expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: 7 })
       expect(
         records

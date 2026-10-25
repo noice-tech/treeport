@@ -17,6 +17,7 @@ const projectColorSchema = Schema.Literal(
 
 const stringArraySchema = Schema.Array(Schema.String)
 const nullableStringSchema = Schema.NullOr(Schema.String)
+
 const jsonObjectSchema = Schema.Record({
   key: Schema.String,
   value: jsonValueSchema
@@ -26,6 +27,7 @@ export const launcherDefinitionsQuerySchema = Schema.Struct({
   projectId: Schema.optional(Schema.String),
   worktreeId: Schema.optional(Schema.String)
 })
+
 export const operationQuerySchema = Schema.Struct({
   kind: Schema.optional(
     Schema.Literal(
@@ -39,6 +41,7 @@ export const operationQuerySchema = Schema.Struct({
   ),
   projectId: Schema.optional(Schema.String)
 })
+
 export const deleteAppQuerySchema = Schema.Struct({
   discardStoredData: Schema.optional(Schema.String),
   force: Schema.optional(Schema.String)
@@ -82,10 +85,12 @@ const webAppLaunchSchema = Schema.Struct({
   input: Schema.NullOr(jsonObjectSchema),
   cwd: nullableStringSchema
 })
+
 const webAppSandboxSchema = Schema.Struct({
   enabled: Schema.Boolean,
   allowSameOrigin: Schema.Boolean
 })
+
 export const webAppSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('web'),
@@ -98,6 +103,7 @@ export const webAppSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 export const browserAppSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('browser'),
@@ -107,6 +113,7 @@ export const browserAppSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 const terminalWorkspaceItemSchema = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('terminal'),
@@ -116,6 +123,7 @@ const terminalWorkspaceItemSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 const workspaceItemSchema = Schema.Union(
   terminalWorkspaceItemSchema,
   webAppSchema,
@@ -139,6 +147,7 @@ const treeDecorationSchema = Schema.Struct({
   source: nullableStringSchema,
   updatedAt: Schema.String
 })
+
 const dirtyStateSchema = Schema.Struct({
   dirty: Schema.Boolean,
   staged: Schema.NonNegativeInt,
@@ -147,6 +156,7 @@ const dirtyStateSchema = Schema.Struct({
   conflicts: Schema.NonNegativeInt,
   total: Schema.NonNegativeInt
 })
+
 export const worktreeRecordSchema = Schema.Struct({
   id: Schema.String,
   projectId: Schema.String,
@@ -168,6 +178,7 @@ export const worktreeRecordSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 export const projectRecordSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -186,6 +197,7 @@ export const projectRecordSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
+
 export const recentProjectRecordSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -204,6 +216,7 @@ const cleanupCommandProgressSchema = Schema.Struct({
   error: nullableStringSchema,
   outputTruncated: Schema.Boolean
 })
+
 const removeCleanupProgressSchema = Schema.Struct({
   status: Schema.Literal(
     'pending',
@@ -216,6 +229,7 @@ const removeCleanupProgressSchema = Schema.Struct({
   skippedReason: nullableStringSchema,
   commands: Schema.Array(cleanupCommandProgressSchema)
 })
+
 export const removePreviewSchema = Schema.Struct({
   worktreeId: Schema.String,
   name: Schema.String,
@@ -255,6 +269,7 @@ const operationBaseFields = {
   createdAt: Schema.String,
   updatedAt: Schema.String
 }
+
 const createOperationRequestSchema = Schema.Struct({
   name: Schema.String,
   base: Schema.Literal('default', 'current'),
@@ -275,12 +290,14 @@ const createOperationRequestSchema = Schema.Struct({
   sourceWorktreeId: Schema.optional(Schema.String),
   treeTitleCommand: Schema.optional(stringArraySchema)
 })
+
 const createOperationResultSchema = Schema.Struct({
   worktreeId: Schema.String,
   terminalId: nullableStringSchema,
   terminalError: nullableStringSchema,
   setupError: nullableStringSchema
 })
+
 const removalCheckoutIdentitySchema = Schema.Struct({
   path: Schema.String,
   device: Schema.String,
@@ -291,6 +308,7 @@ const removalCheckoutIdentitySchema = Schema.Struct({
   managedWrapperPath: nullableStringSchema,
   quarantinePath: Schema.String
 })
+
 const removeOperationRequestSchema = Schema.Struct({
   confirmation: Schema.NullOr(Schema.Boolean),
   confirmationToken: nullableStringSchema,
@@ -313,6 +331,7 @@ const removeOperationRequestSchema = Schema.Struct({
   managedWrapperPath: nullableStringSchema,
   cleanupCommands: removeCleanupProgressSchema
 })
+
 const removeOperationResultSchema = Schema.Struct({
   removed: Schema.Literal(true),
   worktreeId: Schema.String,
@@ -327,6 +346,7 @@ const removeOperationResultSchema = Schema.Struct({
     commands: Schema.Array(cleanupCommandProgressSchema)
   })
 })
+
 const externalRemoveResultSchema = Schema.Struct({
   removed: Schema.Literal(true),
   external: Schema.Literal(true),
@@ -339,6 +359,7 @@ const externalRemoveResultSchema = Schema.Struct({
     skippedReason: Schema.String
   })
 })
+
 export const operationRecordSchema = Schema.Union(
   Schema.Struct({
     ...operationBaseFields,
@@ -422,6 +443,7 @@ const packageDefinitionSourceSchema = Schema.Union(
     scope: Schema.Literal('global', 'project')
   })
 )
+
 export const launcherDefinitionListingSchema = Schema.Struct({
   definitions: Schema.Array(
     Schema.Struct({
@@ -445,6 +467,7 @@ export const launcherDefinitionListingSchema = Schema.Struct({
     })
   )
 })
+
 export const webAppDefinitionSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
@@ -481,15 +504,18 @@ export const webAppContextSchema = Schema.Struct({
     head: nullableStringSchema
   })
 })
+
 export const gitDiffImageSchema = Schema.Struct({
   dataUrl: Schema.String,
   byteLength: Schema.Number
 })
+
 const gitDiffFileSchema = Schema.Struct({
   path: Schema.String,
   previousPath: nullableStringSchema,
   status: Schema.Literal('modified', 'added', 'deleted', 'renamed', 'untracked')
 })
+
 export const gitDiffSchema = Schema.Struct({
   baseRef: Schema.String,
   baseCommit: Schema.String,
@@ -507,6 +533,7 @@ export const gitDiffSchema = Schema.Struct({
     untracked: stringArraySchema
   })
 })
+
 export const worktreeListenerDiscoverySchema = Schema.Struct({
   supported: Schema.Boolean,
   message: nullableStringSchema,
@@ -520,15 +547,18 @@ export const worktreeListenerDiscoverySchema = Schema.Struct({
     })
   )
 })
+
 export const treeFileListingSchema = Schema.Struct({
   paths: stringArraySchema,
   truncated: Schema.Boolean
 })
+
 export const treeFileSchema = Schema.Struct({
   path: Schema.String,
   content: Schema.String,
   revision: Schema.String
 })
+
 export const treeFileSearchResultSchema = Schema.Struct({
   files: Schema.Array(
     Schema.Struct({
@@ -547,6 +577,7 @@ export const treeFileSearchResultSchema = Schema.Struct({
   ),
   truncated: Schema.Boolean
 })
+
 export const treeFileWriteResultSchema = Schema.Struct({
   path: Schema.String,
   revision: Schema.String
@@ -561,6 +592,7 @@ const packageResourceDiagnosticSchema = Schema.Struct({
   resourceType: Schema.optional(Schema.Literal('web-app', 'launcher')),
   path: Schema.optional(Schema.String)
 })
+
 const packageListingSchema = Schema.Struct({
   source: Schema.String,
   identity: Schema.String,
@@ -574,6 +606,7 @@ const packageListingSchema = Schema.Struct({
   }),
   diagnostics: Schema.Array(packageResourceDiagnosticSchema)
 })
+
 const packageOperationResultSchema = Schema.Struct({
   action: Schema.Literal('install', 'remove', 'update', 'reload'),
   source: nullableStringSchema,
@@ -593,6 +626,7 @@ export const workspaceActivityResponseSchema = Schema.Struct({
   working: Schema.Int.pipe(Schema.nonNegative()),
   needsAttention: Schema.Int.pipe(Schema.nonNegative())
 })
+
 export type WorkspaceActivityResponse = Schema.Schema.Type<
   typeof workspaceActivityResponseSchema
 >
@@ -602,6 +636,7 @@ export const phoneAccessResponseSchema = Schema.Struct({
   error: nullableStringSchema,
   setupCommand: nullableStringSchema
 })
+
 export type PhoneAccessResponse = Schema.Schema.Type<
   typeof phoneAccessResponseSchema
 >
@@ -617,6 +652,7 @@ export const healthResponseSchema = Schema.Struct({
   daemonLifecycle: Schema.Literal('treeport', 'service', 'external'),
   url: Schema.String
 })
+
 export type HealthResponse = Schema.Schema.Type<typeof healthResponseSchema>
 
 export const browserInstallStatusSchema = Schema.Struct({
@@ -628,34 +664,43 @@ export const browserInstallStatusSchema = Schema.Struct({
   launchReady: Schema.Boolean,
   launchError: nullableStringSchema
 })
+
 export const browserInstallResponseSchema = Schema.Struct({
   message: Schema.String
 })
+
 export const browserAgentResponseSchema = Schema.Struct({
   output: Schema.String
 })
+
 export const packageListingResponseSchema = Schema.Struct({
   packages: Schema.Array(packageListingSchema),
   diagnostics: Schema.Array(packageResourceDiagnosticSchema)
 })
+
 export const packageOperationResponseSchema = Schema.Struct({
   result: packageOperationResultSchema
 })
+
 export const packageOperationsResponseSchema = Schema.Struct({
   results: Schema.Array(packageOperationResultSchema)
 })
+
 export const packageReloadResponseSchema = Schema.Struct({
   results: Schema.Array(packageOperationResultSchema),
   diagnostics: Schema.Array(packageResourceDiagnosticSchema)
 })
+
 export const packageProjectResponseSchema = Schema.Struct({
   project: projectRecordSchema
 })
+
 export const packageServiceSelfResponseSchema = Schema.Struct({
   packageId: Schema.String,
   /** Null when the package is configured globally. */
   projectIds: Schema.NullOr(Schema.Array(Schema.String))
 })
+
 export const packageServiceProjectsResponseSchema = Schema.Struct({
   projects: Schema.Array(
     Schema.Struct({
@@ -685,64 +730,83 @@ export const packageServiceProjectsResponseSchema = Schema.Struct({
     })
   )
 })
+
 export const projectsResponseSchema = Schema.Struct({
   projects: Schema.Array(projectRecordSchema)
 })
+
 export const recentProjectsResponseSchema = Schema.Struct({
   projects: Schema.Array(recentProjectRecordSchema)
 })
+
 export const projectResponseSchema = Schema.Struct({
   project: projectRecordSchema
 })
+
 export const worktreeResponseSchema = Schema.Struct({
   worktree: worktreeRecordSchema
 })
+
 export const worktreesResponseSchema = Schema.Struct({
   worktrees: Schema.Array(worktreeRecordSchema)
 })
+
 export const operationResponseSchema = Schema.Struct({
   operation: operationRecordSchema
 })
+
 export const operationsResponseSchema = Schema.Struct({
   operations: Schema.Array(operationRecordSchema)
 })
+
 export const launchersResponseSchema = Schema.Struct({
   launchers: Schema.Array(launcherSchema)
 })
+
 export const launcherResponseSchema = Schema.Struct({
   launcher: launcherSchema
 })
+
 export const webAppDefinitionsResponseSchema = Schema.Struct({
   definitions: Schema.Array(webAppDefinitionSchema)
 })
+
 export const openWebAppResponseSchema = Schema.Struct({
   app: webAppSchema,
   created: Schema.Boolean,
   reused: Schema.Boolean
 })
+
 export const openBrowserAppResponseSchema = Schema.Struct({
   app: browserAppSchema
 })
+
 export const terminalResponseSchema = Schema.Struct({
   terminal: terminalRecordSchema
 })
+
 export const terminalObservationResponseSchema = Schema.Struct({
   terminal: terminalRecordSchema,
   metadata: terminalRuntimeMetadataSchema
 })
+
 export const terminalCaptureResponseSchema = Schema.Struct({
   terminalId: Schema.String,
   capturedAt: Schema.String,
   lineLimit: Schema.Int.pipe(Schema.positive()),
   content: Schema.String
 })
+
 export const removePreviewResponseSchema = Schema.Struct({
   preview: removePreviewSchema
 })
+
 export const webAppContextResponseSchema = Schema.Struct({
   context: webAppContextSchema
 })
+
 export const gitDiffResponseSchema = Schema.Struct({ diff: gitDiffSchema })
+
 export const gitFileDiffResponseSchema = Schema.Struct({
   path: Schema.String,
   status: Schema.Literal('ready', 'oversized'),
@@ -750,24 +814,32 @@ export const gitFileDiffResponseSchema = Schema.Struct({
   revision: nullableStringSchema,
   message: nullableStringSchema
 })
+
 export const listenerDiscoveryResponseSchema = Schema.Struct({
   discovery: worktreeListenerDiscoverySchema
 })
+
 export const webAppResponseSchema = Schema.Struct({ app: webAppSchema })
+
 export const webAppDefinitionResponseSchema = Schema.Struct({
   definition: webAppDefinitionSchema
 })
+
 export const terminatedTerminalsResponseSchema = Schema.Struct({
   terminated: Schema.NonNegativeInt
 })
+
 export const hasDataResponseSchema = Schema.Struct({ hasData: Schema.Boolean })
+
 export const storageValueResponseSchema = Schema.Struct({
   found: Schema.Boolean,
   value: jsonValueSchema
 })
+
 export const uploadedFileResponseSchema = Schema.Struct({
   file: Schema.Struct({ path: Schema.String })
 })
+
 export const applicationUpdateStatusSchema = Schema.Struct({
   currentVersion: Schema.String,
   latestVersion: nullableStringSchema,

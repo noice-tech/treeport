@@ -10,6 +10,7 @@ export function useWorkspaceNavigate(): (
 ) => Promise<void> {
   const navigate = useNavigate()
   const setTerminalFocusIntent = useSetTerminalFocusIntent()
+
   return useCallback(
     (target: WorkspaceTarget, replace = false, focusTerminal = true) => {
       if (target.kind === 'terminal') {
