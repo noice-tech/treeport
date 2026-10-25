@@ -84,13 +84,12 @@ function copyText(text: string) {
 
 // Status scales invert in light mode, so one set of tones serves both themes.
 const treeBadgeToneClasses = {
-  neutral: 'bg-zinc-800 text-zinc-300 inset-ring inset-ring-white/5',
-  info: 'bg-blue-400/10 text-blue-300 inset-ring inset-ring-blue-400/20',
-  success:
-    'bg-emerald-400/10 text-emerald-300 inset-ring inset-ring-emerald-400/20',
-  warning: 'bg-amber-400/10 text-amber-300 inset-ring inset-ring-amber-400/20',
-  danger: 'bg-rose-400/10 text-rose-300 inset-ring inset-ring-rose-400/20',
-  done: 'bg-violet-400/10 text-violet-300 inset-ring inset-ring-violet-400/20'
+  neutral: 'bg-zinc-800 text-zinc-300',
+  info: 'bg-blue-400/15 text-blue-300',
+  success: 'bg-emerald-400/15 text-emerald-300',
+  warning: 'bg-amber-400/15 text-amber-300',
+  danger: 'bg-rose-400/15 text-rose-300',
+  done: 'bg-violet-400/15 text-violet-300'
 } satisfies Record<TreeBadgeTone, string>
 
 function WorktreeShell({
