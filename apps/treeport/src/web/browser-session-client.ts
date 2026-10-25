@@ -66,16 +66,13 @@ export function connectBrowserApp(
   socketFactory: BrowserAppSocketFactory = defaultSocketFactory
 ): BrowserVideoConnection {
   if (browserViewerId === null) {
-    // Keep this viewer stable across app remounts and server-switch reloads.
     browserViewerId = crypto.randomUUID()
 
     try {
       browserViewerId =
         sessionStorage.getItem('treeport-browser-client-id') || browserViewerId
       sessionStorage.setItem('treeport-browser-client-id', browserViewerId)
-    } catch {
-      // Storage can be unavailable; the in-memory identity remains stable.
-    }
+    } catch {}
   }
 
   const viewerId = browserViewerId
@@ -214,9 +211,6 @@ export function connectBrowserApp(
         return
       }
 
-      // Reattach in place. The project event bridge owns workspace updates;
-      // reconnecting this app must not reload every terminal and browser.
-
       if (message.type === 'videoSettingsResult') {
         if (pendingVideoSettings?.requestId === message.requestId) {
           finishVideoSettings(message.error ? new Error(message.error) : null)
@@ -242,8 +236,6 @@ export function connectBrowserApp(
         visible: currentVisible
       })
 
-      // A new attachment starts with the server viewport, not this app's.
-      // Send layout even when no ResizeObserver notification follows readiness.
       if (viewport) {
         connectedSocket.emit('command', viewport)
       }
@@ -281,7 +273,6 @@ export function connectBrowserApp(
         return
       }
 
-      // Detach first: disconnect must not overwrite the useful server error.
       socket = null
       ready = false
       readyAt = null
@@ -382,8 +373,6 @@ export function connectBrowserApp(
         return
       }
 
-      // Never queue clipboard actions: a delay can target a different page or owner.
-      // Keep the initial command queue bounded without silently evicting input.
       if (
         reconnectAllowed &&
         !connectedOnce &&

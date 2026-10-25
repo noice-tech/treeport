@@ -103,9 +103,7 @@ class TerminalWorkspaceLayoutStore {
       )
 
       layout = stored ? parseStoredLayout(stored) : null
-    } catch {
-      // Keep the layout in memory when storage is unavailable.
-    }
+    } catch {}
 
     this.layouts.set(worktreeId, layout)
 
@@ -136,9 +134,7 @@ class TerminalWorkspaceLayoutStore {
 
     try {
       localStorage.setItem(`${LAYOUT_STORAGE_PREFIX}${worktreeId}`, serialized)
-    } catch {
-      // The in-memory layout remains usable when storage is unavailable.
-    }
+    } catch {}
 
     this.emit()
   }

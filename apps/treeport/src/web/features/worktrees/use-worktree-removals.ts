@@ -8,8 +8,6 @@ import {
 import type { RemoveOperationRecord } from '@treeport/shared'
 import { parseResponse, rpc } from '../../api'
 
-// Track accepted operations independently of the project snapshot: a refresh or
-// a delayed projects response must not bring a removing tree back into navigation.
 export function useWorktreeRemovals() {
   const queryClient = useQueryClient()
 
@@ -79,7 +77,6 @@ export function useWorktreeRemovals() {
       results.flatMap((result) => (result.data ? [result.data] : []))
   })
 
-  // Keep completed removals hidden too, until stale project snapshots catch up.
   const hiddenWorktreeIds = useMemo(
     () =>
       new Set(
@@ -95,8 +92,6 @@ export function useWorktreeRemovals() {
   return {
     operations,
     hiddenWorktreeIds,
-    // A failed initial fetch must not hide the workspace again on each retry:
-    // that would unmount live terminals and Browser guests during an outage.
     ready: activeQuery.isFetched,
     trackRemoval: (operation: RemoveOperationRecord) => {
       queryClient.setQueryData(['operation', operation.id], operation)

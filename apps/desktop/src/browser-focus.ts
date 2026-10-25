@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import type { WebContents } from 'electron'
 import * as Effect from 'effect/Effect'
 
-// Mouse dispatch focuses a native widget; keyboard dispatch also needs the
+// EXTERNAL: Mouse dispatch focuses a native widget; keyboard dispatch also needs the
 // embedder's focused-frame mapping. WebContents.focus alone does not establish
 // that mapping for a hidden guest. Await the webview focus IPC, dispatch, then
 // restore the desktop control without revealing/selecting the Browser app.
@@ -49,7 +49,7 @@ export function preserveDesktopFocus<A, E>(
     ).pipe(
       Effect.timeout('1 second'),
       Effect.zipRight(operation),
-      // Schedule cleanup even if capture is interrupted. Electron cannot cancel
+      // EXTERNAL: Schedule cleanup even if capture is interrupted. Electron cannot cancel
       // executeJavaScript; its queued capture must not leave a late DOM reference.
       Effect.ensuring(
         Effect.suspend(() =>

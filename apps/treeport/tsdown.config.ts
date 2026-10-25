@@ -4,7 +4,7 @@ import path from 'node:path'
 import { defineConfig } from 'tsdown'
 import { appendDaemonLog } from './src/server/daemon-log.ts'
 
-// tsdown reimports this module when its config changes. Keep the shutdown queue
+// EXTERNAL: tsdown reimports this module when its config changes. Keep the shutdown queue
 // across those imports so the replacement cannot race the previous listener.
 // SAFETY: This optional process-local slot is initialized below and owned only here.
 const developmentGlobal = globalThis as typeof globalThis & {
@@ -19,7 +19,6 @@ export default defineConfig({
   entry: {
     'node/cli/index': 'src/cli/index.ts',
     'node/server/index': 'src/server/index.ts',
-    // Keep application import.meta URLs at the server entrypoint depth.
     'node/server/main': 'src/server/main.ts',
     'node/server/daemon-log-worker': 'src/server/daemon-log-worker.ts',
     'node/server/browser-relay': 'src/server/browser-relay.ts',
@@ -100,8 +99,6 @@ export default defineConfig({
   },
   deps: {
     neverBundle: true,
-    // Shared is private and bundled. Its tracing SDK imports stay external,
-    // so the npm package must also declare them (see knip ignoreDependencies).
     alwaysBundle: [/^@treeport\/shared(?:\/|$)/]
   }
 })

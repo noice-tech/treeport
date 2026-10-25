@@ -17,8 +17,6 @@ export function browserSetupGuidance(platform = process.platform): string {
   ].join('\n')
 }
 
-// One executable resolution path for launches and diagnostics. Never silently
-// download a browser or disable its sandbox when the host is misconfigured.
 export async function browserRuntime(platform = process.platform): Promise<{
   executablePath: string | null
   channel: 'chrome' | 'chromium'

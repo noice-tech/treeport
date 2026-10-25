@@ -51,8 +51,6 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
   })
   const remoteCdp = await remote.context().newCDPSession(remote)
 
-  // Mount the real app without a daemon/video encoder. Only its transport is
-  // replaced; Chromium supplies native touch arbitration and pointer capture.
   await page.route('**/src/web/browser-session-client.ts', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
@@ -184,8 +182,6 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
   await replay()
   expect(await remote.evaluate(() => window.remoteClicks)).toBe(1)
 
-  // A page with custom touch handling receives stable contacts, including a
-  // single-finger release while the other finger continues moving.
   await remote.evaluate(() => {
     document.body.style.touchAction = 'none'
     window.remoteTouches = []
@@ -226,7 +222,6 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     contacts.filter((event) => event.type === 'touchmove').at(-1)?.ids
   ).toEqual([secondId])
 
-  // Native pinch zoom affects the remote page, not the workspace viewport.
   await remote.evaluate(() => {
     document.body.style.touchAction = 'auto'
   })
@@ -271,7 +266,7 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     points: []
   })
 
-  // Trackpad pinch supplies ctrlKey on wheel without a physical Control key
+  // EXTERNAL: Trackpad pinch supplies ctrlKey on wheel without a physical Control key
   // press. Preserve it (and the focal point) just as a wheel-driven editor needs.
   await remote.evaluate(() => {
     window.remoteWheel = null
@@ -347,11 +342,9 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     })
   expect(await page.evaluate(() => window.visualViewport!.scale)).toBe(1)
 
-  // Mouse dragging remains mouse input rather than becoming touch scrolling.
   await page.mouse.move(x, y)
   await clear()
   await page.mouse.down()
-  // Fractional viewer coordinates must map consistently for moves and buttons.
   await page.mouse.move(x + 20.25, y + 20.75)
   await page.mouse.up()
   expect(
@@ -374,9 +367,6 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     y: pointers[2]!.y
   })
 
-  // The viewer's desired viewport survives remounts independently of the
-  // host's confirmed viewport. Returning in a landscape window must not
-  // overwrite a custom portrait size, even in the first resize command.
   await page.setViewportSize({ width: 1280, height: 800 })
   await page
     .getByRole('button', { name: 'Responsive mode', exact: true })
@@ -407,7 +397,6 @@ test('remote video forwards native touch, trackpad pinch and cancellation', asyn
     page.getByRole('spinbutton', { name: 'Viewport height' })
   ).toHaveValue('915')
 
-  // Exiting fixed-size mode must also survive a reload.
   await page
     .getByRole('button', { name: 'Responsive mode', exact: true })
     .click()

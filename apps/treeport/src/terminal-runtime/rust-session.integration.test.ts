@@ -139,7 +139,6 @@ async function* frames(socket: net.Socket) {
   })
   let buffer = ''
 
-  // setEncoding keeps incremental UTF-8 decoding in Node's readable stream.
   for await (const chunk of socket) {
     buffer += String(chunk)
     let boundary: number
@@ -174,8 +173,6 @@ async function control(
 }
 
 afterEach(async () => {
-  // Detach this test's cleanup state before any fallible work. A retained
-  // failed fixture is evidence, not a cleanup dependency of subsequent tests.
   const retained = {
     keepers: [...keepers],
     pids: [...pids],
@@ -190,14 +187,10 @@ afterEach(async () => {
     session.dispose()
   }
 
-  // Authentication, not a cached PID, authorizes fixture cleanup. If ownership
-  // cannot be established, retain the fixture/evidence instead of signaling a
-  // potentially reused PID or hiding a keeper lifecycle regression.
   const cleanup = await Promise.allSettled(
     retained.keepers.map(async ([socket, keeper]) => {
       const socketStat = await fs.lstat(socket).catch((cause) => {
-        // SAFETY: Node filesystem errors expose errno codes; only ENOENT means
-        // authenticated close already removed this fixture's control endpoint.
+        // SAFETY: Node filesystem errors expose errno codes.
         if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') {
           throw cause
         }
@@ -247,8 +240,6 @@ afterEach(async () => {
     retained.keepers.map(([socket]) => fs.rm(socket, { force: true }))
   )
 
-  // Only our unique image mountpoints, and only after authenticated cleanup
-  // proves every fixture process exited. Never force-unmount a live keeper.
   for (const mount of retained.volumes) {
     await execute('hdiutil', ['detach', mount])
   }
@@ -336,8 +327,6 @@ describe('Rust keeper with the production TypeScript client and journal', () => 
       await execute('mkfifo', [file])
       const module = await bundledJournalUrl()
 
-      // A regression can block open/read in libuv. Only this owned launcher is
-      // subject to the deadline, never the Pi session or a keeper process.
       const result = await execute(
         process.execPath,
         [
@@ -421,8 +410,6 @@ os._exit(7)
       const peers: net.Socket[] = []
 
       try {
-        // Leave these admitted peers unauthenticated. Only this fixture's
-        // inherited RLIMIT is reduced; never alter another process's limits.
         for (let index = 0; index < 31; index++) {
           const peer = net.createConnection(value.session.manifest.socketPath)
           peers.push(peer)
@@ -432,9 +419,6 @@ os._exit(7)
 
         await new Promise((resolve) => setTimeout(resolve, 150))
         value.session.write('exit')
-        // Native enumeration needs neither a spawned /bin/ps nor pipe FDs.
-        // Reaping proves exit-time discovery completed under this pressure;
-        // the previous subprocess path retained a zombie after EMFILE instead.
         await until(() => !alive(value.status.pid))
 
         const evidence = await fs.readFile(
@@ -451,9 +435,6 @@ os._exit(7)
           expect(value.session.exitCode).toBeNull()
         }
       } finally {
-        // A local destroy does not prove the keeper released its admission
-        // slots. Finish the half-close handshake before opening a control
-        // connection, so teardown cannot race the deliberately full peer pool.
         await Promise.all(
           peers.map(
             (peer) =>
@@ -472,16 +453,11 @@ os._exit(7)
         )
       }
 
-      // Resource pressure has gone. Without descendants, verify the natural
-      // exit code and output fence via a fresh production-client replay first.
       let session = value.session
 
       if (descendant === null) {
         value.session.dispose()
         let output = ''
-        // Local socket disposal is not a remote lease-release acknowledgement,
-        // especially with the peer/descriptor backlog from this fixture. Wait
-        // for that existing v1 lease to drain; never force-replace the owner.
         await until(async () => {
           const candidate = await PersistentSession.open(value.directory)
           sessions.push(candidate)
@@ -530,8 +506,6 @@ os._exit(7)
         expect(records.at(-1)).toMatchObject({ type: 'exit', exitCode: code })
       }
 
-      // Discovery retained the separate group's birth identity before reaping
-      // its leader. The 20-second self-expiry cannot masquerade as cleanup.
       const start = performance.now()
 
       for (let attempt = 0; ; attempt++) {
@@ -544,9 +518,6 @@ os._exit(7)
           break
         }
 
-        // Under descriptor/fsync pressure, the bounded drain may deliberately
-        // refuse an ACK while its SAME admitted write is still pending. Qualify
-        // that explicit retry contract, not an unlimited generic close retry.
         if (
           attempt >= 2 ||
           !(failure instanceof Error) ||
@@ -638,9 +609,6 @@ os._exit(7)
         token: value.session.manifest.token
       })
 
-      // These are valid JSON/Zod extensions, not decoded command arguments:
-      // an unpaired property name, unpaired string, overflow number and deep
-      // unused field must not change authentication or the attached lease.
       const extensions =
         String.raw`,"data":"\ud800","extra":{"\ud800":"\udfff","number":1e400},"\ud800":"ignored","metadata":` +
         '['.repeat(1000) +
@@ -839,8 +807,6 @@ os._exit(7)
 
     const pathToJournal = path.join(value.directory, 'journal.jsonl')
     const committed = await fs.readFile(pathToJournal)
-    // The v1 protocol permits an empty ID. Its smaller request envelope can
-    // fit the limit even though timestamp/sequence make the journal line larger.
     const request = { method: 'marker', id: '', data: '' }
     request.data = 'x'.repeat(
       SESSION_MAX_FRAME_BYTES - Buffer.byteLength(JSON.stringify(request)) - 1
@@ -914,8 +880,6 @@ os._exit(7)
       token: value.session.manifest.token
     }
 
-    // A legal, exactly bounded request has less envelope overhead than its
-    // status response. The original attached engine must not lose its lease.
     request.id = 'x'.repeat(
       SESSION_MAX_FRAME_BYTES - Buffer.byteLength(JSON.stringify(request)) - 1
     )
@@ -1069,7 +1033,6 @@ os._exit(7)
   })
 
   it('captures a command that exits immediately after exec', async () => {
-    // Signoff covers both commands once; the explicit stress gate repeats the races.
     const attempts = process.env.SESSION_KEEPER_STRESS === '1' ? 10 : 1
 
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -1236,8 +1199,6 @@ os._exit(7)
     await until(() => value.output().includes('READY'))
     value.session.dispose()
     await new Promise((resolve) => setTimeout(resolve, 150))
-    // Admit the replacement BEFORE cleanup unlinks the socket; authenticate it
-    // AFTER cleanup. The first close's huge valid id backpressures its reply.
     const replacement = net.createConnection(value.session.manifest.socketPath)
     await once(replacement, 'connect')
     const engine = net.createConnection(value.session.manifest.socketPath)
@@ -1319,8 +1280,6 @@ os._exit(7)
   })
 
   it('retains live group members after leader exit and excludes independent daemon sessions', async () => {
-    // Descendants must not hold the PTY open: exitCode follows captured EOF,
-    // not just leader exit. Keep the process alive without retaining its stdio.
     const value = await fixture(`
       const {spawn}=require('node:child_process');
       const child=spawn(process.execPath,['-e',"process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('background.pid',String(process.pid));process.send('ready');setInterval(()=>{},1000)"],{stdio:['ignore','ignore','ignore','ipc']});
@@ -1361,12 +1320,10 @@ os._exit(7)
     pids.add(detached)
     await separate.session.terminate()
     expect(alive(detached)).toBe(true)
-    // This deliberately independent fixture self-expires; no cached-PID kill.
     await until(() => !alive(detached))
   })
 
   it('cleans reparented separate groups in the original terminal session', async () => {
-    // The background group survives the leader without delaying captured EOF.
     const value = await fixture('', undefined, [
       '/bin/bash',
       '-c',
@@ -1390,7 +1347,6 @@ os._exit(7)
     const started = Date.now()
     await value.session.terminate()
     await until(() => !alive(background))
-    // Waiting for the self-expiry must not masquerade as verified cleanup.
     expect(Date.now() - started).toBeLessThan(4000)
   })
 
@@ -1398,7 +1354,7 @@ os._exit(7)
     const units = Array.from({ length: 65536 }, (_, unit) => unit)
     const allCodeUnits = String.fromCharCode(...units)
 
-    // Padding ends Node's decode early. Omit its low-byte aliases from this
+    // EXTERNAL: Padding ends Node's decode early. Omit its low-byte aliases from this
     // corpus so base64 conversion also exercises units after the first page.
     const allBase64CodeUnits = String.fromCharCode(
       ...units.filter((unit) => (unit & 0xff) !== 0x3d)
@@ -1652,7 +1608,7 @@ os._exit(7)
     await resumed.terminate()
   })
 
-  // Root bypasses mode-bit permissions; do not count that as EACCES coverage.
+  // EXTERNAL: Root bypasses mode-bit permissions; do not count that as EACCES coverage.
   it.each(
     process.getuid?.() === 0
       ? ['directory', 'fifo']
@@ -1838,8 +1794,6 @@ os._exit(7)
       const descriptor = await fs.open(file, 'wx', 0o600)
 
       try {
-        // Sparse invalid JSON: no implementation can launch a real child from
-        // this fixture, including the pre-fix reference used for the red run.
         await descriptor.write('{')
         await descriptor.truncate(size)
       } finally {
@@ -1930,8 +1884,6 @@ os._exit(7)
           }
         })
 
-        // Do not repair the obstruction before exercising independently
-        // authenticated close: a failed metadata operation must not strand it.
         const closed = await control(value.session.manifest.socketPath, {
           method: 'terminate',
           id: 'fifo-metadata-close',
@@ -2031,8 +1983,6 @@ os._exit(7)
         await expect(value.session.terminate()).rejects.toThrow(
           /Permission denied|os error 13/
         )
-        // Close already verified descendant cleanup, but failed to delete any
-        // files. The owner must retain discovery and journal commit authority.
         await until(() => !alive(value.status.pid))
         expect(alive(value.status.ownerPid)).toBe(true)
         expect(
@@ -2075,8 +2025,6 @@ os._exit(7)
             .join('')
         ).toBe('READY\r\n')
       } finally {
-        // Restore only this fixture so teardown can retry authenticated close
-        // even if an assertion fails. Never delete a live owner's evidence.
         await fs.chmod(value.directory, 0o700)
       }
 
@@ -2155,8 +2103,6 @@ os._exit(7)
           .join('')
       ).toBe('READY\r\n')
     } finally {
-      // Repair only the injected fixture subtree before authenticated teardown;
-      // the keeper itself never receives recursive deletion authority.
       await fs.rm(blocked, { recursive: true })
     }
 
@@ -2164,7 +2110,7 @@ os._exit(7)
     await until(() => !alive(value.status.ownerPid))
   })
 
-  // Root bypasses the mode-bit faults; do not count it as EACCES coverage.
+  // EXTERNAL: Root bypasses the mode-bit faults; do not count it as EACCES coverage.
   it.runIf(process.getuid?.() !== 0).each(['discovery', 'parent'])(
     'retains independent authenticated close after partial deletion (%s)',
     async (kind) => {
@@ -2184,8 +2130,6 @@ os._exit(7)
           : value.root
 
       if (kind === 'discovery') {
-        // Payload deletion succeeds before unlink of this discovery path fails.
-        // Close must retain the token and never recurse into the replacement.
         await fs.rm(blocked)
         await fs.mkdir(blocked)
         await fs.writeFile(path.join(blocked, 'retained'), 'blocked data')
@@ -2201,7 +2145,6 @@ os._exit(7)
         )
         await until(() => !alive(value.status.pid))
         expect(alive(value.status.ownerPid)).toBe(true)
-        // The bootstrap log is deterministically deleted before this fault.
         expect(await fs.readdir(value.directory)).not.toContain('owner.log')
         expect(
           JSON.parse(
@@ -2268,14 +2211,10 @@ os._exit(7)
           })
         }
 
-        // Even if the active journal was already unlinked, retained failed-close
-        // discovery cannot authorize a replacement native command.
         await expect(
           execute(binary, [value.directory], { timeout: 2000 })
         ).rejects.toThrow(/ownership is held/)
       } finally {
-        // Only this private fixture's blocked path, so authenticated teardown
-        // remains possible after a failed assertion. No cached-PID signaling.
         await fs.chmod(blocked, 0o700)
 
         if (kind === 'discovery') {
@@ -2287,16 +2226,11 @@ os._exit(7)
       const resumed = await PersistentSession.open(value.directory)
       sessions.push(resumed)
       expect(resumed.manifest.token).toBe(value.session.manifest.token)
-      // Do not attach or replay potentially removed data. Fresh discovery is
-      // sufficient for the independent authenticated close transaction.
       await resumed.terminate()
       await until(() => !alive(value.status.ownerPid))
     }
   )
 
-  // Disk-image attachment is explicitly opt-in; ordinary CI must not mount
-  // volumes. Run with SESSION_KEEPER_DISK_FAULTS=1 on macOS to qualify ENOSPC.
-  // Integration config strips all TREEPORT_* variables for instance isolation.
   it.runIf(
     process.platform === 'darwin' &&
       process.env.SESSION_KEEPER_DISK_FAULTS === '1'
@@ -2361,8 +2295,6 @@ os._exit(7)
       let written = 0
       const block = Buffer.alloc(64 * 1024, 0x61)
 
-      // Even a misconfigured mount cannot exhaust the host: never write more
-      // than 48 MiB to this unique fixture, and require a real ENOSPC result.
       while (written < 48 * 1024 * 1024) {
         const result = await filler.write(block).catch((cause: unknown) => {
           // SAFETY: Node filesystem write errors expose errno codes.

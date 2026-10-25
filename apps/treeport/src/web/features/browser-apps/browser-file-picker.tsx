@@ -72,7 +72,6 @@ export function BrowserFilePicker({
               const base64 = await new Promise<string>((resolve, reject) => {
                 const reader = new FileReader()
                 reader.onload = () => {
-                  // FileReader's API uses one result union for both read modes.
                   // eslint-disable-next-line anti-slop/no-runtime-typeof -- readAsDataURL returns a string on success.
                   if (typeof reader.result === 'string') {
                     resolve(reader.result.slice(reader.result.indexOf(',') + 1))

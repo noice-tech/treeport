@@ -24,7 +24,6 @@ describe('buffered daemon diagnostics', () => {
         expect(log.write(`${index}\n`)).toBe(true)
       }
 
-      // No await: this also exercises flushing before the worker is ready.
       expect(log.flushSync()).toBe(true)
       expect(await fs.readFile(logPath, 'utf8')).toBe(
         Array.from({ length: 1_000 }, (_, index) => `${index}\n`).join('')

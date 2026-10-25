@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-// Ordered by preference: high-resolution and vector icons stay crisp in the
-// sidebar, while favicon.ico is often a blurry 16px bitmap.
 const ICON_NAMES = [
   'apple-touch-icon.png',
   'apple-touch-icon-precomposed.png',
@@ -26,8 +24,6 @@ const ICON_DIRECTORIES = [
 const MAX_MONOREPO_APPS = 16
 const MAX_ICON_BYTES = 1024 * 1024
 
-// Only probe conventional locations; never walk the tree, so the cost stays a
-// few dozen readdir calls regardless of repository size.
 export async function findProjectIcon(
   rootPath: string
 ): Promise<string | null> {

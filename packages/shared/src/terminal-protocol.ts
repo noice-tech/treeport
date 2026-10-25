@@ -44,7 +44,6 @@ export type TerminalSize = Schema.Schema.Type<typeof terminalSizeSchema>
 
 export const terminalActivitySchema = Schema.Struct({
   state: Schema.Literal('idle', 'working', 'blocked', 'done', 'error'),
-  // What a blocked terminal needs from the user.
   kind: Schema.NullOr(Schema.Literal('permission', 'question', 'auth')),
   progress: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100))),
   app: Schema.NullOr(Schema.String.pipe(Schema.maxLength(32))),
@@ -176,7 +175,6 @@ export const terminalReadySchema = Schema.Struct({
   ...terminalReadyBase,
   ...dimensions,
   revision: positiveInt,
-  // Base64 libghostty-vt snapshot.
   snapshot: Schema.String
 })
 

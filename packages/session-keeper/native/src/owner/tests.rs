@@ -98,8 +98,6 @@ async fn authenticated_close_bypasses_stalled_storage_and_a_full_control_queue()
                 })
                 .await
                 .context("Producer never reached blocked storage")??;
-                // Cancel the original caller only after its command has been
-                // accepted. The actor's eventual manifest commit must survive.
                 if let Some(metadata) = &metadata {
                     metadata.abort();
                 }
@@ -162,8 +160,6 @@ async fn authenticated_close_bypasses_stalled_storage_and_a_full_control_queue()
             Ok::<_, anyhow::Error>(())
         }
         .await;
-        // Always unblock and close this owned session, including if a check
-        // failed. Never signal cached PIDs or let a synthetic stall leak a PTY.
         drop(stalled);
         let resumed = async {
             if let Some(metadata) = metadata {
@@ -206,8 +202,6 @@ async fn authenticated_close_bypasses_stalled_storage_and_a_full_control_queue()
             Ok::<_, anyhow::Error>(())
         }
         .await;
-        // Creator-held Handle is an ownership capability. This idempotent
-        // cleanup also covers a failed wire assertion or an expired peer.
         let cleanup = tokio::time::timeout(
             Duration::from_secs(6),
             owner.command(Command::Terminate {
@@ -263,8 +257,6 @@ async fn admitted_stalled_deletion_retains_one_transaction_across_cancellation_a
         );
         let (admitted, stalled) = storage.stall_next(phase);
         if phase == crate::storage::StallPhase::Manifest {
-            // Real partial deletion: payload unlink succeeds, then unlinking the
-            // status directory fails. Stall its admitted discovery recovery.
             std::fs::create_dir(directory.join("status.json"))?;
             std::fs::write(directory.join("status.json/retained"), "untouched")?;
         }
@@ -284,8 +276,6 @@ async fn admitted_stalled_deletion_retains_one_transaction_across_cancellation_a
             tokio::spawn(async move { wire(&first_socket, "terminate", &first_token).await });
         let outcome = async {
             tokio::time::timeout(Duration::from_secs(3), admitted).await??;
-            // The authenticated request reached the actual delete worker. Cancel
-            // its peer now; dropping that caller must not abandon or repeat close.
             first.abort();
             let mut status = owner.status.clone();
             tokio::time::timeout(Duration::from_secs(3), async {
@@ -340,8 +330,6 @@ async fn admitted_stalled_deletion_retains_one_transaction_across_cancellation_a
             Ok::<_, anyhow::Error>(())
         }
         .await;
-        // Release/reap only our own fixture even on a failed assertion. There are
-        // no production environment hooks and no cached-PID cleanup signals.
         first.abort();
         drop(stalled);
         let resumed = async {
@@ -352,8 +340,6 @@ async fn admitted_stalled_deletion_retains_one_transaction_across_cancellation_a
                     }
                 })
                 .await?;
-                // Prove retry consumes the SAME completed transaction, not a new
-                // delete against a path that now names different fixture storage.
                 std::fs::create_dir(&directory)?;
                 std::fs::write(directory.join("replacement"), "untouched")?;
                 let reply = wire(&socket, "terminate", &manifest.token).await?;
@@ -364,8 +350,6 @@ async fn admitted_stalled_deletion_retains_one_transaction_across_cancellation_a
                 ensure!(std::fs::read_to_string(directory.join("replacement"))? == "untouched");
                 ensure!(!directory.join("manifest.json").exists());
             } else if outcome.is_ok() {
-                // Consume the retained failure, not another deletion. Recovery
-                // commits once even though its original requesting peer vanished.
                 let reply = wire(&socket, "terminate", &manifest.token).await?;
                 ensure!(
                     reply["type"] == "fault" && reply["message"].is_string(),
@@ -387,8 +371,6 @@ async fn admitted_stalled_deletion_retains_one_transaction_across_cancellation_a
         .await;
         if phase == crate::storage::StallPhase::Manifest {
             std::fs::remove_dir_all(directory.join("status.json"))?;
-            // A failed assertion may not yet have consumed the first transaction.
-            // Consume its typed partial failure, then admit the repaired retry.
             let _ = tokio::time::timeout(
                 Duration::from_secs(3),
                 owner.command(Command::Terminate {

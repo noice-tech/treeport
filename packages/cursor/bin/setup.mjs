@@ -107,7 +107,6 @@ config.hooks ??= {}
 
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'"
 
-// Never point hooks into npx's disposable package cache or pin its Node binary.
 const command = 'node ' + quote(join(runtimePath, 'hook.mjs'))
 
 for (const [event, state] of [

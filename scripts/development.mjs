@@ -357,10 +357,6 @@ export function sendSignalToChild(child, signal, ownedProcessGroups) {
       foundDescendant = false
 
       for (const { pid, parentPid, processGroupId, command } of rows) {
-        // Independent terminal owners (including a bootstrap not yet orphaned)
-        // are lifetime boundaries, not development workers. Do not walk their
-        // command subtrees or add either group to the escalation set. Match the
-        // reserved prefix, not a particular terminal's display title.
         const keeper =
           processGroupId === pid && command.startsWith('treeport-session')
 
@@ -537,7 +533,7 @@ export async function main() {
 
   const stop = (signal) => {
     if (requestedSignal) {
-      // Terminal teardown signals every session member, so pnpm forwards a
+      // EXTERNAL: Terminal teardown signals every session member, so pnpm forwards a
       // copy of a signal this process already received. Only a repeated
       // interrupt asks to force-stop; the timer below covers hung shutdowns.
       if (signal === 'SIGINT') {
@@ -582,7 +578,7 @@ export async function main() {
   const result = await childExit
 
   if (requestedSignal) {
-    // Turbo can exit before its workers, including a backend still restoring
+    // EXTERNAL: Turbo can exit before its workers, including a backend still restoring
     // sessions that has not opened a listener. Keep escalation alive until the
     // owned worker groups are gone, not merely until their ports are free.
     for (let attempt = 0; attempt < 140; attempt += 1) {

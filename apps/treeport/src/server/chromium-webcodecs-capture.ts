@@ -1,5 +1,3 @@
-// Serialized into Treeport's isolated extension document, never a visited page.
-// No pixels or encoded chunks travel through Playwright/CDP.
 export async function captureChromiumWebCodecs(
   track: MediaStreamTrack,
   url: string,
@@ -25,7 +23,7 @@ export async function captureChromiumWebCodecs(
     throw new Error('Exact-tab capture did not report its dimensions.')
   }
 
-  // H.264 level 4.2 covers 1080p60; larger captures need the macroblock
+  // EXTERNAL: H.264 level 4.2 covers 1080p60; larger captures need the macroblock
   // throughput of level 5.1 or 5.2 (up to the protocol's 3840×2160 limit).
   const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16)
 
@@ -38,8 +36,6 @@ export async function captureChromiumWebCodecs(
           : 'avc1.420034',
     width,
     height,
-    // Text needs far more bits than camera video. Interactive pages are idle
-    // most of the time, so a generous variable cap costs little on average.
     bitrate: Math.round(
       Math.min(40_000_000, Math.max(8_000_000, width * height * 120 * 0.1))
     ),
@@ -63,9 +59,6 @@ export async function captureChromiumWebCodecs(
     )
   }
 
-  // Frames are pipelined: up to WINDOW encoded packets may await the viewer's
-  // decode ACK. Capture keeps only the newest raw frame while the window is
-  // full, so congestion lowers the frame rate instead of adding latency.
   const WINDOW = 4
   const MAX_SOCKET_BUFFER = 1024 * 1024
   const socket = new WebSocket(url)
@@ -179,7 +172,7 @@ export async function captureChromiumWebCodecs(
       clearTimeout(idle)
     }
 
-    // Realtime rate control spends few bits on fast motion. Once the page is
+    // EXTERNAL: Realtime rate control spends few bits on fast motion. Once the page is
     // still, re-encode the same pixels so static text converges to full detail.
     idle = setTimeout(
       () => {
@@ -202,8 +195,6 @@ export async function captureChromiumWebCodecs(
     )
   }
 
-  // A lost or stalled viewer must not freeze capture forever. Treat
-  // unacknowledged packets as lost and restart the GOP after a quiet period.
   const watchdog = setInterval(() => {
     if (
       epoch &&
@@ -250,7 +241,6 @@ export async function captureChromiumWebCodecs(
 
     if (command.type === 'keyframe') {
       if (epoch && command.epoch === epoch) {
-        // Packets in flight were discarded by the relay or viewer.
         acknowledged = sequence
         acknowledgedAt = performance.now()
         forceKey = true
@@ -314,7 +304,6 @@ export async function captureChromiumWebCodecs(
           )
         }
 
-        // Header: epoch/sequence/timestamp/key.
         const packet = new Uint8Array(17 + chunk.byteLength)
         const header = new DataView(packet.buffer)
         header.setUint32(0, epoch)
@@ -328,8 +317,7 @@ export async function captureChromiumWebCodecs(
       error: (error) => fail(error.message)
     })
     encoder.configure(config)
-    // Static tabs may emit no new frame on a control handoff. The last raw
-    // frame belongs to this exact tab only; encode a fresh IDR for the new epoch.
+    // EXTERNAL: Static tabs may emit no new frame on a control handoff.
     latestEncoded = false
     encode()
   }
@@ -354,8 +342,6 @@ export async function captureChromiumWebCodecs(
 
       captured++
 
-      // The processor holds at most one raw frame, plus this replaceable
-      // latest frame. Count only frames replaced before they were encoded.
       if (latest && !latestEncoded) {
         dropped++
       }
@@ -372,7 +358,6 @@ export async function captureChromiumWebCodecs(
 
   return {
     stop,
-    // Privileged local diagnostics only; never return frames or encoded bytes.
     stats: () => ({
       epoch,
       sequence,

@@ -49,8 +49,6 @@ const HANDSHAKE_TIMEOUT_MS = 10_000
 const OUTBOUND_QUEUE_CAPACITY = 512
 const CHANNELS = new Set(['terminals', 'browsers', 'browser-owners'])
 
-// The media socket's capability travels as its second WebSocket subprotocol,
-// so it never appears in URLs or logs.
 const MEDIA_PROTOCOL = 'treeport-media'
 
 const TERMINAL_EVENTS = new Set<TerminalClientEvent>([
@@ -212,9 +210,6 @@ export function createSocketServer({
           )
         )
 
-        // Acceptance can enqueue ready/claimGranted and even binary frames.
-        // Do not drain them until acceptance finishes: their handlers must be
-        // able to reply, so connected must be the first successful wire event.
         const writer = Effect.zipRight(
           write(JSON.stringify({ event: 'connected', payload: null })),
           Effect.forever(
@@ -445,8 +440,6 @@ export function createSocketServer({
           })
         )
 
-        // A failed writer must end the connection too, rather than leaving a
-        // live reader and a black/frozen browser behind a dead output fiber.
         yield* Effect.raceFirst(
           writer,
           Effect.raceFirst(messages, Fiber.join(reader))

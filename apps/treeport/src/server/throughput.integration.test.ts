@@ -18,8 +18,6 @@ import { startTerminalEngineWorker } from './terminal-engine-worker'
 import { makeTerminalHostSessions } from '../terminal-runtime/sessions'
 import { makeTerminalHostServer } from '../terminal-runtime/server'
 
-// Opt-in synthetic mixed-load comparison. Never contacts a running Treeport.
-// MEASURE_TREEPORT_THROUGHPUT=1 pnpm exec vitest run --config vitest.integration.config.ts apps/treeport/src/server/throughput.integration.test.ts
 it.skipIf(process.env.MEASURE_TREEPORT_THROUGHPUT !== '1')(
   'measures embedded versus worker terminal parsing with Git and HTTP control traffic',
   async () => {

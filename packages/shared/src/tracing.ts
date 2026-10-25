@@ -178,8 +178,6 @@ class JsonLinesSpanExporter implements SpanExporter {
         this.bytes = (await this.descriptor.stat()).size
       }
 
-      // Development owns one writer per service. Keep two backups across
-      // restarts; never rotate a caller's explicit TREEPORT_TRACE_FILE.
       if (
         this.destination.rotate &&
         this.bytes + Buffer.byteLength(data) > 10 * 1024 * 1024
@@ -297,8 +295,6 @@ export type PromiseSpan = <A>(
 
 export const untracedPromiseSpan: PromiseSpan = (_name, evaluate) => evaluate()
 
-// Preserve the request's tracer and parent across the Promise-based Vite boundary.
-// Re-throw the original error so runtime diagnostics and DomainError handling stay intact.
 export const currentPromiseSpan = Effect.gen(function* () {
   if (!tracingEnabled()) {
     return untracedPromiseSpan

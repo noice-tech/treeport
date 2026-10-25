@@ -22,7 +22,7 @@ function processExists(pid: number): boolean {
 
     return true
   } catch (error) {
-    // SAFETY: The surrounding boundary contract establishes this asserted value.
+    // SAFETY: process.kill failures use Node's ErrnoException shape.
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
@@ -101,7 +101,7 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
       .readFile(filePath, 'utf8')
       .then(
         (value) =>
-          // SAFETY: The surrounding boundary contract establishes this asserted value.
+          // SAFETY: Only instanceId is compared; any other parsed shape fails the comparison.
           (JSON.parse(value) as Partial<DaemonRecord>).instanceId === instanceId
       )
       .catch(() => false)

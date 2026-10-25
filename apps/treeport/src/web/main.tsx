@@ -1,7 +1,5 @@
 export {}
 
-// Keep this entry dependency-free so startup feedback does not wait for React,
-// application code, fonts, or the workspace stylesheet to download.
 const status = document.getElementById('startup-status')!
 
 const slowLoadTimer = window.setTimeout(() => {

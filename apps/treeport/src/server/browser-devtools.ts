@@ -48,7 +48,7 @@ export function createBrowserDevtoolsBridge(
           server.handleUpgrade(request, socket, head, (viewer) => {
             server.emit('connection', viewer, request)
 
-            // Chrome's debugging endpoint is loopback-only. Never pass the
+            // EXTERNAL: Chrome's debugging endpoint is loopback-only. Never pass the
             // DevTools window's Origin header to the local Chrome socket.
             const upstream = new WebSocket(endpoint, {
               perMessageDeflate: false,

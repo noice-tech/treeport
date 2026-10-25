@@ -42,7 +42,6 @@ const server = http.createServer((request, response) => {
     response.end(
       JSON.stringify({
         ok: true,
-        // Deliberately older than the retired desktop compatibility floor.
         version: '0.0.1',
         hostname: 'release-smoke'
       })

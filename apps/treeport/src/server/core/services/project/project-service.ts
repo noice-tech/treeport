@@ -243,10 +243,6 @@ export class ProjectService {
     })
   }
 
-  /**
-   * Set or clear one decoration; unchanged values skip the write and event. A
-   * package may change only its own decorations; a direct caller may clear any.
-   */
   updateWorktreeDecoration(
     worktreeId: string,
     key: string,
@@ -290,7 +286,6 @@ export class ProjectService {
         return
       }
 
-      // The key pattern excludes quotes, so it is safe inside a JSON path.
       const jsonPath = `$."${key}"`
       yield* database
         .execute('project.service.worktree-decoration', (db) =>
@@ -317,7 +312,6 @@ export class ProjectService {
     })
   }
 
-  /** Remove decorations owned by packages that are no longer configured. */
   pruneDecorationSources(
     activeSources: string[]
   ): Effect.Effect<void, never, ApplicationServices> {
@@ -621,8 +615,6 @@ export class ProjectService {
       const events = yield* EventBusPort
       const projectObservations = yield* ProjectObservations
       const projectStore = yield* ProjectStore
-      // Visibility changes serialize with observations, not filesystem work.
-      // Closing neither cancels accepted operations nor stops terminals.
       yield* projectObservations.enqueue(
         projectId,
         Effect.gen(function* () {

@@ -18,8 +18,6 @@ type LocalBrowserBridge = DesktopBridge &
     >
   >
 
-// Local browser ownership is one enhancement: never start it with only half
-// its operations. The daemon-hosted browser remains available otherwise.
 export function supportsLocalBrowser(
   bridge: DesktopBridge | undefined
 ): bridge is LocalBrowserBridge {

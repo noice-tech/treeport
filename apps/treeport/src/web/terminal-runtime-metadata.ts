@@ -46,7 +46,6 @@ export class TerminalRuntimeMetadataStore {
   private readonly attentionEventListeners = new Set<
     (event: TerminalAttentionEvent) => void
   >()
-  // Unread attention by terminal.
   private attentionSnapshot: ReadonlyMap<string, TerminalAttentionReason> =
     new Map()
   private titleSnapshot: ReadonlyMap<string, string> = new Map()

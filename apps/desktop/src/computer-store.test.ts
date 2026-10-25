@@ -125,7 +125,6 @@ describe('desktop computer store', () => {
     )
 
     await renameStarted
-    // Readers see committed settings, not the in-flight draft.
     expect(reopened.selectedComputer?.id).toBe(local.id)
     const selectLocalPromise = Effect.runPromise(reopened.select(local.id))
     releaseRename()

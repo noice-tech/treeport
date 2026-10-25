@@ -58,8 +58,6 @@ if ((await nativeSourceFingerprint()) !== sourceFingerprint) {
   )
 }
 
-// Ship the license/copyright texts for the locked normal + build dependency
-// closure and Rust's linked standard runtime, not just Cargo SPDX labels.
 const execute = promisify(execFile)
 
 const metadata = JSON.parse(
@@ -155,8 +153,6 @@ const directory = path.join(appRoot, 'dist/native', platform)
 
 await fs.mkdir(directory, { recursive: true })
 
-// Never truncate an executable inode: macOS caches its code signature, and
-// an already-running owner must keep its original binary through a rebuild.
 const binary = path.join(directory, 'treeport-session-keeper')
 const temporary = `${binary}.${crypto.randomUUID()}.tmp`
 

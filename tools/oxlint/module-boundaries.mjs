@@ -6,8 +6,6 @@ import { ResolverFactory } from 'oxc-resolver'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 
-// Package ownership must be known even on a clean checkout, before exported
-// declaration files have been built.
 const workspaceOwners = new Map()
 
 for (const directory of ['apps', 'packages']) {
@@ -44,8 +42,6 @@ const desktopPackages = new Set([
   '@treeport/shared/tracing'
 ])
 
-// Keep these leaf modules independent too: a facade must not smuggle the
-// application protocol back into desktop through a transitive dependency.
 const nativeUtilities = new Set([
   'packages/shared/src/browser-host.ts',
   'packages/shared/src/browser-clipboard.ts',
@@ -150,8 +146,6 @@ export default {
         targetOwner !== owner &&
         !desktopPackages.has(specifier)
       ) {
-        // Third-party dependencies resolve under node_modules. Repository code
-        // outside desktop must use one of the explicit package entry points.
         if (!target.startsWith('node_modules/') && !target.startsWith('../')) {
           reason =
             'Do not bypass the desktop package boundary with a source path or alias.'

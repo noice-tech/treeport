@@ -10,14 +10,11 @@ if (!socketPath || !Number.isInteger(ownerPid) || ownerPid <= 1) {
   process.exit(1)
 }
 
-// A descriptor inherited from the hook targets the original Cursor terminal,
-// even though this helper is detached and its own stdio is not a terminal.
 let working = false
 let generation = null
 let closing = false
 
 const emit = (data) => {
-  // Deleting a terminal can close its PTY before the owner watcher runs.
   try {
     writeSync(3, data)
   } catch {
@@ -78,7 +75,7 @@ const close = async () => {
   await unlink(socketPath).catch(() => {})
 }
 
-// Compare creation time as well as PID so a recycled PID cannot keep an orphan
+// EXTERNAL: Compare creation time as well as PID so a recycled PID cannot keep an orphan
 // heartbeat alive. Cursor does not consistently fire sessionEnd on shutdown.
 const ownerIdentity = () =>
   spawnSync('ps', ['-p', String(ownerPid), '-o', 'lstart='], {
@@ -105,8 +102,6 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 
 server.once('error', () => {
-  // Another hook may have started the per-session helper concurrently. Do not
-  // unlink its socket; the caller will connect to the winning helper.
   clearInterval(heartbeat)
   clearInterval(ownerWatch)
   process.exitCode = 1

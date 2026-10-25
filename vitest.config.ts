@@ -1,6 +1,5 @@
 import { defineConfig } from 'vitest/config'
 
-// Tests must not inherit the managing Treeport instance's paths or credentials.
 for (const name of Object.keys(process.env)) {
   if (name.startsWith('TREEPORT_')) {
     delete process.env[name]
@@ -9,7 +8,6 @@ for (const name of Object.keys(process.env)) {
 
 export default defineConfig({
   test: {
-    // Bound CPU and filesystem pressure alongside integration and static checks.
     pool: 'threads',
     maxWorkers: 2,
     include: [

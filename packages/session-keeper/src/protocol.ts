@@ -1,7 +1,5 @@
 import { z } from 'zod'
 
-// This is the deliberately small, cross-release PTY-owner contract. It contains
-// no emulator state or product concepts. Old owners stay alive for their sessions.
 export const sessionRecordSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('output'),
@@ -48,7 +46,6 @@ export const sessionManifestSchema = z.object({
   env: z.record(z.string(), z.string()),
   cols: z.int().positive(),
   rows: z.int().positive(),
-  // Metadata belongs to the engine; the owner only stores it.
   metadata: z.string(),
   journalLimitBytes: z.int().positive()
 })

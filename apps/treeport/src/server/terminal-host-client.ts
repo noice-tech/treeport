@@ -227,7 +227,6 @@ function isStaleSocketFailure(error: TerminalHostClientError): boolean {
   return code === 'ENOENT' || code === 'ECONNREFUSED'
 }
 
-/** Scoped daemon-side connection to one terminal engine. */
 export class TerminalHostClient
   implements TerminalSessionBackend, TerminalAttachmentBackend
 {
@@ -443,8 +442,6 @@ export class TerminalHostClient
     Scope.Scope
   > {
     return Effect.gen(this, function* () {
-      // Releases take the route lock, and a scope that is already closed runs
-      // a new finalizer immediately. Register releases outside the lock.
       const route = yield* Effect.acquireRelease(
         this.withRouteLock(
           terminalId,
@@ -682,8 +679,6 @@ export class TerminalHostClient
       }
 
       return yield* Deferred.await(response).pipe(
-        // Input is allowed to wait for a slow PTY. Disconnects still fail
-        // pending requests; a deadline must never cause an input retry.
         method === 'write'
           ? (effect) => effect
           : Effect.timeoutFail({
@@ -776,8 +771,6 @@ export class TerminalHostClient
       : Effect.void
   }
 
-  // Route changes and their subscription requests are ordered per terminal,
-  // so one slow terminal cannot stall attachments to every other terminal.
   private withRouteLock<A, E, R>(
     terminalId: string,
     effect: Effect.Effect<A, E, R>
@@ -901,13 +894,10 @@ export class TerminalHostClient
   }
 }
 
-/** Acquires the engine, starting its worker unless a live one is recorded. */
 export function connectOrStartTerminalHost(
   options: TerminalHostClientOptions
 ): Effect.Effect<TerminalHostClient, TerminalHostClientError, Scope.Scope> {
   return Effect.gen(function* () {
-    // A legacy host's PTYs cannot move to keepers. Refuse to start while it
-    // may own terminals, so they are never hidden or reported as cleaned up.
     const legacy = yield* nodePromise(() =>
       inspectLegacyTerminalHost(options.dataDir, options.runtimeDir)
     )
@@ -923,7 +913,6 @@ export function connectOrStartTerminalHost(
 
     if (legacy.running && legacy.record && legacy.token) {
       const record = legacy.record
-      // The host itself refuses this shutdown if it owns any session.
       yield* Effect.scoped(
         TerminalHostClient.connect(
           record.socketPath,
@@ -932,7 +921,6 @@ export function connectOrStartTerminalHost(
           record.hostId
         ).pipe(Effect.flatMap((host) => host.shutdownIfEmpty()))
       )
-      // It deletes the shared token file on exit; wait before reading it.
       const deadline = Date.now() + LEGACY_HOST_STOP_TIMEOUT_MS
 
       while (yield* processExists(record.pid)) {
@@ -1043,9 +1031,6 @@ export function connectOrStartTerminalHost(
       }
 
       if (isStaleSocketFailure(failure)) {
-        // Keep the dead host's record until its replacement atomically publishes
-        // a new one. If startup is interrupted, the next attempt still has
-        // positive identity evidence instead of treating absence as safety.
         yield* nodePromise(() => fs.rm(paths.socketPath, { force: true }))
       } else {
         return yield* Effect.fail(
@@ -1069,10 +1054,6 @@ export function connectOrStartTerminalHost(
       )
 
       if (socketStats) {
-        // A missing record is no evidence that the socket is unowned, but a
-        // refused connection is: a listening host always accepts. This daemon
-        // holds the data directory lock that the host key derives from, so no
-        // other host can bind this path between the probe and the unlink.
         const refused =
           socketStats.isSocket() &&
           (yield* Effect.async<boolean>((resume) => {
@@ -1118,8 +1099,6 @@ export function connectOrStartTerminalHost(
       )
     )
 
-    // Workers die with the daemon; only raw PTY keepers detach. Keep emulator
-    // parsing and snapshots off the HTTP/browser-control event loop.
     yield* startTerminalEngineWorker(
       options.engineWorkerPath,
       {

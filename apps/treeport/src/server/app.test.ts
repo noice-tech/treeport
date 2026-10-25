@@ -574,7 +574,6 @@ function fixture(webDist = '/missing') {
   const metadataTrack = vi.fn(() => Effect.void)
   const metadataAcknowledgeAttention = vi.fn(() => Effect.void)
 
-  // SAFETY: The test fixture provides the asserted contract used here.
   const terminalMetadata = testAccess<TerminalMetadataManager>({
     snapshot: metadataSnapshot,
     get: metadataGet,
@@ -845,7 +844,6 @@ describe('HTTP API validation', () => {
     ).toBe(403)
     expect(presence.snapshot()).toHaveLength(2)
 
-    // Even with the same tab ID, Bob can remove only Bob's presence.
     await fetch(url, {
       method: 'POST',
       headers: bobHeaders,
@@ -858,7 +856,6 @@ describe('HTTP API validation', () => {
     expect(presence.snapshot().map((viewer) => viewer.identity.name)).toEqual([
       'Alice'
     ])
-    // A Fetch request that bypasses the Node ingress cannot forge its principal.
     expect(
       (
         await app.request('/api/presence', {
@@ -1443,7 +1440,7 @@ describe('HTTP API validation', () => {
     ) => listeners.get(type)!(testAccess<Event>(event))
 
     try {
-      // SAFETY: The test fixture provides the asserted contract used here.
+      // SAFETY: The built app SDK module exports this treeport client surface.
       const sdk = (await import('@treeport/app-sdk')) as {
         treeport: {
           version: number
@@ -1689,7 +1686,7 @@ describe('HTTP API validation', () => {
       )
       const moduleSource = await moduleResponse.text()
 
-      // SAFETY: The test fixture provides the asserted contract used here.
+      // SAFETY: The served module is compiled from a source that exports answer.
       const compiled = (await import(
         /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`
       )) as { answer: number }
@@ -2098,7 +2095,6 @@ describe('HTTP API validation', () => {
       await fs.writeFile(stalePath, 'stale')
       const staleTime = new Date(Date.now() - 25 * 60 * 60_000)
       await fs.utimes(stalePath, staleTime, staleTime)
-      // Sparse file: verify the increased cleanup budget without writing 600 MiB.
       await fs.writeFile(retainedPath, '')
       await fs.truncate(retainedPath, 600 * 1024 * 1024)
 
@@ -2114,7 +2110,7 @@ describe('HTTP API validation', () => {
 
       expect(response.status).toBe(201)
       expect(service.getTerminal).toHaveBeenCalledWith('term_1')
-      // SAFETY: The test fixture provides the asserted contract used here.
+      // SAFETY: The upload endpoint answers 201, asserted above, with the stored file path.
       const result = (await response.json()) as { file: { path: string } }
       expect(path.dirname(result.file.path)).toBe(
         path.join(config.runtimeDir, 'uploads')
@@ -2148,7 +2144,7 @@ describe('HTTP API validation', () => {
       expect(legacyHeader.status).toBe(201)
       expect(
         path.extname(
-          // SAFETY: The test fixture provides the asserted contract used here.
+          // SAFETY: The upload endpoint answers 201, asserted above, with the stored file path.
           ((await legacyHeader.json()) as { file: { path: string } }).file.path
         )
       ).toBe('.txt')

@@ -26,9 +26,6 @@ struct Admission {
     command: Option<process::Identity>,
 }
 
-/// The lock inode outlives the session directory. Never unlink these files:
-/// recreating a pathname would allow two independent ownership locks.
-/// File descriptors are CLOEXEC, so the user's command cannot retain the lease.
 pub struct SessionLease {
     directory: PathBuf,
     file: File,
@@ -91,8 +88,6 @@ impl SessionLease {
             .take(16 * 1024)
             .read_to_string(&mut source)?;
         let admission = if starting {
-            // A session is admitted once. Reopening old discovery must never
-            // launch its command again, even after its keeper has disappeared.
             if !source.is_empty()
                 || directory.join("status.json").try_exists()?
                 || directory.join("journal.jsonl").try_exists()?
@@ -156,8 +151,6 @@ enum RecoveryCommand {
     Metadata { metadata: OpaqueString },
 }
 
-/// Recovery keeps the same exclusive lease until the caller finishes reading
-/// retained output. Only this native boundary may authorize archive deletion.
 pub fn recover(directory: &Path, manifest: &Manifest) -> Result<()> {
     let lease = SessionLease::acquire(directory, manifest, false)?;
     let status: Status = match open_regular(
@@ -225,9 +218,6 @@ pub fn recover(directory: &Path, manifest: &Manifest) -> Result<()> {
                 {
                     bail!("Session keeper is gone but its recorded command still exists; retaining session evidence");
                 }
-                // Leader death does not prove its job-control children exited.
-                // Session numbers are only an absence barrier, never authority
-                // to signal: even a recycled session conservatively blocks close.
                 if process::snapshot()?
                     .values()
                     .any(|row| row.session == original.session)

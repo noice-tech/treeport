@@ -15,7 +15,6 @@ export function ShellStateProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const receive = (next: DesktopShellState) => {
       const root = document.documentElement
-      // Main broadcasts again when the system appearance changes.
       root.dataset.theme =
         next.theme.mode === 'auto'
           ? window.matchMedia('(prefers-color-scheme: light)').matches

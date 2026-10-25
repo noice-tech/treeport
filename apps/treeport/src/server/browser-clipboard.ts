@@ -20,7 +20,7 @@ export async function browserClipboard(
 ): Promise<BrowserClipboard | null> {
   let copied = false
 
-  // Cross-origin frames can live in separate renderer targets. Same-process
+  // EXTERNAL: Cross-origin frames can live in separate renderer targets. Same-process
   // frames share a target and are traversed by copyBrowserPage itself.
   for (const frame of page.frames()) {
     const source = await page.context().newCDPSession(frame)

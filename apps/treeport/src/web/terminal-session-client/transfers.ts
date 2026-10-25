@@ -200,8 +200,6 @@ export function makeTransfers(
           { concurrency: 8 }
         )
 
-        // Local paths only produce terminal input; upload limits apply only
-        // to files whose contents must be sent to the instance.
         const uploadFiles = files.filter((_, index) => !sourcePaths[index])
         const uploadCount = uploadFiles.length
 
@@ -293,8 +291,6 @@ export function makeTransfers(
           { concurrency: TERMINAL_UPLOAD_CONCURRENCY }
         )
 
-        // Losing and reacquiring control during an upload is not permission to
-        // paste into a different stream or controller generation.
         if (
           streamId !== state.streamId ||
           generation !== state.controllerGeneration

@@ -64,8 +64,6 @@ export function makeBrowser(
       const options = terminalOptions(state.terminalId)
 
       if (!core) {
-        // Ghostty compiles its WASM asynchronously. The session only connects
-        // once the terminal is open, so no output can arrive before it exists.
         loading = true
         void loadGhosttyVtModule().then((module) => {
           loading = false
@@ -88,8 +86,6 @@ export function makeBrowser(
 
       const terminal = new WTerm(element, {
         core,
-        // Treeport owns the grid size: controllers propose it and the server
-        // decides, so wterm must never resize the core on its own.
         autoResize: false,
         onData: (data) => {
           if (!dependencies.canInput()) {
@@ -122,8 +118,6 @@ export function makeBrowser(
           dependencies.update({ title: title.trim().slice(0, 256) }),
         onBell: () => dependencies.handleBell(),
         onClipboardWrite: (text) => {
-          // OSC 52 is write-only. Never let viewers, background sessions or
-          // snapshot restoration change the clipboard.
           if (
             !dependencies.canInput() ||
             state.snapshotValue.phase !== 'ready' ||
@@ -135,13 +129,12 @@ export function makeBrowser(
             return
           }
 
-          // Do not block the output parser on browser clipboard permissions.
           void dependencies.copyText(text).catch(() => {
             toast.error('Couldn’t copy terminal text', {
               action: {
                 label: 'Copy',
                 onClick: () => {
-                  // Some browsers require a fresh user gesture for clipboard writes.
+                  // EXTERNAL: Some browsers require a fresh user gesture for clipboard writes.
                   void dependencies
                     .copyText(text)
                     .catch(() => toast.error('Couldn’t copy text'))
@@ -153,9 +146,9 @@ export function makeBrowser(
       })
 
       setTerminalFontSize(terminal, state.fontSize)
-      // wterm focuses its input during initialization; keep focus where it was.
+      // EXTERNAL: wterm focuses its input during initialization; keep focus where it was.
       const focused = document.activeElement
-      // With a supplied core, initialization completes synchronously.
+      // EXTERNAL: With a supplied core, initialization completes synchronously.
       void terminal.init().catch(dependencies.failRendering)
 
       if (focused instanceof HTMLElement && focused !== document.body) {
@@ -164,10 +157,10 @@ export function makeBrowser(
         element.querySelector('textarea')?.blur()
       }
 
-      // A fixed grid makes wterm lock its height; let it fill the host instead.
+      // EXTERNAL: A fixed grid makes wterm lock its height; let it fill the host instead.
       element.style.height = ''
       state.terminal = terminal
-      // wterm moves its hidden input to the cursor only on focus, keys and
+      // EXTERNAL: wterm moves its hidden input to the cursor only on focus, keys and
       // composition. Left below history that shrank (clear, Pi redraws, the
       // alternate screen) it keeps the scroll area tall, so following output
       // scrolls the viewport past every row.
@@ -221,7 +214,6 @@ export function makeBrowser(
             return
           }
 
-          // Treeport opens links itself instead of navigating the app window.
           event.preventDefault()
           options.linkHandler.activate(event, link.href)
 
@@ -281,7 +273,6 @@ export function makeBrowser(
           }
 
           if (mappedInput !== null) {
-            // Capture runs before wterm's input, which would encode it differently.
             event.preventDefault()
             event.stopPropagation()
             terminal.onData?.(mappedInput)
@@ -334,7 +325,7 @@ export function makeBrowser(
         })
       }
 
-      // iOS drags a long-pressed selection with a web archive file. Dropping
+      // EXTERNAL: iOS drags a long-pressed selection with a web archive file. Dropping
       // terminal text back onto the terminal must not upload and paste it.
       let draggingTerminalText = false
       wrapper.addEventListener('dragstart', () => {
@@ -391,7 +382,6 @@ export function makeBrowser(
       dependencies.reconnectImmediately()
     }
 
-    // Replace all terminal state with the server's libghostty-vt snapshot.
     function restoreTerminal(snapshot: string): void {
       const terminal = state.terminal
       const terminalCore = terminal?.bridge
@@ -400,8 +390,6 @@ export function makeBrowser(
         return
       }
 
-      // Snapshots with styled history reach tens of megabytes, where a mapping
-      // callback per byte blocks the page for most of a second.
       const binary = atob(snapshot)
       const bytes = new Uint8Array(binary.length)
 
@@ -410,7 +398,7 @@ export function makeBrowser(
       }
 
       terminalCore.restore(bytes)
-      // An empty write makes wterm repaint the restored grid and history.
+      // EXTERNAL: An empty write makes wterm repaint the restored grid and history.
       terminal.write('')
     }
 

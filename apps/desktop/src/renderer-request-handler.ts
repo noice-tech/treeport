@@ -124,8 +124,6 @@ export function createRendererRequestHandler(
       Effect.gen(function* () {
         const url = new URL(request.url)
 
-        // Only the private shell is bundled. Workspace documents and assets
-        // always belong to the selected daemon, never to the desktop release.
         if (url.protocol !== 'treeport-app:') {
           return yield* forward(request)
         }

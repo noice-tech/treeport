@@ -39,8 +39,6 @@ test.describe('mobile terminal UI', () => {
       )
 
     await page.clock.install()
-    // Exercise apps panel toggles while controlling the terminal, so a resize would
-    // reach the process rather than being suppressed for a read-only viewer.
     await page.clock.runFor(250)
     const screen = page.locator('.xterm-screen')
     const screenBounds = await screen.boundingBox()
@@ -59,7 +57,6 @@ test.describe('mobile terminal UI', () => {
         page.getByRole('region', { name: 'topic apps panel' })
       ).toBeVisible()
       expect(await screen.boundingBox()).toEqual(screenBounds)
-      // Observe long enough for a debounced resize to reach the socket.
       await page.clock.runFor(250)
       expect(await screen.boundingBox()).toEqual(screenBounds)
       await appsPanelToggle.click()
@@ -220,7 +217,6 @@ test.describe('mobile terminal UI', () => {
     const startY = bounds!.y + row!.height * 2
     const positions = [0, 4, 8, 12].map((rows) => startY + row!.height * rows)
 
-    // This spec runs only in the mobile-chromium project.
     {
       const selectionX = bounds!.x + bounds!.width / 100
       const selectionY = bounds!.y + row!.height / 2
@@ -261,7 +257,6 @@ test.describe('mobile terminal UI', () => {
       type: 'touchMove',
       touchPoints: [{ x, y: positions[1]! }]
     })
-    // Check while the finger is down, before xterm starts native inertia.
     await expect(firstRow).toContainText(
       `mobile-history-${historyRowBeforeScroll - 4}`
     )
@@ -297,7 +292,6 @@ test.describe('mobile terminal UI', () => {
     }
 
     await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
-    // Taking control refits the terminal, so use its current cell height.
     const mouseBounds = (await screen.boundingBox())!
     const mouseRow = (await firstRow.boundingBox())!
     const mouseStartY = mouseBounds.y + mouseRow.height * 2
@@ -307,7 +301,7 @@ test.describe('mobile terminal UI', () => {
     })
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchMove',
-      // Stay just beyond the row boundary to avoid CSS pixel rounding.
+      // EXTERNAL: Stay just beyond the row boundary to avoid CSS pixel rounding.
       touchPoints: [{ x, y: mouseStartY + mouseRow.height * 4.25 }]
     })
     await expect

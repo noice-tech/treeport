@@ -31,8 +31,7 @@ test.describe('desktop terminal input and removal', () => {
     mocked.terminal.messages = []
     mocked.terminal.delayTakeControl = true
 
-    // Clipboard files cannot be filled through Playwright's text clipboard API.
-    // Dispatch the browser event, then verify the alert or terminal protocol.
+    // EXTERNAL: Clipboard files cannot be filled through Playwright's text clipboard API.
     const pasteTerminalFiles = () =>
       page
         .getByRole('textbox', { name: 'Terminal input' })
@@ -252,8 +251,6 @@ test.describe('desktop terminal input and removal', () => {
       )
       .toBe(true)
 
-    // Legacy mouse reports use onBinary. Native wheel handling must leave
-    // later keyboard input unchanged, without a queued repeat count.
     {
       const socket = mocked.terminal.connection
       socket.receive('output', {
@@ -494,7 +491,6 @@ test.describe('desktop terminal input and removal', () => {
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
 
-    // A fresh projects snapshot still includes the tree until Git removes it.
     const pendingRefresh = page.waitForResponse(
       (response) => new URL(response.url()).pathname === '/api/projects'
     )

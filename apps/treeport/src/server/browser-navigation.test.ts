@@ -35,7 +35,6 @@ it.each(['native', 'hosted'])(
     expect(cdp.listenerCount('Treeport.navigationCanceled')).toBe(0)
     failNavigation(new Error('Browser disconnected during cleanup'))
     await new Promise<void>((resolve) => setImmediate(resolve))
-    // A subsequent command is not blocked by the canceled navigation.
     // SAFETY: The helper only uses EventEmitter methods on this page fake.
     await expect(
       browserNavigation(page as never, async () => 'next')
@@ -76,7 +75,6 @@ it('ignores ordinary dialogs and cleans up after success or failure', async () =
     browserNavigation(page as never, failedNavigation, null, 'page')
   ).resolves.toBeUndefined()
   expect(dispose).toHaveBeenCalledOnce()
-  // Automation still receives the failure even when an error document is visible.
   // SAFETY: The helper only uses EventEmitter methods for automation failures.
   await expect(
     browserNavigation(page as never, failedNavigation)
@@ -86,7 +84,6 @@ it('ignores ordinary dialogs and cleans up after success or failure', async () =
   await expect(
     browserNavigation(page as never, failedNavigation, null, 'page')
   ).rejects.toThrow('net::ERR_CONNECTION_REFUSED')
-  // An old error page must not hide unrelated failures.
   // SAFETY: The helper only uses EventEmitter methods for non-network failures.
   await expect(
     browserNavigation(

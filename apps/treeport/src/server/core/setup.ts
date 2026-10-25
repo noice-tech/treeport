@@ -316,8 +316,6 @@ export function resolveWorktreeCleanupTasks(input: {
       fs.realpath(input.mainWorktreePath)
     )
 
-    // Read before resolving task cwd so a missing/prunable checkout with no
-    // readable cleanup definition can still be removed without running commands.
     const native = yield* readNativeSetup(input.worktreePath)
     const commands = native.setup?.cleanup ?? []
 

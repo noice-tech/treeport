@@ -3,7 +3,6 @@ import { sessionOwnershipViolations } from './check-terminal-runtime.mjs'
 
 describe('session lifecycle ownership boundary', () => {
   it('rejects the PID-based recovery and cleanup paths that caused startup failures', () => {
-    // Recovery from 56e8d7b (#559), and cleanup from dc30fdb (#579).
     expect(
       sessionOwnershipViolations(
         'src/terminal-runtime/session-client.ts',

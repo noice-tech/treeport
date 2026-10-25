@@ -109,7 +109,6 @@ interface ApplicationFiberSet {
   readonly awaitEmpty: Effect.Effect<void>
 }
 
-/** Owns application daemons that run until the application scope closes. */
 export class ApplicationDaemons extends Effect.Service<ApplicationDaemons>()(
   'treeport/ApplicationDaemons',
   {
@@ -125,7 +124,6 @@ export class ApplicationDaemons extends Effect.Service<ApplicationDaemons>()(
   }
 ) {}
 
-/** Owns finite background work accepted before shutdown starts. */
 export class ApplicationFibers extends Effect.Service<ApplicationFibers>()(
   'treeport/ApplicationFibers',
   {
@@ -133,7 +131,7 @@ export class ApplicationFibers extends Effect.Service<ApplicationFibers>()(
       const fibers = yield* FiberSet.make<unknown, never>()
 
       return {
-        // The application scope owns accepted work, not the request's
+        // EXTERNAL: The application scope owns accepted work, not the request's
         // interruption mask. Inheriting that mask can deadlock races while
         // they wait for losing command/timeout fibers to be interrupted.
         fork: (effect) =>
@@ -252,7 +250,6 @@ export type ApplicationServices =
   | ApplicationFibers
   | TerminalState
 
-/** Preserve typed domain failures instead of exposing Effect's FiberFailure. */
 export async function runApplicationEffect<Result, Failure>(
   runtime: ApplicationRuntime,
   effect: Effect.Effect<Result, Failure, ApplicationServices>

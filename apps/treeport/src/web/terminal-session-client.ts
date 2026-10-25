@@ -25,8 +25,6 @@ import {
   normalizeTerminalDimensions
 } from './terminal-session-client/state'
 
-// The synchronous React/wterm adapter composes session-owned Effect services.
-// Unmount detaches a host; only dispose closes the scope and stops rendering.
 export class TerminalSession {
   private readonly state: TerminalSessionState
   private readonly scope = Effect.runSync(Scope.make())
@@ -40,8 +38,6 @@ export class TerminalSession {
     this.services = Effect.runSync(
       Scope.extend(
         Effect.gen(this, function* () {
-          // Register first: clear references only after every service has released
-          // its resources, even if an addon disposer fails.
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               state.terminal = null
@@ -82,8 +78,6 @@ export class TerminalSession {
             send: (...args) => connection.send(...args)
           })
 
-          // Finalizers run in reverse: detach the host and disconnect the
-          // socket before disposing wterm, then interrupt the async workers.
           const browser = yield* makeBrowser(state, {
             copyText: (text) => this.copyText(text),
             canInput: (...args) => connection.canInput(...args),
@@ -215,7 +209,6 @@ export class TerminalSession {
     return this.zoom(action)
   }
 
-  // Mobile controls resize text without focusing wterm or opening the keyboard.
   zoom(action: TerminalFontZoom): boolean {
     if (this.state.disposed || !this.state.host || !this.state.terminal) {
       return false
@@ -235,11 +228,8 @@ export class TerminalSession {
     }
 
     try {
-      // Future sessions inherit this device's last zoom; open sessions keep theirs.
       localStorage.setItem(this.state.fontSizeStorageKey, String(fontSize))
-    } catch {
-      // Zoom remains usable when browser storage is unavailable.
-    }
+    } catch {}
 
     this.update({
       fontZoomPercent: Math.round((fontSize / TERMINAL_FONT_SIZE) * 100)
@@ -284,8 +274,6 @@ export class TerminalSession {
     }
 
     if (this.state.renderFailed) {
-      // A rejected render queue must never be reused. Reloading reconstructs
-      // xterm, its DOM listeners, and the queue before reconnecting.
       window.location.reload()
 
       return
@@ -382,7 +370,7 @@ export class TerminalSession {
       return
     }
 
-    // Clipboard.writeText is unavailable on non-HTTPS iOS installations.
+    // EXTERNAL: Clipboard.writeText is unavailable on non-HTTPS iOS installations.
     // execCommand remains the reliable synchronous path from a user gesture
     // there, provided the selected value lives in a real form control.
     const copyBuffer = document.createElement('textarea')
@@ -391,7 +379,6 @@ export class TerminalSession {
     copyBuffer.style.position = 'fixed'
     copyBuffer.style.left = '-9999px'
     copyBuffer.style.opacity = '0'
-    // Stay inside the active focus scope when copying from a modal menu.
     ;(document.activeElement?.parentElement ?? document.body).appendChild(
       copyBuffer
     )
@@ -428,8 +415,6 @@ export class TerminalSession {
     this.state.renderEpoch += 1
     this.state.ready = false
     this.state.reconnectAllowed = false
-    // Scope closure interrupts callback waits, uploads and sleeps. Submitted
-    // xterm writes cannot be cancelled and remain epoch-fenced.
     Effect.runFork(
       Scope.close(this.scope, Exit.void).pipe(
         Effect.catchAllCause((cause) =>

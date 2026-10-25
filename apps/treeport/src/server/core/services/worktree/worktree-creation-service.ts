@@ -503,7 +503,6 @@ export class WorktreeCreationService {
         const setupService = yield* Setup
         const zed = yield* Zed
 
-        // Acceptance requires an open project; accepted work survives closure.
         const { project, worktree } = yield* Effect.acquireUseRelease(
           locks
             .tryAcquire({ projectId, projectLockKind: 'worktree-creation' })
@@ -716,8 +715,6 @@ export class WorktreeCreationService {
                 worktreeRow.mainWorktreePath
               )
 
-              // Reserve the new tree before releasing the project lock. Snapshot
-              // collection can observe it as soon as importWorktrees finishes.
               yield* Effect.acquireRelease(
                 locks
                   .tryAcquire({ worktreeIds: [worktree.id] })
@@ -770,7 +767,6 @@ export class WorktreeCreationService {
                   return Effect.void
                 }
 
-                // A title set while the command ran wins over its output.
                 return database
                   .execute('worktree.creation.service.title', (db) =>
                     db.run(sql`
@@ -899,7 +895,6 @@ export class WorktreeCreationService {
                 'Tree setup: no persistent terminal could be started'
             } else {
               const setupOptions: TerminalLaunchOptions = {
-                // Hide the no-op command used to exit after the setup tasks.
                 initialTitle: 'Setup',
                 setup: { tasks: setup.tasks, error: setupError },
                 closeOnSuccess: true

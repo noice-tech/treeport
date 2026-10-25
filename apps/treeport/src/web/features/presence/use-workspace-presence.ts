@@ -17,8 +17,6 @@ export interface WorkspacePresenceStore {
   setViewers(viewers: readonly WorkspacePresence[]): void
 }
 
-// Presence changes on every navigation and heartbeat but only the viewers
-// indicator displays it, so it lives outside the workspace's React state.
 export function useWorkspacePresence(
   worktreeId: string | null,
   focusedAppId: string | null
@@ -86,8 +84,6 @@ export function useWorkspacePresence(
         !disposed && !leaving && document.visibilityState === 'visible'
 
       const focused = visible && document.hasFocus()
-      // Serialize updates so a slow navigation/focus request cannot overwrite
-      // a newer one. Each effect lifetime has its own tab session.
       void parseResponse(
         rpc.api.presence.$post(
           {
@@ -153,7 +149,6 @@ export function useWorkspacePresence(
     }
   }, [store])
 
-  // Navigation and workspace surface focus are external to this hook.
   useEffect(() => {
     publish.current()
   }, [worktreeId, focusedAppId])

@@ -13,7 +13,7 @@ const tsdownPackage = createRequire(import.meta.url).resolve(
   'tsdown/package.json'
 )
 
-// Run tsdown in a process group this script owns instead of behind
+// EXTERNAL: Run tsdown in a process group this script owns instead of behind
 // `pnpm exec`: pnpm SIGKILLs its child groups as soon as tsdown exits, which
 // kills the daemon tsdown spawned before it can release its terminal host.
 const child = spawn(
@@ -79,7 +79,7 @@ function stop(signal = 'SIGTERM') {
   signalGroup(signal)
 }
 
-// Stay subscribed: terminal teardown delivers duplicates, and the default
+// EXTERNAL: Stay subscribed: terminal teardown delivers duplicates, and the default
 // action would end this process before the daemon has stopped.
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(signal, () => stop(signal))
@@ -101,7 +101,7 @@ child.once('exit', async (code) => {
         : requestedSignal === 'SIGHUP'
           ? 129
           : (code ?? 1)
-  // tsdown exits without awaiting the daemon it spawned. Stay alive, and keep
+  // EXTERNAL: tsdown exits without awaiting the daemon it spawned. Stay alive, and keep
   // the pnpm processes above this script alive, until the daemon has shut down.
   signalGroup('SIGTERM')
   const deadline = Date.now() + 10_000

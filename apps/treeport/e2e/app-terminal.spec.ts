@@ -276,7 +276,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     mocked.terminal.messages = []
     mocked.terminal.delayTakeControl = true
     await page.getByRole('textbox', { name: 'Terminal input' }).press('Meta+f')
-    // The modifier-only event must not request control, even after timers run.
     await page.clock.runFor(50)
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     expect(
@@ -360,7 +359,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
 
     await viewer.setViewportSize({ width: 760, height: 640 })
-    // A read-only viewer must not publish a debounced resize.
     await viewer.clock.runFor(250)
     expect(
       observer.terminal.messages.filter((message) => message.type === 'resize')
@@ -432,7 +430,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     mocked.terminal.connection.close()
     const before = mocked.terminal.connections.length
     await page.evaluate(() => window.dispatchEvent(new Event('online')))
-    // Exercise the reconnect timer rather than racing a fixed sleep.
     await page.clock.runFor(750)
     expect(mocked.terminal.connections).toHaveLength(before)
     await page.getByRole('button', { name: 'Retry' }).click()
@@ -559,8 +556,6 @@ test.describe('desktop worktree and terminal workflows', () => {
         height: splitBounds!.height
       })
 
-    // Traverse a full keyboard focus cycle; the covered terminal must not
-    // become a typing target, regardless of how the overlay is implemented.
     const terminalInput = page.getByRole('textbox', {
       name: 'Terminal input',
       includeHidden: true
@@ -573,7 +568,6 @@ test.describe('desktop worktree and terminal workflows', () => {
       await page.keyboard.press('Tab')
       await expect(terminalInput).not.toBeFocused()
 
-      // Stop after a full focus cycle; the assertions above run on every step.
       // oxlint-disable-next-line playwright/no-conditional-in-test
       if (await exit.evaluate((button) => button === document.activeElement)) {
         break

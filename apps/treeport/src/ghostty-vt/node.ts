@@ -4,8 +4,6 @@ let compiled: Promise<WebAssembly.Module> | null = null
 
 export function loadGhosttyVtModule(): Promise<WebAssembly.Module> {
   compiled ??= (async () => {
-    // Source and shared dist chunks sit beside the module; entrypoints that
-    // inline this file are two levels below dist.
     for (const candidate of ['./ghostty-vt.wasm', '../../ghostty-vt.wasm']) {
       const bytes = await fs
         .readFile(new URL(candidate, import.meta.url))

@@ -267,7 +267,6 @@ export interface TerminalHostResults {
   inventory: HostedTerminal[]
   state: TerminalSessionState
   attach: {
-    /** Base64 libghostty-vt snapshot. */
     data: string
     format: 'ghostty'
     fence: number
@@ -457,7 +456,6 @@ const terminalHostFrameSchema = Schema.Union(
   })
 )
 
-// Validate every known field while discarding additive unknown fields.
 const decodeFrame = Schema.decodeUnknownSync(terminalHostFrameSchema)
 
 export function decodeTerminalHostInput<
@@ -482,8 +480,6 @@ export function decodeTerminalHostInput<
   >
 }
 
-/** The owner stores this opaque engine envelope without interpreting it.
- * Candidates validate its version before updating, while PTY owners remain v1. */
 export function decodeTerminalEngineMetadata(source: string) {
   return Effect.gen(function* () {
     const parsed = yield* Effect.try({
@@ -548,8 +544,6 @@ export function encodeTerminalHostFrame(
       ) {
         const id = Buffer.from(validated.data.terminalId, 'utf8')
         const data = Buffer.from(validated.data.output, 'utf8')
-        // Private daemon-worker output frame. Control/snapshot messages
-        // retain the JSON wire format.
         payload = Buffer.allocUnsafe(13 + id.length + data.length)
         payload[0] = 0
         payload.writeUInt32BE(id.length, 1)
@@ -576,7 +570,6 @@ export function encodeTerminalHostFrame(
   })
 }
 
-/** A transport-owned incremental decoder. Do not share it across sockets. */
 export function makeTerminalHostFrameDecoder(): (
   chunk: Uint8Array
 ) => Effect.Effect<readonly TerminalHostFrame[], TerminalHostFrameDecodeError> {

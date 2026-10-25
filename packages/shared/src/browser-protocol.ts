@@ -21,7 +21,6 @@ export {
 export const BROWSER_MAX_UPLOAD_FILES = 100
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
 
-// Observed Chromium addresses can be megabytes long (including JSON escaping).
 export const BROWSER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 export type BrowserMouseButton = 'left' | 'right' | 'middle'
@@ -114,7 +113,7 @@ const browserWheelFields = {
   type: Schema.Literal('wheel'),
   x: Schema.Finite.pipe(Schema.between(0, 3_840)),
   y: Schema.Finite.pipe(Schema.between(0, 2_160)),
-  // CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
+  // EXTERNAL: CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
   modifiers: Schema.Int.pipe(Schema.between(0, 15)),
   deltaX: Schema.Finite.pipe(Schema.between(-10_000, 10_000)),
   deltaY: Schema.Finite.pipe(Schema.between(-10_000, 10_000))
@@ -129,7 +128,6 @@ export const browserClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('fileChooserResponse'),
     requestId: browserRequestIdSchema,
-    // Null cancels without clearing the input's previous selection.
     files: Schema.NullOr(
       Schema.Array(
         Schema.Struct({
@@ -204,8 +202,6 @@ export const browserClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('touch'),
     phase: Schema.Literal('start', 'move', 'end', 'cancel'),
-    // Start/move carry active contacts; end carries only released contacts.
-    // An empty end or cancel releases the entire gesture.
     points: Schema.Array(
       Schema.Struct({
         id: Schema.Int.pipe(Schema.between(0, 2_147_483_647)),
@@ -249,13 +245,10 @@ export const browserClientMessageSchema = Schema.Union(
     type: Schema.Literal('setVisible'),
     visible: Schema.Boolean
   }),
-  // Marks the point in this socket's input order that wheel events sent on
-  // the media socket afterwards must not overtake.
   Schema.Struct({
     type: Schema.Literal('inputBarrier'),
     id: Schema.Int.pipe(Schema.between(1, 0xffffffff))
   }),
-  // The viewer display's refresh rate, which hosted pages render at.
   Schema.Struct({
     type: Schema.Literal('refreshRate'),
     hz: Schema.Finite.pipe(Schema.between(24, 480))
@@ -275,8 +268,6 @@ export type BrowserClientMessage = Schema.Schema.Type<
   typeof browserClientMessageSchema
 >
 
-// The decoder worker's media socket: flow control for the video it receives,
-// and wheel input, which must not wait on the daemon's main thread.
 export const browserMediaClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('webcodecsAck'),
@@ -289,7 +280,6 @@ export const browserMediaClientMessageSchema = Schema.Union(
   }),
   Schema.Struct({
     ...browserWheelFields,
-    // The last inputBarrier sent on the session socket, or 0.
     barrier: Schema.Int.pipe(Schema.between(0, 0xffffffff))
   })
 )
@@ -300,7 +290,6 @@ export type BrowserMediaClientMessage = Schema.Schema.Type<
 
 export const browserRuntimeStateSchema = Schema.Struct({
   url: Schema.Union(Schema.Literal('about:blank'), browserObservedUrlSchema),
-  // Ordinary page metadata must not invalidate an otherwise healthy connection.
   title: Schema.transform(Schema.String, Schema.String, {
     decode: normalizeBrowserTitle,
     encode: normalizeBrowserTitle
@@ -374,8 +363,6 @@ export type BrowserSessionState = Schema.Schema.Type<
   typeof browserSessionStateSchema
 >
 
-// Only native keywords cross the boundary: remote cursor URLs must never load
-// resources from the viewer's network or carry credentials into the client.
 export const browserCursorSchema = Schema.Literal(
   'auto',
   'default',
@@ -469,8 +456,6 @@ export const browserServerMessageSchema = Schema.Union(
     type: Schema.Literal('ready'),
     state: browserSessionStateSchema
   }),
-  // Authorizes this attachment's video socket, which a decoder worker opens
-  // so packets and ACKs never wait on the page's main thread.
   Schema.Struct({
     type: Schema.Literal('videoChannel'),
     mediaToken: opaqueTokenSchema
@@ -508,8 +493,6 @@ export type BrowserServerMessage = Schema.Schema.Type<
 >
 
 export const browserTicketRequestSchema = Schema.Struct({
-  // Persistent viewer/window ID. Account and device identity come from ingress,
-  // never from this request body; the socket gets its own ephemeral ID.
   clientId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
   visible: Schema.Boolean
 })

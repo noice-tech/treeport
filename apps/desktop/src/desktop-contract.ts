@@ -1,6 +1,5 @@
 import type { TreeportTheme } from '@treeport/desktop-bridge'
 
-// Shell metadata is decoded locally and is never a workspace prerequisite.
 export interface WorkspaceActivityResponse {
   working: number
   needsAttention: number

@@ -4,7 +4,6 @@ interface RefreshableFile {
   readonly loadState: string
 }
 
-/** Poll mutable viewport patches, not every patch previously visited. */
 export async function refreshVisibleFiles(
   files: readonly RefreshableFile[],
   visible: ReadonlySet<string>,

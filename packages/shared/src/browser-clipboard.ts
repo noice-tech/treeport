@@ -94,10 +94,8 @@ export async function copyBrowserPage(
   return null
 }
 
-// Self-contained: runs in a private isolated world so websites cannot replace
+// EXTERNAL: Self-contained: runs in a private isolated world so websites cannot replace
 // DOM APIs and trick this operation into exporting the host's old clipboard.
-// Never read the native clipboard unless this command actually copied content;
-// a password, empty selection, or cancelled copy must not export old host data.
 function copyBrowserSelection(): boolean | null {
   if (!document.hasFocus()) {
     return null
@@ -120,7 +118,7 @@ function copyBrowserSelection(): boolean | null {
     return false
   }
 
-  // Ask Chromium instead of inspecting DOM ranges: inputs such as email and
+  // EXTERNAL: Ask Chromium instead of inspecting DOM ranges: inputs such as email and
   // selections inside shadow roots need the browser's native selection logic.
   const hasSelection = document.queryCommandEnabled('copy')
   let copied = false
@@ -130,7 +128,7 @@ function copyBrowserSelection(): boolean | null {
       return
     }
 
-    // Runs after the page's copy handlers, so custom content takes precedence.
+    // EXTERNAL: Runs after the page's copy handlers, so custom content takes precedence.
     copied = event.defaultPrevented
       ? (event.clipboardData?.types.length ?? 0) > 0
       : hasSelection

@@ -18,8 +18,6 @@ pub(super) struct Gate {
 }
 impl Gate {
     pub(super) fn allow(&mut self) -> Result<()> {
-        // A single nonblocking byte is the only command-start authority. No
-        // user code runs on EOF, timeout, a denied byte, or a failed send.
         let byte = [1_u8];
         // SAFETY: parent owns this socket and byte is readable for its length.
         let sent = unsafe {
@@ -65,7 +63,6 @@ pub(super) struct Held {
 
 // portable-pty exposes no pre-exec hook. Keep its PTY allocation/resize, but
 // launch with std's fork/exec boundary so identity acquisition precedes exec.
-// The worker owns/reaps its Child even if identity setup or the caller fails.
 pub(super) fn hold(
     manifest: &Manifest,
     slave: std::fs::File,
@@ -110,9 +107,6 @@ pub(super) fn hold(
     // locking, filesystem enumeration, Rust destructors, or user code.
     unsafe {
         command.pre_exec(move || {
-            // These captures pin both fd numbers in the spawning parent until
-            // fork completes. Close the child's copy of the opposite endpoint
-            // so parent death cannot keep the child's gate alive accidentally.
             libc::close(child_parent.as_raw_fd());
             for signal in [
                 libc::SIGCHLD,
@@ -183,16 +177,11 @@ pub(super) fn hold(
             let mut sender = Some(sender);
             let result = (|| -> Result<i32> {
                 let spawned = command.spawn();
-                // Report std's spawn/pre-exec errno before dropping the gate
-                // endpoint makes the admission reader observe EOF. Otherwise a
-                // failed chdir, fork or TIOCSCTTY is hidden by a short read.
                 let _ = launched.send(
                     spawned.as_ref().map(|_| ()).map_err(|error| {
                         io::Error::new(error.kind(), error.to_string())
                     }),
                 );
-                // The parent's copies of the child gate and stdio must not
-                // hold EOF open while waiting on the command's lifetime.
                 drop(command);
                 let mut child = spawned.context("Cannot execute owned PTY command")?;
                 let owned = match ownership_receiver.recv() {
@@ -207,8 +196,6 @@ pub(super) fn hold(
                 };
                 let pid = child.id();
                 ensure!(owned.lock().unwrap().leader.pid == pid, "PTY launch identity changed");
-                // Keep the zombie as an exact-child kernel anchor until all
-                // surviving original-session descendants have been recorded.
                 // SAFETY: initialized info is written only by waitid for our
                 // unreaped Child, without releasing its PID/birth anchor.
                 let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -246,8 +233,6 @@ pub(super) fn hold(
                     let _ = sender.take().unwrap().send(Ok(code));
                     let _ = reaper.recv();
                 }
-                // Reaping and pin release share discovery's lock; cleanup must
-                // not borrow a leader pin after the kernel reuses its PID.
                 let status = {
                     let mut ownership = owned.lock().unwrap();
                     let result = child.wait();
@@ -265,9 +250,6 @@ pub(super) fn hold(
         })?;
     let mut bytes = [0; 4];
     if let Err(error) = (&*parent).read_exact(&mut bytes) {
-        // Deny admission before waiting for spawn to finish. A timed-out child
-        // may still be waiting on its gate; never wait for it while holding the
-        // only cancellation authority. Bound this diagnostic wait too.
         drop(gate);
         drop(owned);
         if let Ok(Err(spawn_error)) = launch_result.recv_timeout(Duration::from_secs(3)) {

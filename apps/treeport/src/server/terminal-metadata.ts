@@ -56,11 +56,6 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   acknowledgedAttentionSequence: number
 }
 
-/**
- * Projects terminal-host runtime events into the product metadata contract.
- * The terminal host remains the only parser and process owner; this manager
- * only persists attention and publishes title/activity changes.
- */
 export function acquireTerminalMetadataManager(
   service: TreeportService,
   terminalHost: TerminalAttachmentBackend,
@@ -538,8 +533,6 @@ export class TerminalMetadataManager {
                   this.stopRuntime(entry)
                 }
 
-                // Refresh outside the runtime scope, which stopRuntime closes.
-                // Waiters need terminal.updated, not just cleared metadata.
                 this.service.forkApplicationEffect(
                   this.service.terminals
                     .refreshTerminalStatus(entry.terminalId, false)
@@ -570,7 +563,6 @@ export class TerminalMetadataManager {
         ),
         runtimeScope
       )
-      // Ensure the scoped runtime subscription is installed before returning.
       yield* Effect.yieldNow()
 
       const [state, titleState] = yield* Effect.all([
@@ -626,8 +618,6 @@ export class TerminalMetadataManager {
     return this.service.terminalMetadataMutation(
       entry.terminalId,
       Effect.gen(this, function* () {
-        // The host may restate its latest attention with a more specific
-        // reason; that is not a new event.
         const restated = observed.sequence === entry.attention?.sequence
 
         if (
@@ -685,8 +675,6 @@ export class TerminalMetadataManager {
   ): void {
     entry.terminalTitle = state.terminalTitle?.trim().slice(0, 256) || null
     entry.currentCommand = state.currentCommand?.trim().slice(0, 256) || null
-    // A cleared command after launch completion is the fallback shell's idle
-    // report, not a reason to resurrect the original launch command.
     entry.commandLine = state.commandLine?.trim().slice(0, 256) || null
 
     const commandLine =

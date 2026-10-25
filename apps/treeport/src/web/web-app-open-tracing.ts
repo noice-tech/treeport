@@ -4,9 +4,6 @@ import {
   newBrowserCorrelationId
 } from './agent-tracing'
 
-// Request IDs join renderer milestones to treeport.request.id in server JSONL.
-// Asset spans carry treeport.app.id. Never record launch input, file paths, or URLs.
-// Bound retention because failed requests/navigation may never finish.
 const requests = new Map<string, number>()
 const apps = new Map<string, { requestId: string; startedAt: number }>()
 

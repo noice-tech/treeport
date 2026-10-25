@@ -50,7 +50,6 @@ it('bounds ownership startup, cancels abandoned claims, and keeps a granted owne
   await vi.advanceTimersByTimeAsync(10_000)
   await timeoutFailure
   expect(socket.disconnect).toHaveBeenCalledTimes(1)
-  // A failed claim is one failed attempt, not also a disconnected live owner.
   expect(handlers.disconnected).not.toHaveBeenCalled()
   events.removeAllListeners()
 

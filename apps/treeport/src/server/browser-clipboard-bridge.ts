@@ -6,8 +6,6 @@ import {
 } from '@treeport/shared'
 import type { Page } from 'playwright'
 
-// Forward only content supplied by the page. Never poll/read the host clipboard:
-// it is shared with other tabs and can contain unrelated private content.
 export async function installBrowserClipboardBridge(
   page: Page,
   publish: (clipboard: BrowserClipboard) => boolean
@@ -22,7 +20,7 @@ export async function installBrowserClipboardBridge(
   await page.addInitScript(bridgeBrowserClipboard, BROWSER_MAX_CLIPBOARD_LENGTH)
 }
 
-// Self-contained: Playwright installs this in every document, including frames,
+// EXTERNAL: Self-contained: Playwright installs this in every document, including frames,
 // before website scripts can cache the original clipboard methods.
 function bridgeBrowserClipboard(limit: number): void {
   const publish = (clipboard: BrowserClipboard): Promise<void> => {
@@ -126,7 +124,7 @@ function bridgeBrowserClipboard(limit: number): void {
 
     let value: BrowserClipboard | null = null
 
-    // Register at invocation time, after the website's copy handlers. Read the
+    // EXTERNAL: Register at invocation time, after the website's copy handlers. Read the
     // DataTransfer during dispatch: Chromium empties it as soon as copy returns.
     const observe = (event: ClipboardEvent) => {
       if (!event.isTrusted) {
@@ -179,7 +177,7 @@ function bridgeBrowserClipboard(limit: number): void {
     try {
       const copied = execCommand(command, showUI, argument)
 
-      // The native boolean return must stay synchronous for legacy copy libraries.
+      // EXTERNAL: The native boolean return must stay synchronous for legacy copy libraries.
       if (copied && value !== null) {
         void publish(value).catch(() => undefined)
       }

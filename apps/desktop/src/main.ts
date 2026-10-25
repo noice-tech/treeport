@@ -76,7 +76,6 @@ const themeSchema = z.object({
 
 const defaultTheme: TreeportTheme = { mode: 'dark', accent: null }
 
-// Hex copies of each mode's zinc-200/zinc-900 from @treeport/theme.
 const windowChrome = {
   dark: { background: '#151920', symbol: '#dfe4eb' },
   light: { background: '#edf0f4', symbol: '#20242c' }
@@ -128,7 +127,7 @@ if (desktopE2e && developmentUserData) {
 }
 
 if (!app.isPackaged) {
-  // Renaming the app must not move existing computers, cookies, or window state.
+  // EXTERNAL: Renaming the app must not move existing computers, cookies, or window state.
   const userData = app.getPath('userData')
   app.setName('Treeport Dev')
   app.setPath('userData', userData)
@@ -204,7 +203,7 @@ function navigationState(): DesktopNavigationState {
     return { canGoBack: false, canGoForward: false }
   }
 
-  // Electron's canGoBack/canGoForward omit same-document pushState entries.
+  // EXTERNAL: Electron's canGoBack/canGoForward omit same-document pushState entries.
   // Relative offsets include the TanStack Router locations in the renderer.
   return {
     canGoBack: renderer.navigationHistory.canGoToOffset(-1),
@@ -249,7 +248,6 @@ function layoutWorkspace(): void {
   })
   shellView.setBounds({ x: 0, y: 0, width, height })
   workspace?.setVisible(host?.connection.status === 'ready')
-  // Raise the transparent shell for menus/dialogs without tearing down guests.
   const topView = shellOverlayOpen || !workspace ? shellView : workspace
 
   if (mainWindow.contentView.children.at(-1) !== topView) {
@@ -281,7 +279,6 @@ function broadcastState(): void {
   }
 }
 
-// Foreground actions are distinct from host-owned background Browser/CDP work.
 function isTrustedRendererEvent(
   event: IpcMainEvent | IpcMainInvokeEvent
 ): boolean {
@@ -469,7 +466,6 @@ function installRendererSecurity(
       !input.alt &&
       zoomCommand
     ) {
-      // Prevent the native menu accelerator too, so each press zooms once.
       event.preventDefault()
       sendDesktopCommand(zoomCommand)
 
@@ -562,8 +558,6 @@ function installRendererSecurity(
     return { action: 'deny' }
   })
 
-  // The trusted workspace can copy sanitized text, HTML and images, but never
-  // read the native clipboard. Subframes and browser guests keep their own policy.
   const canWriteClipboard = (
     contents: WebContents | null,
     permission: string,
@@ -655,7 +649,6 @@ function connectSelected(options: { url?: string } = {}): void {
     return
   }
 
-  // A changed origin is a new authority, not a navigation of the old session.
   for (const [id, host] of hosts.visited) {
     if (store?.getComputer(id)?.origin !== host.computer.origin) {
       hosts.visited.delete(id)
@@ -737,8 +730,6 @@ function rendererWindowPreferences(): Electron.WebPreferences {
     contextIsolation: true,
     sandbox: true,
     webviewTag: true,
-    // Hidden hosts retry navigations while the shell owns focus. Foreground
-    // focus is assigned explicitly once a host document is ready.
     focusOnNavigation: false
   }
 }
@@ -1046,7 +1037,7 @@ function createWindow(url?: string): BrowserWindow {
     options.y = restoredBounds.y
   }
 
-  // Leave trafficLightPosition unset so titleBarOverlay centers the native
+  // EXTERNAL: Leave trafficLightPosition unset so titleBarOverlay centers the native
   // buttons using their actual size, which varies between macOS versions.
 
   const window = new BrowserWindow(options)
@@ -1145,7 +1136,7 @@ function applyWindowChrome(): void {
 
   mainWindow?.setBackgroundColor(chrome.background)
 
-  // macOS draws native traffic lights without an overlay color.
+  // EXTERNAL: macOS draws native traffic lights without an overlay color.
   if (process.platform !== 'darwin') {
     mainWindow?.setTitleBarOverlay({
       color: chrome.background,
@@ -1216,7 +1207,7 @@ function registerIpc(): void {
     endpoint.search = ''
     endpoint.hash = ''
 
-    // Electron's bundled DevTools CSP permits ws://127.0.0.1:* but not
+    // EXTERNAL: Electron's bundled DevTools CSP permits ws://127.0.0.1:* but not
     // arbitrary tailnet WSS origins. Keep the remote connection in main.
     const relay = new WebSocketServer({
       host: '127.0.0.1',
@@ -1232,7 +1223,6 @@ function registerIpc(): void {
 
     const address = relay.address()
 
-    // ws exposes Node's AddressInfo | string result at this I/O boundary.
     if (
       !listening ||
       !address ||
@@ -1283,7 +1273,6 @@ function registerIpc(): void {
         const message = Buffer.from(data as Buffer)
 
         if (inspectNode !== null && !binary) {
-          // CDP is an untrusted JSON boundary even for the bundled frontend.
           try {
             const command = z
               .object({
@@ -1304,9 +1293,7 @@ function registerIpc(): void {
             ) {
               documentRequest = command.data.id
             }
-          } catch {
-            /* Invalid CDP is handled by Chrome. */
-          }
+          } catch {}
         }
 
         if (upstream.readyState === WebSocket.OPEN) {
@@ -1374,8 +1361,6 @@ function registerIpc(): void {
                   response.data.id === documentRequest &&
                   (response.data.sessionId ?? null) === inspectSession
                 ) {
-                  // Feed the native Elements app the same backend-node event
-                  // Chrome emits for its inspect picker, after its DOM is ready.
                   viewer.send(
                     JSON.stringify({
                       method: 'Overlay.inspectNodeRequested',
@@ -1385,9 +1370,7 @@ function registerIpc(): void {
                   )
                   inspectNode = null
                 }
-              } catch {
-                /* Non-JSON CDP cannot complete the selection. */
-              }
+              } catch {}
             }
           }
         }
@@ -1441,7 +1424,6 @@ function registerIpc(): void {
           return []
         }
 
-        // Only saved origins can be queried; the renderer cannot supply a URL.
         return yield* Effect.all(
           store.summaries().map((computer) =>
             checkActivity(computer.origin).pipe(
@@ -1512,8 +1494,6 @@ function registerIpc(): void {
           return false
         }
 
-        // Admit every request to the store's mutation queue. A same-host click
-        // may be the newest intent while an earlier switch is still persisting.
         const selected = yield* store.select(parsedId.data)
 
         if (selected) {
@@ -1734,7 +1714,6 @@ function registerIpc(): void {
       return
     }
 
-    // ponytail: This fallback reads one macOS file URL. Parse NSFilenamesPboardType if Electron omits multiple files from ClipboardEvent.
     const filePath = filePathFromUrl(clipboard.read('public.file-url'))
     const parsedPath = localSourcePathSchema.safeParse(filePath)
 
@@ -2115,7 +2094,7 @@ if (!hasSingleInstanceLock) {
     }
 
     quitting = true
-    // Do not close the root from one of its own fibers: closing joins children.
+    // EXTERNAL: Do not close the root from one of its own fibers: closing joins children.
     void Effect.runPromiseExit(desktopRuntime.close).then((exit) => {
       if (exit._tag === 'Failure') {
         console.error('[Treeport] Desktop shutdown failed', exit.cause)

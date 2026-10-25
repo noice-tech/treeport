@@ -11,8 +11,6 @@ const files = (await fs.readdir(runtimeRoot))
   .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
   .sort()
 
-// Lifecycle consumers must ask the native owner, not reimplement ownership
-// using discovery PIDs, ps timestamps, or filesystem deletion.
 export function sessionOwnershipViolations(file, source) {
   const violations = []
 

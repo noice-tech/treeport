@@ -476,7 +476,6 @@ export function createApp({
     })
   })
 
-  // A package service authenticates with the token Treeport started it with.
   const requirePackageAccess = Effect.gen(function* () {
     const request = yield* serverRequest
 
@@ -903,7 +902,6 @@ export function createApp({
                 continue
               }
 
-              // A read done or error outcome needs nothing more from the user.
               if (
                 runtime.attention?.unread ||
                 runtime.activity.state === 'blocked'
@@ -932,8 +930,6 @@ export function createApp({
           return config.remoteUrl
         }
 
-        // Read the URL recorded by remote enable/disable so changes are visible
-        // without restarting. Never inspect Tailscale or infer reachability here.
         const saved = await fs
           .readFile(path.join(config.dataDir, 'config.json'), 'utf8')
           .then((value) =>
@@ -1285,8 +1281,6 @@ export function createApp({
 
         return yield* fileResponse(iconPath, {
           ...headers,
-          // Icons come from repository content; keep SVG scripts inert when
-          // the URL is opened directly.
           'content-security-policy':
             "default-src 'none'; style-src 'unsafe-inline'; sandbox",
           'x-content-type-options': 'nosniff'
@@ -1511,7 +1505,6 @@ export function createApp({
                 return
               }
 
-              // Read scope per event: the package may be reconfigured or removed.
               const access = appServices?.access(token) ?? null
 
               if (!access) {
@@ -1531,7 +1524,6 @@ export function createApp({
               }
             })
 
-            // Keeps proxies from closing a quiet stream.
             const heartbeat = setInterval(
               () => void emit.single(encoder.encode(': keepalive\n\n')),
               25_000
@@ -1566,7 +1558,6 @@ export function createApp({
             )
           }
 
-          // A package service's token makes its package the decoration owner.
           const request = yield* serverRequest
 
           const token = /^Bearer (\S+)$/u.exec(
@@ -2235,8 +2226,6 @@ export function createApp({
                 operation(() =>
                   Effect.gen(function* () {
                     let receivedBytes = 0
-                    // Only directory mutations are serialized. File streams run in
-                    // parallel, and pruning must never remove an active upload.
                     yield* Stream.runForEach(
                       request.stream.pipe(
                         Stream.timeoutFail(
@@ -2446,8 +2435,6 @@ export function createApp({
         'cache-control': 'no-cache'
       })
     ),
-    // Only hashed assets are immutable. Navigation after a daemon update must
-    // always fetch the entry point belonging to the newly running release.
     route(
       'GET',
       '*',

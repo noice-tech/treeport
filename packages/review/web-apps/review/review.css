@@ -12,19 +12,16 @@
   box-sizing: border-box;
 }
 html {
-  /* Controls provide their own press feedback; don't flash or inflate text. */
   -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%;
 }
 html,
 body {
-  /* This embedded app owns its scrollers, not document pull-to-refresh. */
   overscroll-behavior: none;
 }
 button,
 [role='button'],
 .file-viewed {
-  /* Remove tap delay and long-press selection only from controls. */
   touch-action: manipulation;
   -webkit-user-select: none;
   user-select: none;
@@ -49,10 +46,8 @@ button :is(span, svg) {
     :disabled,
     [aria-disabled='true']
   ) {
-    /* Respond when the finger lands, not only when click fires on release. */
     opacity: 0.7;
   }
-  /* This control changes its glyph on release; don't fade its old paint. */
   .file-collapse {
     transition: none;
   }
@@ -63,7 +58,6 @@ button :is(span, svg) {
   }
 }
 body {
-  /* Track the visible area; Treeport's host already pads the safe areas. */
   height: 100dvh;
   margin: 0;
   overflow: hidden;
@@ -415,7 +409,6 @@ button:focus-visible {
   outline-offset: 2px;
 }
 @media (forced-colors: active) {
-  /* Let the system supply the mark and contrast in high-contrast mode. */
   .file-viewed input {
     -webkit-appearance: auto;
     appearance: auto;
@@ -425,7 +418,6 @@ button:focus-visible {
   }
 }
 .workspace {
-  /* Keep sticky diff headers below toolbar popovers such as Find. */
   isolation: isolate;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -490,7 +482,6 @@ main {
   min-width: 0;
   padding: 1rem;
   overflow: auto;
-  /* Keep the scroller's bounce without passing scroll to the host app. */
   overscroll-behavior: contain;
 }
 .review-change-group {

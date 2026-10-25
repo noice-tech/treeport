@@ -65,7 +65,6 @@ interface PendingRequest {
   method: SessionRequest['method']
 }
 
-/** A detachable engine-side handle. dispose() NEVER terminates the PTY. */
 export class PersistentSession implements EnginePty {
   private readonly dataListeners = new Set<(data: string) => void>()
   private readonly exitListeners = new Set<
@@ -103,7 +102,6 @@ export class PersistentSession implements EnginePty {
       this.readyResolve = resolve
       this.readyReject = reject
     })
-    // A failure may arrive before the engine starts awaiting replay.
     void this.ready.catch(() => undefined)
   }
 
@@ -134,15 +132,11 @@ export class PersistentSession implements EnginePty {
   }): Promise<PersistentSession> {
     const socketPath = sessionSocketPath(options.directory)
 
-    // Fail before allocating a command or leaving discovery artifacts when a
-    // custom TMPDIR exceeds the portable Unix socket pathname limit.
+    // EXTERNAL: A custom TMPDIR can exceed the portable Unix socket pathname limit.
     if (Buffer.byteLength(socketPath) > 103) {
       throw new Error('Session socket path is too long; use a shorter TMPDIR')
     }
 
-    // Allocate the session directory exclusively, not just its manifest. A
-    // failed close/startup can leave archives or discovery fragments without a
-    // manifest; none of those states authorize launching another command.
     await fs.mkdir(path.dirname(options.directory), {
       recursive: true,
       mode: 0o700
@@ -183,9 +177,6 @@ export class PersistentSession implements EnginePty {
       0o600
     )
 
-    // Display only a stable opaque identity, never labels, commands, or env.
-    // Canonical IDs remain recognizable; other IDs are bounded and sanitized
-    // by hashing. Renames and engine reconnections leave this title unchanged.
     const terminalId =
       options.terminalId === undefined
         ? null
@@ -223,8 +214,6 @@ export class PersistentSession implements EnginePty {
     })
 
     await log.close()
-    // The keeper must already be outside the daemon's descendant tree before
-    // create returns, not merely scheduled to become orphaned later.
     const deadline = Date.now() + 10000
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
@@ -260,8 +249,6 @@ export class PersistentSession implements EnginePty {
       if (published !== null) {
         const status = sessionStatusSchema.parse(JSON.parse(published))
 
-        // An aborted owner publishes its proof before exiting. Wait until it
-        // is gone so connect cannot attach to its not-yet-closed listener.
         if (
           !status.startupAborted ||
           (await withSessionRecovery(options.directory, async () => true).catch(
@@ -275,7 +262,6 @@ export class PersistentSession implements EnginePty {
       await new Promise((resolve) => setTimeout(resolve, 25))
     }
 
-    // Do not kill a possibly live owner on a timeout. Discovery can reconnect it.
     throw new Error(`Session owner startup timed out: ${options.directory}`)
   }
 
@@ -361,8 +347,6 @@ export class PersistentSession implements EnginePty {
             this.replaying = false
             this.readyResolve?.()
           } else if (frame.type === 'fault') {
-            // A storage fault pauses the owner, not its command. Keep this
-            // connection available for explicit close and display the fault.
             this.fault = new Error(frame.message)
             console.error(`Persistent terminal session: ${frame.message}`)
           } else {
@@ -380,9 +364,6 @@ export class PersistentSession implements EnginePty {
     })
     socket.on('close', () => {
       if (connected && !this.closed) {
-        // A keeper can send a specific storage/protocol fault before ending
-        // its lease. Preserve that actionable cause for pending requests and
-        // the UI instead of replacing it with the generic socket-close error.
         this.fail(
           this.fault ??
             new Error(
@@ -395,8 +376,6 @@ export class PersistentSession implements EnginePty {
       socket.once('connect', () => resolve(true))
       socket.once('error', reject)
     }).catch(async (error) => {
-      // Refused sockets can be stale. An inaccessible LIVE keeper is not an
-      // exited session: never replace it, signal it, or reinterpret its files.
       // SAFETY: Node connection errors expose errno codes.
       if (
         !['ENOENT', 'ECONNREFUSED'].includes(
@@ -410,8 +389,6 @@ export class PersistentSession implements EnginePty {
         this.status = sessionStatusSchema.parse(status)
         this.archived = true
         this.socket = null
-        // The native recovery lease excludes a keeper or concurrent close
-        // while retained output is read. A PID is never recovery authority.
         this.processedSequence = Number.MAX_SAFE_INTEGER
 
         for await (const record of SessionJournal.readRetained(
@@ -571,7 +548,6 @@ export class PersistentSession implements EnginePty {
     pending.timer = setTimeout(() => {
       this.pending.delete(id)
       pending.reject(new Error(`Session request timed out: ${pending.method}`))
-      // Never retry a timed-out input: it may already have run.
       this.fail(new Error('Session request timed out; command remains alive'))
     }, pending.remainingMs)
   }
@@ -605,8 +581,6 @@ export class PersistentSession implements EnginePty {
     this.socket?.pause()
   }
   private pauseRequestTimeouts(): void {
-    // Replies share the keeper stream. Neither output backpressure nor input
-    // waiting for PTY capacity may consume unrelated requests' timeout budgets.
     for (const pending of this.pending.values()) {
       if (pending.timer !== null) {
         clearTimeout(pending.timer)
@@ -660,10 +634,6 @@ export class PersistentSession implements EnginePty {
       return
     }
 
-    // The keeper persists each acknowledged parser fence. Keep at most one
-    // acknowledgement in flight and send the newest completed fence next,
-    // instead of queuing a disk-status update for every small PTY fragment.
-    // This never advances past parsed output or coalesces input/control.
     this.processingAcknowledgement = (async () => {
       let acknowledged = -1
 
@@ -692,8 +662,6 @@ export class PersistentSession implements EnginePty {
   }
 
   terminate(): Promise<void> {
-    // Concurrent terminal/tree closes must share the same ownership check and
-    // result instead of replacing each other's authenticated control socket.
     this.termination ??= this.terminateOwnedSession().finally(() => {
       this.termination = null
     })

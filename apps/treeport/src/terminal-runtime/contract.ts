@@ -1,15 +1,6 @@
-/**
- * Cross-release terminal runtime contract.
- *
- * This module is deliberately data-only: the detached PTY owner outlives the
- * product daemon, so daemon, database, worktree, UI, and product-shared types
- * must adapt to these shapes rather than becoming runtime dependencies.
- */
-
 export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
 export const TERMINAL_NAME_MAX_LENGTH = 120
 
-/** Private OSC carrying `command;<line>` from Treeport shell integration. */
 export const TERMINAL_COMMAND_OSC = 7740
 
 interface TerminalSize {
@@ -56,8 +47,6 @@ export interface TerminalSessionState {
   exitCode: number | null
   unavailableReason?: string | null | undefined
   recoveryPending?: boolean | undefined
-  // Initial launched process, not commands typed into a shell. Older retained
-  // hosts may omit this; null means no authoritative completion is available.
   commandExitCode?: number | null | undefined
 }
 
@@ -130,7 +119,6 @@ export interface TerminalHostOutput {
 }
 
 export interface TerminalHostSnapshot {
-  /** Base64 libghostty-vt snapshot. */
   data: string
   format: 'ghostty'
   fence: number

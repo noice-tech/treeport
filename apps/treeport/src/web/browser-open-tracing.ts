@@ -1,9 +1,5 @@
 import { browserTrace, browserTracingEnabled } from './agent-tracing'
 
-// Opt in with localStorage['treeport.trace'] = 'jsonl'. Renderer correlationId
-// matches the HTTP span's treeport.request.id in TREEPORT_TRACE=jsonl output.
-// Lifecycle events describe the latest open for a app, not a navigation ID.
-// Only retain recent opens; a failed navigation may never report completion.
 const appOpens = new Map<string, { requestId: string; startedAt: number }>()
 
 export function registerBrowserOpen(appId: string, requestId: string): void {

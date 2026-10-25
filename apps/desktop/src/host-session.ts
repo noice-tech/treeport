@@ -18,7 +18,6 @@ import { DesktopRuntime } from './desktop-runtime'
 import { loadRenderer } from './renderer-load'
 import { isLoopbackUrl } from './renderer-url'
 
-// A host owns its document, guests and asynchronous work, even while hidden.
 export class HostSession {
   readonly view: WebContentsView
   readonly runtime: DesktopRuntime
@@ -53,8 +52,6 @@ export class HostSession {
     options.window.contentView.addChildView(this.view)
     const renderer = this.view.webContents
 
-    // Browser storage and permission handlers must never be rebound to a
-    // different host when another session is installed or removed.
     const storageKey = createHash('sha256')
       .update(`${computer.id}|${computer.origin}`)
       .digest('hex')
@@ -84,8 +81,6 @@ export class HostSession {
         })
       )
     )
-    // Provisional navigations can be cancelled by the origin policy. Keep the
-    // current document usable until a navigation commits or actually fails.
     renderer.on('did-navigate', (_event, url, status) => {
       this.documentAvailable = status < 400 && this.ownsUrl(url)
 
@@ -163,9 +158,6 @@ export class HostSession {
     this.browser.suspendPresentation()
   }
 
-  // Only first visits, explicit deep links, failed navigations and crashes load
-  // documents. Network/WebSocket loss in a live workspace is recovered by its
-  // own frontend, preserving terminal scroll and showing reconnecting feedback.
   connect(url?: string): void {
     if (this.disposed || this.runtime.isClosed) {
       return
@@ -251,7 +243,6 @@ export class HostSession {
   }
 
   dispose(): Effect.Effect<void> {
-    // Revoke authority immediately, before asynchronous guest/bridge shutdown.
     this.disposed = true
     this.generation++
     this.deactivate()
@@ -261,8 +252,6 @@ export class HostSession {
   }
 }
 
-// The native window owns the visited hosts and the foreground pointer. There
-// is no cache/eviction policy: unvisited hosts have no renderer or retry loop.
 export class HostSessions {
   readonly visited = new Map<string, HostSession>()
   active: HostSession | null = null

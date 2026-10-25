@@ -66,9 +66,6 @@ pub async fn serve(listener: UnixListener, token: String, owner: Handle) -> Resu
                         let message = error.to_string();
                         if listener_error.as_ref() != Some(&message) { crate::diagnostics::report(format!("Session listener failed: {message}; PTY capture remains alive")); }
                         listener_error = Some(message);
-                        // Descriptor exhaustion can be transient. Never destroy
-                        // the PTY because control admission failed; back off
-                        // only after an error, not by polling while idle.
                         tokio::time::sleep(Duration::from_millis(250)).await;
                         continue;
                     }
@@ -111,8 +108,6 @@ async fn finish_close(
         Ok::<(), anyhow::Error>(())
     })
     .await;
-    // Verified cleanup has already finished. A lost acknowledgement cannot
-    // strand an undiscoverable owner after its journal/socket were removed.
     owner.shutdown.send_replace(true);
     sent.context("Timed out acknowledging session close")?
 }
@@ -175,9 +170,6 @@ async fn connection(
     if matches!(first.command, Command::Inspect { .. }) {
         let status = owner.status.borrow().clone();
         if let Err(error) = response(&mut writer, first.id, Some(status), None).await {
-            // A bounded request ID can still make its larger status envelope
-            // exceed the reply limit. Report a small v1 fault, without acquiring
-            // a lease or changing the attached engine/owner's state.
             let _ = tokio::time::timeout(
                 Duration::from_secs(1),
                 frame(
@@ -256,8 +248,6 @@ async fn connection(
     };
     drop(work);
     if let Some(Err(error)) = outcome {
-        // A protocol/storage/replay failure emits a v1 fault before detaching,
-        // but a dead or backpressured socket cannot strand the owner here.
         let _ = tokio::time::timeout(
             Duration::from_secs(1),
             frame(
@@ -286,8 +276,6 @@ fn records(mut snapshot: Snapshot) -> Records {
     receiver
 }
 
-// Read/control, storage notifications, and live replay compete at record
-// boundaries. Never hide faults or query replies behind an entire snapshot.
 async fn attached(
     mut reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: &mut OwnedWriteHalf,
@@ -330,10 +318,6 @@ async fn attached(
         } else {
             status_events.borrow().sequence
         };
-        // Cleanup can remove checkpoint paths and end capture. Once attached
-        // close is accepted, only its result may finish this transaction (or a
-        // newer authenticated close may replace the lease). Replay/status
-        // errors must not steal the acknowledgement after successful cleanup.
         let closing = operation_reply
             .as_ref()
             .is_some_and(|(_, _, terminate)| *terminate);

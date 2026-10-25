@@ -102,7 +102,7 @@ export function WorkspaceWindowTitle({
 
       if (isWorking && !reducedMotion.matches) {
         let frame = 0
-        // Swap raster frames: SVG favicon animations are not reliably supported.
+        // EXTERNAL: Swap raster frames: SVG favicon animations are not reliably supported.
         timer = window.setInterval(() => {
           favicon.href = frames[frame % frames.length]!
           frame += 1

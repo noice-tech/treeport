@@ -1,6 +1,4 @@
 /* eslint-disable anti-slop/no-runtime-typeof -- This dependency-free worker validates external push and notification data at the browser I/O boundary. */
-// Notification-only worker: no caching of authenticated pages, API responses,
-// or terminal output, and no interception of Treeport's live network traffic.
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting())
 })
@@ -14,12 +12,10 @@ self.addEventListener('push', (event) => {
 
   try {
     payload = event.data?.json() ?? {}
-  } catch {
-    // A malformed delivery still needs a visible notification on iOS.
-  }
+  } catch {}
 
-  // Always display received pushes: iOS may revoke subscriptions when the
-  // worker silently consumes a push. Focused BELs are suppressed by the daemon.
+  // EXTERNAL: Always display received pushes: iOS may revoke subscriptions when the
+  // worker silently consumes a push.
   event.waitUntil(
     self.registration.showNotification(
       typeof payload.title === 'string' ? payload.title : 'Treeport',
@@ -45,18 +41,17 @@ self.addEventListener('notificationclick', (event) => {
       let target = new URL('/', self.location.origin)
       const requested = event.notification.data?.url
 
-      if (typeof requested === 'string') {
-        try {
-          const candidate = new URL(requested, self.location.origin)
+      if (
+        typeof requested === 'string' &&
+        URL.canParse(requested, self.location.origin)
+      ) {
+        const candidate = new URL(requested, self.location.origin)
 
-          if (
-            candidate.origin === self.location.origin &&
-            candidate.pathname.startsWith('/projects/')
-          ) {
-            target = candidate
-          }
-        } catch {
-          // Invalid notification targets fall back to the workspace root.
+        if (
+          candidate.origin === self.location.origin &&
+          candidate.pathname.startsWith('/projects/')
+        ) {
+          target = candidate
         }
       }
 
@@ -71,7 +66,6 @@ self.addEventListener('notificationclick', (event) => {
       )
 
       for (const client of clients) {
-        // Do not replace auxiliary app pages on the same origin.
         const pathname = new URL(client.url).pathname
 
         if (pathname !== '/' && !pathname.startsWith('/projects/')) {
@@ -91,9 +85,7 @@ self.addEventListener('notificationclick', (event) => {
           await navigated.focus()
 
           return
-        } catch {
-          // A client can close between enumeration and navigation.
-        }
+        } catch {}
       }
 
       await self.clients.openWindow(target.href)

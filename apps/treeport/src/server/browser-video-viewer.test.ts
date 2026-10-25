@@ -51,7 +51,6 @@ it.each(['answer', 'failure'] as const)(
       pending.reject(new Error('stale-failure'))
     }
 
-    // Even after negotiation settles, slow peer cleanup still gates readiness.
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(send.mock.calls).toEqual([[{ type: 'videoReady' }]])
     cleanup.resolve()

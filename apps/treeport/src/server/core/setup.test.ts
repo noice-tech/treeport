@@ -434,7 +434,6 @@ describe('worktree setup', () => {
     await expect(
       Effect.runPromise(resolveWorktreeCleanupTasks(input))
     ).resolves.toEqual({ tasks: [], definitionHash: null })
-    // Even invalid main settings must not affect target-tree resolution.
     await fs.writeFile(path.join(main, '.treeport', 'settings.json'), 'null')
     await expect(
       Effect.runPromise(resolveWorktreeSetupTasks(input))

@@ -7,9 +7,6 @@ interface BrowserVideoSource {
   close(): Promise<void>
 }
 
-// Hosted Chromium uses WebCodecs; only Electron-owned tabs negotiate WebRTC.
-// The session scheduler supplies a source after capture is ready; native ICE
-// negotiation and retiring viewers never occupy that scheduler.
 export class BrowserVideoViewer {
   #source: { readonly runtime: BrowserVideoSource } | null = null
   #advertised = false
@@ -19,7 +16,6 @@ export class BrowserVideoViewer {
 
   constructor(
     private readonly send: (message: BrowserServerMessage) => boolean,
-    // Closes the attachment's media socket, which the browser relay owns.
     private readonly release: () => void = () => undefined
   ) {}
 
@@ -28,7 +24,6 @@ export class BrowserVideoViewer {
       return
     }
 
-    // Each activation gets its own lease, even when the backend is reused.
     this.#source = { runtime: source }
     this.prepare()
   }
@@ -100,8 +95,6 @@ export class BrowserVideoViewer {
       return
     }
 
-    // Revoke immediately, then drain any in-flight negotiation before advertising
-    // another source. A late answer/cleanup can never close a successor's peer.
     const close = source.runtime.close().catch(() => undefined)
     const negotiation = this.#negotiation
 

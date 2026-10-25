@@ -12,12 +12,9 @@ type RequestPrincipal = ViewerIdentity
 
 export interface AuthenticatedViewer {
   account: ViewerIdentity
-  // Verified ingress address, not a client-supplied device claim. Null means
-  // unavailable; it must never imply that two viewers use the same device.
   deviceId: string | null
 }
 
-// Only the Node ingress can attach an authenticated identity to a request.
 export const authenticatedViewers = new WeakMap<
   IncomingMessage,
   AuthenticatedViewer
@@ -166,7 +163,7 @@ function effectiveOriginFor(
     return `http://${incomingHost.host}`
   }
 
-  // Tailscale Serve overwrites these values from its inbound HTTPS request.
+  // EXTERNAL: Tailscale Serve overwrites these values from its inbound HTTPS request.
   const forwardedHostHeader = singleHeader(request, 'x-forwarded-host')
   const forwardedProtocolHeader = singleHeader(request, 'x-forwarded-proto')
 
@@ -191,8 +188,6 @@ function effectiveOriginFor(
   return `https://${forwardedHost.host}`
 }
 
-// A sandboxed app has an opaque browser origin. Allow this origin only for
-// read-only app resources and the dedicated development HMR upgrade.
 function allowsOpaqueWebAppOrigin(
   request: IncomingMessage,
   socketUpgrade: boolean
@@ -231,14 +226,13 @@ function originIsAllowed(
   if (originHeader.present) {
     const value = originHeader.value ?? ''
 
-    if (devtoolsUpgrade && value === 'devtools://devtools') {
-      // Only Electron's bundled DevTools frontend may use this cross-origin
-      // connection; the page target is checked by the bridge separately.
-    } else if (value === 'null') {
+    const devtoolsOrigin = devtoolsUpgrade && value === 'devtools://devtools'
+
+    if (value === 'null') {
       if (!allowsOpaqueWebAppOrigin(request, socketUpgrade)) {
         return false
       }
-    } else {
+    } else if (!devtoolsOrigin) {
       if (!URL.canParse(value)) {
         return false
       }
@@ -392,9 +386,7 @@ export function authorizeRequest(
     return denied(403, 'INVALID_ORIGIN', 'The request origin is not allowed.')
   }
 
-  // Serve overwrites X-Forwarded-For with the single source IP. Never accept
-  // a proxy chain, duplicate headers, or a device ID supplied by the renderer.
-  // Local ingress is on this host; it does not identify an OS user.
+  // EXTERNAL: Serve overwrites X-Forwarded-For with the single source IP.
   const forwardedFor = singleHeader(request, 'x-forwarded-for')
   const address = forwardedFor.valid ? forwardedFor.value : null
 

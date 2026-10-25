@@ -79,7 +79,6 @@ const noBrowserTestState = {
           return
         }
 
-        // Member access is reported above, including aliases such as browser.localStorage.
         if (
           node.parent.type === 'MemberExpression' &&
           node.parent.property === node &&
@@ -120,6 +119,50 @@ const noBrowserTestState = {
   }
 }
 
+const allowedComment =
+  /^\s*(?:eslint-disable|eslint-enable|oxlint-disable|oxlint-enable|@ts-expect-error|@ts-ignore|@ts-nocheck|prettier-ignore|oxfmt-ignore|@vite-ignore\b|\/\s*<reference\s|EXTERNAL:)|\bSAFETY\s*:|\bCopyright\b|SPDX-License-Identifier|@license\b/
+
+const noComments = {
+  meta: {
+    type: 'suggestion',
+    docs: {
+      description:
+        'Ban comments except tool directives, doc comments, SAFETY and EXTERNAL notes, and license headers'
+    },
+    messages: {
+      noComment:
+        'Delete this comment. Make the code say it through names, types, or structure. Only behavior forced by a dependency, platform, or protocol may stay, as an `EXTERNAL:` note.'
+    },
+    schema: []
+  },
+  create(context) {
+    return {
+      Program() {
+        let allowedLineEnd = -1
+
+        for (const comment of context.sourceCode.getAllComments()) {
+          const continuation =
+            comment.type === 'Line' &&
+            comment.loc.start.line === allowedLineEnd + 1
+
+          const allowed =
+            comment.type === 'Shebang' ||
+            (comment.type === 'Block' && comment.value.startsWith('*')) ||
+            continuation ||
+            allowedComment.test(comment.value)
+
+          allowedLineEnd =
+            allowed && comment.type === 'Line' ? comment.loc.end.line : -1
+
+          if (!allowed) {
+            context.report({ messageId: 'noComment', loc: comment.loc })
+          }
+        }
+      }
+    }
+  }
+}
+
 export default {
   meta: {
     name: 'treeport'
@@ -128,6 +171,7 @@ export default {
     'no-record-string-unknown': noRecordStringUnknown,
     'module-boundaries': moduleBoundaries,
     'browser-boundaries': browserBoundaries,
-    'no-browser-test-state': noBrowserTestState
+    'no-browser-test-state': noBrowserTestState,
+    'no-comments': noComments
   }
 }

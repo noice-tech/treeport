@@ -7,7 +7,7 @@ export async function browserCursor(
 ) {
   let frame: Frame | null = page.mainFrame()
 
-  // Hit testing uses layout coordinates, unlike the streamed visual viewport.
+  // EXTERNAL: Hit testing uses layout coordinates, unlike the streamed visual viewport.
   const rootPoint = await page.evaluate(({ x, y }) => {
     const viewport = window.visualViewport!
 
@@ -20,9 +20,6 @@ export async function browserCursor(
   let position = rootPoint
 
   while (frame) {
-    // Most hits are in this frame. Resolve them in one renderer round trip,
-    // rather than creating, inspecting and releasing a remote element handle
-    // after every pointer/scroll event. Only iframe traversal needs a handle.
     const style = await frame.evaluate(({ x, y }) => {
       let element = document.elementFromPoint(x, y)
 
@@ -48,12 +45,9 @@ export async function browserCursor(
       }
 
       const computed = getComputedStyle(element)
-      // Keep the native fallback of custom image cursors, not their URLs.
       let cursor = computed.cursor.split(',').at(-1)!.trim()
 
       if (cursor === 'auto') {
-        // A canvas cannot resolve `auto` from the remote page's text layout.
-        // Editable regions also show an I-beam over their empty space.
         const textCursor = computed.writingMode.startsWith('horizontal')
           ? 'text'
           : 'vertical-text'
@@ -80,7 +74,7 @@ export async function browserCursor(
             node.parentElement &&
             getComputedStyle(node.parentElement).userSelect !== 'none'
           ) {
-            // Caret hit testing snaps to nearby text even in padding. Only
+            // EXTERNAL: Caret hit testing snaps to nearby text even in padding. Only
             // forward an I-beam when the pointer is on an actual text run.
             const range = document.createRange()
             range.selectNodeContents(node)
@@ -144,7 +138,7 @@ export async function browserCursor(
       return decodeUnknownOrNull(browserCursorSchema, style.cursor) ?? 'default'
     }
 
-    // Playwright bounds are in top-level viewport coordinates, including scale.
+    // EXTERNAL: Playwright bounds are in top-level viewport coordinates, including scale.
     position = {
       x:
         ((rootPoint.x - bounds.x) * style.width) / bounds.width - style.borderX,

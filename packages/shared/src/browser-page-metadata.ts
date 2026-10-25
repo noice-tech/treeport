@@ -1,4 +1,4 @@
-// This function runs inside Chromium through Playwright or Electron. Keep it
+// EXTERNAL: This function runs inside Chromium through Playwright or Electron. Keep it
 // self-contained so it can be serialized without importing code into the page.
 export function readBrowserPageMetadata() {
   let faviconUrl: string | null = null
@@ -7,7 +7,6 @@ export function readBrowserPageMetadata() {
   for (const link of document.querySelectorAll<HTMLLinkElement>(
     'link[rel~="icon"]'
   )) {
-    // Tab chrome is always dark, even when the page itself uses a light theme.
     const media = link.media.replace(
       /\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)/gi,
       (_query, scheme: string) =>

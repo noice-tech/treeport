@@ -139,7 +139,7 @@ async function fixture(
     })
   )
 
-  // SAFETY: The test fixture provides the asserted contract used here.
+  // SAFETY: The socket fixture provides every service required by these effects.
   const service = testAccess<TreeportService>({
     events,
     listWebApps,
@@ -167,7 +167,6 @@ async function fixture(
   const child = new FakePty()
   ptys.push(child)
 
-  // SAFETY: The test fixture provides the terminal-host attachment contract.
   const terminalHost = testAccess<TerminalAttachmentBackend>({
     attach: vi.fn(() =>
       Effect.succeed({
@@ -231,7 +230,6 @@ async function fixture(
     currentMetadata
   ])
 
-  // SAFETY: The test fixture provides the asserted contract used here.
   const metadata = testAccess<TerminalMetadataManager>({
     initialize: vi.fn(() => Effect.void),
     snapshot: metadataSnapshot,
@@ -288,7 +286,7 @@ async function fixture(
     }
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  // SAFETY: The test fixture provides the asserted contract used here.
+  // SAFETY: The server is listening on a TCP port.
   const address = server.address() as AddressInfo
 
   const value: NetworkFixture = {
@@ -518,7 +516,6 @@ describe('Effect WebSocket real network', () => {
 
     const ready = await new Promise<BrowserServerMessage>((resolve) =>
       browser.once('message', (message) => {
-        // Control and signaling remain authenticated on the same connection.
         browser.emit('command', { type: 'setVisible', visible: true })
         resolve(message)
       })
@@ -695,7 +692,6 @@ describe('Effect WebSocket real network', () => {
     browser.on('disconnect', disconnected)
     const signal = { type: 'videoReady' as const }
 
-    // Only the server uses ws here; clients use the native WebSocket.
     const send = vi
       .spyOn(WebSocket.prototype, 'send')
       .mockImplementation(() => {
@@ -952,7 +948,7 @@ describe('Effect WebSocket real network', () => {
     socket.manager.reconnection(false)
     await new Promise<void>((resolve) => socket.once('ready', () => resolve()))
 
-    // SAFETY: The test fixture provides the asserted contract used here.
+    // SAFETY: The test deliberately sends an invalid payload.
     socket.emit('input', undefined as never)
     await vi.waitFor(() => expect(socket.connected).toBe(false))
     expect(value.ptys[0]!.kills).toBe(0)

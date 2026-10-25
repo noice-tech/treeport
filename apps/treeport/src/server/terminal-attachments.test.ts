@@ -256,7 +256,6 @@ function fixture() {
     attention: null
   }
 
-  // SAFETY: This fixture supplies the metadata methods exercised by attachments.
   const metadata = testAccess<TerminalMetadataManager>({
     trackTerminal: vi.fn(() => Effect.void),
     subscribe: vi.fn(() => () => undefined),

@@ -22,8 +22,6 @@
   --animate-tooltip-in: fade-in 125ms var(--ease-out);
   --animate-badge-in: badge-in 200ms var(--ease-out);
 
-  /* Dark is the default; [data-theme='light'] swaps these neutrals. Desktop
-     window chrome keeps hex copies of each mode's zinc-200/zinc-900. */
   --color-zinc-50: oklch(98.4% 0.003 250);
   --color-zinc-100: oklch(96.6% 0.006 250);
   --color-zinc-200: oklch(91.8% 0.01 252);
@@ -36,8 +34,6 @@
   --color-zinc-900: oklch(21.2% 0.016 261);
   --color-zinc-950: oklch(15.2% 0.013 262);
 
-  /* The accent scale keeps the chosen color's hue and relative chroma at fixed
-     lightness, so any choice keeps the contrast the components expect. */
   --color-accent-50: oklch(from var(--accent-color) 97.6% calc(c * 0.17) h);
   --color-accent-100: oklch(from var(--accent-color) 94.8% calc(c * 0.35) h);
   --color-accent-200: oklch(from var(--accent-color) 90.6% calc(c * 0.61) h);
@@ -50,16 +46,12 @@
   --color-accent-900: oklch(from var(--accent-color) 37% calc(c * 0.78) h);
   --color-accent-950: oklch(from var(--accent-color) 25% calc(c * 0.52) h);
 
-  /* Solid accent fills stay mid-tone in both modes so near-white labels on
-     them stay readable for any accent choice. */
   --color-accent-solid: oklch(from var(--accent-color) 58% calc(c * 1.2) h);
   --color-accent-solid-hover: oklch(
     from var(--accent-color) 52% calc(c * 1.2) h
   );
   --color-on-accent: oklch(99% 0 0);
 
-  /* Terminal statuses sit at the accent's lightness so they carry the same
-     weight as the working state. */
   --color-status-done: oklch(81% 0.13 162);
   --color-status-error: oklch(76% 0.13 18);
   --color-status-attention: oklch(85% 0.13 85);
@@ -121,8 +113,6 @@
   }
 }
 
-/* The components are written for dark surfaces, so light mode inverts the
-   neutral, accent, and status scales, and flips white overlays to dark. */
 :root[data-theme='light'] {
   color-scheme: light;
 
@@ -155,10 +145,8 @@
   --color-status-attention: oklch(62% 0.15 65);
 
   --color-white: oklch(20% 0.02 260);
-  /* Scrims are written as black/70; translucency keeps them light here. */
   --color-black: oklch(30% 0.02 260 / 55%);
 
-  /* Tailwind's status and project colors, with 50-950 reversed. */
   --color-rose-50: oklch(27.1% 0.105 12.094);
   --color-rose-100: oklch(41% 0.159 10.272);
   --color-rose-200: oklch(45.5% 0.188 13.697);
@@ -260,7 +248,6 @@
 }
 
 :root {
-  /* Tide; the app sets the chosen accent inline on the root element. */
   --accent-color: #6ccefe;
   color-scheme: dark;
   font-family: var(--font-sans);
@@ -283,19 +270,16 @@
 
 html {
   background: var(--color-zinc-950);
-  /* Controls provide press feedback instead of the browser's tap flash. */
   -webkit-tap-highlight-color: transparent;
   /* Keep text sizing stable when rotating a phone. */
   -webkit-text-size-adjust: 100%;
 }
 
-/* This is an app with inner scrollers, not a pull-to-refresh document. */
 html,
 body {
   overscroll-behavior: none;
 }
 
-/* Leave content selectable and pinch zoom available; only controls opt out. */
 button,
 a,
 [role='button'],
@@ -305,7 +289,7 @@ a,
 }
 
 /* Apply to control labels explicitly as well: selection inheritance differs
-   across browsers. Do not include editable fields or terminal output. */
+   across browsers. */
 button,
 [role='button'],
 [role='tab'],
@@ -317,7 +301,6 @@ button,
   -webkit-touch-callout: none;
 }
 
-/* Immediate feedback on finger-down, including controls without hover styles. */
 @media (pointer: coarse) {
   :is(button, a, [role='button'], [role='tab'], [role='menuitem']) {
     transition: opacity 100ms ease-out;
@@ -351,7 +334,6 @@ code {
   height: max(100%, 3rem);
   transform: translate(-50%, -50%);
 
-  /* Dense mobile rows must not have hit areas that overlap adjacent actions. */
   @media (max-width: 700px) {
     width: max(100%, 2rem);
     height: max(100%, 2rem);

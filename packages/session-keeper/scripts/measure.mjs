@@ -1,6 +1,3 @@
-// Opt-in qualification harness; cleanup authenticates only its own fixtures.
-// Build the CLI entries and @treeport/session-keeper first.
-// Usage: pnpm --filter @treeport/session-keeper measure /absolute/path/to/results
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
@@ -71,7 +68,6 @@ assert.ok(
     orphanProbe === 'same-session'
 )
 
-// No emulator here. The fake engine supplies query replies, as the TS engine does.
 const workload = `
 import os,sys,time,tty
 sys.stdout.reconfigure(line_buffering=True)
@@ -185,9 +181,6 @@ class Wire {
           this.pending.delete(frame.id)
           pending?.resolve(frame)
         } else if (frame.type === 'fault' && independentControl) {
-          // This independent peer has exactly one control and no capture.
-          // Attached faults can be asynchronous quota notifications, unrelated
-          // to an outstanding write; never reject those as control responses.
           for (const pending of this.pending.values()) {
             pending.reject(new Error(frame.message))
           }
@@ -275,9 +268,6 @@ async function wire(
 async function fixture(limit = 512 * 1024 * 1024) {
   const kind = 'rust'
   const directory = await fs.mkdtemp(path.join(fixtureRoot, `${kind}-`))
-  // Real terminal HOME/cwd are outside keeper storage. Platform runtimes may
-  // create caches (macOS Library, for example); these are not journal payload
-  // and must never grant close authority to traverse arbitrary subdirectories.
   const home = await fs.mkdtemp(path.join(fixtureRoot, `${kind}-home-`))
 
   const socketPath = path.join(
@@ -383,8 +373,6 @@ async function memory(pid, label) {
 
   await fs.writeFile(path.join(results, `${label}-${pid}.vmmap`), map)
   await fs.writeFile(path.join(results, `${label}-${pid}.footprint`), footprint)
-  // PRV resident + COW dirty resident, fractional pages discarded: lower bound, NOT macOS USS.
-  // Clean private COW pages are omitted; do not label footprint or dirty as USS.
   let privateResidentLowerBoundBytes = 0
   let privateRegionCount = 0
   const pageSize = Number(/VM page size:\s*(\d+) bytes/.exec(map)?.[1])
@@ -463,8 +451,6 @@ async function stop(fixture) {
     return
   }
 
-  // Authentication authorizes cleanup, never a cached PID or unchecked group.
-  // If control fails, retain evidence rather than signaling a reused PID.
   const inspected = await wire(fixture, fixture.token, 'inspect')
   inspected.value.close()
   assert.equal(inspected.response.error, null)
@@ -622,9 +608,6 @@ try {
     const before = value.engine.output
     await value.engine.write('d')
     value.engine.close()
-    // Timer scheduling is not an offline-capture fence. Establish the marker in
-    // committed TS-readable storage BEFORE attaching, even when platform probes
-    // or machine load delay the command's background thread beyond 700ms.
     await waitFor(async () => {
       let tail = ''
 
@@ -637,7 +620,6 @@ try {
       return tail === 'DETACHED_OUTPUT\n'
     })
     const afterDetach = `${before}DETACHED_OUTPUT\n`
-    // Capture keeps running without an engine; reattach after orphaned bootstrap exit.
     const replayStarted = performance.now()
     const attached = await wire(value, value.token, 'attach', {}, true)
     const replayElapsedSeconds = (performance.now() - replayStarted) / 1000
@@ -707,7 +689,6 @@ try {
         await fs.readFile(path.join(value.directory, 'manifest.json'), 'utf8')
       )
     )
-    // Pausing the engine must not stop journal capture or status requests.
     await value.engine.ok('pause', { paused: true })
     await value.engine.write('z')
     await delay(300)
@@ -848,9 +829,6 @@ try {
     }
   }
 
-  // Optional read-only accounting of the current Pi and its actual launcher.
-  // A launcher may be a shell rather than Node; retain its observed command.
-  // These PIDs are NEVER added to fixtures or signalled by cleanup.
   for (const [label, name] of [
     ['pi-existing-session', 'TREEPORT_KEEPER_PI_PID'],
     ['command-launcher-existing-session', 'TREEPORT_KEEPER_LAUNCHER_PID']

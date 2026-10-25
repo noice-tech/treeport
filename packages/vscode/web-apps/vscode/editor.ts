@@ -18,7 +18,6 @@ function openEditor() {
         throw new Error(service.error ?? 'Service is not ready')
       }
 
-      // The app owns navigation; starting a service never replaces its UI.
       window.location.replace(service.url)
     })
     .catch(async (error) => {

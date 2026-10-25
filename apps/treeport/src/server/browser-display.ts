@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-// Headless Chromium paces every page at a fixed 60 Hz, and input crosses
+// EXTERNAL: Headless Chromium paces every page at a fixed 60 Hz, and input crosses
 // several frame-aligned stages before it reaches pixels. A private X server
 // with a dummy output instead paces pages at the viewer's refresh rate. The
 // display has no window manager; pages are still sized by device-metrics
@@ -27,8 +27,7 @@ const MODE_TIMINGS = [
 
 const MODE_PIXELS = 3888 * 2166
 
-// The dummy driver otherwise rejects pixel clocks above 300 MHz. Rates go up
-// to 240 Hz (see setRefreshRate).
+// EXTERNAL: The dummy driver otherwise rejects pixel clocks above 300 MHz.
 const XORG_CONFIG = (input: string) => `Section "ServerFlags"
   Option "AutoAddDevices" "false"
   Option "AutoAddGPU" "false"
@@ -73,14 +72,11 @@ export interface BrowserDisplay {
   name: string
   width: number
   height: number
-  // The inputtest socket, or null without the driver (CDP input then).
   input: string | null
   setRefreshRate(hz: number): void
   close(): void
 }
 
-// Returns null when Xorg or its dummy driver is unavailable; callers keep
-// using headless Chromium then.
 export async function startBrowserDisplay(
   directory: string
 ): Promise<BrowserDisplay | null> {
@@ -88,8 +84,7 @@ export async function startBrowserDisplay(
     return null
   }
 
-  // Socket paths are limited to 107 bytes, too short for profile paths. The
-  // private directory keeps other users from injecting input.
+  // EXTERNAL: Socket paths are limited to 107 bytes, too short for profile paths.
   const inputDirectory = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-input-')
   )
@@ -103,7 +98,7 @@ export async function startBrowserDisplay(
   await fs.writeFile(config, XORG_CONFIG(input), { mode: 0o600 })
 
   for (let display = 90; display < 130; display++) {
-    // A live server owns its lock; Xorg itself removes stale locks.
+    // EXTERNAL: A live server owns its lock; Xorg itself removes stale locks.
     if (
       await fs.access(`/tmp/.X${display}-lock`).then(
         () => true,
@@ -113,7 +108,7 @@ export async function startBrowserDisplay(
       continue
     }
 
-    // -terminate exits once the last client (Chromium) disconnects, so a
+    // EXTERNAL: -terminate exits once the last client (Chromium) disconnects, so a
     // killed daemon cannot leak the server. -displayfd cannot be used: it
     // requires a filesystem socket, and WSL mounts /tmp/.X11-unix read-only.
     const server = spawn(
@@ -157,7 +152,7 @@ export async function startBrowserDisplay(
       running && (listening < 0 ? attempt < 100 : attempt - listening <= 20);
       attempt++
     ) {
-      // Probe the listening socket without connecting: the first client to
+      // EXTERNAL: Probe the listening socket without connecting: the first client to
       // disconnect would otherwise terminate the server.
       const sockets = (await fs.readFile('/proc/net/unix', 'utf8')).split('\n')
       const inputReady = sockets.some((line) => line.endsWith(` ${input}`))
@@ -166,7 +161,7 @@ export async function startBrowserDisplay(
         listening = listening < 0 ? attempt : listening
       }
 
-      // Input devices start just after the display socket opens. Without the
+      // EXTERNAL: Input devices start just after the display socket opens. Without the
       // inputtest driver, Xorg runs without the device.
       if (listening >= 0 && (inputReady || attempt - listening >= 20)) {
         const name = `:${display}`
@@ -194,8 +189,6 @@ export async function startBrowserDisplay(
           height: Number(MODE_TIMINGS[4]),
           input: inputReady ? input : null,
           setRefreshRate: (hz) => {
-            // Above 120 Hz, half the rate keeps every frame on screen for
-            // the same number of refreshes.
             const rate = Math.max(30, hz > 121 ? hz / 2 : hz)
 
             if (Math.abs(rate - requested) < 0.05) {
@@ -209,7 +202,7 @@ export async function startBrowserDisplay(
                   return
                 }
 
-                // Chromium rereads the refresh rate only when the output's
+                // EXTERNAL: Chromium rereads the refresh rate only when the output's
                 // mode list changes, so every switch adds a fresh mode.
                 const next = `treeport-${Math.round(rate)}-${++modes}`
                 await xrandr(
@@ -243,8 +236,6 @@ export async function startBrowserDisplay(
     server.kill()
     await exited
 
-    // Only a display claimed by another server is worth another attempt.
-    // A missing binary, driver or permission fails the same way everywhere.
     if (!errors.includes('already active')) {
       break
     }

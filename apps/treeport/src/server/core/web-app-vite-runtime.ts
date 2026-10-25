@@ -137,7 +137,7 @@ export class WebAppViteRuntime {
     }
 
     if (options.server) {
-      // Vite prepends base to the HMR path itself.
+      // EXTERNAL: Vite prepends base to the HMR path itself.
       server.hmr = { server: options.server, path: '/@vite-hmr' }
     }
 
@@ -165,9 +165,7 @@ export class WebAppViteRuntime {
           name: 'treeport-app-dev-maps',
           apply: 'serve',
           enforce: 'post',
-          // Inline maps dwarf executable dependency code on every app mount.
-          // An empty map resets the transform map chain without changing code.
-          // Production build maps are unaffected.
+          // EXTERNAL: An empty map resets the transform map chain without changing code.
           transform(code) {
             return { code, map: { mappings: '' } }
           }
@@ -354,7 +352,7 @@ export class WebAppViteRuntime {
             `${JSON.stringify({ hash, compilerAbi: COMPILER_ABI })}\n`
           )
           await fs.rename(temporary, directory).catch(async (error) => {
-            // SAFETY: The surrounding boundary contract establishes this asserted value.
+            // SAFETY: Node filesystem promise rejections expose the filesystem error code.
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
               throw error
             }
@@ -684,7 +682,7 @@ export class WebAppViteRuntime {
     })
 
     response.setHeader('access-control-allow-origin', '*')
-    // Let Vite select no-cache for source files and immutable caching for
+    // EXTERNAL: Let Vite select no-cache for source files and immutable caching for
     // versioned optimized dependencies; don't override both with no-store.
     response.setHeader('x-content-type-options', 'nosniff')
     response.setHeader(
@@ -762,7 +760,7 @@ export class WebAppViteRuntime {
         Promise.all(
           servers.map(async ({ server }) => {
             await server.waitForRequestsIdle()
-            // Vite's dependency scan can create an optimizer after close() snapshots
+            // EXTERNAL: Vite's dependency scan can create an optimizer after close() snapshots
             // the work to cancel. Let scans settle before closing their optimizers.
             await Promise.all(
               Object.values(server.environments).map(

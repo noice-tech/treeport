@@ -1,5 +1,3 @@
-// Host-level primitives shared by Chromium and Electron, independent of the
-// daemon's workspace protocols. Do not re-export the application barrel here.
 import * as Schema from 'effect/Schema'
 
 export { decodeUnknownOrNull } from './schema.js'
@@ -20,8 +18,6 @@ export const browserAppIdSchema = Schema.String.pipe(
   Schema.maxLength(128)
 )
 
-// Observed addresses are metadata, not navigation input. Never shorten a URL:
-// doing so can change its destination. Transport payload limits still apply.
 export const browserObservedUrlSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.filter(
@@ -39,7 +35,6 @@ export const browserObservedUrlSchema = Schema.String.pipe(
             /^chrome:\/\//i.test(value) &&
             url.hostname !== '' &&
             url.port === '') ||
-          // File paths belong to the browser runtime. Do not accept UNC hosts.
           (url.protocol === 'file:' && url.hostname === '')) &&
         url.username === '' &&
         url.password === ''

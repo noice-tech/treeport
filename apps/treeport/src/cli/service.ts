@@ -763,7 +763,6 @@ function definitionForRecord(record: ServiceRecord): string {
           (record.supervisorVersion ? '-supervised' : ''),
         username: record.username,
         group: record.group,
-        // The system definition must not capture a release or shell environment.
         environment: record.supervisorVersion
           ? { HOME: record.home }
           : record.environment,
@@ -903,7 +902,6 @@ async function saveRecord(record: ServiceRecord): Promise<void> {
   await assertServiceDirectory(locations.directory, record.uid)
   await writeJson(locations.recordPath, {
     ...record,
-    // Do not migrate unrelated login/systemd records during routine updates.
     supervisorVersion: record.supervisorVersion ?? undefined,
     supervisorRequestId: record.supervisorRequestId ?? undefined
   })
@@ -1078,8 +1076,6 @@ export function serviceHealthState(input: {
     return 'healthy'
   }
 
-  // A persistent supervisor remains active even when its daemon fails. Do not
-  // mask that failure as indefinitely "starting" based on launchctl alone.
   if (input.installed && input.managerActive && !input.supervised) {
     return 'starting'
   }
@@ -1974,8 +1970,6 @@ export async function serviceStop(): Promise<ServiceActionResult> {
     )
   }
 
-  // Even an already stopped daemon needs the supervisor acknowledgement: a
-  // concurrent spawn must finish before an updater can switch the active release.
   if (current.state === 'stopped' && !record.supervisorVersion) {
     return { status: current, changed: false, administratorCommand: null }
   }
@@ -2030,7 +2024,6 @@ export async function serviceStop(): Promise<ServiceActionResult> {
         }
       }
 
-      // Uses the existing PID/instance ownership checks, never a process group.
       await daemonDown()
 
       return {
@@ -2347,8 +2340,6 @@ export async function serviceApply(requestPath: string): Promise<{
   const target = `system/${request.definitionName}`
 
   if (request.operation === 'enable') {
-    // Never install user-supplied XML as root. Generate the exact allowlisted
-    // definition, with launchd UserName/GroupName and no privileged log opens.
     const definition = definitionForRecord(record)
 
     if (
@@ -2396,8 +2387,6 @@ export async function serviceApply(requestPath: string): Promise<{
     await fs.rm(request.definitionPath, { force: true })
   }
 
-  // All remaining writes are in user-controlled paths. Permanently drop root
-  // first, so symlink races cannot turn bookkeeping into privileged file writes.
   process.setgroups!([])
   process.setgid!(request.gid)
   process.setuid!(request.uid)
@@ -2448,12 +2437,10 @@ export async function serviceRun(): Promise<void> {
   }
 
   if (record.supervisorVersion) {
-    // A concurrent stop wins even when this child was spawned before the intent changed.
     if (record.requestedState === 'stopped') {
       return
     }
   } else {
-    // Login/user managers still own their start intent, including after reboot.
     await writeJson(recordPath, {
       ...record,
       supervisorVersion: undefined,
@@ -2475,8 +2462,6 @@ export async function serviceRun(): Promise<void> {
     TREEPORT_INSTANCE_ID: crypto.randomUUID(),
     TREEPORT_WEB_DIST: webDist,
     TREEPORT_DAEMON_LIFECYCLE: 'service',
-    // Older installed launchd definitions may still redirect to daemon.log.
-    // Do not duplicate normal output into that same file.
     TREEPORT_DAEMON_LOG_ONLY:
       record.manager === 'launchd' &&
       path.resolve(record.logPath) ===

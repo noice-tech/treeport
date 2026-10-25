@@ -159,8 +159,6 @@ describe('worktree review diff', () => {
       expect(
         patches.every((patch) => patch.unified?.includes('+changed'))
       ).toBe(true)
-      // Six shared context commands (including the missing origin fallback),
-      // then one patch per file, instead of ten commands per file.
       expect(recorded.length).toBe(26)
       expect(peak).toBeLessThanOrEqual(4)
       expect(recorded.filter((args) => args.includes('--cached'))).toHaveLength(

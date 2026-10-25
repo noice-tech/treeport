@@ -75,8 +75,6 @@ const debugPort = z.coerce
   .max(65535)
   .parse(process.env.TREEPORT_DESKTOP_DEBUG_PORT)
 
-// Electron permission checks share the development daemon's diagnostic file,
-// without flooding Forge's inherited console output.
 process.env.TREEPORT_BROWSER_PERMISSION_LOG = path.resolve(
   fileURLToPath(new URL('../../treeport/', import.meta.url)),
   process.env.TREEPORT_DATA_DIR || '.treeport-dev/data',

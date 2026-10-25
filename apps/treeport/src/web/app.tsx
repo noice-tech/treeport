@@ -1224,8 +1224,10 @@ function WorkspaceApp() {
     trigger?: HTMLElement
   ) => {
     dialogTriggerRef.current =
-      // SAFETY: The component contract supplies the asserted browser value used here.
-      trigger ?? (document.activeElement as HTMLElement | null)
+      trigger ??
+      (document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null)
     setDialog(nextDialog)
   }
 
@@ -1322,8 +1324,6 @@ function WorkspaceApp() {
     [closeDrawerAfterNavigation, navigateToWorkspace, projects]
   )
 
-  // A tree starts a terminal when it is entered empty, not when its last
-  // terminal closes; reselecting the current empty tree starts one again.
   const autoStartedWorktreeIdRef = useRef<string | null>(null)
   const [, requestAutoStart] = useReducer((revision: number) => revision + 1, 0)
 

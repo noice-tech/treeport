@@ -1,5 +1,3 @@
-// Pixel contract with browser-stream-diagnostics.tsx. No clocks or timing
-// results cross the input channel: only this changed image completes a probe.
 const marker = document.querySelector('canvas').getContext('2d')
 let counter = 0
 

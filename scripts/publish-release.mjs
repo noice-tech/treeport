@@ -226,9 +226,6 @@ try {
   fail('Packaged cross-release qualification failed; nothing was published.')
 }
 
-// Qualifying the host CLI does not qualify a host-only native tarball. Check
-// the exact complete payload before ANY dependent package is published, and
-// let the native package's own prepack enforce the same contract again.
 try {
   run(
     'pnpm',

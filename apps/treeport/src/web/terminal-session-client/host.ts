@@ -31,9 +31,6 @@ export function makeHost(
   dependencies: Dependencies
 ) {
   return Effect.gen(function* () {
-    // A detached wrapper lays out at zero height and loses its scroll offset.
-    // wterm keeps parsing output meanwhile, so painting must pause and the
-    // offset must be restored before wterm next derives its follow-output state.
     let detachedScroll: { top: number; following: boolean } | null = null
     let wakeListenersAttached = false
     let resizeObserver: ResizeObserver | null = null
@@ -68,7 +65,7 @@ export function makeHost(
           : detachedScroll.top
         detachedScroll = null
         terminal.setRenderingPaused(false)
-        // An empty write makes wterm re-read follow-output from the restored offset.
+        // EXTERNAL: An empty write makes wterm re-read follow-output from the restored offset.
         terminal.write('')
       }
 
@@ -97,7 +94,7 @@ export function makeHost(
       const appFrame = document.querySelector<HTMLElement>('.app-frame')
 
       if (isIOS && viewport && appFrame) {
-        // WebKit leaves the layout viewport unchanged when the software keyboard
+        // EXTERNAL: WebKit leaves the layout viewport unchanged when the software keyboard
         // opens. Size and position the application against the visual viewport
         // instead of scrolling the document between the cursor and accessory row.
         let viewportFrame: number | null = null
@@ -126,7 +123,7 @@ export function makeHost(
               return
             }
 
-            // The visual viewport already excludes Safari's toolbars.
+            // EXTERNAL: The visual viewport already excludes Safari's toolbars.
             appFrame.style.setProperty(
               '--app-visual-viewport-height',
               `${viewport.height}px`

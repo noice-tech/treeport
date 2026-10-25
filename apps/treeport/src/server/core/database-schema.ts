@@ -7,6 +7,7 @@ import {
   text,
   uniqueIndex
 } from 'drizzle-orm/sqlite-core'
+import { PROJECT_COLORS } from '@treeport/shared'
 
 export const projects = sqliteTable(
   'projects',
@@ -20,7 +21,7 @@ export const projects = sqliteTable(
     mainWorktreePath: text('main_worktree_path').notNull(),
     defaultBranch: text('default_branch').notNull(),
     originUrl: text('origin_url'),
-    color: text(),
+    color: text({ enum: PROJECT_COLORS }),
     repositoryIdentity: text('repository_identity'),
     repositoryDevice: text('repository_device').notNull(),
     repositoryInode: text('repository_inode').notNull(),
@@ -70,10 +71,9 @@ export const worktrees = sqliteTable(
     locked: integer().notNull().default(0),
     lockReason: text('lock_reason'),
     prunable: integer().notNull().default(0),
-    kind: text().notNull(),
+    kind: text({ enum: ['main', 'linked', 'folder'] }).notNull(),
     managedWrapperPath: text('managed_wrapper_path'),
     title: text(),
-    // Decorations keyed by decoration key, in insertion order.
     decorations: text().notNull().default('{}'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()

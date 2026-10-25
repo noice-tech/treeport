@@ -14,7 +14,7 @@ import {
 } from './workspace-navigation'
 
 function projectGraph(): ProjectRecord[] {
-  // SAFETY: The test fixture provides the asserted contract used here.
+  // SAFETY: Navigation reads only the ids and names these partial projects define.
   return [
     {
       id: 'project-a',

@@ -42,7 +42,6 @@ export interface ProjectStoreService {
   ) => Effect.Effect<OperationRecord, DomainError<unknown>>
 }
 
-/** Reads durable project, worktree, and operation state for domain workflows. */
 export class ProjectStore extends Context.Tag('treeport/ProjectStore')<
   ProjectStore,
   ProjectStoreService

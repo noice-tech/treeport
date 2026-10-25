@@ -39,8 +39,6 @@ interface ClickSample {
   receiveToDisplayMs: number | null
 }
 
-// An opt-in instrument, not part of the normal playback path. Neither pixels,
-// addresses, SDP nor page content are included in the copyable report.
 export function BrowserStreamDiagnostics({
   videoRef,
   receiverRef,
@@ -115,10 +113,6 @@ export function BrowserStreamDiagnostics({
       ? canvas.getContext('2d', { willReadFrequently: true })
       : null
 
-    // browser-latency-probe.html puts a 32-cell, high-contrast marker across
-    // the top 8% of the viewport: magic 0xa69c, click counter, inverted counter.
-    // Decode video pixels, not a control-channel echo: the changed image must
-    // traverse rendering, capture, encoding, transport and decoding to match.
     const counter = () => {
       if (!context || video.readyState < 2 || !video.videoWidth) {
         return null
@@ -173,7 +167,6 @@ export function BrowserStreamDiagnostics({
         return
       }
 
-      // Do not read pixels here: it would delay the actual input WebSocket send.
       const value = lastCounter
       pending = value === null ? null : { started, counter: (value + 1) & 255 }
       setStatus(
@@ -188,9 +181,7 @@ export function BrowserStreamDiagnostics({
         return
       }
 
-      // Sparse generated tracks can have expectedDisplayTime far in the future.
-      // Observe the actual video image instead, without pairing it with unrelated
-      // frame metadata. Sampling is opt-in and runs outside the input handler.
+      // EXTERNAL: Sparse generated tracks can have expectedDisplayTime far in the future.
       if (!document.hidden && !ambiguous && (pending || now >= nextRead)) {
         const value = counter()
         nextRead = now + 250
@@ -370,7 +361,6 @@ export function BrowserStreamDiagnostics({
       }, 1_000)
     }
 
-    // A new native-video measurement session owns its sampling baseline.
     // eslint-disable-next-line react-you-might-not-need-an-effect/no-adjust-state-on-prop-change, react-you-might-not-need-an-effect/no-external-store-subscription -- This effect owns asynchronous browser instrumentation, not a React external store.
     reset()
     void poll()

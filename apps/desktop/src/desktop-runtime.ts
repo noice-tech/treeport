@@ -7,8 +7,6 @@ import * as Scope from 'effect/Scope'
 import * as ManagedRuntime from 'effect/ManagedRuntime'
 import { tracingLayerFromEnvironment } from '@treeport/shared/tracing'
 
-// Electron callbacks are the Promise/Effect boundary. Every asynchronous task
-// belongs to an app, window, guest or bridge scope; none outlive their owner.
 export class DesktopRuntime {
   readonly scope: Scope.CloseableScope
   private closed = false
@@ -38,7 +36,7 @@ export class DesktopRuntime {
           process.env.npm_package_version || 'development'
         )
       )
-    // Scope.fork unlinks closed children; repeated bridge/capture replacement
+    // EXTERNAL: Scope.fork unlinks closed children; repeated bridge/capture replacement
     // must not retain every historical guest in the application scope.
     this.scope = Effect.runSync(
       parent

@@ -134,7 +134,6 @@ export async function installMockSockets(
   page: Page,
   initialMetadata: TerminalRuntimeMetadata[]
 ) {
-  // Project event streaming is supplied at the HTTP boundary inside the page.
   await page.addInitScript((initialMetadata) => {
     const nativeFetch = window.fetch.bind(window)
     window.fetch = async (input, init) => {
@@ -235,8 +234,6 @@ export async function installMockSockets(
     }
   }
 
-  // Keep the server in the test runner: the app uses a real browser WebSocket,
-  // and tests observe its protocol messages rather than browser globals/storage.
   await page.routeWebSocket('**/api/socket/terminals', (route) => {
     const connection = new TerminalConnection(route)
     terminal.connections.push(connection)
@@ -274,7 +271,6 @@ export async function installMockSockets(
           revision: state.revision,
           generation: state.generation
         })
-        // The protocol handshake acknowledgment precedes terminal events.
         route.send(JSON.stringify({ event: 'connected', payload: null }))
         connection.receive('ready', {
           connectionId: randomUUID(),

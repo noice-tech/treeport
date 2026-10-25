@@ -201,10 +201,6 @@ export function useProjectEventsBridge(
     const connect = Effect.scoped(
       Effect.gen(function* () {
         if (reconnecting) {
-          // A closed stream does not imply a new daemon UI. Compare the served
-          // module entry points with the document we actually loaded, before
-          // decoding a potentially changed RPC protocol. Vite fingerprints
-          // production assets; development updates are handled by HMR.
           const modules = yield* Effect.tryPromise(async (signal) => {
             const response = await fetch(window.location.href, {
               cache: 'no-store',
@@ -286,8 +282,6 @@ export function useProjectEventsBridge(
           return
         }
 
-        // Treat a clean EOF like a failed stream, and only reset backoff after
-        // a stable connection so a host that repeatedly accepts/closes slows down.
         reconnecting = true
         setEventsDisconnected(true)
         onPresenceChangedRef.current?.([])

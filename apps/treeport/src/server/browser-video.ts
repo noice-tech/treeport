@@ -4,8 +4,6 @@ import path from 'node:path'
 import type { Page } from 'playwright'
 
 export async function prepareBrowserVideoExtension(directory: string) {
-  // A fresh public identity scopes unattended capture to this host's extension.
-  // No signing key is retained, and websites cannot invoke this extension.
   const { publicKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048
   })
@@ -30,11 +28,9 @@ export async function prepareBrowserVideoExtension(directory: string) {
         name: 'Treeport Browser capture',
         version: '1.0',
         key: key.toString('base64'),
-        // getTargets maps the exact CDP target to its tab. No debugger attaches
-        // and no page is selected by URL, title, focus, or screen position.
         permissions: ['tabCapture', 'debugger'],
         background: { service_worker: 'worker.js' },
-        // Tab capture paints Chromium's cursor image after native pointer
+        // EXTERNAL: Tab capture paints Chromium's cursor image after native pointer
         // input. A transparent root cursor hides it wherever the page sets no
         // cursor; reported cursors use its `auto` fallback.
         content_scripts: [

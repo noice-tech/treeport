@@ -5,8 +5,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
-// Run on macOS with `pnpm --filter @treeport/desktop generate:icon`.
-// Commit the SVGs and generated icons together. Launches do not rebuild them.
 if (process.platform !== 'darwin') {
   throw new Error('Icon export requires macOS and its iconutil command.')
 }
@@ -22,8 +20,7 @@ try {
     const iconset = path.join(temporary, `${name}.iconset`)
     await mkdir(iconset)
 
-    // Supersample the vector, including its shadow, before downsampling each slot.
-    // Keep the transparent canvas: trimming it makes the Dock icon too large.
+    // EXTERNAL: Keep the transparent canvas: trimming it makes the Dock icon too large.
     const master = await sharp(path.join(assets, source), { density: 288 })
       .png()
       .toBuffer()

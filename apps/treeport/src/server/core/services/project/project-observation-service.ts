@@ -17,7 +17,6 @@ import { GitPort } from '../../git'
 import { ProjectFolderIdentities } from './project-folder-identities'
 import { ProjectStore } from './project-store'
 
-/** Validates registered paths and reconciles their durable worktree inventory. */
 export class ProjectObservationService {
   observeAvailableProject(
     project: ProjectRecord,
@@ -157,7 +156,6 @@ export class ProjectObservationService {
 
   verifyWorktreeLaunchTarget(
     binding: WorktreeRecord,
-    // Accepted tree creation owns its target even after the project is hidden.
     allowClosed = false
   ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
     return Effect.gen(function* () {

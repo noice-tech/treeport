@@ -297,8 +297,7 @@ async function request<S extends Schema.Schema<any, any, never>>(
       )
     }
 
-    // SAFETY: Effect Schema decoded the complete value above. This removes
-    // only Schema's compile-time readonly projection for existing CLI models.
+    // SAFETY: Effect Schema decoded the complete value above.
     return decoded as MutableSchemaType<Schema.Schema.Type<S>>
   } catch (error) {
     if (error instanceof CliError) {
@@ -705,7 +704,9 @@ function appUrl(worktree: WorktreeRecord, appId: string): string {
   return target.href
 }
 
-type WaitCondition = 'idle' | 'working' | 'attention' | 'exit'
+const WAIT_CONDITIONS = ['idle', 'working', 'attention', 'exit'] as const
+
+type WaitCondition = (typeof WAIT_CONDITIONS)[number]
 
 interface TerminalObservation {
   terminal: TerminalRecord
@@ -1090,8 +1091,6 @@ async function main(args: string[]): Promise<void> {
         parserError += value
       }
     })
-    // Preserve machine error messages, but do not dump the command list on
-    // ordinary human usage errors. Explicit help still lists skills.
     .showHelpAfterError(jsonOutput)
     .configureHelp({
       styleTitle: output.heading,
@@ -1190,7 +1189,6 @@ async function main(args: string[]): Promise<void> {
     target.search = ''
     target.hash = ''
 
-    // ponytail: Managed commands assume a client shows the source terminal. Add request acknowledgements if background commands must open another client.
     const opened = contextTerminalId
       ? await request(
           `/api/worktrees/${encodeURIComponent(targetWorktree.id)}/open`,
@@ -2969,7 +2967,11 @@ async function main(args: string[]): Promise<void> {
       timeout?: string
     }>()
 
-    if (!['idle', 'working', 'attention', 'exit'].includes(options.until)) {
+    const until = WAIT_CONDITIONS.find(
+      (condition) => condition === options.until
+    )
+
+    if (!until) {
       throw new CliError(
         '--until must be one of idle, working, attention, or exit',
         2
@@ -2978,8 +2980,7 @@ async function main(args: string[]): Promise<void> {
 
     const result = await waitForTerminal(
       resolveTerminalId(identifier),
-      // SAFETY: The validated CLI or Node contract establishes this asserted value.
-      options.until as WaitCondition,
+      until,
       options.timeout === undefined ? undefined : parseDuration(options.timeout)
     )
 

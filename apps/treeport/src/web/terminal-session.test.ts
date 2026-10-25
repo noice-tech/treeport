@@ -132,7 +132,6 @@ const ghosttyModule = new WebAssembly.Module(
   readFileSync(new URL('../ghostty-vt/ghostty-vt.wasm', import.meta.url))
 )
 
-// The server's snapshot of a terminal that has parsed the given output.
 function ghosttySnapshot(output = '', cols = 100, rows = 30): string {
   const terminal = GhosttyTerminal.create(
     ghosttyModule,
@@ -165,8 +164,6 @@ function ghosttySnapshot(output = '', cols = 100, rows = 30): string {
   return snapshot
 }
 
-// The WTerm surface a session drives, over a real libghostty-vt core. Node
-// tests have no DOM, so wterm's renderer is left out.
 class GhosttyWTerm {
   readonly bridge: GhosttyTerminalCore
   readonly log: string[] = []
@@ -327,8 +324,6 @@ beforeEach(() => {
     vi.fn(() => 1)
   )
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
-  // Model the browser upload transport while keeping the existing fetch
-  // fixtures responsible for response timing, errors and abort observation.
   vi.stubGlobal(
     'XMLHttpRequest',
     class {
@@ -1373,8 +1368,6 @@ describe('TerminalSession', () => {
       message: expect.stringContaining('0/12 files · 0%')
     })
 
-    // Finish each wave out of order: only three run at a time, and the
-    // eventual terminal input must still preserve the selection order.
     for (let completed = 0; completed < 12; completed += 3) {
       expect(paste).not.toHaveBeenCalled()
       pending

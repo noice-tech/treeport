@@ -3,7 +3,6 @@ import * as Effect from 'effect/Effect'
 import type { EngineWorkerOptions } from '../terminal-runtime/engine-worker'
 import { TerminalHostConnectionError } from '../terminal-runtime/api'
 
-/** The emulator shares the daemon lifetime, but never its JavaScript thread. */
 export function startTerminalEngineWorker(
   entry: string,
   options: EngineWorkerOptions,
@@ -38,8 +37,6 @@ export function startTerminalEngineWorker(
                 reject(new Error('Invalid terminal engine readiness message'))
               }
             })
-            // Keep the error listener for the worker's whole lifetime. Once ready,
-            // its socket closing propagates failure to terminal clients.
             worker.on('error', reject)
             worker.once('exit', (code) => {
               if (!ready) {

@@ -3,8 +3,6 @@ import type { WebContents } from 'electron'
 import * as Effect from 'effect/Effect'
 import { z } from 'zod'
 
-// Connection readiness follows navigation, not a daemon API or release number.
-// The separate private shell stays usable while this document is unavailable.
 export function loadRenderer(
   renderer: Pick<WebContents, 'loadURL' | 'isDestroyed'> &
     Pick<EventEmitter, 'on' | 'removeListener'>,
@@ -27,7 +25,7 @@ export function loadRenderer(
         Effect.sync(() => renderer.on('did-navigate', navigated)),
         () =>
           Effect.tryPromise(() => renderer.loadURL(url)).pipe(
-            // loadURL can finish successfully even when the HTTP document is an
+            // EXTERNAL: loadURL can finish successfully even when the HTTP document is an
             // error page, or when stop() lets an interrupted load's late
             // did-finish-load resolve it before this navigation commits. Only a
             // committed, successful document counts as loaded.
@@ -37,7 +35,7 @@ export function loadRenderer(
                 .object({ code: z.string() })
                 .safeParse(error.cause)
 
-              // A newer navigation superseded this one; never navigate back to it.
+              // EXTERNAL: A newer navigation superseded this one; never navigate back to it.
               if (failure.success && failure.data.code === 'ERR_ABORTED') {
                 return Effect.succeed(null)
               }

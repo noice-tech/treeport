@@ -88,7 +88,6 @@ export type BrowserSessionConfig = Pick<
   AppConfig,
   'cacheDir' | 'dataDir' | 'runtimeDir'
 > & {
-  // The built browser relay entrypoint; null where pages are never streamed.
   browserRelayEntry: string | null
 }
 
@@ -184,7 +183,6 @@ interface BrowserLocalOwner {
 }
 
 interface BrowserAttachment {
-  // A connection is ephemeral; a viewer survives reconnects and reloads.
   id: string
   viewerId: string
   identity: AuthenticatedViewer | null
@@ -282,14 +280,11 @@ interface BrowserSession {
   closeReason: string
 }
 
-// Match the browser reconnect/ticket window; brief handoffs must not freeze pages.
 const BROWSER_IDLE_GRACE_MS = 30_000
 const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
 const LOCAL_BROWSER_OWNER_CONTROLLER = 'local-owner'
 
-// Control follows the viewer; socket IDs govern cleanup. Account/device metadata
-// describes the controller but must not change who a reconnecting viewer is.
 const attachmentController = (viewer: Pick<BrowserAttachment, 'viewerId'>) =>
   `attachment:${viewer.viewerId}`
 
@@ -596,7 +591,6 @@ export class BrowserSessionManager {
       return
     }
 
-    // Only a recent action from the exact controlling socket can open a picker.
     const input = session.fileChooserInput
     const attachment = input?.attachment
 
@@ -710,8 +704,6 @@ export class BrowserSessionManager {
       return null
     }
 
-    // Only adjacent operations commute. In particular, moving the pointer can
-    // change the wheel target, and a resize must not cross a button transition.
     const existing = scheduler.tail
 
     const wheelDirectionChanged =
@@ -762,8 +754,6 @@ export class BrowserSessionManager {
       result: null
     }
 
-    // Never fork producers waiting for capacity. The dropping queue's false
-    // return is an explicit admission failure, not permission to lose input.
     if (!Queue.unsafeOffer(scheduler.queue, operation)) {
       networkTelemetry.droppedNow('browsers', 'dropped')
 
@@ -815,8 +805,6 @@ export class BrowserSessionManager {
       )
     }
 
-    // Only admitted callers allocate an await fiber. Fire-and-forget input and
-    // coalesced notifications never accumulate waiters or Promise listeners.
     operation.result = Effect.runPromise(Deferred.await(operation.completion))
 
     return operation.result
@@ -850,19 +838,10 @@ export class BrowserSessionManager {
           const wheel =
             operation.message?.type === 'wheel' ? operation.message : null
 
-          // Reversals cannot merge, but may be submitted in order without
-          // draining ACKs. Tiny sideways trackpad changes otherwise stall the
-          // entire gesture. browserWheel keeps preparation and dispatch ordered.
           if (!wheel || operation.coalesceKey !== wheelKey) {
-            // Clicks, coordinates/modifiers, controllers, navigation and all
-            // lifecycle work are barriers. Only adjacent compatible wheels
-            // may overlap, and shutdown still owns their actual settlement.
             yield* Effect.promise(() => Promise.all(wheelFlights))
             wheelKey = wheel ? operation.coalesceKey : null
           } else if (wheelFlights.size >= (wheel.modifiers === 0 ? 8 : 2)) {
-            // CDP wheel ACKs include a compositor round trip. Allow roughly
-            // 100 ms at 60 Hz for plain scrolling. Keep modified/zoom gestures
-            // at their existing limit and retain non-wheel barriers.
             yield* Effect.promise(() => Promise.race(wheelFlights))
           }
 
@@ -967,14 +946,9 @@ export class BrowserSessionManager {
 
     session.idleTimer = setTimeout(() => {
       session.idleTimer = null
-      // Use the same lane as input, navigation, capture and agent commands.
-      // Recheck at execution time: viewers and work can arrive during the grace.
       void this.scheduleOperation(
         session,
         async () => {
-          // The CLI's persistent Playwright connection also retains focus
-          // emulation. There is no agent work in this lane now; detach it before
-          // deciding whether the hosted page can really enter Chromium's freeze.
           if (!session.localOwner) {
             if (!(await this.detachAgent(session))) {
               return
@@ -1688,8 +1662,6 @@ export class BrowserSessionManager {
         message: error instanceof Error ? error.message : String(error),
         installCommand: null
       })
-      // Failed launch cleanup belongs to the consumer; overload or shutdown
-      // must not close a shared runtime from this attachment's Promise handler.
     }
 
     return attachment.id
@@ -2197,8 +2169,6 @@ export class BrowserSessionManager {
       !session.localOwner &&
       controllerId !== attachmentController(attachment)
     ) {
-      // Not a failure: interacting with the viewport takes control, and the
-      // stream resumes for this viewer.
       attachment.video.suspend()
 
       return
@@ -2283,7 +2253,6 @@ export class BrowserSessionManager {
         return
       }
 
-      // Admit at most one bounded payload per picker, even while input is queued.
       pending.submitted = true
     }
 
@@ -2375,8 +2344,6 @@ export class BrowserSessionManager {
     }
 
     if (message.type === 'inputBarrier') {
-      // The scheduler runs operations in order, so every earlier click, key
-      // and control change has reached the page when this one runs.
       void this.scheduleOperation(session, async () => {
         this.relay?.barrier(attachment.id, message.id)
       }).catch(() => undefined)
@@ -2511,8 +2478,6 @@ export class BrowserSessionManager {
           const previousController = session.controllerId
           const nextController = attachmentController(attachment)
 
-          // Input bursts request control repeatedly; ownership already held
-          // must not resize the page or restart its video stream.
           if (previousController === nextController) {
             return
           }
@@ -2678,9 +2643,6 @@ export class BrowserSessionManager {
             await this.cancelTouches(session)
           }
 
-          // Only recent input from this exact viewer may write its clipboard.
-          // Agent actions and spectators never authorize syncing; the grant
-          // expires and is consumed on the first website clipboard write.
           if (
             (queuedMessage.type === 'pointer' &&
               queuedMessage.phase !== 'move') ||
@@ -2746,8 +2708,6 @@ export class BrowserSessionManager {
 
             this.queueAppState(session, browser.state)
 
-            // Metadata writes must not hold input slots. Keep the existing
-            // persistence barrier for navigation and non-input commands.
             if (
               !['pointer', 'wheel', 'touch', 'key', 'insertText'].includes(
                 queuedMessage.type
@@ -2782,7 +2742,6 @@ export class BrowserSessionManager {
           )
         }
       },
-      // Reserve admission capacity for releases after accepting their presses.
       required:
         ((message.type === 'key' || message.type === 'pointer') &&
           message.phase === 'up') ||
@@ -2799,9 +2758,6 @@ export class BrowserSessionManager {
       return
     }
 
-    // Cursor hit testing can force layout or wait on a busy renderer.
-    // It must never hold an input slot. Keep one best-effort lookup,
-    // sampling the latest position at roughly 30 Hz at most.
     const generation = session.generation
     const localOwner = session.localOwner
 
@@ -2887,7 +2843,6 @@ export class BrowserSessionManager {
     controllerId = session.controllerId,
     settings = session.videoSettings
   ): Promise<void> {
-    // Revoke the old lane before any asynchronous control handoff.
     if (!session.localOwner) {
       for (const attachment of session.attachments.values()) {
         if (controllerId !== attachmentController(attachment)) {
@@ -2957,7 +2912,6 @@ export class BrowserSessionManager {
       const automation = session.localAutomation
 
       if (automation) {
-        // Keep the native desktop picker when the desktop owns control.
         automation.page.off('filechooser', automation.fileChooser)
 
         if (controller === 'other') {
@@ -2985,8 +2939,6 @@ export class BrowserSessionManager {
         attachmentController(attachment) === controllerId
     )?.viewport
 
-    // Visibility and disconnect handoffs need the same viewport update as an
-    // explicit takeover. An unchanged app will not emit another resize event.
     if (
       browser &&
       viewport &&
@@ -3063,7 +3015,6 @@ export class BrowserSessionManager {
   ): Effect.Effect<void> {
     return Effect.scoped(
       Effect.gen(this, function* () {
-        // Each owned resource is released even if an earlier release fails.
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             this.closeFileChooser(session)
@@ -3118,8 +3069,6 @@ export class BrowserSessionManager {
     )
   }
 
-  // Media sockets carry the attachment's video and wheel input. The daemon only
-  // authorizes the upgrade; the browser relay process owns the connection.
   handoffMedia(
     mediaToken: string,
     request: IncomingMessage,
@@ -3165,8 +3114,6 @@ export class BrowserSessionManager {
           const previousController = session.controllerId
 
           if (previousController === attachmentController(attachment)) {
-            // A disconnected viewer must not leave a phantom controller behind.
-            // Prefer its replacement if it reattached before cleanup ran.
             const visibleAttachments = [...session.attachments.values()].filter(
               (candidate) =>
                 !candidate.closing &&
@@ -3227,8 +3174,6 @@ export class BrowserSessionManager {
       session,
       async () => {
         if (session.localOwner) {
-          // Still ask a reachable owner to close its guest, but an explicit
-          // force-close must not depend on a disconnected or stalled owner.
           canClose =
             (await this.requestLocalOwner(session.localOwner, {
               type: 'closeRequest',
@@ -3474,7 +3419,7 @@ export class BrowserSessionManager {
       page.on('framenavigated', clearFileChooser)
       page.on('framedetached', clearFileChooser)
 
-      // Explicit ownership avoids Playwright's fire-and-forget default dialog
+      // EXTERNAL: Explicit ownership avoids Playwright's fire-and-forget default dialog
       // close. Electron keeps beforeunload; the bridge hides those native dialogs.
       page.on('dialog', (dialog) => {
         void dialog.dismiss().catch(() => undefined)
@@ -3600,7 +3545,6 @@ export class BrowserSessionManager {
       return
     }
 
-    // The session consumer owns screencast ordering, including stop/start pairs.
     const width = Math.max(1, session.state.viewport.width || 1_280)
     const height = Math.max(1, session.state.viewport.height || 800)
 
@@ -3846,8 +3790,6 @@ export class BrowserSessionManager {
 
       try {
         if (localOwner) {
-          // Keep a background local page paintable for later agent commands.
-          // Agent activity does not revoke the local user's native input.
           session.retainLocalAgentPaint = true
           await this.updateScreencast(session)
 

@@ -3,7 +3,6 @@ import type { TreeportTheme } from '@treeport/desktop-bridge'
 const THEME_STORAGE_KEY = 'treeport-theme'
 const ACCENT_STORAGE_KEY = 'treeport-accent'
 
-// Presets sit at the dark accent-400 lightness, so swatches match the result.
 export const ACCENT_PRESETS = [
   { label: 'Tide', color: '#6ccefe' },
   { label: 'Moss', color: '#7bd997' },
@@ -45,7 +44,6 @@ export function applyTheme(theme: ReturnType<typeof storedTheme>) {
   const root = document.documentElement
   root.dataset.theme = mode
   root.style.setProperty('--accent-color', theme.accent)
-  // index.html paints the dark startup screen before any theme is known.
   document
     .querySelector('meta[name="color-scheme"]')
     ?.setAttribute('content', mode)

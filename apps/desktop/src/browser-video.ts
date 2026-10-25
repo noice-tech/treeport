@@ -30,9 +30,7 @@ export function permitsBrowserVideoCapture(
       ? new URL(details.securityOrigin).origin
       : null
 
-  // Electron asks the SOURCE guest's permission handler for tab capture. Only
-  // the exact registered helper may capture, during initial acquisition or
-  // viewport-sized source replacement.
+  // EXTERNAL: Electron asks the SOURCE guest's permission handler for tab capture.
   return (
     !!grant &&
     grant.starting &&

@@ -40,8 +40,6 @@ type TerminalProtocolVersion = typeof TERMINAL_PROTOCOL_VERSION
 const TERMINAL_MAX_QUEUED_INPUT_BYTES = 1024 * 1024
 const TERMINAL_MAX_QUEUED_INPUT_MESSAGES = 256
 
-// The shared host cannot pause one viewer without pausing every viewer. Give a
-// progressing browser time to drain, but retain a hard per-viewer byte limit.
 const TERMINAL_OUTPUT_STALL_TIMEOUT_MS = 30_000
 
 export interface TerminalTransport {
@@ -464,7 +462,6 @@ export class TerminalAttachmentManager {
     cols: number,
     rows: number
   ): Effect.Effect<void, unknown, ApplicationServices> {
-    // Effect.gen's generator needs a stable manager receiver across callbacks.
     // eslint-disable-next-line typescript/no-this-alias
     const self = this
 
@@ -603,7 +600,6 @@ export class TerminalAttachmentManager {
         ).pipe(Effect.orDie),
         directScope
       )
-      // Let the stream install its scoped queue before announcing readiness.
       yield* Effect.yieldNow()
 
       const size = decodeUnknownOrNull(terminalSizeSchema, {
@@ -695,9 +691,7 @@ export class TerminalAttachmentManager {
 
     try {
       metadataUnsubscribe?.()
-    } catch {
-      // Metadata teardown must not interrupt attachment teardown.
-    }
+    } catch {}
   }
 
   private sendRuntimeMetadata(
@@ -1055,8 +1049,6 @@ export class TerminalAttachmentManager {
           })
         }).pipe(
           Effect.catchAll((error) =>
-            // Exit can race the authority handshake. It leaves a readable
-            // snapshot, not a broken connection that should replay forever.
             this.terminalHost.runtimeState(connection.terminalId).pipe(
               Effect.flatMap((runtime) => {
                 if (runtime?.status !== 'exited') {

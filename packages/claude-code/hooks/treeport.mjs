@@ -4,8 +4,6 @@ for await (const chunk of process.stdin) {
   input += chunk
 }
 
-// The plugin is installed for every Claude Code session. Act only in
-// Treeport-managed terminals.
 if (!process.env.TREEPORT_TERMINAL_ID) {
   process.exit(0)
 }
@@ -21,7 +19,7 @@ if (process.argv[2] === 'context') {
     }) + '\n'
   )
 } else if (JSON.parse(input).tool_input?.run_in_background === true) {
-  // Background shells are hidden from the user and die with this session.
+  // EXTERNAL: Background shells are hidden from the user and die with this session.
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {

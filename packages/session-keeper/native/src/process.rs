@@ -10,17 +10,12 @@ pub struct Identity {
     pub parent: u32,
     pub group: u32,
     pub session: u32,
-    // Kernel birth identity: microsecond timestamp on macOS, boot ticks on Linux.
     pub birth: u128,
     pub zombie: bool,
     pub name: String,
 }
 pub type Snapshot = BTreeMap<u32, Identity>;
 
-// Public macOS SDK interfaces: task-name rights suffice for TASK_AUDIT_TOKEN
-// (15, eight natural_t words). No task-control/debugger entitlement or private
-// proc_pidinfo flavor is needed. libproc checks the audit PID version atomically
-// at signal delivery, rather than addressing a possibly recycled PID alone.
 #[cfg(target_os = "macos")]
 #[repr(C)]
 struct AuditToken {
@@ -35,14 +30,11 @@ extern "C" {
     fn proc_signal_with_audittoken(token: *mut AuditToken, signal: i32) -> i32;
 }
 
-// Refuse a saturated snapshot, never clean up against a silently truncated
-// process table. This also bounds topology and retained-identity allocation.
 const MAX_PROCESSES: usize = 65_536;
 
 #[cfg(target_os = "macos")]
 fn macos_pids(enumerate: impl FnOnce(&mut [libc::pid_t]) -> io::Result<usize>) -> Result<Vec<u32>> {
-    // One extra slot distinguishes an exactly-full admitted table from a
-    // truncated kernel result. No size-query/growth loop or subprocess needed.
+    // One extra slot distinguishes an exactly-full table from a truncated kernel result.
     let mut buffer = vec![0; MAX_PROCESSES + 1];
     let bytes = enumerate(&mut buffer)?;
     let width = std::mem::size_of::<libc::pid_t>();
@@ -147,8 +139,7 @@ pub fn identity(pid: u32) -> Result<Option<Identity>> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         // A process reaped after open but before read makes procfs return
-        // ESRCH rather than ENOENT. Both establish absence; permission and
-        // other I/O failures must still refuse ownership discovery.
+        // ESRCH rather than ENOENT.
         Err(error)
             if error.kind() == io::ErrorKind::NotFound
                 || error.raw_os_error() == Some(libc::ESRCH) =>
@@ -213,10 +204,7 @@ pub fn snapshot() -> Result<Snapshot> {
             }
             Ok(bytes as usize)
         })?;
-        // SIP denies proc_pidinfo for some system processes. Preserve their
-        // session as an opaque row: original-session membership, not ancestry
-        // or a group number, defines ownership. An opaque owned row still
-        // refuses cleanup; unrelated protected daemons do not prevent it.
+        // SIP denies proc_pidinfo for some system processes.
         for pid in pids {
             let row = match identity(pid) {
                 Ok(Some(row)) => row,
@@ -273,15 +261,9 @@ pub fn snapshot() -> Result<Snapshot> {
     Ok(result)
 }
 
-// Cleanup is conservative: discovery is rooted in kernel birth identities,
-// never in a PID, process name, environment variable, or arbitrary group alone.
-// Retain targets across failed close attempts, even after they are reparented.
 pub struct Ownership {
     pub leader: Identity,
     pub targets: BTreeMap<u32, Identity>,
-    // Only the PTY wait thread may set this after successful WNOWAIT. Clear it
-    // under this same ownership lock when reaping, so discovery never borrows
-    // an anchor whose PID has already become reusable.
     pub leader_exit_pinned: bool,
 }
 impl Ownership {
@@ -306,16 +288,10 @@ impl Ownership {
                 bail!("PTY leader PID no longer identifies this session; refusing cleanup");
             }
         }
-        // Terminal ownership is the original session, not only its first group
-        // or current parent tree. Same-session children can change groups and be
-        // reparented before discovery. Explicit setsid daemons are independent.
         let members: Vec<&Identity> = table
             .values()
             .filter(|row| row.session == self.leader.session && !row.zombie)
             .collect();
-        // macOS clears a zombie leader's reported group even while WNOWAIT
-        // retains its birth identity. The verified original leader still anchors
-        // its recorded session until it is reaped.
         let anchored = self.leader_exit_pinned
             || table
                 .get(&self.leader.pid)
@@ -360,21 +336,15 @@ impl Ownership {
             if row.birth == 0 {
                 bail!("Cannot verify session process {pid}; refusing cleanup");
             }
-            // Failed-close retries must not accumulate unbounded past births.
-            // Saturation refuses cleanup rather than silently forgetting an
-            // anchor or signaling against a partially verified target list.
             if self.targets.len() >= MAX_PROCESSES && !self.targets.contains_key(&pid) {
                 bail!("Retained ownership exceeds the process limit");
             }
-            // Zombie leaders can still anchor group membership and descendants.
             self.targets.insert(pid, row.clone());
             remaining.extend(children.get(&pid).into_iter().flatten());
             if !row.zombie {
                 live.push(row.clone());
             }
         }
-        // Signal individual, freshly verified identities, never an unchecked
-        // negative group PID which could name unrelated newly-created members.
         live.reverse();
         Ok(live)
     }
@@ -385,7 +355,6 @@ pub fn signal(row: &Identity, signal: i32) -> Result<()> {
     {
         use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
         // pidfd pins the target through validation and signaling (Linux >=5.3).
-        // Do not silently downgrade to a PID-reuse-vulnerable Linux fallback.
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, row.pid as libc::pid_t, 0) } as i32;
         if fd < 0 {
             let error = io::Error::last_os_error();
@@ -480,9 +449,6 @@ fn signal_macos(
     if released != 0 {
         bail!("Cannot release process name right (Mach error {released})");
     }
-    // A lookup may have raced with exit/reuse or session detachment. Verify
-    // birth/scope again after obtaining the token; its kernel PID version
-    // then protects the remaining validation-to-delivery window.
     match identity(row.pid)? {
         None => return Ok(()),
         Some(current) if current.birth != row.birth => {
@@ -491,7 +457,6 @@ fn signal_macos(
         Some(current) if current.session != row.session || current.zombie => return Ok(()),
         Some(_) => {}
     }
-    // Deterministic delivery-window faults in tests; production passes a no-op.
     before_delivery(&mut token);
     // SAFETY: token has the complete audit_token_t layout and is uniquely
     // borrowed for this call. libproc returns errno directly, not -1.
@@ -633,8 +598,6 @@ mod tests {
             parent: 1,
             ..background
         };
-        // A failed discovery after partial cleanup must preserve the original
-        // identity for an authenticated retry, not adopt a reused PID.
         assert!(owner
             .discover(&BTreeMap::from([
                 (100, row(100, std::process::id(), 100, 9)),
@@ -746,9 +709,6 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn audit_signal_rejects_a_delivery_window_version_change_without_pid_fallback() -> Result<()> {
-        // /bin/sleep is an exec'd Apple-signed target, not the test harness.
-        // Its unreaped Child is the fixture ownership capability; never signal
-        // the Pi session, an outer keeper, or a cached PID on cleanup.
         let mut child = std::process::Command::new("/bin/sleep")
             .arg("1")
             .stdin(std::process::Stdio::null())
@@ -758,14 +718,9 @@ mod tests {
         let outcome = (|| -> Result<()> {
             let row = identity(child.id())?.context("Owned child identity missing")?;
             for _ in 0..16 {
-                // SIGCONT is harmless to this already-running, owned child.
-                // Exercise acquisition and release repeatedly, unentitled.
                 signal(&row, libc::SIGCONT)?;
             }
             let error = signal_macos(&row, libc::SIGCONT, |token| {
-                // Deterministic interleaving after birth/scope validation:
-                // libproc must reject a stale kernel PID/exec version. A raw
-                // kill(pid) fallback would incorrectly report success here.
                 token.values[7] = token.values[7].wrapping_add(1);
             })
             .err()
@@ -778,8 +733,6 @@ mod tests {
             anyhow::ensure!(signal(&reused, libc::SIGCONT).is_err());
             Ok(())
         })();
-        // Reap through Child even if a test assertion failed, with no cleanup
-        // signal. This fixture self-expires after one second.
         let status = child.wait()?;
         anyhow::ensure!(status.success());
         outcome
@@ -789,7 +742,6 @@ mod tests {
     #[test]
     fn pidfd_signal_checks_birth_before_delivery() -> Result<()> {
         let own = identity(std::process::id())?.context("Own identity missing")?;
-        // Signal zero probes capability without delivering a process signal.
         signal(&own, 0)?;
         let reused = Identity {
             birth: own.birth + 1,

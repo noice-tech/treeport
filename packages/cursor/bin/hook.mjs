@@ -38,7 +38,7 @@ async function runHook() {
   const generation =
     typeof payload?.generation_id === 'string' ? payload.generation_id : null
 
-  // Cursor captures hook stdio and detaches its shell from the controlling
+  // EXTERNAL: Cursor captures hook stdio and detaches its shell from the controlling
   // terminal. Find the nearest terminal-owning ancestor, not /dev/tty or stdout.
   let ownerPid = process.ppid
   let tty = null
@@ -145,8 +145,6 @@ async function runHook() {
   return { continue: true }
 }
 
-// Status reporting must never block a prompt, and stdout belongs to Cursor's
-// hook protocol. Fail open if a terminal disappears or a hook payload is invalid.
 const response = await runHook().catch(() => ({ continue: true }))
 
 process.stdout.write(JSON.stringify(response) + '\n')

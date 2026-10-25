@@ -82,20 +82,17 @@ const DialogContent = React.forwardRef<
             mobilePresentation === 'dialog' && 'keyboard-safe-dialog',
             className
           )}
-          style={
-            // SAFETY: The component contract supplies the asserted browser value used here.
-            {
-              ...style,
-              '--dialog-visual-viewport-top':
-                mobilePresentation === 'dialog' && viewportTop !== null
-                  ? `${viewportTop}px`
-                  : undefined,
-              '--dialog-visual-viewport-height':
-                mobilePresentation === 'dialog' && viewportHeight !== null
-                  ? `${viewportHeight}px`
-                  : undefined
-            } as React.CSSProperties
-          }
+          style={{
+            ...style,
+            '--dialog-visual-viewport-top':
+              mobilePresentation === 'dialog' && viewportTop !== null
+                ? `${viewportTop}px`
+                : undefined,
+            '--dialog-visual-viewport-height':
+              mobilePresentation === 'dialog' && viewportHeight !== null
+                ? `${viewportHeight}px`
+                : undefined
+          }}
           onCloseAutoFocus={(event) => {
             onCloseAutoFocus?.(event)
 

@@ -22,7 +22,6 @@ function alive(pid: number): boolean {
 
     return true
   } catch (cause) {
-    // ESRCH is the expected result for a departed fixture, not an I/O fallback.
     // SAFETY: Node signaling errors expose errno codes.
     if ((cause as NodeJS.ErrnoException).code === 'ESRCH') {
       return false
@@ -94,8 +93,6 @@ afterEach(async () => {
     handle.dispose()
   }
 
-  // These are exclusively fixture PIDs captured at creation, never discovery
-  // data belonging to a user instance. Stop commands before their keepers.
   for (const pid of [...pids].reverse()) {
     if (alive(pid)) {
       process.kill(pid, 'SIGKILL')
@@ -167,8 +164,6 @@ describe('Rust persistent session control and cleanup', () => {
       'setInterval(()=>{},1000)'
     ])
 
-    // Live old keepers still use authenticated control. Only disconnected
-    // legacy sessions need explicit cutover; absence of a lease is not death.
     await value.session.terminate()
     const legacy = path.join(value.root, 'legacy')
     await fs.mkdir(legacy, { mode: 0o700 })
@@ -198,7 +193,6 @@ describe('Rust persistent session control and cleanup', () => {
     value.session.pause()
     const status = value.session.refreshStatus()
     const pending = Promise.all([processed, status])
-    // Observe failure without an unhandled rejection while deliberately paused.
     let failure: Error | null = null
     void pending.catch((error) => {
       failure = error
@@ -232,8 +226,6 @@ describe('Rust persistent session control and cleanup', () => {
     await waitFor(() => !alive(value.status.ownerPid))
     value.session.dispose()
     expect(alive(value.status.pid)).toBe(true)
-    // Simulate reuse of the departed keeper PID by this unrelated test runner.
-    // kill(pid, 0) succeeds; neither that PID nor file timestamps are authority.
     const statusPath = path.join(value.directory, 'status.json')
     await fs.writeFile(
       statusPath,

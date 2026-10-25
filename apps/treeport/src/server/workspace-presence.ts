@@ -20,8 +20,6 @@ export class WorkspacePresenceManager {
   }
 
   update(identity: ViewerIdentity, input: PresenceUpdate): void {
-    // A session ID is a tab identifier, not a credential. Another user cannot
-    // overwrite or remove this user's session, even if they know its ID.
     const key = JSON.stringify([
       identity.source,
       identity.login,

@@ -206,8 +206,6 @@ describe('terminal operations', () => {
       const result = await run(request)
 
       if (request.args[0] === 'worktree' && request.args[1] === 'add') {
-        // Simulate committed settings appearing during checkout, not a main
-        // checkout's uncommitted configuration being copied into the new tree.
         const worktreePath = request.args.at(-2)!
         await fs.mkdir(path.join(worktreePath, '.treeport'))
         await fs.writeFile(
@@ -249,13 +247,9 @@ describe('terminal operations', () => {
       )
 
       await vi.waitFor(() => expect(snapshot).not.toBeNull())
-      // The creation event precedes the terminal host call; wait for launch
-      // to reach the gate before checking the concurrent snapshot.
       await vi.waitFor(() =>
         expect(runner.terminalCreateAttempts).toBe(initialAttempts + 1)
       )
-      // A snapshot must not take the tree lock or launch another terminal
-      // while the requested terminal is still starting.
       await expect(snapshot).resolves.toBeDefined()
       expect(reservedTreeId).not.toBeNull()
       await expect(

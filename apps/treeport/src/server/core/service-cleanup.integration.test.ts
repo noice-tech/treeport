@@ -41,8 +41,6 @@ describe('tree cleanup completion', () => {
       )
       const preview = await service.removePreview(worktree.id)
 
-      // The normal fixture runner bridges through Promise APIs, which resets
-      // Effect interruption state and hides masked cleanup-command deadlocks.
       const removal = await service.runEffect(
         service.worktrees
           .beginRemove(worktree.id, {
@@ -91,8 +89,6 @@ describe('tree cleanup completion', () => {
       })
 
       if (exitCode !== 0) {
-        // A failed cleanup must release the tree lock too, allowing an
-        // explicitly confirmed retry without rerunning the failed hook.
         const retryPreview = await service.removePreview(worktree.id)
 
         const retry = await service.beginRemove(worktree.id, {

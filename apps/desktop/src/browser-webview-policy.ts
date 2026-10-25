@@ -147,7 +147,6 @@ export function installBrowserWebviewPolicy(options: {
 
   const decisions = new Map<string, boolean>()
 
-  // The file is data, not authority: only exact, known origin/capability keys are loaded.
   try {
     const saved = z
       .record(z.string(), z.boolean())
@@ -170,9 +169,7 @@ export function installBrowserWebviewPolicy(options: {
         }
       }
     }
-  } catch {
-    // Missing or corrupt preferences are treated as no grants.
-  }
+  } catch {}
 
   const saveDecisions = () => {
     const temporary = `${decisionsPath}.tmp`
@@ -306,8 +303,6 @@ export function installBrowserWebviewPolicy(options: {
       return null
     }
 
-    // Only the current main-frame document may ask. Subframes are denied rather
-    // than trusting an unverified requestingUrl/securityOrigin string.
     return URL.canParse(entry.guest.getURL()) &&
       new URL(entry.guest.getURL()).origin === parsed.origin
       ? parsed.origin
@@ -400,8 +395,6 @@ export function installBrowserWebviewPolicy(options: {
       const logPath = process.env.TREEPORT_BROWSER_PERMISSION_LOG
 
       if (logPath) {
-        // Diagnostic I/O must never change the permission decision. Fall back
-        // to the console if the daemon log cannot be written.
         try {
           mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 })
           appendFileSync(
@@ -422,8 +415,6 @@ export function installBrowserWebviewPolicy(options: {
         return false
       }
 
-      // Copy buttons need sanitized writes, not permission to read the clipboard.
-      // Keep the grant scoped to the registered page's current main-frame origin.
       if (permission === 'clipboard-sanitized-write') {
         return (
           siteOrigin(
@@ -704,10 +695,8 @@ export function installBrowserWebviewPolicy(options: {
     }
   )
 
-  // Electron 43 checks loopback-network without requesting it after a denied
+  // EXTERNAL: Electron 43 checks loopback-network without requesting it after a denied
   // check. Hold public/local -> loopback requests so the user can grant access.
-  // Loopback documents do not cross into a more-private address space and must
-  // load normally, including requests to other localhost ports and WebSockets.
   browserSession.webRequest.onBeforeRequest(
     { urls: ['<all_urls>'] },
     (details, callback) => {
@@ -740,7 +729,6 @@ export function installBrowserWebviewPolicy(options: {
 
       const entry = registered(contents ?? null)
 
-      // A referrer is page-controlled; use Electron's actual requesting frame.
       const frame = details.frame
 
       const origin =
@@ -860,8 +848,6 @@ export function installBrowserWebviewPolicy(options: {
     }
   )
 
-  // Device selection and display capture require separate source/device choices;
-  // a generic site grant cannot safely authorize them.
   browserSession.setDisplayMediaRequestHandler((_request, callback) =>
     callback({})
   )
@@ -961,7 +947,6 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       delete webPreferences.preload
-      // Keep the served frontend contract, but bind actual guest storage to its host.
       webPreferences.partition = partition
       params.partition = partition
       webPreferences.nodeIntegration = false
@@ -1196,7 +1181,6 @@ export function installBrowserWebviewPolicy(options: {
 
     guest.on('focus', () => {
       if (!options.isForeground()) {
-        // The workspace focus guard redirects to the visible host or shell.
         options.trustedRenderer.focus()
 
         return
@@ -1210,8 +1194,6 @@ export function installBrowserWebviewPolicy(options: {
       }
     })
     guest.on('before-input-event', (event, input) => {
-      // Background/agent input still belongs to the guest. Suppress native
-      // accelerators, not the input itself (CDP must work while a host is hidden).
       const backgroundInput = entry.inputLocked || !options.isForeground()
       guest.setIgnoreMenuShortcuts(backgroundInput)
 
@@ -1398,7 +1380,6 @@ export function installBrowserWebviewPolicy(options: {
 
         return yield* registered.registrations.withPermits(1)(
           Effect.gen(function* () {
-            // Validate after admission, not only before waiting for a replacement.
             if (
               registered.runtime.isClosed ||
               entries.get(appId) !== registered ||
@@ -1456,7 +1437,6 @@ export function installBrowserWebviewPolicy(options: {
           }
         }
 
-        // Dispatch immediately: Stop and newer navigations must interrupt loadURL.
         return yield* Effect.gen(function* () {
           if (entry.runtime.isClosed || entry.guest.isDestroyed()) {
             return yield* Effect.fail(
@@ -1478,8 +1458,6 @@ export function installBrowserWebviewPolicy(options: {
                     return yield* Effect.fail(cause)
                   }
 
-                  // did-fail-load already presents these failures inside the guest.
-                  // Keep command errors when no error document is visible.
                   const errorPage = yield* Effect.tryPromise(() =>
                     entry.guest.executeJavaScript(
                       "window.location.href === 'chrome-error://chromewebdata/'"
@@ -1516,7 +1494,7 @@ export function installBrowserWebviewPolicy(options: {
               const error: NodeJS.ErrnoException =
                 cause instanceof Error ? cause : new Error(String(cause))
 
-              // Chromium aborts the previous load when the user stops or replaces it.
+              // EXTERNAL: Chromium aborts the previous load when the user stops or replaces it.
               return error.code === 'ERR_ABORTED'
                 ? { ok: true, error: null }
                 : { ok: false, error: error.message }

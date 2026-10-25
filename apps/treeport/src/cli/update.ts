@@ -160,8 +160,6 @@ export interface LocalUpdateErrorDetails {
   terminalIds?: string[]
 }
 
-// Also used in API error messages. Keep this representation plain and stable;
-// CLI presentation belongs in output.ts.
 export function formatLocalUpdateError(
   message: string,
   details: {
@@ -915,8 +913,6 @@ export async function runLocalUpdate(
     shouldRunAfterUpdate = shouldRun
 
     if (serviceBefore) {
-      // The service owns migration/preflight diagnostics. Do not synthesize a
-      // privileged stop flow, or discover a legacy launcher after activation.
       if (serviceBefore.administratorCommand) {
         throw new LocalUpdateError(
           'UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED',
@@ -1174,8 +1170,6 @@ export async function runLocalUpdate(
       )
     }
 
-    // The candidate owns this compatibility decision. Its authenticated
-    // read-only handshake cannot attach, transfer query authority, or mutate a PTY.
     const probeTerminalHost = async () => {
       const command = await runCommand(
         process.execPath,
@@ -1328,9 +1322,6 @@ export async function runLocalUpdate(
 
     await save('stop')
 
-    // A stopped service can still have an in-flight supervisor launch. Await
-    // its shutdown acknowledgement before switching binaries, independently
-    // of whether this transaction should start Treeport afterward.
     if (daemonLifecycle === 'service' || daemonWasRunning) {
       progress('Stopping the Treeport daemon and preserving terminals…')
       await stopUpdateDaemon(daemonLifecycle)
@@ -1513,10 +1504,6 @@ export async function runLocalUpdate(
 
     await save('complete')
 
-    // Detached hosts may still execute their release's launcher for a later
-    // terminal creation. Retaining managed release directories is the smallest
-    // safe asset policy; a future cleanup may remove one only after proving no
-    // surviving host references it.
     return {
       schemaVersion: 1,
       operationId,

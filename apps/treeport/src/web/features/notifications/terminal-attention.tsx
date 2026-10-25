@@ -45,11 +45,10 @@ export function TerminalAttention({
     projects,
     selectedTerminalId,
     titles,
-    // SAFETY: The component contract supplies the asserted browser value used here.
     presence: {
       focused: document.hasFocus(),
       visible: document.visibilityState === 'visible'
-    } as Presence
+    } satisfies Presence
   })
 
   latest.current.projects = projects

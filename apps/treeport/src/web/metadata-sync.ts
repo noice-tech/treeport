@@ -54,17 +54,12 @@ export function createInvalidationCoalescer(
 
     running = true
 
-    try {
-      await invalidate()
-    } catch {
-      // TanStack Query owns the visible error state.
-    } finally {
-      running = false
+    await invalidate().catch(() => undefined)
+    running = false
 
-      if (trailing && !disposed) {
-        trailing = false
-        timer = setTimeout(() => void run(), delayMs)
-      }
+    if (trailing && !disposed) {
+      trailing = false
+      timer = setTimeout(() => void run(), delayMs)
     }
   }
 

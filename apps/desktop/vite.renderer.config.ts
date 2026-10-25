@@ -27,9 +27,6 @@ export default defineConfig({
       name: 'desktop-shell-boundary',
       enforce: 'pre',
       load(id) {
-        // Inspect resolved paths, not import spelling: aliases, re-exports and
-        // transitive dependencies must not bundle the workspace or privileged
-        // desktop implementation into the shell.
         const file = id.split('?')[0]!
 
         if (!path.isAbsolute(file)) {

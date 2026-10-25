@@ -7,9 +7,6 @@ export interface ChromiumWebCodecsViewer {
   start(send: (message: BrowserServerMessage) => boolean): boolean
 }
 
-// One exact tab and one controlling viewer. Packets, ACKs and wheel input flow
-// through the browser relay process; this side only manages the capture helper
-// page and which viewer the stream belongs to.
 export class ChromiumWebCodecsVideo {
   private helper: BrowserCapturePage['page'] | null = null
   private stream: BrowserRelayStream | null = null
@@ -42,7 +39,6 @@ export class ChromiumWebCodecsVideo {
         return
       }
 
-      // Reacquire at the new native capture size, not an upscaled old track.
       await this.restart(
         width,
         height,
@@ -99,8 +95,6 @@ export class ChromiumWebCodecsVideo {
                 return
               }
 
-              // A relay or helper loss is usually transient: recover once,
-              // but let a fault that keeps recurring reach the viewer.
               const now = performance.now()
 
               if (now - this.restartedAt < 10_000) {
@@ -195,8 +189,6 @@ export class ChromiumWebCodecsVideo {
     this.stream?.closeViewer(id)
   }
 
-  // A fresh helper/encoder and epoch retire the old packet and decoder; the
-  // viewer waits for a new IDR and acknowledges decoder readiness.
   private async restart(
     width: number,
     height: number,

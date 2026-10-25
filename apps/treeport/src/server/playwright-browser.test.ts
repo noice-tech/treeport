@@ -109,7 +109,6 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
     expect(browser.state.url).toBe(attemptedUrl)
   })
 
-  // Every emitted state must remain usable in the desktop ownership handshake.
   for (const state of states) {
     expect(
       parseBrowserOwnerServerMessage({
@@ -139,9 +138,6 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
   page.emit('load')
   await vi.waitFor(() => expect(browser.state.url).toBe('about:blank'))
 
-  // Interactive navigation must wait for commit, but not a busy renderer's
-  // title read. Address publication and subsequent wheel dispatch still work;
-  // delayed metadata from older navigations must not overwrite newer results.
   const titles: Array<() => void> = []
   onTestFinished(() => titles.forEach((resolve) => resolve()))
 
@@ -207,8 +203,6 @@ it('keeps the attempted HTTP URL when Chromium navigates to an internal error pa
 
   await vi.waitFor(() => expect(browser.state.title).toBe('Navigation 3'))
 
-  // Native button events reuse the correctly scaled position. Navigation,
-  // other input and failed positioning invalidate it; explicit moves still run.
   const point = { type: 'pointer' as const, x: 20, y: 40 }
   await browser.command({ ...point, phase: 'move' })
   await browser.command({ ...point, phase: 'down' })

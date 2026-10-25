@@ -3,7 +3,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
@@ -617,17 +616,12 @@ export function WorktreeAppsPanel({
   )
 
   return (
-    // Mobile tools overlay the terminal without changing its layout. On desktop,
-    // reserve the split width during full-view transitions to avoid resizing it.
     <div
       className={cn(
         'grid min-h-0 min-w-0 w-[var(--apps-panel-width)] max-[701px]:absolute max-[701px]:inset-0 max-[701px]:z-20 max-[701px]:w-full',
         !visible && 'pointer-events-none absolute inset-0 opacity-0'
       )}
-      style={
-        // SAFETY: This custom property contains a clamped CSS pixel value.
-        { '--apps-panel-width': `${appsPanelWidth}px` } as CSSProperties
-      }
+      style={{ '--apps-panel-width': `${appsPanelWidth}px` }}
     >
       <section
         ref={paneRef}

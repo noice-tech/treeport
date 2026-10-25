@@ -99,9 +99,6 @@ export class ApplicationLifecycle {
       const worktrees = yield* WorktreeOperations
       const worktreeMutations = yield* WorktreeMutations
 
-      // A newly spawned terminal host remains empty and provisional while the
-      // daemon validates its database and constructs every listener. Terminal
-      // reconciliation starts only after the caller commits that host.
       yield* observations.reconcile()
 
       const daemons = yield* ApplicationDaemons
@@ -176,9 +173,6 @@ export class ApplicationLifecycle {
                   worktreeIds: [worktreeId],
                   worktreeRemovalProjectId: projectId
                 })
-                // Removal owns its Git critical sections. Enqueuing the whole
-                // recovery here would both serialize cleanup and nest the same
-                // project queue when it reaches the Git mutation.
                 yield* applicationFibers.fork(
                   worktrees
                     .resumeRemove(
@@ -216,9 +210,6 @@ export class ApplicationLifecycle {
       const treeFileMutations = yield* TreeFileMutations
       const worktreeMutations = yield* WorktreeMutations
 
-      // Accepted background workflows may enqueue mutations after shutdown
-      // starts. Wait for their supervised fibers before taking the final queue
-      // drain so no late work is interrupted by runtime disposal.
       yield* applicationFibers.awaitEmpty
       yield* Effect.all(
         [
