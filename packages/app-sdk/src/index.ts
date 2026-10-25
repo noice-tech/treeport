@@ -246,6 +246,118 @@ export interface AppService {
   error: string | null
 }
 
+export type TreeDecorationTone =
+  | 'neutral'
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'done'
+
+/** A short marker beside a tree's name, set by a script, hook, or package. */
+export interface TreeDecoration {
+  key: string
+  text: string
+  /** Shown on hover and in the tree's context menu. */
+  title: string
+  tone: TreeDecorationTone
+  url: string | null
+  /** SVG markup drawn before the text. Only its shape is used: it takes the tone's color. */
+  icon: string | null
+  /** ID of the package that owns this decoration, or null when set directly. */
+  source: string | null
+  /** ISO 8601 timestamp. */
+  updatedAt: string
+}
+
+export interface TreeDecorationInput {
+  /** At most 32 characters. */
+  text: string
+  /** What the decoration means, such as a pull request's title; at most 256 characters. */
+  title: string
+  /** Defaults to neutral. */
+  tone?: TreeDecorationTone
+  /** An http or https link, opened from the tree's context menu. */
+  url?: string | null
+  /** An `<svg>` of at most 8 KiB. Only its shape is used: it takes the tone's color. */
+  icon?: string | null
+}
+
+/** The tree fields available to package services. */
+export interface TreeportTree {
+  id: string
+  name: string
+  /** Null when the tree is not a Git checkout. */
+  git: {
+    /** Null when HEAD is detached. */
+    branch: string | null
+    /** Commit at HEAD. */
+    head: string
+  } | null
+  decorations: TreeDecoration[]
+}
+
+/** The project fields available to package services. */
+export interface TreeportProject {
+  id: string
+  name: string
+  rootPath: string
+  availability: {
+    state: 'available' | 'unavailable'
+    message: string | null
+  }
+  /** Null when the project is not a Git repository. */
+  git: {
+    defaultBranch: string
+    /** Fetch URL of the origin remote, when it has one. */
+    originUrl: string | null
+  } | null
+  worktrees: TreeportTree[]
+}
+
+/**
+ * A change a package service may react to. Events name what changed; read
+ * the current state with `projects()`.
+ */
+export type TreeportEvent =
+  /** Read everything again: the stream (re)connected and may have missed events. */
+  | { type: 'resync' }
+  | { type: 'tree.created'; projectId: string; treeId: string }
+  | { type: 'tree.removed'; projectId: string; treeId: string }
+  /** The tree's contents moved, such as a commit, checkout, or push in a Git tree. */
+  | { type: 'tree.changed'; projectId: string; treeId: string }
+
+/** The package a service acts for, and where it is configured. */
+export interface PackageServiceIdentity {
+  packageId: string
+  /** Null when the package is configured globally. */
+  projectIds: string[] | null
+}
+
+/** The Treeport API available to a package service process. */
+export interface TreeportServiceSdk {
+  readonly version: 1
+  /** The package this service acts for; it owns the decorations the service sets. */
+  self(): Promise<PackageServiceIdentity>
+  /** Projects this service's package is configured for, with their trees. */
+  projects(): Promise<TreeportProject[]>
+  /**
+   * Changes in this package's projects. The stream reconnects by itself and
+   * starts every connection with `resync`.
+   */
+  events(): AsyncIterable<TreeportEvent>
+  readonly decorations: {
+    /** Set or replace this package's decoration. Unchanged values cost nothing. */
+    set(
+      treeId: string,
+      key: string,
+      decoration: TreeDecorationInput
+    ): Promise<void>
+    /** Remove a decoration this package owns; removing a missing decoration is a no-op. */
+    clear(treeId: string, key: string): Promise<void>
+  }
+}
+
 /** The tree-scoped API available to a Treeport web app. */
 export interface TreeportAppSdk {
   readonly version: 1

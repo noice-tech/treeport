@@ -122,14 +122,22 @@ const workspaceItemSchema = Schema.Union(
   browserAppSchema
 )
 
-export const prInfoSchema = Schema.Struct({
-  state: Schema.Literal('no_pr', 'open', 'merged', 'closed', 'unknown'),
-  number: Schema.NullOr(Schema.Int),
+const treeDecorationSchema = Schema.Struct({
+  key: Schema.String,
+  text: Schema.String,
+  title: Schema.String,
+  tone: Schema.Literal(
+    'neutral',
+    'info',
+    'success',
+    'warning',
+    'danger',
+    'done'
+  ),
   url: nullableStringSchema,
-  baseBranch: nullableStringSchema,
-  headBranch: nullableStringSchema,
-  mergedAt: nullableStringSchema,
-  refreshedAt: nullableStringSchema
+  icon: nullableStringSchema,
+  source: nullableStringSchema,
+  updatedAt: Schema.String
 })
 const dirtyStateSchema = Schema.Struct({
   dirty: Schema.Boolean,
@@ -153,7 +161,7 @@ export const worktreeRecordSchema = Schema.Struct({
   prunable: Schema.Boolean,
   kind: Schema.Literal('main', 'linked', 'folder'),
   managedWrapperPath: nullableStringSchema,
-  pr: prInfoSchema,
+  decorations: Schema.Array(treeDecorationSchema),
   dirty: Schema.NullOr(dirtyStateSchema),
   terminals: Schema.Array(terminalRecordSchema),
   workspaceItems: Schema.Array(workspaceItemSchema),
@@ -168,6 +176,7 @@ export const projectRecordSchema = Schema.Struct({
   repositoryPath: Schema.String,
   mainWorktreePath: Schema.String,
   defaultBranch: Schema.String,
+  originUrl: nullableStringSchema,
   color: Schema.NullOr(projectColorSchema),
   availability: Schema.Struct({
     state: Schema.Literal('available', 'unavailable'),
@@ -642,6 +651,40 @@ export const packageReloadResponseSchema = Schema.Struct({
 export const packageProjectResponseSchema = Schema.Struct({
   project: projectRecordSchema
 })
+export const packageServiceSelfResponseSchema = Schema.Struct({
+  packageId: Schema.String,
+  /** Null when the package is configured globally. */
+  projectIds: Schema.NullOr(Schema.Array(Schema.String))
+})
+export const packageServiceProjectsResponseSchema = Schema.Struct({
+  projects: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      rootPath: Schema.String,
+      availability: Schema.Struct({
+        state: Schema.Literal('available', 'unavailable'),
+        message: nullableStringSchema
+      }),
+      git: Schema.NullOr(
+        Schema.Struct({
+          defaultBranch: Schema.String,
+          originUrl: nullableStringSchema
+        })
+      ),
+      worktrees: Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          name: Schema.String,
+          git: Schema.NullOr(
+            Schema.Struct({ branch: nullableStringSchema, head: Schema.String })
+          ),
+          decorations: Schema.Array(treeDecorationSchema)
+        })
+      )
+    })
+  )
+})
 export const projectsResponseSchema = Schema.Struct({
   projects: Schema.Array(projectRecordSchema)
 })
@@ -714,7 +757,6 @@ export const webAppResponseSchema = Schema.Struct({ app: webAppSchema })
 export const webAppDefinitionResponseSchema = Schema.Struct({
   definition: webAppDefinitionSchema
 })
-export const prResponseSchema = Schema.Struct({ pr: prInfoSchema })
 export const terminatedTerminalsResponseSchema = Schema.Struct({
   terminated: Schema.NonNegativeInt
 })

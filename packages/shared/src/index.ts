@@ -1,5 +1,11 @@
 import * as Schema from 'effect/Schema'
-import type { WebApp, WebAppInput, WebAppPermission } from '@treeport/app-sdk'
+import type {
+  TreeDecoration,
+  TreeDecorationTone,
+  WebApp,
+  WebAppInput,
+  WebAppPermission
+} from '@treeport/app-sdk'
 import { browserUrlSchema } from './browser-protocol.js'
 import { jsonValueSchema } from './json-schema.js'
 import type { WorkspacePresence } from './presence-protocol.js'
@@ -35,7 +41,15 @@ export type {
   WebAppLaunch,
   WebAppPermission,
   WorktreeListener,
-  WorktreeListenerDiscovery
+  WorktreeListenerDiscovery,
+  PackageServiceIdentity,
+  TreeDecoration,
+  TreeDecorationInput,
+  TreeDecorationTone,
+  TreeportEvent,
+  TreeportProject,
+  TreeportServiceSdk,
+  TreeportTree
 } from '@treeport/app-sdk'
 export * from './browser-protocol.js'
 export * from './browser-clipboard.js'
@@ -90,7 +104,6 @@ export function formatCommandLine(argv: readonly string[]): string {
 export type ProjectKind = 'repository' | 'folder'
 export type WorktreeKind = 'main' | 'linked' | 'folder'
 export type TerminalStatus = 'running' | 'exited' | 'missing' | 'unavailable'
-export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type OperationKind =
   | 'create'
@@ -100,15 +113,14 @@ export type OperationKind =
   | 'remove'
   | 'external_remove'
 
-export interface PrInfo {
-  state: PrState
-  number: number | null
-  url: string | null
-  baseBranch: string | null
-  headBranch: string | null
-  mergedAt: string | null
-  refreshedAt: string | null
-}
+export const TREE_DECORATION_TONES = [
+  'neutral',
+  'info',
+  'success',
+  'warning',
+  'danger',
+  'done'
+] as const satisfies readonly TreeDecorationTone[]
 
 export interface TerminalRecord {
   id: string
@@ -302,7 +314,7 @@ export interface WorktreeRecord {
   prunable: boolean
   kind: WorktreeKind
   managedWrapperPath: string | null
-  pr: PrInfo
+  decorations: TreeDecoration[]
   dirty: DirtyState | null
   terminals: TerminalRecord[]
   workspaceItems: WorkspaceItem[]
@@ -327,6 +339,8 @@ export interface ProjectRecord {
   id: string
   name: string
   kind: ProjectKind
+  /** Fetch URL of the repository's origin remote, when it has one. */
+  originUrl: string | null
   /** Canonical root folder for this project. */
   rootPath: string
   /**
@@ -875,6 +889,46 @@ export const updateWorktreeTitleSchema = Schema.Struct({
   )
 })
 
+export const TREE_DECORATION_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/
+export const TREE_DECORATION_TEXT_MAX_LENGTH = 32
+export const setTreeDecorationSchema = Schema.Struct({
+  text: Schema.Trim.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(TREE_DECORATION_TEXT_MAX_LENGTH)
+  ),
+  title: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(256)),
+  tone: Schema.optionalWith(Schema.Literal(...TREE_DECORATION_TONES), {
+    default: () => 'neutral' as const
+  }),
+  url: Schema.optionalWith(
+    Schema.NullOr(
+      Schema.String.pipe(
+        Schema.maxLength(2_048),
+        Schema.filter(
+          (url) =>
+            URL.canParse(url) &&
+            ['http:', 'https:'].includes(new URL(url).protocol),
+          { message: () => 'A decoration URL must use http or https' }
+        )
+      )
+    ),
+    { default: () => null }
+  ),
+  // Rendered as a CSS mask, so scripts and colors inside the SVG never apply.
+  icon: Schema.optionalWith(
+    Schema.NullOr(
+      Schema.Trim.pipe(
+        Schema.maxLength(8_192),
+        Schema.filter(
+          (icon) => icon.startsWith('<svg') && icon.endsWith('</svg>'),
+          { message: () => 'A decoration icon must be an <svg> element' }
+        )
+      )
+    ),
+    { default: () => null }
+  )
+})
+
 export const reorderWorkspaceItemsSchema = Schema.Struct({
   itemIds: Schema.Array(
     Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
@@ -1040,6 +1094,8 @@ interface ProductEventPayloadMap {
   'worktree.created': { projectId: string; worktreeId: string }
   'worktree.updated': { worktreeId: string }
   'worktree.removed': { projectId: string; worktreeId: string }
+  // The tree's Git HEAD, branches, or remote-tracking refs moved.
+  'worktree.git_changed': { projectId: string; worktreeId: string }
   'create.started': { projectId: string; operationId: string }
   'create.completed': {
     projectId: string

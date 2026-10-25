@@ -11,24 +11,8 @@ import path from 'node:path'
 import type { Duplex } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { AppService } from '@treeport/shared'
-import { z } from 'zod'
 import { DomainError } from './core/domain'
-
-// Services are trusted native applications. The declaration, not an iframe's
-// request, supplies the executable. Workspace selection never changes the
-// process's working directory: all trees share the package's service instance.
-const declarationSchema = z.strictObject({
-  scope: z.literal('instance'),
-  executable: z.string().min(1),
-  args: z.array(z.string()),
-  readinessPath: z.string().regex(/^\/(?!\/)/u),
-  query: z.record(z.string(), z.string()).default({})
-})
-const manifestSchema = z.looseObject({
-  treeport: z.looseObject({
-    services: z.record(z.string(), declarationSchema)
-  })
-})
+import type { PackageServiceDeclaration } from './core/package-system'
 
 interface ServiceContext {
   packageRoot: string
@@ -37,9 +21,9 @@ interface ServiceContext {
 
 interface ServiceEntry {
   id: string
-  name: string
-  packageRoot: string
-  declaration: z.infer<typeof declarationSchema>
+  declaration: PackageServiceDeclaration
+  /** Identifies the package when the service calls the Treeport API. */
+  token: string
   status: AppService['status']
   error: string | null
   logs: string
@@ -51,50 +35,172 @@ interface ServiceEntry {
   socketPath: string | null
   socketDirectory: string | null
   connections: Set<Duplex>
+  /** Set by an explicit stop; always services restart only when it is false. */
+  stopped: boolean
+  startedAt: number
+  restarts: number
+  restartTimer: NodeJS.Timeout | null
+}
+
+export interface PackageServiceAccess {
+  packageId: string
+  /** Null when the package is configured globally. */
+  projectIds: string[] | null
+}
+
+interface AppServicesOptions {
+  apiUrl: string
+  dataDir: string
+  declarations: () => Promise<PackageServiceDeclaration[]>
+  pruneDecorationSources: (sources: string[]) => Promise<void>
+  log: (message: string) => void
 }
 
 const PREFIX = '/api/app-services/'
 const LOG_LIMIT = 64 * 1024
+// Package state is reconciled lazily from settings fingerprints, so polling
+// picks up installs, removals, and settings edits without change events.
+const SYNC_INTERVAL_MS = 5_000
+const MAX_RESTART_DELAY_MS = 60_000
 
 export class AppServices {
   private readonly entries = new Map<string, ServiceEntry>()
+  private readonly tokens = new Map<string, ServiceEntry>()
+  private activeSources: string | null = null
+  private timer: NodeJS.Timeout | null = null
+  private syncing: Promise<void> | null = null
   private disposed = false
 
-  constructor(private readonly dataDir: string) {}
+  constructor(private readonly options: AppServicesOptions) {}
+
+  /** Start always services and follow package changes. */
+  start(): void {
+    void this.sync()
+    this.timer = setInterval(() => void this.sync(), SYNC_INTERVAL_MS)
+    this.timer.unref()
+  }
+
+  /** Resolve a service's API token to the package it acts for. */
+  access(token: string): PackageServiceAccess | null {
+    const entry = this.tokens.get(token)
+    return entry
+      ? {
+          packageId: entry.declaration.packageId,
+          projectIds: entry.declaration.projectIds
+        }
+      : null
+  }
+
+  private sync(): Promise<void> {
+    this.syncing ??= this.reconcile()
+      .catch((error) => {
+        this.options.log(
+          `Package service sync failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      })
+      .finally(() => {
+        this.syncing = null
+      })
+    return this.syncing
+  }
+
+  private async reconcile(): Promise<void> {
+    const declarations = await this.options.declarations()
+    const next = new Map<string, PackageServiceDeclaration>()
+    for (const declaration of declarations) {
+      // Hash the real path so a service keeps its data directory and URL.
+      const root = await fs
+        .realpath(declaration.root)
+        .catch(() => declaration.root)
+      next.set(
+        crypto
+          .createHash('sha256')
+          .update(`${root}\0${declaration.name}`)
+          .digest('hex')
+          .slice(0, 24),
+        declaration
+      )
+    }
+    if (this.disposed) {
+      return
+    }
+
+    for (const [id, entry] of this.entries) {
+      const declaration = next.get(id)
+      // Declarations are built in a stable key order. Project scope can change
+      // without restarting the process.
+      if (
+        declaration &&
+        JSON.stringify({ ...declaration, projectIds: null }) ===
+          JSON.stringify({ ...entry.declaration, projectIds: null })
+      ) {
+        entry.declaration = declaration
+        continue
+      }
+
+      this.entries.delete(id)
+      this.tokens.delete(entry.token)
+      await this.stopEntry(entry)
+    }
+
+    for (const [id, declaration] of next) {
+      if (this.entries.has(id)) {
+        continue
+      }
+
+      const entry: ServiceEntry = {
+        id,
+        declaration,
+        token: crypto.randomBytes(32).toString('base64url'),
+        status: 'stopped',
+        error: null,
+        logs: '',
+        child: null,
+        closed: null,
+        starting: null,
+        stopping: null,
+        abort: new AbortController(),
+        socketPath: null,
+        socketDirectory: null,
+        connections: new Set(),
+        stopped: false,
+        startedAt: 0,
+        restarts: 0,
+        restartTimer: null
+      }
+      this.entries.set(id, entry)
+      this.tokens.set(entry.token, entry)
+      if (declaration.start === 'always') {
+        void this.run(entry).catch(() => undefined)
+      }
+    }
+
+    const sources = [
+      ...new Set(declarations.map((declaration) => declaration.packageId))
+    ].sort()
+    if (JSON.stringify(sources) !== this.activeSources) {
+      await this.options.pruneDecorationSources(sources)
+      this.activeSources = JSON.stringify(sources)
+    }
+  }
 
   private async resolve(
     context: ServiceContext,
     name: string
   ): Promise<ServiceEntry> {
+    const find = () =>
+      [...this.entries.values()].find(
+        (entry) =>
+          entry.declaration.root === context.packageRoot &&
+          entry.declaration.name === name
+      )
+    // A package installed since the last sync is picked up on first use.
+    const entry = find() ?? (await this.sync().then(find))
     if (this.disposed) {
       throw new DomainError('SERVICE_STOPPED', 'Treeport is shutting down', 503)
     }
 
-    const packageRoot = await fs.realpath(context.packageRoot)
-    const id = crypto
-      .createHash('sha256')
-      .update(`${packageRoot}\0${name}`)
-      .digest('hex')
-      .slice(0, 24)
-    const existing = this.entries.get(id)
-    if (existing) {
-      return existing
-    }
-
-    const manifest = await fs
-      .readFile(path.join(packageRoot, 'package.json'), 'utf8')
-      .then((content) => manifestSchema.parse(JSON.parse(content)))
-      .catch(() => {
-        throw new DomainError(
-          'SERVICE_MANIFEST_INVALID',
-          'This package must declare treeport.services in package.json',
-          400
-        )
-      })
-    const declaration = Object.hasOwn(manifest.treeport.services, name)
-      ? manifest.treeport.services[name]
-      : undefined
-    if (!declaration) {
+    if (!entry) {
       throw new DomainError(
         'SERVICE_NOT_FOUND',
         `Service “${name}” is not declared by this package`,
@@ -102,34 +208,6 @@ export class AppServices {
       )
     }
 
-    // Another app may have resolved the same package while reading its manifest.
-    const current = this.entries.get(id)
-    if (current) {
-      return current
-    }
-
-    if (this.disposed) {
-      throw new DomainError('SERVICE_STOPPED', 'Treeport is shutting down', 503)
-    }
-
-    const entry: ServiceEntry = {
-      id,
-      name,
-      packageRoot,
-      declaration,
-      status: 'stopped',
-      error: null,
-      logs: '',
-      child: null,
-      closed: null,
-      starting: null,
-      stopping: null,
-      abort: new AbortController(),
-      socketPath: null,
-      socketDirectory: null,
-      connections: new Set()
-    }
-    this.entries.set(id, entry)
     return entry
   }
 
@@ -140,14 +218,14 @@ export class AppServices {
     }
     return {
       id: entry.id,
-      name: entry.name,
+      name: entry.declaration.name,
       status: entry.status,
       pid:
         entry.child?.exitCode === null && entry.child.signalCode === null
           ? (entry.child.pid ?? null)
           : null,
       url:
-        entry.status === 'ready'
+        entry.status === 'ready' && entry.declaration.readinessPath
           ? `${PREFIX}${entry.id}/${query.size ? `?${query}` : ''}`
           : null,
       logs: entry.logs,
@@ -166,24 +244,7 @@ export class AppServices {
       throw new DomainError('SERVICE_STOPPED', 'Treeport is shutting down', 503)
     }
 
-    if (!entry.starting && entry.status !== 'ready') {
-      entry.abort = new AbortController()
-      entry.status = 'starting'
-      entry.error = null
-      entry.logs = ''
-      entry.starting = this.start(entry)
-        .catch(async (error) => {
-          entry.error = error instanceof Error ? error.message : String(error)
-          entry.status = 'failed'
-          await this.terminate(entry)
-          throw new DomainError('SERVICE_START_FAILED', entry.error, 503)
-        })
-        .finally(() => {
-          entry.starting = null
-        })
-    }
-
-    await entry.starting
+    await this.run(entry)
     if (entry.status !== 'ready') {
       throw new DomainError(
         'SERVICE_STOPPED',
@@ -195,25 +256,92 @@ export class AppServices {
     return this.snapshot(entry, context)
   }
 
-  private async start(entry: ServiceEntry): Promise<void> {
+  private run(entry: ServiceEntry): Promise<void> {
+    if (!entry.starting && entry.status !== 'ready') {
+      if (entry.restartTimer) {
+        clearTimeout(entry.restartTimer)
+        entry.restartTimer = null
+      }
+
+      entry.stopped = false
+      entry.abort = new AbortController()
+      entry.status = 'starting'
+      entry.error = null
+      entry.logs = ''
+      entry.starting = this.launch(entry)
+        .catch(async (error) => {
+          entry.error = error instanceof Error ? error.message : String(error)
+          entry.status = 'failed'
+          await this.terminate(entry)
+          this.restart(entry)
+          throw new DomainError('SERVICE_START_FAILED', entry.error, 503)
+        })
+        .finally(() => {
+          entry.starting = null
+        })
+    }
+
+    return entry.starting ?? Promise.resolve()
+  }
+
+  /** Restart a failed always service with backoff (1s doubling to 60s). */
+  private restart(entry: ServiceEntry): void {
+    if (
+      entry.declaration.start !== 'always' ||
+      entry.stopped ||
+      entry.restartTimer ||
+      this.disposed ||
+      this.entries.get(entry.id) !== entry
+    ) {
+      return
+    }
+
+    // A service that stayed up past the longest delay starts a fresh backoff.
+    entry.restarts =
+      Date.now() - entry.startedAt > MAX_RESTART_DELAY_MS
+        ? 0
+        : entry.restarts + 1
+    const wait = Math.min(MAX_RESTART_DELAY_MS, 1_000 * 2 ** entry.restarts)
+    this.options.log(
+      `Service ${entry.declaration.packageId} ${entry.declaration.name}: ${entry.error}; restarting in ${wait / 1_000}s\n${entry.logs.slice(-2_048)}`
+    )
+    entry.restartTimer = setTimeout(() => {
+      entry.restartTimer = null
+      void (async () => {
+        await entry.stopping
+        if (!entry.stopped && !this.disposed) {
+          await this.run(entry)
+        }
+      })().catch(() => undefined)
+    }, wait)
+    entry.restartTimer.unref()
+  }
+
+  private async launch(entry: ServiceEntry): Promise<void> {
     if (process.platform === 'win32') {
       throw new Error('App services currently require macOS or Linux')
     }
 
     // Reap a crashed generation before reusing its entry or socket.
     await this.terminate(entry)
-    const dataDir = path.join(this.dataDir, 'app-services', entry.id)
+    const { declaration } = entry
+    const dataDir = path.join(this.options.dataDir, 'app-services', entry.id)
     await fs.mkdir(dataDir, { recursive: true })
-    // Keep Unix socket paths short even when the worktree/data directory is long.
-    entry.socketDirectory = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'treeport-service-')
-    )
-    entry.socketPath = path.join(entry.socketDirectory, 'http.sock')
+    if (declaration.readinessPath) {
+      // Keep Unix socket paths short even when the worktree/data directory is long.
+      entry.socketDirectory = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'treeport-service-')
+      )
+      entry.socketPath = path.join(entry.socketDirectory, 'http.sock')
+    }
+
     const substitute = (value: string) =>
-      value
-        .replaceAll('${socket}', entry.socketPath!)
+      (entry.socketPath
+        ? value.replaceAll('${socket}', entry.socketPath)
+        : value
+      )
         .replaceAll('${dataDir}', dataDir)
-        .replaceAll('${packageRoot}', entry.packageRoot)
+        .replaceAll('${packageRoot}', declaration.root)
     entry.abort.signal.throwIfAborted()
     const env = { ...process.env }
     // An editor's terminal environment must not redirect this launch into an
@@ -227,17 +355,20 @@ export class AppServices {
         delete env[key]
       }
     }
+    env.TREEPORT_API_URL = this.options.apiUrl
+    env.TREEPORT_PACKAGE_TOKEN = entry.token
     const child = spawn(
-      substitute(entry.declaration.executable),
-      entry.declaration.args.map(substitute),
+      substitute(declaration.executable),
+      declaration.args.map(substitute),
       {
-        cwd: entry.packageRoot,
+        cwd: declaration.root,
         env,
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe']
       }
     )
     entry.child = child
+    entry.startedAt = Date.now()
     entry.closed = new Promise((resolve) => {
       child.once('close', () => resolve())
     })
@@ -261,10 +392,11 @@ export class AppServices {
           .finally(() => {
             entry.stopping = null
           })
+        this.restart(entry)
       }
     })
     child.once('error', (error) => {
-      entry.error = `Could not start ${entry.declaration.executable}: ${error.message}. Install the executable and make it available on Treeport's PATH.`
+      entry.error = `Could not start ${declaration.executable}: ${error.message}. Install the executable and make it available on Treeport's PATH.`
       entry.status = 'failed'
     })
     const append = (chunk: Buffer) => {
@@ -272,6 +404,21 @@ export class AppServices {
     }
     child.stdout?.on('data', append)
     child.stderr?.on('data', append)
+    const readinessPath = declaration.readinessPath
+    if (!readinessPath) {
+      // Without HTTP, a service is ready once its process runs.
+      await new Promise((resolve) => {
+        child.once('spawn', resolve)
+        child.once('error', resolve)
+      })
+      if (entry.error) {
+        throw new Error(entry.error)
+      }
+
+      entry.status = 'ready'
+      return
+    }
+
     const deadline = Date.now() + 30_000
     while (Date.now() < deadline) {
       entry.abort.signal.throwIfAborted()
@@ -283,7 +430,7 @@ export class AppServices {
         const request = httpRequest(
           {
             socketPath: entry.socketPath!,
-            path: entry.declaration.readinessPath,
+            path: readinessPath,
             timeout: 1_000
           },
           (response) => {
@@ -308,7 +455,7 @@ export class AppServices {
       await delay(100, undefined, { signal: entry.abort.signal })
     }
     throw new Error(
-      `Service “${entry.name}” did not become ready within 30 seconds.\n${entry.logs.slice(-4_096)}`
+      `Service “${declaration.name}” did not become ready within 30 seconds.\n${entry.logs.slice(-4_096)}`
     )
   }
 
@@ -349,6 +496,12 @@ export class AppServices {
   }
 
   private stopEntry(entry: ServiceEntry): Promise<void> {
+    entry.stopped = true
+    if (entry.restartTimer) {
+      clearTimeout(entry.restartTimer)
+      entry.restartTimer = null
+    }
+
     if (!entry.stopping) {
       entry.status = 'stopped'
       entry.abort.abort()
@@ -507,6 +660,11 @@ export class AppServices {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    if (this.timer) {
+      clearInterval(this.timer)
+    }
+
+    await this.syncing
     await Promise.all(
       [...this.entries.values()].map((entry) => this.stopEntry(entry))
     )

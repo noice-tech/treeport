@@ -89,6 +89,15 @@ interface ResolvedLauncher {
   enabled: boolean
 }
 
+type PackageService = z.output<typeof packageServiceSchema> & { name: string }
+
+/** A package-declared process; null project IDs mean every project. */
+export interface PackageServiceDeclaration extends PackageService {
+  packageId: string
+  root: string
+  projectIds: string[] | null
+}
+
 interface ResolvedPackage {
   source: string
   identity: string
@@ -99,6 +108,7 @@ interface ResolvedPackage {
   installedPath: string
   webApps: ResolvedWebApp[]
   launchers: ResolvedLauncher[]
+  services: PackageService[]
   diagnostics: PackageResourceDiagnostic[]
 }
 
@@ -132,11 +142,28 @@ interface WebAppManifestEntry {
 interface PackageManifest {
   webApps: WebAppManifestEntry[]
   launchers: string[]
+  services: PackageService[]
 }
 
 const packageManifestInputSchema = z.unknown()
 type PackageManifestInput = z.input<typeof packageManifestInputSchema>
 const manifestPatternsSchema = z.array(z.string())
+// Services are trusted native applications. The declaration, not a caller,
+// supplies the executable. HTTP services set readinessPath and listen on
+// ${socket}; Treeport proxies them to the package's web apps.
+const packageServiceSchema = z.strictObject({
+  scope: z.literal('instance'),
+  /** on-demand services start for a web app; always services start with Treeport and restart. */
+  start: z.enum(['on-demand', 'always']).default('on-demand'),
+  executable: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  readinessPath: z
+    .string()
+    .regex(/^\/(?!\/)/u)
+    .nullable()
+    .default(null),
+  query: z.record(z.string(), z.string()).default({})
+})
 const webAppManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
@@ -1179,7 +1206,8 @@ export class PackageSystem {
         const parsedTreeport = z
           .looseObject({
             webApps: z.unknown().optional(),
-            launchers: z.unknown().optional()
+            launchers: z.unknown().optional(),
+            services: z.unknown().optional()
           })
           .safeParse(parsedPackageJson.data.treeport)
         if (!parsedTreeport.success) {
@@ -1197,7 +1225,22 @@ export class PackageSystem {
             parsedTreeport.data.launchers ?? [],
             'launchers',
             packageJsonPath
-          )
+          ),
+          services: (() => {
+            const services = z
+              .record(z.string().min(1), packageServiceSchema)
+              .safeParse(parsedTreeport.data.services ?? {})
+            if (!services.success) {
+              throw new Error(
+                `${packageJsonPath} treeport.services is invalid: ${z.prettifyError(services.error)}`
+              )
+            }
+
+            return Object.entries(services.data).map(([name, service]) => ({
+              name,
+              ...service
+            }))
+          })()
         }
       }
     }
@@ -1391,6 +1434,7 @@ export class PackageSystem {
       installedPath: root,
       webApps,
       launchers: filteredLaunchers,
+      services: manifest?.services ?? [],
       diagnostics: candidates.diagnostics
     }
   }
@@ -1412,6 +1456,11 @@ export class PackageSystem {
           args: [...resource.definition.args],
           source: { ...resource.definition.source }
         }
+      })),
+      services: pkg.services.map((service) => ({
+        ...service,
+        args: [...service.args],
+        query: { ...service.query }
       })),
       diagnostics: [...pkg.diagnostics]
     }
@@ -1494,6 +1543,7 @@ export class PackageSystem {
             : this.npmPackagePath(parsed, scope, projectId),
         webApps: [],
         launchers: [],
+        services: [],
         diagnostics: [
           diagnostic(
             scope,
@@ -1862,6 +1912,54 @@ export class PackageSystem {
       }
 
       return state
+    })
+  }
+
+  /** Services of packages configured globally or by a registered project. */
+  services(): Effect.Effect<
+    PackageServiceDeclaration[],
+    never,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.reconcileGlobal()
+      yield* Effect.all(
+        [...this.projectContexts.keys()].map((projectId) =>
+          this.reconcileProject(projectId)
+        ),
+        { concurrency: 'unbounded', discard: true }
+      )
+      // One process per installed copy: every tree using it shares the instance.
+      const declarations = new Map<string, PackageServiceDeclaration>()
+      const add = (pkg: ResolvedPackage, projectId: string | null) => {
+        for (const service of pkg.services) {
+          const id = `${pkg.root}\0${service.name}`
+          const existing = declarations.get(id)
+          if (!existing) {
+            declarations.set(id, {
+              ...service,
+              args: [...service.args],
+              query: { ...service.query },
+              packageId: pkg.packageId,
+              root: pkg.root,
+              projectIds: projectId === null ? null : [projectId]
+            })
+          } else if (existing.projectIds && projectId === null) {
+            existing.projectIds = null
+          } else if (existing.projectIds && projectId !== null) {
+            existing.projectIds.push(projectId)
+          }
+        }
+      }
+      for (const pkg of this.globalState.packages.values()) {
+        add(pkg, null)
+      }
+      for (const [projectId, state] of this.projectStates) {
+        for (const pkg of state.ownPackages.values()) {
+          add(pkg, projectId)
+        }
+      }
+      return [...declarations.values()]
     })
   }
 

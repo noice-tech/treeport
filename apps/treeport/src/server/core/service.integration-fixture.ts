@@ -135,6 +135,12 @@ export function integrationService(
     updateProjectColor: run(
       application.projects.updateProjectColor.bind(application.projects)
     ),
+    pruneDecorationSources: run(
+      application.projects.pruneDecorationSources.bind(application.projects)
+    ),
+    updateWorktreeDecoration: run(
+      application.projects.updateWorktreeDecoration.bind(application.projects)
+    ),
     updateWorktreeTitle: run(
       application.projects.updateWorktreeTitle.bind(application.projects)
     ),
@@ -151,7 +157,6 @@ export function integrationService(
     listActiveOperations: run(
       application.worktrees.listActiveOperations.bind(application.worktrees)
     ),
-    refreshPr: run(application.worktrees.refreshPr.bind(application.worktrees)),
     removePreview: run(
       application.worktrees.removePreview.bind(application.worktrees)
     ),
@@ -896,7 +901,6 @@ export async function fixture() {
     runtimeDir: runtime,
     shell: '/bin/zsh',
     gitPath: 'git',
-    ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
     daemonLifecycle: 'external',

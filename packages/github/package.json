@@ -1,0 +1,54 @@
+{
+  "name": "@treeport/github",
+  "version": "0.13.0",
+  "description": "GitHub pull request status on Treeport trees.",
+  "type": "module",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "keywords": [
+    "treeport-package"
+  ],
+  "treeport": {
+    "services": {
+      "pull-requests": {
+        "scope": "instance",
+        "start": "always",
+        "executable": "node",
+        "args": [
+          "${packageRoot}/dist/service.js"
+        ]
+      }
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git",
+    "directory": "packages/github"
+  },
+  "bugs": {
+    "url": "https://github.com/noice-tech/treeport/issues"
+  },
+  "homepage": "https://treeport.app",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "pnpm clean && tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
+  },
+  "dependencies": {
+    "@treeport/app-sdk": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.9",
+    "typescript": "catalog:"
+  }
+}

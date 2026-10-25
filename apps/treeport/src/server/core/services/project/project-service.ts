@@ -6,6 +6,7 @@ import type {
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
+  TreeDecoration,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, eq, sql } from 'drizzle-orm'
@@ -234,6 +235,125 @@ export class ProjectService {
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('project.updated', { projectId: worktree.projectId })
+      })
+    })
+  }
+
+  /**
+   * Set or clear one decoration; unchanged values skip the write and event. A
+   * package may change only its own decorations; a direct caller may clear any.
+   */
+  updateWorktreeDecoration(
+    worktreeId: string,
+    key: string,
+    decoration: Omit<TreeDecoration, 'key' | 'source' | 'updatedAt'> | null,
+    source: string | null
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const projectStore = yield* ProjectStore
+      const worktree = yield* projectStore.getWorktree(worktreeId)
+      yield* projectStore.requireOpenProject(worktree.projectId)
+      const current = worktree.decorations.find((entry) => entry.key === key)
+      if (
+        current &&
+        current.source !== source &&
+        (decoration || source !== null)
+      ) {
+        return yield* Effect.fail(
+          new DomainError(
+            'DECORATION_OWNED',
+            `Decoration ${key} belongs to ${current.source ?? 'a direct caller'}`,
+            409
+          )
+        )
+      }
+
+      if (
+        decoration
+          ? current?.text === decoration.text &&
+            current.tone === decoration.tone &&
+            current.url === decoration.url &&
+            current.title === decoration.title &&
+            current.icon === decoration.icon
+          : !current
+      ) {
+        return
+      }
+
+      // The key pattern excludes quotes, so it is safe inside a JSON path.
+      const jsonPath = `$."${key}"`
+      yield* database
+        .execute('project.service.worktree-decoration', (db) =>
+          db.run(
+            decoration
+              ? sql`
+                UPDATE worktrees
+                SET decorations = json_set(decorations, ${jsonPath}, json(${JSON.stringify(
+                  { ...decoration, source, updatedAt: now() }
+                )}))
+                WHERE id = ${worktreeId}
+              `
+              : sql`
+                UPDATE worktrees SET decorations = json_remove(decorations, ${jsonPath})
+                WHERE id = ${worktreeId}
+              `
+          )
+        )
+        .pipe(Effect.orDie)
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('project.updated', { projectId: worktree.projectId })
+      })
+    })
+  }
+
+  /** Remove decorations owned by packages that are no longer configured. */
+  pruneDecorationSources(
+    activeSources: string[]
+  ): Effect.Effect<void, never, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const active = JSON.stringify(activeSources)
+      const stale = sql`
+        SELECT 1 FROM json_each(worktrees.decorations) AS decoration
+        WHERE json_extract(decoration.value, '$.source') IS NOT NULL
+          AND json_extract(decoration.value, '$.source')
+            NOT IN (SELECT value FROM json_each(${active}))
+      `
+      const updated = yield* database
+        .execute('project.service.prune-decorations', (db) =>
+          db.all<{ projectId: string }>(sql`
+            UPDATE worktrees
+            SET decorations = COALESCE((
+              SELECT json_group_object(decoration.key, json(decoration.value))
+              FROM json_each(worktrees.decorations) AS decoration
+              WHERE json_extract(decoration.value, '$.source') IS NULL
+                OR json_extract(decoration.value, '$.source')
+                  IN (SELECT value FROM json_each(${active}))
+            ), '{}')
+            WHERE EXISTS (${stale})
+            RETURNING project_id AS projectId
+          `)
+        )
+        .pipe(Effect.orDie)
+      if (!updated.length) {
+        return
+      }
+
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        for (const projectId of new Set(updated.map((row) => row.projectId))) {
+          events.publish('project.updated', { projectId })
+        }
       })
     })
   }

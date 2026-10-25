@@ -86,7 +86,14 @@ async function checkPackage(
         'LICENSE',
         'README.md'
       ]
-    : ['dist/index.js', 'dist/index.d.ts', 'LICENSE', 'README.md']
+    : [
+        'dist/index.js',
+        'dist/index.d.ts',
+        'dist/service.js',
+        'dist/service.d.ts',
+        'LICENSE',
+        'README.md'
+      ]
   for (const file of required) {
     assert(
       (await fs.stat(path.join(packageDirectory, file))).size > 0,
@@ -195,7 +202,11 @@ async function checkPackage(
   } else {
     assert.equal(manifest.types, 'dist/index.d.ts')
     assert.deepEqual(manifest.exports, {
-      '.': { types: './dist/index.d.ts', default: './dist/index.js' }
+      '.': { types: './dist/index.d.ts', default: './dist/index.js' },
+      './service': {
+        types: './dist/service.d.ts',
+        default: './dist/service.js'
+      }
     })
   }
 

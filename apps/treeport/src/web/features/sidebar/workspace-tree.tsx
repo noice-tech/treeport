@@ -1,6 +1,7 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
+  ArrowTopRightOnSquareIcon,
   DocumentDuplicateIcon,
   FolderIcon,
   LinkSlashIcon,
@@ -12,9 +13,16 @@ import {
 import type {
   ProjectRecord,
   TerminalRecord,
+  TreeDecoration,
+  TreeDecorationTone,
   WorktreeRecord
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from '../../components/ui/tooltip'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -78,11 +86,70 @@ function copyText(text: string) {
   }
 }
 
+// Status scales invert in light mode, so one set of tones serves both themes.
+const treeDecorationToneClasses = {
+  neutral: 'text-zinc-400',
+  info: 'text-blue-400',
+  success: 'text-emerald-400',
+  warning: 'text-amber-400',
+  danger: 'text-rose-400',
+  done: 'text-violet-400'
+} satisfies Record<TreeDecorationTone, string>
+const treeDecorationToneRank = (tone: TreeDecorationTone) =>
+  tone === 'danger' ? 0 : tone === 'warning' ? 1 : 2
+const VISIBLE_TREE_DECORATIONS = 2
+
+/** Problems first; a stable sort keeps the order decorations were first set. */
+function sortTreeDecorations(decorations: TreeDecoration[]): TreeDecoration[] {
+  return [...decorations].sort(
+    (left, right) =>
+      treeDecorationToneRank(left.tone) - treeDecorationToneRank(right.tone)
+  )
+}
+
+// Status is secondary to the tree name: color marks the state, on the icon
+// when there is one, without a filled shape.
+function TreeDecorationLabel({
+  decoration,
+  className
+}: {
+  decoration: TreeDecoration
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        'flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums',
+        decoration.icon
+          ? 'text-zinc-400'
+          : treeDecorationToneClasses[decoration.tone],
+        className
+      )}
+    >
+      {decoration.icon ? (
+        // A mask keeps the SVG inert and paints its shape in the tone color.
+        <span
+          aria-hidden
+          className={cn(
+            'size-3 shrink-0 bg-current mask-contain mask-center mask-no-repeat',
+            treeDecorationToneClasses[decoration.tone]
+          )}
+          style={{
+            maskImage: `url("data:image/svg+xml,${encodeURIComponent(decoration.icon)}")`
+          }}
+        />
+      ) : null}
+      <span className="min-w-0 truncate">{decoration.text}</span>
+    </span>
+  )
+}
+
 function WorktreeShell({
   name,
   title,
   icon,
   status,
+  decorations = [],
   selected = false,
   pending = false,
   busy = false,
@@ -95,6 +162,7 @@ function WorktreeShell({
   title: string
   icon: ReactNode
   status?: ReactNode
+  decorations?: TreeDecoration[]
   selected?: boolean
   pending?: boolean
   busy?: boolean
@@ -115,13 +183,46 @@ function WorktreeShell({
     pending && 'pointer-events-none',
     className
   )
+  const sortedDecorations = sortTreeDecorations(decorations)
+  const hiddenDecorations = sortedDecorations.slice(VISIBLE_TREE_DECORATIONS)
   const content = (
     <>
       {icon}
-      <span className="flex min-w-0 flex-col">
+      {/* The name keeps a few characters; decorations truncate before it vanishes. */}
+      <span className="flex min-w-12 flex-1 flex-col">
         <span className="truncate">{name}</span>
         {status}
       </span>
+      {decorations.length ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex min-w-0 items-center gap-2.5">
+              {sortedDecorations
+                .slice(0, VISIBLE_TREE_DECORATIONS)
+                .map((decoration) => (
+                  <TreeDecorationLabel
+                    key={decoration.key}
+                    decoration={decoration}
+                    className="max-w-28"
+                  />
+                ))}
+              {hiddenDecorations.length ? (
+                <span className="shrink-0 text-xs font-medium text-zinc-500 tabular-nums">
+                  +{hiddenDecorations.length}
+                </span>
+              ) : null}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="right" className="flex flex-col gap-1.5 py-1.5">
+            {sortedDecorations.map((decoration) => (
+              <span key={decoration.key} className="flex items-center gap-2">
+                <TreeDecorationLabel decoration={decoration} />
+                <span className="text-zinc-400">{decoration.title}</span>
+              </span>
+            ))}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
     </>
   )
 
@@ -335,6 +436,7 @@ export function WorkspaceTree({
                                         )}`
                                   }`
                             }
+                            decorations={worktree.decorations}
                             selected={selectedWorktree?.id === worktree.id}
                             className={cn(
                               selectedWorktree?.id === worktree.id &&
@@ -414,6 +516,41 @@ export function WorkspaceTree({
                             Copy tree ID
                           </ContextMenuItem>
                         </ContextMenuGroup>
+                        {worktree.decorations.length ? (
+                          <>
+                            <ContextMenuSeparator />
+                            {/* Every decoration, so ones hidden behind +N can be read, and on touch screens too. */}
+                            <ContextMenuGroup>
+                              {sortTreeDecorations(worktree.decorations).map(
+                                (decoration) => (
+                                  <ContextMenuItem
+                                    key={decoration.key}
+                                    disabled={!decoration.url}
+                                    className="data-[disabled]:opacity-100"
+                                    onSelect={() =>
+                                      window.open(
+                                        decoration.url!,
+                                        '_blank',
+                                        'noopener,noreferrer'
+                                      )
+                                    }
+                                  >
+                                    <TreeDecorationLabel
+                                      decoration={decoration}
+                                      className="shrink-0 text-sm"
+                                    />
+                                    <span className="min-w-0 truncate text-zinc-400">
+                                      {decoration.title}
+                                    </span>
+                                    {decoration.url ? (
+                                      <ArrowTopRightOnSquareIcon className="ml-auto text-zinc-500" />
+                                    ) : null}
+                                  </ContextMenuItem>
+                                )
+                              )}
+                            </ContextMenuGroup>
+                          </>
+                        ) : null}
                         {worktree.kind === 'linked' ? (
                           <>
                             <ContextMenuSeparator />

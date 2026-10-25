@@ -37,6 +37,7 @@ import { connectOrStartTerminalHost } from './terminal-host-client'
 import { observeDaemonEventLoop } from './network-telemetry'
 import { WebPushManager } from './web-push'
 import { AppServices } from './app-services'
+import { PackageSystemPort } from './core/services/infrastructure/ports'
 
 const updateStartupTransactionSchema = z.looseObject({
   schemaVersion: z.literal(1),
@@ -181,7 +182,24 @@ export async function main(
     const appServices = await Effect.runPromise(
       Scope.extend(
         Effect.acquireRelease(
-          Effect.sync(() => new AppServices(config.dataDir)),
+          Effect.sync(
+            () =>
+              new AppServices({
+                apiUrl: config.apiUrl,
+                dataDir: config.dataDir,
+                declarations: () =>
+                  service.runEffect(
+                    Effect.flatMap(PackageSystemPort, (packages) =>
+                      packages.services()
+                    )
+                  ),
+                pruneDecorationSources: (sources) =>
+                  service.runEffect(
+                    service.projects.pruneDecorationSources(sources)
+                  ),
+                log: (message) => console.warn(message)
+              })
+          ),
           (manager) =>
             Effect.tryPromise(() => manager.dispose()).pipe(Effect.orDie)
         ),
@@ -614,6 +632,7 @@ export async function main(
       )
     )
 
+    appServices.start()
     diagnostics.event('ready', { apiUrl: config.apiUrl })
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)

@@ -20,10 +20,10 @@ import type {
   OperationRecord,
   RemoveOperationRequest,
   RemoveOperationResult,
-  PrInfo,
   ProjectRecord,
   Launcher,
   LauncherCommand,
+  TreeDecoration,
   WorktreeRecord
 } from '@treeport/shared'
 import * as schema from './database-schema'
@@ -531,6 +531,7 @@ export function mapProject(
     repositoryPath: row.repositoryPath,
     mainWorktreePath: row.mainWorktreePath,
     defaultBranch: row.defaultBranch,
+    originUrl: row.originUrl,
     // SAFETY: The query selects the columns required by this database row contract.
     color: row.color as ProjectRecord['color'],
     availability: { state: 'available', message: null },
@@ -566,16 +567,15 @@ export function mapWorktree(
     kind: row.kind as WorktreeRecord['kind'],
     managedWrapperPath: row.managedWrapperPath,
     title: row.title,
-    pr: {
-      // SAFETY: The query selects the columns required by this database row contract.
-      state: row.prState as PrInfo['state'],
-      number: row.prNumber,
-      url: row.prUrl,
-      baseBranch: row.prBaseBranch,
-      headBranch: row.prHeadBranch,
-      mergedAt: row.prMergedAt,
-      refreshedAt: row.prRefreshedAt
-    },
+    decorations: Object.entries(
+      // SAFETY: Decoration writes store values validated by the decoration schema.
+      JSON.parse(row.decorations) as Record<string, Omit<TreeDecoration, 'key'>>
+    ).map(([key, decoration]) => ({
+      key,
+      ...decoration,
+      icon: decoration.icon ?? null,
+      source: decoration.source ?? null
+    })),
     dirty: null,
     terminals: [],
     workspaceItems: [],

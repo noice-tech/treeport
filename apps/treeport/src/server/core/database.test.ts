@@ -36,12 +36,26 @@ async function restoreVersion7WorktreeSchema(
     ADD COLUMN tmux_socket_name TEXT NOT NULL DEFAULT ''
   `)
   await database.db.run(sql`
+    ALTER TABLE worktrees ADD COLUMN pr_state TEXT NOT NULL DEFAULT 'unknown'
+  `)
+  for (const column of [
+    'pr_number INTEGER',
+    'pr_url TEXT',
+    'pr_base_branch TEXT',
+    'pr_head_branch TEXT',
+    'pr_merged_at TEXT',
+    'pr_refreshed_at TEXT'
+  ]) {
+    await database.db.run(sql.raw(`ALTER TABLE worktrees ADD COLUMN ${column}`))
+  }
+  await database.db.run(sql`
     UPDATE worktrees SET tmux_socket_name='legacy-' || id
   `)
   await database.db.run(sql`
     CREATE UNIQUE INDEX worktrees_tmux_socket_name_unique
     ON worktrees(tmux_socket_name)
   `)
+  await database.db.run(sql`ALTER TABLE projects DROP COLUMN origin_url`)
   // These fixtures emulate the historical schema before the app rename.
   await database.db.run(sql`ALTER TABLE web_apps RENAME TO web_panels`)
   await database.db.run(sql`ALTER TABLE browser_apps RENAME TO browser_panels`)

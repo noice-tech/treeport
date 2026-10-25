@@ -1,3 +1,5 @@
+import { existsSync, watch } from 'node:fs'
+import path from 'node:path'
 import { decodeUnknownOrNull, webAppInputSchema } from '@treeport/shared'
 import type {
   BrowserApp,
@@ -7,7 +9,7 @@ import type {
   WebAppPermission,
   WorktreeRecord
 } from '@treeport/shared'
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
@@ -26,6 +28,7 @@ import {
   TerminalOperations
 } from '../domain-services'
 import type { ApplicationServices } from '../infrastructure/application-runtime'
+import { EventBusPort } from '../infrastructure/ports'
 import { DatabasePort } from '../../database'
 import { GitPort } from '../../git'
 import { ProjectStore } from './project-store'
@@ -38,6 +41,12 @@ export class ProjectSnapshotService {
     { path: string; state: WorktreeRecord['dirty'] }
   >()
   private readonly refreshDue = new Map<string, number>()
+  // Ref paths, relative to the Git common directory, that moved since the
+  // project's last reconciliation.
+  private readonly gitWatchers = new Map<
+    string,
+    { repositoryPath: string; changes: Set<string>; close: () => void }
+  >()
 
   invalidate(): void {
     this.revision += 1
@@ -241,6 +250,95 @@ export class ProjectSnapshotService {
           this.refreshDue.delete(key)
         }
       }
+      for (const [projectId, watcher] of this.gitWatchers) {
+        const project = projects.find((candidate) => candidate.id === projectId)
+        if (project?.repositoryPath !== watcher.repositoryPath) {
+          watcher.close()
+          this.gitWatchers.delete(projectId)
+        }
+      }
+      for (const project of projects) {
+        if (project.kind !== 'repository' || this.gitWatchers.has(project.id)) {
+          continue
+        }
+
+        const commonDirectory = yield* git
+          .commonDirectory(project.repositoryPath)
+          .pipe(Effect.orElseSucceed(() => null))
+        if (
+          !commonDirectory ||
+          !existsSync(path.join(commonDirectory, 'refs'))
+        ) {
+          // Unwatchable repositories keep the bounded polling refresh.
+          this.gitWatchers.set(project.id, {
+            repositoryPath: project.repositoryPath,
+            changes: new Set(),
+            close: () => {}
+          })
+          continue
+        }
+
+        // Watch only HEADs and refs: commits, checkouts, fetches, and pushes
+        // move them, while index and object writes would be noise.
+        const changes = new Set<string>()
+        const note = (ref: string) => {
+          changes.add(ref)
+          this.refreshDue.set(`project:${project.id}`, 0)
+        }
+        const worktreesDirectory = path.join(commonDirectory, 'worktrees')
+        const watchingWorktrees = existsSync(worktreesDirectory)
+        const watchers = [
+          watch(commonDirectory, { persistent: false }, (_, name) => {
+            if (name === 'HEAD' || name === 'packed-refs') {
+              note(name)
+            } else if (name === 'worktrees' && !watchingWorktrees) {
+              // The first linked tree created the directory; watch it next tick.
+              close()
+              this.gitWatchers.delete(project.id)
+            }
+          }),
+          watch(
+            path.join(commonDirectory, 'refs'),
+            { persistent: false, recursive: true },
+            (_, name) => {
+              if (name && !name.endsWith('.lock')) {
+                note(`refs/${name}`)
+              }
+            }
+          ),
+          ...(watchingWorktrees
+            ? [
+                watch(
+                  worktreesDirectory,
+                  { persistent: false, recursive: true },
+                  (_, name) => {
+                    if (name?.endsWith('/HEAD')) {
+                      note(`worktrees/${name}`)
+                    }
+                  }
+                )
+              ]
+            : [])
+        ]
+        const close = () => {
+          for (const watcher of watchers) {
+            watcher.close()
+          }
+        }
+        for (const watcher of watchers) {
+          // A removed repository fails its watchers; the next tick retries.
+          watcher.on('error', () => {
+            close()
+            this.gitWatchers.delete(project.id)
+          })
+        }
+        this.gitWatchers.set(project.id, {
+          repositoryPath: project.repositoryPath,
+          changes,
+          close
+        })
+      }
+
       const now = Date.now()
       const task = tasks
         .filter((candidate) => (this.refreshDue.get(candidate.key) ?? 0) <= now)
@@ -263,11 +361,62 @@ export class ProjectSnapshotService {
           .pipe(Effect.orElseSucceed(() => null))
         this.dirtyStates.set(tree.id, { path: tree.path, state })
       } else {
+        const changes = [
+          ...(this.gitWatchers.get(task.project.id)?.changes ?? [])
+        ]
+        this.gitWatchers.get(task.project.id)?.changes.clear()
         yield* observations.importWorktrees(
           task.project.id,
           task.project.repositoryPath,
           task.project.mainWorktreePath
         )
+        // A tree changed when its HEAD moved, or when its branch or that
+        // branch's remote-tracking ref did, such as after a push.
+        const branches = new Set(
+          changes.flatMap((ref) => {
+            const match = /^refs\/(?:heads\/(.+)|remotes\/[^/]+\/(.+))$/u.exec(
+              ref
+            )
+            return match ? [match[1] ?? match[2]!] : []
+          })
+        )
+        const before = new Map(
+          task.project.worktrees.map((tree) => [tree.id, tree])
+        )
+        const events = yield* EventBusPort
+        for (const tree of (yield* store.storedProject(task.project.id))
+          ?.worktrees ?? []) {
+          const previous = before.get(tree.id)
+          if (
+            previous &&
+            (changes.includes('packed-refs') ||
+              previous.head !== tree.head ||
+              previous.branch !== tree.branch ||
+              (tree.branch !== null && branches.has(tree.branch)))
+          ) {
+            events.publish('worktree.git_changed', {
+              projectId: task.project.id,
+              worktreeId: tree.id
+            })
+          }
+        }
+        // Remotes change rarely; checking here keeps existing projects current.
+        const originUrl = yield* git
+          .originUrl(task.project.repositoryPath)
+          .pipe(Effect.orElseSucceed(() => task.project.originUrl))
+        if (originUrl !== task.project.originUrl) {
+          const database = yield* DatabasePort
+          yield* database
+            .execute('project.snapshot.service.origin-url', (db) =>
+              db.run(sql`
+                UPDATE projects SET origin_url = ${originUrl}
+                WHERE id = ${task.project.id}
+              `)
+            )
+            .pipe(Effect.orDie)
+          this.invalidate()
+          events.publish('project.updated', { projectId: task.project.id })
+        }
       }
     })
   }

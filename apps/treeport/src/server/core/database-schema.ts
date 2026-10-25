@@ -19,6 +19,7 @@ export const projects = sqliteTable(
     repositoryPath: text('repository_path').notNull().unique(),
     mainWorktreePath: text('main_worktree_path').notNull(),
     defaultBranch: text('default_branch').notNull(),
+    originUrl: text('origin_url'),
     color: text(),
     repositoryIdentity: text('repository_identity'),
     repositoryDevice: text('repository_device').notNull(),
@@ -72,13 +73,8 @@ export const worktrees = sqliteTable(
     kind: text().notNull(),
     managedWrapperPath: text('managed_wrapper_path'),
     title: text(),
-    prState: text('pr_state').notNull().default('unknown'),
-    prNumber: integer('pr_number'),
-    prUrl: text('pr_url'),
-    prBaseBranch: text('pr_base_branch'),
-    prHeadBranch: text('pr_head_branch'),
-    prMergedAt: text('pr_merged_at'),
-    prRefreshedAt: text('pr_refreshed_at'),
+    // Decorations keyed by decoration key, in insertion order.
+    decorations: text().notNull().default('{}'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },

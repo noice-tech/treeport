@@ -111,6 +111,7 @@ export const productEventSchema = Schema.Union(
   eventEnvelope('worktree.created', projectWorktreeEventDataSchema),
   eventEnvelope('worktree.updated', worktreeEventDataSchema),
   eventEnvelope('worktree.removed', projectWorktreeEventDataSchema),
+  eventEnvelope('worktree.git_changed', projectWorktreeEventDataSchema),
   eventEnvelope(
     'create.started',
     Schema.Struct({

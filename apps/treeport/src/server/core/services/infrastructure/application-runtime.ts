@@ -9,7 +9,6 @@ import type { AppConfig } from '../../config'
 import type { EffectCommandRunner } from '../../command'
 import { DatabaseLayer, type DatabasePort } from '../../database'
 import type { ProductEventBus } from '../../events'
-import { GitHubLayer, type GitHubPort } from '../../gh'
 import { GitLayer, type GitPort } from '../../git'
 import {
   NetworkListenersLayer,
@@ -166,7 +165,6 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
     DatabaseLayer(resources.config.databasePath),
     Layer.succeed(CommandPort, resources.runner),
     GitLayer(resources.runner, resources.config.gitPath),
-    GitHubLayer(resources.runner, resources.config.ghPath),
     Layer.succeed(TerminalHostPort, resources.terminalHost),
     Layer.succeed(EventBusPort, resources.events),
     Layer.succeed(PackageSystemPort, resources.packages),
@@ -222,7 +220,6 @@ export type ApplicationServices =
   | DatabasePort
   | CommandPort
   | GitPort
-  | GitHubPort
   | TerminalHostPort
   | EventBusPort
   | PackageSystemPort
