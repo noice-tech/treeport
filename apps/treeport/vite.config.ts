@@ -12,7 +12,6 @@ export default defineConfig({
     {
       name: 'treeport-dev-compression',
       configureServer(server) {
-        // Compress remote dev assets without buffering API streams or touching HMR.
         // SAFETY: compression uses Node HTTP APIs; its types unnecessarily require Express.
         server.middlewares.use(
           compression({
@@ -39,8 +38,6 @@ export default defineConfig({
   server: {
     allowedHosts: ['.ts.net'],
     watch: {
-      // Development data includes browser profiles whose generated HTML would
-      // otherwise trigger full page reloads.
       ignored: ['**/.treeport-dev/**', '**/.treeport-dev-dist/**']
     }
   }

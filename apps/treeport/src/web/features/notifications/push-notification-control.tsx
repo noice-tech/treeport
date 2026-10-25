@@ -59,7 +59,7 @@ export function PushNotificationControl() {
   }, [supported])
 
   const enable = async () => {
-    // The permission request must be the first async browser call in this user
+    // EXTERNAL: The permission request must be the first async browser call in this user
     // gesture. In particular, iOS disallows asking after registering a worker.
     setPending(true)
 
@@ -116,8 +116,6 @@ export function PushNotificationControl() {
           keys: { p256dh: keys.p256dh, auth: keys.auth }
         })
       ).catch(async (error: Error) => {
-        // Do not leave a browser-only subscription that looks enabled after
-        // reopening the notification center. Enabling can then be retried.
         await current.unsubscribe()
         throw error
       })

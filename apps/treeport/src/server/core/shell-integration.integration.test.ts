@@ -137,7 +137,6 @@ it.for([
   { shell: 'fish', startup: '.config/fish/config.fish', coverage: 'optional' }
 ])(
   'preserves user startup and reports the complete $shell command lifecycle ($coverage)',
-  // Each shell can use two ten-second output waits, plus PTY startup and cleanup.
   { timeout: 30_000 },
   async ({ shell, startup, coverage }, context) => {
     const executable = await available(shell)

@@ -25,8 +25,6 @@ export async function writeBrowserClipboard(
     throw new Error('The browser did not copy a supported format.')
   }
 
-  // Native copy events remain a useful text/HTML fallback when a browser denies
-  // the asynchronous API. They do not require clipboard-read permission.
   const nativeCopy = () => {
     if (value.png !== null) {
       throw new Error(

@@ -4,7 +4,6 @@ import { Textarea } from './ui/textarea'
 import { errorMessage } from '../error-message'
 import { cn } from '../lib/utils'
 
-// Pasted files are uploaded and their paths inserted at the caret.
 export function FilePasteTextarea({
   id,
   value,

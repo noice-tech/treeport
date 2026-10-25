@@ -5,8 +5,6 @@ import { DomainError } from '../../domain'
 
 interface State {
   readonly terminals: Map<string, TerminalRecord>
-  // Keep completed reservations until the tree is cleared: an inventory read
-  // started before a kill may still report that terminal afterward.
   readonly removingTerminalIds: Map<string, string>
   readonly terminalClosePolicies: Map<string, 'success' | 'exit'>
   readonly terminalIdsByWorktree: Map<string, Set<string>>
@@ -24,7 +22,6 @@ const emptyState = (): State => ({
   terminalIdsByWorktree: new Map()
 })
 
-/** Application-scoped cache of terminal-host observations. */
 export class TerminalState extends Effect.Service<TerminalState>()(
   'treeport/TerminalState',
   {

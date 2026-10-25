@@ -560,9 +560,6 @@ export class WorktreeRemovalService {
       }
 
       const acceptAfterProjectMutation = Effect.gen(function* () {
-        // Acceptance reads and locks only its target tree. A removal's shared
-        // Git section need not block it; wait only for a project-level owner
-        // (creation) that will release its lock through this queue.
         if (
           (yield* locks.isProjectLocked(worktree.projectId)) &&
           (yield* worktreeMutations.isBusy(worktree.projectId))
@@ -1145,12 +1142,6 @@ export class WorktreeRemovalService {
               )
               .pipe(Effect.orDie)
 
-            // Cleanup cwd is constrained to this tree by Setup; commands are
-            // tree-local teardown, not owners of Treeport's Git inventory.
-            // Distinct trees run independently. Scripts touching shared state
-            // must use Git's native locking for Git writes and provide their
-            // own synchronization for other resources (including with setup).
-            // Do not hold the repository queue around arbitrary user commands.
             for (const [index, task] of cleanup.tasks.entries()) {
               const progress = request.cleanupCommands.commands[index]
 
@@ -1262,9 +1253,6 @@ export class WorktreeRemovalService {
 
           yield* persistPhase('cleanup_commands_completed')
 
-          // Serialize only the shared Git inventory mutation with creation and
-          // other removals. Revalidate inside the queue: cleanup and queue wait
-          // may have changed the repository or replaced this checkout.
           yield* worktreeMutations.enqueue(
             projectId,
             Effect.gen(function* () {
@@ -1291,8 +1279,6 @@ export class WorktreeRemovalService {
               }
 
               if (!current) {
-                // A concurrent prune may retire multiple prunable trees. The
-                // accepted checkout still goes through identity-bound cleanup.
                 gitRemoved = true
                 yield* persistPhase('git_removed')
 

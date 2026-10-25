@@ -3,13 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
-// The startup envelope can contain both launch arguments/environment and an
-// independently updated metadata string. It is not a socket frame.
 pub const MAX_MANIFEST_BYTES: usize = 2 * MAX_FRAME_BYTES;
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
-// Invalid commands cannot become retryable storage faults: increasing quota or
-// repairing disk space can never make an over-budget encoded record fit.
 #[derive(Debug)]
 pub struct FrameLimitExceeded;
 impl std::fmt::Display for FrameLimitExceeded {
@@ -22,8 +18,6 @@ impl std::error::Error for FrameLimitExceeded {}
 struct FrameBuffer<const LIMIT: usize>(Vec<u8>);
 impl<const LIMIT: usize> std::io::Write for FrameBuffer<LIMIT> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        // Refuse the next fragment before copying it, rather than allocating
-        // an oversized encoded value first. JSONL callers reserve the delimiter.
         let next = self.0.len().saturating_add(bytes.len());
         if next > LIMIT {
             return Err(std::io::Error::new(
@@ -42,8 +36,6 @@ impl<const LIMIT: usize> std::io::Write for FrameBuffer<LIMIT> {
         Ok(())
     }
 }
-// Shared socket/journal encoding: no bytes are published until the complete
-// line, including escaped strings and its delimiter, fits the v1 frame budget.
 pub fn encode_jsonl(value: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut buffer = FrameBuffer::<{ MAX_FRAME_BYTES - 1 }>(Vec::new());
     if let Err(error) = serde_json::to_writer(&mut buffer, value) {
@@ -60,8 +52,6 @@ pub fn encode_jsonl(value: &impl serde::Serialize) -> Result<Vec<u8>> {
     Ok(buffer.0)
 }
 
-// Discovery writes must remain readable by the bounded startup reader. Encode
-// before opening/truncating a temporary file, including opaque string escaping.
 pub fn encode_metadata_json(value: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut buffer = FrameBuffer::<MAX_MANIFEST_BYTES>(Vec::new());
     if let Err(error) = serde_json::to_writer(&mut buffer, value) {
@@ -92,8 +82,6 @@ pub struct Manifest {
 impl Manifest {
     pub fn read(reader: impl std::io::Read) -> Result<Self> {
         use std::io::BufReader;
-        // Bound the descriptor read too: a regular file can grow after stat.
-        // Buffer only a small window, not an entire encoded manifest copy.
         let mut reader = BufReader::new(reader.take((MAX_MANIFEST_BYTES + 1) as u64));
         let parsed = serde_json::from_reader::<_, Self>(&mut reader);
         if reader.get_ref().limit() == 0 {
@@ -115,7 +103,7 @@ impl Manifest {
         {
             bail!("Invalid session manifest");
         }
-        // Native PTYs use unsigned 16-bit winsize fields. Refuse truncation.
+        // Native PTYs use unsigned 16-bit winsize fields.
         if self.cols > u16::MAX as u32 || self.rows > u16::MAX as u32 {
             bail!("Session dimensions exceed the native PTY limit");
         }
@@ -137,8 +125,6 @@ pub struct Status {
     pub exit_code: Option<i32>,
     pub error: Option<String>,
     pub incomplete: bool,
-    // Only a failed Pty::spawn, which never released command admission, may
-    // publish this proof. Missing status or keeper death is not equivalent.
     #[serde(default)]
     pub startup_aborted: bool,
 }
@@ -173,7 +159,6 @@ impl<'de> Deserialize<'de> for Record {
         use serde::de::Error;
         // serde's flattened/tagged enum decoder buffers fields as scalar
         // strings before our byte visitor, losing lone UTF-16 surrogates.
-        // Decode the stable wire fields directly, then select the record kind.
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Fields {
@@ -254,8 +239,7 @@ impl Record {
     }
 }
 
-// IDs are opaque JavaScript strings, not terminal text. Retain their validated
-// JSON literal so lone UTF-16 surrogates round-trip without lossy replacement.
+// Retain the validated JSON literal so lone UTF-16 surrogates round-trip without lossy replacement.
 #[derive(Debug, Serialize)]
 #[serde(transparent)]
 pub struct RequestId(Box<serde_json::value::RawValue>);
@@ -265,8 +249,7 @@ pub struct Request {
     pub id: RequestId,
     pub command: Command,
 }
-// JavaScript input is UTF-16, not necessarily a Unicode scalar string. Keep
-// code units until the requested Buffer encoding is applied at input admission.
+// JavaScript input is UTF-16, not necessarily a Unicode scalar string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteData(Vec<u16>);
 impl<'de> Deserialize<'de> for WriteData {
@@ -322,7 +305,6 @@ impl<'de> Deserialize<'de> for WriteData {
                 Ok(WriteData(units))
             }
         }
-        // No sequence visitor: a JSON array of byte values is not a v1 string.
         decoder.deserialize_bytes(Input)
     }
 }
@@ -338,8 +320,6 @@ impl WriteData {
     }
 }
 
-// Markers and metadata belong to TypeScript. Unlike terminal text, replacing
-// unpaired code units would silently change engine-owned recovery state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpaqueString(Vec<u16>);
 impl<'de> Deserialize<'de> for OpaqueString {
@@ -365,9 +345,6 @@ impl Serialize for OpaqueString {
         use serde::ser::Error;
         use serde_json::ser::{CharEscape, CompactFormatter, Formatter};
         use std::io::Write;
-        // A validated string never expands beyond its source JSON literal.
-        // Bound even internal serialization so admission cannot allocate an
-        // unbounded second encoded copy; manifests have the larger envelope.
         let mut buffer = FrameBuffer::<MAX_MANIFEST_BYTES>(Vec::new());
         let mut formatter = CompactFormatter;
         let encoded = (|| -> std::io::Result<()> {
@@ -496,8 +473,7 @@ impl Request {
                 let mut fields = BTreeMap::new();
                 while let Some(key) = map.next_key::<&RawValue>()? {
                     // RawValue validates JSON grammar without decoding Unicode
-                    // code units or overflowing unused numbers. Borrow slices
-                    // from the bounded input; do not allocate unknown subtrees.
+                    // code units or overflowing unused numbers.
                     let value = map.next_value::<&RawValue>()?;
                     if let Ok(key) = serde_json::from_str::<String>(key.get()) {
                         if matches!(
@@ -573,8 +549,6 @@ impl Request {
             });
         }
         // Zod strips extensions, including known names unused by this method.
-        // Do not reject a legal request just because unused values contain lone
-        // surrogates, deeply nested data, or numbers outside Rust's f64 range.
         let allowed: &[&str] = match method.as_str() {
             "attach" => &["token", "journalLimitBytes"],
             "inspect" | "terminate" => &["token"],
@@ -594,8 +568,6 @@ impl Request {
             }
         }
         // JSON.parse/Zod accept integral JSON numbers written as 1.0 or 1e2.
-        // Preserve that v1 contract while rejecting null optional properties
-        // (serde's Option alone would wrongly accept explicit null).
         let numbers: &[&str] = match method.as_str() {
             "resize" => &["cols", "rows"],
             "processed" => &["sequence"],
@@ -661,7 +633,7 @@ pub enum Frame {
 }
 
 // Buffer.from(data, 'base64') accepts URL-safe alphabets, omitted padding,
-// ignored non-alphabet bytes, and a final single sextet. Keep v1 writes compatible.
+// ignored non-alphabet bytes, and a final single sextet.
 pub fn decode_base64(data: impl IntoIterator<Item = u8>) -> Result<Vec<u8>> {
     use base64::{
         alphabet,
@@ -784,7 +756,6 @@ mod tests {
                 assert!(result.unwrap_err().to_string().contains("byte limit"));
             }
         }
-        // Parsing and validation remain mandatory even for a small file.
         for input in [b"{}".as_slice(), b"null", b"{}{}", b"{\"version\":"] {
             assert!(Manifest::read(input).is_err());
         }

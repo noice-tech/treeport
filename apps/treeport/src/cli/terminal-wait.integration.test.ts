@@ -305,7 +305,6 @@ describe('terminal wait CLI observations and event races', () => {
     value.snapshot.mockImplementation(() => {
       value.observation.terminal.commandExitCode = 7
 
-      // No event is delivered: it occurred before subscription's snapshot fence.
       return [value.observation.metadata]
     })
     const result = await value.wait()

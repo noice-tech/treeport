@@ -292,7 +292,6 @@ export class DatabasePort extends Context.Tag('treeport/Database')<
   DatabaseService
 >() {}
 
-/** Raw handle retained only for database boundary tests and scoped acquisition. */
 export interface TreeportDatabase extends DatabaseService {
   readonly db: TreeportOrm
   close(): void
@@ -454,7 +453,7 @@ async function openDatabasePromise(
 
     await fs.promises.chmod(absoluteFilePath, 0o600)
     await db.run(sql`PRAGMA journal_mode = WAL`)
-    // SQLite cannot rebuild a referenced table while foreign-key actions are
+    // EXTERNAL: SQLite cannot rebuild a referenced table while foreign-key actions are
     // active. Generated migrations use table replacement for column removal,
     // so disable enforcement outside the migration transaction and validate
     // every reference before enabling it again.
@@ -532,7 +531,6 @@ async function openDatabasePromise(
   }
 }
 
-/** Promise interpreter retained for database boundary tests only. */
 export const openDatabaseForTest = openDatabasePromise
 
 export function mapProject(
@@ -542,15 +540,13 @@ export function mapProject(
   return {
     id: row.id,
     name: row.name,
-    // SAFETY: The database check constrains this value.
-    kind: row.kind as ProjectRecord['kind'],
+    kind: row.kind,
     rootPath: row.repositoryPath,
     repositoryPath: row.repositoryPath,
     mainWorktreePath: row.mainWorktreePath,
     defaultBranch: row.defaultBranch,
     originUrl: row.originUrl,
-    // SAFETY: The query selects the columns required by this database row contract.
-    color: row.color as ProjectRecord['color'],
+    color: row.color,
     availability: { state: 'available', message: null },
     worktrees: worktreeRows.map((worktree) =>
       mapWorktree(worktree, row.mainWorktreePath)
@@ -567,12 +563,7 @@ export function mapWorktree(
   return {
     id: row.id,
     projectId: row.projectId,
-    name: inferWorktreeName(
-      mainWorktreePath,
-      row.path,
-      // SAFETY: The query selects the columns required by this database row contract.
-      row.kind as WorktreeRecord['kind']
-    ),
+    name: inferWorktreeName(mainWorktreePath, row.path, row.kind),
     path: row.path,
     head: row.kind === 'folder' ? '' : row.head,
     branch: row.branch,
@@ -580,8 +571,7 @@ export function mapWorktree(
     locked: Boolean(row.locked),
     lockReason: row.lockReason,
     prunable: Boolean(row.prunable),
-    // SAFETY: The query selects the columns required by this database row contract.
-    kind: row.kind as WorktreeRecord['kind'],
+    kind: row.kind,
     managedWrapperPath: row.managedWrapperPath,
     title: row.title,
     decorations: Object.entries(
@@ -606,7 +596,7 @@ export function mapLauncher(row: LauncherRow): Launcher {
     id: row.id,
     name: row.name,
     executable: row.executable,
-    // SAFETY: The query selects the columns required by this database row contract.
+    // SAFETY: Launcher writes store args validated by the launcher schema.
     args: JSON.parse(row.argsJson) as string[],
     closeOnSuccess: Boolean(row.closeOnSuccess),
     // SAFETY: Launcher writes store tree titles validated by the launcher schema.

@@ -394,7 +394,6 @@ describe('Browser sessions', () => {
     )
     value.manager.message('viewer', { type: 'setVisible', visible: false })
     expect(browser.closeVideoViewer).toHaveBeenCalledWith('viewer')
-    // Returning before cleanup finishes must not revive the retired viewer.
     browser.screencasting.length = 0
     value.manager.message('viewer', { type: 'setVisible', visible: true })
     await vi.waitFor(() => expect(browser.screencasting).toContain(true))
@@ -421,7 +420,6 @@ describe('Browser sessions', () => {
       expect(browser.state.viewport).toEqual({ width: 900, height: 600 })
     )
 
-    // Visibility handoff must use the observer's already-reported dimensions.
     value.manager.message('viewer', { type: 'setVisible', visible: false })
     await vi.waitFor(() =>
       expect(observer.messages.at(-1)).toMatchObject({
@@ -434,13 +432,10 @@ describe('Browser sessions', () => {
     onTestFinished(() => {
       vi.useRealTimers()
     })
-    // A second visible viewer keeps the page awake even when the first hides.
     await vi.advanceTimersByTimeAsync(30_000)
     expect(browser.frozen).toBe(false)
 
     value.manager.message('viewer', { type: 'setVisible', visible: true })
-    // Disconnect handoff must restore the original size without a new resize
-    // event: this viewer's app dimensions never changed.
     value.manager.close('observer')
     await vi.waitFor(() =>
       expect(viewer.messages.at(-1)).toMatchObject({
@@ -479,7 +474,6 @@ describe('Browser sessions', () => {
     )
 
     await vi.waitFor(() => expect(agentCommand).toHaveBeenCalledOnce())
-    // An unobserved page remains active for the entire automation operation.
     await vi.advanceTimersByTimeAsync(60_000)
     expect(browser.frozen).toBe(false)
     finishAgent()
@@ -500,8 +494,6 @@ describe('Browser sessions', () => {
     await vi.advanceTimersByTimeAsync(30_000)
     await vi.waitFor(() => expect(browser.frozen).toBe(true))
 
-    // Restoring a workspace must not see its disconnected viewer as someone
-    // else's controller, even if client storage was unavailable on reload.
     const restored = value.transport('restored-viewer')
     await runEffect(
       value.manager.accept(
@@ -540,7 +532,6 @@ describe('Browser sessions', () => {
       account: { ...identity.account, login: 'bob@example.test', name: 'Bob' }
     }
 
-    // Tickets are bound to the authenticated ingress, not renderer claims.
     for (const requester of [otherDevice, otherAccount, null]) {
       const ticket = await runEffect(
         value.manager.issueTicket('app_browser', 'client-first', true, identity)
@@ -752,7 +743,6 @@ describe('Browser sessions', () => {
     expect(
       lateObserver.messages.some((message) => message.type === 'clipboardWrite')
     ).toBe(false)
-    // One input does not grant ongoing background clipboard access.
     expect(browser.callbacks.clipboard(clipboard)).toBe(false)
     value.manager.message('second', {
       type: 'key',
@@ -790,7 +780,6 @@ describe('Browser sessions', () => {
     expect(
       browser.commands.filter((command) => command.type === 'forward')
     ).toHaveLength(forwardCommands)
-    // A grant from the previous controller cannot write after a handoff.
     expect(browser.callbacks.clipboard(clipboard)).toBe(false)
 
     value.manager.close('first')
@@ -805,8 +794,6 @@ describe('Browser sessions', () => {
       state: { controlled: false, controller: 'other' }
     })
 
-    // A fresh ticket can report a new device address without changing the
-    // persistent viewer's control or leaving its previous socket attached.
     const resumed = value.transport('second-resumed')
     await runEffect(
       value.manager.accept(
@@ -827,7 +814,6 @@ describe('Browser sessions', () => {
       type: 'ready',
       state: expect.objectContaining({ controlled: true })
     })
-    // The old socket's delayed close cannot release the replacement's control.
     value.manager.close('second')
     expect(resumed.messages.at(-1)).toMatchObject({
       state: { controlled: true }
@@ -1197,7 +1183,6 @@ describe('Browser sessions', () => {
       )
     ).resolves.toBe('- button "Local target" [ref=e1]')
     expect(ownerMessages).toHaveLength(ownerMessageCount)
-    // Native cancellation releases the queue without closing the local page.
     let rejectReload: (error: Error) => void = () => undefined
     localBrowser.page.reload.mockImplementationOnce(
       () =>
@@ -1368,7 +1353,6 @@ describe('Browser sessions', () => {
       type: 'controlChanged',
       state: { controlled: false, controller: 'other' }
     })
-    // Reconnecting must not steal control from the viewer that took over.
     value.manager.message('remote-reconnected', { type: 'takeControl' })
     await vi.waitFor(() =>
       expect(reconnectedRemote.messages.at(-1)).toMatchObject({
@@ -1726,7 +1710,6 @@ describe('Browser sessions', () => {
     const boundary: BrowserClientMessage[] = [
       { type: 'pointer', phase: 'move', x: 10, y: 20 },
       { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 40 },
-      // Reversals cannot cancel at the viewport or nested scroll boundaries.
       { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: -40 },
       { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 30, deltaY: 0 },
       { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: -30, deltaY: 0 },
@@ -1840,11 +1823,8 @@ describe('Browser sessions', () => {
         { type: 'wheel', x: 10, y: 20, modifiers: 0, deltaX: 0, deltaY: 42 }
       ])
     )
-    // Compositor ACK latency must not serialize trackpad direction changes.
-    // Keep a bounded, ordered wheel window; keys still drain every wheel ACK.
     browser.commands.length = 0
     const completions: Array<() => void> = []
-    // Cursor layout queries must not occupy input slots or delay shutdown.
     let releaseCursor!: (cursor: 'default') => void
 
     const cursor = vi.spyOn(browser, 'cursor').mockImplementation(

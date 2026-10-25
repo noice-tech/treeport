@@ -4,8 +4,6 @@ use crate::{
 };
 use anyhow::{Context, Result};
 
-// Match the retained journal reader's directory budget. Close must not recurse
-// into arbitrary injected trees or perform an unbounded enumeration.
 const MAX_SESSION_ENTRIES: usize = 65_536;
 use std::{
     fs, io,
@@ -36,8 +34,6 @@ enum Operation {
     Stall(oneshot::Sender<()>, oneshot::Receiver<()>),
 }
 
-// Test-only worker barrier: block the actual serialized worker, not a mocked
-// append result. Dropping the guard always releases it, including on failure.
 #[cfg(test)]
 pub(crate) struct Stall(Option<oneshot::Sender<()>>);
 #[cfg(test)]
@@ -88,15 +84,11 @@ impl Storage {
         #[cfg(test)]
         let worker_stall = operation_stall.clone();
         thread::spawn(move || {
-            // A canceled runtime can leave admitted writes in flight. Keep
-            // recovery excluded until this worker exits (or the process dies).
             let _lease = lease;
             let mut journal = Some(journal);
             while let Some((operation, _guard)) = receiver.blocking_recv() {
                 #[cfg(test)]
                 {
-                    // Stall AFTER exclusive admission, on the actual worker.
-                    // Never hold the configuration lock while it is blocked.
                     let phase = match &operation {
                         Operation::Close(_) => Some(StallPhase::Close),
                         Operation::Manifest(_, _) => Some(StallPhase::Manifest),
@@ -156,10 +148,6 @@ impl Storage {
                     }
                     Operation::Close(reply) => {
                         let result = remove_session(&directory, MAX_SESSION_ENTRIES);
-                        // A refused deletion is not a closed journal. Retain
-                        // its descriptor and commit state so pending EOF/exit
-                        // capture and authenticated close can still retry.
-                        // This does not undo an OS-level partial deletion.
                         if result.is_ok() {
                             journal.take();
                         }
@@ -177,8 +165,6 @@ impl Storage {
     }
     async fn enqueue(&self, operation: Operation) -> Result<()> {
         let guard = self.gate.clone().lock_owned().await;
-        // The worker, not the requesting future, owns this guard. Canceling a
-        // peer must never make an accepted write appear idle before it commits.
         self.sender.send((operation, guard)).await?;
         Ok(())
     }
@@ -225,8 +211,6 @@ impl Storage {
         Ok(())
     }
     pub fn status(&self, status: Status) {
-        // Diagnostics must never backpressure capture or control. The socket's
-        // watch status remains authoritative if the bounded worker is busy.
         let Ok(guard) = self.gate.clone().try_lock_owned() else {
             return;
         };
@@ -240,9 +224,6 @@ impl Storage {
     }
     pub async fn close(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        // Only close admission is timed out. No delete is submitted without
-        // the exclusive worker guard; never cancel an admitted filesystem
-        // operation, which could still commit/unlink after the caller returns.
         let guard = tokio::time::timeout(Duration::from_secs(1), self.gate.clone().lock_owned())
             .await
             .map_err(|_| StorageBusy)?;
@@ -251,8 +232,6 @@ impl Storage {
     }
 }
 
-// The wire remains v1: this internal error only lets the owner distinguish a
-// refused delete from possibly destructive progress and stop claiming capture.
 #[derive(Debug)]
 pub struct CloseFailure {
     pub partial: bool,
@@ -284,9 +263,6 @@ fn remove_session(directory: &Path, entry_limit: usize) -> Result<()> {
         if !metadata.is_dir() {
             return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
         }
-        // Complete bounded admission before touching even owner.log. Retained
-        // journals are flat; an unexpected directory is not owned payload and
-        // must be repaired explicitly, never traversed recursively by close.
         let payloads = || -> io::Result<Vec<std::ffi::OsString>> {
             let mut names = Vec::new();
             for (index, entry) in fs::read_dir(directory)?.enumerate() {
@@ -306,8 +282,6 @@ fn remove_session(directory: &Path, entry_limit: usize) -> Result<()> {
             Ok(names)
         };
         let names = payloads()?;
-        // Delete the bootstrap log first, then retained data. Never destroy the
-        // token/discovery files because a later payload cannot be removed.
         match fs::remove_file(directory.join("owner.log")) {
             Ok(()) => partial = true,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -322,14 +296,9 @@ fn remove_session(directory: &Path, entry_limit: usize) -> Result<()> {
             if name == "owner.log" {
                 continue;
             }
-            // Unlink symlinks and FIFOs themselves; never follow their data.
-            // A payload replaced with a directory after admission fails unlink
-            // instead of granting authority to traverse the new tree.
             partial = true;
             fs::remove_file(directory.join(name))?;
         }
-        // Re-check with the SAME entry bound before consuming discovery. A
-        // concurrent writer cannot turn this final scan into unbounded work.
         if !payloads()?.is_empty() {
             return Err(io::Error::other("Session storage changed during close"));
         }

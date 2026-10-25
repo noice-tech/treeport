@@ -243,8 +243,6 @@ export function BrowserAppWorkspace({
     { viewport: viewportOverride, preset: viewportPreset },
     setViewportSettings
   ] = useState<z.infer<typeof viewportSettingsSchema>>(() => {
-    // Restore before observing layout: a remount must not replace a fixed
-    // portrait viewport with the workspace's current landscape dimensions.
     try {
       const stored = sessionStorage.getItem(
         `treeport-browser-viewport:${app.id}`
@@ -257,9 +255,7 @@ export function BrowserAppWorkspace({
       if (parsed.success) {
         return parsed.data
       }
-    } catch {
-      // Storage may be unavailable or contain an invalid value.
-    }
+    } catch {}
 
     return { viewport: null, preset: 'responsive' }
   })
@@ -456,8 +452,6 @@ export function BrowserAppWorkspace({
         return
       }
 
-      // Start the clipboard operation in the user's activation, but supply its
-      // text only after the controller-checked server action validates context.
       const text = new Promise<Blob>((resolve, reject) => {
         pending.resolveCopy = resolve
         pending.rejectCopy = reject
@@ -478,7 +472,6 @@ export function BrowserAppWorkspace({
       contextId: context.contextId,
       action
     })
-    // The action consumes its context; closing the UI must not cancel its reply.
     contextRef.current = null
     dismissContext()
     pending.timeout = setTimeout(() => {
@@ -762,7 +755,6 @@ export function BrowserAppWorkspace({
           decodeUnknownOrNull(browserObservedUrlSchema, message.state.url) !==
           null
 
-        // takeControl can report the old page before the queued navigation starts.
         const navigationStarted =
           pendingNavigation === null ||
           (validUrl &&
@@ -864,7 +856,7 @@ export function BrowserAppWorkspace({
       return
     }
 
-    // A worker takes over the canvas; control of a canvas transfers only once.
+    // EXTERNAL: A worker takes over the canvas; control of a canvas transfers only once.
     const canvas = document.createElement('canvas')
     canvas.className = 'block size-full object-contain'
     canvasHost.replaceChildren(canvas)
@@ -988,8 +980,6 @@ export function BrowserAppWorkspace({
     []
   )
 
-  // Stream visibility follows both workspace and document visibility, not input
-  // eligibility: overlays do not hide the page or restart its media peer.
   useEffect(() => {
     if (localBrowser) {
       return
@@ -1044,9 +1034,6 @@ export function BrowserAppWorkspace({
         return
       }
 
-      // Video is captured at even dimensions. An odd viewport would make the
-      // hosted compositor rescale every captured frame, which is expensive in
-      // software compositing.
       viewport = viewportOverrideRef.current ?? {
         width: Math.max(
           2,
@@ -1057,8 +1044,6 @@ export function BrowserAppWorkspace({
           Math.min(2_160, Math.floor(entry.contentRect.height / 2) * 2)
         )
       }
-      // Throttle rather than debounce so dragging a divider keeps resizing.
-      // Input coordinates continue using the server's confirmed viewport.
       timer ??= setTimeout(() => {
         timer = null
 
@@ -1253,9 +1238,7 @@ export function BrowserAppWorkspace({
         `treeport-browser-viewport:${app.id}`,
         JSON.stringify(settings)
       )
-    } catch {
-      // The current app remains usable when storage is unavailable.
-    }
+    } catch {}
 
     const needsControl = !stateRef.current?.controlled
     viewportOverrideRef.current = size
@@ -1292,8 +1275,6 @@ export function BrowserAppWorkspace({
     }) => {
       const canvas = event.currentTarget
       const bounds = canvas.getBoundingClientRect()
-      // Match object-contain's letterboxing using the decoded video dimensions,
-      // then map into the host's CSS viewport (not the encoder's pixel size).
       const viewport = stateRef.current?.viewport ?? viewportRef.current
 
       const image =
@@ -1386,7 +1367,7 @@ export function BrowserAppWorkspace({
 
       void result
         .then((clipboard) => {
-          // A browser may require a fresh gesture once the remote response has
+          // EXTERNAL: A browser may require a fresh gesture once the remote response has
           // arrived. Retain the exact payload for the explicit retry button.
           setClipboardToCopy(clipboard)
 
@@ -1477,7 +1458,7 @@ export function BrowserAppWorkspace({
       })
     }
 
-    // React's delegated wheel listener is passive and cannot prevent the
+    // EXTERNAL: React's delegated wheel listener is passive and cannot prevent the
     // containing workspace from scrolling along with the streamed page.
     canvas.addEventListener('wheel', wheel, { passive: false })
 
@@ -1492,7 +1473,6 @@ export function BrowserAppWorkspace({
       ? permissionSettings
       : null
 
-  // Scale only the page, not the handles. CSS viewport dimensions stay exact.
   const viewportScale = viewportOverride
     ? Math.max(
         0.01,
@@ -2380,8 +2360,6 @@ export function BrowserAppWorkspace({
                         return
                       }
 
-                      // Match mouse down/up precision. Pointer events can retain
-                      // fractions that mouse events discard, causing a second move.
                       send({ type: 'pointer', phase: 'move', ...point(event) })
                     }}
                     onPointerLeave={(event) => {
@@ -2397,8 +2375,6 @@ export function BrowserAppWorkspace({
                         return
                       }
 
-                      // Mouse events carry the native multi-click count; cancelling
-                      // pointerdown would suppress those compatibility events.
                       if (event.pointerType === 'touch') {
                         event.preventDefault()
                       }
@@ -2417,7 +2393,7 @@ export function BrowserAppWorkspace({
                           send({ type: 'takeControl' })
                         }
 
-                        // iOS pointer IDs can be negative or exceed int32, so
+                        // EXTERNAL: iOS pointer IDs can be negative or exceed int32, so
                         // send each contact as its lowest free slot instead.
                         const ids = new Set(
                           [...touchesRef.current.values()].map(
@@ -2565,8 +2541,6 @@ export function BrowserAppWorkspace({
                       }, 10_000)
                       send({ type: 'takeControl' })
                       send({ type: 'contextMenu', requestId, ...point(event) })
-                      // Radix records the pointer anchor, but the controlled menu
-                      // opens only after the remote page permits its native menu.
                     }}
                     onKeyDown={(event) => key(event, 'down')}
                     onKeyUp={(event) => key(event, 'up')}

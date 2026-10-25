@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-// Use this tracked entrypoint as the target of a machine-local development CLI link.
 import { spawnSync } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import { access, lstat, readFile, realpath } from 'node:fs/promises'

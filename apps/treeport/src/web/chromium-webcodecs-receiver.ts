@@ -5,8 +5,6 @@ import type {
   BrowserMediaWorkerEvent
 } from './browser-media-protocol'
 
-// Full-frame Annex-B H.264, received, decoded and painted by a worker that
-// owns both the canvas and the attachment's video socket.
 export class ChromiumWebCodecsReceiver {
   private readonly worker: Worker
   private epoch: number | null = null
@@ -42,7 +40,6 @@ export class ChromiumWebCodecsReceiver {
     return Boolean(globalThis.VideoDecoder && canvas.transferControlToOffscreen)
   }
 
-  // Each attachment authorizes its own video socket.
   connect(token: string): void {
     const url = new URL(`${SOCKET_PATH}/browser-media`, location.href)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -82,8 +79,6 @@ export class ChromiumWebCodecsReceiver {
     })
   }
 
-  // Wheel input rides the media socket to the browser relay, which scrolls
-  // without waiting on the daemon. Returns false when that socket is down.
   wheel(message: BrowserMediaWheel): boolean {
     if (!this.connected) {
       return false
@@ -94,7 +89,6 @@ export class ChromiumWebCodecsReceiver {
     return true
   }
 
-  // Discards the last painted frame on lease revocation.
   stop(): void {
     this.generation++
     this.epoch = null

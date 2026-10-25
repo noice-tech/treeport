@@ -4,10 +4,7 @@ use std::{
     thread,
 };
 
-// stderr is normally owner.log on the SAME filesystem as the journal. A full
-// or stalled filesystem must neither panic a worker (eprintln! can panic on
-// write failure) nor block the control reactor. Diagnostics are best-effort,
-// bounded, and confined to an independent worker with no idle timer.
+// eprintln! panics when writing to stderr fails.
 pub fn report(mut message: String) {
     static SENDER: OnceLock<mpsc::SyncSender<String>> = OnceLock::new();
     let sender = SENDER.get_or_init(|| {

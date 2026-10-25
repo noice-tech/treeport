@@ -98,8 +98,6 @@ it.each(['empty', 'directory', 'symlink', 'oversized'] as const)(
 
       try {
         if (kind === 'oversized') {
-          // Sparse, owned fixture: no large allocation needed to exercise the
-          // metadata refusal before any payload bytes can be read.
           await file.truncate(SESSION_KEEPER_MAX_PAYLOAD_BYTES + 1)
         }
       } finally {
@@ -138,8 +136,6 @@ it('refuses a FIFO source payload in an isolated, deadline-bounded launcher', as
     path.resolve(import.meta.dirname, '../dist/index.js')
   ).href
 
-  // A regression may block the filesystem worker in open/read. Confine that
-  // probe to our own child launcher, rather than hanging the test runner's pool.
   const result = await execute(
     process.execPath,
     [

@@ -9,11 +9,8 @@ import type {
 import { treeport } from '@treeport/app-sdk/service'
 import { z } from 'zod'
 
-// Unchanged responses are free, so polling for changes made on GitHub is
-// cheap. Local commits, checkouts, and pushes arrive as Treeport events.
 const POLL_MS = 15_000
 
-// Leave headroom for the user's own GitHub usage.
 const RATE_LIMIT_RESERVE = 500
 const PULL_REQUEST_KEY = 'pr'
 const CHECKS_KEY = 'ci'
@@ -42,7 +39,6 @@ interface Repository {
   name: string
 }
 
-/** Parse remotes such as git@github.com:owner/name.git or https://host/owner/name. */
 function parseRemote(url: string): Repository | null {
   const match =
     /^(?:https:\/\/(?:[^@/]+@)?|ssh:\/\/git@|git@)([^/:]+)[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/u.exec(
@@ -54,7 +50,6 @@ function parseRemote(url: string): Repository | null {
 
 const tokens = new Map<string, Promise<string | null>>()
 
-/** Borrow the user's GitHub login: GITHUB_TOKEN, else the gh CLI's stored token. */
 function token(host: string): Promise<string | null> {
   const environment =
     host === 'github.com'
@@ -84,7 +79,7 @@ function token(host: string): Promise<string | null> {
   return pending
 }
 
-// Conditional requests answered with 304 do not count against the rate limit.
+// EXTERNAL: Conditional requests answered with 304 do not count against the rate limit.
 const responses = new Map<string, { etag: string; body: unknown }>()
 let pausedUntil = 0
 
@@ -114,7 +109,6 @@ async function github<Body extends z.ZodType>(
   const response = await fetch(url, { headers })
 
   if (response.status === 401) {
-    // The stored login may have been refreshed; read it again next time.
     tokens.delete(repository.host)
   }
 
@@ -126,7 +120,7 @@ async function github<Body extends z.ZodType>(
     throw new Error(`GitHub returned ${response.status} for ${pathname}`)
   }
 
-  // GitHub Enterprise Server may run without rate limits and omit these.
+  // EXTERNAL: GitHub Enterprise Server may run without rate limits and omit these.
   const remaining = response.headers.get('x-ratelimit-remaining')
 
   if (remaining !== null && Number(remaining) < RATE_LIMIT_RESERVE) {
@@ -140,7 +134,6 @@ async function github<Body extends z.ZodType>(
   const etag = response.headers.get('etag')
 
   if (etag) {
-    // Keep recent responses only; old commits' checks are not asked again.
     responses.delete(url)
     responses.set(url, { etag, body })
 
@@ -174,7 +167,6 @@ function decorationFor(pull: PullRequest): TreeDecorationInput {
 
   return {
     text: `#${pull.number}`,
-    // Keep the state when a long title is cut to Treeport's limit.
     title: `${pull.title.slice(0, 240)} · ${state}`,
     tone,
     icon,
@@ -184,7 +176,6 @@ function decorationFor(pull: PullRequest): TreeDecorationInput {
 
 const { packageId } = await treeport.self()
 
-// A merged pull request cannot change, so its tree is not queried again.
 const mergedBranches = new Map<string, string>()
 
 async function refreshProject(project: TreeportProject): Promise<void> {
@@ -194,7 +185,6 @@ async function refreshProject(project: TreeportProject): Promise<void> {
     (tree) => tree.git?.branch && tree.git.branch !== defaultBranch
   )
 
-  // Only touch this package's own decorations, and skip ones already gone.
   const clear = async (tree: TreeportTree, key: string) => {
     if (
       tree.decorations.some(
@@ -245,7 +235,6 @@ async function refreshProject(project: TreeportProject): Promise<void> {
       await clear(tree, PULL_REQUEST_KEY)
     }
 
-    // Like the sidebar, report checks only when they need attention.
     const open = pull?.state === 'open'
 
     const [checkRuns, status] = open
@@ -291,7 +280,6 @@ async function refreshProject(project: TreeportProject): Promise<void> {
   }
 }
 
-// Project IDs to refresh; null refreshes every project.
 let pending: Set<string> | null = new Set()
 let wake = () => {}
 

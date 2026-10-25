@@ -167,7 +167,6 @@ describe('TerminalHostSessionManager', () => {
     }
 
     const snapshot = await run(manager.snapshot('term'))
-    // Count parser submissions: queued PTY packets are parsed together.
     expect(writes.mock.calls.length).toBeLessThan(16)
     writes.mockRestore()
     expect(snapshot?.fence).toBe(chunks.length)
@@ -374,7 +373,6 @@ describe('TerminalHostSessionManager', () => {
       'history-1999-🙂'
     )
 
-    // The canonical headless terminal answers while detached.
     pty.emit('\u001b[6n')
     await run(manager.snapshot('term'))
     expect(pty.writes).toHaveLength(1)
@@ -382,8 +380,6 @@ describe('TerminalHostSessionManager', () => {
       new RegExp(String.raw`^\u001b\[\d+;\d+R$`, 'u')
     )
 
-    // A paused parser fence hands query authority to one browser. The
-    // historical snapshot cannot answer the old query again.
     const transition = await run(manager.prepareQueryAuthority('term'))
     await run(
       manager.activateQueryAuthority(
@@ -428,7 +424,6 @@ describe('TerminalHostSessionManager', () => {
     )
     expect(pty.writes.at(-1)).toBe('input')
 
-    // Handoff to the detached responder happens behind another parser fence.
     await run(manager.useHostQueryAuthority('term'))
     pty.emit('\u001b[6n')
     await run(manager.snapshot('term'))

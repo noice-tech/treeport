@@ -1,4 +1,4 @@
-// Keep WebRTC's decoder and native video rendering, but do not accumulate
+// EXTERNAL: Keep WebRTC's decoder and native video rendering, but do not accumulate
 // Chromium's remote-stream smoothing delay between sparse screen updates.
 export function presentBrowserVideo(
   video: HTMLVideoElement,
@@ -52,8 +52,6 @@ export function presentBrowserVideo(
   }
 
   if (MediaStreamTrackProcessor && MediaStreamTrackGenerator) {
-    // These APIs are not available in every browser. Construction, stream
-    // transfer or worker loading can fail; ordinary native playback still works.
     try {
       worker = new Worker(
         new URL('./browser-video-presentation.worker.ts', import.meta.url),

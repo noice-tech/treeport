@@ -9,15 +9,9 @@ use std::{
 };
 
 const SEGMENT_BYTES: u64 = 1024 * 1024;
-// Leave headroom for discovery and failed-rotation artifacts within the
-// retained reader's 65,536-entry directory budget. Quota increases must not
-// turn path/fence vectors (or their replay copies) into unbounded allocations.
 const MAX_CHECKPOINTS: usize = 65_520;
 const MAX_ACTIVE_OFFSETS: usize = 65_536;
 
-// This object is confined to the storage worker, never the control reactor.
-// Durable publication precedes sequence advancement. Failed writes remain
-// outside the snapshot fence and retries overwrite the uncommitted suffix.
 pub struct Journal {
     directory: PathBuf,
     active: File,
@@ -36,11 +30,6 @@ struct Rotation {
 }
 impl Journal {
     pub fn new(directory: &Path, limit_bytes: u64) -> Result<Self> {
-        // Only a fresh launch manifest and its bootstrap log may predate the
-        // journal. An archive, status, temporary rotation or unknown entry can
-        // outlive a failed cleanup even when journal.jsonl itself is absent.
-        // Existing owners reconnect over their socket; never reopen their
-        // storage as authority to spawn a replacement command.
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
             if !matches!(
@@ -54,7 +43,6 @@ impl Journal {
                 );
             }
         }
-        // Exclusive creation also resolves simultaneous fresh bootstrap races.
         let active = open_regular(
             &directory.join("journal.jsonl"),
             OpenOptions::new().read(true).write(true).create_new(true),
@@ -80,8 +68,6 @@ impl Journal {
             sequence: self.sequence + 1,
         };
         record.validate()?;
-        // Invalid input must be refused before rotation/recovery I/O, even if
-        // the filesystem is also broken. It cannot be retained as a disk retry.
         let encoded = encode_jsonl(&record).context("Cannot encode journal record")?;
         if self.rotation.is_some() {
             self.finish_rotation()?;
@@ -90,9 +76,6 @@ impl Journal {
             self.compact()?;
         }
         if self.offsets.len() >= MAX_ACTIVE_OFFSETS {
-            // A quota-refused compaction can leave the active inode intact.
-            // Refuse before writing or advancing its fence; raising quota may
-            // permit this SAME retained record to compact and commit on retry.
             bail!("Terminal journal active index limit reached; increase the journal quota to allow compaction, or close the terminal");
         }
         if self.archive_bytes + self.bytes + encoded.len() as u64 > self.limit_bytes {
@@ -118,9 +101,6 @@ impl Journal {
             return Ok(());
         }
         if self.checkpoints.len() >= MAX_CHECKPOINTS {
-            // This is a resource limit, not a disk quota. Never evict history,
-            // overwrite a temporary/archive, or suggest an ineffective quota
-            // increase once the bounded checkpoint index is full.
             bail!("Terminal journal checkpoint index limit reached; close the terminal to release retained history");
         }
         let number = self.checkpoints.len() + 1;
@@ -148,14 +128,7 @@ impl Journal {
         }
         output.sync_all()?;
         drop(output);
-        // Create the next inode before publishing the checkpoint. Every failure
-        // after publication has an explicit retry state; no duplicate archive
-        // charges and no truncation of a reader's captured active inode.
         let replacement = self.directory.join("journal-next.tmp");
-        // A failed pre-publication attempt can leave this temporary behind.
-        // Create a fresh empty inode, rather than relying on a durable truncate
-        // of that old inode. As in Journal::new, the directory sync publishes
-        // the empty file; its first append syncs data before advancing a fence.
         // A separate empty-file sync adds a device-wide barrier on Darwin for
         // every small-quota checkpoint, without protecting any output.
         match fs::remove_file(&replacement) {
@@ -179,16 +152,12 @@ impl Journal {
     }
 
     fn finish_rotation(&mut self) -> Result<()> {
-        // Once checkpoint publication succeeds, even a directory fsync failure
-        // must leave rotation pending so retries cannot duplicate it.
         File::open(&self.directory)?.sync_all()?;
         let rotation = self.rotation.as_mut().context("Missing rotation state")?;
         if !rotation.moved {
             fs::rename(self.directory.join("journal.jsonl"), &rotation.retired)?;
             rotation.moved = true;
         }
-        // A retry can observe a successfully renamed replacement after a later
-        // open/fsync failure. Its name is absent only after our own rename.
         if rotation.replacement.exists() {
             fs::rename(&rotation.replacement, self.directory.join("journal.jsonl"))?;
         }
@@ -197,8 +166,6 @@ impl Journal {
             OpenOptions::new().read(true).write(true),
         )?;
         File::open(&self.directory)?.sync_all()?;
-        // Cleanup failure keeps retry state; old active records are still held
-        // in self.active and the durable checkpoint, never silently discarded.
         match fs::remove_file(&rotation.retired) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -319,9 +286,6 @@ impl Snapshot {
                     bail!("Terminal checkpoint exceeds its captured fence");
                 }
                 if record.sequence == fence {
-                    // Consumers may stop at the snapshot fence, dropping the
-                    // replay worker. Validate EOF/CRC now, before publishing
-                    // this archive's final record; a later read is not assured.
                     if !self.input.as_mut().unwrap().fill_buf()?.is_empty() {
                         bail!("Terminal checkpoint contains data beyond its captured fence");
                     }
@@ -355,13 +319,8 @@ pub fn atomic_json<T: serde::Serialize>(directory: &Path, name: &str, value: &T)
     Ok(())
 }
 
-// Temporary names and checkpoint paths may already exist after a failed
-// operation. Never block opening a FIFO, follow a symlink or publish bytes to
-// another special file. O_NONBLOCK does not make regular disk I/O async; that
-// remains confined to workers, not the reactor.
+// O_NONBLOCK keeps a FIFO open from blocking; it does not make regular disk I/O async.
 pub fn open_regular(path: &Path, options: &mut OpenOptions) -> Result<File> {
-    // Refuse known special files before opening them at all. Flags and the
-    // descriptor check below still defend against replacement after this check.
     match fs::symlink_metadata(path) {
         Ok(metadata) if !metadata.is_file() => {
             bail!(
@@ -486,8 +445,6 @@ mod tests {
             },
             1,
         )?;
-        // A stale pre-publication replacement must be unlinked, not truncated:
-        // keep its inode open to prove that rotation creates a new empty file.
         let replacement = root.path().join("journal-next.tmp");
         fs::write(&replacement, "uncommitted stale contents")?;
         let mut stale = File::open(&replacement)?;

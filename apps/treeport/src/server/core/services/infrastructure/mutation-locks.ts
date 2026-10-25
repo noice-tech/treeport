@@ -12,10 +12,7 @@ interface LockState {
 interface LockRequest {
   readonly projectId?: string
   readonly projectLockKind?: ProjectLockKind
-  // A shared project lease lasting through residual cleanup, even after the
-  // worktree catalog row is retired. Only creation may overlap these leases.
   readonly worktreeRemovalProjectId?: string
-  // Only relax checkProjectIds; acquiring a project key remains exclusive.
   readonly allowWorktreeCreation?: boolean
   readonly worktreeIds?: Iterable<string>
   readonly checkProjectIds?: Iterable<string>

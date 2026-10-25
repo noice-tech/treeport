@@ -3,8 +3,6 @@ import path from 'node:path'
 
 const LOG_LIMIT_BYTES = 5 * 1024 * 1024
 
-// Open on each write: rotation must not strand a writer on a renamed file.
-// This synchronous boundary also works during fatal errors and process exit.
 export function appendDaemonLog(
   logPath: string,
   value: string | Uint8Array
@@ -64,7 +62,6 @@ export async function tailDaemonLog(
       let newlines = 0
       let readBytes = 0
 
-      // Bound reads even for legacy files containing an enormous single line.
       while (
         position > 0 &&
         newlines <= remaining &&

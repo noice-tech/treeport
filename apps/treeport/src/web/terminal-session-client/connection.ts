@@ -32,9 +32,7 @@ function getClientId(): string {
 
       return (fallbackClientId = stored)
     }
-  } catch {
-    // Storage can be unavailable in private browsing modes.
-  }
+  } catch {}
 
   const bytes = new Uint8Array(16)
 
@@ -53,9 +51,7 @@ function getClientId(): string {
 
   try {
     sessionStorage.setItem('treeport-terminal-client-id', created)
-  } catch {
-    // The in-memory ID still keeps reconnects stable for this page load.
-  }
+  } catch {}
 
   return (fallbackClientId = created)
 }
@@ -111,8 +107,6 @@ export function makeConnection(
 
     let inputInFlight: { generation: number; end: number } | null = null
 
-    // UTF-8 needs at most three bytes per UTF-16 code unit; JSON escaping can
-    // need six. Bound both representations without encoding the whole paste.
     const chunkLength = Math.min(
       Math.floor(TERMINAL_MAX_INPUT_BYTES / 3),
       Math.floor((TERMINAL_MAX_CLIENT_MESSAGE_BYTES - 1024) / 6)
@@ -172,8 +166,6 @@ export function makeConnection(
       }
 
       inputInFlight = { generation: input.generation, end }
-      // One outstanding chunk bounds every downstream queue. The server ACKs
-      // only after the host/keeper has capacity, never just on socket receipt.
       state.socket.volatile.emit(input.event, {
         generation: input.generation,
         data: input.data.slice(input.offset, end)

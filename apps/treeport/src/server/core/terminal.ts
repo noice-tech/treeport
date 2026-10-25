@@ -31,7 +31,6 @@ export interface TerminalHostAttachment extends TerminalHostSnapshot {
   output: Stream.Stream<TerminalHostOutput, unknown>
 }
 
-/** Browser-facing view of the detached terminal host. */
 export interface TerminalAttachmentBackend {
   attach(
     terminalId: string,
@@ -75,7 +74,6 @@ export interface TerminalAttachmentBackend {
   ): Effect.Effect<void, unknown>
 }
 
-/** API daemon view of the detached terminal host. */
 export interface TerminalSessionBackend {
   initialize(): Effect.Effect<boolean, unknown>
   createTerminal(

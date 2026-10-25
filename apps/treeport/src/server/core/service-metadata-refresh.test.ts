@@ -40,8 +40,6 @@ it('keeps metadata reads Git-free, refreshes dirty state in the background, and 
   )
   runner.dirtyPaths.add(tree.path)
 
-  // Explicitly execute the daemon's bounded unit of work instead of waiting
-  // for its timer; the first turn reconciles, the next scans a tree.
   const refresh = () =>
     service.runEffect(
       Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>

@@ -16,7 +16,6 @@ import {
 const nonEmptyString = Schema.String.pipe(Schema.minLength(1))
 const positiveInteger = Schema.Int.pipe(Schema.positive())
 
-/** Protocol 4 hosts wrote protocolVersion; later standalone hosts omit it. */
 const legacyHostRecordSchema = Schema.parseJson(
   Schema.Struct({
     hostId: nonEmptyString,
@@ -28,11 +27,6 @@ const legacyHostRecordSchema = Schema.parseJson(
   })
 )
 
-/**
- * A standalone terminal host from a release before persistent session keepers.
- * Its PTYs cannot move to keepers. A non-null reason means the host may still
- * own terminals; only an idle (running, reason-free) host may be retired.
- */
 export interface LegacyTerminalHost {
   readonly recordPath: string
   readonly socketPath: string
@@ -73,7 +67,6 @@ async function socketAcceptsConnections(socketPath: string): Promise<boolean> {
   })
 }
 
-/** Authenticated read-only handshake; the host rejects any other request. */
 async function probeLegacyHost(
   record: TerminalHostRecord,
   token: string
@@ -199,10 +192,6 @@ async function probeLegacyHost(
   })
 }
 
-/**
- * Locates a legacy host without replacing, signaling, or mutating it. Treeport
- * never adopts its terminals; users close them deliberately before upgrading.
- */
 export async function inspectLegacyTerminalHost(
   dataDir: string,
   runtimeDir: string

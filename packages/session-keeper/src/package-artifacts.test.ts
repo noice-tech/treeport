@@ -18,7 +18,6 @@ afterEach(async () => {
 
 async function linkOrCopy(source: string, target: string) {
   await fs.link(source, target).catch((error) => {
-    // Temporary storage may be on another filesystem in CI.
     if (error.code !== 'EXDEV') {
       throw error
     }
@@ -106,7 +105,6 @@ it('refuses oversized release payloads before reading their bytes', async () => 
     'treeport-session-keeper'
   )
 
-  // Replace the fixture's link before mutation; never alter build output.
   await fs.unlink(payload)
   const file = await fs.open(payload, 'wx')
 
@@ -125,7 +123,6 @@ it('rejects stale source associations and corrupt payload hashes', async () => {
   const root = await fixture()
   const notices = path.join(root, 'dist/native', host, 'THIRD_PARTY_NOTICES')
   const original = await fs.readFile(notices, 'utf8')
-  // The immutable fixture shares an inode with build output until replacement.
   await fs.unlink(notices)
   await fs.writeFile(
     notices,

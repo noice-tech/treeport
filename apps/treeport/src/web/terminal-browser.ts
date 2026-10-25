@@ -16,7 +16,7 @@ const TERMINAL_TOUCH_SELECTION_SLOP = 10
 const TERMINAL_TOUCH_MOMENTUM_DECAY = 0.95
 const TERMINAL_TOUCH_MOMENTUM_MIN_ROWS_PER_FRAME = 0.05
 
-// Matches wterm's tolerance for treating the viewport as following live output.
+// EXTERNAL: Matches wterm's tolerance for treating the viewport as following live output.
 const TERMINAL_SCROLLBACK_BOTTOM_TOLERANCE = 5
 
 interface WTermMetrics {
@@ -25,7 +25,7 @@ interface WTermMetrics {
 }
 
 export function setTerminalFontSize(terminal: WTerm, fontSize: number): void {
-  // wterm sizes rows from --term-row-height and measures the cell width from
+  // EXTERNAL: wterm sizes rows from --term-row-height and measures the cell width from
   // the font, so both follow the font size without rebuilding the grid.
   terminal.element.style.setProperty('--term-font-size', `${fontSize}px`)
   terminal.element.style.setProperty(
@@ -48,7 +48,7 @@ export function terminalCellSize(
 
 export function pasteTerminalText(terminal: WTerm, text: string): void {
   const normalized = text.replace(/\r?\n/g, '\r')
-  // Strip ESC so pasted text cannot end bracketed paste and inject commands.
+  // EXTERNAL: Strip ESC so pasted text cannot end bracketed paste and inject commands.
   terminal.onData?.(
     terminal.bridge?.bracketedPaste()
       ? `\u001b[200~${normalized.replaceAll('\u001b', '')}\u001b[201~`
@@ -75,8 +75,6 @@ export function terminalActivityLabel(activity: TerminalActivity): string {
   return activity.message ? `${label}: ${activity.message}` : label
 }
 
-// Shells default their title to `user@host:cwd`; the user and host repeat on
-// every row, so show only the reported directory.
 export function terminalDisplayTitle(
   runtimeTitle: string | undefined,
   name: string
@@ -127,7 +125,6 @@ export function terminalInputWithModifiers(
   }
 
   if (modifiers.shift && data.length === 1) {
-    // A software Shift latch also covers the standard US punctuation pairs.
     const unshifted = "1234567890-=[]\\;',./`"
     const shifted = '!@#$%^&*()_+{}|:"<>?~'
     const index = unshifted.indexOf(data)
@@ -284,9 +281,6 @@ export function trackTerminalSelection(
 ): () => void {
   const handleMouseDown = () => {
     options.requestControl()
-    // Let wterm route plain clicks and drags to mouse-aware applications such
-    // as Pi fullscreen, which owns transcript selection. Shift still lets the
-    // user explicitly choose local terminal selection.
   }
 
   wrapper.addEventListener('mousedown', handleMouseDown, true)
@@ -319,8 +313,6 @@ export function trackTerminalScrolling(
       return null
     }
 
-    // Rows count from the oldest retained history row, matching wterm's
-    // scroll content where every retained row has the same height.
     const element = terminal.element
     const bounds = element.getBoundingClientRect()
     const style = getComputedStyle(element)
@@ -367,8 +359,6 @@ export function trackTerminalScrolling(
   }
 
   const reportsWheel = () => {
-    // wterm reports wheels to mouse-aware applications such as Pi fullscreen
-    // unless the user has scrolled back into local history.
     const element = terminal.element
 
     return (
@@ -378,7 +368,7 @@ export function trackTerminalScrolling(
     )
   }
 
-  // wterm sends one report per wheel event whatever its delta, so trackpads
+  // EXTERNAL: wterm sends one report per wheel event whatever its delta, so trackpads
   // and touch would scroll applications far too fast. Pace reports to one per
   // row of travel through untrusted events that wterm encodes as usual.
   const reportWheelRows = (
@@ -428,8 +418,6 @@ export function trackTerminalScrolling(
       return false
     }
 
-    // The painted frame is frozen while the buffer changes underneath it.
-    // Block both local scrolling and mouse-wheel reports to the application.
     event.preventDefault()
     event.stopImmediatePropagation()
     clearTouchSelectionTimer()
@@ -466,9 +454,6 @@ export function trackTerminalScrolling(
     },
     { capture: true, passive: false }
   )
-  // wterm scrolls history and the platform selects its DOM text natively;
-  // Treeport intercepts touches while it owns a paste gesture, output is
-  // frozen, or an application receives wheel reports.
   wrapper.addEventListener(
     'touchstart',
     (event) => {
@@ -523,7 +508,7 @@ export function trackTerminalScrolling(
         return
       }
 
-      // iOS treats a long-press as a tap while the terminal input is focused.
+      // EXTERNAL: iOS treats a long-press as a tap while the terminal input is focused.
       // Select the word here instead; wterm blurs the input to keep it.
       const start = { x: touch.clientX, y: touch.clientY }
       touchStart = start
@@ -579,7 +564,6 @@ export function trackTerminalScrolling(
       }
 
       if (touchSelected) {
-        // The platform adjusts the selected word with its handles.
         event.preventDefault()
 
         return
@@ -595,8 +579,6 @@ export function trackTerminalScrolling(
         clearTouchSelectionTimer()
       }
 
-      // A long-press starts a native selection that follows the finger.
-      // Applications must not receive that movement as scrolling.
       const selection = window.getSelection()
 
       if (
@@ -614,7 +596,6 @@ export function trackTerminalScrolling(
 
       if (touchScroll && cell) {
         event.preventDefault()
-        // Content follows the finger, so dragging up scrolls toward newer rows.
         const rows = (touchScroll.y - touch.clientY) / cell.height
         const elapsed = event.timeStamp - touchScroll.time
 
@@ -646,7 +627,7 @@ export function trackTerminalScrolling(
     }
 
     if (touchSelected) {
-      // Without a following tap, iOS keeps the input blurred and the selection.
+      // EXTERNAL: Without a following tap, iOS keeps the input blurred and the selection.
       event.preventDefault()
     }
 

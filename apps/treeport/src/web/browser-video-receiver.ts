@@ -8,7 +8,7 @@ import { presentBrowserVideo } from './browser-video-presentation'
 import { ChromiumWebCodecsReceiver } from './chromium-webcodecs-receiver'
 
 export class BrowserVideoReceiver {
-  // Owns the canvas for its lifetime: an OffscreenCanvas transfers only once.
+  // EXTERNAL: Owns the canvas for its lifetime: an OffscreenCanvas transfers only once.
   private webcodecs: ChromiumWebCodecsReceiver | null = null
   private webcodecsEpoch: number | null = null
   private mediaToken: string | null = null
@@ -142,8 +142,6 @@ export class BrowserVideoReceiver {
     this.visible = visible
 
     if (!visible) {
-      // Hiding closes the host peer and may stop capture. Wait for a fresh
-      // videoReady on return instead of racing capture restart with an offer.
       this.available = false
       this.stop()
       this.statusChanged('Waiting for browser video…')
@@ -207,12 +205,7 @@ export class BrowserVideoReceiver {
     this.peer = peer
     this.requestId = requestId
     const transceiver = peer.addTransceiver('video', { direction: 'recvonly' })
-    // Remote interaction favors freshness over a smooth but delayed playout.
-    // The receiver still retains the minimum buffer required for network jitter.
     transceiver.receiver.jitterBufferTarget = 0
-    // Prefer H.264 for low-latency screen sharing and hardware decoding on
-    // laptops. Keep every advertised fallback and repair codec; the browser
-    // negotiates a mutually supported profile.
     const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs ?? []
 
     if (codecs.some((codec) => codec.mimeType === 'video/H264')) {

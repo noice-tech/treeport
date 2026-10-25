@@ -342,10 +342,6 @@ describe('detached terminal host lifecycle', () => {
   const clients = new Set<LegacyClient>()
 
   afterEach(async () => {
-    // A failed assertion can happen before a keeper PID is added to hostPids.
-    // Closing an engine does NOT close its sessions: authenticate every owned
-    // fixture before removing its discovery/journal directory. Cleanup failure
-    // intentionally retains evidence rather than leaving an undiscoverable PTY.
     for (const root of roots) {
       for (const name of await fs.readdir(root, { recursive: true })) {
         if (!name.includes('/sessions/') || !name.endsWith('/manifest.json')) {
@@ -638,7 +634,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
       }
     )
 
-    // This fixture's noncanonical terminal ID is represented by its digest.
     expect(
       keeperListing
         .trim()
@@ -695,8 +690,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
         .some((line) => JSON.parse(line).sequence > detachedSequence)
     }, 'The detached session stopped capturing output')
 
-    // The new engine reconnects without replacing the owner PID or replaying
-    // its command launch.
     const restartedDaemon = await connectOrStartTerminalHost(options)
     clients.add(restartedDaemon)
     await waitFor(
@@ -755,8 +748,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const transition =
       await restartedDaemon.prepareQueryAuthority('terminal-host')
 
-    // Mobile fitting can resize during the authority handshake. Keeper control
-    // replies must remain readable until the viewer activates its authority.
     await restartedDaemon.resize('terminal-host', 100, 30)
     expect(
       (await restartedDaemon.listProcesses('worktree-host')).length
@@ -944,9 +935,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'Explicit close did not stop the quota session owner'
     )
     hostPids.delete(quotaStatus.ownerPid)
-    // Losing one keeper must not prevent startup or cause its command to be
-    // rerun. Recover all complete records, including output after status.json's
-    // last published fence, but preserve an uncommitted partial write as-is.
     await recoveredDaemon.createTerminal({
       terminalId: 'archived-terminal',
       worktreeId: 'worktree-archive',
@@ -1067,8 +1055,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
       unavailableManifest.socketPath,
       unavailableManifest.socketPath + '.unavailable'
     )
-    // Hold attach open without answering. Backend readiness must not depend
-    // on a session's handshake deadline (not merely catch fast ENOENT errors).
     const stalledPeers: net.Socket[] = []
 
     const stalledOwner = net
@@ -1136,8 +1122,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
       degradedDaemon.terminalState('unavailable-terminal')
     ])
 
-    // A concurrent refresh may observe recovery in progress, but a completed
-    // retry must replace the unavailable entry, never duplicate its command.
     expect(retried.some((state) => state.status === 'running')).toBe(true)
     expect(
       (await degradedDaemon.terminalState('unavailable-terminal')).status
@@ -1227,9 +1211,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(
       await finalDaemon.captureTerminal('archived-terminal', 10)
     ).toContain('ARCHIVE_UNPUBLISHED_TAIL')
-    // The removal service awaits killWorktree before recording terminals_stopped.
-    // Refuse that boundary while the unverified command survives, and keep it
-    // in the inventory so subsequent removals cannot falsely report success.
     await expect(finalDaemon.killWorktree('worktree-archive')).rejects.toThrow()
     expect(await finalDaemon.listTerminals('worktree-archive')).toEqual([
       expect.objectContaining({ id: 'archived-terminal', status: 'exited' })
@@ -1237,7 +1218,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(processExists(archiveStatus.pid)).toBe(true)
     await fs.access(path.join(archiveDirectory, 'manifest.json'))
     await expect(finalDaemon.killWorktree('worktree-archive')).rejects.toThrow()
-    // Explicit cleanup of the private fixture's known, still-live group.
     process.kill(-archiveStatus.pid, 'SIGKILL')
     await waitFor(
       () => !processExists(archiveStatus.pid),
@@ -1270,8 +1250,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(processExists(commandPid)).toBe(false)
     hostPids.delete(ownerPid)
 
-    // Exercise pnpm dev's actual descendant-group cleanup with a private
-    // supervisor. Existing (not yet orphaned) detached keepers are boundaries.
     const supervisor = spawn(
       process.execPath,
       [
@@ -1669,7 +1647,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
         emitOutput('x'.repeat(256 * 1024), sequence)
       }
 
-      // A reset can surface as a socket error before the normal EOF path.
+      // EXTERNAL: A reset can surface as a socket error before the normal EOF path.
       // Assert disconnection, not platform-dependent transport wording; the
       // subscription cleanup and fresh-client checks below prove isolation.
       await expect(

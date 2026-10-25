@@ -41,8 +41,6 @@ export class ProjectSnapshotService {
     { path: string; state: WorktreeRecord['dirty'] }
   >()
   private readonly refreshDue = new Map<string, number>()
-  // Ref paths, relative to the Git common directory, that moved since the
-  // project's last reconciliation.
   private readonly gitWatchers = new Map<
     string,
     { repositoryPath: string; changes: Set<string>; close: () => void }
@@ -139,9 +137,6 @@ export class ProjectSnapshotService {
         )
       }
 
-      // Context callers need current Git identity, not the bounded background
-      // refresh's durable inventory. Overlay the response without reconciling
-      // trees or writing cached metadata; ordinary metadata reads stay Git-free.
       if (freshGitWorktreeId && project.kind === 'repository') {
         const worktree = project.worktrees.find(
           (candidate) => candidate.id === freshGitWorktreeId
@@ -230,8 +225,6 @@ export class ProjectSnapshotService {
     })
   }
 
-  // Run by the daemon, not by HTTP metadata reads. One tree status or
-  // project reconciliation per tick bounds subprocess pressure.
   refreshGitState(): Effect.Effect<void, never, ApplicationServices> {
     return Effect.gen(this, function* () {
       const store = yield* ProjectStore
@@ -292,7 +285,6 @@ export class ProjectSnapshotService {
           !commonDirectory ||
           !existsSync(path.join(commonDirectory, 'refs'))
         ) {
-          // Unwatchable repositories keep the bounded polling refresh.
           this.gitWatchers.set(project.id, {
             repositoryPath: project.repositoryPath,
             changes: new Set(),
@@ -301,8 +293,6 @@ export class ProjectSnapshotService {
           continue
         }
 
-        // Watch only HEADs and refs: commits, checkouts, fetches, and pushes
-        // move them, while index and object writes would be noise.
         const changes = new Set<string>()
 
         const note = (ref: string) => {
@@ -318,7 +308,6 @@ export class ProjectSnapshotService {
             if (name === 'HEAD' || name === 'packed-refs') {
               note(name)
             } else if (name === 'worktrees' && !watchingWorktrees) {
-              // The first linked tree created the directory; watch it next tick.
               close()
               this.gitWatchers.delete(project.id)
             }
@@ -354,7 +343,6 @@ export class ProjectSnapshotService {
         }
 
         for (const watcher of watchers) {
-          // A removed repository fails its watchers; the next tick retries.
           watcher.on('error', () => {
             close()
             this.gitWatchers.delete(project.id)
@@ -382,8 +370,6 @@ export class ProjectSnapshotService {
         return
       }
 
-      // Reserve the slot before awaiting I/O so concurrent refreshes cannot
-      // schedule the same expensive operation twice.
       this.refreshDue.set(task.key, now + (task.worktree ? 45_000 : 60_000))
 
       if (task.worktree) {
@@ -406,8 +392,6 @@ export class ProjectSnapshotService {
           task.project.mainWorktreePath
         )
 
-        // A tree changed when its HEAD moved, or when its branch or that
-        // branch's remote-tracking ref did, such as after a push.
         const branches = new Set(
           changes.flatMap((ref) => {
             const match = /^refs\/(?:heads\/(.+)|remotes\/[^/]+\/(.+))$/u.exec(
@@ -442,7 +426,6 @@ export class ProjectSnapshotService {
           }
         }
 
-        // Remotes change rarely; checking here keeps existing projects current.
         const originUrl = yield* git
           .originUrl(task.project.repositoryPath)
           .pipe(Effect.orElseSucceed(() => task.project.originUrl))

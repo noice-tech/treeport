@@ -53,11 +53,6 @@ export interface BrowserRelayStream {
   close(): void
 }
 
-// Hosted browser video and wheel input run in a separate process. The daemon's
-// event loop also serves projects, terminals and git, and its stalls of a few
-// hundred milliseconds froze scrolling. The relay owns the capture socket, the
-// viewers' media sockets and its own CDP connection to the page; the daemon
-// only authorizes sockets and starts or stops streams.
 export class BrowserRelay {
   #child: ChildProcess | null = null
   readonly #streams = new Map<
@@ -142,8 +137,6 @@ export class BrowserRelay {
     })
   }
 
-  // The daemon has authorized this upgrade for the attachment. The relay
-  // completes the WebSocket handshake on the same TCP connection.
   handoff(
     attachment: string,
     request: IncomingMessage,
@@ -232,7 +225,6 @@ export class BrowserRelay {
       }
     })
     child.on('error', () => child.kill())
-    // Without its IPC channel the relay is unusable even if still running.
     child.once('disconnect', () => {
       child.kill()
 

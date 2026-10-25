@@ -115,8 +115,6 @@ window.addEventListener(
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
-  // Native context is synchronous, so a local browser never briefly starts
-  // the daemon-hosted implementation while waiting for desktop metadata.
   runtime:
     process.isMainFrame &&
     ['http:', 'https:'].includes(window.location.protocol)
@@ -451,8 +449,6 @@ const shellBridge = Object.freeze({
   }
 })
 
-// The private shell owns installation controls. Workspace pages get only
-// optional native enhancements; neither subframes nor browser guests get them.
 if (process.isMainFrame) {
   if (window.location.protocol === 'treeport-app:') {
     contextBridge.exposeInMainWorld('treeportShell', shellBridge)

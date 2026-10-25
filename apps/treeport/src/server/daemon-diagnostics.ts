@@ -9,18 +9,11 @@ import { appendDaemonLog } from './daemon-log'
 import { createBufferedDaemonLog } from './buffered-daemon-log'
 import { resolveDataDir } from './core/config'
 
-// A failed diagnostic write must not replace the error we are investigating.
-// Keep this boundary independent of Effect scopes and asynchronous finalizers.
 export function installDaemonDiagnostics(entrypoint: URL) {
   process.env.TREEPORT_INSTANCE_ID ||= crypto.randomUUID()
-  // Managed and service launchers explicitly set these; an unlabelled direct
-  // invocation is external, not a daemon started by `treeport start`.
   process.env.TREEPORT_DAEMON_LIFECYCLE ||= 'external'
   process.env.TREEPORT_INSTALLATION_METHOD ||= 'unknown'
 
-  // Every built server entrypoint lives at <package>/dist/node/server/index.js,
-  // including the development output directory. Do not report a production
-  // direct launch as "development" merely because no CLI supplied its version.
   if (!process.env.TREEPORT_APP_VERSION?.trim()) {
     const manifestPath = new URL('../../../package.json', entrypoint)
 
@@ -90,8 +83,6 @@ export function installDaemonDiagnostics(entrypoint: URL) {
         return buffered.write(value)
       }
 
-      // Drain the worker before synchronous lifecycle/fatal writes so rotation
-      // cannot race and exit diagnostics remain ordered after normal logs.
       if (!buffered.flushSync()) {
         return false
       }
@@ -143,8 +134,6 @@ export function installDaemonDiagnostics(entrypoint: URL) {
         typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk
       )
 
-      // Detached launchers retain stderr for loader/native errors. Their normal
-      // output is already persisted here; do not copy it into the fallback log.
       if (persisted && logOnly) {
         const done =
           typeof encodingOrCallback === 'function'
@@ -164,7 +153,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
     }
   }
 
-  // Monitor, rather than handle, uncaught exceptions so Node retains its fatal
+  // EXTERNAL: Monitor, rather than handle, uncaught exceptions so Node retains its fatal
   // semantics. Node's default strict rejection policy reaches this monitor too.
   process.on('uncaughtExceptionMonitor', (error, origin) => {
     fatal = true

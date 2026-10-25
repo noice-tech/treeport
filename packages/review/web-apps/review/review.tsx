@@ -86,11 +86,9 @@ const COMMENTS_KEY = 'review-comments-v1'
 const VIEWED_KEY = 'review-viewed-files-v1'
 const DIFF_STYLE_KEY = 'review-diff-style-v1'
 
-// ponytail: Unfocused apps stay stale, and focused apps can lag two seconds.
-// Add a host diff-change event when either limit matters.
 const AUTO_REFRESH_INTERVAL_MS = 2_000
 
-// Document styles don't reach the diff/tree shadow roots. Keep their native
+// EXTERNAL: Document styles don't reach the diff/tree shadow roots. Keep their native
 // control behavior aligned without disabling selection or zoom on content.
 const NATIVE_CONTROL_CSS = `
   button, [role="button"], [role="treeitem"] {
@@ -292,8 +290,6 @@ function ChangedFileTree({
     }> = []
 
     for (const entry of entries) {
-      // A replacement can contain both a leaf and descendants of that leaf.
-      // Reserve real files AND directories before choosing display-only names.
       const occupied = new Set<string>()
       const parents = new Set<string>()
 
@@ -355,7 +351,7 @@ function ChangedFileTree({
     }
   }, [files])
 
-  // useFileTree captures options once; callbacks must read the current data.
+  // EXTERNAL: useFileTree captures options once; callbacks must read the current data.
   const current = useRef({ tree, onSelect })
   current.current = { tree, onSelect }
   const previousTree = useRef(tree)
@@ -414,8 +410,6 @@ function ChangedFileTree({
       previous.paths.length !== tree.paths.length ||
       previous.paths.some((path, index) => path !== tree.paths[index])
     ) {
-      // Include hidden directories so closing a parent doesn't lose its
-      // children's expansion state. Defaults apply only to new directories.
       const collapsedPaths: string[] = []
 
       const expandedPaths = [...tree.directories].filter((path) => {
@@ -435,7 +429,7 @@ function ChangedFileTree({
 
       model.resetPaths(tree.paths, { initialExpandedPaths: expandedPaths })
 
-      // resetPaths expands ancestors of expanded children; restore closed
+      // EXTERNAL: resetPaths expands ancestors of expanded children; restore closed
       // parents without changing those children's remembered state.
       for (const path of collapsedPaths) {
         const item = model.getItem(path)
@@ -479,7 +473,7 @@ function CommentEditor({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    // React's autofocus runs before the diff's layout effect adds the
+    // EXTERNAL: React's autofocus runs before the diff's layout effect adds the
     // annotation slot, when this textarea isn't visible or focusable yet.
     textareaRef.current?.focus()
   }, [comment.draft, comment.resolved])
@@ -1092,8 +1086,7 @@ function ReviewApp() {
           )
         : []
 
-      // A pathspec may also return descendants during directory replacement.
-      // Git emits separate delete/add patches for a regular-file/symlink change.
+      // EXTERNAL: Git emits separate delete/add patches for a regular-file/symlink change.
       const matching = parsed.filter((candidate) => candidate.name === filePath)
       let fileDiff = matching[0]
       const deleted = matching.find((candidate) => candidate.type === 'deleted')
@@ -1164,8 +1157,6 @@ function ReviewApp() {
           if (entry.isIntersecting) {
             visibleFiles.current.add(id)
             const file = loadedRef.current?.files.find((file) => file.id === id)
-            // Collapsed files still need their metadata for the real diff header.
-            // Load once, without polling already-loaded collapsed patches.
             void loadFile(
               id,
               file?.scope === 'uncommitted' && !collapsedFilesRef.current.has(id)
@@ -1197,8 +1188,6 @@ function ReviewApp() {
       refreshPending.current = true
 
       try {
-        // Update commit identities before requesting patches; unchanged committed
-        // patches are immutable. Only the viewport needs working-tree refreshes.
         await load()
         await refreshVisibleFiles(
           loadedRef.current?.files ?? [],

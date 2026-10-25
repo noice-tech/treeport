@@ -59,8 +59,6 @@ export async function checkSessionKeeperPackage(
 
   assert.equal(SESSION_KEEPER_MAX_PAYLOAD_BYTES, 64 * 1024 * 1024)
 
-  // This checks target format, source association and bound licenses, NOT
-  // runtime behavior, minimum ABI, signing or performance qualification.
   const platforms = allTargets
     ? ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64']
     : [`${process.platform}-${process.arch}`]
@@ -146,8 +144,6 @@ export async function checkSessionKeeperPackage(
     }
   }
 
-  // Exercise the public API and actual packed bytes. pnpm strips executable
-  // modes from non-bin payloads; consumers must not edit their npm installation.
   assert.equal(
     await fs.realpath(getSessionKeeperPayload()),
     await fs.realpath(keeper)

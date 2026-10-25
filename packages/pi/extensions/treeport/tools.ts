@@ -37,8 +37,6 @@ const argv = Type.Optional(
   })
 )
 
-// CLI responses are JSON objects with command-specific fields. Preserve fields
-// added by the CLI rather than coupling this separately published package to it.
 const object = Type.Record(Type.String(), Type.Unknown())
 
 const browserResult = Type.Object(

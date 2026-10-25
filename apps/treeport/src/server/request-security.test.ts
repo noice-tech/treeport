@@ -122,7 +122,7 @@ async function fixture(): Promise<{
   })
   servers.push(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  // SAFETY: The test fixture provides the asserted contract used here.
+  // SAFETY: The server is listening on a TCP port.
   const address = server.address() as AddressInfo
 
   return { url: `http://127.0.0.1:${address.port}`, mutations }

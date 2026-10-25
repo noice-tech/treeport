@@ -36,7 +36,7 @@ export interface BrowserCdpBridge {
   stop: Effect.Effect<void>
 }
 
-// The native clipboard is shared by all guests. Keep copy and read together.
+// EXTERNAL: The native clipboard is shared by all guests. Keep copy and read together.
 const clipboardOperations = Effect.unsafeMakeSemaphore(1)
 
 const ALLOWED_DOMAINS = new Set([
@@ -164,7 +164,7 @@ export function createBrowserCdpBridge(
         params: unknown,
         sessionId?: string
       ) => {
-        // Electron owns beforeunload and can close it before an automation
+        // EXTERNAL: Electron owns beforeunload and can close it before an automation
         // reply arrives. Never expose that native dialog to Playwright's
         // automatic accept path (which has an unobserved rejection).
         if (method === 'Page.javascriptDialogOpening') {
@@ -252,7 +252,6 @@ export function createBrowserCdpBridge(
             return resume(Effect.void)
           }
 
-          // A peer cannot block shutdown by withholding a close handshake.
           for (const socket of sockets.clients) {
             socket.terminate()
           }
@@ -294,9 +293,6 @@ export function createBrowserCdpBridge(
       guest.debugger.on('message', onDebuggerMessage)
       guest.debugger.once('detach', onDebuggerDetach)
       guest.once('destroyed', onDestroyed)
-      // Chromium must deliver input to this guest even when the terminal or a
-      // desktop control has keyboard focus. Emulation does not focus the native
-      // WebContents, reveal a app, or activate a worktree.
       yield* Effect.tryPromise(() =>
         guest.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
           enabled: true
@@ -367,7 +363,7 @@ export function createBrowserCdpBridge(
       })
       sockets = new WebSocketServer({
         noServer: true,
-        // Playwright sends in-memory file uploads through Runtime.callFunctionOn
+        // EXTERNAL: Playwright sends in-memory file uploads through Runtime.callFunctionOn
         // as base64. Leave room for the CDP envelope and file metadata too.
         maxPayload: 4 * Math.ceil(BROWSER_MAX_UPLOAD_BYTES / 3) + 1024 * 1024
       })
@@ -782,7 +778,6 @@ export function createBrowserCdpBridge(
             }
 
             if (request.method === 'Page.bringToFront') {
-              // Automation must not move desktop focus or select/reveal a app.
               sendResult(socket, request, {})
 
               return
@@ -948,7 +943,7 @@ export function createBrowserCdpBridge(
                 return
               }
 
-              // CDP routes insertText via the embedder's focused widget. Target
+              // EXTERNAL: CDP routes insertText via the embedder's focused widget. Target
               // the guest directly so terminal focus cannot swallow agent input.
               yield* Effect.tryPromise(() => guest.insertText(text))
               sendResult(socket, request, {})

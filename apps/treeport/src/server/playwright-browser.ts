@@ -55,8 +55,7 @@ export interface BrowserInstallStatus {
   launchError: string | null
 }
 
-// CDP can resolve nodes inside closed shadow roots that composedPath hides.
-// Use the owning target's session, and release the remote object on all paths.
+// EXTERNAL: CDP can resolve nodes inside closed shadow roots that composedPath hides.
 async function readContextLink(
   cdp: CDPSession,
   backendNodeId: number
@@ -200,7 +199,6 @@ export class PlaywrightBrowser {
   }
 
   async devtoolsEndpoint(): Promise<string> {
-    // An agent using another CDP connection can reposition the pointer.
     this.pointerPoint = null
 
     if (!this.page || this.page.isClosed() || !this.cdp) {
@@ -256,9 +254,7 @@ export class PlaywrightBrowser {
     await page.setViewportSize(this.stateValue.viewport)
     const cdp = await context.newCDPSession(page)
     this.cdp = cdp
-    // Streamed tabs retain DOM focus even when a different hosted tab is active.
     await this.host.setPageFocus(page, true)
-    // Match Treeport's dark chrome, including sites that switch favicon URLs in JS.
     await cdp.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-color-scheme', value: 'dark' }]
     })
@@ -378,8 +374,6 @@ export class PlaywrightBrowser {
         request.frame() === page.mainFrame()
       ) {
         this.updateState({ loading: false })
-        // Chromium presents failed document requests in the page itself.
-        // Command failures without a visible error page are reported separately.
       }
     })
     page.on('framedetached', () => {
@@ -400,8 +394,6 @@ export class PlaywrightBrowser {
       this.updateState({ loading: false })
       void this.refreshPageState()
     })
-    // Keep unload protection: dismiss means stay on the current page. Dialogs
-    // can disappear or the browser can disconnect while the reply is in flight.
     this.dialogHandler = (dialog) => {
       void dialog.dismiss().catch(() => undefined)
     }
@@ -416,7 +408,6 @@ export class PlaywrightBrowser {
     })
     await this.cdp.send('Page.enable')
     this.titleTimer = setInterval(() => {
-      // Do not enqueue renderer evaluations while frozen (or overlap slow reads).
       if (this.frozenValue || this.metadataUpdate) {
         return
       }
@@ -441,7 +432,6 @@ export class PlaywrightBrowser {
             return
           }
 
-          // Hosted icons travel as data, never fetching on the viewer's network.
           let icon = source.startsWith('data:') ? source : null
 
           if (!icon) {
@@ -483,7 +473,7 @@ export class PlaywrightBrowser {
   private updateState(patch: Partial<BrowserRuntimeState>): void {
     const observedUrl = patch.url ?? this.stateValue.url
 
-    // Chromium error pages are not navigable protocol URLs. Keep the last
+    // EXTERNAL: Chromium error pages are not navigable protocol URLs. Keep the last
     // supported address (including a failed navigation's target) for recovery.
     const url =
       observedUrl === 'about:blank' ||
@@ -544,7 +534,6 @@ export class PlaywrightBrowser {
   }
 
   get idle(): boolean {
-    // Long-running fetches/streams and active WebSockets must not be suspended.
     return (
       this.freezingSupported &&
       !this.stateValue.loading &&
@@ -568,7 +557,6 @@ export class PlaywrightBrowser {
     }
 
     if (frozen) {
-      // Pause polling before draining its last read, then recheck network/load.
       this.frozenValue = true
       await this.metadataUpdate
 
@@ -590,13 +578,12 @@ export class PlaywrightBrowser {
       await cdp
         .send('Page.setWebLifecycleState', { state: 'frozen' })
         .catch(async () => {
-          // Unsupported Chromium versions keep the page alive; never close it.
+          // EXTERNAL: Unsupported Chromium versions keep the page alive; never close it.
           this.freezingSupported = false
           this.frozenValue = false
           await this.host.setPageFocus(page, true)
         })
     } else {
-      // A failed thaw must fail the operation rather than run against a frozen page.
       await cdp.send('Page.setWebLifecycleState', { state: 'active' })
       await this.host.setPageFocus(page, true)
       this.frozenValue = false
@@ -620,7 +607,6 @@ export class PlaywrightBrowser {
   }
 
   async setScreencasting(enabled: boolean): Promise<void> {
-    // Commands, resize stop/start pairs and cleanup share the session consumer.
     const page = this.page
     const video = this.video
 
@@ -697,8 +683,6 @@ export class PlaywrightBrowser {
 
       this.contextMenu = context
 
-      // Observe the real Chromium event in every frame, including cross-origin
-      // frames. Do not synthesize another contextmenu or suppress the site's one.
       const observers = await Promise.all(
         page.frames().map((frame) =>
           frame
@@ -745,8 +729,6 @@ export class PlaywrightBrowser {
       let captured: { prevented: boolean; linkUrl: string | null } | null = null
 
       try {
-        // CDP hit testing pierces shadow roots and reports a remote backend node,
-        // never a node in the viewer's streamed canvas.
         const hit = await this.cdp
           ?.send('DOM.getNodeForLocation', {
             x: Math.round(message.x),
@@ -784,7 +766,7 @@ export class PlaywrightBrowser {
             captured = value
 
             if (entry.frame !== page.mainFrame()) {
-              // Page-target hit testing stops at out-of-process iframes. Keep
+              // EXTERNAL: Page-target hit testing stops at out-of-process iframes. Keep
               // that frame's target identity to route inspection in DevTools.
               const frameCdp = await this.context
                 ?.newCDPSession(entry.frame)
@@ -901,14 +883,10 @@ export class PlaywrightBrowser {
       }
     }
 
-    // Other input invalidates a previously resolved location/link.
     if (message.type !== 'videoOffer') {
       this.contextMenu = null
     }
 
-    // Commit and publish the address before releasing the input barrier.
-    // Renderer-dependent title/history reads must not hold subsequent input;
-    // refreshPageState's revision guard retires stale background results.
     if (message.type === 'navigate') {
       this.updateState({ loading: true })
       await browserNavigation(
@@ -1007,8 +985,6 @@ export class PlaywrightBrowser {
       const x = message.x / cssVisualViewport.scale
       const y = message.y / cssVisualViewport.scale
 
-      // A button event at the already-positioned pointer does not need a
-      // second move/compositor ACK. Explicit moves still deliver hover/drag.
       if (
         message.phase === 'move' ||
         this.pointerPoint?.x !== x ||
@@ -1208,7 +1184,7 @@ export class PlaywrightBrowser {
         page.once('close', closeHandler)
         page.on('dialog', dialogHandler)
         timer = setTimeout(
-          // runBeforeUnload does not cancel on timeout. Keep the session
+          // EXTERNAL: runBeforeUnload does not cancel on timeout. Keep the session
           // occupied until close or dismissal, rather than race fresh commands
           // against a close that Chromium may still complete later.
           () =>

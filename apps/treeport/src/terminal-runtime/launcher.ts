@@ -348,8 +348,6 @@ export function runLaunchSpec(
       )
     }
 
-    // Report the child result before starting the fallback. This is not a PTY
-    // exit and must not depend on shell integration or terminal output parsing.
     if (dependencies.onCommandExit) {
       const exitCode = result.spawnError ? 127 : (result.code ?? 1)
       yield* Effect.promise(() => dependencies.onCommandExit!(exitCode))

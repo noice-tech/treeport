@@ -258,8 +258,6 @@ export async function main(
         pendingAttention.add(terminalId)
         service.forkApplicationEffect(
           Effect.gen(function* () {
-            // Let focused clients acknowledge attention before sending. Coalesce
-            // bursts, but never hide a received push in the worker (iOS revokes it).
             yield* Effect.sleep('750 millis')
             const current = terminalMetadata.get(terminalId)
             const { attention } = current
@@ -288,7 +286,6 @@ export async function main(
               push.notify(
                 {
                   title: current.title ?? terminal.name,
-                  // Name the worktree: status text comes from the program.
                   body: `${status} · ${worktree.name}`,
                   url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
                   tag: `treeport-attention:${terminalId}`
@@ -385,7 +382,6 @@ export async function main(
             })
           ),
           (httpServer) =>
-            // Upgraded service connections must close before server.close waits.
             Effect.tryPromise(() => appServices.dispose()).pipe(
               Effect.orDie,
               Effect.andThen(
@@ -541,8 +537,6 @@ export async function main(
       shuttingDown = true
       diagnostics.shutdown(signal)
       devtoolsBridge.close()
-      // Stop accepting requests before slower subsystem finalizers run so a
-      // completed development command cannot leave its port behind.
       server.close()
       void Effect.runPromise(Scope.close(resourceScope, Exit.void)).then(
         () => {
@@ -564,7 +558,7 @@ export async function main(
       }, 5_000).unref()
     }
 
-    // Keep handlers installed while shutting down: supervisors and terminal
+    // EXTERNAL: Keep handlers installed while shutting down: supervisors and terminal
     // teardown often deliver the same signal twice, and the default action
     // would kill the daemon before the terminal engine releases its socket.
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
@@ -596,9 +590,6 @@ export async function main(
         ? startupDescriptor.data
         : null
 
-    // Ordinary starts activate after all daemon subsystems and the listener
-    // are ready. An updater-owned start waits until its separate health
-    // verification commits the transaction below.
     if (!externallyVerifiedStartup) {
       await service.runEffect(service.activateStartup())
     }

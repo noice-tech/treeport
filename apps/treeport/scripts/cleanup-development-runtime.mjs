@@ -48,7 +48,7 @@ const terminalHostResponseSchema = z.object({
 })
 
 function processExists(pid) {
-  // Aborted startups record PID 0 (no command). Nonpositive PIDs address
+  // EXTERNAL: Aborted startups record PID 0 (no command). Nonpositive PIDs address
   // process groups in kill(), so they cannot establish command liveness.
   if (!validPid(pid)) {
     return false
@@ -538,8 +538,6 @@ export async function cleanupDevelopmentRuntime(worktreePath, options = {}) {
   const graceMs = options.graceMs ?? DEFAULT_PROCESS_GRACE_MS
   await stopDaemon(dataDir, runtimeDir, timeoutMs)
   await stopTerminalHost(dataDir, runtimeDir, timeoutMs, graceMs)
-  // This explicit dev-instance teardown closes sessions. Ordinary daemon
-  // shutdowns and updates never call this path.
   await stopPersistentSessions(dataDir, runtimeDir)
 }
 

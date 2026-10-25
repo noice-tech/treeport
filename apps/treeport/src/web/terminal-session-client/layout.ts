@@ -60,8 +60,6 @@ export function makeLayout(
     let resizeFrame: number | null = null
 
     function keepLiveOutputVisible(): void {
-      // A smaller host leaves wterm's scroll offset above the live screen
-      // without a scroll event; follow output unless the user scrolled away.
       const element = state.terminal?.element
 
       if (element && !state.wrapper?.classList.contains('terminal-scrolling')) {
@@ -278,8 +276,6 @@ export function makeLayout(
       )
 
       if (Exit.isFailure(result)) {
-        // Missing dimensions are represented above; actual wterm measurement
-        // defects close the session instead of masquerading as a hidden host.
         dependencies.failRendering(Cause.squash(result.cause))
       }
     }

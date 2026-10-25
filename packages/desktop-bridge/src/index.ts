@@ -18,9 +18,7 @@ export type DesktopCommand =
 export type DesktopFileActionResult = 'opened' | 'rejected'
 
 export interface TreeportTheme {
-  // auto follows the operating system appearance.
   mode: 'auto' | 'dark' | 'light'
-  // A #rrggbb color; null keeps the default accent.
   accent: string | null
 }
 
@@ -65,8 +63,6 @@ export interface DesktopBrowserCommandResult {
   error: string | null
 }
 
-// This public platform boundary is additive: workspace access must not depend
-// on a desktop release. Detect the operations an enhancement actually needs.
 export type DesktopBridge = Readonly<
   Partial<{
     runtime: { computerId: string; localBrowser: boolean } | null

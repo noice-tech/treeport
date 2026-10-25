@@ -343,8 +343,10 @@ export function NewAppDialog({
                   )
                 )
 
-                // SAFETY: The component contract supplies the asserted browser value used here.
-                const index = actions.indexOf(event.target as HTMLButtonElement)
+                const index =
+                  event.target instanceof HTMLButtonElement
+                    ? actions.indexOf(event.target)
+                    : -1
 
                 if (index < 0 || actions.length < 2) {
                   return

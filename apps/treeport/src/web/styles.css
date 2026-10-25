@@ -5,12 +5,10 @@
 .app-frame {
   height: var(--app-visual-viewport-height, 100dvh);
   transform: translateY(var(--app-visual-viewport-offset-top, 0px));
-  /* Paint edge-to-edge, but keep every app clear of the notch/home indicator. */
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
-/* Glow from the bottom so it never seams against the desktop titlebar. */
 @media (min-width: 702px) {
   .app-frame {
     background-image: radial-gradient(
@@ -21,13 +19,11 @@
   }
 }
 
-/* The drawer is portalled outside the padded app frame. */
 [data-sidebar='sidebar'][data-mobile='true'] {
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
-/* Preserve each inner scroller's bounce without scrolling the app behind it. */
 :is(.overflow-y-auto, .overflow-auto, .overflow-x-auto, .wterm) {
   overscroll-behavior: contain;
 }
@@ -48,7 +44,7 @@
   }
 }
 
-/* iOS zooms any focused input below 16px, including xterm's hidden textarea.
+/* iOS zooms any focused input below 16px, including wterm's hidden textarea.
    Important declarations in base outrank important utilities (layer order is
    reversed), so desktop text-sm! overrides cannot shrink touch inputs. */
 @layer base {
@@ -90,9 +86,6 @@
   bottom: 50%;
 }
 
-/* Font size and row height are set per terminal for zoom and viewer scaling.
-   OSC 10/11 replies report TERMINAL_FOREGROUND/TERMINAL_BACKGROUND regardless
-   of theme, so every theme must keep a near-black background. */
 .xterm-host .wterm {
   --term-font-family:
     'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
@@ -139,7 +132,6 @@
   background: #09090b;
 }
 
-/* Light mode still paints terminals dark, matching the OSC 10/11 replies. */
 :root[data-theme='light'] .xterm-host .wterm {
   --term-fg: #e4e4e7;
   --term-bg: #09090b;

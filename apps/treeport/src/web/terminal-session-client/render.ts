@@ -79,7 +79,6 @@ export function makeRender(
         return
       }
 
-      // Never drop output or let an unresponsive parser grow memory indefinitely.
       if (!Queue.unsafeOffer(renderQueue, { epoch, effect })) {
         failRendering(
           new TerminalRenderError({

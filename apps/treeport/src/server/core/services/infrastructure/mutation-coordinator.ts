@@ -33,10 +33,6 @@ export interface MutationCoordinator<Key> {
   readonly drain: Effect.Effect<void>
 }
 
-/**
- * A scoped, keyed FIFO coordinator. Work for different keys is forked into
- * separate fibers, while work for one key is consumed by a single worker.
- */
 export function makeMutationCoordinator<Key>(
   coordinator = 'unspecified'
 ): Effect.Effect<MutationCoordinator<Key>, never, Scope.Scope> {

@@ -63,7 +63,7 @@ async function assertNoSymlinkComponents(
     try {
       stat = await fs.lstat(current)
     } catch (error) {
-      // SAFETY: The surrounding boundary contract establishes this asserted value.
+      // SAFETY: Node filesystem failures can carry the standard errno code.
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return
       }
@@ -185,7 +185,7 @@ async function prepareZedWorktreeWrapperPromise(
       throw new Error(`Zed worktree wrapper is not a directory: ${wrapper}`)
     }
   } catch (error) {
-    // SAFETY: The surrounding boundary contract establishes this asserted value.
+    // SAFETY: Node filesystem failures can carry the standard errno code.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       throw error
     }

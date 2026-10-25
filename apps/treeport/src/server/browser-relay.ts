@@ -12,10 +12,6 @@ import type {
   BrowserRelayEvent
 } from './browser-relay-client'
 
-// Entry point of the browser relay process (see BrowserRelay). Everything on
-// the path between the hosted page and the viewer's decoder runs here, so the
-// daemon's event loop never delays a frame, an ACK or a scroll step.
-
 type Wheel = Extract<BrowserMediaClientMessage, { type: 'wheel' }>
 
 interface Stream {
@@ -24,7 +20,6 @@ interface Stream {
   capture: WebSocket | null
   cdp: WebSocket
   session: string | null
-  // The hosted display's native pointer (see startBrowserDisplay).
   input: string | null
   calls: Map<
     number,
@@ -34,14 +29,11 @@ interface Stream {
   viewer: {
     attachment: string
     epoch: number
-    // Packets that arrive before the viewer's decoder is configured.
     early: Uint8Array[]
     ready: boolean
-    // After a relay drop, deltas are useless until the next keyframe.
     awaitingKey: boolean
   } | null
   wheels: { attachment: string; message: Wheel; arrived: number }[]
-  // Dispatch times of unacknowledged wheels, oldest first.
   inFlight: number[]
   congested: boolean
   preparing: boolean
@@ -58,22 +50,15 @@ interface CdpResult {
 
 const WHEEL_SPACING_MS = 1000 / 120
 
-// A healthy page acknowledges a wheel within about a frame. Past two frames it
-// has fallen behind.
 const WHEEL_BEHIND_MS = 1000 / 30
 
-// Trackpad events of one gesture arrive at least every few frames.
 const GESTURE_GAP_MS = 250
 
-// A barrier normally arrives within milliseconds. A stalled or lost one must
-// not hold scrolling for longer than this.
 const BARRIER_TIMEOUT_MS = 1_000
 const MAX_MEDIA_BUFFER = 2 * 1024 * 1024
 
 const streams = new Map<string, Stream>()
 
-// Hosted windows overlap at the display's origin; `raised` is the stream
-// whose window was last brought to the front under the pointer.
 const pointers = new Map<
   string,
   {
@@ -100,7 +85,7 @@ const emit = (event: BrowserRelayEvent) => process.send?.(event)
 
 process.on('disconnect', () => process.exit(0))
 
-// A motion event of Xorg's inputtest driver protocol
+// EXTERNAL: A motion event of Xorg's inputtest driver protocol
 // (xf86-input-inputtest-protocol.h). Axes 0 and 1 are the pointer position,
 // 2 and 3 the horizontal and vertical scroll in pixels.
 const pointerEvent = (absolute: boolean, axes: [number, number][]) => {
@@ -133,7 +118,6 @@ const pointer = (path: string) => {
   version.writeUInt16LE(1, 8)
   version.writeUInt16LE(1, 10)
   socket.write(version)
-  // The driver's replies carry nothing the relay needs.
   socket.resume()
   socket.on('error', () => socket.destroy())
   const created = { socket, raised: null, scrolledAt: 0, x: -1, y: -1 }
@@ -228,8 +212,6 @@ const forward = (
     return
   }
 
-  // A congested or missing viewer lane drops this packet; the GOP restarts
-  // once the helper learns that its in-flight packets will never be ACKed.
   viewer.awaitingKey = true
   stream.capture?.send(
     JSON.stringify({ type: 'keyframe', epoch: viewer.epoch })
@@ -246,7 +228,6 @@ const cursor = (attachment: string, x: number, y: number) => {
     return
   }
 
-  // Cursor hit testing in the daemon samples at roughly 30 Hz anyway.
   const latest = { x, y }
   cursors.set(attachment, latest)
   emit({ type: 'cursor', attachment, x, y })
@@ -283,7 +264,7 @@ const dispatch = (
       pump(stream)
     })
 
-  // CDP multiplies coordinates by the pinch scale. Only a pinch (Ctrl) changes
+  // EXTERNAL: CDP multiplies coordinates by the pinch scale. Only a pinch (Ctrl) changes
   // it between events, so other wheels use a recent value instead of waiting.
   if (stream.dispatchedAt - stream.scaledAt > 250) {
     stream.scaledAt = stream.dispatchedAt
@@ -308,7 +289,7 @@ const pump = (stream: Stream) => {
     const head = stream.wheels[0]!
     const now = performance.now()
 
-    // CDP wheel ACKs include a compositor round trip, so a few in flight keep
+    // EXTERNAL: CDP wheel ACKs include a compositor round trip, so a few in flight keep
     // one step per page frame. CDP makes each wheel its own gesture, which
     // Chrome cannot merge, so a page that falls behind would replay every one
     // of them. Hold the rest instead and send them as one step once it catches
@@ -322,8 +303,6 @@ const pump = (stream: Stream) => {
       return
     }
 
-    // A click, key or control change sent before this wheel must reach the
-    // page first, or the scroll can move the page under it.
     if (
       head.message.barrier > (barriers.get(head.attachment) ?? 0) &&
       now - head.arrived < BARRIER_TIMEOUT_MS
@@ -336,10 +315,6 @@ const pump = (stream: Stream) => {
       return
     }
 
-    // Network jitter delivers wheel events in pairs: both land in one page
-    // frame and the next frame has no scroll, so motion stutters. Space a
-    // bunched event to the next frame, but never hold an event longer than a
-    // frame after it arrived, so faster input is not rate-limited.
     const slot = stream.dispatchedAt + WHEEL_SPACING_MS
 
     if (
@@ -352,7 +327,7 @@ const pump = (stream: Stream) => {
       return
     }
 
-    // Native scrolls skip CDP's wait for the page's main thread. Modified
+    // EXTERNAL: Native scrolls skip CDP's wait for the page's main thread. Modified
     // wheels (zoom, horizontal) keep CDP, which carries their modifiers.
     const native =
       stream.input !== null && head.message.modifiers === 0
@@ -363,15 +338,13 @@ const pump = (stream: Stream) => {
       native &&
       (native.raised !== stream.id || now - native.scrolledAt > GESTURE_GAP_MS)
     ) {
-      // Another hosted window may have opened over this one since its last
-      // gesture.
       stream.preparing = true
       void call(stream, 'Page.bringToFront', {})
         .catch(() => undefined)
         .finally(() => {
           native.raised = stream.id
           native.scrolledAt = performance.now()
-          // Chromium drops the first scroll delta after the pointer enters
+          // EXTERNAL: Chromium drops the first scroll delta after the pointer enters
           // one of its windows: it only resynchronizes on it.
           native.socket.write(
             pointerEvent(false, [
@@ -391,9 +364,6 @@ const pump = (stream: Stream) => {
     let { deltaX, deltaY } = head.message
 
     if (stream.congested) {
-      // Like Chrome, sum the deltas of adjacent wheels with the same
-      // modifiers and scroll at the latest point. A click or key between them
-      // must still land between them.
       for (
         let next = stream.wheels[0];
         next &&
@@ -415,8 +385,6 @@ const pump = (stream: Stream) => {
       stream.dispatchedAt = now
       native.scrolledAt = now
 
-      // The window is pinned fullscreen at the origin (see
-      // PlaywrightBrowserHost), so viewport and screen pixels coincide.
       if (native.x !== x || native.y !== y) {
         native.x = x
         native.y = y
@@ -465,8 +433,6 @@ const wheel = (attachment: string, message: Wheel) => {
   const stream = viewerStream(attachment)
 
   if (!stream?.session) {
-    // Not the streamed controller here (for example after a control change):
-    // the daemon applies its usual checks and input path.
     emit({
       type: 'wheel',
       attachment,
@@ -488,7 +454,6 @@ const wheel = (attachment: string, message: Wheel) => {
 }
 
 const attachMedia = (attachment: string, socket: WebSocket) => {
-  // A reconnecting worker replaces its previous socket.
   media.get(attachment)?.close(4001, 'Replaced by a newer media socket')
   media.set(attachment, socket)
   socket.on('message', (data, binary) => {
@@ -598,7 +563,6 @@ const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
   const key = header.getUint8(16) === 1
 
   if (!viewer.ready) {
-    // The helper's window bounds this list before the first ACK.
     if (key) {
       viewer.early = []
     }
@@ -614,8 +578,6 @@ const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
 const open = async (
   command: Extract<BrowserRelayCommand, { type: 'open' }>
 ) => {
-  // The helper authenticates on loopback; capability tokens never appear in
-  // URLs or logs.
   const token = crypto.randomBytes(32).toString('hex')
 
   const server = new WebSocketServer({
@@ -649,7 +611,7 @@ const open = async (
 
   streams.set(stream.id, stream)
 
-  // Scrolls in the first few hundred milliseconds of a driver connection are
+  // EXTERNAL: Scrolls in the first few hundred milliseconds of a driver connection are
   // lost, which would swallow the start of the first gesture.
   if (stream.input) {
     pointer(stream.input)

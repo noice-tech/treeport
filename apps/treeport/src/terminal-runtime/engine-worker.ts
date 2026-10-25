@@ -36,7 +36,6 @@ await Effect.runPromise(
         sessions,
         binaryOutput: true
       })
-      // Install shutdown before advertising readiness, including startup cancellation.
       const stopped = yield* Effect.forkScoped(stop)
       port.postMessage('ready')
       yield* Fiber.join(stopped)

@@ -79,8 +79,6 @@ export function makeProtocol(
       generation: number,
       transitionId: string | null
     ): void {
-      // A former viewer can still have a scaled font until the scheduled fit.
-      // Measure the controller font before the host starts placing images.
       dependencies.fit()
       dependencies.send('query_authority', {
         generation,
@@ -177,7 +175,6 @@ export function makeProtocol(
             dependencies.clearDegraded()
             dependencies.update({
               phase: 'ready',
-              // A control event can supersede ready while the snapshot restores.
               controller:
                 state.controllerGeneration === message.generation
                   ? message.controller
@@ -286,8 +283,6 @@ export function makeProtocol(
           message.generation !== state.controllerGeneration
 
         if (controllerChanged) {
-          // A pending paste may be the user action requesting initial control.
-          // Only discard it when losing control or replacing an existing lease.
           if (state.snapshotValue.controller || !message.controller) {
             dependencies.cancelInput()
           }

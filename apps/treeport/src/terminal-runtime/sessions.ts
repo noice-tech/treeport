@@ -50,7 +50,6 @@ export type { TerminalHostRuntimeEvent } from './contract'
 
 const HOST_SCROLLBACK_LINES = 50_000
 
-// Bounds unfinished VT input a snapshot carries, such as a partial image upload.
 const HOST_CONTINUATION_BYTES = 64 * 1024 * 1024
 
 const IDLE_ACTIVITY: TerminalActivity = {
@@ -62,10 +61,8 @@ const IDLE_ACTIVITY: TerminalActivity = {
   since: null
 }
 
-// The OSC 7501 specification requires at least 64 records per terminal.
 const PROGRAM_STATUS_RECORDS = 64
 
-// Most important first, when several records are reported at once.
 const PROGRAM_STATUS_RANK = ['blocked', 'error', 'working', 'done', 'idle']
 const HOST_PARSER_HIGH_WATERMARK = 1024 * 1024
 const HOST_PARSER_LOW_WATERMARK = 256 * 1024
@@ -117,7 +114,6 @@ type ParserCommand =
 type RuntimeCommand =
   | { readonly _tag: 'Title'; readonly title: string }
   | { readonly _tag: 'TitleState'; readonly value: TerminalTitleState }
-  // OSC 9;4 says only busy, a percentage, or error.
   | {
       readonly _tag: 'Progress'
       readonly state: 'idle' | 'working' | 'error'
@@ -155,18 +151,14 @@ interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
   commandLine: string | null
   activity: TerminalActivity
   progressFiber: Fiber.RuntimeFiber<void, never> | null
-  // OSC 7501 records by id, least recently updated first. Once a program
-  // reports, OSC 9;4 is ignored until a full reset.
   statusRecords: Map<string, ProgramStatusRecord> | null
   attention: TerminalAttention | null
-  // Parser batch that raised the latest attention.
   attentionBatch: number
   readonly pty: IPty | PersistentSession
   replaying: boolean
   processingSequence: number
   processingTime: number
   readonly terminal: GhosttyTerminal
-  // Suppresses the host's query replies, for example while a viewer answers.
   stdinDisabled: boolean
   cellSize: { width: number; height: number }
   readonly scope: Scope.CloseableScope
@@ -200,8 +192,6 @@ export interface TerminalHostSessionsOptions {
   readonly journalLimitBytes?: number | undefined
 }
 
-// A BEL and a status change written together are one attention event, with
-// the status as its more specific reason.
 function raiseAttention(
   session: HostedTerminalSession,
   reason: TerminalAttention['reason'],
@@ -332,9 +322,6 @@ const terminatePtyProcessTree: ProcessTreeTerminator = (child) =>
     yield* signalTree('SIGKILL')
   })
 
-/** Replaceable terminal engine. Production PTYs belong to independent session
- * processes; closing this engine detaches them. Direct PTY injection is retained
- * for isolated emulator checks and the pre-migration host entrypoint. */
 interface UnavailableSession {
   completed: Deferred.Deferred<void>
   terminal: HostedTerminal & { status: 'unavailable'; recoveryPending: boolean }
@@ -545,8 +532,6 @@ export class TerminalHostSessions {
           )
         )
 
-        // Discovery is authoritative before readiness; attachment/replay is
-        // not a prerequisite for serving the application or other terminals.
         yield* background
           ? Effect.forkIn(restore, this.recoveryScope).pipe(Effect.asVoid)
           : restore
@@ -554,8 +539,6 @@ export class TerminalHostSessions {
         .pipe(
           Effect.catchAll((error) =>
             Effect.sync(() => {
-              // Unreadable metadata cannot safely be assigned to a tree. Keep a global
-              // inventory barrier, not an authoritative empty result or a startup crash.
               this.unidentified.set(directory, error.message)
             })
           )
@@ -798,9 +781,6 @@ export class TerminalHostSessions {
           )
 
           if (owner.archived) {
-            // A vanished keeper cannot be revived by spawning its command.
-            // Keep the reconstructed screen accessible and report unknown exit
-            // status if no exit record survived. Do not manufacture success.
             ownedSession.status = 'exited'
             ownedSession.exitCode = owner.exitCode
             Queue.unsafeOffer(ownedSession.runtimeCommands, {
@@ -824,9 +804,6 @@ export class TerminalHostSessions {
         }
 
         if (ownedSession.specPath) {
-          // The launcher's atomic sidecar is authoritative even while the engine
-          // is detached. Poll only until completion (or final hosted exit), so
-          // neither a missed notification nor journal rotation can lose it.
           const observeCommand = this.observeCommandExit(ownedSession)
           yield* observeCommand
 
@@ -986,7 +963,7 @@ export class TerminalHostSessions {
       )
 
       inheritedEnvironment.TERM = 'xterm-256color'
-      // xterm supports RGB colors; TERM alone makes apps fall back to 256 colors.
+      // EXTERNAL: xterm supports RGB colors; TERM alone makes apps fall back to 256 colors.
       inheritedEnvironment.COLORTERM = 'truecolor'
 
       if (
@@ -1052,8 +1029,6 @@ export class TerminalHostSessions {
       )
 
       const ghosttyModule = yield* nodePromise(loadGhosttyVtModule)
-      // Parser callbacks run synchronously inside terminal.write, which only
-      // happens after the session below is assigned.
       let hosted: HostedTerminalSession | null = null
 
       const terminal = GhosttyTerminal.create(
@@ -1116,7 +1091,6 @@ export class TerminalHostSessions {
               return
             }
 
-            // Paused progress is still unfinished work, not a wait on the user.
             const progressState =
               (['idle', 'working', 'error', 'working', 'working'] as const)[
                 state
@@ -1355,9 +1329,6 @@ export class TerminalHostSessions {
   private parserWorker(session: HostedTerminalSession): Effect.Effect<void> {
     return Effect.forever(
       Effect.gen(this, function* () {
-        // A PTY can deliver image-heavy redraws in thousands of 1 KiB chunks.
-        // Drain already queued output together; never wait to fill a batch or
-        // parse across a snapshot/authority fence.
         const commands = Array.from(
           yield* Queue.takeBetween(session.parserCommands, 1, 256)
         )
@@ -1422,9 +1393,6 @@ export class TerminalHostSessions {
           }
 
           if (session.replaying && session.pty instanceof PersistentSession) {
-            // Advance metadata between records so replayed bells, progress,
-            // and query replies retain their original timestamps and
-            // processed-sequence fence.
             for (const output of batch) {
               session.processingSequence = output.sequence
               session.processingTime = output.at
@@ -1448,8 +1416,6 @@ export class TerminalHostSessions {
             session.parserQueuedBytes - bytes
           )
 
-          // Preserve owner sequences: subscribers use them to distinguish
-          // canonical snapshot contents from the live suffix.
           for (const output of batch) {
             yield* PubSub.publish(session.output, {
               data: output.data,
@@ -1571,8 +1537,6 @@ export class TerminalHostSessions {
                 kind: report.kind,
                 progress: report.progress,
                 app: report.app || null,
-                // Untrusted text shown outside the terminal: drop invisible
-                // formatting such as direction overrides.
                 message:
                   report.message.replace(/\p{Cf}/gu, '').slice(0, 2048) || null
               })
@@ -1588,7 +1552,6 @@ export class TerminalHostSessions {
           }
 
           case 'Prompt':
-            // A new prompt ends work the program left reported as ongoing.
             if (session.statusRecords) {
               for (const [id, record] of session.statusRecords) {
                 if (record.state === 'working' || record.state === 'blocked') {
@@ -1601,7 +1564,6 @@ export class TerminalHostSessions {
 
             return
           case 'Reset':
-            // Ghostty already cleared the records before reporting the reset.
             session.statusRecords = null
 
             return
@@ -1663,8 +1625,6 @@ export class TerminalHostSessions {
           }
 
           case 'Exit':
-            // The launcher commits its child result before exiting. Read it
-            // before the session-exit event stops product runtime subscriptions.
             yield* this.observeCommandExit(session).pipe(
               Effect.catchAll((error) => Effect.logError(error.message))
             )
@@ -1708,8 +1668,6 @@ export class TerminalHostSessions {
     )
   }
 
-  // The terminal shows only its most important record; a record without an
-  // app takes it from its nearest ancestor.
   private applyProgramStatus(
     session: HostedTerminalSession,
     source: { at: number; batch: number; replaying: boolean }
@@ -1997,8 +1955,6 @@ export class TerminalHostSessions {
         const subscription = yield* PubSub.subscribe(session.runtime)
         const live = Stream.fromQueue(subscription)
 
-        // Completion may have been replayed before subscriptions could attach.
-        // Publish the recovered state once, then continue with live events.
         const restored: TerminalHostRuntimeEvent = {
           commandExitCode: session.commandExitCode ?? null
         }
@@ -2038,8 +1994,6 @@ export class TerminalHostSessions {
             const pty = session.pty
 
             if (pty instanceof PersistentSession) {
-              // Acknowledge only after the keeper admits this chunk into its
-              // bounded PTY writer, propagating backpressure to the browser.
               yield* nodePromise(() => pty.writeAndWait(data))
             } else {
               pty.write(data)
@@ -2084,10 +2038,6 @@ export class TerminalHostSessions {
       const lease = this.makePauseLease(session)
 
       if (owner) {
-        // The keeper has already paused PTY output. Keep its IPC stream readable:
-        // a viewer can resize before completing this authority handshake, and
-        // resize/status replies share the stream with output. Pausing it would
-        // deadlock resize behind the lease that activation needs to release.
         owner.resume()
       }
 
@@ -2155,8 +2105,6 @@ export class TerminalHostSessions {
       if (cellSize) {
         if (session.pty instanceof PersistentSession) {
           const owner = session.pty
-          // The owner is paused during authority transfer. Read its marker
-          // acknowledgement without allowing new PTY output to overtake it.
           owner.resume()
           yield* nodePromise(() =>
             owner.recordMarker(
@@ -2588,8 +2536,6 @@ export class TerminalHostSessions {
       }
 
       if (session.pty instanceof PersistentSession) {
-        // Keep ownership visible if termination fails. A later worktree close
-        // must retry/fail, not report success from an already emptied map.
         const owner = session.pty
         yield* nodePromise(() => owner.terminate())
       }
@@ -2630,7 +2576,6 @@ export class TerminalHostSessions {
           ? Effect.void
           : this.options.terminateProcessTree(session.pty)
         ).pipe(
-          // Stop the writer before removing its result, including direct PTYs.
           Effect.zipRight(
             session.specPath
               ? nodePromise(() =>

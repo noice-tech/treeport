@@ -87,7 +87,6 @@ export function ProjectForm({
   const busy = openProject.isPending
 
   const navigate = (directoryPath: string) => {
-    // End with a separator so typing continues into the folder's children.
     const nextPath = /[\\/]$/u.test(directoryPath)
       ? directoryPath
       : `${directoryPath}${directoryPath.includes('/') ? '/' : '\\'}`

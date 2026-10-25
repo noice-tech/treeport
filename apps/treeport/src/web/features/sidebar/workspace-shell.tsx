@@ -3,7 +3,6 @@ import {
   useContext,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
@@ -102,13 +101,10 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
             'app-frame isolate grid min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-900 max-[701px]:grid-cols-1 max-[701px]:grid-rows-[2.5rem_minmax(0,1fr)] max-[701px]:bg-zinc-950',
             resizingSidebar && 'select-none'
           )}
-          style={
-            // SAFETY: The component contract supplies the asserted browser value used here.
-            {
-              '--sidebar-width': `${sidebarWidth}px`,
-              '--sidebar-width-mobile': 'min(88vw, 18rem)'
-            } as CSSProperties
-          }
+          style={{
+            '--sidebar-width': `${sidebarWidth}px`,
+            '--sidebar-width-mobile': 'min(88vw, 18rem)'
+          }}
         >
           {children}
         </SidebarProvider>

@@ -1,8 +1,6 @@
 import type { CDPSession, Dialog, Page } from 'playwright'
 
-// Playwright waits for a commit even when beforeunload keeps the current page.
-// Race that wait with cancellation; Promise.race also observes the losing
-// navigation promise if it later rejects during timeout or browser teardown.
+// EXTERNAL: Playwright waits for a commit even when beforeunload keeps the current page.
 export async function browserNavigation<T>(
   page: Page,
   navigate: () => Promise<T>,
@@ -34,8 +32,6 @@ export async function browserNavigation<T>(
     }
   }
 
-  // Hosted pages dismiss beforeunload. Local Electron pages retain native
-  // ownership and report the actual native result through the exact-guest CDP.
   if (nativeCdp) {
     nativeEvents?.on('Treeport.navigationCanceled', cancel)
   } else {
@@ -44,9 +40,6 @@ export async function browserNavigation<T>(
 
   try {
     return await Promise.race([navigate(), canceled]).catch(async (cause) => {
-      // Only interactive navigation may rely on Chromium's visible error page.
-      // Automation must still receive the failure, and transport/timeouts must
-      // not disappear just because an earlier navigation left an error page.
       if (
         errorPresentation === 'page' &&
         cause instanceof Error &&

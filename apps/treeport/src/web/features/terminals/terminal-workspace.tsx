@@ -264,8 +264,6 @@ export function useTerminalWorkflows({
       correlationId: string
       queuedAt: number
     }) => {
-      // Keep rapid optimistic closes responsive without occupying every HTTP/1
-      // connection while the server performs ordered process cleanup.
       const request = closeRequestTailRef.current.then(() => {
         browserTrace('terminal.remove.request.started', correlationId, {
           browserQueueWaitMs: Number((performance.now() - queuedAt).toFixed(3)),

@@ -313,7 +313,6 @@ export class TerminalService {
     })
   }
 
-  // Latency-sensitive requests use observed state, not a full project refresh.
   getKnownTerminal(terminalId: string): TerminalEffect<TerminalRecord> {
     return Effect.gen(function* () {
       const projectStore = yield* ProjectStore
@@ -438,15 +437,13 @@ export class TerminalService {
         interactiveShell,
         env: {
           PI_IMAGE_PROTOCOL: 'kitty',
-          // Pi only emits OSC 8 links for terminals it recognizes.
+          // EXTERNAL: Pi only emits OSC 8 links for terminals it recognizes.
           PI_HYPERLINKS: '1',
-          // The clipboard belongs to the attached client, not this daemon host.
           PI_CLIPBOARD_OSC52: '1',
           ...(options?.env ?? {}),
           TREEPORT_API_URL: config.apiUrl,
           TREEPORT_MANAGED_API_URL: config.apiUrl,
           TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),
-          // Keep offline logs addressable after daemon.json disappears on exit.
           TREEPORT_DATA_DIR: config.dataDir,
           TREEPORT_RUNTIME_DIR: config.runtimeDir,
           TREEPORT_DAEMON_LIFECYCLE: config.daemonLifecycle,
@@ -656,7 +653,6 @@ export class TerminalService {
       WorktreeRecord,
       DomainError<unknown>
     >,
-    // Only tree creation may use this, while its scoped worktree lock is held.
     reservedByCreation = false
   ): TerminalEffect<TerminalRecord> {
     const createTerminalSession = this.createTerminalSession.bind(this)

@@ -1,5 +1,3 @@
-// Preserve the published cross-release protocol entrypoint. The native owner
-// package owns the schema used by both lifecycle control and terminal replay.
 export {
   sessionRecordSchema,
   sessionManifestSchema,

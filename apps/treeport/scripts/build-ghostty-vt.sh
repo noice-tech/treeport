@@ -1,7 +1,4 @@
 #!/bin/bash
-# Builds libghostty-vt for wasm32-freestanding from a pinned Ghostty commit
-# with ghostty-vt-wasm.patch applied.
-# Usage: build-ghostty-vt.sh [--check]
 set -euo pipefail
 
 GHOSTTY_COMMIT="08a9518340e19487bd5fdf96963583fb32f0c41f"

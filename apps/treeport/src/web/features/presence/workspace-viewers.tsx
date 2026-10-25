@@ -23,7 +23,6 @@ export function WorkspaceViewers({
     presence.getSnapshot
   )
 
-  // Display-only fixture: never sent to the daemon or used as our identity.
   const mockViewer: WorkspacePresence | null =
     import.meta.env.DEV &&
     import.meta.env.VITE_TREEPORT_MOCK_PRESENCE === '1' &&
@@ -49,8 +48,6 @@ export function WorkspaceViewers({
     for (const viewer of mockViewer ? [...viewers, mockViewer] : viewers) {
       if (
         viewer.worktreeId !== worktree.id ||
-        // Local sessions have no person identity and may be our own desktop
-        // or localhost tab, even when this session uses Tailscale.
         viewer.identity.source === 'local' ||
         (viewer.identity.source === identity.source &&
           viewer.identity.login === identity.login)

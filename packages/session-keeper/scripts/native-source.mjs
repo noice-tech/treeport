@@ -3,8 +3,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Associates target payloads with the locked native source/toolchain inputs.
-// This is not an ABI, signing or runtime qualification certificate.
 export async function nativeSourceFingerprint() {
   const directory = fileURLToPath(new URL('..', import.meta.url))
 

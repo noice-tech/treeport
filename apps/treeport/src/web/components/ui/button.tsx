@@ -3,7 +3,7 @@ import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
 
-// Popovers anchor to their trigger's transformed rect, so popup triggers skip the press scale.
+// EXTERNAL: Popovers anchor to their trigger's transformed rect, so popup triggers skip the press scale.
 const buttonVariants = cva(
   'relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md text-sm font-medium whitespace-nowrap outline-none transition-[opacity,transform] duration-100 ease-out [&[aria-haspopup]]:active:scale-100 disabled:pointer-events-none disabled:opacity-45 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400',
   {

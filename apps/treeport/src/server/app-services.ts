@@ -22,7 +22,6 @@ interface ServiceContext {
 interface ServiceEntry {
   id: string
   declaration: PackageServiceDeclaration
-  /** Identifies the package when the service calls the Treeport API. */
   token: string
   status: AppService['status']
   error: string | null
@@ -35,7 +34,6 @@ interface ServiceEntry {
   socketPath: string | null
   socketDirectory: string | null
   connections: Set<Duplex>
-  /** Set by an explicit stop; always services restart only when it is false. */
   stopped: boolean
   startedAt: number
   restarts: number
@@ -44,7 +42,6 @@ interface ServiceEntry {
 
 export interface PackageServiceAccess {
   packageId: string
-  /** Null when the package is configured globally. */
   projectIds: string[] | null
 }
 
@@ -59,8 +56,6 @@ interface AppServicesOptions {
 const PREFIX = '/api/app-services/'
 const LOG_LIMIT = 64 * 1024
 
-// Package state is reconciled lazily from settings fingerprints, so polling
-// picks up installs, removals, and settings edits without change events.
 const SYNC_INTERVAL_MS = 5_000
 const MAX_RESTART_DELAY_MS = 60_000
 
@@ -74,14 +69,12 @@ export class AppServices {
 
   constructor(private readonly options: AppServicesOptions) {}
 
-  /** Start always services and follow package changes. */
   start(): void {
     void this.sync()
     this.timer = setInterval(() => void this.sync(), SYNC_INTERVAL_MS)
     this.timer.unref()
   }
 
-  /** Resolve a service's API token to the package it acts for. */
   access(token: string): PackageServiceAccess | null {
     const entry = this.tokens.get(token)
 
@@ -112,7 +105,6 @@ export class AppServices {
     const next = new Map<string, PackageServiceDeclaration>()
 
     for (const declaration of declarations) {
-      // Hash the real path so a service keeps its data directory and URL.
       const root = await fs
         .realpath(declaration.root)
         .catch(() => declaration.root)
@@ -134,8 +126,6 @@ export class AppServices {
     for (const [id, entry] of this.entries) {
       const declaration = next.get(id)
 
-      // Declarations are built in a stable key order. Project scope can change
-      // without restarting the process.
       if (
         declaration &&
         JSON.stringify({ ...declaration, projectIds: null }) ===
@@ -205,7 +195,6 @@ export class AppServices {
           entry.declaration.name === name
       )
 
-    // A package installed since the last sync is picked up on first use.
     const entry = find() ?? (await this.sync().then(find))
 
     if (this.disposed) {
@@ -300,7 +289,6 @@ export class AppServices {
     return entry.starting ?? Promise.resolve()
   }
 
-  /** Restart a failed always service with backoff (1s doubling to 60s). */
   private restart(entry: ServiceEntry): void {
     if (
       entry.declaration.start !== 'always' ||
@@ -312,7 +300,6 @@ export class AppServices {
       return
     }
 
-    // A service that stayed up past the longest delay starts a fresh backoff.
     entry.restarts =
       Date.now() - entry.startedAt > MAX_RESTART_DELAY_MS
         ? 0
@@ -339,14 +326,12 @@ export class AppServices {
       throw new Error('App services currently require macOS or Linux')
     }
 
-    // Reap a crashed generation before reusing its entry or socket.
     await this.terminate(entry)
     const { declaration } = entry
     const dataDir = path.join(this.options.dataDir, 'app-services', entry.id)
     await fs.mkdir(dataDir, { recursive: true })
 
     if (declaration.readinessPath) {
-      // Keep Unix socket paths short even when the worktree/data directory is long.
       entry.socketDirectory = await fs.mkdtemp(
         path.join(os.tmpdir(), 'treeport-service-')
       )
@@ -364,8 +349,6 @@ export class AppServices {
     entry.abort.signal.throwIfAborted()
     const env = { ...process.env }
 
-    // An editor's terminal environment must not redirect this launch into an
-    // unrelated running editor, or identify its child terminals as our Pi tab.
     for (const key of Object.keys(env)) {
       if (
         key.startsWith('VSCODE_') ||
@@ -407,7 +390,7 @@ export class AppServices {
       }
 
       if (crashed) {
-        // Use exit, not close: orphaned descendants can hold the stdout pipes
+        // EXTERNAL: Use exit, not close: orphaned descendants can hold the stdout pipes
         // open. Reap the group immediately before its ID can be reused.
         entry.stopping = this.terminate(entry)
           .catch((error) => {
@@ -433,7 +416,6 @@ export class AppServices {
     const readinessPath = declaration.readinessPath
 
     if (!readinessPath) {
-      // Without HTTP, a service is ready once its process runs.
       await new Promise((resolve) => {
         child.once('spawn', resolve)
         child.once('error', resolve)
@@ -508,7 +490,6 @@ export class AppServices {
         try {
           process.kill(-pid, value)
         } catch (error) {
-          // The group can already be gone after a failed spawn or normal exit.
           // SAFETY: Node's process.kill failures expose an errno code.
           if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
             throw error
@@ -521,8 +502,7 @@ export class AppServices {
       signal('SIGKILL')
     }
 
-    // Failed spawns have no PID but still emit close. Do not let that old
-    // generation's callbacks race the next launch.
+    // EXTERNAL: Failed spawns have no PID but still emit close.
     await entry.closed
 
     entry.child = null
@@ -566,9 +546,8 @@ export class AppServices {
     return this.snapshot(entry, context)
   }
 
-  // Called only after the daemon's normal HTTP/WebSocket ingress authorization.
-  // Forward the raw WebSocket stream: VS Code's reconnect protocol is not a
-  // message-level WebSocket bridge. Only registered service IDs are routable.
+  // EXTERNAL: Forward the raw WebSocket stream: VS Code's reconnect protocol is not a
+  // message-level WebSocket bridge.
   handleRequest(
     request: IncomingMessage,
     response: ServerResponse | null,
@@ -611,8 +590,8 @@ export class AppServices {
     }
 
     const headers = { ...request.headers }
-    // The upstream does not need Treeport/Tailscale credentials. Retain Host and
-    // Origin for code-server's own origin checks, including remote HTTPS viewers.
+    // EXTERNAL: Retain Host and Origin for code-server's own origin checks, including
+    // remote HTTPS viewers.
     delete headers.authorization
     delete headers.cookie
 

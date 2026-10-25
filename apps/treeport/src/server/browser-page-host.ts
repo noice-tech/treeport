@@ -17,14 +17,12 @@ interface PlaywrightBrowserLease {
   context: BrowserContext
   page: Page
   extensionId: string
-  // Null only for hosts that probe the browser installation.
   relay: BrowserRelay | null
-  // The display's native pointer (see startBrowserDisplay).
   input: string | null
   openCapturePage(): Promise<BrowserCapturePage>
 }
 
-// Playwright opens every page as the foreground tab of a shared window.
+// EXTERNAL: Playwright opens every page as the foreground tab of a shared window.
 // Chromium throttles a background tab to 1 fps once a few of its frames go
 // undrawn, and capture does not count as drawing: the captured page froze for
 // a second after each scroll. Each hosted page gets its own window, and the
@@ -70,8 +68,6 @@ export class PlaywrightBrowserHost {
   }
 
   private schedule<T>(operation: () => Promise<T>): Promise<T> {
-    // A permit is held until the underlying Playwright promise settles, even
-    // if the caller goes away. Interruption cannot cancel Chromium operations.
     return Effect.runPromise(
       this.lifecycle
         .withPermits(1)(
@@ -118,18 +114,18 @@ export class PlaywrightBrowserHost {
         const env = { ...process.env }
 
         const args = [
-          // Only the private loopback CDP connection can load our extension.
+          // EXTERNAL: Only the private loopback CDP connection can load our extension.
           // Modern branded Chrome does not support --load-extension.
           '--enable-unsafe-extension-debugging',
           `--allowlisted-extension-id=${extension.id}`,
           '--remote-debugging-address=127.0.0.1',
           '--remote-debugging-port=0',
-          // Remote debugging sets navigator.webdriver, and Google sign-in
+          // EXTERNAL: Remote debugging sets navigator.webdriver, and Google sign-in
           // rejects such browsers as insecure.
           '--disable-blink-features=AutomationControlled'
         ]
 
-        // WSLg exposes Windows GPUs through Mesa's D3D12 OpenGL driver, not
+        // EXTERNAL: WSLg exposes Windows GPUs through Mesa's D3D12 OpenGL driver, not
         // native Linux Vulkan. Daemons often lack DISPLAY, and headless Chrome
         // otherwise forces SwiftShader. Scope these defaults to the child and
         // respect explicitly selected displays or software rendering.
@@ -151,7 +147,7 @@ export class PlaywrightBrowserHost {
         ) {
           env.DISPLAY ||= ':0'
           env.GALLIUM_DRIVER ||= 'd3d12'
-          // GPU compositing synchronizes every shared image (tiles, WebGL,
+          // EXTERNAL: GPU compositing synchronizes every shared image (tiles, WebGL,
           // video) across D3D12 contexts through WSL, which stalls the GPU
           // thread while pages load. WebGL stays on the GPU; compositing and
           // raster run on the CPU, which is several times faster here.
@@ -167,7 +163,6 @@ export class PlaywrightBrowserHost {
         if (display) {
           env.DISPLAY = display.name
           delete env.WAYLAND_DISPLAY
-          // Keep the page-visible defaults of headless mode.
           args.push(
             '--ozone-platform=x11',
             '--hide-scrollbars',
@@ -188,7 +183,7 @@ export class PlaywrightBrowserHost {
             ignoreDefaultArgs: ['--disable-extensions'],
             args,
             env,
-            // Each browser page sets its own viewport in launch(). A context
+            // EXTERNAL: Each browser page sets its own viewport in launch(). A context
             // default also resizes the shared native window when a capture
             // helper tab opens, changing the streamed resolution on every tree
             // switch.
@@ -270,7 +265,7 @@ export class PlaywrightBrowserHost {
       const input = display?.input ?? null
 
       if (display && input) {
-        // Native input addresses screen pixels. A fullscreen window has no
+        // EXTERNAL: Native input addresses screen pixels. A fullscreen window has no
         // toolbar, so the viewport's corner sits at the screen's origin.
         // Without a window manager, fullscreen keeps the window's size.
         const cdp = await context.newCDPSession(page)
@@ -337,11 +332,9 @@ export class PlaywrightBrowserHost {
   }
 
   setPageFocus(page: Page, enabled: boolean): Promise<void> {
-    // Playwright's pinned in-process driver enables focus emulation on its own
+    // EXTERNAL: Playwright's pinned in-process driver enables focus emulation on its own
     // CDP session. That owns a Chromium capturer handle which prevents freezing;
     // disabling emulation on a second CDP session cannot release that handle.
-    // Keep this private-driver boundary here rather than reaching into sessions
-    // from the idle scheduler. This must be revisited when upgrading Playwright.
     // SAFETY: Hosted pages come from our pinned Playwright in-process Chromium
     // driver, whose Page connection maps directly to this server-side CDP client.
     const clientPage = page as Page & {
@@ -378,7 +371,6 @@ export class PlaywrightBrowserHost {
           throw new Error('The hosted browser page is unavailable.')
         }
 
-        // Clipboard reads need a script-free context, never the user's tab.
         const context = await browser.newContext({ viewport: null })
 
         try {
@@ -395,8 +387,6 @@ export class PlaywrightBrowserHost {
     )
   }
 
-  // Pages render at the streamed viewer's refresh rate, so each frame is
-  // displayed exactly once instead of being dropped or repeated unevenly.
   setRefreshRate(hz: number): void {
     this.display?.setRefreshRate(hz)
   }
@@ -416,11 +406,9 @@ export class PlaywrightBrowserHost {
       return Promise.resolve()
     }
 
-    // Release work is admitted once per owned lease, never once per request.
     const result = this.schedule(async () => {
       this.pages.delete(page)
       await page.close().catch(() => undefined)
-      // Shared login sessions outlive individual tabs and viewer connections.
     }).finally(() => {
       this.closingPages.delete(page)
     })

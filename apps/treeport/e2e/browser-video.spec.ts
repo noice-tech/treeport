@@ -5,7 +5,6 @@ for (const workerFails of [false, true]) {
   test.describe(`video presentation with ${workerFails ? 'a failed worker' : 'the real worker'}`, () => {
     if (workerFails) {
       test.beforeEach(async ({ page }) => {
-        // Exercise a real worker loading error, not a simulated callback.
         await page.route('**/browser-video-presentation.worker.ts*', (route) =>
           route.fulfill({
             contentType: 'text/javascript',
@@ -50,8 +49,6 @@ for (const workerFails of [false, true]) {
         }
 
         draw()
-        // Keep producing frames during negotiation and restart; no fixed sleeps
-        // or external network are needed to observe the requested image.
         const timer = setInterval(draw, 33)
         const stream = source.captureStream(30)
         const sender = new RTCPeerConnection({ iceServers: [] })
@@ -139,7 +136,7 @@ for (const workerFails of [false, true]) {
                 }, rgb),
             { message: `Video should show RGB ${rgb.join(', ')}` }
           )
-          // Allow codec/color-conversion rounding, not a different source image.
+          // EXTERNAL: Allow codec/color-conversion rounding, not a different source image.
           .toBeLessThan(12)
       }
 

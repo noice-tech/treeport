@@ -47,15 +47,11 @@ const UNDERLINE_STYLES: readonly UnderlineStyle[] = [
 
 const decoder = new TextDecoder()
 
-// Plain-text URLs, as xterm's web links addon matched them.
 const URL_PATTERN =
   /https?:\/\/[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/g
 
-// Rows joined to find a wrapped URL in either direction.
 const URL_ROW_LIMIT = 8
 
-// Decoded history rows kept between frames, so wrapped neighbours are decoded
-// once while scrolling.
 const HISTORY_ROW_CACHE = 512
 
 let compiled: Promise<WebAssembly.Module> | null = null
@@ -83,16 +79,12 @@ interface CellStyle {
 }
 
 interface DecodedRow {
-  // Cells with plain-text URLs linked.
   cells: CellData[]
   raw: CellData[]
-  // Columns up to the last cell with content or styling.
   length: number
   metadata: TerminalRowMetadata
 }
 
-// Per-terminal render handles and scratch memory. A terminal owns its
-// WebAssembly instance, so these die with it.
 interface Session {
   terminal: GhosttyTerminal
   vt: GhosttyVt
@@ -128,8 +120,6 @@ function rgb(view: DataView, ptr: number): number {
   )
 }
 
-// wterm core over libghostty-vt. Treeport restores server snapshots into it,
-// so the browser and the terminal host share one emulator.
 export class GhosttyTerminalCore implements TerminalCore {
   private session: Session | null = null
   private layout: ReturnType<typeof readLayout> | null = null
@@ -148,7 +138,6 @@ export class GhosttyTerminalCore implements TerminalCore {
   private graphicsKey = ''
   private graphicsGeneration = 0
   private synchronizedGeneration = 0
-  // Tracked positions from a replaced terminal must not resolve.
   private owner = {}
 
   constructor(
@@ -166,8 +155,6 @@ export class GhosttyTerminalCore implements TerminalCore {
         this.titleChanged = true
       },
       progress: null,
-      // The daemon keeps program status; this only lets the browser answer
-      // OSC 7501 support queries while it holds query authority.
       programStatus: () => {},
       reset: null,
       unknownOsc: null,
@@ -217,7 +204,6 @@ export class GhosttyTerminalCore implements TerminalCore {
     this.owner = {}
     this.viewport = []
     this.dirty = []
-    // A restored snapshot brings its own title.
     this.titleChanged = true
     this.invalidate()
   }
@@ -234,7 +220,6 @@ export class GhosttyTerminalCore implements TerminalCore {
     )
   }
 
-  // Replace all terminal state with a libghostty-vt snapshot.
   restore(snapshot: Uint8Array): void {
     this.attach(
       GhosttyTerminal.restore(
@@ -447,7 +432,6 @@ export class GhosttyTerminalCore implements TerminalCore {
       visible:
         view.getUint8(cursor('viewport_has_value')) !== 0 &&
         view.getUint8(cursor('visible')) !== 0,
-      // wterm's CursorState field; the identifier is lint-banned locally.
       ['shape']:
         style === layout.cursorBar
           ? 'bar'
@@ -629,7 +613,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     const flag = (name: string, value: number) =>
       view.getUint8(field(name)) ? value : 0
 
-    // wterm themes the 16 ANSI colors but builds indices 16-255 from a
+    // EXTERNAL: wterm themes the 16 ANSI colors but builds indices 16-255 from a
     // 51-step cube instead of xterm's, so those resolve through Ghostty's palette.
     const color = (name: string) => {
       const base = field(name)
@@ -1119,7 +1103,7 @@ export class GhosttyTerminalCore implements TerminalCore {
     )
   }
 
-  // wterm polls after every write and expects a title only when it changed.
+  // EXTERNAL: wterm polls after every write and expects a title only when it changed.
   getTitle(): string | null {
     if (!this.session || !this.titleChanged) {
       return null
@@ -1171,8 +1155,6 @@ export class GhosttyTerminalCore implements TerminalCore {
     return this.historyRow(offset)?.metadata ?? null
   }
 
-  // Kitty placements anchored to cells, in retained rows so images stay with
-  // their text in scrollback. Unicode placeholder placements are not shown.
   getGraphicsState(): TerminalGraphicsState | null {
     const session = this.session
 
@@ -1303,7 +1285,7 @@ export class GhosttyTerminalCore implements TerminalCore {
           sourceY: info('source_y'),
           sourceWidth: info('source_width'),
           sourceHeight: info('source_height'),
-          // wterm stretches to both cell dimensions and treats zero rows as
+          // EXTERNAL: wterm stretches to both cell dimensions and treats zero rows as
           // unreserved, so keep aspect ratio unless the program asked for both.
           columns: placement('ROWS') ? placement('COLUMNS') : 0,
           rows: placement('ROWS') || info('grid_rows'),
@@ -1408,7 +1390,6 @@ export class GhosttyTerminalCore implements TerminalCore {
       : 0
   }
 
-  // Pending images have metadata but no pixels yet.
   private imageDescriptor(imageId: number): TerminalImageDescriptor | null {
     const session = this.session
     const image = this.kittyImage(imageId)
@@ -1489,8 +1470,6 @@ function readLayout(vt: GhosttyVt) {
   }
 }
 
-// Link plain-text URLs across one logical line of wrapped rows. A URL that may
-// continue beyond the given rows stays unlinked rather than truncated.
 function linkUrls(rows: readonly DecodedRow[]): CellData[][] {
   const result = rows.map((row) => row.raw)
   let text = ''

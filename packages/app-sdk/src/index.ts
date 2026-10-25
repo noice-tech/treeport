@@ -6,10 +6,8 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue }
 
-/** Structured input stored with a web app launch. */
 export type WebAppInput = Record<string, JsonValue>
 
-/** Launch data for a persistent web app instance. */
 export interface WebAppLaunch {
   input: WebAppInput | null
   /** Directory relative to the tree root. */
@@ -38,7 +36,6 @@ export interface WebApp {
   updatedAt: string
 }
 
-/** Project and tree information available to the current app. */
 export interface WebAppContext {
   apiVersion: 1
   app: WebApp
@@ -58,7 +55,6 @@ export interface WebAppContext {
   }
 }
 
-/** File paths grouped by the Git layer where they changed. */
 export interface GitDiffChangeSets {
   /** Paths changed between the default-branch merge base and HEAD. */
   branch: string[]
@@ -128,7 +124,6 @@ export interface GitDiffImage {
   byteLength: number
 }
 
-/** A listening TCP socket attributed to the current tree. */
 export interface WorktreeListener {
   pid: number
   command: string
@@ -137,14 +132,12 @@ export interface WorktreeListener {
   terminalId: string | null
 }
 
-/** The result of scanning for tree-scoped listening TCP sockets. */
 export interface WorktreeListenerDiscovery {
   supported: boolean
   message: string | null
   listeners: WorktreeListener[]
 }
 
-/** Existing editable files in the current tree. */
 export interface TreeFileListing {
   paths: string[]
   truncated: boolean
@@ -157,7 +150,6 @@ export interface TreeFile {
   revision: string
 }
 
-/** One matching line in a tree-file search. */
 export interface TreeFileSearchMatch {
   /** One-based line number in the file. */
   lineNumber: number
@@ -185,14 +177,12 @@ export interface TreeFileSearchResult {
   truncated: boolean
 }
 
-/** A revision-checked update to one existing tree file. */
 export interface TreeFileWrite {
   path: string
   content: string
   expectedRevision: string
 }
 
-/** The revision created by a successful tree-file update. */
 export interface TreeFileWriteResult {
   path: string
   revision: string
@@ -205,7 +195,6 @@ export interface WebAppStorageOptions {
 
 /** Durable key-value storage scoped to an app instance or definition. */
 export interface WebAppStorage {
-  /** Return a stored JSON value, or undefined when the key does not exist. */
   get<Value extends JsonValue = JsonValue>(
     key: string,
     options?: WebAppStorageOptions
@@ -216,7 +205,6 @@ export interface WebAppStorage {
     value: JsonValue,
     options?: WebAppStorageOptions
   ): Promise<void>
-  /** Remove a stored value. */
   delete(key: string, options?: WebAppStorageOptions): Promise<void>
 }
 
@@ -228,7 +216,6 @@ export interface WebAppControls {
   setDirty(dirty: boolean): void
 }
 
-/** Keyboard shortcuts Treeport can route to an active web app. */
 export interface WebAppShortcuts {
   /** Run a handler when the user invokes Find with Cmd/Ctrl+F. */
   onFind(handler: () => void): () => void
@@ -283,7 +270,6 @@ export interface TreeDecorationInput {
   icon?: string | null
 }
 
-/** The tree fields available to package services. */
 export interface TreeportTree {
   id: string
   name: string
@@ -291,13 +277,11 @@ export interface TreeportTree {
   git: {
     /** Null when HEAD is detached. */
     branch: string | null
-    /** Commit at HEAD. */
     head: string
   } | null
   decorations: TreeDecoration[]
 }
 
-/** The project fields available to package services. */
 export interface TreeportProject {
   id: string
   name: string
@@ -358,10 +342,8 @@ export interface TreeportServiceSdk {
   }
 }
 
-/** The tree-scoped API available to a Treeport web app. */
 export interface TreeportAppSdk {
   readonly version: 1
-  /** Client-local controls for the current app. */
   readonly app: WebAppControls
   readonly services: {
     /** Start or attach to a declared service and wait for readiness. Does not navigate or change the app UI. */
@@ -547,7 +529,6 @@ function call<Result>(
   })
 }
 
-/** The tree-scoped API available to this web app. */
 export const treeport: TreeportAppSdk = Object.freeze({
   version: 1,
   app: Object.freeze({

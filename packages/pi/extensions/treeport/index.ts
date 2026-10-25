@@ -312,7 +312,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
     restoreTools(sessionContext)
     refreshing = false
     lastWarning = null
-    // Discover the status badge without adding context to the transcript.
     await refreshContext(sessionContext)
 
     if (startedLifecycle.signal.aborted) {
@@ -326,7 +325,6 @@ export default function treeportExtension(pi: ExtensionAPI): void {
   })
 
   pi.on('agent_settled', (_event, sessionContext) => {
-    // Do not move the CLI delay to Pi's completion/idle notification either.
     void refreshContext(sessionContext)
   })
 

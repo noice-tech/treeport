@@ -20,7 +20,7 @@ function ContextMenuContent({
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   return (
     <ContextMenuPrimitive.Portal>
-      {/* Menus open beside the pointer and never shift sideways, so long items
+      {/* EXTERNAL: Menus open beside the pointer and never shift sideways, so long items
           (decoration titles) truncate to the room on that side of a phone. */}
       <ContextMenuPrimitive.Content
         collisionPadding={8}

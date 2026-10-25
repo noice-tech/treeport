@@ -4,7 +4,6 @@ import type { LocalUpdateErrorDetails, LocalUpdateResult } from './update.js'
 
 export type OutputTone = 'success' | 'warning' | 'failure' | 'neutral'
 
-/** Human output only. JSON and raw streams must bypass this formatter. */
 export function humanOutput(
   environment: NodeJS.ProcessEnv = process.env,
   isTTY = false,
@@ -25,7 +24,7 @@ export function humanOutput(
       return text
     }
 
-    // Kleur has one global switch. Scope it to a synchronous call so stdout,
+    // EXTERNAL: Kleur has one global switch. Scope it to a synchronous call so stdout,
     // stderr, and other consumers never inherit each other's color policy.
     const previous = kleur.enabled
     kleur.enabled = true
@@ -170,7 +169,6 @@ export function formatServiceStatus(
         'Attention',
         [...new Set(status.issues)]
           .map((issue) =>
-            // The migration command is presented under Next, not twice in prose.
             issue.replace(
               'Run `treeport service enable --headless`; routine start and stop then need no administrator.',
               'After migration, routine start and stop need no administrator.'

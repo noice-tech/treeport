@@ -40,7 +40,6 @@ it('recovers ordered archives and only complete active records without changing 
     { type: 'marker', sequence: 3, at: 3, data: '\ud800\ud800\udc00\udc00' }
   ]
 
-  // Create archives out of order; their records, not directory order, define history.
   for (const index of [1, 0]) {
     await fs.writeFile(
       path.join(root, `checkpoint-${String(index + 1).padStart(10, '0')}.gz`),
@@ -110,7 +109,6 @@ it.each(['valid', 'crc', 'truncated', 'empty', 'partial-record'] as const)(
         await expect(records.next()).rejects.toThrow()
       }
     } finally {
-      // Consumers may stop after one record; integrity cannot depend on a later next().
       await records.return(undefined)
     }
 

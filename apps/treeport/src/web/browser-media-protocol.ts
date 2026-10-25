@@ -18,5 +18,4 @@ export type BrowserMediaWorkerCommand =
 export type BrowserMediaWorkerEvent =
   | { type: 'presented'; epoch: number }
   | { type: 'media'; connected: boolean }
-  // A wheel that raced a media socket drop; the session socket carries it.
   | { type: 'wheel'; message: BrowserMediaWheel }

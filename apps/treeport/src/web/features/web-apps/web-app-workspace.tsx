@@ -37,7 +37,7 @@ export function WebAppWorkspace({
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const appWindowRef = useRef<Window | null>(null)
-  // Sandbox changes only take effect on a new document, so remount on policy changes.
+  // EXTERNAL: Sandbox changes only take effect on a new document, so remount on policy changes.
   const appRevision = `${app.id}:${reloadRevision}:${app.sandbox.enabled}:${app.sandbox.allowSameOrigin}`
 
   const [loadedAppRevision, setLoadedAppRevision] = useState<string | null>(
@@ -368,7 +368,6 @@ export function WebAppWorkspace({
           ref={frameRef}
           title={title}
           src={`/api/web-apps/${encodeURIComponent(app.id)}/assets/`}
-          // Frame policy comes from the package, never from service operations.
           sandbox={
             !app.sandbox.enabled
               ? undefined
@@ -377,14 +376,14 @@ export function WebAppWorkspace({
           allow="clipboard-read; clipboard-write; fullscreen"
           onFocus={onFocusSurface}
           tabIndex={loadedAppRevision === appRevision ? 0 : -1}
-          // A dark host scheme with a default-scheme document makes Chromium
+          // EXTERNAL: A dark host scheme with a default-scheme document makes Chromium
           // paint an opaque white canvas instead of this loading background.
           className={cn(
             'h-full w-full border-0 bg-zinc-950 [color-scheme:normal]',
             loadedAppRevision === appRevision ? 'opacity-100' : 'opacity-0'
           )}
           onLoad={() => {
-            // Load also fires for error documents; this is not app/data readiness.
+            // EXTERNAL: Load also fires for error documents; this is not app/data readiness.
             traceWebAppOpen(app.id, 'web_app.open.iframe_load', {
               reloadRevision
             })

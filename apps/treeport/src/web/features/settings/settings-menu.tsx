@@ -12,8 +12,6 @@ import { useSidebar } from '../../components/ui/sidebar'
 import { cn } from '../../lib/utils'
 import { ACCENT_PRESETS, applyTheme, storedTheme } from './theme'
 
-// Previews keep each mode's own colors, independent of the active one, and
-// show the chosen accent at that mode's accent-400 lightness.
 const modePreviews = {
   light: {
     canvas: 'bg-[oklch(95.5%_0.006_253)]',

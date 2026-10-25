@@ -132,7 +132,7 @@ const rpcFetch: typeof fetch = async (input, init) => {
   }
 }
 
-// XHR exposes bytes sent; fetch does not provide upload progress events.
+// EXTERNAL: XHR exposes bytes sent; fetch does not provide upload progress events.
 function uploadRequest(
   url: URL,
   init: RequestInit & { readonly body: File },

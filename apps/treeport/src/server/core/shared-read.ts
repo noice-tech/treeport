@@ -4,7 +4,6 @@ interface PendingRead {
   readers: number
 }
 
-/** Share only overlapping reads. One cancelled caller must not cancel its peers. */
 export class SharedRead {
   private readonly pending = new Map<string, PendingRead>()
 

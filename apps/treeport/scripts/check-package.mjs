@@ -14,10 +14,6 @@ const sdkDirectory = path.resolve(directory, '../../packages/app-sdk')
 const keeperDirectory = path.resolve(directory, '../../packages/session-keeper')
 const packed = process.argv.includes('--packed')
 
-// The build uses only the local output check. The gate also checks real pnpm
-// tarballs, with lifecycle scripts disabled to avoid prepack -> build recursion.
-// Packed keeper checks resolve its declared runtime dependencies offline; this
-// is not an end-to-end npm application installation or update qualification.
 async function checkPackage(
   packageDirectory,
   published,
@@ -124,7 +120,7 @@ async function checkPackage(
     ]) {
       const entrypointPath = path.join(packageDirectory, entrypoint)
 
-      // pnpm normalizes non-bin modes; the CLI and daemon launcher run via Node.
+      // EXTERNAL: pnpm normalizes non-bin modes; the CLI and daemon launcher run via Node.
       if (entrypoint === manifest.bin.treeport) {
         assert(
           (await fs.stat(entrypointPath)).mode & 0o111,
@@ -197,8 +193,6 @@ async function checkPackage(
       'Missing web JavaScript'
     )
 
-    // The bootstrap loads workspace styles and optional chunks dynamically,
-    // so they need not appear as stylesheet or script links in the HTML.
     const bundledAssets = await fs.readdir(
       path.join(packageDirectory, 'dist/web/assets')
     )

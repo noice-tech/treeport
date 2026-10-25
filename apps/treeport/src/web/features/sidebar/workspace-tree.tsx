@@ -86,7 +86,6 @@ function copyText(text: string) {
   }
 }
 
-// Status scales invert in light mode, so one set of tones serves both themes.
 const treeDecorationToneClasses = {
   neutral: 'text-zinc-400',
   info: 'text-blue-400',
@@ -101,7 +100,6 @@ const treeDecorationToneRank = (tone: TreeDecorationTone) =>
 
 const VISIBLE_TREE_DECORATIONS = 2
 
-/** Problems first; a stable sort keeps the order decorations were first set. */
 function sortTreeDecorations(decorations: TreeDecoration[]): TreeDecoration[] {
   return [...decorations].sort(
     (left, right) =>
@@ -109,8 +107,6 @@ function sortTreeDecorations(decorations: TreeDecoration[]): TreeDecoration[] {
   )
 }
 
-// Status is secondary to the tree name: color marks the state, on the icon
-// when there is one, without a filled shape.
 function TreeDecorationLabel({
   decoration,
   className
@@ -129,7 +125,6 @@ function TreeDecorationLabel({
       )}
     >
       {decoration.icon ? (
-        // A mask keeps the SVG inert and paints its shape in the tone color.
         <span
           aria-hidden
           className={cn(
@@ -192,7 +187,6 @@ function WorktreeShell({
   const content = (
     <>
       {icon}
-      {/* The name keeps a few characters; decorations truncate before it vanishes. */}
       <span className="flex min-w-12 flex-1 flex-col">
         <span className="truncate">{name}</span>
         {status}
@@ -200,7 +194,7 @@ function WorktreeShell({
       {decorations.length ? (
         <Tooltip>
           <TooltipTrigger asChild>
-            {/* An empty title stops the row's native title from stacking on this tooltip. */}
+            {/* EXTERNAL: An empty title stops the row's native title from stacking on this tooltip. */}
             <span title="" className="flex min-w-0 items-center gap-2.5">
               {sortedDecorations
                 .slice(0, VISIBLE_TREE_DECORATIONS)
@@ -536,7 +530,6 @@ export function WorkspaceTree({
                         {worktree.decorations.length ? (
                           <>
                             <ContextMenuSeparator />
-                            {/* Every decoration, so ones hidden behind +N can be read, and on touch screens too. */}
                             <ContextMenuGroup>
                               {sortTreeDecorations(worktree.decorations).map(
                                 (decoration) => (

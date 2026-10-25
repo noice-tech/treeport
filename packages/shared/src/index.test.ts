@@ -272,8 +272,12 @@ describe('API input validation', () => {
   })
 
   it('bounds every launcher field', () => {
-    // SAFETY: The test fixture provides the asserted contract used here.
-    const valid = { name: 'Launcher', executable: 'tool', args: [] as string[] }
+    const valid = {
+      name: 'Launcher',
+      executable: 'tool',
+      args: new Array<string>()
+    }
+
     expect(
       createLauncherSchema.safeParse({
         ...valid,

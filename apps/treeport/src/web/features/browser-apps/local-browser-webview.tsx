@@ -54,7 +54,6 @@ function browserState(
     canGoBack: webview.canGoBack(),
     canGoForward: webview.canGoForward(),
     viewport: {
-      // A responsive preview can be visually scaled without resizing the page.
       width: Math.max(0, Math.min(3_840, webview.clientWidth)),
       height: Math.max(0, Math.min(2_160, webview.clientHeight))
     }
@@ -200,7 +199,6 @@ export function LocalBrowserWebview({
       try {
         state = browserState(webview, fallbackUrl, loading, faviconUrl)
       } catch (cause) {
-        // A guest can disappear before React receives its crash or cleanup event.
         reporting = false
         ready = false
         reportError(cause)
@@ -238,7 +236,6 @@ export function LocalBrowserWebview({
       // SAFETY: Electron's page-favicon-updated event supplies a string array.
       const { favicons } = event as Event & { favicons: string[] }
       const revision = ++faviconRevision
-      // Native events can list the light PNG before the theme-aware SVG.
       void webview
         .executeJavaScript<ReturnType<typeof readBrowserPageMetadata>>(
           `(${readBrowserPageMetadata.toString()})()`
@@ -351,9 +348,6 @@ export function LocalBrowserWebview({
           previousFocus.focus({ preventScroll: true })
         }
       }
-
-      // The desktop bridge supplies guest focus emulation and targeted input.
-      // Paint retention must not focus the webview or activate its workspace.
 
       if (!locked && prepareWithInputLocked) {
         const unlocked = await bridge
@@ -602,7 +596,6 @@ export function LocalBrowserWebview({
         owner = connectionOwner
         takeControlRef.current = () => owner?.takeControl()
 
-        // A granted claim starts unlocked; the daemon reapplies external control after ready.
         if (externalControllerRef.current !== null || retainPaintRef.current) {
           if (!(await setRuntimeControl('none', null, false))) {
             throw new Error(
@@ -615,13 +608,10 @@ export function LocalBrowserWebview({
           return
         }
 
-        // Readiness means commands can run, not that a document finished loading.
         window.clearTimeout(startupTimer)
         ready = true
         reporting = true
 
-        // Keep the live webview even if a restarted daemon lost its owner
-        // record. Workspace code updates are handled by the project event bridge.
         if (connectionOwner.resumed || hasOwnedRuntime) {
           hasOwnedRuntime = true
           loading = webview.isLoading()
@@ -711,7 +701,6 @@ export function LocalBrowserWebview({
       }
     })
 
-    // Install listeners before starting the guest, including an about:blank guest.
     webview.setAttribute('partition', 'persist:treeport-browser')
     webview.setAttribute('allowpopups', 'true')
     webview.src = `about:blank#treeport-app=${encodeURIComponent(app.id)}`

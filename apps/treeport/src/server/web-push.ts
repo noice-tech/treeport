@@ -25,8 +25,6 @@ const stateSchema = Schema.Struct({
 
 type PushState = Schema.Schema.Type<typeof stateSchema>
 
-// Subscription endpoints are browser-supplied URLs. Only known push services
-// may receive server-side requests; never turn this API into an SSRF proxy.
 function validateEndpoint(endpoint: string): void {
   if (!URL.canParse(endpoint)) {
     throw new DomainError(
@@ -87,7 +85,6 @@ export class WebPushManager {
         throw error
       })
 
-    // Do not silently rotate keys on corrupt state: that strands installed PWAs.
     const state =
       saved === null
         ? { ...webpush.generateVAPIDKeys(), subscriptions: [] }
@@ -167,8 +164,6 @@ export class WebPushManager {
       return
     }
 
-    // Keep the in-app BEL unread; only skip external delivery for users who
-    // can already see it in a foreground Treeport window (web or desktop).
     const activeOwners = new Set(
       viewers
         .filter((viewer) => viewer.visible && viewer.focused)
@@ -181,8 +176,6 @@ export class WebPushManager {
       (record) => !activeOwners.has(record.owner)
     )
 
-    // Bound fan-out and network waits; expired endpoints are pruned without
-    // deleting a subscription that was replaced while a delivery was in flight.
     for (
       let index = 0;
       index < subscriptions.length && !this.disposed;
@@ -211,7 +204,6 @@ export class WebPushManager {
                   )
                 }))
               } else {
-                // Do not log endpoints, encryption keys, or provider response bodies.
                 console.warn('[Treeport] Web Push delivery failed', {
                   status: error.statusCode ?? null
                 })

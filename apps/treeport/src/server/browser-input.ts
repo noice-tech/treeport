@@ -14,7 +14,6 @@ export async function browserKey(
 
   if (!state) {
     state = {
-      // Local Electron guests can run on a different OS from the daemon.
       mac: await page.evaluate(() => /Mac/.test(navigator.platform)),
       modifiers: 0,
       meta: false,
@@ -25,8 +24,6 @@ export async function browserKey(
 
   const meta = Boolean(message.modifiers & 4)
 
-  // Match the remote platform's primary shortcut modifier, so Command+Z/K
-  // from a Mac also works in a Linux/Windows browser and its web apps.
   const modifiers =
     !state.mac && meta ? (message.modifiers & ~4) | 2 : message.modifiers
 
@@ -49,7 +46,7 @@ export async function browserKey(
     state.modifiers = (state.modifiers & ~bit) | (modifiers & bit)
   }
 
-  // macOS can omit keyup for keys pressed while Command is held. Release
+  // EXTERNAL: macOS can omit keyup for keys pressed while Command is held. Release
   // them with Command so the next press is not treated as an auto-repeat.
   if (state.meta && !meta) {
     for (const key of state.keys) {
@@ -80,16 +77,12 @@ export async function browserWheel(
   cdp: CDPSession,
   message: Extract<BrowserClientMessage, { type: 'wheel' }>
 ): Promise<void> {
-  // The session scheduler bounds outstanding wheel ACKs. Keep coordinate
-  // preparation and dispatch ordered, including reversals, even if CDP metrics
-  // respond at different speeds; do not serialize on the compositor's input ACK.
   let dispatched: Promise<unknown> | null = null
 
   const preparation = (wheelPreparations.get(cdp) ?? Promise.resolve())
     .catch(() => undefined)
     .then(async () => {
       const { cssVisualViewport } = await cdp.send('Page.getLayoutMetrics')
-      // Trackpad pinch needs the per-event modifiers and exact focal point.
       dispatched = cdp.send('Input.dispatchMouseEvent', {
         type: 'mouseWheel',
         x: message.x / cssVisualViewport.scale,
@@ -98,8 +91,6 @@ export async function browserWheel(
         deltaY: message.deltaY,
         modifiers: message.modifiers
       })
-      // Attach a rejection observer immediately; the caller still awaits the
-      // original promise and reports errors through the input scheduler.
       void dispatched.catch(() => undefined)
     })
 
@@ -119,7 +110,7 @@ export async function browserTouch(
   cdp: CDPSession,
   message: Extract<BrowserClientMessage, { type: 'touch' }>
 ): Promise<void> {
-  // The stream uses viewport pixels; CDP multiplies coordinates by the page's
+  // EXTERNAL: The stream uses viewport pixels; CDP multiplies coordinates by the page's
   // pinch scale. Undo that scale so contacts stay under the viewer's fingers.
   const scale =
     message.points.length > 0

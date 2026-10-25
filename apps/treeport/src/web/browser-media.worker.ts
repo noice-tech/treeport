@@ -4,8 +4,6 @@ import type {
   BrowserMediaWorkerEvent
 } from './browser-media-protocol'
 
-// Decodes and paints hosted browser video off the main thread. React work,
-// terminals or layout on the main thread cannot delay a decoded frame.
 // SAFETY: This module is only loaded as a dedicated worker; the web project
 // types `self` as a window.
 const scope = Object(self) as DedicatedWorkerGlobalScope
@@ -25,12 +23,8 @@ let stream: {
   presented: boolean
 } | null = null
 
-// Decoder output timestamps map back to the packet sequence they ACK.
 const decoding = new Map<number, number>()
 
-// Decoded frames wait for the next display refresh. Painting on decoder
-// output lets network jitter put two frames into one refresh, so motion is
-// uneven even when every frame arrives.
 const queue: VideoFrame[] = []
 let scheduled = false
 
@@ -62,9 +56,6 @@ const paint = () => {
     return
   }
 
-  // One frame per refresh, oldest first: a frame that arrives late plays on
-  // the next refresh instead of displacing its successor. Older frames are
-  // dropped so at most one waits, which bounds the added latency.
   for (const frame of queue.splice(0, Math.max(0, queue.length - 2))) {
     frame.close()
   }
@@ -84,9 +75,6 @@ const paint = () => {
   }
 }
 
-// The worker owns the attachment's media socket: packets reach the decoder,
-// and ACKs and wheel input reach the browser relay, without waiting on the
-// page's main thread.
 let media: {
   url: string
   token: string
@@ -148,8 +136,6 @@ const openMedia = () => {
   }
 
   current.timer = null
-  // Upgrades are authorized before the socket opens, so an open socket is a
-  // connected one.
   const socket = new WebSocket(current.url, ['treeport-media', current.token])
   socket.binaryType = 'arraybuffer'
   current.socket = socket
@@ -166,7 +152,6 @@ const openMedia = () => {
 
     setConnected(true)
 
-    // Packets sent while the previous socket was down are gone.
     if (stream && stream.sequence > 0) {
       stream.keyRequested = false
       requestKey()
@@ -189,8 +174,6 @@ const openMedia = () => {
     current.socket = null
     setConnected(false)
 
-    // A rejected token belongs to an attachment that is gone, typically after
-    // the session socket dropped; its replacement sends a new one.
     if (current.attempts >= 8) {
       closeMedia()
 
@@ -225,14 +208,11 @@ const openDecoder = () => {
       decoding.delete(frame.timestamp)
 
       if (sequence !== undefined) {
-        // ACK decoded packets: decoder throughput, not just the network,
-        // bounds the sender's window.
         sendMedia({ type: 'webcodecsAck', epoch: current.epoch, sequence })
       }
 
       queue.push(frame)
 
-      // Decoder buffers are pooled; a hidden page must not pin them all.
       while (queue.length > 4) {
         queue.shift()!.close()
       }
@@ -247,7 +227,6 @@ const openDecoder = () => {
         return
       }
 
-      // Recover in place: a fresh decoder and IDR, never a reconnect.
       decoder = null
       current.keyRequested = false
       requestKey()
@@ -355,7 +334,6 @@ const receive = (data: ArrayBuffer) => {
     return
   }
 
-  // Deltas depend on every earlier packet. After a gap, skip until an IDR.
   if (!key && (current.needsKey || sequence !== current.sequence + 1)) {
     current.sequence = sequence
     requestKey()

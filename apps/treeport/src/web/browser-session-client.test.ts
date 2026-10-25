@@ -182,8 +182,6 @@ it('preserves control and video signaling and reconnects without replaying offer
   ).toMatchObject({ clientId })
   remounted.dispose()
 
-  // Switching away and back reloads the module, but retains this origin's
-  // sessionStorage in the desktop workspace's WebContents.
   vi.resetModules()
   const restoredClient = await import('./browser-session-client')
 

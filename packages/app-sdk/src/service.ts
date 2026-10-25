@@ -6,7 +6,6 @@ import type {
   TreeportServiceSdk
 } from './index.js'
 
-// This entry runs in a package service's Node process, not a browser.
 declare const process: { env: Record<string, string | undefined> }
 
 export class TreeportRequestError extends Error {
@@ -21,7 +20,6 @@ export class TreeportRequestError extends Error {
 }
 
 function connection() {
-  // Treeport passes these to every service it starts.
   const apiUrl = process.env.TREEPORT_API_URL
   const token = process.env.TREEPORT_PACKAGE_TOKEN
 
@@ -72,7 +70,6 @@ async function request<Result>(
 const decorationPath = (treeId: string, key: string) =>
   `/api/worktrees/${encodeURIComponent(treeId)}/decorations/${encodeURIComponent(key)}`
 
-/** The Treeport API available to this package service. */
 export const treeport: TreeportServiceSdk = Object.freeze({
   version: 1,
   self: () =>
@@ -112,7 +109,6 @@ export const treeport: TreeportServiceSdk = Object.freeze({
         let buffer = ''
 
         while (true) {
-          // A dropped connection ends the stream; reconnect below.
           const chunk = await reader
             .read()
             .catch(() => ({ done: true, value: undefined }) as const)

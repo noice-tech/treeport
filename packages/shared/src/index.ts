@@ -152,7 +152,6 @@ export interface TerminalRecord {
   exitCode: number | null
   unavailableReason?: string | null | undefined
   recoveryPending?: boolean | undefined
-  // Initial launched process, independent of the persistent shell/session.
   commandExitCode?: number | null | undefined
   createdAt: string
   updatedAt: string
@@ -954,7 +953,6 @@ export const setTreeDecorationSchema = Schema.Struct({
     ),
     { default: () => null }
   ),
-  // Rendered as a CSS mask, so scripts and colors inside the SVG never apply.
   icon: Schema.optionalWith(
     Schema.NullOr(
       Schema.Trim.pipe(
@@ -1153,7 +1151,6 @@ interface ProductEventPayloadMap {
   'worktree.created': { projectId: string; worktreeId: string }
   'worktree.updated': { worktreeId: string }
   'worktree.removed': { projectId: string; worktreeId: string }
-  // The tree's Git HEAD, branches, or remote-tracking refs moved.
   'worktree.git_changed': { projectId: string; worktreeId: string }
   'create.started': { projectId: string; operationId: string }
   'create.completed': {

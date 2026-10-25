@@ -255,9 +255,7 @@ async function terminateFixture(value) {
   if (Number.isInteger(pid) && pid !== process.pid) {
     try {
       process.kill(pid, 'SIGTERM')
-    } catch {
-      // The isolated process already exited.
-    }
+    } catch {}
   }
 
   await new Promise((resolve) => setTimeout(resolve, 300))
@@ -542,7 +540,6 @@ describe('packaged stable terminal API lifecycle', () => {
       assert.equal('protocolVersion' in hostBefore, false)
 
       await runCli(candidateCliA, value.env, ['stop', '--json'])
-      // Package replacement reconnects the exact owner, never respawns it.
       await runCli(candidateCliB, value.env, ['start', '--json'])
       const hostAfter = (await readHostRecord(value.runtimeDir)).value
       assert.notEqual(hostAfter.pid, hostBefore.pid)
@@ -679,8 +676,6 @@ describe('packaged stable terminal API lifecycle', () => {
 
       const engine = await readHostRecord(value.runtimeDir)
 
-      // Model a live retired host in the legacy discovery location. Embedded
-      // engine discovery is disposable and never gates candidate activation.
       const host = {
         path: path.join(
           value.runtimeDir,

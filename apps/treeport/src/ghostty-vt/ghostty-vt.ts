@@ -1,6 +1,3 @@
-// Bindings for the libghostty-vt C API compiled to wasm32-freestanding.
-// Every terminal owns a WebAssembly instance so closing it releases its memory.
-
 type Export = (...args: number[]) => number
 
 interface Exports {
@@ -43,16 +40,12 @@ const decoder = new TextDecoder()
 
 const GHOSTTY_SUCCESS = 0
 
-// Treeport's terminal theme defaults; keep in sync with the wterm colors in
-// styles.css.
 export const TERMINAL_FOREGROUND = 0xe4e4e7
 export const TERMINAL_BACKGROUND = 0x09090b
 
-// Hosts and browsers must match so restored snapshots keep the same images.
 export const TERMINAL_IMAGE_STORAGE_BYTES = 32 * 1024 * 1024
 const SCRATCH_BYTES = 1024
 
-// OSC 7501. Text the program did not send is empty.
 export interface GhosttyProgramStatus {
   readonly state: 'idle' | 'working' | 'done' | 'blocked' | 'error' | 'clear'
   readonly kind: 'permission' | 'question' | 'auth' | null
@@ -63,36 +56,25 @@ export interface GhosttyProgramStatus {
 }
 
 export interface GhosttyTerminalCallbacks {
-  // Query and mode reports the terminal writes back to the application.
   writePty: ((data: Uint8Array) => void) | null
   bell: (() => void) | null
   titleChanged: (() => void) | null
-  // OSC 9;4. State follows GhosttyTerminalProgressState.
   progress: ((state: number, value: number) => void) | null
-  // OSC 7501. Setting it also makes the terminal answer the support query.
   programStatus: ((report: GhosttyProgramStatus) => void) | null
-  // Full reset (RIS), after any program status clear it causes.
   reset: (() => void) | null
-  // OSC sequences libghostty-vt does not implement, without the terminator.
   unknownOsc: ((content: string) => void) | null
-  // Synchronized output (mode 2026) began or ended.
   renderHold: ((held: boolean) => void) | null
-  // OSC 52 and equivalent writes; empty text clears the clipboard.
   clipboardWrite: ((text: string) => void) | null
 }
 
 export interface GhosttyTerminalOptions {
   readonly scrollbackLines: number
-  // Snapshot encoding needs unfinished VT input retained up to this limit.
   readonly continuationBytes: number
-  // Decoded Kitty image bytes kept per screen; zero disables Kitty graphics.
   readonly imageStorageBytes: number
-  // Defaults reported to OSC 10/11 queries, as 0xRRGGBB.
   readonly foreground: number
   readonly background: number
 }
 
-// Low-level access to one libghostty-vt instance.
 export class GhosttyVt {
   readonly exports: Exports
   readonly layout: Layout
@@ -181,7 +163,6 @@ export class GhosttyVt {
     return value
   }
 
-  // Bits of one arm of a packed union field, relative to that field.
   armBits(type: string, field: string, arm: string, name: string): LayoutBits {
     const value = this.bits(type, field).arms?.[arm]?.bits?.[name]
 
@@ -192,7 +173,6 @@ export class GhosttyVt {
     return value
   }
 
-  // Stage bytes in a reusable input buffer owned by this instance.
   stage(data: Uint8Array): number {
     if (data.length > this.input.size) {
       if (this.input.ptr) {
@@ -213,7 +193,6 @@ export class GhosttyVt {
     return this.input.ptr
   }
 
-  // Run a constructor that writes an opaque handle through an out pointer.
   opaque(what: string, create: (out: number) => number): number {
     const handle = this.tryOpaque(create)
 
@@ -233,7 +212,7 @@ export class GhosttyVt {
     return result === GHOSTTY_SUCCESS ? handle : null
   }
 
-  // Copy and free a buffer returned through (uint8_t** out_ptr, size_t* out_len).
+  // EXTERNAL: Copy and free a buffer returned through (uint8_t** out_ptr, size_t* out_len).
   take(what: string, produce: (outPtr: number, outLen: number) => number) {
     const out = this.scratch
     this.check(produce(out, out + 4), what)
@@ -250,7 +229,6 @@ export class GhosttyVt {
     return decoder.decode(this.bytes().subarray(ptr, ptr + length))
   }
 
-  // Place a JavaScript callback in the instance's growable function table.
   callback(
     fn: (...args: number[]) => number | void,
     params: number,
@@ -267,7 +245,7 @@ export class GhosttyVt {
       0x00,
       0x00,
       0x00,
-      // Type section: one function type with i32 parameters.
+      // EXTERNAL: Type section: one function type with i32 parameters.
       0x01,
       4 + params + (returns ? 1 : 0),
       0x01,
@@ -275,7 +253,7 @@ export class GhosttyVt {
       params,
       ...Array.from({ length: params }, () => 0x7f),
       ...(returns ? [0x01, 0x7f] : [0x00]),
-      // Import the JavaScript function as e.f and re-export it as f.
+      // EXTERNAL: Import the JavaScript function as e.f and re-export it as f.
       0x02,
       7,
       0x01,
@@ -331,7 +309,6 @@ export class GhosttyTerminal {
     return terminal
   }
 
-  // Decode a complete snapshot into a new terminal.
   static restore(
     module: WebAssembly.Module,
     snapshot: Uint8Array,
@@ -637,7 +614,6 @@ export class GhosttyTerminal {
     this.vt.call('ghostty_terminal_vt_write', this.handle, ptr, bytes.length)
   }
 
-  // Without a cell size, keep the current one, such as a restored snapshot's.
   resize(
     cols: number,
     rows: number,
@@ -647,7 +623,7 @@ export class GhosttyTerminal {
       view.getUint32(ptr, true)
     ) / this.rows
   ): void {
-    // Ghostty ends synchronized output on every resize, but an application
+    // EXTERNAL: Ghostty ends synchronized output on every resize, but an application
     // only redraws its frame when the grid itself changes.
     const synchronized =
       cols === this.cols && rows === this.rows && this.mode(2026)
@@ -669,7 +645,6 @@ export class GhosttyTerminal {
     }
   }
 
-  // Read GhosttyTerminalData into scratch memory. Null means no value.
   data<T>(data: string, read: (view: DataView, ptr: number) => T): T | null {
     const { vt } = this
 
@@ -751,7 +726,6 @@ export class GhosttyTerminal {
     )
   }
 
-  // Plain text of the active screen, including its scrollback.
   text(): string {
     const { vt } = this
     const options = 'GhosttyFormatterTerminalOptions'

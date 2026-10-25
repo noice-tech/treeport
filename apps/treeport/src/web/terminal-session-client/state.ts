@@ -87,8 +87,6 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   inputError: null
 }
 
-// Coordination state is session-owned, never mount-owned. Each service receives
-// only the fields it uses; queues, fibers and timers stay private to their owner.
 export class TerminalSessionState {
   readonly listeners = new Set<() => void>()
   snapshotValue: TerminalSessionSnapshot = DEFAULT_SNAPSHOT
@@ -135,8 +133,6 @@ export class TerminalSessionState {
       if (Number.isInteger(stored) && stored >= 8 && stored <= 32) {
         this.fontSize = stored
       }
-    } catch {
-      // Keep the default size when browser storage is unavailable.
-    }
+    } catch {}
   }
 }

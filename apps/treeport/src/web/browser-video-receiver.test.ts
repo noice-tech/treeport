@@ -114,7 +114,6 @@ it('negotiates native video only when visible and ignores superseded answers', a
     sdp: 'stale'
   })
   expect(first.setRemoteDescription).not.toHaveBeenCalled()
-  // Late readiness from the hidden cycle cannot start a resumed offer.
   receiver.receive({ type: 'videoReady' })
   receiver.setVisible(true)
   expect(FakePeer.instances).toHaveLength(1)

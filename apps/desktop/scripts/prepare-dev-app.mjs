@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
 const execute = promisify(execFile)
 const require = createRequire(import.meta.url)
 
-// macOS reads the Dock label from the bundle, not app.setName(). Brand a local
+// EXTERNAL: macOS reads the Dock label from the bundle, not app.setName(). Brand a local
 // copy so other worktrees and Electron apps keep their original installation.
 export async function prepareDevelopmentApp() {
   const electronExecutable = require('electron')
@@ -77,7 +77,7 @@ export async function prepareDevelopmentApp() {
     }
   }
 
-  // Forge gets its executable from require('electron'). Override only this
+  // EXTERNAL: Forge gets its executable from require('electron'). Override only this
   // launcher's cached export: ELECTRON_OVERRIDE_DIST_PATH retains Electron.app
   // in the launch path, which macOS also uses for the Dock label.
   require.cache[require.resolve('electron')].exports = path.join(

@@ -58,7 +58,6 @@ async function restoreVersion7WorktreeSchema(
     ON worktrees(tmux_socket_name)
   `)
   await database.db.run(sql`ALTER TABLE projects DROP COLUMN origin_url`)
-  // These fixtures emulate the historical schema before the app rename.
   await database.db.run(sql`ALTER TABLE web_apps RENAME TO web_panels`)
   await database.db.run(sql`ALTER TABLE browser_apps RENAME TO browser_panels`)
   await database.db.run(sql`
@@ -299,7 +298,7 @@ describe('SQLite migration and catalog ordering', () => {
         id: id!,
         projectId: 'p_order',
         path: worktreePath!,
-        kind: kind!,
+        kind: kind === 'main' ? ('main' as const) : ('linked' as const),
         createdAt: createdAt!,
         updatedAt: createdAt!
       }))
@@ -973,7 +972,7 @@ describe('SQLite migration and catalog ordering', () => {
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
 
-    // SAFETY: The test fixture provides the asserted contract used here.
+    // SAFETY: drizzle-kit migration journals hold an entries array.
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }

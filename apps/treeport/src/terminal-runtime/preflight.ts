@@ -16,8 +16,6 @@ export interface TerminalHostCompatibilityProbe {
   next: string | null
 }
 
-/** Candidate updates inspect raw session owners without attaching an engine,
- * replaying output, transferring authority, or signaling any process. */
 export async function probeTerminalHostCompatibility(
   dataDir: string,
   runtimeDir: string

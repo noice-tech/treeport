@@ -353,8 +353,6 @@ describe('development runtime cleanup', () => {
       path.join(root, 'unrelated-host')
     )
 
-    // A stale archive sorts before live keepers. It must not abort cleanup or
-    // leave the later live sessions running after worktree removal.
     const staleSession = await startPersistentSession(
       targetData,
       targetRuntime,
@@ -395,8 +393,6 @@ describe('development runtime cleanup', () => {
       root
     )
 
-    // A launch can leave only its manifest, and a live keeper can lose its
-    // cached status. Cleanup must handle both without trusting cached PIDs.
     const sessionDirectories = await fs.readdir(path.dirname(staleDirectory))
 
     for (const name of sessionDirectories) {

@@ -35,8 +35,6 @@ fn main() -> Result<()> {
         let directory = args.next().context("Missing session directory")?;
         let mut command = std::process::Command::new(std::env::current_exe()?);
         command.arg(directory);
-        // Treeport supplies argv[0] as an opaque display title. Preserve it in
-        // the detached owner without interpreting product metadata or labels.
         command.arg0(
             std::env::args_os()
                 .next()
@@ -75,8 +73,6 @@ fn main() -> Result<()> {
         &directory.join("manifest.json"),
         OpenOptions::new().read(true),
     )?;
-    // Reject known oversized files without reading/allocating their contents.
-    // Manifest::read also caps actual bytes if this descriptor grows afterward.
     if manifest_file.metadata()?.len() > MAX_MANIFEST_BYTES as u64 {
         bail!("Session manifest exceeds the byte limit");
     }
@@ -89,17 +85,13 @@ fn main() -> Result<()> {
     )?));
     #[cfg(target_os = "linux")]
     {
-        // Refuse an unclosable opt-in session BEFORE creating its journal or
-        // command. pidfd signaling needs Linux >=5.3 and a permitting seccomp
-        // policy; never silently downgrade identity safety on older kernels.
+        // pidfd signaling needs Linux >=5.3 and a permitting seccomp policy.
         let own = treeport_session_keeper::process::identity(std::process::id())?
             .context("Cannot verify keeper identity")?;
         treeport_session_keeper::process::signal(&own, 0)
             .context("Rust sessions require Linux pidfd_open/pidfd_send_signal support")?;
     }
     let journal = Journal::new(&directory, manifest.journal_limit_bytes)?;
-    // Socket creation happens under a private parent directory (the engine's
-    // responsibility) and chmod is complete before any peer can be accepted.
     let ipc = fs::symlink_metadata(
         PathBuf::from(&manifest.socket_path)
             .parent()
@@ -116,8 +108,6 @@ fn main() -> Result<()> {
         .build()?;
     let result = runtime.block_on(async move {
         let listener = tokio::net::UnixListener::from_std(listener)?;
-        // Create the storage worker before releasing a verified command. A
-        // thread-creation failure must not happen after user code starts.
         let storage = Storage::start_leased(directory.clone(), journal, lease.clone());
         let spawned = Pty::spawn_leased(
             &manifest,
@@ -128,11 +118,6 @@ fn main() -> Result<()> {
         let pty = match spawned {
             Ok(pty) => pty,
             Err(error) => {
-                // Pty::spawn has no fallible work after gate admission. This
-                // branch proves user code never ran, unlike a missing status,
-                // a timeout in the engine, or an unexpectedly dead keeper.
-                // Keep discovery and journal evidence; restore as a failed
-                // terminal, never silently skip it or relaunch its command.
                 drop(listener);
                 fs::remove_file(&manifest.socket_path)?;
                 let message = format!("Terminal startup aborted: {error:#}");
@@ -177,9 +162,6 @@ fn main() -> Result<()> {
         drop(lease);
         result
     });
-    // Explicit close can cancel a replay whose blocking reader is still inside
-    // an OS filesystem call. Do not wait forever for that worker after verified
-    // process cleanup and bounded acknowledgement have completed.
     runtime.shutdown_background();
     result
 }

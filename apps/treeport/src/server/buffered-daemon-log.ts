@@ -2,7 +2,6 @@ import { Worker } from 'node:worker_threads'
 
 const MAX_PENDING_BYTES = 1024 * 1024
 
-/** Bounded, batched normal logging; fatal/exit flushes do not need the event loop. */
 export function createBufferedDaemonLog(
   entry: URL,
   logPath: string,

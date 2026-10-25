@@ -39,7 +39,7 @@ async function* readJsonlLines(
   input: Readable,
   retainedTail: boolean
 ): AsyncGenerator<string> {
-  // JSON strings can contain literal U+2028/U+2029. readline treats them as
+  // EXTERNAL: JSON strings can contain literal U+2028/U+2029. readline treats them as
   // delimiters, but a version-1 journal uses only LF to separate records.
   input.setEncoding('utf8')
   let line = ''
@@ -99,10 +99,7 @@ async function* readRecords(
               fs.constants.O_NONBLOCK
           )
           .catch((error) => {
-            // Only the active recovery tail is optional. Missing checkpoints
-            // are lost history, not an empty session.
-            // SAFETY: Node open errors expose errno codes; only ENOENT proves
-            // this optional tail is absent, rather than inaccessible.
+            // SAFETY: Node open errors expose errno codes.
             if (
               source.retainedTail &&
               (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -131,15 +128,12 @@ async function* readRecords(
           continue
         }
 
-        // Anchor the inode and EOF once. Later path replacements or file
-        // growth cannot substitute data or extend this recovery operation.
         file = handle.createReadStream({
           autoClose: false,
           start: source.start,
           end: source.end ?? (metadata.size > 0 ? metadata.size - 1 : undefined)
         })
       } else {
-        // Snapshot owns an already-captured descriptor until this handoff.
         file = fs.createReadStream(source.path, {
           fd: source.fd,
           autoClose: true,
@@ -152,9 +146,6 @@ async function* readRecords(
       const readable = source.compressed ? file.pipe(createGunzip()) : file
       input = readable
       file.on('error', (error: Error) => readable.destroy(error))
-      // Hold at most one decoded record. A consumer may stop at its fence,
-      // so validate this source's EOF (including gzip CRC) BEFORE handing off
-      // its final record, not in a later next() that may never happen.
       let pending: SessionRecord | null = null
 
       for await (const line of readJsonlLines(readable, source.retainedTail)) {
@@ -173,7 +164,6 @@ async function* readRecords(
           throw new Error('Terminal journal exceeds its captured fence')
         }
 
-        // Failed rotation can leave an already checkpointed active prefix.
         if (record.sequence <= sequence) {
           continue
         }
@@ -195,8 +185,6 @@ async function* readRecords(
         ) {
           pending = record
         } else {
-          // LF commits a plain retained record. Keep streaming that prefix,
-          // even if its following uncommitted tail later exceeds the budget.
           yield record
         }
       }
@@ -222,12 +210,6 @@ async function* readRecords(
   }
 }
 
-/** Lossless, compressed checkpoints retain the original records, including
- * partial escapes, decoder boundaries, resize events, and opaque engine markers.
- * No incomplete emulator serialization is used as a recovery checkpoint.
- * The quota bounds retained storage; explicit terminal close removes it.
- * Compaction briefly needs one segment of additional disk space.
- */
 export class SessionJournal {
   private readonly activePath: string
   private fd: number | null
@@ -242,7 +224,6 @@ export class SessionJournal {
     public limitBytes: number
   ) {
     this.activePath = path.join(directory, 'journal.jsonl')
-    // Never restart a PTY owner over another owner's journal.
     this.fd = fs.openSync(this.activePath, 'wx', 0o600)
   }
 
@@ -288,8 +269,6 @@ export class SessionJournal {
       )
     }
 
-    // A failed partial write is outside activeBytes and never exposed to a
-    // reader. Retrying overwrites it; truncate any uncommitted trailing bytes.
     fs.ftruncateSync(this.fd, this.activeBytes + encoded.length)
     this.activeOffsets.push({
       sequence: value.sequence,
@@ -339,8 +318,6 @@ export class SessionJournal {
     fs.renameSync(temporary, checkpoint)
     this.checkpoints.push({ path: checkpoint, fence: this.sequence })
     this.archiveBytes += encoded.length
-    // Rotate the inode rather than truncating it: a reconnecting engine may
-    // still be reading its captured prefix while the PTY keeps producing data.
     const retired = path.join(this.directory, `retired-${number}.jsonl`)
     fs.renameSync(this.activePath, retired)
 
@@ -355,9 +332,6 @@ export class SessionJournal {
     fs.unlinkSync(retired)
   }
 
-  /** Capture an immutable prefix without pausing the PTY or buffering a live
-   * suffix in the engine's socket. Archived files are immutable; the active
-   * inode is held open and read only up to its captured byte boundary. */
   snapshot(after: number): JournalSnapshot {
     let low = 0
     let high = this.checkpoints.length
@@ -428,7 +402,7 @@ export class SessionJournal {
             end: bytes - 1,
             onOpen: () => {
               ownedFd = null
-            }, // ReadStream owns the captured descriptor.
+            }, // EXTERNAL: ReadStream owns the captured descriptor.
             retainedTail: false,
             fence
           })
@@ -443,13 +417,8 @@ export class SessionJournal {
     return { fence, records, close }
   }
 
-  /** Read-only recovery after the owning process is proven dead. Read all
-   * complete records, not only the last published status fence: output may
-   * have been committed after the engine's last acknowledgement. */
   static async *readRetained(directory: string): AsyncGenerator<SessionRecord> {
-    // readdir materializes the entire directory before a caller can enforce
-    // a budget. Stream a bounded listing instead, counting unrelated entries
-    // too; a corrupt directory must not turn recovery into unbounded work.
+    // EXTERNAL: readdir materializes the entire directory before a caller can enforce a budget.
     const names: string[] = []
     let entries = 0
     const listing = await fs.promises.opendir(directory)
@@ -464,8 +433,7 @@ export class SessionJournal {
       }
     }
 
-    // Dir's async iterator closes its descriptor on success and on rejection,
-    // before any archive is opened or a committed record is handed off.
+    // EXTERNAL: Dir's async iterator closes its descriptor on success and on rejection.
     names.sort()
 
     const sources: JournalSource[] = names.map((name) => ({
@@ -479,9 +447,6 @@ export class SessionJournal {
       fence: null
     }))
 
-    // Stream the active tail with the same record budget as socket replay.
-    // Ignore only an uncommitted final fragment; do not load the whole file to
-    // find its last LF or let a growing file extend the captured EOF.
     sources.push({
       path: path.join(directory, 'journal.jsonl'),
       compressed: false,

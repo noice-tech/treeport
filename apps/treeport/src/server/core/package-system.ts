@@ -91,7 +91,6 @@ interface ResolvedLauncher {
 
 type PackageService = z.output<typeof packageServiceSchema> & { name: string }
 
-/** A package-declared process; null project IDs mean every project. */
 export interface PackageServiceDeclaration extends PackageService {
   packageId: string
   root: string
@@ -151,12 +150,8 @@ type PackageManifestInput = z.input<typeof packageManifestInputSchema>
 
 const manifestPatternsSchema = z.array(z.string())
 
-// Services are trusted native applications. The declaration, not a caller,
-// supplies the executable. HTTP services set readinessPath and listen on
-// ${socket}; Treeport proxies them to the package's web apps.
 const packageServiceSchema = z.strictObject({
   scope: z.literal('instance'),
-  /** on-demand services start for a web app; always services start with Treeport and restart. */
   start: z.enum(['on-demand', 'always']).default('on-demand'),
   executable: z.string().min(1),
   args: z.array(z.string()).default([]),
@@ -1420,7 +1415,6 @@ export class PackageSystem {
           ...new Set(declarations.flatMap((entry) => entry.permissions))
         ]
 
-        // Only an explicit package declaration may disable the frame sandbox.
         const sandboxEnabled = declarations.every((entry) => entry.sandbox)
 
         const resolved: ResolvedWebApp = {
@@ -2072,7 +2066,6 @@ export class PackageSystem {
     })
   }
 
-  /** Services of packages configured globally or by a registered project. */
   services(): Effect.Effect<
     PackageServiceDeclaration[],
     never,
@@ -2086,7 +2079,6 @@ export class PackageSystem {
         ),
         { concurrency: 'unbounded', discard: true }
       )
-      // One process per installed copy: every tree using it shares the instance.
       const declarations = new Map<string, PackageServiceDeclaration>()
 
       const add = (pkg: ResolvedPackage, projectId: string | null) => {

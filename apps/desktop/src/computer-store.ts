@@ -227,8 +227,6 @@ export class ComputerStore {
     }).pipe(Effect.uninterruptible)
   }
 
-  // Waiters are interruptible. Once admitted, commit the file before publishing
-  // the draft in memory, even during shutdown. Failed writes never leak state.
   private mutate<A>(mutation: (draft: DesktopSettings) => A) {
     return this.mutations.withPermits(1)(
       Effect.uninterruptible(
@@ -265,7 +263,6 @@ export class ComputerStore {
           return localDifference
         }
 
-        // Switching computers must not move their entries in the UI.
         return left.createdAt.localeCompare(right.createdAt)
       })
       .map((computer) => ({

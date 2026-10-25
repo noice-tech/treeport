@@ -927,7 +927,6 @@ export async function fixture() {
   const runtime = path.join(root, 'runtime')
   await fs.mkdir(main, { recursive: true })
   const runner = new SystemDouble(main)
-  // Each test owns a fresh database; migration behavior has its own suite.
   const databasePath = path.join(root, 'treeport.db')
   await fs.copyFile(databaseTemplate, databasePath)
   const database = await openDatabaseForTest(databasePath)

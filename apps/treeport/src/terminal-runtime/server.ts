@@ -102,7 +102,6 @@ function tokensMatch(actual: string, expected: string): boolean {
   )
 }
 
-/** Acquires the engine listener and owns it for the caller's scope. */
 export function makeTerminalHostServer(
   options: TerminalHostServerOptions
 ): Effect.Effect<
@@ -881,8 +880,6 @@ export function makeTerminalHostServer(
                 yield* Queue.takeBetween(outgoing, 1, 64)
               )
 
-              // Drain only already-queued frames, preserving every sequence and
-              // response fence. Bound each copy; snapshots may exceed the batch.
               for (let index = 0; index < frames.length;) {
                 const batch = [frames[index++]!]
                 let bytes = batch[0]!.encoded.length

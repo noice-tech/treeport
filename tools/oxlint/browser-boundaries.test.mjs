@@ -40,7 +40,6 @@ async function lint(filename, input, directory = 'server') {
   return spawnSync(oxlint, [file], { cwd: root, encoding: 'utf8' })
 }
 
-// These are the allocation paths from #574 and #580, not invented bad APIs.
 it.each([
   ['browser-clipboard.ts', 'export const reader = page.context().newPage()'],
   ['browser-video.ts', 'export const helper = context.newPage()'],

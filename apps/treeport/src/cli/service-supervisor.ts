@@ -1,6 +1,3 @@
-// Installed independently of a release: never import code from the active package.
-// launchd drops privileges before starting this program. Only the owned daemon
-// child is signalled; detached terminal hosts must survive supervisor shutdown.
 export function serviceSupervisorSource(): string {
   return `import fs from 'node:fs/promises'
 import { constants } from 'node:fs'

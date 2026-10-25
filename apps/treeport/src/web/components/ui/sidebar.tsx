@@ -100,8 +100,6 @@ const SidebarProvider = React.forwardRef<
       setOpenMobileState(false)
     }, [])
 
-    // This is the internal state of the sidebar.
-    // We use openProp and setOpenProp for control from outside the component.
     const [_open, _setOpen] = React.useState(defaultOpen)
     const open = openProp ?? _open
 
@@ -118,16 +116,12 @@ const SidebarProvider = React.forwardRef<
       [setOpenProp, open]
     )
 
-    // Treeport keeps the desktop sidebar expanded; the trigger only controls
-    // the modal mobile sheet.
     const toggleSidebar = React.useCallback(() => {
       if (isMobile) {
         setOpenMobile((open) => !open)
       }
     }, [isMobile, setOpenMobile])
 
-    // We add a state so that we can do data-state="expanded" or "collapsed".
-    // This makes it easier to style the sidebar with Tailwind classes.
     const state = open ? 'expanded' : 'collapsed'
 
     const contextValue = React.useMemo<SidebarContextProps>(
@@ -150,14 +144,11 @@ const SidebarProvider = React.forwardRef<
       <SidebarContext.Provider value={contextValue}>
         <TooltipProvider delayDuration={0}>
           <div
-            style={
-              // SAFETY: The component contract supplies the asserted browser value used here.
-              {
-                '--sidebar-width': SIDEBAR_WIDTH,
-                '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
-                ...style
-              } as React.CSSProperties
-            }
+            style={{
+              '--sidebar-width': SIDEBAR_WIDTH,
+              '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
+              ...style
+            }}
             className={cn(
               'group/sidebar-wrapper flex min-h-svh w-full has-[[data-variant=inset]]:bg-sidebar',
               className
@@ -214,12 +205,9 @@ const Sidebar = React.forwardRef<
             data-sidebar="sidebar"
             data-mobile="true"
             className="w-(--sidebar-width-mobile) border-0 bg-zinc-900/95 p-0 text-zinc-100"
-            style={
-              // SAFETY: The component contract supplies the asserted browser value used here.
-              {
-                '--sidebar-width-mobile': SIDEBAR_WIDTH_MOBILE
-              } as React.CSSProperties
-            }
+            style={{
+              '--sidebar-width-mobile': SIDEBAR_WIDTH_MOBILE
+            }}
             side={side}
             showCloseButton={false}
             onCloseAutoFocus={(event) => {
@@ -272,7 +260,6 @@ const Sidebar = React.forwardRef<
         data-variant={variant}
         data-side={side}
       >
-        {/* This is what handles the sidebar gap on desktop */}
         <div
           className={cn(
             'relative w-[--sidebar-width] bg-transparent transition-[width] duration-200 ease-linear',
@@ -289,7 +276,6 @@ const Sidebar = React.forwardRef<
             side === 'left'
               ? 'left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]'
               : 'right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]',
-            // Adjust the padding for floating and inset variants.
             variant === 'floating' || variant === 'inset'
               ? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]'
               : 'group-data-[collapsible=icon]:w-[--sidebar-width-icon] group-data-[side=left]:border-r group-data-[side=right]:border-l',
@@ -527,7 +513,6 @@ const SidebarGroupAction = React.forwardRef<
       data-sidebar="group-action"
       className={cn(
         'absolute right-3 top-3.5 flex size-5 items-center justify-center rounded-md p-0 text-sidebar-foreground outline-none ring-sidebar-ring transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0',
-        // Increases the hit area of the button on mobile.
         'after:absolute after:-inset-2 after:min-[701px]:hidden',
         'group-data-[collapsible=icon]:hidden',
         className
@@ -682,7 +667,6 @@ const SidebarMenuAction = React.forwardRef<
       data-sidebar="menu-action"
       className={cn(
         'absolute right-1 top-1.5 flex size-5 items-center justify-center rounded-md p-0 text-sidebar-foreground outline-none ring-sidebar-ring transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 peer-hover/menu-button:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0',
-        // Increases the hit area of the button on mobile.
         'after:absolute after:-inset-2 after:min-[701px]:hidden',
         'peer-data-[size=sm]/menu-button:top-1',
         'peer-data-[size=default]/menu-button:top-1.5',
@@ -727,7 +711,6 @@ const SidebarMenuSkeleton = React.forwardRef<
     showIcon?: boolean
   }
 >(({ className, showIcon = false, ...props }, ref) => {
-  // Random width between 50 to 90%.
   const width = React.useMemo(() => {
     return `${Math.floor(Math.random() * 40) + 50}%`
   }, [])
@@ -748,12 +731,9 @@ const SidebarMenuSkeleton = React.forwardRef<
       <Skeleton
         className="h-4 max-w-[--skeleton-width] flex-1"
         data-sidebar="menu-skeleton-text"
-        style={
-          // SAFETY: The component contract supplies the asserted browser value used here.
-          {
-            '--skeleton-width': width
-          } as React.CSSProperties
-        }
+        style={{
+          '--skeleton-width': width
+        }}
       />
     </div>
   )

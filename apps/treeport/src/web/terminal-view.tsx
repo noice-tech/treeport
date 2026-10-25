@@ -98,9 +98,12 @@ export function TerminalView({
   const [shift, setShift] = useState(false)
   const [accessoryActionsOpen, setAccessoryActionsOpen] = useState(false)
 
-  const [paste, setPaste] = useState({
-    // SAFETY: The component contract supplies the asserted browser value used here.
-    terminalId: null as string | null,
+  const [paste, setPaste] = useState<{
+    terminalId: string | null
+    open: boolean
+    value: string
+  }>({
+    terminalId: null,
     open: false,
     value: ''
   })
@@ -113,8 +116,6 @@ export function TerminalView({
   const unavailable = terminal?.status === 'unavailable'
   const [retrying, setRetrying] = useState(false)
 
-  // Pending recovery is external work, not a disconnected terminal stream.
-  // Refresh only while it is in flight; permanent failures need explicit retry.
   useEffect(() => {
     if (!terminal?.recoveryPending) {
       return
@@ -382,7 +383,6 @@ export function TerminalView({
         placeholder="Touch and hold here, then choose Paste"
         className="min-h-16"
         onValueChange={(value) =>
-          // An upload can finish after the menu was dismissed; keep it closed.
           setPaste((current) => ({
             terminalId: terminal?.id ?? null,
             open: current.open,
@@ -479,7 +479,6 @@ export function TerminalView({
               asChild
               disabled={!snapshot.hoveredLink}
               onContextMenu={() => {
-                // Keep the target when moving from the terminal into the menu.
                 linkToCopyRef.current = snapshot.hoveredLink
               }}
             >
@@ -489,9 +488,6 @@ export function TerminalView({
                 onMouseDownCapture={stopLinkMouseEvent}
                 onMouseUpCapture={stopLinkMouseEvent}
                 onMouseDown={() => {
-                  // Focusing the input collapses native terminal selections.
-                  // iOS sends mousedown during a long-press word selection;
-                  // wterm focuses on click once the selection is collapsed.
                   if (window.getSelection()?.isCollapsed === false) {
                     activeSession?.requestControl()
 

@@ -11,7 +11,6 @@ fn manifest(root: &std::path::Path) -> Manifest {
         argv: vec![
             "/bin/sh".into(),
             "-c".into(),
-            // A regression must not leave a long-lived side-effect fixture.
             "printf started >command-started; (printf forked >descendant-started; sleep 1) & wait"
                 .into(),
         ],
@@ -48,8 +47,6 @@ async fn rejected_ownership_cannot_execute_or_fork_and_always_reaps_the_child() 
         let result = Pty::spawn_identified(&manifest(root.path()), |pid| {
             let mut row = process::identity(pid)?.context("Held leader absent")?;
             original = Some(row.clone());
-            // Deliberately give an ungated command time to run. The production
-            // identity lookup remains event-driven, with no idle timer.
             std::thread::sleep(Duration::from_millis(30));
             executed_before_identity = started.exists() || descendant.exists();
             match fault {
@@ -65,7 +62,6 @@ async fn rejected_ownership_cannot_execute_or_fork_and_always_reaps_the_child() 
             }
             Ok(Some(row))
         });
-        // Observe/reap only our recorded birth. Never signal a cached PID.
         let original = original.context("Identity probe did not run")?;
         gone(&original).await?;
         ensure!(result.is_err(), "{fault}: invalid ownership admitted");
@@ -97,8 +93,6 @@ async fn dropping_an_unreleased_launch_denies_exec_and_reaps_without_hangup() ->
     let before = root.path().join("command-started").exists();
     let canceled = std::time::Instant::now();
     drop(held);
-    // Both PTY ends remain open: cancellation must work by gate authority,
-    // not an incidental TTY hangup or a PID-addressed kill.
     gone(&original).await?;
     ensure!(
         canceled.elapsed() < Duration::from_secs(1),
@@ -110,7 +104,6 @@ async fn dropping_an_unreleased_launch_denies_exec_and_reaps_without_hangup() ->
     Ok(())
 }
 
-// Invoked only by the following test in an isolated test-binary process.
 #[test]
 #[ignore = "subprocess-only startup fault fixture"]
 fn parent_exit_fixture() -> Result<()> {
@@ -127,8 +120,6 @@ fn parent_exit_fixture() -> Result<()> {
         root.join("held-identity"),
         format!("{} {} {}", original.pid, original.birth, std::process::id()),
     )?;
-    // No Gate Drop runs. The pre-exec child must notice actual parent death,
-    // not retain the parent's inherited socket endpoint until its deadline.
     std::process::exit(0);
 }
 
@@ -153,8 +144,6 @@ async fn actual_parent_exit_denies_exec_before_the_child_deadline() -> Result<()
     let evidence = std::fs::read_to_string(root.path().join("held-identity"))?;
     let fields = evidence.split_whitespace().collect::<Vec<_>>();
     ensure!(fields.len() == 3 && fields[2].parse::<u32>()? == parent);
-    // Read-only observation of the birth recorded under verified ownership.
-    // This synthetic row is never used as signaling authority.
     let original = process::Identity {
         pid: fields[0].parse()?,
         birth: fields[1].parse()?,

@@ -13,8 +13,6 @@ import {
 
 export * from './protocol.js'
 
-// Release artifacts and runtime reads share this bound. A corrupt or growing
-// installation must not turn executable materialization into an unbounded read.
 export const SESSION_KEEPER_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
 
 export function getSessionKeeperPayload(): string {
@@ -62,8 +60,6 @@ async function readNativePayload(
     offset += bytesRead
   }
 
-  // Fixed positional reads never follow an append stream indefinitely. Check
-  // its boundary and metadata before using bytes from a concurrently edited file.
   const tail = await file.read(Buffer.alloc(1), 0, 1, bytes.length)
   const after = await file.stat()
 
@@ -90,8 +86,7 @@ async function verifyCachedKeeper(
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
     )
     .catch((cause) => {
-      // SAFETY: Node filesystem errors expose errno codes. Only absence permits
-      // publication; inaccessible or invalid entries must never be replaced.
+      // SAFETY: Node filesystem errors expose errno codes.
       if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw cause
       }
@@ -286,7 +281,6 @@ export async function withSessionRecovery<A>(
     })
   })
 
-  // Observe errors while a caller is reading retained output under the lease.
   void exited.catch(() => undefined)
   child.stdin.on('error', () => undefined)
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -317,7 +311,6 @@ export async function withSessionRecovery<A>(
           return
         }
 
-        // Promise parsing keeps malformed native output in the error channel.
         void Promise.resolve()
           .then(() =>
             sessionStatusSchema.parse(JSON.parse(buffer.slice(0, boundary)))
@@ -352,8 +345,6 @@ export async function prepareSessionKeeper(
   payload: string,
   directory: string
 ): Promise<string> {
-  // Reject known special files before opening them at all. The descriptor
-  // checks and flags below also defend against replacement after this check.
   if (!(await fs.lstat(payload)).isFile()) {
     throw new Error(
       'Session keeper file does not identify a bounded native payload'
@@ -405,14 +396,11 @@ export async function prepareSessionKeeper(
       await file.close()
     }
 
-    // Hard-link publication is exclusive. A racing launcher may have already
-    // published this hash; verify its inode instead of replacing it via rename.
     const published = await fs
       .link(temporary, binary)
       .then(() => true)
       .catch((cause) => {
-        // SAFETY: EEXIST is the only allowed publication race. Never overwrite a
-        // concurrently created symlink/FIFO, wrong payload, or executable inode.
+        // SAFETY: EEXIST is the only allowed publication race.
         if ((cause as NodeJS.ErrnoException).code !== 'EEXIST') {
           throw cause
         }

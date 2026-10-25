@@ -15,7 +15,6 @@ import { WorktreeRemovalService } from './worktree-removal-service'
 
 export type { CreateWorktreeResult } from './worktree-creation-service'
 
-/** Domain façade over the independent creation and durable-removal workflows. */
 export class WorktreeService {
   private readonly creation: WorktreeCreationService
   private readonly removal: WorktreeRemovalService

@@ -203,7 +203,6 @@ export async function resolveLocalApiUrl(
 export async function resolvePackagePath(
   ...segments: string[]
 ): Promise<string> {
-  // Shared build chunks can be at dist root or below dist/node.
   const candidates = [
     fileURLToPath(new URL('../', import.meta.url)),
     fileURLToPath(new URL('../../../', import.meta.url)),
@@ -239,7 +238,7 @@ function processExists(pid: number): boolean {
 
     return true
   } catch (error) {
-    // SAFETY: The validated CLI or Node contract establishes this asserted value.
+    // SAFETY: process.kill failures use Node's ErrnoException shape.
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
@@ -275,7 +274,6 @@ function matchesOwnership(
 async function readState(): Promise<DaemonRecord | null> {
   const paths = localPaths()
 
-  // The ownership lock exists during migrations, before daemon.json is published.
   const starting = await fs
     .readFile(paths.lockPath, 'utf8')
     .then((value) => daemonRecordSchema.parse(JSON.parse(value)))
@@ -438,7 +436,7 @@ async function tailscale(args: string[]): Promise<string> {
     child.once('error', (error) =>
       reject(
         new Error(
-          // SAFETY: The validated CLI or Node contract establishes this asserted value.
+          // SAFETY: ChildProcess spawn errors carry Node's ErrnoException code.
           (error as NodeJS.ErrnoException).code === 'ENOENT'
             ? 'Tailscale is required for remote access. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
             : `Could not run Tailscale: ${error.message}`
@@ -891,7 +889,6 @@ export async function daemonUp(options: {
     return { alreadyRunning: false, apiUrl, pid: child.pid ?? 0 }
   }
 
-  // Keep loader/native stderr separately: the daemon owns normal persistence.
   const launcherLogPath = path.join(
     paths.dataDir,
     'logs',

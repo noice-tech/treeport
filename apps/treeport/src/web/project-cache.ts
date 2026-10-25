@@ -1,6 +1,5 @@
 import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
 
-/** Applies an authoritative terminal record without duplicating event/response races. */
 export function upsertProjectTerminal(
   projects: ProjectRecord[] | undefined,
   worktreeId: string,
@@ -41,7 +40,6 @@ export function upsertProjectTerminal(
   return { projects: updated, found }
 }
 
-/** Removes an authoritative terminal record while tolerating repeated events. */
 export function removeProjectTerminal(
   projects: ProjectRecord[] | undefined,
   worktreeId: string,

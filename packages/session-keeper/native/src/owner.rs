@@ -101,8 +101,6 @@ impl Handle {
         if let Command::Write { data, encoding } = command {
             if self.status.borrow().exit_code.is_none() {
                 let bytes = data.into_bytes(encoding)?;
-                // Backpressure only this engine's input requests, not the owner
-                // actor, independent close, inspection, or output capture.
                 self.input
                     .send(bytes)
                     .await
@@ -120,9 +118,6 @@ impl Handle {
         receiver.await?
     }
 }
-// Retain exactly one transaction, including its admitted worker operation,
-// across peer cancellation and response deadlines. A retry polls it; it must
-// never resubmit deletion against a directory path that may have been reused.
 type ClosingStorage = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 
 struct Owner {
@@ -146,8 +141,6 @@ struct Owner {
 }
 impl Owner {
     async fn stop_processes(&mut self) -> Result<()> {
-        // Once every owned process is verified gone, no original-session
-        // process can fork again. Do not signal a recycled PID on close retry.
         if self.cleanup_verified {
             return Ok(());
         }
@@ -160,8 +153,6 @@ impl Owner {
                     process::signal(&target, signal)?;
                 }
                 if signal == libc::SIGTERM {
-                    // Preserve the grace period for uncooperative commands,
-                    // but complete as soon as verified session members exit.
                     let deadline = Instant::now() + Duration::from_millis(500);
                     loop {
                         if ownership.discover(&process::snapshot()?)?.is_empty() {
@@ -186,8 +177,6 @@ impl Owner {
             }
         })
         .await??;
-        // Release a retained zombie anchor only after verified cleanup. A full
-        // event slot already means the same release is queued.
         let _ = self.pty.reap.try_send(());
         self.cleanup_verified = true;
         Ok(())
@@ -209,9 +198,6 @@ impl Owner {
                     return result;
                 }
                 close = async {
-                    // A multi-step command (quota manifest, then limit) can
-                    // enter storage again before the main loop handles a close.
-                    // Keep that already-admitted request ahead of new closes.
                     if let Some(close) = self.deferred_close.take() {
                         Some(close)
                     } else {
@@ -224,12 +210,6 @@ impl Owner {
                     };
                     let error = match self.stop_processes().await {
                         Ok(()) => {
-                            // A future waiting for admission may only submit
-                            // its write when polled again after process cleanup.
-                            // Give this SAME future a bounded drain window; one
-                            // poll can otherwise fabricate a storage fault for
-                            // an ordinary short write. Timing out only drops the
-                            // mutable borrow, never the original operation.
                             let completed = tokio::time::timeout(
                                 Duration::from_millis(250),
                                 &mut operation,
@@ -242,9 +222,6 @@ impl Owner {
                                 self.storing.send_replace(false);
                                 return result;
                             }
-                            // We cannot prove that killing a backpressured PTY
-                            // preserved its unread tail. Freeze capture/fences,
-                            // retain discovery, and never claim a complete exit.
                             self.eof = true;
                             self.exit_recorded = true;
                             anyhow::anyhow!("Session processes stopped, but storage is still in flight; authenticated close must retry after it completes")
@@ -255,9 +232,6 @@ impl Owner {
                     self.status.error = Some(format!("{error:#}"));
                     self.publish(true);
                     let _ = close.reply.send(Err(error));
-                    // Do NOT cancel/re-submit the original write: it may still
-                    // commit. Keep polling the same operation before any retry
-                    // can remove storage or supersede its durable sequence.
                 }
             }
         }
@@ -275,14 +249,9 @@ impl Owner {
                 self.status.sequence = record.sequence;
                 match record.data {
                     RecordData::Exit { exit_code } => {
-                        // Never advertise exit before all preceding output and
-                        // the exit fence are committed, including a quota tail.
                         self.status.exit_code = Some(exit_code);
                     }
                     RecordData::Resize { cols, rows } => {
-                        // A storage fault can retain this control record until
-                        // attach retries it. Apply the effect at COMMIT in both
-                        // paths, not only in the original request handler.
                         if !self.exited {
                             if let Err(error) = self.pty.master.resize(PtySize {
                                 cols: cols as u16,
@@ -307,9 +276,6 @@ impl Owner {
             }
             Err(error) => {
                 if error.downcast_ref::<FrameLimitExceeded>().is_some() {
-                    // Capture fragments, resize and exit are bounded well below
-                    // a frame. Only a peer marker can fail this check; refuse
-                    // the command without poisoning capture or retry state.
                     return Err(error);
                 }
                 self.status.error = Some(format!("{error:#}"));
@@ -325,14 +291,6 @@ impl Owner {
                 capture = self.pty.capture.recv(), if self.pending.is_none() && !self.eof => {
                     match capture {
                         Some(Capture::Output(mut data)) => {
-                            // PTY reads can be very small (Darwin often returns
-                            // <1 KiB). Coalesce the bounded, already-captured
-                            // queue into one durable write instead of fsyncing
-                            // every fragment; never wait on an idle timer.
-                            // Budget actual JSON escaping rather than assuming
-                            // every byte expands 6x. Reserve the envelope and
-                            // one worst-case <=4 KiB fragment before dequeueing;
-                            // retain the old minimum for very small quotas.
                             let target = self.manifest.journal_limit_bytes
                                 .saturating_sub(128 + 6 * 4096)
                                 .max(6 * 4096);
@@ -401,12 +359,6 @@ impl Owner {
                     let success = result.is_ok();
                     let _ = control.reply.send(result.map(|_| self.status.clone()));
                     if terminate && success {
-                        // Keep the status/command endpoints alive until a peer
-                        // attempts the bounded acknowledgement and shuts down
-                        // the server. A replacement authenticated close can
-                        // cancel the original peer AFTER cleanup: it must still
-                        // receive the same successful, idempotent result rather
-                        // than strand an owner whose socket/journal are gone.
                         while let Some(control) = tokio::select! {
                             biased;
                             close = self.closing.recv() => close,
@@ -483,10 +435,6 @@ impl Owner {
             Command::Status | Command::Inspect { .. } => {}
             Command::Processed { sequence } => {
                 self.status.processed_sequence = self.status.processed_sequence.max(sequence);
-                // Live reconnects receive this watermark from the owner. After
-                // owner death, retained queries are all historical and cannot
-                // write to a PTY. Do not fsync diagnostic metadata for every
-                // parser acknowledgement; output durability belongs to Journal.
                 self.publish(false);
             }
             Command::Write { .. } => bail!("Input belongs to the bounded PTY writer"),
@@ -512,9 +460,6 @@ impl Owner {
             }
             Command::Terminate { .. } => {
                 self.stop_processes().await?;
-                // Never delete discovery/journal evidence until verified cleanup
-                // succeeds. An admitted delete can stall inside the filesystem;
-                // retain that SAME future on timeout, never cancel/re-submit it.
                 if self.closing_storage.is_none() {
                     let storage = self.storage.clone();
                     let manifest = self.manifest.clone();
@@ -524,9 +469,6 @@ impl Owner {
                                 .downcast_ref::<CloseFailure>()
                                 .is_some_and(|failure| failure.partial)
                             {
-                                // Discovery recovery belongs to the same close
-                                // transaction and response deadline. It too may
-                                // stall; do not strand authenticated controls.
                                 if let Err(recovery) = storage.manifest(manifest.clone()).await {
                                     crate::diagnostics::report(format!(
                                         "Cannot retain failed-close discovery: {recovery:#}"
@@ -554,17 +496,12 @@ impl Owner {
                         self.status.incomplete = true;
                         let error = anyhow::anyhow!("Session storage close is still in flight; deletion or discovery recovery may still complete. Retry authenticated close; no new transaction will be admitted");
                         self.status.error = Some(format!("{error:#}"));
-                        // Watch only: a queued status write could recreate
-                        // discovery at a path whose deletion already finished.
                         self.publish(false);
                         return Err(error);
                     }
                 };
                 if let Err(error) = result {
                     if error.downcast_ref::<StorageBusy>().is_some() {
-                        // The processes are stopped but no delete was admitted.
-                        // Preserve discovery and report possibly lost PTY tail,
-                        // rather than wait forever behind another peer's I/O.
                         self.eof = true;
                         self.exit_recorded = true;
                         self.status.incomplete = true;
@@ -574,9 +511,6 @@ impl Owner {
                         .downcast_ref::<CloseFailure>()
                         .is_some_and(|failure| failure.partial)
                     {
-                        // Some data may now be unlinked, even while captured
-                        // descriptors still replay it. Never commit a new exit
-                        // fence or advertise a resumable complete history.
                         self.eof = true;
                         self.exit_recorded = true;
                         self.status.incomplete = true;
@@ -585,8 +519,6 @@ impl Owner {
                         ));
                         self.publish(true);
                     } else if error.downcast_ref::<CloseFailure>().is_none() {
-                        // A worker/transport failure cannot prove how far the
-                        // delete progressed. Do not claim resumable history.
                         self.eof = true;
                         self.exit_recorded = true;
                         self.status.incomplete = true;
@@ -595,9 +527,6 @@ impl Owner {
                     }
                     return Err(error);
                 }
-                // Keep discovery reachable while a retained storage close is
-                // pending. Socket cleanup starts only after its successful
-                // result has been consumed by this authenticated request.
                 let socket = self.manifest.socket_path.clone();
                 tokio::task::spawn_blocking(move || -> Result<()> {
                     match std::fs::remove_file(socket) {

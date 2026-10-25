@@ -20,9 +20,6 @@ it('preserves the published database contract through upgrade and downgrade refu
     created_at: migration.when
   }))
 
-  // Frozen from the integrity-checked published tarball recorded in the fixture.
-  // Reuse SQL only after verifying its historical hashes: constructing an old
-  // schema by undoing today's schema could silently change both sides together.
   expect(
     migrations.slice(0, history.length).map((migration) => ({
       hash: migration.hash,
@@ -72,7 +69,6 @@ it('preserves the published database contract through upgrade and downgrade refu
     database = await openDatabaseForTest(filePath, {
       migrationsFolder: historicalMigrations
     })
-    // Seed the historical columns directly, independent of today's ORM schema.
     await database.db.run(sql`
       INSERT INTO projects (
         id, name, repository_path, main_worktree_path, default_branch,
@@ -111,7 +107,6 @@ it('preserves the published database contract through upgrade and downgrade refu
     database.close()
     database = null
 
-    // Exercise the schema-version boundary, not an npm installation or old CLI.
     const beforeDowngrade = await fs.readFile(filePath)
     await expect(
       openDatabaseForTest(filePath, { migrationsFolder: historicalMigrations })

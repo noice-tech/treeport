@@ -58,8 +58,6 @@ impl Pty {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        // Complete fallible descriptor setup before creating a command. An fd
-        // limit or reactor-registration failure must not leave an unowned child.
         let raw = pair
             .master
             .as_raw_fd()
@@ -77,9 +75,7 @@ impl Pty {
             return Err(io::Error::last_os_error().into());
         }
         let descriptor = Arc::new(AsyncFd::new(descriptor)?);
-        // The public slave trait has no descriptor or pre-exec hook. Reopen
-        // this freshly allocated, kernel-owned slave while our master keeps
-        // its device alive; never open a caller-supplied terminal path.
+        // The public slave trait has no descriptor or pre-exec hook.
         let slave_path = pair.master.tty_name().context("PTY has no slave path")?;
         let slave = std::fs::OpenOptions::new()
             .read(true)
@@ -143,10 +139,6 @@ impl Pty {
             ownership: held.ownership,
             reap: held.reap,
         };
-        // All fallible descriptor, worker and ownership setup is complete.
-        // Drop denies the child on any error before this one-byte admission.
-        // The keeper persists Err as proof that startup was aborted: NEVER add
-        // fallible work after allow() or return Err once user code may run.
         held.gate.allow()?;
         Ok(result)
     }
@@ -201,8 +193,7 @@ pub async fn write(descriptor: &AsyncFd<OwnedFd>, bytes: &[u8]) -> io::Result<()
     while offset < bytes.len() {
         let mut ready = descriptor.writable().await?;
         // A hung-up Linux PTY can keep reporting writable/closed while write
-        // returns EAGAIN. Retrying that permanent readiness spins the single-
-        // thread runtime and prevents independent close from completing.
+        // returns EAGAIN.
         if ready.ready().is_write_closed() {
             return Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,

@@ -308,7 +308,6 @@ export function ManageComputersDialog({
                   key={`${computer.id}:${computer.origin}:${computer.nameOverride ?? ''}`}
                   computer={computer}
                   onDone={() => {
-                    // Commit the collapsed editor before restoring keyboard focus.
                     flushSync(() => setEditingId(null))
 
                     const focusTarget =

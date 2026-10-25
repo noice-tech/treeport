@@ -57,8 +57,6 @@ const projectMarkColors = {
   pink: 'from-pink-300 to-pink-500 text-pink-950'
 } satisfies Record<ProjectColor, string>
 
-// Remembered for the page lifetime so remounting marks neither flash the
-// monogram nor request icons that were already found missing.
 const projectIconStatus = new Map<string, 'loaded' | 'missing'>()
 
 function ProjectMark({
@@ -424,7 +422,6 @@ export function ProjectSwitcher({
                     .map((terminal) => terminalAttention.get(terminal.id))
                     .find((reason) => reason !== undefined) ?? null
 
-                // Read outcomes look idle, as in the terminal list.
                 const activity = terminals
                   .map((terminal) => terminalActivity.get(terminal.id))
                   .find(

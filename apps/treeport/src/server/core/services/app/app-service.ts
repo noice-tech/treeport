@@ -92,9 +92,6 @@ export class AppService {
         )
       }
 
-      // Browser creation, owner tickets, and owner claims each reach this check.
-      // Verify the target identity without reconciling every tree in the project
-      // or waiting behind unrelated project observations. Do not cache authorization.
       return yield* observations.verifyWorktreeLaunchTarget(worktree)
     }).pipe(Effect.withSpan('treeport.browser.verify_worktree'))
   }
@@ -689,8 +686,6 @@ export class AppService {
     })
   }
 
-  // Only called after worktree availability, definition resolution, and permission
-  // validation in this operation. Do not repeat project observation on creation.
   private createValidatedWebApp(
     worktree: WorktreeRecord,
     definition: WebAppDefinition,
@@ -1330,7 +1325,7 @@ export class AppService {
         )
         .pipe(Effect.orDie)
 
-      // SAFETY: The surrounding boundary contract establishes this asserted value.
+      // SAFETY: Storage writes only JSON.stringify a JsonValue into valueJson.
       return row ? (JSON.parse(row.valueJson) as JsonValue) : undefined
     })
   }

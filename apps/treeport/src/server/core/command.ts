@@ -19,7 +19,6 @@ export interface CommandRequest {
   timeoutMs?: number
   killGraceMs?: number
   maxStdoutBytes?: number
-  /** Encode binary stdout without a lossy UTF-8 conversion. */
   stdoutEncoding?: 'utf8' | 'base64'
   maxStderrBytes?: number
 }
@@ -205,11 +204,6 @@ function signalProcessGroup(
   }
 }
 
-/**
- * Runs a child command as an interruptible Effect. The child is acquired in an
- * isolated process group, so interruption completes only after the finalizer
- * has signaled the full group and observed the direct child exit.
- */
 function runCommandEffect(
   request: CommandRequest,
   spawnChild: (request: CommandRequest) => ChildProcessWithoutNullStreams
@@ -260,7 +254,7 @@ function runCommandEffect(
               if (!spawned) {
                 child.removeListener('spawn', onSpawn)
                 removeResourceListeners()
-                // Failed spawns can report a late stdin EPIPE. Keep one inert
+                // EXTERNAL: Failed spawns can report a late stdin EPIPE. Keep one inert
                 // listener until that stream closes so it cannot become an
                 // uncaught EventEmitter error after acquisition has failed.
                 const ignoreStdinError = () => {}
@@ -339,9 +333,6 @@ function runCommandEffect(
             resume(Effect.succeed(resource))
           }
 
-          // Install all terminal-event listeners before the spawn event. A
-          // short-lived child can otherwise close before the use phase starts,
-          // leaving the command waiting until its timeout.
           child.once('spawn', onSpawn)
           child.on('error', resource.onProcessError)
           child.once('exit', resource.onExit)

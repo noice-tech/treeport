@@ -132,7 +132,7 @@ function parseGitDiffLineCounts(output: string) {
     counts.additions += match[1] === '-' ? 0 : Number(match[1])
     counts.deletions += match[2] === '-' ? 0 : Number(match[2])
 
-    // With -z, renames have an empty path followed by two path fields.
+    // EXTERNAL: With -z, renames have an empty path followed by two path fields.
     if (match[3] === '') {
       index += 2
     }
@@ -773,9 +773,6 @@ class PromiseGitAdapter {
     }
 
     args.push('--', worktreePath)
-    // Git recursively deletes ignored dependencies and build artifacts too.
-    // Removal is not atomic: a wall-clock timeout can kill a healthy deletion
-    // midway and leave a registered, partially destroyed checkout.
     await runChecked(this.runner, {
       executable: this.executable,
       args,
@@ -899,7 +896,6 @@ class PromiseGitAdapter {
         input.path
       ])
 
-      // Read only regular blobs, never symlink targets or submodule contents.
       const match = /^(100644|100755) blob ([a-f0-9]+)\t/.exec(entry.stdout)
 
       if (!match) {
@@ -925,7 +921,6 @@ class PromiseGitAdapter {
 
       bytes = Buffer.from(result.stdout, 'base64')
     } else {
-      // Match diff visibility: tracked or untracked, but not ignored files.
       if (!(await this.worktreeFiles(cwd)).includes(input.path)) {
         throw new Error('The image is not a visible repository file')
       }
@@ -963,7 +958,6 @@ class PromiseGitAdapter {
           throw new Error('Image previews are limited to 5 MiB')
         }
 
-        // Bound the read even if the file grows after stat().
         const buffer = Buffer.alloc(maxBytes + 1)
         let length = 0
 
@@ -1037,7 +1031,6 @@ class PromiseGitAdapter {
 
             const headCommit = await this.resolveCommit(cwd)
 
-            // Resolve once, then use immutable IDs even if a branch moves mid-read.
             const mergeBase = await this.checked(cwd, [
               'merge-base',
               baseTip,
@@ -1143,7 +1136,6 @@ class PromiseGitAdapter {
     return this.read(['summary', cwd, defaultBranch, scope], async () => {
       const context = await this.worktreeDiffContext(cwd, defaultBranch, scope)
 
-      // Fetch compact statistics independently of the bounded, lazy patches.
       const stats = await this.checked(cwd, [
         'diff',
         '--no-ext-diff',
@@ -1179,7 +1171,7 @@ class PromiseGitAdapter {
 
         const result = await this.runner.run(request)
 
-        // --no-index returns 1 when the files differ, including binary files.
+        // EXTERNAL: --no-index returns 1 when the files differ, including binary files.
         if (result.exitCode !== 0 && result.exitCode !== 1) {
           throw new ExternalCommandError(
             result.stderr.trim() || `Could not count lines in ${file.path}`,
@@ -1311,8 +1303,6 @@ class PromiseGitAdapter {
         }
 
         if (scope === 'committed') {
-          // Immutable commit IDs make this cache independent of working-tree edits.
-          // Bound both tiny-entry overhead and retained UTF-16 patch storage.
           this.committedPatchBytes -=
             (this.committedPatches.get(cacheKey)?.unified?.length ?? 0) * 2
           this.committedPatches.set(cacheKey, patch)
@@ -1412,7 +1402,6 @@ export class GitError extends Data.TaggedError('GitError')<{
 
 type GitEffect<A> = Effect.Effect<A, GitError>
 
-/** Effect-native Git boundary. Operations are cold and failures are typed. */
 export class GitAdapter {
   private readonly implementation: PromiseGitAdapter
   private readonly cancellation = new AsyncLocalStorage<AbortSignal>()
@@ -1423,8 +1412,6 @@ export class GitAdapter {
 
   constructor(runner: CommandRunner, executable = 'git') {
     const effectRunner = asEffectCommandRunner(runner)
-    // Bound read fan-out, including parallel scans within one request. Long
-    // fetches/worktree mutations must not occupy the interactive read budget.
     const permits = Effect.unsafeMakeSemaphore(4)
 
     const boundedReads = new Set([
