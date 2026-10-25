@@ -1464,6 +1464,12 @@ export class GitAdapter {
     return this.operation('originUrl', () => this.implementation.originUrl(cwd))
   }
 
+  commonDirectory(cwd: string): GitEffect<string> {
+    return this.operation('commonDirectory', () =>
+      this.implementation.repositoryCommonDirectory(cwd)
+    )
+  }
+
   defaultBranch(cwd: string): GitEffect<string> {
     return this.operation('defaultBranch', () =>
       this.implementation.defaultBranch(cwd)

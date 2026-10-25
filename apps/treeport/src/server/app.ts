@@ -90,6 +90,7 @@ import {
   updateProjectSchema,
   updateWorktreeTitleSchema,
   setTreeDecorationSchema,
+  packageServiceProjectsResponseSchema,
   packageServiceSelfResponseSchema,
   TREE_DECORATION_KEY_PATTERN,
   updateLauncherSchema,
@@ -111,7 +112,8 @@ import {
   listenerDiscoveryResponseSchema,
   okResponseSchema,
   writeTreeFileSchema,
-  type ApiErrorBody
+  type ApiErrorBody,
+  type TreeportEvent
 } from '@treeport/shared'
 import * as Headers from '@effect/platform/Headers'
 import * as Cause from 'effect/Cause'
@@ -452,6 +454,25 @@ export function createApp({
         'access-control-allow-origin': '*'
       }
     })
+  })
+  // A package service authenticates with the token Treeport started it with.
+  const requirePackageAccess = Effect.gen(function* () {
+    const request = yield* serverRequest
+    const token = /^Bearer (\S+)$/u.exec(
+      request.headers.authorization ?? ''
+    )?.[1]
+    const access = token ? (appServices?.access(token) ?? null) : null
+    if (!token || !access) {
+      return yield* Effect.fail(
+        new DomainError(
+          'INVALID_PACKAGE_TOKEN',
+          'The package token is invalid or its package was removed',
+          401
+        )
+      )
+    }
+
+    return { token, access }
   })
   const pushIdentity = Effect.gen(function* () {
     const request = yield* serverRequest
@@ -1334,23 +1355,107 @@ export function createApp({
     route(
       'GET',
       '/api/package-services/self',
+      requirePackageAccess.pipe(
+        Effect.map(({ access }) =>
+          jsonContractResponse(packageServiceSelfResponseSchema, access)
+        )
+      )
+    ),
+    route(
+      'GET',
+      '/api/package-services/projects',
       Effect.gen(function* () {
-        const request = yield* serverRequest
-        const token = /^Bearer (\S+)$/u.exec(
-          request.headers.authorization ?? ''
-        )?.[1]
-        const access = token ? (appServices?.access(token) ?? null) : null
-        if (!access) {
-          return yield* Effect.fail(
-            new DomainError(
-              'INVALID_PACKAGE_TOKEN',
-              'The package token is invalid or its package was removed',
-              401
+        const { access } = yield* requirePackageAccess
+        const projects = yield* operation(() => service.projects.listProjects())
+        return jsonContractResponse(packageServiceProjectsResponseSchema, {
+          projects: projects
+            .filter(
+              (project) =>
+                !access.projectIds || access.projectIds.includes(project.id)
             )
-          )
-        }
+            .map((project) => ({
+              id: project.id,
+              name: project.name,
+              rootPath: project.rootPath,
+              availability: project.availability,
+              git:
+                project.kind === 'repository'
+                  ? {
+                      defaultBranch: project.defaultBranch,
+                      originUrl: project.originUrl
+                    }
+                  : null,
+              worktrees: project.worktrees.map((tree) => ({
+                id: tree.id,
+                name: tree.name,
+                git:
+                  project.kind === 'repository'
+                    ? { branch: tree.branch, head: tree.head }
+                    : null,
+                decorations: tree.decorations
+              }))
+            }))
+        })
+      })
+    ),
+    route(
+      'GET',
+      '/api/package-services/events',
+      Effect.gen(function* () {
+        const { token } = yield* requirePackageAccess
+        const encoder = new TextEncoder()
+        const message = (event: TreeportEvent) =>
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+        const publicTypes = {
+          'worktree.created': 'tree.created',
+          'worktree.removed': 'tree.removed',
+          'worktree.git_changed': 'tree.changed'
+        } as const
+        return HttpServerResponse.stream(
+          Stream.async<Uint8Array>((emit) => {
+            void emit.single(message({ type: 'resync' }))
+            const unsubscribe = service.events.subscribe((event) => {
+              if (
+                event.type !== 'worktree.created' &&
+                event.type !== 'worktree.removed' &&
+                event.type !== 'worktree.git_changed'
+              ) {
+                return
+              }
 
-        return jsonContractResponse(packageServiceSelfResponseSchema, access)
+              // Read scope per event: the package may be reconfigured or removed.
+              const access = appServices?.access(token) ?? null
+              if (!access) {
+                void emit.end()
+              } else if (
+                event.data.worktreeId &&
+                (!access.projectIds ||
+                  access.projectIds.includes(event.data.projectId))
+              ) {
+                void emit.single(
+                  message({
+                    type: publicTypes[event.type],
+                    projectId: event.data.projectId,
+                    treeId: event.data.worktreeId
+                  })
+                )
+              }
+            })
+            // Keeps proxies from closing a quiet stream.
+            const heartbeat = setInterval(
+              () => void emit.single(encoder.encode(': keepalive\n\n')),
+              25_000
+            )
+            return Effect.sync(() => {
+              unsubscribe()
+              clearInterval(heartbeat)
+            })
+          }),
+          {
+            contentType: 'text/event-stream',
+            headers: Headers.fromInput({ 'cache-control': 'no-store' })
+          }
+        )
       })
     ),
     ...(['PUT', 'DELETE'] as const).map((method) =>

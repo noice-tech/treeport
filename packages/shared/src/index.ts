@@ -2,8 +2,6 @@ import * as Schema from 'effect/Schema'
 import type {
   TreeDecoration,
   TreeDecorationTone,
-  TreeportProject,
-  TreeportTree,
   WebApp,
   WebAppInput,
   WebAppPermission
@@ -48,6 +46,7 @@ export type {
   TreeDecoration,
   TreeDecorationInput,
   TreeDecorationTone,
+  TreeportEvent,
   TreeportProject,
   TreeportServiceSdk,
   TreeportTree
@@ -301,8 +300,7 @@ export interface OpenBrowserAppResult {
   app: BrowserApp
 }
 
-// Package services read trees and projects through the SDK's narrower views.
-export interface WorktreeRecord extends TreeportTree {
+export interface WorktreeRecord {
   id: string
   projectId: string
   name: string
@@ -337,7 +335,7 @@ export const PROJECT_COLORS = [
 
 export type ProjectColor = (typeof PROJECT_COLORS)[number]
 
-export interface ProjectRecord extends TreeportProject {
+export interface ProjectRecord {
   id: string
   name: string
   kind: ProjectKind
@@ -1096,6 +1094,8 @@ interface ProductEventPayloadMap {
   'worktree.created': { projectId: string; worktreeId: string }
   'worktree.updated': { worktreeId: string }
   'worktree.removed': { projectId: string; worktreeId: string }
+  // The tree's Git HEAD, branches, or remote-tracking refs moved.
+  'worktree.git_changed': { projectId: string; worktreeId: string }
   'create.started': { projectId: string; operationId: string }
   'create.completed': {
     projectId: string

@@ -287,7 +287,13 @@ export interface TreeDecorationInput {
 export interface TreeportTree {
   id: string
   name: string
-  branch: string | null
+  /** Null when the tree is not a Git checkout. */
+  git: {
+    /** Null when HEAD is detached. */
+    branch: string | null
+    /** Commit at HEAD. */
+    head: string
+  } | null
   decorations: TreeDecoration[]
 }
 
@@ -295,17 +301,31 @@ export interface TreeportTree {
 export interface TreeportProject {
   id: string
   name: string
-  kind: 'repository' | 'folder'
   rootPath: string
-  defaultBranch: string
-  /** Fetch URL of the repository's origin remote, when it has one. */
-  originUrl: string | null
   availability: {
     state: 'available' | 'unavailable'
     message: string | null
   }
+  /** Null when the project is not a Git repository. */
+  git: {
+    defaultBranch: string
+    /** Fetch URL of the origin remote, when it has one. */
+    originUrl: string | null
+  } | null
   worktrees: TreeportTree[]
 }
+
+/**
+ * A change a package service may react to. Events name what changed; read
+ * the current state with `projects()`.
+ */
+export type TreeportEvent =
+  /** Read everything again: the stream (re)connected and may have missed events. */
+  | { type: 'resync' }
+  | { type: 'tree.created'; projectId: string; treeId: string }
+  | { type: 'tree.removed'; projectId: string; treeId: string }
+  /** The tree's contents moved, such as a commit, checkout, or push in a Git tree. */
+  | { type: 'tree.changed'; projectId: string; treeId: string }
 
 /** The package a service acts for, and where it is configured. */
 export interface PackageServiceIdentity {
@@ -321,6 +341,11 @@ export interface TreeportServiceSdk {
   self(): Promise<PackageServiceIdentity>
   /** Projects this service's package is configured for, with their trees. */
   projects(): Promise<TreeportProject[]>
+  /**
+   * Changes in this package's projects. The stream reconnects by itself and
+   * starts every connection with `resync`.
+   */
+  events(): AsyncIterable<TreeportEvent>
   readonly decorations: {
     /** Set or replace this package's decoration. Unchanged values cost nothing. */
     set(

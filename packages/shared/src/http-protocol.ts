@@ -656,6 +656,35 @@ export const packageServiceSelfResponseSchema = Schema.Struct({
   /** Null when the package is configured globally. */
   projectIds: Schema.NullOr(Schema.Array(Schema.String))
 })
+export const packageServiceProjectsResponseSchema = Schema.Struct({
+  projects: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      rootPath: Schema.String,
+      availability: Schema.Struct({
+        state: Schema.Literal('available', 'unavailable'),
+        message: nullableStringSchema
+      }),
+      git: Schema.NullOr(
+        Schema.Struct({
+          defaultBranch: Schema.String,
+          originUrl: nullableStringSchema
+        })
+      ),
+      worktrees: Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          name: Schema.String,
+          git: Schema.NullOr(
+            Schema.Struct({ branch: nullableStringSchema, head: Schema.String })
+          ),
+          decorations: Schema.Array(treeDecorationSchema)
+        })
+      )
+    })
+  )
+})
 export const projectsResponseSchema = Schema.Struct({
   projects: Schema.Array(projectRecordSchema)
 })

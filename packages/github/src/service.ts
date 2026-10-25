@@ -9,7 +9,9 @@ import type {
 import { treeport } from '@treeport/app-sdk/service'
 import { z } from 'zod'
 
-const INTERVAL_MS = 60_000
+// Unchanged responses are free, so polling for changes made on GitHub is
+// cheap. Local commits, checkouts, and pushes arrive as Treeport events.
+const POLL_MS = 15_000
 // Leave headroom for the user's own GitHub usage.
 const RATE_LIMIT_RESERVE = 500
 const PULL_REQUEST_KEY = 'pr'
@@ -18,49 +20,18 @@ const CHECKS_KEY = 'ci'
 const pullRequestSchema = z.object({
   number: z.number().int(),
   title: z.string(),
-  state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
-  isDraft: z.boolean(),
-  url: z.url(),
-  // The combined state of every check on the pull request's latest commit.
-  commits: z.object({
-    nodes: z.array(
-      z.object({
-        commit: z.object({
-          statusCheckRollup: z
-            .object({
-              state: z.enum([
-                'SUCCESS',
-                'FAILURE',
-                'ERROR',
-                'PENDING',
-                'EXPECTED'
-              ])
-            })
-            .nullable()
-        })
-      })
-    )
-  })
+  state: z.enum(['open', 'closed']),
+  draft: z.boolean(),
+  merged_at: z.string().nullable(),
+  html_url: z.url(),
+  head: z.object({ sha: z.string() })
 })
-const rateLimitSchema = z.object({
-  remaining: z.number().int(),
-  resetAt: z.iso.datetime()
+const checkRunsSchema = z.object({
+  check_runs: z.array(z.object({ conclusion: z.string().nullable() }))
 })
-const pullRequestsResponseSchema = z.object({
-  data: z
-    .object({
-      rateLimit: rateLimitSchema,
-      repository: z
-        .record(z.string(), z.object({ nodes: z.array(pullRequestSchema) }))
-        .nullable()
-    })
-    .nullable()
-    .optional(),
-  errors: z.array(z.object({ message: z.string() })).optional()
-})
+const statusSchema = z.object({ state: z.string() })
 
 type PullRequest = z.infer<typeof pullRequestSchema>
-type RateLimit = z.infer<typeof rateLimitSchema>
 
 interface Repository {
   host: string
@@ -106,64 +77,65 @@ function token(host: string): Promise<string | null> {
   return pending
 }
 
-/** Look up every branch's latest pull request in one GraphQL request. */
-async function pullRequests(
+// Conditional requests answered with 304 do not count against the rate limit.
+const responses = new Map<string, { etag: string; body: unknown }>()
+let pausedUntil = 0
+
+async function github<Body extends z.ZodType>(
   repository: Repository,
   credential: string,
-  branches: string[]
-): Promise<{ rateLimit: RateLimit; pulls: (PullRequest | null)[] }> {
-  const variables = branches.map((_, index) => `$b${index}: String!`)
-  const aliases = branches.map(
-    (_, index) =>
-      `b${index}: pullRequests(headRefName: $b${index}, first: 1, orderBy: {field: CREATED_AT, direction: DESC}, states: [OPEN, MERGED, CLOSED]) { nodes { number title state isDraft url commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }`
-  )
-  const response = await fetch(
+  pathname: string,
+  schema: Body
+): Promise<z.infer<Body>> {
+  const url =
     repository.host === 'github.com'
-      ? 'https://api.github.com/graphql'
-      : `https://${repository.host}/api/graphql`,
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${credential}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        query: `query($owner: String!, $name: String!, ${variables.join(', ')}) {
-          rateLimit { remaining resetAt }
-          repository(owner: $owner, name: $name) { ${aliases.join('\n')} }
-        }`,
-        variables: Object.fromEntries([
-          ['owner', repository.owner],
-          ['name', repository.name],
-          ...branches.map((branch, index) => [`b${index}`, branch])
-        ])
-      })
-    }
-  )
+      ? `https://api.github.com/repos/${repository.owner}/${repository.name}${pathname}`
+      : `https://${repository.host}/api/v3/repos/${repository.owner}/${repository.name}${pathname}`
+  const cached = responses.get(url)
+  const headers = new Headers({
+    accept: 'application/vnd.github+json',
+    authorization: `Bearer ${credential}`,
+    'x-github-api-version': '2022-11-28'
+  })
+  if (cached) {
+    headers.set('if-none-match', cached.etag)
+  }
+
+  const response = await fetch(url, { headers })
   if (response.status === 401) {
     // The stored login may have been refreshed; read it again next time.
     tokens.delete(repository.host)
   }
 
-  if (!response.ok) {
-    throw new Error(`GitHub returned ${response.status}`)
+  if (response.status === 304 && cached) {
+    return schema.parse(cached.body)
   }
 
-  const { data, errors } = pullRequestsResponseSchema.parse(
-    await response.json()
-  )
-  if (!data?.repository) {
-    throw new Error(
-      errors?.map((error) => error.message).join('; ') ??
-        `${repository.owner}/${repository.name} was not found`
+  if (!response.ok) {
+    throw new Error(`GitHub returned ${response.status} for ${pathname}`)
+  }
+
+  // GitHub Enterprise Server may run without rate limits and omit these.
+  const remaining = response.headers.get('x-ratelimit-remaining')
+  if (remaining !== null && Number(remaining) < RATE_LIMIT_RESERVE) {
+    pausedUntil = Number(response.headers.get('x-ratelimit-reset')) * 1_000
+    console.error(
+      `GitHub rate limit is low; pausing until ${new Date(pausedUntil).toISOString()}`
     )
   }
 
-  const pulls = data.repository
-  return {
-    rateLimit: data.rateLimit,
-    pulls: branches.map((_, index) => pulls[`b${index}`]?.nodes[0] ?? null)
+  const body: unknown = await response.json()
+  const etag = response.headers.get('etag')
+  if (etag) {
+    // Keep recent responses only; old commits' checks are not asked again.
+    responses.delete(url)
+    responses.set(url, { etag, body })
+    if (responses.size > 1_000) {
+      responses.delete(responses.keys().next().value!)
+    }
   }
+
+  return schema.parse(body)
 }
 
 // Octicons, MIT License, Copyright (c) GitHub Inc. https://primer.style/octicons
@@ -178,21 +150,20 @@ const ICONS = {
 }
 
 function decorationFor(pull: PullRequest): TreeDecorationInput {
-  const [tone, icon, state] =
-    pull.state === 'MERGED'
-      ? (['done', ICONS.merged, 'Merged'] as const)
-      : pull.state === 'CLOSED'
-        ? (['danger', ICONS.closed, 'Closed'] as const)
-        : pull.isDraft
-          ? (['neutral', ICONS.draft, 'Draft'] as const)
-          : (['success', ICONS.open, 'Open'] as const)
+  const [tone, icon, state] = pull.merged_at
+    ? (['done', ICONS.merged, 'Merged'] as const)
+    : pull.state === 'closed'
+      ? (['danger', ICONS.closed, 'Closed'] as const)
+      : pull.draft
+        ? (['neutral', ICONS.draft, 'Draft'] as const)
+        : (['success', ICONS.open, 'Open'] as const)
   return {
     text: `#${pull.number}`,
     // Keep the state when a long title is cut to Treeport's limit.
     title: `${pull.title.slice(0, 240)} · ${state}`,
     tone,
     icon,
-    url: pull.url
+    url: pull.html_url
   }
 }
 
@@ -200,11 +171,10 @@ const { packageId } = await treeport.self()
 // A merged pull request cannot change, so its tree is not queried again.
 const mergedBranches = new Map<string, string>()
 
-async function refreshProject(
-  project: TreeportProject
-): Promise<RateLimit | null> {
+async function refreshProject(project: TreeportProject): Promise<void> {
+  const defaultBranch = project.git?.defaultBranch
   const trees = project.worktrees.filter(
-    (tree) => tree.branch !== null && tree.branch !== project.defaultBranch
+    (tree) => tree.git?.branch && tree.git.branch !== defaultBranch
   )
   // Only touch this package's own decorations, and skip ones already gone.
   const clear = async (tree: TreeportTree, key: string) => {
@@ -224,22 +194,25 @@ async function refreshProject(
     }
   }
 
-  const pending = trees.filter(
-    (tree) => mergedBranches.get(tree.id) !== tree.branch
-  )
-  const repository = project.originUrl ? parseRemote(project.originUrl) : null
+  const originUrl = project.git?.originUrl
+  const repository = originUrl ? parseRemote(originUrl) : null
   const credential = repository ? await token(repository.host) : null
-  if (!pending.length || !repository || !credential) {
-    return null
+  if (!repository || !credential) {
+    return
   }
 
-  const { rateLimit, pulls } = await pullRequests(
-    repository,
-    credential,
-    pending.map((tree) => tree.branch!)
-  )
-  for (const [index, tree] of pending.entries()) {
-    const pull = pulls[index] ?? null
+  for (const tree of trees) {
+    const branch = tree.git!.branch!
+    if (mergedBranches.get(tree.id) === branch) {
+      continue
+    }
+
+    const [pull = null] = await github(
+      repository,
+      credential,
+      `/pulls?state=all&per_page=1&head=${encodeURIComponent(`${repository.owner}:${branch}`)}`,
+      z.array(pullRequestSchema)
+    )
     if (pull) {
       await treeport.decorations.set(
         tree.id,
@@ -251,57 +224,91 @@ async function refreshProject(
     }
 
     // Like the sidebar, report checks only when they need attention.
-    const checks = pull?.commits.nodes[0]?.commit.statusCheckRollup?.state
+    const open = pull?.state === 'open'
+    const [checkRuns, status] = open
+      ? await Promise.all([
+          github(
+            repository,
+            credential,
+            `/commits/${pull.head.sha}/check-runs?per_page=100`,
+            checkRunsSchema
+          ),
+          github(
+            repository,
+            credential,
+            `/commits/${pull.head.sha}/status`,
+            statusSchema
+          )
+        ])
+      : [null, null]
     if (
-      pull?.state === 'OPEN' &&
-      (checks === 'FAILURE' || checks === 'ERROR')
+      open &&
+      (status?.state === 'failure' ||
+        status?.state === 'error' ||
+        checkRuns?.check_runs.some((run) =>
+          ['failure', 'timed_out', 'startup_failure'].includes(
+            run.conclusion ?? ''
+          )
+        ))
     ) {
       await treeport.decorations.set(tree.id, CHECKS_KEY, {
         text: 'CI',
         title: `Checks failing on #${pull.number}`,
         tone: 'danger',
-        url: `${pull.url}/checks`
+        url: `${pull.html_url}/checks`
       })
     } else {
       await clear(tree, CHECKS_KEY)
     }
 
-    if (pull?.state === 'MERGED') {
-      mergedBranches.set(tree.id, tree.branch!)
+    if (pull?.merged_at) {
+      mergedBranches.set(tree.id, branch)
     }
   }
-
-  return rateLimit
 }
 
+// Project IDs to refresh; null refreshes every project.
+let pending: Set<string> | null = new Set()
+let wake = () => {}
+const refresh = (projectId: string | null) => {
+  pending = projectId && pending ? pending.add(projectId) : null
+  wake()
+}
+setInterval(() => refresh(null), POLL_MS)
+void (async () => {
+  for await (const event of treeport.events()) {
+    refresh(event.type === 'resync' ? null : event.projectId)
+  }
+})()
+
+refresh(null)
 while (true) {
-  let wait = INTERVAL_MS
+  if (pending?.size === 0) {
+    await new Promise<void>((resolve) => {
+      wake = resolve
+    })
+  }
+
+  if (Date.now() < pausedUntil) {
+    await delay(pausedUntil - Date.now())
+  }
+
+  const due = pending
+  pending = new Set()
   const projects = await treeport.projects().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     return []
   })
   for (const project of projects) {
     if (
-      project.kind !== 'repository' ||
-      project.availability.state !== 'available'
+      project.availability.state === 'available' &&
+      (!due || due.has(project.id))
     ) {
-      continue
-    }
-
-    const rateLimit = await refreshProject(project).catch((error) => {
-      console.error(
-        `${project.name}: ${error instanceof Error ? error.message : String(error)}`
-      )
-      return null
-    })
-    if (rateLimit && rateLimit.remaining < RATE_LIMIT_RESERVE) {
-      wait = Math.max(wait, Date.parse(rateLimit.resetAt) - Date.now())
-      console.error(
-        `GitHub rate limit is low; pausing until ${rateLimit.resetAt}`
-      )
-      break
+      await refreshProject(project).catch((error) => {
+        console.error(
+          `${project.name}: ${error instanceof Error ? error.message : String(error)}`
+        )
+      })
     }
   }
-
-  await delay(wait)
 }
