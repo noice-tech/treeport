@@ -1,9 +1,13 @@
 ---
-name: unslop
 description: Cut AI tells from any writing.
 disable-model-invocation: true
+metadata:
+    github-path: skills/unslop
+    github-ref: refs/tags/v1.0.0
+    github-repo: https://github.com/noice-tech/skills
+    github-tree-sha: e3a8722303b1614a179180f8b4adcd3597f5d5c5
+name: unslop
 ---
-
 # Unslop
 
 Edit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meaning and match the intended tone.

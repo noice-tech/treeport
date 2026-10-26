@@ -1,6 +1,6 @@
 # Changelog rules
 
-Shared by `commit` and `unreleased`.
+Read by the `pr`, `unreleased`, and `release-notes` skills.
 
 PR changelog summaries are the source for future public release notes, so each one must stand alone without the PR, its diff, or release links.
 

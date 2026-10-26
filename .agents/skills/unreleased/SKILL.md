@@ -1,84 +1,37 @@
 ---
+description: Preview public release candidates and summary-quality issues since the latest reachable tag, without publishing or editing. Explicit user invocation only.
+disable-model-invocation: true
+license: MIT
+metadata:
+    github-path: skills/unreleased
+    github-ref: refs/tags/v1.0.0
+    github-repo: https://github.com/noice-tech/skills
+    github-tree-sha: 8b1b304524dd9548d28aa37fe10d489f04ebabc9
 name: unreleased
-description: Preview merged PRs since the latest git tag as public candidates, internal/skipped, and needs-cleanup, with a release recommendation. Read-only; replies in chat. Use when asked what is unreleased or whether to cut a release.
 ---
-
 # Unreleased
 
-Preview what would go into a new release from merged PRs since the latest tag. Do not create tags, releases, commits, branches, PRs, or files. Reply in chat only. Ignore any arguments.
+Assess what is ready for a public release since the latest reachable tag. Use Git and GitHub CLI to establish the actual commit range and included merged PRs; dates alone are not proof of inclusion. Fetch tags if needed. If no tag exists or membership is uncertain, make that limitation explicit rather than inventing a release boundary.
 
-Classify with [changelog-rules.md](../commit/changelog-rules.md).
+This is a chat-only review: do not edit files or PRs, commit, push, tag, or publish.
 
-## Workflow
+## Product boundary
 
-1. `git fetch --tags`
-2. Latest reachable tag: `git describe --tags --abbrev=0`
-3. Its commit date: `git log -1 --format=%cI <tag>`
-4. Commits since: `git log --oneline <tag>..HEAD`
-5. Merged PRs since that date:
+PR titles classify changes as `feat` (new user capability), `fix` (user-visible bug corrected), `improve` (existing user-facing workflow improved), or `internal` (no public product change). Optional package scopes are metadata.
 
-   ```sh
-   gh pr list --state merged --search "merged:>=YYYY-MM-DD" --limit 200 \
-     --json number,title,url,mergedAt,body,mergeCommit,headRefName,baseRefName
-   ```
+The canonical public source is the PR body's `## Changelog` → `Public summary`. Internal work and summaries marked `None.` stay out of public candidates. Technical/build/CI/test/dependency/refactor changes are internal unless their effect is directly user-visible.
 
-6. Cross-check PRs against commits in `<tag>..HEAD` (e.g. by `mergeCommit` or `(#N)` in squash subjects). Say so if matching is uncertain.
-7. Read each relevant PR's title and body (`gh pr view` if needed) and extract `## Changelog` → `Public summary` and `Context`.
-8. Classify each PR as a public candidate, internal/skipped, or needs cleanup.
+A public candidate needs a specific, standalone user-facing summary, without repository links, PR numbers, hashes, private URLs, or internal details. Flag potentially public changes with missing, vague, private, or contradictory summaries as needing cleanup rather than inventing polished copy. A user-facing title paired with `None.` deserves review, not automatic inclusion.
 
-## Classification
+If root `.release-notes/style.md` exists, use its product terminology and audience to assess summaries; style does not override classification or privacy.
 
-Public candidates:
+## Review
 
-- `feat`, `fix`, or `improve` with a meaningful `Public summary`; use that text as the bullet.
-- Be conservative with `fix`: user-visible only.
-- User-facing but without a usable public summary → needs cleanup, not a candidate.
+Give a concise recommendation of yes, maybe, or no, anchored to the inspected range, with:
 
-Internal/skipped: `internal` PRs and `Public summary: None.`
+- Public candidates and their existing summaries.
+- Internal/skipped changes and why.
+- Summaries needing cleanup and what is wrong.
+- Any uncertainty affecting the recommendation.
 
-Needs cleanup:
-
-- missing `## Changelog` or `Public summary`
-- vague summary such as "Improved experience" or "Bug fixes"
-- `feat`, `fix`, or `improve` with `Public summary: None.`
-- title type inconsistent with the changelog body
-- user-facing change only discoverable from the title or commits
-
-## Output
-
-```md
-Unreleased preview since <latest-tag>
-
-Release recommendation: <yes|maybe|no>
-
-Public candidates: <count>
-Internal/skipped: <count>
-Needs cleanup: <count>
-
-## Public candidates
-
-- <public summary>
-  Source: #<number> <title>
-
-## Internal / skipped
-
-- #<number> <title>
-  Reason: <reason>
-
-## Needs cleanup
-
-- #<number> <title>
-  Issue: <issue>
-
-## Recommendation
-
-<whether this is worth releasing now and what to clean up first>
-
-## Notes
-
-- <only when relevant: uncertain PR matching, no tag, no gh access, no unreleased commits>
-```
-
-No tag: say the preview cannot be anchored and summarize recent merged PRs only if safe. Nothing since the tag: recommend `no`.
-
-Keep it raw and factual. No polished public copy, title, CTA, or marketing framing.
+Include PR references in this internal review so the user can inspect the sources. This is not public release copy, and it does not invoke pr or release-notes.
