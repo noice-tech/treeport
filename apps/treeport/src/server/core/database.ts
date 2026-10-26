@@ -26,6 +26,7 @@ import type {
   TreeDecoration,
   WorktreeRecord
 } from '@treeport/shared'
+import { formatCommandLine } from '@treeport/shared'
 import * as schema from './database-schema'
 import type {
   operations,
@@ -37,21 +38,43 @@ import { inferWorktreeName } from './zed'
 
 const LEGACY_LATEST_VERSION = 10
 
+const legacyInitialTerminalSchema = z.looseObject({
+  argv: z.array(z.string()),
+  returnToShell: z.boolean().optional()
+})
+
 const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
   z.strictObject({
     name: z.string(),
     base: z.enum(['default', 'current']),
-    initialTerminal: z
-      .strictObject({
-        name: z.string(),
-        initialTitle: z.string().optional(),
-        command: z.string().optional(),
-        afterExit: z.enum(['shell', 'close', 'closeOnSuccess']).optional(),
-        initialSize: z
-          .strictObject({ cols: z.number().int(), rows: z.number().int() })
-          .optional()
-      })
-      .optional(),
+    initialTerminal: z.preprocess(
+      (value) => {
+        const legacy = legacyInitialTerminalSchema.safeParse(value)
+
+        if (!legacy.success) {
+          return value
+        }
+
+        const { argv, returnToShell, ...terminal } = legacy.data
+
+        return {
+          ...terminal,
+          command: formatCommandLine(argv),
+          afterExit: returnToShell ? 'shell' : 'close'
+        }
+      },
+      z
+        .strictObject({
+          name: z.string(),
+          initialTitle: z.string().optional(),
+          command: z.string().optional(),
+          afterExit: z.enum(['shell', 'close', 'closeOnSuccess']).optional(),
+          initialSize: z
+            .strictObject({ cols: z.number().int(), rows: z.number().int() })
+            .optional()
+        })
+        .optional()
+    ),
     sourceWorktreeId: z.string().optional(),
     treeTitleCommand: z.array(z.string()).optional()
   })
