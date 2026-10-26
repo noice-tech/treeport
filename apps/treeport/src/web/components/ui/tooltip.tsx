@@ -3,7 +3,7 @@ import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { cn } from '../../lib/utils'
 
 function TooltipProvider({
-  delayDuration = 250,
+  delayDuration = 500,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
   return <TooltipPrimitive.Provider delayDuration={delayDuration} {...props} />
@@ -29,7 +29,7 @@ function TooltipContent({
       <TooltipPrimitive.Content
         sideOffset={sideOffset}
         className={cn(
-          'z-100 rounded-md bg-zinc-800 px-2 py-1 text-xs font-medium text-zinc-100 shadow-lg ring-1 ring-white/10 motion-safe:data-[state=delayed-open]:animate-tooltip-in',
+          'z-100 rounded-md bg-zinc-800 px-2 py-1 text-xs font-medium select-none text-zinc-100 shadow-lg ring-1 ring-white/10 motion-safe:data-[state=delayed-open]:animate-tooltip-in',
           className
         )}
         {...props}

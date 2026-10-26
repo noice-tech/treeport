@@ -1,7 +1,6 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
-  ArrowTopRightOnSquareIcon,
   DocumentDuplicateIcon,
   FolderIcon,
   LinkSlashIcon,
@@ -19,10 +18,10 @@ import type {
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger
-} from '../../components/ui/tooltip'
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger
+} from '../../components/ui/hover-card'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -153,7 +152,8 @@ function WorktreeShell({
   id,
   className,
   ariaLabel,
-  onClick
+  onClick,
+  onOpenDecoration
 }: {
   name: string
   title: string
@@ -167,7 +167,10 @@ function WorktreeShell({
   className?: string
   ariaLabel?: string | undefined
   onClick?: () => void
+  onOpenDecoration?: (url: string) => void
 }) {
+  const [decorationsOpen, setDecorationsOpen] = useState(false)
+
   const classes = cn(
     'worktree-row flex h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1 text-left text-[0.8125rem]/4 font-medium min-[701px]:text-sm/5 min-[701px]:min-h-8 min-[701px]:py-0.5',
     pending
@@ -192,9 +195,9 @@ function WorktreeShell({
         {status}
       </span>
       {decorations.length ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            {/* EXTERNAL: An empty title stops the row's native title from stacking on this tooltip. */}
+        <HoverCard open={decorationsOpen} onOpenChange={setDecorationsOpen}>
+          <HoverCardTrigger asChild>
+            {/* EXTERNAL: An empty title stops the row's native title from stacking on this hover card. */}
             <span title="" className="flex min-w-0 items-center gap-2.5">
               {sortedDecorations
                 .slice(0, VISIBLE_TREE_DECORATIONS)
@@ -211,16 +214,51 @@ function WorktreeShell({
                 </span>
               ) : null}
             </span>
-          </TooltipTrigger>
-          <TooltipContent side="right" className="flex flex-col gap-1.5 py-1.5">
-            {sortedDecorations.map((decoration) => (
-              <span key={decoration.key} className="flex items-center gap-2">
-                <TreeDecorationLabel decoration={decoration} />
-                <span className="text-zinc-400">{decoration.title}</span>
-              </span>
-            ))}
-          </TooltipContent>
-        </Tooltip>
+          </HoverCardTrigger>
+          <HoverCardContent
+            side="right"
+            align="start"
+            className="flex w-max max-w-80 flex-col"
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.stopPropagation()}
+          >
+            {sortedDecorations.map((decoration) => {
+              const row = (
+                <>
+                  <TreeDecorationLabel
+                    decoration={decoration}
+                    className="text-sm"
+                  />
+                  <span className="line-clamp-2 text-[0.8125rem]/4.5 text-zinc-400 wrap-anywhere">
+                    {decoration.title}
+                  </span>
+                </>
+              )
+
+              return decoration.url ? (
+                <button
+                  key={decoration.key}
+                  type="button"
+                  className="flex flex-col gap-0.5 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-white/7 focus-visible:bg-white/7 active:bg-white/10"
+                  onClick={() => {
+                    setDecorationsOpen(false)
+                    onOpenDecoration?.(decoration.url!)
+                  }}
+                >
+                  {row}
+                </button>
+              ) : (
+                <div
+                  key={decoration.key}
+                  className="flex flex-col gap-0.5 px-2 py-1.5"
+                >
+                  {row}
+                </div>
+              )
+            })}
+          </HoverCardContent>
+        </HoverCard>
       ) : null}
     </>
   )
@@ -271,6 +309,11 @@ export interface WorkspaceTreeProps {
     trigger: HTMLElement
   ) => void
   onOpenWorktreeDialog: (project: ProjectRecord, trigger: HTMLElement) => void
+  onOpenBrowserUrl: (
+    project: ProjectRecord,
+    worktree: WorktreeRecord,
+    url: string
+  ) => void
 }
 
 export function WorkspaceTree({
@@ -290,7 +333,8 @@ export function WorkspaceTree({
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
   onOpenAppDialog,
-  onOpenWorktreeDialog
+  onOpenWorktreeDialog,
+  onOpenBrowserUrl
 }: WorkspaceTreeProps) {
   useSyncExternalStore(
     terminalWorkspaceLayouts.subscribe,
@@ -462,6 +506,9 @@ export function WorkspaceTree({
                                   : undefined
                             }
                             onClick={() => selectWorktree(worktree)}
+                            onOpenDecoration={(url) =>
+                              onOpenBrowserUrl(project, worktree, url)
+                            }
                             icon={
                               pendingRemovals[worktree.id] ? (
                                 <GitBranchIcon
@@ -512,7 +559,7 @@ export function WorkspaceTree({
                           ) : null}
                         </div>
                       </ContextMenuTrigger>
-                      <ContextMenuContent>
+                      <ContextMenuContent className="max-w-[min(20rem,var(--radix-context-menu-content-available-width))]">
                         <ContextMenuGroup>
                           <ContextMenuItem
                             onSelect={() => setTitleWorktree(worktree)}
@@ -527,7 +574,8 @@ export function WorkspaceTree({
                             Copy tree ID
                           </ContextMenuItem>
                         </ContextMenuGroup>
-                        {worktree.decorations.length ? (
+                        {worktree.decorations.length &&
+                        globalThis.matchMedia?.('(pointer: coarse)').matches ? (
                           <>
                             <ContextMenuSeparator />
                             <ContextMenuGroup>
@@ -538,23 +586,22 @@ export function WorkspaceTree({
                                     disabled={!decoration.url}
                                     className="data-[disabled]:opacity-100"
                                     onSelect={() =>
-                                      window.open(
-                                        decoration.url!,
-                                        '_blank',
-                                        'noopener,noreferrer'
+                                      onOpenBrowserUrl(
+                                        project,
+                                        worktree,
+                                        decoration.url!
                                       )
                                     }
                                   >
-                                    <TreeDecorationLabel
-                                      decoration={decoration}
-                                      className="shrink-0 text-sm"
-                                    />
-                                    <span className="min-w-0 truncate text-zinc-400">
-                                      {decoration.title}
+                                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                      <TreeDecorationLabel
+                                        decoration={decoration}
+                                        className="text-sm"
+                                      />
+                                      <span className="line-clamp-2 text-[0.8125rem]/4.5 text-zinc-400 wrap-anywhere">
+                                        {decoration.title}
+                                      </span>
                                     </span>
-                                    {decoration.url ? (
-                                      <ArrowTopRightOnSquareIcon className="ml-auto text-zinc-500" />
-                                    ) : null}
                                   </ContextMenuItem>
                                 )
                               )}

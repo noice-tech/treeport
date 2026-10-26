@@ -157,17 +157,17 @@ const ICONS = {
 }
 
 function decorationFor(pull: PullRequest): TreeDecorationInput {
-  const [tone, icon, state] = pull.merged_at
-    ? (['done', ICONS.merged, 'Merged'] as const)
+  const [tone, icon] = pull.merged_at
+    ? (['done', ICONS.merged] as const)
     : pull.state === 'closed'
-      ? (['danger', ICONS.closed, 'Closed'] as const)
+      ? (['danger', ICONS.closed] as const)
       : pull.draft
-        ? (['neutral', ICONS.draft, 'Draft'] as const)
-        : (['success', ICONS.open, 'Open'] as const)
+        ? (['neutral', ICONS.draft] as const)
+        : (['success', ICONS.open] as const)
 
   return {
     text: `#${pull.number}`,
-    title: `${pull.title.slice(0, 240)} · ${state}`,
+    title: pull.title.slice(0, 240),
     tone,
     icon,
     url: pull.html_url
