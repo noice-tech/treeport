@@ -7,6 +7,7 @@ import {
   useQueryClient
 } from '@tanstack/react-query'
 import type {
+  LauncherTreeTitle,
   ProjectRecord,
   RemoveOperationRecord,
   RemovePreview,
@@ -28,6 +29,7 @@ export interface PendingWorktreeCreation {
   id: string
   projectId: string
   typedName: string
+  pendingTitle: string | null
 }
 
 interface WorktreeCreationRequest {
@@ -41,13 +43,14 @@ interface WorktreeCreationRequest {
     initialSize?: TerminalSize
   }
   sourceWorktreeId?: string
-  treeTitleCommand?: string[]
+  treeTitle?: LauncherTreeTitle
 }
 
 interface TrackedCreation {
   id: string
   projectId: string
   typedName: string
+  pendingTitle: string | null
   owned: boolean
 }
 
@@ -106,10 +109,15 @@ export function useWorktreeWorkflows({
       return []
     }
 
-    const name = operation.request.name
-
     return operation.projectId
-      ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
+      ? [
+          {
+            id: operation.id,
+            projectId: operation.projectId,
+            typedName: operation.request.name,
+            pendingTitle: operation.request.treeTitle?.pendingTitle ?? null
+          }
+        ]
       : []
   })
 
@@ -179,7 +187,12 @@ export function useWorktreeWorkflows({
           !serverPendingIds.has(creation.id) &&
           !materializedCreationIds.has(creation.id)
       )
-      .map(({ id, projectId, typedName }) => ({ id, projectId, typedName }))
+      .map(({ id, projectId, typedName, pendingTitle }) => ({
+        id,
+        projectId,
+        typedName,
+        pendingTitle
+      }))
   ]
 
   const [localPendingRemovals, setLocalPendingRemovals] = useState<
@@ -278,8 +291,8 @@ export function useWorktreeWorkflows({
         Object.assign(json, { sourceWorktreeId: request.sourceWorktreeId })
       }
 
-      if (request.treeTitleCommand) {
-        Object.assign(json, { treeTitleCommand: request.treeTitleCommand })
+      if (request.treeTitle) {
+        Object.assign(json, { treeTitle: request.treeTitle })
       }
 
       return parseResponse(
@@ -308,6 +321,7 @@ export function useWorktreeWorkflows({
                 id: operation.id,
                 projectId: request.projectId,
                 typedName: name,
+                pendingTitle: request.treeTitle?.pendingTitle ?? null,
                 owned: true
               }
             ]
@@ -408,7 +422,7 @@ export function useWorktreeWorkflows({
       command?: string
     },
     sourceWorktreeId?: string,
-    treeTitleCommand?: string[]
+    treeTitle?: LauncherTreeTitle
   ) => {
     const initialSize = selectedTerminalId
       ? terminalSessions.getInitialSize(selectedTerminalId)
@@ -441,8 +455,8 @@ export function useWorktreeWorkflows({
       pending.sourceWorktreeId = sourceWorktreeId
     }
 
-    if (treeTitleCommand) {
-      pending.treeTitleCommand = treeTitleCommand
+    if (treeTitle) {
+      pending.treeTitle = treeTitle
     }
 
     onWorktreeSubmitted()

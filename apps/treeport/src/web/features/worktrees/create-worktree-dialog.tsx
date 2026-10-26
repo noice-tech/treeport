@@ -2,6 +2,7 @@ import { lazy, Suspense, useRef } from 'react'
 import type {
   ProjectRecord,
   LauncherDefinition,
+  LauncherTreeTitle,
   LauncherDefinitionDiagnostic
 } from '@treeport/shared'
 import {
@@ -46,7 +47,7 @@ export function CreateWorktreeDialog({
       command?: string
     },
     sourceWorktreeId?: string,
-    treeTitleCommand?: string[]
+    treeTitle?: LauncherTreeTitle
   ) => void
 }) {
   const submittedRef = useRef(false)

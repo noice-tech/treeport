@@ -40,6 +40,7 @@ export class ProjectSnapshotService {
     string,
     { path: string; state: WorktreeRecord['dirty'] }
   >()
+  private readonly pendingTitles = new Map<string, string>()
   private readonly refreshDue = new Map<string, number>()
   private readonly gitWatchers = new Map<
     string,
@@ -49,6 +50,16 @@ export class ProjectSnapshotService {
   invalidate(): void {
     this.revision += 1
     this.inFlight = null
+  }
+
+  setPendingTitle(worktreeId: string, title: string | null): void {
+    if (title === null) {
+      this.pendingTitles.delete(worktreeId)
+    } else {
+      this.pendingTitles.set(worktreeId, title)
+    }
+
+    this.invalidate()
   }
 
   listProjects(): Effect.Effect<ProjectRecord[], never, ApplicationServices> {
@@ -451,6 +462,7 @@ export class ProjectSnapshotService {
     projectId?: string
   ): Effect.Effect<ProjectRecord[], never, ApplicationServices> {
     const dirtyStates = this.dirtyStates
+    const pendingTitles = this.pendingTitles
 
     return Effect.gen(function* () {
       const database = yield* DatabasePort
@@ -536,6 +548,10 @@ export class ProjectSnapshotService {
 
                   worktree.dirty = dirty
                   worktree.terminals = terminals
+                  worktree.pendingTitle =
+                    worktree.title === null
+                      ? (pendingTitles.get(worktree.id) ?? null)
+                      : null
 
                   const [storedBrowserApps, storedWebApps, storedToolOrder] =
                     yield* Effect.all(

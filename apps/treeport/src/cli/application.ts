@@ -18,6 +18,7 @@ import {
   launchersResponseSchema,
   repositoryLauncherSchema,
   resolveLauncherArgs,
+  resolveLauncherTreeTitle,
   TreeportRpcs,
   treeportRpcClientLayer,
   okResponseSchema,
@@ -3389,11 +3390,13 @@ async function main(args: string[]): Promise<void> {
         createRequest.sourceWorktreeId = (await resolveWorktree('.')).id
       }
 
-      if (treeTitle) {
-        createRequest.treeTitleCommand = [
-          treeTitle.executable,
-          ...resolveLauncherArgs(treeTitle.args, inputs)
-        ]
+      const resolvedTreeTitle = resolveLauncherTreeTitle(
+        { name: launcher.name, treeTitle },
+        inputs
+      )
+
+      if (resolvedTreeTitle) {
+        createRequest.treeTitle = resolvedTreeTitle
       }
 
       const result = await createWorktree(project.id, createRequest)

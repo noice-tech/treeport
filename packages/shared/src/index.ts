@@ -319,6 +319,8 @@ export interface WorktreeRecord {
   projectId: string
   name: string
   title: string | null
+  /** Shown while the launcher's tree title command runs; null otherwise. */
+  pendingTitle: string | null
   path: string
   head: string
   branch: string | null
@@ -505,7 +507,7 @@ export interface CreateOperationRequest {
       }
     | undefined
   sourceWorktreeId?: string | undefined
-  treeTitleCommand?: string[] | undefined
+  treeTitle?: LauncherTreeTitle | undefined
 }
 
 export interface CreateOperationResult {
@@ -750,6 +752,8 @@ const launcherRevisionSchema = Schema.String.pipe(
   Schema.maxLength(64)
 )
 
+export const WORKTREE_TITLE_MAX_LENGTH = 120
+
 const LAUNCHER_INPUT_PATTERN = /\$\{([a-z][a-z0-9_]*)\}/g
 const LAUNCHER_WHOLE_INPUT_PATTERN = /^\$\{([a-z][a-z0-9_]*)\}$/
 
@@ -789,6 +793,35 @@ export function resolveLauncherArgs(
   })
 }
 
+export interface LauncherTreeTitle {
+  readonly command: readonly string[]
+  readonly pendingTitle: string
+}
+
+/** The tree title command, plus the launcher's first input to show until it finishes. */
+export function resolveLauncherTreeTitle(
+  launcher: { name: string; treeTitle: LauncherCommand | null },
+  inputs: Readonly<Record<string, string>>
+): LauncherTreeTitle | null {
+  if (!launcher.treeTitle) {
+    return null
+  }
+
+  const input = launcherInputNames(launcher.treeTitle.args)
+    .map((name) => inputs[name]?.replace(/\s+/gu, ' ').trim())
+    .find(Boolean)
+
+  return {
+    command: [
+      launcher.treeTitle.executable,
+      ...resolveLauncherArgs(launcher.treeTitle.args, inputs)
+    ],
+    pendingTitle: (input ?? launcher.name)
+      .slice(0, WORKTREE_TITLE_MAX_LENGTH)
+      .trim()
+  }
+}
+
 export function normalizeWorktreeName(input: string): string {
   const name = input
     .normalize('NFKD')
@@ -808,13 +841,103 @@ export function normalizeWorktreeName(input: string): string {
   return name
 }
 
-/** `tree`, then `tree-2`, `tree-3`, … skipping names already taken. */
+const TREE_NAME_ADJECTIVES = [
+  'amber',
+  'bold',
+  'brave',
+  'bright',
+  'brisk',
+  'calm',
+  'clever',
+  'cosy',
+  'crisp',
+  'daring',
+  'eager',
+  'early',
+  'fair',
+  'fleet',
+  'fresh',
+  'gentle',
+  'golden',
+  'grand',
+  'happy',
+  'hidden',
+  'jolly',
+  'keen',
+  'kind',
+  'lively',
+  'lucky',
+  'merry',
+  'mellow',
+  'misty',
+  'nimble',
+  'noble',
+  'proud',
+  'quick',
+  'quiet',
+  'rapid',
+  'silver',
+  'steady',
+  'sunny',
+  'swift',
+  'tidy',
+  'wild'
+]
+
+const TREE_NAME_NOUNS = [
+  'acorn',
+  'alder',
+  'aspen',
+  'bamboo',
+  'banyan',
+  'baobab',
+  'birch',
+  'cedar',
+  'cherry',
+  'cypress',
+  'elm',
+  'fern',
+  'fig',
+  'fir',
+  'grove',
+  'hazel',
+  'hemlock',
+  'holly',
+  'juniper',
+  'larch',
+  'laurel',
+  'linden',
+  'magnolia',
+  'maple',
+  'meadow',
+  'moss',
+  'oak',
+  'olive',
+  'palm',
+  'pine',
+  'poplar',
+  'redwood',
+  'rowan',
+  'sequoia',
+  'spruce',
+  'sycamore',
+  'thicket',
+  'walnut',
+  'willow',
+  'yew'
+]
+
+/** A random `adjective-noun` name, with a numeric suffix if every tried name is taken. */
 export function availableTreeName(takenNames: readonly string[]): string {
   const taken = new Set(takenNames.map((name) => name.toLowerCase()))
-  let name = 'tree'
 
-  for (let suffix = 2; taken.has(name); suffix += 1) {
-    name = `tree-${suffix}`
+  const pick = (words: readonly string[]) =>
+    words[Math.floor(Math.random() * words.length)]!
+
+  let name = `${pick(TREE_NAME_ADJECTIVES)}-${pick(TREE_NAME_NOUNS)}`
+
+  for (let attempt = 1; taken.has(name); attempt += 1) {
+    name = `${pick(TREE_NAME_ADJECTIVES)}-${pick(TREE_NAME_NOUNS)}${attempt > 32 ? `-${attempt}` : ''}`
   }
 
   return name
@@ -851,7 +974,15 @@ export const createWorktreeSchema = Schema.Struct({
   }),
   sourceWorktreeId: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
   initialTerminal: Schema.optional(initialTerminalSchema),
-  treeTitleCommand: Schema.optional(terminalArgvSchema)
+  treeTitle: Schema.optional(
+    Schema.Struct({
+      command: terminalArgvSchema,
+      pendingTitle: Schema.Trim.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(WORKTREE_TITLE_MAX_LENGTH)
+      )
+    })
+  )
 }).pipe(
   Schema.filter(
     (value) => value.base !== 'current' || Boolean(value.sourceWorktreeId),
@@ -900,8 +1031,6 @@ export const createTerminalSchema = Schema.Struct({
 })
 
 export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })
-
-export const WORKTREE_TITLE_MAX_LENGTH = 120
 
 export const updateWorktreeTitleSchema = Schema.Struct({
   title: Schema.NullOr(

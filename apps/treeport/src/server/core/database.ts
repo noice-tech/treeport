@@ -76,7 +76,12 @@ const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
         .optional()
     ),
     sourceWorktreeId: z.string().optional(),
-    treeTitleCommand: z.array(z.string()).optional()
+    treeTitle: z
+      .strictObject({
+        command: z.array(z.string()),
+        pendingTitle: z.string()
+      })
+      .optional()
   })
 
 const createOperationResultSchema: z.ZodType<CreateOperationResult> =
@@ -597,6 +602,7 @@ export function mapWorktree(
     kind: row.kind,
     managedWrapperPath: row.managedWrapperPath,
     title: row.title,
+    pendingTitle: null,
     decorations: Object.entries(
       // SAFETY: Decoration writes store values validated by the decoration schema.
       JSON.parse(row.decorations) as Record<string, Omit<TreeDecoration, 'key'>>

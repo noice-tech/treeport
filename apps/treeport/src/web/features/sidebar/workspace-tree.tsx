@@ -148,6 +148,7 @@ function WorktreeShell({
   decorations = [],
   selected = false,
   pending = false,
+  titlePending = false,
   busy = false,
   id,
   className,
@@ -162,6 +163,7 @@ function WorktreeShell({
   decorations?: TreeDecoration[]
   selected?: boolean
   pending?: boolean
+  titlePending?: boolean
   busy?: boolean
   id?: string
   className?: string
@@ -191,7 +193,11 @@ function WorktreeShell({
     <>
       {icon}
       <span className="flex min-w-12 flex-1 flex-col">
-        <span className="truncate">{name}</span>
+        <span
+          className={cn('truncate', titlePending && 'worktree-title-pending')}
+        >
+          {name}
+        </span>
         {status}
       </span>
       {decorations.length ? (
@@ -478,11 +484,16 @@ export function WorkspaceTree({
                         >
                           <WorktreeShell
                             id={`worktree-${worktree.id}`}
-                            name={worktree.title ?? worktree.name}
+                            name={
+                              worktree.title ??
+                              worktree.pendingTitle ??
+                              worktree.name
+                            }
+                            titlePending={worktree.pendingTitle !== null}
                             title={
                               worktree.kind === 'folder'
                                 ? worktree.path
-                                : `${worktree.title ? `${worktree.name} · ` : ''}${worktree.path}${
+                                : `${(worktree.title ?? worktree.pendingTitle) ? `${worktree.name} · ` : ''}${worktree.path}${
                                     worktree.branch
                                       ? ` · ${worktree.branch}`
                                       : ` · detached at ${worktree.head.slice(
@@ -858,7 +869,7 @@ export function WorkspaceTree({
                   .map((pending) => (
                     <SidebarMenuItem key={pending.id} className="min-w-0">
                       <WorktreeShell
-                        name={pending.typedName}
+                        name={pending.pendingTitle ?? pending.typedName}
                         title={`Creating ${pending.typedName}`}
                         pending
                         icon={

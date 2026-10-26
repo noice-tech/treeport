@@ -160,6 +160,7 @@ export const worktreeRecordSchema = Schema.Struct({
   projectId: Schema.String,
   name: Schema.String,
   title: nullableStringSchema,
+  pendingTitle: nullableStringSchema,
   path: Schema.String,
   head: Schema.String,
   branch: nullableStringSchema,
@@ -288,7 +289,9 @@ const createOperationRequestSchema = Schema.Struct({
     })
   ),
   sourceWorktreeId: Schema.optional(Schema.String),
-  treeTitleCommand: Schema.optional(stringArraySchema)
+  treeTitle: Schema.optional(
+    Schema.Struct({ command: stringArraySchema, pendingTitle: Schema.String })
+  )
 })
 
 const createOperationResultSchema = Schema.Struct({
