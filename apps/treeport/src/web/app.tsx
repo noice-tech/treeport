@@ -753,11 +753,17 @@ function WorkspaceApp() {
   })
 
   const createBrowserApp = useMutation({
-    mutationFn: ({ worktree }: { worktree: WorktreeRecord }) =>
+    mutationFn: ({
+      worktree,
+      url = null
+    }: {
+      worktree: WorktreeRecord
+      url?: string | null
+    }) =>
       parseResponse(
         rpc.api.worktrees[':worktreeId']['browser-apps'].$post({
           param: { worktreeId: worktree.id },
-          json: {}
+          json: url ? { url } : {}
         })
       ),
     onSuccess: async ({ app }, { worktree }) => {
@@ -802,7 +808,13 @@ function WorkspaceApp() {
       })
       await navigation
     },
-    onError: (error, { worktree }) => {
+    onError: (error, { worktree, url }) => {
+      if (url) {
+        window.open(url, '_blank', 'noopener,noreferrer')
+
+        return
+      }
+
       notifyError(error, {
         operation: `create Browser in tree “${worktree.name}”`
       })
@@ -1964,6 +1976,19 @@ function WorkspaceApp() {
           onOpenWorktreeDialog={(project, trigger) =>
             openDialog({ type: 'worktree', project }, trigger)
           }
+          onOpenBrowserUrl={(project, worktree, url) => {
+            if (
+              project.availability.state === 'unavailable' ||
+              worktree.prunable ||
+              pendingRemovals[worktree.id]
+            ) {
+              window.open(url, '_blank', 'noopener,noreferrer')
+
+              return
+            }
+
+            createBrowserApp.mutate({ worktree, url })
+          }}
         />
       </WorkspaceSidebar>
       <WorkspaceMain
