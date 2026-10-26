@@ -143,7 +143,6 @@ test.describe('desktop worktree and terminal workflows', () => {
         initialTerminal: expect.objectContaining({
           name: 'Hunk',
           initialTitle: 'Hunk',
-          returnToShell: true,
           initialSize: {
             cols: expect.any(Number),
             rows: expect.any(Number)
@@ -183,8 +182,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         base: 'default',
         initialTerminal: expect.objectContaining({
           name: 'Pi',
-          argv: ['pi', 'Fix the login redirect loop'],
-          returnToShell: true
+          command: "pi 'Fix the login redirect loop'"
         })
       })
     }

@@ -498,26 +498,14 @@ export function makeTerminalHostServer(
                     name: input.name,
                     createdAt: input.createdAt,
                     cwd: input.cwd,
-                    argv: [...input.argv],
-                    shellCommand: input.shellCommand,
-                    interactiveShell: input.interactiveShell,
+                    shell: input.shell,
+                    command: input.command,
+                    afterExit: input.afterExit,
                     env: { ...input.env }
                   }
 
                   if (input.initialTitle !== undefined) {
                     createInput.initialTitle = input.initialTitle
-                  }
-
-                  if (input.fallbackArgv !== undefined) {
-                    createInput.fallbackArgv = [...input.fallbackArgv]
-                  }
-
-                  if (input.closeOnSuccess !== undefined) {
-                    createInput.closeOnSuccess = input.closeOnSuccess
-                  }
-
-                  if (input.closeOnExit !== undefined) {
-                    createInput.closeOnExit = input.closeOnExit
                   }
 
                   if (input.initialSize !== undefined) {

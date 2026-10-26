@@ -102,17 +102,11 @@ export const TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH = 300
 
 export function formatCommandLine(argv: readonly string[]): string {
   return argv
-    .map((value) => {
-      if (value === '') {
-        return '""'
-      }
-
-      if (!/[\s"'\\]/.test(value)) {
-        return value
-      }
-
-      return `"${value.replace(/["\\]/g, '\\$&')}"`
-    })
+    .map((value) =>
+      /^[\w@%+=:,./-]+$/u.test(value)
+        ? value
+        : `'${value.replaceAll("'", `'\\''`)}'`
+    )
     .join(' ')
 }
 
@@ -145,9 +139,7 @@ export interface TerminalRecord {
   id: string
   worktreeId: string
   name: string
-  argv: string[]
-  shellCommand: string | null
-  interactiveShell: boolean
+  command: string | null
   status: TerminalStatus
   exitCode: number | null
   unavailableReason?: string | null | undefined
@@ -156,6 +148,8 @@ export interface TerminalRecord {
   createdAt: string
   updatedAt: string
 }
+
+export type TerminalAfterExit = 'shell' | 'close' | 'closeOnSuccess'
 
 export interface LauncherCommand {
   readonly executable: string
@@ -505,8 +499,8 @@ export interface CreateOperationRequest {
     | {
         name: string
         initialTitle?: string | undefined
-        argv?: string[] | undefined
-        returnToShell?: boolean | undefined
+        command?: string | undefined
+        afterExit?: TerminalAfterExit | undefined
         initialSize?: { cols: number; rows: number } | undefined
       }
     | undefined
@@ -826,11 +820,25 @@ export function availableTreeName(takenNames: readonly string[]): string {
   return name
 }
 
+const terminalCommandSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH),
+  Schema.filter((value) => value.trim().length > 0 && !value.includes('\0'), {
+    message: () => 'Command cannot be blank or contain NUL'
+  })
+)
+
+const terminalAfterExitSchema = Schema.Literal(
+  'shell',
+  'close',
+  'closeOnSuccess'
+)
+
 const initialTerminalSchema = Schema.Struct({
   name: terminalNameSchema,
   initialTitle: Schema.optional(terminalNameSchema),
-  argv: Schema.optional(terminalArgvSchema),
-  returnToShell: Schema.optional(Schema.Boolean),
+  command: Schema.optional(terminalCommandSchema),
+  afterExit: Schema.optional(terminalAfterExitSchema),
   initialSize: Schema.optional(terminalSizeSchema)
 })
 
@@ -867,14 +875,6 @@ const terminalEnvironmentKeySchema = Schema.String.pipe(
   })
 )
 
-const terminalShellCommandSchema = Schema.String.pipe(
-  Schema.minLength(1),
-  Schema.maxLength(TERMINAL_ARGUMENT_MAX_LENGTH),
-  Schema.filter((value) => value.trim().length > 0 && !value.includes('\0'), {
-    message: () => 'Shell command cannot be blank or contain NUL'
-  })
-)
-
 const terminalEnvironmentSchema = Schema.Record({
   key: terminalEnvironmentKeySchema,
   value: Schema.String.pipe(
@@ -892,27 +892,12 @@ const terminalEnvironmentSchema = Schema.Record({
 export const createTerminalSchema = Schema.Struct({
   name: terminalNameSchema,
   initialTitle: Schema.optional(terminalNameSchema),
-  argv: Schema.optional(terminalArgvSchema),
-  shellCommand: Schema.optional(terminalShellCommandSchema),
+  command: Schema.optional(terminalCommandSchema),
+  afterExit: Schema.optional(terminalAfterExitSchema),
   cwd: Schema.optional(terminalCwdSchema),
   env: Schema.optional(terminalEnvironmentSchema),
-  returnToShell: Schema.optional(Schema.Boolean),
-  closeOnSuccess: Schema.optional(Schema.Boolean),
-  closeOnExit: Schema.optional(Schema.Boolean),
   initialSize: Schema.optional(terminalSizeSchema)
-}).pipe(
-  Schema.filter((value) => !(value.argv && value.shellCommand), {
-    message: () => 'A terminal cannot have both argv and a shell command'
-  }),
-  Schema.filter(
-    (value) =>
-      !(value.returnToShell && (value.closeOnSuccess || value.closeOnExit)),
-    {
-      message: () =>
-        'A terminal cannot return to a shell and close automatically'
-    }
-  )
-)
+})
 
 export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })
 
@@ -1124,22 +1109,6 @@ export const removeWorktreeSchema = Schema.Struct({
     default: () => false
   })
 })
-
-export const spawnSchema = Schema.Struct({
-  project: Schema.String.pipe(Schema.minLength(1)),
-  worktreeName: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(120)),
-  name: terminalNameSchema,
-  argv: Schema.optional(terminalArgvSchema),
-  base: Schema.optionalWith(Schema.Literal('default', 'current'), {
-    default: () => 'default' as const
-  }),
-  sourceWorktreeId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
-}).pipe(
-  Schema.filter(
-    (value) => value.base !== 'current' || Boolean(value.sourceWorktreeId),
-    { message: () => 'A source tree is required when starting from current' }
-  )
-)
 
 interface ProductEventPayloadMap {
   'presence.changed': {

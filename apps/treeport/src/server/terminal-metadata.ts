@@ -1,13 +1,12 @@
 import path from 'node:path'
-import {
-  formatCommandLine,
-  type ProductEvent,
-  type TerminalActivity,
-  type TerminalAttentionReason,
-  type TerminalProgram,
-  type TerminalRecord,
-  type TerminalRuntimeMetadata,
-  type WorktreeRecord
+import type {
+  ProductEvent,
+  TerminalActivity,
+  TerminalAttentionReason,
+  TerminalProgram,
+  TerminalRecord,
+  TerminalRuntimeMetadata,
+  WorktreeRecord
 } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
@@ -50,8 +49,6 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   currentCommand: string | null
   commandLine: string | null
   launchCommandLine: string | null
-  interactiveShellCommand: string | null
-  launchProgram: TerminalProgram | null
   runtimeScope: Scope.CloseableScope | null
   acknowledgedAttentionSequence: number
 }
@@ -198,25 +195,11 @@ export class TerminalMetadataManager {
       let entry = this.entries.get(terminal.id)
 
       if (!entry) {
-        const launchCommand = path
-          .basename(terminal.argv[0] ?? '')
-          .replace(/^-/, '')
-
-        const launchProgram =
-          !terminal.interactiveShell && terminal.shellCommand === null
-            ? (PROGRAM_COMMANDS.get(launchCommand) ?? null)
-            : null
-
-        const launchCommandLine = terminal.interactiveShell
-          ? null
-          : (
-              terminal.shellCommand?.replace(/\p{Cc}/gu, '') ??
-              formatCommandLine(
-                terminal.argv.map((value) => value.replace(/\p{Cc}/gu, ''))
-              )
-            )
-              .trim()
-              .slice(0, 256) || null
+        const launchCommandLine =
+          terminal.command
+            ?.replace(/\p{Cc}/gu, '')
+            .trim()
+            .slice(0, 256) || null
 
         const persisted = this.persistedAttention.get(terminal.id)
 
@@ -240,7 +223,7 @@ export class TerminalMetadataManager {
           status: terminal.status,
           commandExitCode: terminal.commandExitCode ?? null,
           title: launchCommandLine,
-          program: launchProgram,
+          program: null,
           hasForegroundProcess: terminal.status === 'running' ? null : false,
           activity: IDLE_ACTIVITY,
           attention,
@@ -248,10 +231,6 @@ export class TerminalMetadataManager {
           currentCommand: null,
           commandLine: null,
           launchCommandLine,
-          interactiveShellCommand: terminal.interactiveShell
-            ? launchCommand
-            : null,
-          launchProgram,
           runtimeScope: null,
           acknowledgedAttentionSequence: attention
             ? attention.unread
@@ -693,20 +672,13 @@ export class TerminalMetadataManager {
       PROGRAM_COMMANDS.get(path.basename(executable ?? '').replace(/^-/, '')) ??
       null
 
-    const shellIdle =
-      ((entry.interactiveShellCommand !== null ||
-        entry.commandExitCode !== null) &&
-        commandLine === null) ||
-      (entry.interactiveShellCommand !== null &&
-        commandLine === entry.interactiveShellCommand)
+    const shellIdle = commandLine === null
 
     this.update(entry, {
       title: shellIdle
-        ? (entry.terminalTitle ?? entry.interactiveShellCommand)
+        ? entry.terminalTitle
         : (entry.terminalTitle ?? commandLine ?? entry.currentCommand),
-      program:
-        observedProgram ??
-        (entry.interactiveShellCommand === null ? entry.launchProgram : null),
+      program: observedProgram,
       hasForegroundProcess:
         entry.status !== 'running'
           ? false

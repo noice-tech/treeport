@@ -1,5 +1,6 @@
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import type {
   HostedTerminal,
@@ -98,19 +99,27 @@ const setupTaskSchema = Schema.Struct({
   timeoutMs: Schema.Number.pipe(Schema.positive())
 })
 
+const afterExitSchema = Schema.Literal('shell', 'close', 'closeOnSuccess')
+
+const legacyCreateSchema = Schema.Struct({
+  argv: Schema.Array(Schema.String),
+  shellCommand: Schema.NullOr(Schema.String),
+  interactiveShell: Schema.Boolean,
+  fallbackArgv: Schema.optional(Schema.Array(Schema.String)),
+  closeOnSuccess: Schema.optional(Schema.Boolean),
+  closeOnExit: Schema.optional(Schema.Boolean)
+})
+
 const createSchema = Schema.Struct({
   terminalId: nonEmptyString,
   worktreeId: nonEmptyString,
   name: Schema.String,
   createdAt: Schema.String,
   cwd: Schema.String,
-  argv: Schema.Array(Schema.String),
+  shell: Schema.String,
+  command: Schema.NullOr(Schema.String),
+  afterExit: afterExitSchema,
   initialTitle: Schema.optional(Schema.String),
-  shellCommand: Schema.NullOr(Schema.String),
-  interactiveShell: Schema.Boolean,
-  fallbackArgv: Schema.optional(Schema.Array(Schema.String)),
-  closeOnSuccess: Schema.optional(Schema.Boolean),
-  closeOnExit: Schema.optional(Schema.Boolean),
   initialSize: Schema.optional(terminalSizeSchema),
   env: Schema.Record({ key: Schema.String, value: Schema.String }),
   setupTasks: Schema.optional(Schema.Array(setupTaskSchema)),
@@ -347,11 +356,8 @@ const hostedTerminalSchema = Schema.Struct({
   id: Schema.String,
   worktreeId: Schema.String,
   name: Schema.String,
-  argv: Schema.Array(Schema.String),
-  shellCommand: Schema.NullOr(Schema.String),
-  interactiveShell: Schema.Boolean,
-  closeOnSuccess: Schema.Boolean,
-  closeOnExit: Schema.Boolean,
+  command: Schema.NullOr(Schema.String),
+  afterExit: afterExitSchema,
   status: terminalStatusSchema,
   exitCode: Schema.NullOr(Schema.Int),
   unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
@@ -497,7 +503,35 @@ export function decodeTerminalEngineMetadata(source: string) {
       Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
     )
 
-    const input = yield* decodeTerminalHostInput('create', parsed)
+    let createInput = parsed
+    const legacy = Schema.decodeUnknownOption(legacyCreateSchema)(parsed)
+
+    if (Option.isSome(legacy)) {
+      const { argv, shellCommand, interactiveShell, fallbackArgv } =
+        legacy.value
+
+      let afterExit = 'shell'
+
+      if (legacy.value.closeOnSuccess) {
+        afterExit = 'closeOnSuccess'
+      }
+
+      if (legacy.value.closeOnExit) {
+        afterExit = 'close'
+      }
+
+      let shell = fallbackArgv?.[0] ?? process.env.SHELL ?? '/bin/sh'
+      let command: string | null = argv.join(' ')
+
+      if (interactiveShell || shellCommand !== null) {
+        shell = argv[0] ?? shell
+        command = shellCommand
+      }
+
+      createInput = { ...parsed, shell, command, afterExit }
+    }
+
+    const input = yield* decodeTerminalHostInput('create', createInput)
 
     return { ...metadata, input }
   })

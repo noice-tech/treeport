@@ -11,6 +11,7 @@ import {
   browserInstallStatusSchema,
   decodeUnknownOrNull,
   EVENT_PROTOCOL_VERSION,
+  formatCommandLine,
   launcherDefinitionListingSchema,
   launcherInputNames,
   launcherResponseSchema,
@@ -49,6 +50,7 @@ import {
   type NetworkProductEvent,
   type ProjectRecord,
   type TreeportContext,
+  type TerminalAfterExit,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
   type WebAppDefinition,
@@ -134,13 +136,10 @@ interface PackageMutationBody {
 interface TerminalCreateBody {
   name: string
   initialTitle?: string
-  argv?: string[]
-  shellCommand?: string
+  command?: string
+  afterExit?: TerminalAfterExit
   cwd?: string
   env?: Record<string, string>
-  returnToShell?: boolean
-  closeOnSuccess?: boolean
-  closeOnExit?: boolean
 }
 
 export interface CliApplicationOptions {
@@ -2827,7 +2826,7 @@ async function main(args: string[]): Promise<void> {
       list
         .map(
           (terminal) =>
-            `${terminal.id}\t${terminal.name}\t${terminal.status}\t${JSON.stringify(terminal.argv)}`
+            `${terminal.id}\t${terminal.name}\t${terminal.status}\t${terminal.command ?? ''}`
         )
         .join('\n')
     )
@@ -2860,15 +2859,11 @@ async function main(args: string[]): Promise<void> {
     const body: TerminalCreateBody = { name: options.name }
 
     if (argv) {
-      body.argv = argv
-
-      if (!options.closeOnExit) {
-        body.returnToShell = true
-      }
+      body.command = argv.join(' ')
     }
 
     if (options.closeOnExit) {
-      body.closeOnExit = true
+      body.afterExit = 'close'
     }
 
     const result = await request(
@@ -3037,7 +3032,7 @@ async function main(args: string[]): Promise<void> {
     > = { name: options.name }
 
     if (argv) {
-      initialTerminal.argv = argv
+      initialTerminal.command = argv.join(' ')
     }
 
     const request: CreateOperationRequest = {
@@ -3359,12 +3354,17 @@ async function main(args: string[]): Promise<void> {
       )
     }
 
-    const launchArgv = launcher.executable
-      ? [launcher.executable, ...resolveLauncherArgs(launcher.args, inputs)]
-      : null
+    const commandLine =
+      launcher.shellCommand ??
+      (launcher.executable
+        ? formatCommandLine([
+            launcher.executable,
+            ...resolveLauncherArgs(launcher.args, inputs)
+          ])
+        : null)
 
     if (project) {
-      if (!launchArgv || launcher.closeOnSuccess) {
+      if (!commandLine || launcher.closeOnSuccess) {
         throw new CliError(
           `${launcher.name} cannot start a new tree; start it in an existing tree instead`,
           2
@@ -3381,8 +3381,7 @@ async function main(args: string[]): Promise<void> {
         initialTerminal: {
           name: launcher.name,
           initialTitle: launcher.name,
-          argv: launchArgv,
-          returnToShell: true
+          command: commandLine
         }
       }
 
@@ -3412,10 +3411,8 @@ async function main(args: string[]): Promise<void> {
       initialTitle: launcher.name
     }
 
-    if (launcher.shellCommand !== null) {
-      body.shellCommand = launcher.shellCommand
-    } else if (launchArgv) {
-      body.argv = launchArgv
+    if (commandLine) {
+      body.command = commandLine
     }
 
     if (launcher.cwd) {
@@ -3427,9 +3424,7 @@ async function main(args: string[]): Promise<void> {
     }
 
     if (launcher.closeOnSuccess) {
-      body.closeOnSuccess = true
-    } else {
-      body.returnToShell = true
+      body.afterExit = 'closeOnSuccess'
     }
 
     const result = await request(

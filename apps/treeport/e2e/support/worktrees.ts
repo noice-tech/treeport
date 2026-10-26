@@ -103,8 +103,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
         initialTerminal?: {
           name: string
           initialTitle?: string
-          argv?: string[]
-          returnToShell?: boolean
+          command?: string
         }
       } = route.request().postDataJSON()
 
@@ -165,9 +164,7 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
           id: 'term_new',
           worktreeId: 'wt_new',
           name: body.initialTerminal?.name ?? 'Shell',
-          argv: body.initialTerminal?.argv ?? ['/bin/zsh', '-l'],
-          shellCommand: null,
-          interactiveShell: !body.initialTerminal?.argv,
+          command: body.initialTerminal?.command ?? null,
           status: 'running' as const,
           exitCode: null,
           createdAt: '2026-01-01',

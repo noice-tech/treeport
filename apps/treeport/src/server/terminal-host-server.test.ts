@@ -60,9 +60,9 @@ describe('terminal host request scheduling', () => {
       name: terminalId,
       createdAt: '2026-01-01T00:00:00.000Z',
       cwd: root,
-      argv: ['/bin/sh', '-l'],
-      shellCommand: null,
-      interactiveShell: true,
+      shell: '/bin/sh',
+      command: null,
+      afterExit: 'shell' as const,
       env: {}
     })
 

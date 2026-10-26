@@ -480,11 +480,8 @@ export class TerminalHostSessions {
             id: input.terminalId,
             worktreeId: input.worktreeId,
             name: input.name,
-            argv: [...input.argv],
-            shellCommand: input.shellCommand,
-            interactiveShell: input.interactiveShell,
-            closeOnSuccess: input.closeOnSuccess ?? false,
-            closeOnExit: input.closeOnExit ?? false,
+            command: input.command,
+            afterExit: input.afterExit,
             createdAt: input.createdAt,
             updatedAt: input.createdAt,
             status: 'unavailable' as const,
@@ -500,10 +497,6 @@ export class TerminalHostSessions {
         const restore = this.createTerminal(
           {
             ...input,
-            argv: [...input.argv],
-            fallbackArgv: input.fallbackArgv
-              ? [...input.fallbackArgv]
-              : undefined,
             setupTasks: input.setupTasks?.map((task) => ({
               ...task,
               argv: [...task.argv]
@@ -871,10 +864,8 @@ export class TerminalHostSessions {
   ): Effect.Effect<HostedTerminalSession, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const directShell =
-        input.interactiveShell &&
-        input.shellCommand === null &&
+        input.command === null &&
         !input.initialTitle &&
-        !input.fallbackArgv &&
         !input.setupTasks?.length &&
         !input.setupError
 
@@ -900,7 +891,9 @@ export class TerminalHostSessions {
 
       if (!directShell && !retainedOwner) {
         const spec: TerminalLaunchSpec = {
-          argv: [...input.argv],
+          shell: input.shell,
+          command: input.command,
+          afterExit: input.afterExit,
           cwd: input.cwd,
           env: { ...input.env },
           shellIntegrationDir: this.shellIntegrationDir
@@ -908,10 +901,6 @@ export class TerminalHostSessions {
 
         if (input.initialTitle !== undefined) {
           spec.initialTitle = input.initialTitle
-        }
-
-        if (input.fallbackArgv !== undefined) {
-          spec.fallbackArgv = [...input.fallbackArgv]
         }
 
         if (input.setupTasks !== undefined) {
@@ -1016,7 +1005,7 @@ export class TerminalHostSessions {
       }
 
       const directLaunch = integrateShellLaunch(
-        input.argv,
+        [input.shell, '-l'],
         { ...inheritedEnvironment, ...input.env },
         this.shellIntegrationDir,
         directShell
@@ -1251,11 +1240,8 @@ export class TerminalHostSessions {
         id: input.terminalId,
         worktreeId: input.worktreeId,
         name: input.name,
-        argv: [...input.argv],
-        shellCommand: input.shellCommand,
-        interactiveShell: input.interactiveShell,
-        closeOnSuccess: input.closeOnSuccess ?? false,
-        closeOnExit: input.closeOnExit ?? false,
+        command: input.command,
+        afterExit: input.afterExit,
         status: 'running',
         exitCode: null,
         commandExitCode: null,
@@ -2249,11 +2235,8 @@ export class TerminalHostSessions {
             id: session.id,
             worktreeId: session.worktreeId,
             name: session.name,
-            argv: [...session.argv],
-            shellCommand: session.shellCommand,
-            interactiveShell: session.interactiveShell,
-            closeOnSuccess: session.closeOnSuccess,
-            closeOnExit: session.closeOnExit,
+            command: session.command,
+            afterExit: session.afterExit,
             status: session.status,
             exitCode: session.exitCode,
             commandExitCode: session.commandExitCode ?? null,

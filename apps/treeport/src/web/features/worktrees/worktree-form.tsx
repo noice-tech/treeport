@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import {
   availableTreeName,
+  formatCommandLine,
   launcherInputNames,
   resolveLauncherArgs,
   type ProjectRecord,
@@ -43,8 +44,7 @@ export function WorktreeForm({
     initialTerminal: {
       name: string
       initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
+      command?: string
     },
     sourceWorktreeId?: string,
     treeTitleCommand?: string[]
@@ -155,11 +155,10 @@ export function WorktreeForm({
             ? {
                 name: selectedLauncher.name,
                 initialTitle: selectedLauncher.name,
-                argv: [
+                command: formatCommandLine([
                   selectedLauncher.executable,
                   ...resolveLauncherArgs(selectedLauncher.args, submittedInputs)
-                ],
-                returnToShell: true
+                ])
               }
             : { name: 'Terminal' },
           base === 'current' ? baseValue : undefined,

@@ -148,9 +148,7 @@ const terminal: TerminalRecord = {
   id: 'terminal',
   worktreeId: 'worktree',
   name: 'Shell',
-  argv: ['/bin/zsh', '-l'],
-  shellCommand: null,
-  interactiveShell: true,
+  command: null,
   status: 'running',
   exitCode: null,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -222,7 +220,7 @@ describe('TerminalMetadataManager', () => {
     await service.runEffect(manager.initialize())
     await service.runEffect(
       manager.trackTerminal(
-        { ...terminal, argv: ['pnpm', 'test'], interactiveShell: false },
+        { ...terminal, command: 'pnpm test' },
         testAccess({ id: 'worktree' })
       )
     )
@@ -282,8 +280,7 @@ describe('TerminalMetadataManager', () => {
       manager.trackTerminal(
         {
           ...terminal,
-          argv: ['pnpm', 'test'],
-          interactiveShell: false,
+          command: 'pnpm test',
           commandExitCode: 7
         },
         testAccess({ id: 'worktree' })
@@ -295,8 +292,7 @@ describe('TerminalMetadataManager', () => {
       restored.trackTerminal(
         {
           ...terminal,
-          argv: ['pnpm', 'test'],
-          interactiveShell: false,
+          command: 'pnpm test',
           commandExitCode: 7
         },
         testAccess({ id: 'worktree' })

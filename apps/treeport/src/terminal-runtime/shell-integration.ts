@@ -31,6 +31,33 @@ if [[ -n "$TREEPORT_SHELL_INTEGRATION" ]]; then
   add-zsh-hook -d precmd _treeport_command_title_precmd 2>/dev/null
   add-zsh-hook preexec _treeport_command_title_preexec
   add-zsh-hook precmd _treeport_command_title_precmd
+  if [[ -n "\${TREEPORT_RUN_COMMAND+x}" ]]; then
+    _treeport_run_command=$TREEPORT_RUN_COMMAND
+    _treeport_run_after=\${TREEPORT_RUN_AFTER:-shell}
+    _treeport_run_result=\${TREEPORT_RUN_RESULT-}
+    unset TREEPORT_RUN_COMMAND TREEPORT_RUN_AFTER TREEPORT_RUN_RESULT
+    _treeport_run_precmd() {
+      add-zsh-hook -d precmd _treeport_run_precmd
+      print -rs -- "$_treeport_run_command"
+      local hook run_status
+      for hook in preexec $preexec_functions; do
+        (( $+functions[$hook] )) && $hook "$_treeport_run_command" "$_treeport_run_command" "$_treeport_run_command"
+      done
+      eval "$_treeport_run_command"
+      run_status=$?
+      if [[ -n $_treeport_run_result ]]; then
+        print -r -- $run_status >| "$_treeport_run_result.tmp" && command mv -f -- "$_treeport_run_result.tmp" "$_treeport_run_result"
+      fi
+      if [[ $_treeport_run_after == close || ( $_treeport_run_after == closeOnSuccess && $run_status == 0 ) ]]; then
+        exit $run_status
+      fi
+      unset _treeport_run_command _treeport_run_after _treeport_run_result
+      for hook in precmd $precmd_functions; do
+        (( $+functions[$hook] )) && $hook
+      done
+    }
+    add-zsh-hook precmd _treeport_run_precmd
+  fi
 fi
 
 ZDOTDIR=$TREEPORT_USER_ZDOTDIR
@@ -80,6 +107,36 @@ unset _treeport_title_integration_ready
 if [[ -n "\${_treeport_uses_debug_trap-}" ]]; then
   _treeport_command_ready=1
 fi
+if [[ -n "\${TREEPORT_RUN_COMMAND+x}" ]]; then
+  _treeport_run_command=$TREEPORT_RUN_COMMAND
+  _treeport_run_after=\${TREEPORT_RUN_AFTER:-shell}
+  _treeport_run_result=\${TREEPORT_RUN_RESULT-}
+  unset TREEPORT_RUN_COMMAND TREEPORT_RUN_AFTER TREEPORT_RUN_RESULT
+  _treeport_run_prompt() {
+    [[ -n "\${_treeport_run_command+x}" ]] || return
+    local run_command=$_treeport_run_command hook run_status
+    unset _treeport_run_command
+    builtin history -s -- "$run_command"
+    _treeport_command_title_preexec "$run_command"
+    for hook in preexec "\${preexec_functions[@]}"; do
+      declare -F "$hook" >/dev/null && "$hook" "$run_command"
+    done
+    eval "$run_command"
+    run_status=$?
+    if [[ -n $_treeport_run_result ]]; then
+      printf '%s\\n' "$run_status" >| "$_treeport_run_result.tmp" && command mv -f -- "$_treeport_run_result.tmp" "$_treeport_run_result"
+    fi
+    if [[ $_treeport_run_after == close || ( $_treeport_run_after == closeOnSuccess && $run_status == 0 ) ]]; then
+      exit "$run_status"
+    fi
+    _treeport_command_title_prompt
+  }
+  if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
+    PROMPT_COMMAND=("\${PROMPT_COMMAND[@]}" _treeport_run_prompt)
+  else
+    PROMPT_COMMAND="\${PROMPT_COMMAND:+$PROMPT_COMMAND;}_treeport_run_prompt"
+  fi
+fi
 `
 
 const BASH_PROFILE_DELEGATE = `_treeport_integration_home=$HOME
@@ -128,6 +185,33 @@ end
 function _treeport_command_title_prompt --on-event fish_prompt
   printf '\\e]7740;command;\\e\\\\'
 end
+
+if set -q TREEPORT_RUN_COMMAND
+  set -g _treeport_run_command $TREEPORT_RUN_COMMAND
+  set -g _treeport_run_after shell
+  set -q TREEPORT_RUN_AFTER; and set _treeport_run_after $TREEPORT_RUN_AFTER
+  set -g _treeport_run_result
+  set -q TREEPORT_RUN_RESULT; and set _treeport_run_result $TREEPORT_RUN_RESULT
+  set -e TREEPORT_RUN_COMMAND TREEPORT_RUN_AFTER TREEPORT_RUN_RESULT
+
+  function _treeport_run_prompt --on-event fish_prompt
+    set -q _treeport_run_command; or return
+    set -l run_command $_treeport_run_command
+    set -e _treeport_run_command
+    builtin history append -- $run_command 2>/dev/null
+    emit fish_preexec $run_command
+    eval $run_command
+    set -l run_status $status
+    emit fish_postexec $run_command
+    if test -n "$_treeport_run_result"
+      printf '%s\\n' $run_status >"$_treeport_run_result.tmp"; and command mv -f -- "$_treeport_run_result.tmp" "$_treeport_run_result"
+    end
+    if test "$_treeport_run_after" = close; or begin; test "$_treeport_run_after" = closeOnSuccess; and test $run_status -eq 0; end
+      exit $run_status
+    end
+    _treeport_command_title_prompt
+  end
+end
 `
 
 export async function prepareShellIntegration(root: string): Promise<void> {
@@ -167,6 +251,7 @@ export async function prepareShellIntegration(root: string): Promise<void> {
 interface ShellLaunch {
   argv: string[]
   env: NodeJS.ProcessEnv
+  integrated: boolean
 }
 
 export function integrateShellLaunch(
@@ -178,7 +263,7 @@ export function integrateShellLaunch(
   const shell = path.basename(argv[0] ?? '').replace(/^-/, '')
 
   if (!root || !enabled || !['zsh', 'bash', 'fish'].includes(shell)) {
-    return { argv, env }
+    return { argv, env, integrated: false }
   }
 
   let positional = false
@@ -210,7 +295,7 @@ export function integrateShellLaunch(
     }
 
     if (hasCommandOption) {
-      return { argv, env }
+      return { argv, env, integrated: false }
     }
   }
 
@@ -230,7 +315,7 @@ export function integrateShellLaunch(
         : env.HOME?.trim()
 
     if (!userZdotDir) {
-      return { argv, env }
+      return { argv, env, integrated: false }
     }
 
     return {
@@ -239,7 +324,8 @@ export function integrateShellLaunch(
         ...integratedEnv,
         TREEPORT_USER_ZDOTDIR: userZdotDir,
         ZDOTDIR: integrationZdotDir
-      }
+      },
+      integrated: true
     }
   }
 
@@ -258,7 +344,7 @@ export function integrateShellLaunch(
       fishEnvironment.TREEPORT_FISH_XDG_DATA_DIRS_SET = '1'
     }
 
-    return { argv, env: fishEnvironment }
+    return { argv, env: fishEnvironment, integrated: true }
   }
 
   positional = false
@@ -266,7 +352,7 @@ export function integrateShellLaunch(
   for (const argument of argv.slice(1)) {
     if (positional) {
       if (argument !== '-') {
-        return { argv, env }
+        return { argv, env, integrated: false }
       }
 
       continue
@@ -282,16 +368,16 @@ export function integrateShellLaunch(
         !argument.startsWith('--') &&
         argument.slice(1).includes('c'))
     ) {
-      return { argv, env }
+      return { argv, env, integrated: false }
     } else if (!argument.startsWith('-') && argument !== '-') {
-      return { argv, env }
+      return { argv, env, integrated: false }
     }
   }
 
   const userHome = env.HOME?.trim()
 
   if (!userHome) {
-    return { argv, env }
+    return { argv, env, integrated: false }
   }
 
   return {
@@ -300,6 +386,7 @@ export function integrateShellLaunch(
       ...integratedEnv,
       HOME: path.join(root, 'bash', 'home'),
       TREEPORT_USER_HOME: userHome
-    }
+    },
+    integrated: true
   }
 }

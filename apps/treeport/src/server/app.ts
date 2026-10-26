@@ -1367,12 +1367,12 @@ export function createApp({
             initialTerminal.initialTitle = body.initialTerminal.initialTitle
           }
 
-          if (body.initialTerminal.argv) {
-            initialTerminal.argv = [...body.initialTerminal.argv]
+          if (body.initialTerminal.command) {
+            initialTerminal.command = body.initialTerminal.command
           }
 
-          if (body.initialTerminal.returnToShell) {
-            initialTerminal.returnToShell = true
+          if (body.initialTerminal.afterExit) {
+            initialTerminal.afterExit = body.initialTerminal.afterExit
           }
 
           if (body.initialTerminal.initialSize) {
@@ -1964,23 +1964,19 @@ export function createApp({
         const body = yield* requestBody(createTerminalSchema)
 
         const options: NonNullable<
-          Parameters<TreeportService['terminals']['createTerminal']>[3]
+          Parameters<TreeportService['terminals']['createTerminal']>[2]
         > = {}
 
         if (body.initialTitle) {
           options.initialTitle = body.initialTitle
         }
 
-        if (body.returnToShell) {
-          options.returnToShell = true
+        if (body.command) {
+          options.command = body.command
         }
 
-        if (body.closeOnSuccess) {
-          options.closeOnSuccess = true
-        }
-
-        if (body.closeOnExit) {
-          options.closeOnExit = true
+        if (body.afterExit) {
+          options.afterExit = body.afterExit
         }
 
         if (body.initialSize) {
@@ -1995,15 +1991,10 @@ export function createApp({
           options.env = { ...body.env }
         }
 
-        if (body.shellCommand) {
-          options.shellCommand = body.shellCommand
-        }
-
         const terminal = yield* operation(() =>
           service.terminals.createTerminal(
             params.worktreeId!,
             body.name,
-            body.argv ? [...body.argv] : undefined,
             Object.keys(options).length ? options : undefined
           )
         )

@@ -3,6 +3,8 @@ export const TERMINAL_NAME_MAX_LENGTH = 120
 
 export const TERMINAL_COMMAND_OSC = 7740
 
+type TerminalAfterExit = 'shell' | 'close' | 'closeOnSuccess'
+
 interface TerminalSize {
   cols: number
   rows: number
@@ -32,9 +34,10 @@ interface TerminalSetupTask {
 }
 
 export interface TerminalLaunchSpec {
-  argv: string[]
+  shell: string
+  command: string | null
+  afterExit: TerminalAfterExit
   initialTitle?: string | undefined
-  fallbackArgv?: string[] | undefined
   cwd: string
   env: Record<string, string>
   shellIntegrationDir?: string | undefined
@@ -60,11 +63,8 @@ export interface HostedTerminal {
   id: string
   worktreeId: string
   name: string
-  argv: string[]
-  shellCommand: string | null
-  interactiveShell: boolean
-  closeOnSuccess: boolean
-  closeOnExit: boolean
+  command: string | null
+  afterExit: TerminalAfterExit
   status: 'running' | 'exited' | 'unavailable'
   exitCode: number | null
   unavailableReason?: string | null | undefined
@@ -85,13 +85,10 @@ export interface TerminalCreateInput {
   name: string
   createdAt: string
   cwd: string
-  argv: string[]
+  shell: string
+  command: string | null
+  afterExit: TerminalAfterExit
   initialTitle?: string | undefined
-  shellCommand: string | null
-  interactiveShell: boolean
-  fallbackArgv?: string[] | undefined
-  closeOnSuccess?: boolean | undefined
-  closeOnExit?: boolean | undefined
   initialSize?: TerminalSize | undefined
   env: Record<string, string>
   setupTasks?: TerminalSetupTask[] | undefined

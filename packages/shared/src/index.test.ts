@@ -6,7 +6,6 @@ import {
   createWorktreeSchema as createWorktreeEffectSchema,
   registerProjectSchema as registerProjectEffectSchema,
   removeWorktreeSchema as removeWorktreeEffectSchema,
-  spawnSchema as spawnEffectSchema,
   TERMINAL_ARGUMENT_MAX_LENGTH,
   TERMINAL_EXECUTABLE_MAX_LENGTH,
   TERMINAL_NAME_MAX_LENGTH,
@@ -21,7 +20,6 @@ const createTerminalSchema = testSchema(createTerminalEffectSchema)
 const createWorktreeSchema = testSchema(createWorktreeEffectSchema)
 const registerProjectSchema = testSchema(registerProjectEffectSchema)
 const removeWorktreeSchema = testSchema(removeWorktreeEffectSchema)
-const spawnSchema = testSchema(spawnEffectSchema)
 const updateLauncherSchema = testSchema(updateLauncherEffectSchema)
 
 describe('API input validation', () => {
@@ -47,96 +45,63 @@ describe('API input validation', () => {
     ).toBe(false)
   })
 
-  it('preserves command argv literally', () => {
-    const argv = [
-      'command with spaces',
-      'a "quote"',
-      'semi;colon',
-      '$HOME',
-      'Unicode 世界',
-      "single'quote"
-    ]
+  it('preserves terminal commands literally', () => {
+    const command = `printf '%s' 'a "quote"' 'semi;colon' $HOME 'Unicode 世界'`
 
     expect(
       createTerminalSchema.parse({
         name: 'researcher',
         initialTitle: '  Review launcher  ',
-        argv,
+        command,
         cwd: '/repo/worktrees/topic with spaces',
         env: { CUSTOM: 'value;$HOME 雪' },
-        returnToShell: true,
+        afterExit: 'closeOnSuccess',
         initialSize: { cols: 132, rows: 47 }
       })
     ).toMatchObject({
       initialTitle: 'Review launcher',
-      argv,
+      command,
       cwd: '/repo/worktrees/topic with spaces',
       env: { CUSTOM: 'value;$HOME 雪' },
-      returnToShell: true,
+      afterExit: 'closeOnSuccess',
       initialSize: { cols: 132, rows: 47 }
     })
     expect(
       createTerminalSchema.safeParse({
         name: 'invalid lifecycle',
-        argv,
-        returnToShell: true,
-        closeOnSuccess: true
+        command,
+        afterExit: 'later'
       }).success
     ).toBe(false)
-    expect(
-      createTerminalSchema.parse({
-        name: 'Zed task',
-        shellCommand: 'bun remotion',
-        returnToShell: true
-      })
-    ).toMatchObject({
-      shellCommand: 'bun remotion',
-      returnToShell: true
-    })
-    expect(
-      createTerminalSchema.safeParse({
-        name: 'ambiguous',
-        argv,
-        shellCommand: 'bun remotion'
-      }).success
-    ).toBe(false)
-    expect(
-      spawnSchema.parse({
-        project: '.',
-        worktreeName: 'topic',
-        name: 'Pi',
-        argv
-      }).argv
-    ).toEqual(argv)
     expect(
       createWorktreeSchema.parse({
         name: 'topic',
         initialTerminal: {
           name: 'Hunk',
           initialTitle: '  Hunk review  ',
-          argv
+          command
         }
       })
     ).toMatchObject({
-      initialTerminal: { name: 'Hunk', initialTitle: 'Hunk review', argv }
+      initialTerminal: { name: 'Hunk', initialTitle: 'Hunk review', command }
     })
   })
 
-  it('rejects empty argv, command strings, and invalid initial sizes', () => {
+  it('rejects blank commands and invalid initial sizes', () => {
     expect(
-      createTerminalSchema.safeParse({ name: 'bad', argv: [] }).success
+      createTerminalSchema.safeParse({ name: 'bad', command: '' }).success
     ).toBe(false)
     expect(
-      createTerminalSchema.safeParse({ name: 'bad', argv: 'pnpm dev' }).success
-    ).toBe(false)
-    expect(
-      createTerminalSchema.safeParse({ name: 'bad', shellCommand: ' \t ' })
+      createTerminalSchema.safeParse({ name: 'bad', command: ['pnpm', 'dev'] })
         .success
+    ).toBe(false)
+    expect(
+      createTerminalSchema.safeParse({ name: 'bad', command: ' \t ' }).success
     ).toBe(false)
     expect(
       createTerminalSchema.safeParse({
         name: 'bad',
-        shellCommand: 'bun\0remotion'
+        command: 'bun\0remotion'
       }).success
     ).toBe(false)
     expect(
@@ -190,26 +155,11 @@ describe('API input validation', () => {
     }
   })
 
-  it('keeps legacy terminal and spawn argument lengths unchanged', () => {
-    const longArgument = 'x'.repeat(TERMINAL_ARGUMENT_MAX_LENGTH + 1)
+  it('limits terminal command length', () => {
     expect(
       createTerminalSchema.safeParse({
-        name: 'Legacy terminal',
-        argv: ['tool', longArgument]
-      }).success
-    ).toBe(true)
-    expect(
-      spawnSchema.safeParse({
-        project: '.',
-        worktreeName: 'topic',
-        name: 'Legacy spawn',
-        argv: ['tool', longArgument]
-      }).success
-    ).toBe(true)
-    expect(
-      createTerminalSchema.safeParse({
-        name: 'Shell command',
-        shellCommand: longArgument
+        name: 'Long command',
+        command: 'x'.repeat(TERMINAL_ARGUMENT_MAX_LENGTH + 1)
       }).success
     ).toBe(false)
   })

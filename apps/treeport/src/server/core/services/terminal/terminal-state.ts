@@ -1,4 +1,4 @@
-import type { TerminalRecord } from '@treeport/shared'
+import type { TerminalAfterExit, TerminalRecord } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
 import { DomainError } from '../../domain'
@@ -6,7 +6,7 @@ import { DomainError } from '../../domain'
 interface State {
   readonly terminals: Map<string, TerminalRecord>
   readonly removingTerminalIds: Map<string, string>
-  readonly terminalClosePolicies: Map<string, 'success' | 'exit'>
+  readonly terminalClosePolicies: Map<string, TerminalAfterExit>
   readonly terminalIdsByWorktree: Map<string, Set<string>>
 }
 
@@ -89,18 +89,17 @@ export class TerminalState extends Effect.Service<TerminalState>()(
         updateClosePolicies: (
           terminals: ReadonlyArray<{
             readonly terminalId: string
-            readonly closeOnSuccess: boolean
-            readonly closeOnExit: boolean
+            readonly afterExit: TerminalAfterExit
           }>
         ) =>
           Ref.update(state, (current) => {
             const terminalClosePolicies = new Map(current.terminalClosePolicies)
 
             for (const terminal of terminals) {
-              if (terminal.closeOnExit || terminal.closeOnSuccess) {
+              if (terminal.afterExit !== 'shell') {
                 terminalClosePolicies.set(
                   terminal.terminalId,
-                  terminal.closeOnExit ? 'exit' : 'success'
+                  terminal.afterExit
                 )
               } else {
                 terminalClosePolicies.delete(terminal.terminalId)
@@ -161,15 +160,15 @@ export class TerminalState extends Effect.Service<TerminalState>()(
 
         recordTerminal: (
           terminal: TerminalRecord,
-          closePolicy: 'success' | 'exit' | null
+          afterExit: TerminalAfterExit
         ) =>
           Ref.update(state, (current) => {
             const terminals = new Map(current.terminals)
             terminals.set(terminal.id, terminal)
             const terminalClosePolicies = new Map(current.terminalClosePolicies)
 
-            if (closePolicy) {
-              terminalClosePolicies.set(terminal.id, closePolicy)
+            if (afterExit !== 'shell') {
+              terminalClosePolicies.set(terminal.id, afterExit)
             } else {
               terminalClosePolicies.delete(terminal.id)
             }
