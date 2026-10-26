@@ -26,7 +26,8 @@ const EMPTY_NAVIGATION_METADATA = {
 
 const EMPTY_ATTENTION_METADATA = {
   attention: EMPTY_ATTENTION_METADATA_MAP,
-  titles: EMPTY_TITLES
+  titles: EMPTY_TITLES,
+  activity: EMPTY_ACTIVITY
 }
 
 let navigationMetadata = EMPTY_NAVIGATION_METADATA
@@ -53,12 +54,14 @@ function getNavigationMetadata() {
 function getAttentionMetadata() {
   const attention = terminalSessions.getAttentionMetadataSnapshot()
   const titles = terminalSessions.getTitleSnapshot()
+  const activity = terminalSessions.getActivitySnapshot()
 
   if (
     attentionMetadata.attention !== attention ||
-    attentionMetadata.titles !== titles
+    attentionMetadata.titles !== titles ||
+    attentionMetadata.activity !== activity
   ) {
-    attentionMetadata = { attention, titles }
+    attentionMetadata = { attention, titles, activity }
   }
 
   return attentionMetadata

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 import { NodeHttpServer } from '@effect/platform-node'
 import { getSessionKeeperPayload } from '@treeport/session-keeper'
+import { terminalAttentionNotification } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
@@ -266,27 +267,25 @@ export async function main(
               return
             }
 
-            const status =
-              attention.reason === 'bell'
-                ? 'Terminal needs attention'
-                : (current.activity.message ??
-                  {
-                    done: 'Finished',
-                    blocked: 'Needs your input',
-                    error: 'Failed'
-                  }[attention.reason])
-
             const terminal = yield* service.terminals.getTerminal(terminalId)
 
             const worktree = yield* service.projects.getWorktree(
               terminal.worktreeId
             )
 
+            const project = yield* service.projects.getProject(
+              worktree.projectId
+            )
+
             yield* Effect.tryPromise(() =>
               push.notify(
                 {
-                  title: current.title ?? terminal.name,
-                  body: `${status} · ${worktree.name}`,
+                  ...terminalAttentionNotification({
+                    terminalTitle: current.title ?? terminal.name,
+                    projectName: project.name,
+                    reason: attention.reason,
+                    activityMessage: current.activity.message
+                  }),
                   url: `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/terminals/${encodeURIComponent(terminalId)}`,
                   tag: `treeport-attention:${terminalId}`
                 },

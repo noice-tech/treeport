@@ -119,6 +119,28 @@ export function parseTerminalRuntimeMetadata(
   return decodeOrNull(terminalRuntimeMetadataSchema, value)
 }
 
+export function terminalAttentionNotification(input: {
+  terminalTitle: string
+  projectName: string
+  reason: TerminalAttentionReason
+  activityMessage: string | null
+}) {
+  const status =
+    input.reason === 'bell'
+      ? 'Terminal needs attention'
+      : (input.activityMessage ??
+        {
+          done: 'Finished',
+          blocked: 'Needs your input',
+          error: 'Failed'
+        }[input.reason])
+
+  return {
+    title: input.terminalTitle,
+    body: `${status} · ${input.projectName}`
+  }
+}
+
 export const terminalAuthSchema = Schema.Struct({
   terminalId,
   clientId,

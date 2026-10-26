@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react'
-import type { ProjectRecord } from '@treeport/shared'
+import {
+  terminalAttentionNotification,
+  type ProjectRecord
+} from '@treeport/shared'
 import { BellIcon } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -50,7 +53,7 @@ export function NotificationCenter({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { attention, titles } = useTerminalAttentionMetadata()
+  const { attention, titles, activity } = useTerminalAttentionMetadata()
   const [pending, setPending] = useState<Set<string>>(() => new Set())
 
   const notifications = useMemo(
@@ -68,8 +71,13 @@ export function NotificationCenter({
                       terminalId: terminal.id,
                       sequence: entry.sequence,
                       occurredAt: entry.at,
-                      title: titles.get(terminal.id) ?? terminal.name,
-                      context: project.name,
+                      ...terminalAttentionNotification({
+                        terminalTitle: titles.get(terminal.id) ?? terminal.name,
+                        projectName: project.name,
+                        reason: entry.reason,
+                        activityMessage:
+                          activity.get(terminal.id)?.message ?? null
+                      }),
                       target
                     }
                   ]
@@ -82,7 +90,7 @@ export function NotificationCenter({
             right.occurredAt.localeCompare(left.occurredAt) ||
             left.terminalId.localeCompare(right.terminalId)
         ),
-    [attention, projects, titles]
+    [activity, attention, projects, titles]
   )
 
   const count = notifications.length
@@ -172,7 +180,7 @@ export function NotificationCenter({
                       {notification.title}
                     </h3>
                     <div className="flex min-w-0 items-baseline gap-1.5 text-xs text-zinc-500">
-                      <p className="min-w-0 truncate">{notification.context}</p>
+                      <p className="min-w-0 truncate">{notification.body}</p>
                       <span className="shrink-0" aria-hidden>
                         ·
                       </span>
