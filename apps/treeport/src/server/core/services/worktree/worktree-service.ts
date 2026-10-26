@@ -1,5 +1,6 @@
 import type {
   CreateOperationRequest,
+  LauncherTreeTitle,
   OperationRecord,
   RemovePreview,
   TerminalAfterExit,
@@ -50,7 +51,7 @@ export class WorktreeService {
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,
-    treeTitleCommand?: readonly string[]
+    treeTitle?: LauncherTreeTitle
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     return this.creation.beginCreateWorktree(
       projectId,
@@ -58,7 +59,7 @@ export class WorktreeService {
       base,
       initialTerminal,
       sourceWorktreeId,
-      treeTitleCommand
+      treeTitle
     )
   }
 
@@ -82,7 +83,7 @@ export class WorktreeService {
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,
-    treeTitleCommand?: readonly string[]
+    treeTitle?: LauncherTreeTitle
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -94,7 +95,7 @@ export class WorktreeService {
       base,
       initialTerminal,
       sourceWorktreeId,
-      treeTitleCommand
+      treeTitle
     )
   }
 

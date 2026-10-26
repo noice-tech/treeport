@@ -28,6 +28,7 @@ export const project: ProjectRecord = {
       kind: 'main',
       managedWrapperPath: null,
       title: null,
+      pendingTitle: null,
       decorations: [],
       dirty: {
         dirty: false,
@@ -67,6 +68,7 @@ export const project: ProjectRecord = {
       kind: 'linked',
       managedWrapperPath: null,
       title: null,
+      pendingTitle: null,
       decorations: [],
       dirty: {
         dirty: false,

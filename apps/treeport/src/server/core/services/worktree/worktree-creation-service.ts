@@ -8,6 +8,7 @@ import {
 } from '@treeport/shared'
 import type {
   CreateOperationRequest,
+  LauncherTreeTitle,
   OperationRecord,
   ProjectRecord,
   TerminalRecord,
@@ -176,7 +177,7 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitleCommand?: readonly string[]
+    treeTitle?: LauncherTreeTitle
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     const executeCreateOperation = this.executeCreateOperation.bind(this)
 
@@ -240,8 +241,8 @@ export class WorktreeCreationService {
         request.sourceWorktreeId = sourceWorktreeId
       }
 
-      if (treeTitleCommand) {
-        request.treeTitleCommand = [...treeTitleCommand]
+      if (treeTitle) {
+        request.treeTitle = treeTitle
       }
 
       yield* database
@@ -272,7 +273,7 @@ export class WorktreeCreationService {
             base,
             initialTerminal,
             sourceWorktreeId,
-            treeTitleCommand
+            treeTitle
           )
         )
         .pipe(
@@ -296,7 +297,7 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitleCommand?: readonly string[]
+    treeTitle?: LauncherTreeTitle
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     const executeCreateWorktree = this.executeCreateWorktree.bind(this)
 
@@ -318,7 +319,7 @@ export class WorktreeCreationService {
         base,
         initialTerminal,
         sourceWorktreeId,
-        treeTitleCommand
+        treeTitle
       )
 
       yield* Effect.matchCauseEffect(creation, {
@@ -406,7 +407,7 @@ export class WorktreeCreationService {
       request.base,
       initialTerminal,
       request.sourceWorktreeId,
-      request.treeTitleCommand
+      request.treeTitle
     )
   }
 
@@ -416,7 +417,7 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitleCommand?: readonly string[]
+    treeTitle?: LauncherTreeTitle
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -464,7 +465,7 @@ export class WorktreeCreationService {
           base,
           initialTerminal,
           sourceWorktreeId,
-          treeTitleCommand
+          treeTitle
         )
       )
     })
@@ -476,7 +477,7 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitleCommand?: readonly string[]
+    treeTitle?: LauncherTreeTitle
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -498,6 +499,7 @@ export class WorktreeCreationService {
         const locks = yield* MutationLocks
         const projectStore = yield* ProjectStore
         const runner = yield* CommandPort
+        const snapshots = yield* ProjectSnapshotOperations
         const setupService = yield* Setup
         const zed = yield* Zed
 
@@ -731,6 +733,14 @@ export class WorktreeCreationService {
                   ),
                 () => locks.release({ worktreeIds: [worktree.id] })
               )
+
+              if (treeTitle) {
+                worktree.pendingTitle = treeTitle.pendingTitle
+                yield* Effect.sync(() =>
+                  snapshots.setPendingTitle(worktree.id, treeTitle.pendingTitle)
+                )
+              }
+
               yield* Effect.sync(() =>
                 events.publish('worktree.created', {
                   projectId,
@@ -743,7 +753,7 @@ export class WorktreeCreationService {
           () => locks.release({ projectId })
         )
 
-        const [titleExecutable, ...titleArgs] = treeTitleCommand ?? []
+        const [titleExecutable, ...titleArgs] = treeTitle?.command ?? []
 
         if (titleExecutable) {
           yield* Effect.forkDaemon(
@@ -772,22 +782,20 @@ export class WorktreeCreationService {
                     WHERE id=${worktree.id} AND title IS NULL
                   `)
                   )
-                  .pipe(
-                    Effect.orDie,
-                    Effect.zipRight(invalidateProjectsSnapshot()),
-                    Effect.zipRight(
-                      Effect.sync(() =>
-                        events.publish('project.updated', {
-                          projectId: worktree.projectId
-                        })
-                      )
-                    )
-                  )
+                  .pipe(Effect.orDie)
               }),
               Effect.catchAllCause((cause) =>
                 Effect.logWarning(
                   `Tree title command failed for ${worktree.id}: ${Cause.pretty(cause)}`
                 )
+              ),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  snapshots.setPendingTitle(worktree.id, null)
+                  events.publish('project.updated', {
+                    projectId: worktree.projectId
+                  })
+                })
               )
             )
           )

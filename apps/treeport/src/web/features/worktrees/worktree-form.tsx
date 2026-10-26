@@ -4,6 +4,8 @@ import {
   formatCommandLine,
   launcherInputNames,
   resolveLauncherArgs,
+  resolveLauncherTreeTitle,
+  type LauncherTreeTitle,
   type ProjectRecord,
   type LauncherDefinition,
   type LauncherDefinitionDiagnostic
@@ -47,7 +49,7 @@ export function WorktreeForm({
       command?: string
     },
     sourceWorktreeId?: string,
-    treeTitleCommand?: string[]
+    treeTitle?: LauncherTreeTitle
   ) => void
 }) {
   const submitButtonRef = useRef<HTMLButtonElement>(null)
@@ -108,8 +110,8 @@ export function WorktreeForm({
     })
   )
 
-  const generatedName = availableTreeName(
-    project.worktrees.map((worktree) => worktree.name)
+  const [generatedName] = useState(() =>
+    availableTreeName(project.worktrees.map((worktree) => worktree.name))
   )
 
   const base = baseValue === 'default' ? 'default' : 'current'
@@ -162,14 +164,9 @@ export function WorktreeForm({
               }
             : { name: 'Terminal' },
           base === 'current' ? baseValue : undefined,
-          selectedLauncher?.treeTitle
-            ? [
-                selectedLauncher.treeTitle.executable,
-                ...resolveLauncherArgs(
-                  selectedLauncher.treeTitle.args,
-                  submittedInputs
-                )
-              ]
+          selectedLauncher
+            ? (resolveLauncherTreeTitle(selectedLauncher, submittedInputs) ??
+                undefined)
             : undefined
         )
       }}

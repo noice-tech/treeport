@@ -297,6 +297,30 @@
   animation-delay: 120ms;
 }
 
+.worktree-title-pending {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    var(--color-zinc-400) 40%,
+    var(--color-zinc-100) 50%,
+    var(--color-zinc-400) 60%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  animation: worktree-title-shimmer 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes worktree-title-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+
+  60%,
+  100% {
+    background-position: 0 0;
+  }
+}
+
 .worktree-removing-icon {
   --worktree-progress-glow: var(--color-rose-400);
 }
@@ -357,7 +381,8 @@
 @media (prefers-reduced-motion: reduce) {
   .worktree-progress-icon,
   .worktree-progress-icon :is(path, line, polyline),
-  .worktree-progress-icon circle {
+  .worktree-progress-icon circle,
+  .worktree-title-pending {
     animation: none;
   }
 }

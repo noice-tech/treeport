@@ -1387,7 +1387,7 @@ export function createApp({
             body.base,
             initialTerminal,
             body.sourceWorktreeId,
-            body.treeTitleCommand
+            body.treeTitle
           )
         )
 
