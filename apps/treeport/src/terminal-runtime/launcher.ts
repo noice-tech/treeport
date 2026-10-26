@@ -318,7 +318,10 @@ export function runLaunchSpec(
       return 127
     }
 
-    const commandEnvironment = { ...process.env, ...spec.env }
+    const { TREEPORT_RUN_COMMAND: runCommand, ...commandEnvironment } = {
+      ...process.env,
+      ...spec.env
+    }
 
     const command = integrateShellLaunch(
       spec.argv,
@@ -326,6 +329,12 @@ export function runLaunchSpec(
       spec.shellIntegrationDir,
       Boolean(spec.shellIntegrationDir)
     )
+
+    if (runCommand !== undefined && command.integrated) {
+      command.env = { ...command.env, TREEPORT_RUN_COMMAND: runCommand }
+    } else if (runCommand !== undefined) {
+      command.argv = [...command.argv, '-i', '-c', runCommand]
+    }
 
     const initialTitle = spec.initialTitle
       ? safeDiagnostic(spec.initialTitle)

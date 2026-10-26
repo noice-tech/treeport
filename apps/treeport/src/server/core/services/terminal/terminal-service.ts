@@ -415,14 +415,20 @@ export class TerminalService {
         'treeport.terminal.id': terminalId,
         'treeport.worktree.id': worktree.id
       })
-      const shellCommand = options?.shellCommand ?? null
-      const interactiveShell = !argv && shellCommand === null
 
-      const commandArgv = argv
-        ? [...argv]
-        : shellCommand
-          ? [config.shell, '-lc', shellCommand]
-          : [config.shell, '-l']
+      const shellCommand =
+        options?.shellCommand ??
+        argv
+          ?.map((value) =>
+            /^[\w@%+=:,./-]+$/u.test(value)
+              ? value
+              : `'${value.replaceAll("'", `'\\''`)}'`
+          )
+          .join(' ') ??
+        null
+
+      const interactiveShell = shellCommand === null
+      const commandArgv = [config.shell, '-l']
 
       const timestamp = now()
 
@@ -451,6 +457,10 @@ export class TerminalService {
           TREEPORT_WORKTREE_ID: worktree.id,
           TREEPORT_TERMINAL_ID: terminalId
         }
+      }
+
+      if (shellCommand !== null) {
+        session.env.TREEPORT_RUN_COMMAND = shellCommand
       }
 
       if (options?.initialTitle) {
@@ -503,9 +513,9 @@ export class TerminalService {
             'treeport.worktree.id': worktree.id,
             'treeport.terminal.launch_kind': interactiveShell
               ? 'shell'
-              : shellCommand
-                ? 'shell_command'
-                : 'argv'
+              : argv
+                ? 'argv'
+                : 'shell_command'
           }
         })
       )
