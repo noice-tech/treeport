@@ -6,6 +6,7 @@ import {
   MagnifyingGlassIcon
 } from '@heroicons/react/16/solid'
 import {
+  formatCommandLine,
   launcherInputNames,
   resolveLauncherArgs,
   type LauncherDefinition,
@@ -104,9 +105,9 @@ export function NewAppDialog({
     }
 
     if (launcher.shellCommand !== null) {
-      input.shellCommand = launcher.shellCommand
+      input.command = launcher.shellCommand
     } else if (launcher.executable) {
-      input.argv = [
+      input.command = formatCommandLine([
         launcher.executable,
         ...resolveLauncherArgs(
           launcher.args,
@@ -114,7 +115,7 @@ export function NewAppDialog({
             Object.entries(values).map(([key, value]) => [key, value.trim()])
           )
         )
-      ]
+      ])
     } else {
       return
     }
@@ -128,9 +129,7 @@ export function NewAppDialog({
     }
 
     if (launcher.closeOnSuccess) {
-      input.closeOnSuccess = true
-    } else {
-      input.returnToShell = true
+      input.afterExit = 'closeOnSuccess'
     }
 
     onCreateTerminal(input)

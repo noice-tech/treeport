@@ -1,3 +1,4 @@
+import { formatCommandLine } from '@treeport/shared'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import http from 'node:http'
@@ -143,14 +144,13 @@ it.skipIf(process.env.MEASURE_TREEPORT_THROUGHPUT !== '1')(
                 name: terminalId,
                 createdAt: new Date().toISOString(),
                 cwd: root,
-                argv: [
+                shell: '/bin/sh',
+                command: `exec ${formatCommandLine([
                   process.execPath,
                   '-e',
                   `const timer = setInterval(() => { if (!require('fs').existsSync(${JSON.stringify(path.join(runtimeDir, 'go'))})) return; clearInterval(timer); const data = '\\x1b[32mhello🌲\\x1b[0m\\r\\n'.repeat(256); let n = 0; const write = () => { if (++n <= 512) process.stdout.write(data, () => setImmediate(write)); else process.stdout.write('BENCH_DONE'); }; write(); }, 10);`
-                ],
-                shellCommand: null,
-                interactiveShell: false,
-                closeOnSuccess: false,
+                ])}`,
+                afterExit: 'shell',
                 initialSize: { cols: 80, rows: 24 },
                 env: {}
               })

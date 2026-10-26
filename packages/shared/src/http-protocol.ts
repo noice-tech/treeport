@@ -53,9 +53,7 @@ export const terminalRecordSchema = Schema.Struct({
   id: Schema.String,
   worktreeId: Schema.String,
   name: Schema.String,
-  argv: stringArraySchema,
-  shellCommand: nullableStringSchema,
-  interactiveShell: Schema.Boolean,
+  command: nullableStringSchema,
   status: Schema.Literal('running', 'exited', 'missing', 'unavailable'),
   exitCode: Schema.NullOr(Schema.Int),
   unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
@@ -280,8 +278,10 @@ const createOperationRequestSchema = Schema.Struct({
     Schema.Struct({
       name: Schema.String,
       initialTitle: Schema.optional(Schema.String),
-      argv: Schema.optional(stringArraySchema),
-      returnToShell: Schema.optional(Schema.Boolean),
+      command: Schema.optional(Schema.String),
+      afterExit: Schema.optional(
+        Schema.Literal('shell', 'close', 'closeOnSuccess')
+      ),
       initialSize: Schema.optional(
         Schema.Struct({ cols: Schema.Int, rows: Schema.Int })
       )

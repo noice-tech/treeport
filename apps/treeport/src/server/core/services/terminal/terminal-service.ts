@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import type {
+  TerminalAfterExit,
   TerminalRecord,
   TerminalSize,
   WorktreeRecord
@@ -50,13 +51,11 @@ type TerminalEffect<Result> = Effect.Effect<
 export interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
   initialTitle?: string
-  returnToShell?: boolean
-  closeOnSuccess?: boolean
-  closeOnExit?: boolean
+  command?: string
+  afterExit?: TerminalAfterExit
   initialSize?: TerminalSize
   cwd?: string
   env?: Record<string, string>
-  shellCommand?: string
 }
 
 export class TerminalService {
@@ -122,8 +121,9 @@ export class TerminalService {
           if (
             terminal.status !== 'exited' ||
             !(
-              terminal.closeOnExit ||
-              (terminal.closeOnSuccess && terminal.exitCode === 0)
+              terminal.afterExit === 'close' ||
+              (terminal.afterExit === 'closeOnSuccess' &&
+                terminal.exitCode === 0)
             )
           ) {
             continue
@@ -160,9 +160,7 @@ export class TerminalService {
           id: terminal.id,
           worktreeId: terminal.worktreeId,
           name: terminal.name,
-          argv: terminal.argv,
-          shellCommand: terminal.shellCommand,
-          interactiveShell: terminal.interactiveShell,
+          command: terminal.command,
           status: terminal.status,
           exitCode: terminal.exitCode,
           unavailableReason: terminal.unavailableReason ?? null,
@@ -191,8 +189,7 @@ export class TerminalService {
       yield* terminalState.updateClosePolicies(
         sessions.map((terminal) => ({
           terminalId: terminal.id,
-          closeOnSuccess: terminal.closeOnSuccess,
-          closeOnExit: terminal.closeOnExit
+          afterExit: terminal.afterExit
         }))
       )
 
@@ -399,7 +396,6 @@ export class TerminalService {
   private createTerminalSession(
     worktree: WorktreeRecord,
     name: string,
-    argv?: string[],
     options?: TerminalLaunchOptions
   ): TerminalEffect<TerminalRecord> {
     const invalidateProjectsSnapshot =
@@ -416,20 +412,8 @@ export class TerminalService {
         'treeport.worktree.id': worktree.id
       })
 
-      const shellCommand =
-        options?.shellCommand ??
-        argv
-          ?.map((value) =>
-            /^[\w@%+=:,./-]+$/u.test(value)
-              ? value
-              : `'${value.replaceAll("'", `'\\''`)}'`
-          )
-          .join(' ') ??
-        null
-
-      const interactiveShell = shellCommand === null
-      const commandArgv = [config.shell, '-l']
-
+      const command = options?.command ?? null
+      const afterExit = options?.afterExit ?? 'shell'
       const timestamp = now()
 
       const session: Parameters<TerminalSessionBackend['createTerminal']>[0] = {
@@ -438,9 +422,9 @@ export class TerminalService {
         name,
         createdAt: timestamp,
         cwd: options?.cwd ?? worktree.path,
-        argv: commandArgv,
-        shellCommand,
-        interactiveShell,
+        shell: config.shell,
+        command,
+        afterExit,
         env: {
           PI_IMAGE_PROTOCOL: 'kitty',
           // EXTERNAL: Pi only emits OSC 8 links for terminals it recognizes.
@@ -459,24 +443,8 @@ export class TerminalService {
         }
       }
 
-      if (shellCommand !== null) {
-        session.env.TREEPORT_RUN_COMMAND = shellCommand
-      }
-
       if (options?.initialTitle) {
         session.initialTitle = options.initialTitle
-      }
-
-      if (options?.returnToShell && !interactiveShell) {
-        session.fallbackArgv = [config.shell, '-l']
-      }
-
-      if (options?.closeOnSuccess) {
-        session.closeOnSuccess = true
-      }
-
-      if (options?.closeOnExit) {
-        session.closeOnExit = true
       }
 
       if (options?.initialSize) {
@@ -511,11 +479,7 @@ export class TerminalService {
           attributes: {
             'treeport.terminal.id': terminalId,
             'treeport.worktree.id': worktree.id,
-            'treeport.terminal.launch_kind': interactiveShell
-              ? 'shell'
-              : argv
-                ? 'argv'
-                : 'shell_command'
+            'treeport.terminal.after_exit': afterExit
           }
         })
       )
@@ -524,9 +488,7 @@ export class TerminalService {
         id: terminalId,
         worktreeId: worktree.id,
         name,
-        argv: commandArgv,
-        shellCommand,
-        interactiveShell,
+        command,
         status: 'running',
         exitCode: null,
         commandExitCode: null,
@@ -534,14 +496,7 @@ export class TerminalService {
         updatedAt: timestamp
       }
 
-      yield* terminalState.recordTerminal(
-        terminal,
-        options?.closeOnExit
-          ? 'exit'
-          : options?.closeOnSuccess
-            ? 'success'
-            : null
-      )
+      yield* terminalState.recordTerminal(terminal, afterExit)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('terminal.created', {
@@ -559,7 +514,6 @@ export class TerminalService {
   createTerminal(
     worktreeId: string,
     name: string,
-    argv?: string[],
     options?: TerminalLaunchOptions
   ): TerminalEffect<TerminalRecord> {
     const executeCreateTerminal = this.executeCreateTerminal.bind(this)
@@ -625,7 +579,6 @@ export class TerminalService {
             executeCreateTerminal(
               worktreeId,
               name,
-              argv,
               options,
               undefined,
               verification.result
@@ -656,7 +609,6 @@ export class TerminalService {
   executeCreateTerminal(
     worktreeId: string,
     name: string,
-    argv?: string[],
     options?: TerminalLaunchOptions,
     verifiedWorktree?: WorktreeRecord,
     launchVerification?: Deferred.Deferred<
@@ -730,7 +682,7 @@ export class TerminalService {
                 reservedByCreation
               )
 
-        return yield* createTerminalSession(launchWorktree, name, argv, options)
+        return yield* createTerminalSession(launchWorktree, name, options)
       }).pipe(
         Effect.ensuring(
           reservedByCreation
@@ -824,8 +776,8 @@ export class TerminalService {
 
       if (
         state.status === 'exited' &&
-        (closePolicy === 'exit' ||
-          (closePolicy === 'success' && state.exitCode === 0))
+        (closePolicy === 'close' ||
+          (closePolicy === 'closeOnSuccess' && state.exitCode === 0))
       ) {
         yield* deleteTerminal(terminalId)
 

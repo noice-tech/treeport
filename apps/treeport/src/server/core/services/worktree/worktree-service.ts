@@ -2,6 +2,7 @@ import type {
   CreateOperationRequest,
   OperationRecord,
   RemovePreview,
+  TerminalAfterExit,
   TerminalSize
 } from '@treeport/shared'
 import type * as Effect from 'effect/Effect'
@@ -44,8 +45,8 @@ export class WorktreeService {
     initialTerminal?: {
       name: string
       initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
+      command?: string
+      afterExit?: TerminalAfterExit
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,
@@ -76,8 +77,8 @@ export class WorktreeService {
     initialTerminal?: {
       name: string
       initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
+      command?: string
+      afterExit?: TerminalAfterExit
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,

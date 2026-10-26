@@ -11,6 +11,7 @@ import type {
   OperationRecord,
   ProjectRecord,
   TerminalRecord,
+  TerminalAfterExit,
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
@@ -55,19 +56,18 @@ function causeMessage(cause: Cause.Cause<unknown>): string {
 interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
   initialTitle?: string
-  returnToShell?: boolean
-  closeOnSuccess?: boolean
+  command?: string
+  afterExit?: TerminalAfterExit
   initialSize?: TerminalSize
   cwd?: string
   env?: Record<string, string>
-  shellCommand?: string
 }
 
 interface CreateInitialTerminal {
   name: string
   initialTitle?: string
-  argv?: string[]
-  returnToShell?: boolean
+  command?: string
+  afterExit?: TerminalAfterExit
   initialSize?: TerminalSize
 }
 
@@ -106,14 +106,12 @@ export class WorktreeCreationService {
   private executeCreateTerminal(
     worktreeId: string,
     name: string,
-    argv?: string[],
     options?: TerminalLaunchOptions
   ) {
     return Effect.flatMap(TerminalOperations, (terminals) =>
       terminals.executeCreateTerminal(
         worktreeId,
         name,
-        argv,
         options,
         undefined,
         undefined,
@@ -388,12 +386,12 @@ export class WorktreeCreationService {
         initialTerminal.initialTitle = request.initialTerminal.initialTitle
       }
 
-      if (request.initialTerminal.argv !== undefined) {
-        initialTerminal.argv = request.initialTerminal.argv
+      if (request.initialTerminal.command !== undefined) {
+        initialTerminal.command = request.initialTerminal.command
       }
 
-      if (request.initialTerminal.returnToShell !== undefined) {
-        initialTerminal.returnToShell = request.initialTerminal.returnToShell
+      if (request.initialTerminal.afterExit !== undefined) {
+        initialTerminal.afterExit = request.initialTerminal.afterExit
       }
 
       if (request.initialTerminal.initialSize !== undefined) {
@@ -806,8 +804,12 @@ export class WorktreeCreationService {
             launchOptions.initialTitle = initialTerminal.initialTitle
           }
 
-          if (initialTerminal.returnToShell) {
-            launchOptions.returnToShell = true
+          if (initialTerminal.command) {
+            launchOptions.command = initialTerminal.command
+          }
+
+          if (initialTerminal.afterExit) {
+            launchOptions.afterExit = initialTerminal.afterExit
           }
 
           if (initialTerminal.initialSize) {
@@ -828,7 +830,6 @@ export class WorktreeCreationService {
             executeCreateTerminal(
               worktree.id,
               initialTerminal.name,
-              initialTerminal.argv,
               launchOptions
             )
           )
@@ -897,7 +898,8 @@ export class WorktreeCreationService {
               const setupOptions: TerminalLaunchOptions = {
                 initialTitle: 'Setup',
                 setup: { tasks: setup.tasks, error: setupError },
-                closeOnSuccess: true
+                command: 'true',
+                afterExit: 'closeOnSuccess'
               }
 
               if (initialTerminal.initialSize) {
@@ -905,12 +907,7 @@ export class WorktreeCreationService {
               }
 
               const setupTerminal = yield* Effect.exit(
-                executeCreateTerminal(
-                  worktree.id,
-                  'Setup',
-                  ['true'],
-                  setupOptions
-                )
+                executeCreateTerminal(worktree.id, 'Setup', setupOptions)
               )
 
               if (

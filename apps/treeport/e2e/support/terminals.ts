@@ -43,8 +43,9 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
       pathname === '/api/worktrees/wt_topic/terminals' &&
       route.request().method() === 'POST'
     ) {
-      const body: { name: string; argv?: string[]; shellCommand?: string } =
-        route.request().postDataJSON()
+      const body: { name: string; command?: string } = route
+        .request()
+        .postDataJSON()
 
       terminalCreations += 1
       const creationNumber = terminalCreations
@@ -94,13 +95,7 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
         id: creationNumber === 1 ? 'term_dev' : `term_dev_${creationNumber}`,
         worktreeId: 'wt_topic',
         name: body.name,
-        argv:
-          body.argv ||
-          (body.shellCommand
-            ? ['/bin/zsh', '-lc', body.shellCommand]
-            : ['/bin/zsh', '-l']),
-        shellCommand: body.shellCommand ?? null,
-        interactiveShell: !body.argv && !body.shellCommand,
+        command: body.command ?? null,
         status: 'running',
         exitCode: null,
         createdAt: '2026-01-01',

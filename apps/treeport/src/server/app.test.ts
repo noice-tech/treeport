@@ -72,9 +72,7 @@ function fixture(webDist = '/missing') {
     id: 'term_1',
     worktreeId: 'wt_1',
     name: 'Pi',
-    argv: ['pi'],
-    shellCommand: null,
-    interactiveShell: true,
+    command: null,
     status: 'running' as const,
     exitCode: null,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -1777,7 +1775,7 @@ describe('HTTP API validation', () => {
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
-  it('forwards terminal completion behavior without changing argv', async () => {
+  it('forwards terminal commands and exit behavior unchanged', async () => {
     const { app, service } = fixture()
 
     const response = await app.request('/api/worktrees/wt_1/terminals', {
@@ -1786,35 +1784,29 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({
         name: 'Diff',
         initialTitle: 'Review changes',
-        argv: ['diff', 'main', '--mode', 'split'],
+        command: 'diff main --mode split',
         cwd: '/repo/worktrees/topic',
         env: { CUSTOM: 'argument with spaces;$HOME' },
-        returnToShell: true,
         initialSize: { cols: 132, rows: 47 }
       })
     })
 
     expect(response.status).toBe(201)
-    expect(service.createTerminal).toHaveBeenCalledWith(
-      'wt_1',
-      'Diff',
-      ['diff', 'main', '--mode', 'split'],
-      {
-        initialTitle: 'Review changes',
-        returnToShell: true,
-        initialSize: { cols: 132, rows: 47 },
-        cwd: '/repo/worktrees/topic',
-        env: { CUSTOM: 'argument with spaces;$HOME' }
-      }
-    )
+    expect(service.createTerminal).toHaveBeenCalledWith('wt_1', 'Diff', {
+      initialTitle: 'Review changes',
+      command: 'diff main --mode split',
+      initialSize: { cols: 132, rows: 47 },
+      cwd: '/repo/worktrees/topic',
+      env: { CUSTOM: 'argument with spaces;$HOME' }
+    })
 
     const oneOff = await app.request('/api/worktrees/wt_1/terminals', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         name: 'Open editor',
-        argv: ['code', '.'],
-        closeOnSuccess: true
+        command: 'code .',
+        afterExit: 'closeOnSuccess'
       })
     })
 
@@ -1822,26 +1814,7 @@ describe('HTTP API validation', () => {
     expect(service.createTerminal).toHaveBeenLastCalledWith(
       'wt_1',
       'Open editor',
-      ['code', '.'],
-      { closeOnSuccess: true }
-    )
-
-    const shellCommand = await app.request('/api/worktrees/wt_1/terminals', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name: 'Remotion',
-        shellCommand: 'bun remotion',
-        returnToShell: true
-      })
-    })
-
-    expect(shellCommand.status).toBe(201)
-    expect(service.createTerminal).toHaveBeenLastCalledWith(
-      'wt_1',
-      'Remotion',
-      undefined,
-      { returnToShell: true, shellCommand: 'bun remotion' }
+      { command: 'code .', afterExit: 'closeOnSuccess' }
     )
   })
 
@@ -2024,8 +1997,8 @@ describe('HTTP API validation', () => {
         initialTerminal: {
           name: 'Terminal',
           initialTitle: 'Review changes',
-          argv: ['tool', 'semi;colon', '$HOME'],
-          returnToShell: true,
+          command: "tool 'semi;colon' $HOME",
+          afterExit: 'shell',
           initialSize: { cols: 144, rows: 48 }
         }
       })
@@ -2042,8 +2015,8 @@ describe('HTTP API validation', () => {
       {
         name: 'Terminal',
         initialTitle: 'Review changes',
-        argv: ['tool', 'semi;colon', '$HOME'],
-        returnToShell: true,
+        command: "tool 'semi;colon' $HOME",
+        afterExit: 'shell',
         initialSize: { cols: 144, rows: 48 }
       },
       'wt_main',

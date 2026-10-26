@@ -12,14 +12,15 @@ const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 
 const launchSpecSchema = z
   .object({
-    argv: z.array(z.string()),
+    shell: z.string(),
+    command: z.string().nullable(),
+    afterExit: z.enum(['shell', 'close', 'closeOnSuccess']),
     initialTitle: z
       .string()
       .trim()
       .min(1)
       .max(TERMINAL_NAME_MAX_LENGTH)
       .optional(),
-    fallbackArgv: z.array(z.string()).optional(),
     cwd: z.string(),
     env: z.record(z.string(), z.string()),
     shellIntegrationDir: z.string().optional(),
@@ -72,7 +73,7 @@ export interface LauncherDependencies {
   stdout?: Writable
   stderr?: Writable
   signalSource?: SignalSource
-  onCommandExit?: (exitCode: number) => Promise<void>
+  resultPath?: string
 }
 
 interface ChildResult {
@@ -312,28 +313,25 @@ export function runLaunchSpec(
       stdout.write(`[Treeport setup] ${label} complete\n`)
     }
 
-    if (!spec.argv[0]) {
-      stderr.write('Treeport launcher: argv is empty\n')
-
-      return 127
-    }
-
-    const { TREEPORT_RUN_COMMAND: runCommand, ...commandEnvironment } = {
-      ...process.env,
-      ...spec.env
-    }
-
     const command = integrateShellLaunch(
-      spec.argv,
-      commandEnvironment,
+      [spec.shell, '-l'],
+      { ...process.env, ...spec.env },
       spec.shellIntegrationDir,
       Boolean(spec.shellIntegrationDir)
     )
 
-    if (runCommand !== undefined && command.integrated) {
-      command.env = { ...command.env, TREEPORT_RUN_COMMAND: runCommand }
-    } else if (runCommand !== undefined) {
-      command.argv = [...command.argv, '-i', '-c', runCommand]
+    if (spec.command !== null && command.integrated) {
+      command.env = {
+        ...command.env,
+        TREEPORT_RUN_COMMAND: spec.command,
+        TREEPORT_RUN_AFTER: spec.afterExit
+      }
+
+      if (dependencies.resultPath) {
+        command.env.TREEPORT_RUN_RESULT = dependencies.resultPath
+      }
+    } else if (spec.command !== null) {
+      command.argv = [...command.argv, '-i', '-c', spec.command]
     }
 
     const initialTitle = spec.initialTitle
@@ -357,57 +355,31 @@ export function runLaunchSpec(
       )
     }
 
-    if (dependencies.onCommandExit) {
+    const resultPath = dependencies.resultPath
+
+    if (resultPath) {
       const exitCode = result.spawnError ? 127 : (result.code ?? 1)
-      yield* Effect.promise(() => dependencies.onCommandExit!(exitCode))
-    }
 
-    if (
-      result.forwardedSignal &&
-      (!spec.fallbackArgv || result.forwardedSignal !== 'SIGINT')
-    ) {
-      return 1
-    }
-
-    if (spec.fallbackArgv) {
-      if (spec.shellIntegrationDir) {
-        stdout.write('\u001b]7740;command;\u001b\\')
-      }
-
-      const fallback = integrateShellLaunch(
-        spec.fallbackArgv,
-        commandEnvironment,
-        spec.shellIntegrationDir,
-        Boolean(spec.shellIntegrationDir)
-      )
-
-      const fallbackResult = yield* runChild(fallback.argv, {
-        cwd: spec.cwd,
-        env: fallback.env,
-        spawnProcess,
-        signalSource
-      })
-
-      if (fallbackResult.spawnError) {
-        stderr.write(
-          `Treeport launcher: ${safeDiagnostic(fallbackResult.spawnError.message) || 'spawn error'}\n`
+      yield* Effect.promise(async () => {
+        const reported = await fs.access(resultPath).then(
+          () => true,
+          () => false
         )
 
-        return 127
-      }
-
-      if (fallbackResult.forwardedSignal || fallbackResult.signal) {
-        return 1
-      }
-
-      return fallbackResult.code ?? 1
+        if (!reported) {
+          await fs.writeFile(`${resultPath}.tmp`, JSON.stringify(exitCode), {
+            mode: 0o600
+          })
+          await fs.rename(`${resultPath}.tmp`, resultPath)
+        }
+      })
     }
 
     if (result.spawnError) {
       return 127
     }
 
-    if (result.signal) {
+    if (result.forwardedSignal || result.signal) {
       return 1
     }
 
@@ -437,15 +409,7 @@ function main(): Effect.Effect<number> {
       })
     ),
     Effect.flatMap((spec) =>
-      runLaunchSpec(spec, {
-        onCommandExit: async (exitCode) => {
-          const resultPath = `${specPath}.result`
-          await fs.writeFile(`${resultPath}.tmp`, JSON.stringify(exitCode), {
-            mode: 0o600
-          })
-          await fs.rename(`${resultPath}.tmp`, resultPath)
-        }
-      })
+      runLaunchSpec(spec, { resultPath: `${specPath}.result` })
     ),
     Effect.catchAll((error) =>
       Effect.sync(() => {

@@ -5,7 +5,11 @@ import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import { getSessionKeeperPayload } from '@treeport/session-keeper'
-import type { TerminalRecord, TerminalRuntimeMetadata } from '@treeport/shared'
+import {
+  formatCommandLine,
+  type TerminalRecord,
+  type TerminalRuntimeMetadata
+} from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
@@ -41,9 +45,7 @@ async function fixture() {
       id: 'term',
       worktreeId: 'tree',
       name: 'Command',
-      argv: ['bash'],
-      shellCommand: null,
-      interactiveShell: false,
+      command: 'bash',
       status: 'running',
       exitCode: null,
       commandExitCode: null,
@@ -184,11 +186,7 @@ async function runtimeFixture() {
   value.inspect.mockImplementation(async () => {
     const terminals = await Effect.runPromise(manager.listTerminals('tree'))
 
-    const {
-      closeOnSuccess: _closeOnSuccess,
-      closeOnExit: _closeOnExit,
-      ...terminal
-    } = terminals[0]!
+    const { afterExit: _afterExit, ...terminal } = terminals[0]!
 
     return { terminal, metadata: value.observation.metadata }
   })
@@ -225,16 +223,13 @@ async function runtimeFixture() {
           name: 'Command',
           createdAt: new Date().toISOString(),
           cwd: root,
-          argv: [
+          shell: 'bash',
+          command: formatCommandLine([
             'bash',
             '-c',
             `printf 'COMMAND_STARTED\\n'; while [ ! -f finish ]; do sleep 0.02; done; printf 'WAIT_EXIT_REPRO_COMMAND_FINISHED\\n'; exit ${exitCode}`
-          ],
-          shellCommand: null,
-          interactiveShell: false,
-          fallbackArgv: fallback
-            ? ['bash', '--noprofile', '--norc', '-i']
-            : undefined,
+          ]),
+          afterExit: fallback ? 'shell' : 'close',
           env: { HOME: root, PS1: 'FALLBACK_READY> ' }
         })
       )
@@ -442,9 +437,9 @@ describe('launcher, persistent PTY, and CLI wait lifecycle', () => {
         name: 'Shell',
         createdAt: new Date().toISOString(),
         cwd: value.root,
-        argv: ['bash', '--noprofile', '--norc', '-i'],
-        shellCommand: null,
-        interactiveShell: true,
+        shell: 'bash',
+        command: null,
+        afterExit: 'shell',
         env: { HOME: value.root }
       })
     )

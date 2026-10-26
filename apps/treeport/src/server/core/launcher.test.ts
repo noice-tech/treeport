@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
@@ -35,7 +38,9 @@ function writable() {
 
 function spec(overrides: Partial<TerminalLaunchSpec> = {}): TerminalLaunchSpec {
   return {
-    argv: ['final', 'hostile;argument'],
+    shell: '/bin/sh',
+    command: "final 'hostile;argument'",
+    afterExit: 'shell',
     cwd: '/worktree',
     env: { TREEPORT_TERMINAL_ID: 'term' },
     ...overrides
@@ -43,7 +48,7 @@ function spec(overrides: Partial<TerminalLaunchSpec> = {}): TerminalLaunchSpec {
 }
 
 describe('terminal launcher setup pipeline', () => {
-  it('runs setup tasks sequentially before the exact final argv', async () => {
+  it('runs setup tasks sequentially before the final command', async () => {
     const calls: Array<{
       executable: string
       args: readonly string[]
@@ -98,7 +103,7 @@ describe('terminal launcher setup pipeline', () => {
     expect(calls.map(({ executable, args }) => [executable, ...args])).toEqual([
       ['one', 'a b'],
       ['two', '$HOME'],
-      ['final', 'hostile;argument']
+      ['/bin/sh', '-l', '-i', '-c', "final 'hostile;argument'"]
     ])
     expect(calls[0]?.options).toMatchObject({
       cwd: '/one',
@@ -111,52 +116,47 @@ describe('terminal launcher setup pipeline', () => {
     expect(error.value()).toBe('')
   })
 
-  it.each([0, 7])(
-    'reports command exit %i before the fallback shell exits',
-    async (exitCode) => {
-      const command = new FakeChild()
-      const shell = new FakeChild()
-      const onCommandExit = vi.fn(async () => {})
+  it('records the shell exit code unless the shell hook already reported it', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-'))
+    const resultPath = path.join(directory, 'spec.result')
 
-      const spawnProcess = vi
-        .fn()
-        .mockReturnValueOnce(command)
-        .mockImplementationOnce(() => {
-          expect(onCommandExit).toHaveBeenCalledExactlyOnceWith(exitCode)
+    const exiting = (code: number) => () => {
+      const child = new FakeChild()
+      queueMicrotask(() => child.emit('exit', code, null))
 
-          return shell
-        })
+      return child
+    }
 
-      let finished = false
-
-      const launch = Effect.runPromise(
-        runLaunchSpec(spec({ fallbackArgv: ['/bin/bash', '-i'] }), {
-          spawnProcess,
-          onCommandExit,
+    await expect(
+      Effect.runPromise(
+        runLaunchSpec(spec(), {
+          spawnProcess: vi.fn(exiting(7)),
+          resultPath,
           signalSource: new EventEmitter()
         })
-      ).then((code) => {
-        finished = true
+      )
+    ).resolves.toBe(7)
+    await expect(fs.readFile(resultPath, 'utf8')).resolves.toBe('7')
 
-        return code
-      })
+    await fs.writeFile(resultPath, '3\n')
+    await expect(
+      Effect.runPromise(
+        runLaunchSpec(spec(), {
+          spawnProcess: vi.fn(exiting(0)),
+          resultPath,
+          signalSource: new EventEmitter()
+        })
+      )
+    ).resolves.toBe(0)
+    await expect(fs.readFile(resultPath, 'utf8')).resolves.toBe('3\n')
+    await fs.rm(directory, { recursive: true, force: true })
+  })
 
-      command.emit('exit', exitCode, null)
-      await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(2))
-      expect(finished).toBe(false)
-      shell.emit('exit', 3, null)
-      await expect(launch).resolves.toBe(3)
-      expect(onCommandExit).toHaveBeenCalledTimes(1)
-    }
-  )
-
-  it('starts a title-integrated fallback shell after the final command exits', async () => {
+  it('hands the command to an integrated shell', async () => {
     const calls: Array<{
       argv: string[]
       env: NodeJS.ProcessEnv
     }> = []
-
-    const results = [23, 0]
 
     const spawnProcess = vi.fn(
       (
@@ -166,47 +166,50 @@ describe('terminal launcher setup pipeline', () => {
       ) => {
         calls.push({ argv: [executable, ...args], env: options.env })
         const child = new FakeChild()
-        queueMicrotask(() => child.emit('exit', results.shift(), null))
+        queueMicrotask(() => child.emit('exit', 0, null))
 
         return child
       }
     )
 
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-'))
+    const resultPath = path.join(directory, 'spec.result')
     const output = writable()
     await expect(
       Effect.runPromise(
         runLaunchSpec(
           spec({
+            shell: '/bin/zsh',
+            afterExit: 'closeOnSuccess',
             initialTitle: '  --Review;\u001bTitle  ',
-            fallbackArgv: ['/bin/zsh', '-l'],
             env: { HOME: '/home/user', ZDOTDIR: '/home/user/.config/zsh' },
             shellIntegrationDir: '/treeport/integration'
           }),
           {
             spawnProcess,
+            resultPath,
             stdout: output.stream,
             signalSource: new EventEmitter()
           }
         )
       )
     ).resolves.toBe(0)
-    expect(calls.map((call) => call.argv)).toEqual([
-      ['final', 'hostile;argument'],
-      ['/bin/zsh', '-l']
-    ])
+    expect(calls.map((call) => call.argv)).toEqual([['/bin/zsh', '-l']])
     expect(output.value()).toContain(
       '\u001b]7740;command;--Review; Title\u001b\\'
     )
-    expect(output.value()).toContain('\u001b]7740;command;\u001b\\')
-    expect(calls[0]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
-    expect(calls[1]?.env).toMatchObject({
+    expect(calls[0]?.env).toMatchObject({
+      TREEPORT_RUN_COMMAND: "final 'hostile;argument'",
+      TREEPORT_RUN_AFTER: 'closeOnSuccess',
+      TREEPORT_RUN_RESULT: resultPath,
       TREEPORT_SHELL_INTEGRATION: '1',
       TREEPORT_USER_ZDOTDIR: '/home/user/.config/zsh',
       ZDOTDIR: '/treeport/integration/zsh'
     })
+    await fs.rm(directory, { recursive: true, force: true })
   })
 
-  it('integrates supported shells without changing direct or unsupported commands', async () => {
+  it('integrates supported shells and runs commands directly in unsupported shells', async () => {
     const calls: Array<{ argv: string[]; env: NodeJS.ProcessEnv }> = []
 
     const spawnProcess = vi.fn(
@@ -235,7 +238,8 @@ describe('terminal launcher setup pipeline', () => {
     await Effect.runPromise(
       runLaunchSpec(
         spec({
-          argv: ['/bin/bash', '-l'],
+          shell: '/bin/bash',
+          command: null,
           env: { PROMPT_COMMAND: 'user_prompt' },
           ...integration
         }),
@@ -245,7 +249,8 @@ describe('terminal launcher setup pipeline', () => {
     await Effect.runPromise(
       runLaunchSpec(
         spec({
-          argv: ['/opt/homebrew/bin/fish', '-l'],
+          shell: '/opt/homebrew/bin/fish',
+          command: null,
           env: { XDG_DATA_DIRS: '/usr/local/share:/usr/share' },
           ...integration
         }),
@@ -254,13 +259,7 @@ describe('terminal launcher setup pipeline', () => {
     )
     await Effect.runPromise(
       runLaunchSpec(
-        spec({ argv: ['/bin/bash', '-c', 'echo okay'], ...integration }),
-        dependencies
-      )
-    )
-    await Effect.runPromise(
-      runLaunchSpec(
-        spec({ argv: ['/bin/nu', '-l'], ...integration }),
+        spec({ shell: '/bin/nu', command: 'echo okay', ...integration }),
         dependencies
       )
     )
@@ -274,6 +273,7 @@ describe('terminal launcher setup pipeline', () => {
         TREEPORT_USER_HOME: process.env.HOME
       }
     })
+    expect(calls[0]?.env).not.toHaveProperty('TREEPORT_RUN_COMMAND')
     expect(calls[1]).toMatchObject({
       argv: ['/opt/homebrew/bin/fish', '-l'],
       env: {
@@ -282,89 +282,46 @@ describe('terminal launcher setup pipeline', () => {
         XDG_DATA_DIRS: '/treeport/integration/fish:/usr/local/share:/usr/share'
       }
     })
-    expect(calls[2]?.argv).toEqual(['/bin/bash', '-c', 'echo okay'])
-    expect(calls[2]?.env).not.toHaveProperty('TREEPORT_SHELL_INTEGRATION')
-    expect(calls[3]?.argv).toEqual(['/bin/nu', '-l'])
-    expect(calls[3]?.env).not.toHaveProperty('TREEPORT_SHELL_INTEGRATION')
+    expect(calls[2]?.argv).toEqual(['/bin/nu', '-l', '-i', '-c', 'echo okay'])
+    expect(calls[2]?.env).not.toHaveProperty('TREEPORT_RUN_COMMAND')
   })
 
-  it('starts a fallback shell after the final command cannot be spawned', async () => {
-    const calls: string[][] = []
+  it('reports a shell that cannot be spawned', async () => {
+    const spawnProcess = vi.fn(() => {
+      const child = new FakeChild()
+      queueMicrotask(() => child.emit('error', new Error('not found')))
 
-    const spawnProcess = vi.fn(
-      (executable: string, args: readonly string[]) => {
-        calls.push([executable, ...args])
-        const child = new FakeChild()
-        queueMicrotask(() =>
-          executable === 'missing'
-            ? child.emit('error', new Error('not found'))
-            : child.emit('exit', 0, null)
-        )
-
-        return child
-      }
-    )
+      return child
+    })
 
     const error = writable()
 
     await expect(
       Effect.runPromise(
-        runLaunchSpec(
-          spec({ argv: ['missing'], fallbackArgv: ['/bin/zsh', '-l'] }),
-          {
-            spawnProcess,
-            stderr: error.stream,
-            signalSource: new EventEmitter()
-          }
-        )
+        runLaunchSpec(spec({ shell: 'missing' }), {
+          spawnProcess,
+          stderr: error.stream,
+          signalSource: new EventEmitter()
+        })
       )
-    ).resolves.toBe(0)
-    expect(calls).toEqual([['missing'], ['/bin/zsh', '-l']])
+    ).resolves.toBe(127)
+    expect(spawnProcess).toHaveBeenCalledTimes(1)
     expect(error.value()).toContain('not found')
   })
 
-  it('starts a fallback shell after Ctrl-C but not terminal teardown', async () => {
-    const firstChild = new FakeChild()
-    const shell = new FakeChild()
-
-    const spawnProcess = vi
-      .fn()
-      .mockReturnValueOnce(firstChild)
-      .mockImplementationOnce(() => {
-        queueMicrotask(() => shell.emit('exit', 0, null))
-
-        return shell
-      })
-
+  it('fails when the terminal is torn down', async () => {
+    const child = new FakeChild()
+    const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
 
     const launch = Effect.runPromise(
-      runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
-        spawnProcess,
-        signalSource
-      })
+      runLaunchSpec(spec(), { spawnProcess, signalSource })
     )
 
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
-    signalSource.emit('SIGINT')
-    await expect(launch).resolves.toBe(0)
-    expect(spawnProcess).toHaveBeenCalledTimes(2)
-
-    const teardownChild = new FakeChild()
-    const teardownSpawn = vi.fn(() => teardownChild)
-    const teardownSignals = new EventEmitter()
-
-    const teardown = Effect.runPromise(
-      runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
-        spawnProcess: teardownSpawn,
-        signalSource: teardownSignals
-      })
-    )
-
-    await vi.waitFor(() => expect(teardownSpawn).toHaveBeenCalledTimes(1))
-    teardownSignals.emit('SIGHUP')
-    await expect(teardown).resolves.toBe(1)
-    expect(teardownSpawn).toHaveBeenCalledTimes(1)
+    signalSource.emit('SIGHUP')
+    await expect(launch).resolves.toBe(1)
+    expect(spawnProcess).toHaveBeenCalledTimes(1)
   })
 
   it('stops on the first setup failure and does not start the final command', async () => {

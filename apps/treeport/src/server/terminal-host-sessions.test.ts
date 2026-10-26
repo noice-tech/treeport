@@ -139,9 +139,9 @@ describe('TerminalHostSessionManager', () => {
         name: 'Shell',
         createdAt: '2026-01-01T00:00:00.000Z',
         cwd: runtimeDir,
-        argv: ['/bin/bash'],
-        shellCommand: null,
-        interactiveShell: true,
+        shell: '/bin/bash',
+        command: null,
+        afterExit: 'shell',
         initialSize: { cols: 80, rows: 24 },
         env: { HOME: runtimeDir }
       })
@@ -220,9 +220,9 @@ describe('TerminalHostSessionManager', () => {
         name: 'Shell',
         createdAt: '2026-01-01T00:00:00.000Z',
         cwd: runtimeDir,
-        argv: ['/bin/bash', '-l'],
-        shellCommand: null,
-        interactiveShell: true,
+        shell: '/bin/bash',
+        command: null,
+        afterExit: 'shell',
         initialSize: { cols: 80, rows: 24 },
         env: { HOME: '/home/test', TREEPORT_TERMINAL_ID: 'term' }
       })
@@ -482,9 +482,9 @@ describe('TerminalHostSessionManager', () => {
         name: 'Shell',
         createdAt: '2026-01-01T00:00:00.000Z',
         cwd: runtimeDir,
-        argv: ['/bin/sh', '-l'],
-        shellCommand: null,
-        interactiveShell: true,
+        shell: '/bin/sh',
+        command: null,
+        afterExit: 'shell',
         env: {}
       })
     )
@@ -511,7 +511,7 @@ describe('TerminalHostSessionManager', () => {
     expect(pty.exitDisposals).toBe(1)
   })
 
-  it('keeps fallback sessions on the launcher path until exit', async () => {
+  it('keeps command sessions on the launcher path until exit', async () => {
     const runtimeDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-')
     )
@@ -535,10 +535,9 @@ describe('TerminalHostSessionManager', () => {
         name: 'Command',
         createdAt: '2026-01-01T00:00:00.000Z',
         cwd: runtimeDir,
-        argv: ['/bin/sh'],
-        shellCommand: null,
-        interactiveShell: true,
-        fallbackArgv: ['/bin/sh', '-l'],
+        shell: '/bin/sh',
+        command: 'true',
+        afterExit: 'shell',
         env: {}
       })
     )
@@ -594,9 +593,9 @@ describe('TerminalHostSessionManager', () => {
         name: 'Shell',
         createdAt: '2026-01-01T00:00:00.000Z',
         cwd: runtimeDir,
-        argv: ['/bin/sh', '-l'],
-        shellCommand: null,
-        interactiveShell: true,
+        shell: '/bin/sh',
+        command: null,
+        afterExit: 'shell',
         env: {}
       })
     )
@@ -647,9 +646,9 @@ describe('TerminalHostSessionManager', () => {
       name,
       createdAt: '2026-01-01T00:00:00.000Z',
       cwd: runtimeDir,
-      argv: ['/bin/sh', '-l'],
-      shellCommand: null,
-      interactiveShell: true,
+      shell: '/bin/sh',
+      command: null,
+      afterExit: 'shell' as const,
       env: {}
     })
 

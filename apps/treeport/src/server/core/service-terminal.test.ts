@@ -12,7 +12,7 @@ describe('terminal operations', () => {
     const tree = project.worktrees[0]!
     const terminal = await service.createTerminal(tree.id, 'Command')
     const hosted = runner.sessions.get(`${tree.id}/${terminal.id}`)!
-    hosted.closeOnSuccess = true
+    hosted.afterExit = 'closeOnSuccess'
     const updates: string[] = []
     service.events.subscribe((event) => {
       if (event.type === 'terminal.updated') {
@@ -243,7 +243,7 @@ describe('terminal operations', () => {
         project.id,
         'snapshot-race',
         'default',
-        { name: 'pi', argv: ['pi'] }
+        { name: 'pi', command: 'pi' }
       )
 
       await vi.waitFor(() => expect(snapshot).not.toBeNull())

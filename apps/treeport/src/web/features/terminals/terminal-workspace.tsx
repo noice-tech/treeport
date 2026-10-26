@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
   ProjectRecord,
+  TerminalAfterExit,
   TerminalRecord,
   TerminalSize,
   WorktreeRecord
@@ -39,12 +40,10 @@ export interface CreateTerminalInput {
   name: string
   correlationId?: string
   initialTitle?: string
-  argv?: string[]
-  shellCommand?: string
+  command?: string
+  afterExit?: TerminalAfterExit
   cwd?: string
   env?: Record<string, string>
-  returnToShell?: boolean
-  closeOnSuccess?: boolean
 }
 
 interface CreateTerminalMutationInput extends CreateTerminalInput {
@@ -84,12 +83,10 @@ export function useTerminalWorkflows({
       worktreeId,
       name,
       initialTitle,
-      argv,
-      shellCommand,
+      command,
+      afterExit,
       cwd,
       env,
-      returnToShell,
-      closeOnSuccess,
       initialSize,
       correlationId,
       requestedAt
@@ -107,12 +104,12 @@ export function useTerminalWorkflows({
         json.initialTitle = initialTitle
       }
 
-      if (argv) {
-        json.argv = argv
+      if (command) {
+        json.command = command
       }
 
-      if (shellCommand) {
-        json.shellCommand = shellCommand
+      if (afterExit) {
+        json.afterExit = afterExit
       }
 
       if (cwd) {
@@ -121,14 +118,6 @@ export function useTerminalWorkflows({
 
       if (env) {
         json.env = env
-      }
-
-      if (returnToShell) {
-        json.returnToShell = true
-      }
-
-      if (closeOnSuccess) {
-        json.closeOnSuccess = true
       }
 
       if (initialSize) {
@@ -385,12 +374,12 @@ export function useTerminalWorkflows({
       mutation.initialTitle = input.initialTitle
     }
 
-    if (input.argv) {
-      mutation.argv = [...input.argv]
+    if (input.command) {
+      mutation.command = input.command
     }
 
-    if (input.shellCommand) {
-      mutation.shellCommand = input.shellCommand
+    if (input.afterExit) {
+      mutation.afterExit = input.afterExit
     }
 
     if (input.cwd) {
@@ -399,14 +388,6 @@ export function useTerminalWorkflows({
 
     if (input.env) {
       mutation.env = { ...input.env }
-    }
-
-    if (input.returnToShell) {
-      mutation.returnToShell = true
-    }
-
-    if (input.closeOnSuccess) {
-      mutation.closeOnSuccess = true
     }
 
     if (initialSize) {

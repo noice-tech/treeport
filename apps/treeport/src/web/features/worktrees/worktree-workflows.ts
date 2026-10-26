@@ -37,8 +37,7 @@ interface WorktreeCreationRequest {
   initialTerminal: {
     name: string
     initialTitle?: string
-    argv?: string[]
-    returnToShell?: boolean
+    command?: string
     initialSize?: TerminalSize
   }
   sourceWorktreeId?: string
@@ -406,8 +405,7 @@ export function useWorktreeWorkflows({
     initialTerminal: {
       name: string
       initialTitle?: string
-      argv?: string[]
-      returnToShell?: boolean
+      command?: string
     },
     sourceWorktreeId?: string,
     treeTitleCommand?: string[]
@@ -424,12 +422,8 @@ export function useWorktreeWorkflows({
       pendingInitialTerminal.initialTitle = initialTerminal.initialTitle
     }
 
-    if (initialTerminal.argv) {
-      pendingInitialTerminal.argv = [...initialTerminal.argv]
-    }
-
-    if (initialTerminal.returnToShell) {
-      pendingInitialTerminal.returnToShell = true
+    if (initialTerminal.command) {
+      pendingInitialTerminal.command = initialTerminal.command
     }
 
     if (initialSize) {

@@ -1,3 +1,4 @@
+import { formatCommandLine } from '@treeport/shared'
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-reflect-get, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- Test-only adapters intentionally bridge the former Promise/callback fixtures to the Effect API. */
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -507,7 +508,7 @@ describe('detached terminal host lifecycle', () => {
       `import fs from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 const spec = JSON.parse(await fs.readFile(process.argv[2], 'utf8'))
-const child = spawn(spec.argv[0], spec.argv.slice(1), {
+const child = spawn(spec.shell, ['-c', spec.command], {
   cwd: spec.cwd,
   env: { ...process.env, ...spec.env },
   stdio: 'inherit'
@@ -552,14 +553,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
       name: 'Persistent terminal',
       createdAt: new Date().toISOString(),
       cwd: root,
-      argv: [
+      shell: '/bin/sh',
+      command: `exec ${formatCommandLine([
         process.execPath,
         '-e',
         `process.stdin.setRawMode(true); process.stdin.setEncoding('utf8'); process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); process.stdout.write('NORMAL_UNICODE λ🙂\\r\\n\\x1b[?1049h\\x1b[?1003h\\x1b[?1006h'); console.log('HOST_BOOT'); let replies = 0; process.stdin.on('data', data => { if (/\\x1b\\[\\d+;\\d+R/.test(data)) console.log('QUERY_REPLY_' + ++replies); else if (data.includes('SEND_IMAGE')) process.stdout.write('\\x1b[20;1H\\x1b_Ga=T,f=100,i=42,c=4,r=2,C=1,q=2;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=\\x1b\\\\\\x1b[30;1H'); else process.stdout.write('ECHO:' + data) }); setTimeout(() => process.stdout.write('\\x1b[6n'), 100); let offline = false; setInterval(() => { console.log('DETACHED_OUTPUT'); if (!offline && require('node:fs').existsSync('offline-query')) { offline = true; process.stdout.write('\\x1b[?100'); setTimeout(() => process.stdout.write('6h\\x1b[6n'), 10) } }, 250)`
-      ],
-      shellCommand: null,
-      interactiveShell: false,
-      closeOnSuccess: false,
+      ])}`,
+      afterExit: 'shell',
       initialSize: { cols: 80, rows: 24 },
       env: {}
     })
@@ -797,13 +797,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
       name: 'Quota recovery',
       createdAt: new Date().toISOString(),
       cwd: root,
-      argv: [
+      shell: '/bin/sh',
+      command: `exec ${formatCommandLine([
         process.execPath,
         '-e',
         "console.log('QUOTA_BOOT'); setTimeout(() => process.stdout.write(require('node:crypto').randomBytes(256 * 1024).toString('base64'), () => { console.log('QUOTA_FINISHED'); process.exit(7) }), 250)"
-      ],
-      shellCommand: null,
-      interactiveShell: false,
+      ])}`,
+      afterExit: 'shell',
       env: {}
     })
 
@@ -941,13 +941,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
       name: 'Lost keeper',
       createdAt: new Date().toISOString(),
       cwd: root,
-      argv: [
+      shell: '/bin/sh',
+      command: `exec ${formatCommandLine([
         process.execPath,
         '-e',
         "process.on('SIGHUP',()=>{}); process.stdout.write('\\x1b[31m\\x1b[0m'.repeat(140000)); console.log('ARCHIVE_UNICODE λ🙂'); setInterval(() => {}, 1000)"
-      ],
-      shellCommand: null,
-      interactiveShell: false,
+      ])}`,
+      afterExit: 'shell',
       env: {}
     })
     await waitFor(
@@ -1009,13 +1009,13 @@ child.once('exit', (code) => process.exit(code ?? 1))
       name: 'Live unreachable keeper',
       createdAt: new Date().toISOString(),
       cwd: root,
-      argv: [
+      shell: '/bin/sh',
+      command: `exec ${formatCommandLine([
         process.execPath,
         '-e',
         "console.log('UNAVAILABLE_BOOT'); setInterval(() => {}, 1000)"
-      ],
-      shellCommand: null,
-      interactiveShell: false,
+      ])}`,
+      afterExit: 'shell',
       env: {}
     })
 
