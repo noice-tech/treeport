@@ -155,7 +155,7 @@ export function BrowserAppWorkspace({
     new Map<
       string,
       {
-        resolve(clipboard: BrowserClipboard): void
+        resolve(clipboard: BrowserClipboard | null): void
         reject(reason: Error): void
       }
     >()
@@ -616,10 +616,8 @@ export function BrowserAppWorkspace({
       if (message.type === 'copyResult') {
         const pending = pendingCopiesRef.current.get(message.requestId)
 
-        if (message.error !== null || message.clipboard === null) {
-          pending?.reject(
-            new Error(message.error ?? 'Nothing is selected to copy.')
-          )
+        if (message.error !== null) {
+          pending?.reject(new Error(message.error))
         } else {
           pending?.resolve(message.clipboard)
         }
@@ -1358,7 +1356,7 @@ export function BrowserAppWorkspace({
       const requestId = crypto.randomUUID()
       let timer: ReturnType<typeof setTimeout> | null = null
 
-      const result = new Promise<BrowserClipboard>((resolve, reject) => {
+      const result = new Promise<BrowserClipboard | null>((resolve, reject) => {
         pendingCopiesRef.current.set(requestId, { resolve, reject })
         timer = setTimeout(
           () =>
@@ -1377,6 +1375,10 @@ export function BrowserAppWorkspace({
 
       void result
         .then((clipboard) => {
+          if (clipboard === null) {
+            return
+          }
+
           // EXTERNAL: A browser may require a fresh gesture once the remote response has
           // arrived. Retain the exact payload for the explicit retry button.
           setClipboardToCopy(clipboard)
