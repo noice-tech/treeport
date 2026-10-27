@@ -1338,7 +1338,7 @@ export function BrowserAppWorkspace({
     // physical key for shortcuts so they match what pages and the viewer expect.
     const pressedKey =
       (event.ctrlKey || event.metaKey) &&
-      /^[^\x00-\x7f]$/u.test(event.key) &&
+      /^[\u0080-\u{10ffff}]$/u.test(event.key) &&
       /^Key[A-Z]$/.test(event.code)
         ? event.code.slice(3).toLowerCase()
         : event.key

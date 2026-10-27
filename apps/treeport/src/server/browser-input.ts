@@ -64,7 +64,7 @@ export async function browserKey(
 
   // EXTERNAL: Playwright only knows US-layout keys and throws for characters such as
   // Cyrillic letters. Enter them as text, which is what a local keypress produces.
-  if (/^[^\x00-\x7f]$/u.test(message.key)) {
+  if (/^[\u0080-\u{10ffff}]$/u.test(message.key)) {
     if (message.phase === 'down') {
       await page.keyboard.insertText(message.key)
     }
