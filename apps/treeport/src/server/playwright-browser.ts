@@ -41,6 +41,7 @@ export interface PlaywrightBrowserCallbacks {
   state(state: BrowserRuntimeState): void
   clipboard(clipboard: BrowserClipboard): boolean
   fileChooser(chooser: FileChooser | null): void
+  dialog(dialog: Dialog | null, agent: boolean): void
   download(download: Download): void
   popup(url: string): void
   navigationError(message: string, source?: 'video'): void
@@ -119,6 +120,7 @@ export class PlaywrightBrowser {
   private metadataUpdate: Promise<void> | null = null
   private closing = false
   private dialogHandler: ((dialog: Dialog) => void) | null = null
+  private agentInteracting = false
   private readonly consoleMessages: string[] = []
   private readonly requests: string[] = []
   private contextMenu: {
@@ -394,12 +396,19 @@ export class PlaywrightBrowser {
       void this.refreshPageState()
     })
     this.dialogHandler = (dialog) => {
-      void dialog.dismiss().catch(() => undefined)
+      if (dialog.type() === 'beforeunload') {
+        void dialog.dismiss().catch(() => undefined)
+      } else {
+        this.callbacks.dialog(dialog, this.agentInteracting)
+      }
     }
 
     page.on('dialog', this.dialogHandler)
     page.once('crash', () =>
       this.callbacks.crashed('The hosted browser page crashed.')
+    )
+    this.cdp.on('Page.javascriptDialogClosed', () =>
+      this.callbacks.dialog(null, false)
     )
     this.cdp.on('Page.navigatedWithinDocument', () => {
       this.contextMenu = null
@@ -1053,7 +1062,9 @@ export class PlaywrightBrowser {
     }
   }
 
-  async agentCommand(input: BrowserAgentCommand): Promise<string> {
+  async agentCommand(
+    input: Exclude<BrowserAgentCommand, { command: `dialog-${string}` }>
+  ): Promise<string> {
     this.pointerPoint = null
     const page = this.page
 
@@ -1063,25 +1074,52 @@ export class PlaywrightBrowser {
 
     const target = (value: string) => page.locator(`aria-ref=${value}`)
 
+    // EXTERNAL: Playwright actions do not settle while a page dialog is open.
+    const interact = async (action: () => Promise<void>) => {
+      let opened: () => void = () => undefined
+
+      const dialog = new Promise<void>((resolve) => {
+        opened = resolve
+      })
+
+      const onDialog = (candidate: Dialog) => {
+        if (candidate.type() !== 'beforeunload') {
+          opened()
+        }
+      }
+
+      this.agentInteracting = true
+      page.on('dialog', onDialog)
+
+      try {
+        const result = action()
+        result.catch(() => undefined)
+        await Promise.race([result, dialog])
+      } finally {
+        this.agentInteracting = false
+        page.off('dialog', onDialog)
+      }
+    }
+
     if (input.command === 'snapshot') {
       // eslint-disable-next-line anti-slop/no-reflect-apply -- Playwright exposes CLI element references through this internal snapshot option.
       return Reflect.apply(page.ariaSnapshot, page, [{ mode: 'ai' }])
     }
 
     if (input.command === 'click') {
-      await target(input.args[0]).click()
+      await interact(() => target(input.args[0]).click())
 
       return `Clicked ${input.args[0]}`
     }
 
     if (input.command === 'fill') {
-      await target(input.args[0]).fill(input.args[1])
+      await interact(() => target(input.args[0]).fill(input.args[1]))
 
       return `Filled ${input.args[0]}`
     }
 
     if (input.command === 'press') {
-      await page.keyboard.press(input.args[0])
+      await interact(() => page.keyboard.press(input.args[0]))
 
       return `Pressed ${input.args[0]}`
     }

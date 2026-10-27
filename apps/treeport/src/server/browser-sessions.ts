@@ -14,6 +14,7 @@ import * as Data from 'effect/Data'
 import type {
   Browser as PlaywrightConnection,
   CDPSession,
+  Dialog,
   Download,
   FileChooser,
   Page
@@ -106,7 +107,9 @@ export interface BrowserSessionBrowser {
   ): ReturnType<PlaywrightBrowser['command']>
   copy(): Promise<BrowserClipboard | null>
   cursor(point: { x: number; y: number }): ReturnType<typeof browserCursor>
-  agentCommand(input: BrowserAgentCommand): Promise<string>
+  agentCommand(
+    input: Parameters<PlaywrightBrowser['agentCommand']>[0]
+  ): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
   closeVideoViewer(viewerId: string): Promise<void>
   devtoolsEndpoint?(): Promise<string>
@@ -268,6 +271,10 @@ interface BrowserSession {
     attachment: BrowserAttachment
     generation: number
     timer: ReturnType<typeof setTimeout>
+  } | null
+  dialog: {
+    dialog: Dialog
+    message: Extract<BrowserServerMessage, { type: 'dialog' }>
   } | null
   touchAttachmentId: string | null
   touchIds: Set<number>
@@ -586,6 +593,31 @@ export class BrowserSessionManager {
       .element()
       .dispose()
       .catch(() => undefined)
+  }
+
+  private closeDialog(
+    session: BrowserSession,
+    response: { accept: boolean; promptText: string | null } | null = null
+  ): void {
+    const pending = session.dialog
+    session.dialog = null
+
+    if (!pending) {
+      return
+    }
+
+    for (const attachment of session.attachments.values()) {
+      attachment.transport.sendMessage({
+        type: 'dialogClosed',
+        requestId: pending.message.requestId
+      })
+    }
+
+    void (
+      response?.accept
+        ? pending.dialog.accept(response.promptText ?? undefined)
+        : pending.dialog.dismiss()
+    ).catch(() => undefined)
   }
 
   private openFileChooser(
@@ -1196,6 +1228,7 @@ export class BrowserSessionManager {
       clipboardInput: null,
       fileChooserInput: null,
       fileChooser: null,
+      dialog: null,
       touchAttachmentId: null,
       touchIds: new Set(),
       retainLocalAgentPaint: false,
@@ -1308,6 +1341,62 @@ export class BrowserSessionManager {
                 ?.element()
                 .dispose()
                 .catch(() => undefined)
+            }
+          },
+          dialog: (dialog, agent) => {
+            if (session.browser !== browser) {
+              void dialog?.dismiss().catch(() => undefined)
+
+              return
+            }
+
+            this.closeDialog(session)
+
+            if (!dialog) {
+              return
+            }
+
+            if (
+              !runtimeReady ||
+              session.generation !== runtimeGeneration ||
+              session.localOwner ||
+              session.closing ||
+              (!agent &&
+                ![...session.attachments.values()].some(
+                  (attachment) =>
+                    !attachment.closing && attachment.transport.isConnected()
+                ))
+            ) {
+              void dialog.dismiss().catch(() => undefined)
+
+              return
+            }
+
+            const dialogType = dialog.type()
+
+            if (
+              dialogType !== 'alert' &&
+              dialogType !== 'confirm' &&
+              dialogType !== 'prompt'
+            ) {
+              void dialog.dismiss().catch(() => undefined)
+
+              return
+            }
+
+            session.dialog = {
+              dialog,
+              message: {
+                type: 'dialog',
+                requestId: crypto.randomUUID(),
+                dialogType,
+                message: dialog.message().slice(0, 16_384),
+                defaultValue: dialog.defaultValue().slice(0, 16_384)
+              }
+            }
+
+            for (const attachment of session.attachments.values()) {
+              attachment.transport.sendMessage(session.dialog.message)
             }
           },
           download: (download) => {
@@ -1449,6 +1538,7 @@ export class BrowserSessionManager {
             }
 
             this.closeFileChooser(session)
+            this.closeDialog(session)
             session.crashMessage = message
 
             for (const attachment of session.attachments.values()) {
@@ -1720,6 +1810,10 @@ export class BrowserSessionManager {
           type: 'videoUnavailable',
           message: session.videoError
         })
+      }
+
+      if (session.dialog) {
+        transport.sendMessage(session.dialog.message)
       }
 
       this.prepareVideoViewer(session, attachment)
@@ -2315,6 +2409,17 @@ export class BrowserSessionManager {
     const { session, attachment } = entry
 
     if (attachment.closing) {
+      return
+    }
+
+    // EXTERNAL: The input that opened the dialog stays blocked in the scheduler
+    // until the dialog closes, so answer it directly. Any viewer may answer,
+    // since taking control would also wait behind that input.
+    if (message.type === 'dialogResponse') {
+      if (session.dialog?.message.requestId === message.requestId) {
+        this.closeDialog(session, message)
+      }
+
       return
     }
 
@@ -3075,6 +3180,7 @@ export class BrowserSessionManager {
 
   private async closePlaywrightRuntime(session: BrowserSession): Promise<void> {
     this.closeFileChooser(session)
+    this.closeDialog(session)
     await this.waitForAppState(session)
     await this.detachAgent(session)
     const launch = session.launch
@@ -3101,6 +3207,7 @@ export class BrowserSessionManager {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             this.closeFileChooser(session)
+            this.closeDialog(session)
             this.resetVideoDelivery(session)
 
             if (this.sessions.get(session.appId) === session) {
@@ -3213,6 +3320,15 @@ export class BrowserSessionManager {
 
       attachment.closing = true
       attachment.video.dispose()
+
+      if (
+        ![...session.attachments.values()].some(
+          (candidate) => !candidate.closing && candidate.transport.isConnected()
+        )
+      ) {
+        this.closeDialog(session)
+      }
+
       void this.scheduleOperation(
         session,
         async () => {
@@ -3275,6 +3391,9 @@ export class BrowserSessionManager {
     }
 
     let canClose = false
+    // EXTERNAL: An open page dialog blocks the scheduled input that opened it,
+    // so a queued close would wait for an answer.
+    this.closeDialog(session)
 
     const operation = this.scheduleOperation(
       session,
@@ -3776,7 +3895,7 @@ export class BrowserSessionManager {
   private async executeLocalAgentCommand(
     session: BrowserSession,
     owner: BrowserLocalOwner,
-    input: BrowserAgentCommand
+    input: Parameters<PlaywrightBrowser['agentCommand']>[0]
   ): Promise<string> {
     const automation = await this.ensureLocalAutomation(session, owner)
     const page = automation.page
@@ -3883,6 +4002,37 @@ export class BrowserSessionManager {
     input: BrowserAgentCommand,
     session: BrowserSession
   ): Promise<string> {
+    const pendingDialog = session.dialog?.message ?? null
+
+    const describeDialog = (dialog: typeof pendingDialog) =>
+      dialog
+        ? `A ${dialog.dialogType} dialog is open: ${JSON.stringify(dialog.message)}. Answer it with dialog-accept${dialog.dialogType === 'prompt' ? ' [prompt]' : ''} or dialog-dismiss.`
+        : ''
+
+    // EXTERNAL: An open page dialog blocks page scripts and scheduled input, so
+    // answer it directly and refuse commands that would wait behind it.
+    if (
+      input.command === 'dialog-accept' ||
+      input.command === 'dialog-dismiss'
+    ) {
+      if (!pendingDialog) {
+        throw new Error('No page dialog is open.')
+      }
+
+      this.closeDialog(session, {
+        accept: input.command === 'dialog-accept',
+        promptText: input.args[0] ?? null
+      })
+
+      return input.command === 'dialog-accept'
+        ? `Accepted the ${pendingDialog.dialogType} dialog`
+        : `Dismissed the ${pendingDialog.dialogType} dialog`
+    }
+
+    if (pendingDialog) {
+      throw new Error(describeDialog(pendingDialog))
+    }
+
     let result = ''
     await this.scheduleOperation(session, async () => {
       const localOwner = session.localOwner
@@ -3954,7 +4104,9 @@ export class BrowserSessionManager {
       }
     })
 
-    return result
+    return session.dialog
+      ? `${result}\n${describeDialog(session.dialog.message)}`
+      : result
   }
 
   async status(): Promise<BrowserInstallStatus> {
