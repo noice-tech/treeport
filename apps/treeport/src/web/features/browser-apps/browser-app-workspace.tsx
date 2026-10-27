@@ -1346,20 +1346,16 @@ export function BrowserAppWorkspace({
       const requestId = crypto.randomUUID()
       let timer: ReturnType<typeof setTimeout> | null = null
 
-      const result = new Promise<BrowserClipboard | null>(
-        (resolve, reject) => {
-          pendingCopiesRef.current.set(requestId, { resolve, reject })
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error('Copy timed out. Select the text and try again.')
-              ),
-            10_000
-          )
-          send({ type: 'takeControl' })
-          send({ type: 'copy', requestId })
-        }
-      ).finally(() => {
+      const result = new Promise<BrowserClipboard | null>((resolve, reject) => {
+        pendingCopiesRef.current.set(requestId, { resolve, reject })
+        timer = setTimeout(
+          () =>
+            reject(new Error('Copy timed out. Select the text and try again.')),
+          10_000
+        )
+        send({ type: 'takeControl' })
+        send({ type: 'copy', requestId })
+      }).finally(() => {
         if (timer !== null) {
           clearTimeout(timer)
         }
