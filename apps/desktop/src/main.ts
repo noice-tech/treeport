@@ -156,7 +156,6 @@ let installUpdateOnQuit = false
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 const workspaceTargets = Effect.unsafeMakeSemaphore(1)
 
-let dockBounceId: number | null = null
 let frameFlashing = false
 
 function rendererDevelopmentServerUrl(): string | null {
@@ -320,11 +319,6 @@ function releaseTerminalSelection(): void {
 }
 
 function stopWindowAttention(): void {
-  if (dockBounceId !== null) {
-    app.dock?.cancelBounce(dockBounceId)
-    dockBounceId = null
-  }
-
   if (frameFlashing) {
     mainWindow?.flashFrame(false)
     frameFlashing = false
@@ -338,11 +332,9 @@ function requestWindowAttention(): void {
     return
   }
 
-  if (process.platform === 'darwin') {
-    if (dockBounceId === null && app.dock) {
-      dockBounceId = app.dock.bounce('informational')
-    }
-  } else if (!frameFlashing) {
+  shellView?.webContents.send('shell:attention-sound')
+
+  if (process.platform !== 'darwin' && !frameFlashing) {
     window.flashFrame(true)
     frameFlashing = true
   }
@@ -1054,7 +1046,11 @@ function createWindow(url?: string): BrowserWindow {
   hostSessions = hosts
 
   const shell = new WebContentsView({
-    webPreferences: { ...rendererWindowPreferences(), webviewTag: false }
+    webPreferences: {
+      ...rendererWindowPreferences(),
+      webviewTag: false,
+      autoplayPolicy: 'no-user-gesture-required'
+    }
   })
 
   shellView = shell

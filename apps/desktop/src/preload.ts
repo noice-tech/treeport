@@ -402,6 +402,13 @@ const shellBridge = Object.freeze({
     return () =>
       ipcRenderer.removeListener('terminal-selection:active', receive)
   },
+  onAttentionSound(listener: () => void) {
+    const receive = () => listener()
+
+    ipcRenderer.on('shell:attention-sound', receive)
+
+    return () => ipcRenderer.removeListener('shell:attention-sound', receive)
+  },
   releaseTerminalSelection(): void {
     ipcRenderer.send('shell:terminal-selection-release')
   },
