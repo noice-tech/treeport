@@ -211,6 +211,22 @@ async function refreshProject(project: TreeportProject): Promise<void> {
     return
   }
 
+  // EXTERNAL: Git linked worktrees share the repository config, so one read covers every branch.
+  const { stdout } = await promisify(execFile)(
+    'git',
+    ['-C', project.rootPath, 'config', '--list', '-z'],
+    { timeout: 10_000 }
+  )
+
+  const config = new Map(
+    stdout
+      .split('\0')
+      .map((entry) => [
+        entry.slice(0, entry.indexOf('\n')),
+        entry.slice(entry.indexOf('\n') + 1)
+      ])
+  )
+
   for (const tree of trees) {
     const branch = tree.git!.branch!
 
@@ -218,10 +234,30 @@ async function refreshProject(project: TreeportProject): Promise<void> {
       continue
     }
 
+    const remote =
+      config.get(`branch.${branch}.pushremote`) ??
+      config.get('remote.pushdefault') ??
+      config.get(`branch.${branch}.remote`) ??
+      null
+
+    const headRepository = remote
+      ? (parseRemote(remote) ??
+        parseRemote(config.get(`remote.${remote}.url`) ?? ''))
+      : null
+
+    const headOwner =
+      headRepository?.host === repository.host
+        ? headRepository.owner
+        : repository.owner
+
+    const headBranch =
+      config.get(`branch.${branch}.merge`)?.replace(/^refs\/heads\//u, '') ??
+      branch
+
     const [pull = null] = await github(
       repository,
       credential,
-      `/pulls?state=all&per_page=1&head=${encodeURIComponent(`${repository.owner}:${branch}`)}`,
+      `/pulls?state=all&per_page=1&head=${encodeURIComponent(`${headOwner}:${headBranch}`)}`,
       z.array(pullRequestSchema)
     )
 
