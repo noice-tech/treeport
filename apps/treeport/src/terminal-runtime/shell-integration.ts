@@ -25,7 +25,8 @@ if [[ -n "$TREEPORT_SHELL_INTEGRATION" ]]; then
   }
   _treeport_command_end() {
     local command_status=$?
-    printf '\\033]133;D;%s\\033\\\\\\033]7;kitty-shell-cwd://%s%s\\033\\\\\\033]133;A\\033\\\\' "$command_status" "$HOST" "$PWD"
+    # A directory or host name with a raw ESC or BEL could end OSC 7 early and inject its own sequence.
+    printf '\\033]133;D;%s\\033\\\\\\033]7;kitty-shell-cwd://%s%s\\033\\\\\\033]133;A\\033\\\\' "$command_status" "\${HOST//[[:cntrl:]]/}" "\${PWD//[[:cntrl:]]/}"
   }
   _treeport_prompt_end() {
     printf '\\033]133;B\\033\\\\'
@@ -87,7 +88,8 @@ _treeport_command_start() {
 }
 _treeport_command_end() {
   local command_status=$?
-  printf '\\033]133;D;%s\\033\\\\\\033]7;kitty-shell-cwd://%s%s\\033\\\\\\033]133;A\\033\\\\' "$command_status" "$HOSTNAME" "$PWD"
+  # A directory or host name with a raw ESC or BEL could end OSC 7 early and inject its own sequence.
+  printf '\\033]133;D;%s\\033\\\\\\033]7;kitty-shell-cwd://%s%s\\033\\\\\\033]133;A\\033\\\\' "$command_status" "\${HOSTNAME//[[:cntrl:]]/}" "\${PWD//[[:cntrl:]]/}"
   return "$command_status"
 }
 _treeport_command_ready_prompt() {
@@ -199,7 +201,8 @@ function _treeport_command_end --on-event fish_postexec
 end
 
 function _treeport_prompt_start --on-event fish_prompt
-  printf '\\e]7;kitty-shell-cwd://%s%s\\e\\\\\\e]133;A\\e\\\\' (prompt_hostname) "$PWD"
+  # A directory or host name with a raw ESC or BEL could end OSC 7 early and inject its own sequence.
+  printf '\\e]7;kitty-shell-cwd://%s%s\\e\\\\\\e]133;A\\e\\\\' (prompt_hostname | string replace -ar '[[:cntrl:]]' '') (string replace -ar '[[:cntrl:]]' '' -- "$PWD")
   # The prompt function runs after this event, so wrap it once user config has loaded.
   if not functions -q _treeport_user_prompt; and functions -q fish_prompt
     functions -c fish_prompt _treeport_user_prompt
