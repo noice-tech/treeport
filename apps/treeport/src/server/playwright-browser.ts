@@ -6,6 +6,7 @@ import type {
   BrowserContext,
   CDPSession,
   Dialog,
+  Download,
   FileChooser,
   Page,
   Request
@@ -40,6 +41,7 @@ export interface PlaywrightBrowserCallbacks {
   state(state: BrowserRuntimeState): void
   clipboard(clipboard: BrowserClipboard): boolean
   fileChooser(chooser: FileChooser | null): void
+  download(download: Download): void
   popup(url: string): void
   navigationError(message: string, source?: 'video'): void
   crashed(message: string): void
@@ -302,10 +304,7 @@ export class PlaywrightBrowser {
         await candidate.close().catch(() => undefined)
       })()
     })
-    page.on('download', (download) => {
-      this.callbacks.navigationError('Downloads are not supported in Browser.')
-      void download.cancel()
-    })
+    page.on('download', (download) => this.callbacks.download(download))
     page.on('filechooser', (chooser) => this.callbacks.fileChooser(chooser))
     page.on('close', () => {
       if (!this.closing) {
