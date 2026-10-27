@@ -75,6 +75,7 @@ function fixture(webDist = '/missing') {
     command: null,
     status: 'running' as const,
     exitCode: null,
+    parentTerminalId: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
@@ -2016,6 +2017,7 @@ describe('HTTP API validation', () => {
         initialSize: { cols: 144, rows: 48 }
       },
       'wt_main',
+      undefined,
       undefined
     )
     const active = await app.request('/api/operations?projectId=p&kind=create')

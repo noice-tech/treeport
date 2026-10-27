@@ -1,6 +1,9 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
+  ArrowUturnLeftIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   DocumentDuplicateIcon,
   FolderIcon,
   LinkSlashIcon,
@@ -98,6 +101,8 @@ const treeDecorationToneRank = (tone: TreeDecorationTone) =>
   tone === 'danger' ? 0 : tone === 'warning' ? 1 : 2
 
 const VISIBLE_TREE_DECORATIONS = 2
+
+const COLLAPSED_TERMINALS_STORAGE_KEY = 'treeport-collapsed-terminals'
 
 function sortTreeDecorations(decorations: TreeDecoration[]): TreeDecoration[] {
   return [...decorations].sort(
@@ -353,6 +358,38 @@ export function WorkspaceTree({
     null
   )
 
+  const [collapsedTerminalIds, setCollapsedTerminalIds] = useState(
+    () =>
+      new Set(
+        localStorage
+          .getItem(COLLAPSED_TERMINALS_STORAGE_KEY)
+          ?.split(',')
+          .filter(Boolean) ?? []
+      )
+  )
+
+  const terminalOwners = new Map(
+    projects.flatMap((project) =>
+      project.worktrees.flatMap((worktree) =>
+        worktree.terminals.map(
+          (terminal) => [terminal.id, { terminal, worktree }] as const
+        )
+      )
+    )
+  )
+
+  const toggleTerminalChildren = (terminalId: string) => {
+    const next = new Set(collapsedTerminalIds)
+
+    if (!next.delete(terminalId)) {
+      next.add(terminalId)
+    }
+
+    const retained = [...next].filter((id) => terminalOwners.has(id))
+    localStorage.setItem(COLLAPSED_TERMINALS_STORAGE_KEY, retained.join(','))
+    setCollapsedTerminalIds(new Set(retained))
+  }
+
   const {
     attention: terminalAttention,
     titles: runtimeTitles,
@@ -374,10 +411,40 @@ export function WorkspaceTree({
       : 'Ctrl+Shift+T'
     : null
 
+  const orderedWorktrees = new Map(
+    projects.map((project) => {
+      const ids = new Set(project.worktrees.map((worktree) => worktree.id))
+
+      const withChildTrees = (worktree: WorktreeRecord): WorktreeRecord[] => [
+        worktree,
+        ...project.worktrees
+          .filter(
+            (candidate) =>
+              candidate.originWorktreeId === worktree.id &&
+              candidate.id !== worktree.id
+          )
+          .flatMap(withChildTrees)
+      ]
+
+      return [
+        project.id,
+        project.worktrees
+          .filter(
+            (worktree) =>
+              !worktree.originWorktreeId || !ids.has(worktree.originWorktreeId)
+          )
+          .flatMap(withChildTrees)
+      ] as const
+    })
+  )
+
   const terminalTrees = new Map<
     string,
     {
-      terminals: TerminalRecord[]
+      visibleTerminals: TerminalRecord[]
+      depths: Map<string, number>
+      childCounts: Map<string, number>
+      runningDescendants: Map<string, number>
       splitMembers: Map<string, 'first' | 'middle' | 'last'>
     }
   >()
@@ -393,12 +460,83 @@ export function WorkspaceTree({
         worktree.terminals.map((terminal) => terminal.id)
       )
 
-      const orderedIds = layout.groups.flatMap(terminalIdsInLayoutNode)
+      const groups = layout.groups.map(terminalIdsInLayoutNode)
       const splitMembers = new Map<string, 'first' | 'middle' | 'last'>()
+      const childGroups = new Map<string, string[][]>()
+      const rootGroups: string[][] = []
 
-      for (const group of layout.groups) {
-        const groupIds = terminalIdsInLayoutNode(group)
+      for (const groupIds of groups) {
+        const parentId =
+          groupIds.length === 1
+            ? terminalsById.get(groupIds[0]!)!.parentTerminalId
+            : null
 
+        if (
+          parentId &&
+          parentId !== groupIds[0] &&
+          terminalsById.has(parentId)
+        ) {
+          childGroups.set(parentId, [
+            ...(childGroups.get(parentId) ?? []),
+            groupIds
+          ])
+        } else {
+          rootGroups.push(groupIds)
+        }
+      }
+
+      const visibleIds: string[] = []
+      const depths = new Map<string, number>()
+      const childCounts = new Map<string, number>()
+      const runningDescendants = new Map<string, number>()
+
+      const visitGroup = (
+        groupIds: string[],
+        depth: number,
+        visible: boolean
+      ): number => {
+        let running = 0
+        const unvisitedIds = groupIds.filter((id) => !depths.has(id))
+
+        for (const terminalId of unvisitedIds) {
+          depths.set(terminalId, depth)
+
+          if (visible) {
+            visibleIds.push(terminalId)
+          }
+        }
+
+        for (const terminalId of unvisitedIds) {
+          const children = childGroups.get(terminalId) ?? []
+          let childRunning = 0
+
+          for (const child of children) {
+            childRunning += visitGroup(
+              child,
+              depth + 1,
+              visible && !collapsedTerminalIds.has(terminalId)
+            )
+          }
+
+          childCounts.set(terminalId, children.length)
+          runningDescendants.set(terminalId, childRunning)
+          running +=
+            childRunning +
+            (terminalsById.get(terminalId)!.status === 'running' ? 1 : 0)
+        }
+
+        return running
+      }
+
+      for (const groupIds of rootGroups) {
+        visitGroup(groupIds, 0, true)
+      }
+
+      for (const groupIds of groups) {
+        visitGroup(groupIds, 0, true)
+      }
+
+      for (const groupIds of groups) {
         if (groupIds.length < 2) {
           continue
         }
@@ -416,9 +554,12 @@ export function WorkspaceTree({
       }
 
       terminalTrees.set(worktree.id, {
-        terminals: orderedIds.map((terminalId) =>
+        visibleTerminals: visibleIds.map((terminalId) =>
           terminalsById.get(terminalId)!
         ),
+        depths,
+        childCounts,
+        runningDescendants,
         splitMembers
       })
     }
@@ -468,10 +609,16 @@ export function WorkspaceTree({
                 </p>
               ) : null}
               <SidebarMenu className="gap-0.5 min-[701px]:gap-1">
-                {project.worktrees.map((worktree) => (
+                {orderedWorktrees.get(project.id)!.map((worktree) => (
                   <SidebarMenuItem
                     key={worktree.id}
-                    className="group/worktree min-w-0"
+                    className={cn(
+                      'group/worktree min-w-0',
+                      project.worktrees.some(
+                        (candidate) =>
+                          candidate.id === worktree.originWorktreeId
+                      ) && 'worktree-origin-child'
+                    )}
                   >
                     <ContextMenu>
                       <ContextMenuTrigger asChild>
@@ -584,6 +731,24 @@ export function WorkspaceTree({
                             <DocumentDuplicateIcon />
                             Copy tree ID
                           </ContextMenuItem>
+                          {project.worktrees.some(
+                            (candidate) =>
+                              candidate.id === worktree.originWorktreeId
+                          ) ? (
+                            <ContextMenuItem
+                              onSelect={() =>
+                                selectWorktree(
+                                  project.worktrees.find(
+                                    (candidate) =>
+                                      candidate.id === worktree.originWorktreeId
+                                  )!
+                                )
+                              }
+                            >
+                              <ArrowUturnLeftIcon />
+                              Go to origin tree
+                            </ContextMenuItem>
+                          ) : null}
                         </ContextMenuGroup>
                         {worktree.decorations.length &&
                         globalThis.matchMedia?.('(pointer: coarse)').matches ? (
@@ -657,12 +822,17 @@ export function WorkspaceTree({
                     >
                       <ReorderableItems
                         items={
-                          terminalTrees.get(worktree.id)?.terminals ??
+                          terminalTrees.get(worktree.id)?.visibleTerminals ??
                           worktree.terminals
                         }
                         orientation="vertical"
                         onReorder={(terminalIds) =>
-                          reorderTerminals(worktree, terminalIds)
+                          reorderTerminals(worktree, [
+                            ...terminalIds,
+                            ...worktree.terminals
+                              .map((terminal) => terminal.id)
+                              .filter((id) => !terminalIds.includes(id))
+                          ])
                         }
                         onDragMove={(terminal, clientX, clientY) =>
                           terminalLayoutDrag.update(terminal, clientX, clientY)
@@ -672,7 +842,7 @@ export function WorkspaceTree({
                         }
                         onDragCancel={() => terminalLayoutDrag.cancel()}
                       >
-                        {(terminal, itemProps, handleProps, index) => {
+                        {(terminal, itemProps, handleProps) => {
                           const title = terminalDisplayTitle(
                             runtimeTitles.get(terminal.id),
                             terminal.name
@@ -696,19 +866,43 @@ export function WorkspaceTree({
                             .filter(Boolean)
                             .join(', ')
 
+                          const serverIndex =
+                            worktree.terminals.indexOf(terminal)
+
                           const shortcutIndex =
-                            selectedWorktree?.id === worktree.id && index < 9
-                              ? index + 1
+                            selectedWorktree?.id === worktree.id &&
+                            serverIndex < 9
+                              ? serverIndex + 1
                               : null
 
-                          const splitMember = terminalTrees
-                            .get(worktree.id)
-                            ?.splitMembers.get(terminal.id)
+                          const terminalTree = terminalTrees.get(worktree.id)
+
+                          const splitMember = terminalTree?.splitMembers.get(
+                            terminal.id
+                          )
+
+                          const depth =
+                            terminalTree?.depths.get(terminal.id) ?? 0
+
+                          const childCount =
+                            terminalTree?.childCounts.get(terminal.id) ?? 0
+
+                          const childrenCollapsed = collapsedTerminalIds.has(
+                            terminal.id
+                          )
+
+                          const runningChildren =
+                            terminalTree?.runningDescendants.get(terminal.id) ??
+                            0
 
                           return (
                             <SidebarMenuSubItem
                               key={terminal.id}
                               {...itemProps}
+                              style={{
+                                ...itemProps.style,
+                                marginLeft: `${depth * 0.875}rem`
+                              }}
                               className={cn(
                                 'group/terminal relative min-w-0',
                                 splitMember && 'terminal-split-tree-member',
@@ -731,6 +925,8 @@ export function WorkspaceTree({
                                       type="button"
                                       className={cn(
                                         'terminal-row grid h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_2rem] gap-1 rounded-md px-2 py-1 text-left text-xs/4 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                        childCount > 0 &&
+                                          'grid-cols-[1rem_minmax(0,1fr)_4.25rem] min-[701px]:grid-cols-[1rem_minmax(0,1fr)_3.75rem]',
                                         selectedTerminalId === terminal.id
                                           ? 'selected bg-accent-400/8! text-accent-50 active:bg-accent-400/14!'
                                           : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
@@ -787,6 +983,35 @@ export function WorkspaceTree({
                                     </Button>
                                   </SidebarMenuSubButton>
                                 </ContextMenuTrigger>
+                                {childCount > 0 ? (
+                                  <div className="absolute inset-y-0 right-8 z-10 flex items-center min-[701px]:right-6">
+                                    <SidebarAction
+                                      label={`${childrenCollapsed ? 'Show' : 'Hide'} ${childCount} ${childCount === 1 ? 'terminal' : 'terminals'} started by ${title}`}
+                                      tooltipSide="right"
+                                      tooltip={
+                                        childrenCollapsed
+                                          ? `Show started terminals${runningChildren ? ` — ${runningChildren} running` : ''}`
+                                          : 'Hide started terminals'
+                                      }
+                                      className={cn(
+                                        'w-auto gap-0.5 px-1 text-[0.6875rem] text-zinc-500 tabular-nums hover:bg-transparent hover:text-zinc-200 active:bg-transparent',
+                                        childrenCollapsed &&
+                                          runningChildren > 0 &&
+                                          'text-accent-300'
+                                      )}
+                                      onClick={() =>
+                                        toggleTerminalChildren(terminal.id)
+                                      }
+                                    >
+                                      {childrenCollapsed ? (
+                                        <ChevronRightIcon />
+                                      ) : (
+                                        <ChevronDownIcon />
+                                      )}
+                                      {childCount}
+                                    </SidebarAction>
+                                  </div>
+                                ) : null}
                                 <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
                                   <SidebarAction
                                     label={`Close ${title}`}

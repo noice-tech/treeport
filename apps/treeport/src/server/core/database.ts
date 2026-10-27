@@ -75,6 +75,7 @@ const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
         .optional()
     ),
     sourceWorktreeId: z.string().optional(),
+    originWorktreeId: z.string().optional(),
     treeTitle: z
       .strictObject({
         command: z.array(z.string()),
@@ -600,6 +601,7 @@ export function mapWorktree(
     prunable: Boolean(row.prunable),
     kind: row.kind,
     managedWrapperPath: row.managedWrapperPath,
+    originWorktreeId: row.originWorktreeId,
     title: row.title,
     pendingTitle: null,
     decorations: Object.entries(

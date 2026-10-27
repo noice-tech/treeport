@@ -18,7 +18,7 @@ For CLI installations with a machine-local development wrapper, use the executab
 
 ## Persistent terminals
 
-Start servers and long-running tools in their own Treeport terminals, not background Bash commands or monitors. They stay visible to the user and keep running after this session ends:
+Start servers, watchers, and other long-running processes in their own Treeport terminals, not background Bash commands or monitors. They stay visible to the user, nested under this terminal, and keep running after this session ends:
 
 ```sh
 treeport terminal create --worktree . --name "Dev server" -- pnpm dev
@@ -40,7 +40,7 @@ treeport terminal wait <terminal-id> --until exit --timeout 10m
 
 `idle` means no `working` activity, not proof that every application has completed. `attention` waits for the next attention event, not an already-unread notification. Inspect first when the process may already have finished. Terminal creation success does not prove its command succeeded; inspect output and exit status.
 
-Never delete a terminal unless the user explicitly asks to stop or close it. Never delete your own Claude Code terminal.
+Delete terminals you started with `treeport terminal delete <terminal-id>` once their processes are no longer needed. Never delete other terminals unless the user explicitly asks, and never delete your own Claude Code terminal.
 
 ## Shared browser
 

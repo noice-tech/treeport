@@ -122,7 +122,8 @@ const createSchema = Schema.Struct({
   initialSize: Schema.optional(terminalSizeSchema),
   env: Schema.Record({ key: Schema.String, value: Schema.String }),
   setupTasks: Schema.optional(Schema.Array(setupTaskSchema)),
-  setupError: Schema.optional(Schema.String)
+  setupError: Schema.optional(Schema.String),
+  parentTerminalId: Schema.optional(nonEmptyString)
 })
 
 export type TerminalHostCreateInput = typeof createSchema.Type & {
@@ -361,6 +362,7 @@ const hostedTerminalSchema = Schema.Struct({
   unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
   recoveryPending: Schema.optional(Schema.Boolean),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
+  parentTerminalId: Schema.optional(Schema.NullOr(Schema.String)),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })

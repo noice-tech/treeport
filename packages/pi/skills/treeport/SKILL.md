@@ -18,7 +18,8 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - Treat command arguments after `--` as an argv array. Do not turn them into a shell command string.
 - Do not use `eval` or an implicit `sh -lc`. Launch a shell explicitly only when the caller intentionally requests shell semantics.
 - Do not place untrusted titles, prompts, or other external text into interpolated shell fragments. Pass each value as one argument or use a caller-managed file when the child supports file arguments.
-- Never delete a terminal or remove a tree unless the user explicitly asks.
+- Create terminals only for long-running processes such as servers, watchers, and agents.
+- Delete terminals you started once their processes are no longer needed. Never delete other terminals or remove a tree unless the user explicitly asks.
 - Obey the daemon lifecycle reported by `treeport context`.
 - When the lifecycle is `external`, never run `treeport start`, `treeport stop`, or `treeport remote enable`.
 - In the external lifecycle, the parent process owns startup, shutdown, and remote exposure.
@@ -63,6 +64,8 @@ treeport terminal create --worktree <tree-id> --name <terminal-name> -- <program
 ```
 
 The command returns after the detached terminal host creates the session. The program continues independently of the browser, API daemon, and caller that created it.
+
+Inside a managed terminal, Treeport records the calling terminal as the new terminal's parent and shows it nested under the caller in the UI. `spawn` and `launch --new-tree` record the calling tree as the new tree's origin and show the new tree under it.
 
 ## Create a child tree and terminal
 

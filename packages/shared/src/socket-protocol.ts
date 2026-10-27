@@ -97,6 +97,7 @@ const terminalRecordSchema = Schema.Struct({
   unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
   recoveryPending: Schema.optional(Schema.Boolean),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
+  parentTerminalId: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String
 })

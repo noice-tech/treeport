@@ -73,6 +73,7 @@ export const worktrees = sqliteTable(
     prunable: integer().notNull().default(0),
     kind: text({ enum: ['main', 'linked', 'folder'] }).notNull(),
     managedWrapperPath: text('managed_wrapper_path'),
+    originWorktreeId: text('origin_worktree_id'),
     title: text(),
     decorations: text().notNull().default('{}'),
     createdAt: text('created_at').notNull(),
