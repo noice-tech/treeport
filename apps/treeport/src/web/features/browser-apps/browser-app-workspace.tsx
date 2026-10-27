@@ -188,6 +188,7 @@ export function BrowserAppWorkspace({
   )
 
   const pointerActiveRef = useRef(false)
+  const pointerTypeRef = useRef('mouse')
 
   const touchesRef = useRef(
     new Map<number, { id: number; x: number; y: number }>()
@@ -2331,6 +2332,8 @@ export function BrowserAppWorkspace({
                     aria-label="Browser viewport. Streamed page content is not available to assistive technology."
                     onFocus={onFocusSurface}
                     onPointerMove={(event) => {
+                      pointerTypeRef.current = event.pointerType
+
                       if (
                         contextRequestRef.current ||
                         contextRef.current ||
@@ -2352,6 +2355,7 @@ export function BrowserAppWorkspace({
                     }}
                     onMouseMove={(event) => {
                       if (
+                        pointerTypeRef.current === 'touch' ||
                         contextRequestRef.current ||
                         contextRef.current ||
                         (!stateRef.current?.controlled &&
@@ -2366,6 +2370,8 @@ export function BrowserAppWorkspace({
                       event.currentTarget.style.cursor = 'default'
                     }}
                     onPointerDown={(event) => {
+                      pointerTypeRef.current = event.pointerType
+
                       if (
                         inputBlocked ||
                         !active ||
@@ -2466,7 +2472,14 @@ export function BrowserAppWorkspace({
                     onMouseDown={(event) => {
                       event.preventDefault()
 
-                      if (event.button === 2 || inputBlocked || !active) {
+                      // EXTERNAL: iOS Safari fires compatibility mouse events after a tap
+                      // even when pointerdown is prevented, which would click twice.
+                      if (
+                        pointerTypeRef.current === 'touch' ||
+                        event.button === 2 ||
+                        inputBlocked ||
+                        !active
+                      ) {
                         return
                       }
 
@@ -2481,7 +2494,10 @@ export function BrowserAppWorkspace({
                     onMouseUp={(event) => {
                       event.preventDefault()
 
-                      if (event.button === 2) {
+                      if (
+                        pointerTypeRef.current === 'touch' ||
+                        event.button === 2
+                      ) {
                         return
                       }
 
