@@ -31,6 +31,8 @@ function emptySnapshot(cols: number, rows: number): string {
       writePty: null,
       bell: null,
       titleChanged: null,
+      pwdChanged: null,
+      semanticPrompt: null,
       progress: null,
       programStatus: null,
       reset: null,

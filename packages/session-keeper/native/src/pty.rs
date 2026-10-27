@@ -143,7 +143,7 @@ impl Pty {
         Ok(result)
     }
 }
-pub fn foreground_name(descriptor: &AsyncFd<OwnedFd>) -> Result<Option<String>> {
+pub fn foreground(descriptor: &AsyncFd<OwnedFd>) -> Result<Option<(String, Vec<String>)>> {
     // SAFETY: the PTY descriptor remains owned for the duration of this call.
     let group = unsafe { libc::tcgetpgrp(descriptor.get_ref().as_raw_fd()) };
     if group < 0 {
@@ -156,7 +156,7 @@ pub fn foreground_name(descriptor: &AsyncFd<OwnedFd>) -> Result<Option<String>> 
     if group == 0 {
         return Ok(None);
     }
-    Ok(process::identity(group as u32)?.map(|row| row.name))
+    Ok(process::identity(group as u32)?.map(|row| (row.name, process::arguments(group as u32))))
 }
 
 async fn read(descriptor: &AsyncFd<OwnedFd>) -> io::Result<Vec<u8>> {

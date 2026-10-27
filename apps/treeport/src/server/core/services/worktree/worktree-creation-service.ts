@@ -56,7 +56,6 @@ function causeMessage(cause: Cause.Cause<unknown>): string {
 
 interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
-  initialTitle?: string
   command?: string
   afterExit?: TerminalAfterExit
   initialSize?: TerminalSize
@@ -66,7 +65,6 @@ interface TerminalLaunchOptions {
 
 interface CreateInitialTerminal {
   name: string
-  initialTitle?: string
   command?: string
   afterExit?: TerminalAfterExit
   initialSize?: TerminalSize
@@ -382,10 +380,6 @@ export class WorktreeCreationService {
 
     if (request.initialTerminal) {
       initialTerminal = { name: request.initialTerminal.name }
-
-      if (request.initialTerminal.initialTitle !== undefined) {
-        initialTerminal.initialTitle = request.initialTerminal.initialTitle
-      }
 
       if (request.initialTerminal.command !== undefined) {
         initialTerminal.command = request.initialTerminal.command
@@ -808,10 +802,6 @@ export class WorktreeCreationService {
         if (initialTerminal) {
           const launchOptions: TerminalLaunchOptions = {}
 
-          if (initialTerminal.initialTitle) {
-            launchOptions.initialTitle = initialTerminal.initialTitle
-          }
-
           if (initialTerminal.command) {
             launchOptions.command = initialTerminal.command
           }
@@ -904,7 +894,6 @@ export class WorktreeCreationService {
                 'Tree setup: no persistent terminal could be started'
             } else {
               const setupOptions: TerminalLaunchOptions = {
-                initialTitle: 'Setup',
                 setup: { tasks: setup.tasks, error: setupError },
                 command: 'true',
                 afterExit: 'closeOnSuccess'

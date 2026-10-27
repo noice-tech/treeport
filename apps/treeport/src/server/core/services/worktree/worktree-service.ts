@@ -45,7 +45,6 @@ export class WorktreeService {
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
-      initialTitle?: string
       command?: string
       afterExit?: TerminalAfterExit
       initialSize?: TerminalSize
@@ -77,7 +76,6 @@ export class WorktreeService {
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
-      initialTitle?: string
       command?: string
       afterExit?: TerminalAfterExit
       initialSize?: TerminalSize

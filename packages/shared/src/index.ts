@@ -500,7 +500,6 @@ export interface CreateOperationRequest {
   initialTerminal?:
     | {
         name: string
-        initialTitle?: string | undefined
         command?: string | undefined
         afterExit?: TerminalAfterExit | undefined
         initialSize?: { cols: number; rows: number } | undefined
@@ -959,7 +958,6 @@ const terminalAfterExitSchema = Schema.Literal(
 
 const initialTerminalSchema = Schema.Struct({
   name: terminalNameSchema,
-  initialTitle: Schema.optional(terminalNameSchema),
   command: Schema.optional(terminalCommandSchema),
   afterExit: Schema.optional(terminalAfterExitSchema),
   initialSize: Schema.optional(terminalSizeSchema)
@@ -1022,7 +1020,6 @@ const terminalEnvironmentSchema = Schema.Record({
 
 export const createTerminalSchema = Schema.Struct({
   name: terminalNameSchema,
-  initialTitle: Schema.optional(terminalNameSchema),
   command: Schema.optional(terminalCommandSchema),
   afterExit: Schema.optional(terminalAfterExitSchema),
   cwd: Schema.optional(terminalCwdSchema),

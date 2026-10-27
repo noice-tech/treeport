@@ -142,7 +142,6 @@ test.describe('desktop worktree and terminal workflows', () => {
         base: 'default',
         initialTerminal: expect.objectContaining({
           name: 'Hunk',
-          initialTitle: 'Hunk',
           initialSize: {
             cols: expect.any(Number),
             rows: expect.any(Number)

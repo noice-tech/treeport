@@ -143,6 +143,7 @@ fn main() -> Result<()> {
                         owner_pid: std::process::id(),
                         pid: 0,
                         process: manifest.argv[0].clone(),
+                        command_line: Vec::new(),
                         cols: manifest.cols,
                         rows: manifest.rows,
                         sequence: exit.sequence,

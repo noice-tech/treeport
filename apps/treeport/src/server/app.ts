@@ -1415,10 +1415,6 @@ export function createApp({
         if (body.initialTerminal) {
           initialTerminal = { name: body.initialTerminal.name }
 
-          if (body.initialTerminal.initialTitle) {
-            initialTerminal.initialTitle = body.initialTerminal.initialTitle
-          }
-
           if (body.initialTerminal.command) {
             initialTerminal.command = body.initialTerminal.command
           }
@@ -2018,10 +2014,6 @@ export function createApp({
         const options: NonNullable<
           Parameters<TreeportService['terminals']['createTerminal']>[2]
         > = {}
-
-        if (body.initialTitle) {
-          options.initialTitle = body.initialTitle
-        }
 
         if (body.command) {
           options.command = body.command

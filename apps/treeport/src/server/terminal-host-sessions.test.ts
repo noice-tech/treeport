@@ -276,7 +276,7 @@ describe('TerminalHostSessionManager', () => {
       )
     )
     pty.emit(
-      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]7740;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
+      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]133;C;cmdline_url=pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
     )
     const snapshot = await run(manager.snapshot('term'))
     expect(await run(manager.runtimeState('term'))).toMatchObject({
@@ -301,7 +301,7 @@ describe('TerminalHostSessionManager', () => {
     restored.dispose()
     await vi.waitFor(() => expect(firstOutput).toHaveLength(2))
     expect(firstOutput).toEqual([
-      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]7740;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n',
+      '\u001b[?2026h\u001b]2;Terminal title\u0007\u001b]133;C;cmdline_url=pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n',
       'after attach\r\n'
     ])
     expect(secondOutput).toEqual(firstOutput)
@@ -353,9 +353,12 @@ describe('TerminalHostSessionManager', () => {
 
     expect(runtimeEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ title: 'Terminal title' }),
         expect.objectContaining({
-          titleState: expect.objectContaining({ commandLine: 'pnpm test' })
+          titleState: {
+            title: 'pnpm test',
+            command: 'pnpm test',
+            running: true
+          }
         }),
         {
           activity: expect.objectContaining({ state: 'working', progress: 50 })

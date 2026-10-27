@@ -22,6 +22,8 @@ export async function restoreTestSnapshot(
       writePty,
       bell: null,
       titleChanged: null,
+      pwdChanged: null,
+      semanticPrompt: null,
       progress: null,
       programStatus: null,
       reset: null,

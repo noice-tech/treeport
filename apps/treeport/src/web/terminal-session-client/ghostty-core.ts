@@ -154,6 +154,8 @@ export class GhosttyTerminalCore implements TerminalCore {
       titleChanged: () => {
         this.titleChanged = true
       },
+      pwdChanged: null,
+      semanticPrompt: null,
       progress: null,
       programStatus: () => {},
       reset: null,

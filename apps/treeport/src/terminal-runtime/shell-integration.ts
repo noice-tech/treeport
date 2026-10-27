@@ -17,20 +17,23 @@ const ZSH_INTEGRATION = `${ZSH_DELEGATE('.zshrc')}
 if [[ -n "$TREEPORT_SHELL_INTEGRATION" ]]; then
   unset TREEPORT_SHELL_INTEGRATION
   autoload -Uz add-zsh-hook 2>/dev/null
-  _treeport_command_title_preexec() {
+  _treeport_command_start() {
     emulate -L zsh
-    local title=\${1//[[:cntrl:]]/}
-    title=\${title[1,256]}
-    printf '\\033]7740;command;%s\\033\\\\' "$title"
+    local line=\${1//[[:cntrl:]]/}
+    line=\${line//\\%/%25}
+    printf '\\033]133;C;cmdline_url=%s\\033\\\\' "\${line//;/%3B}"
   }
-  _treeport_command_title_precmd() {
-    emulate -L zsh
-    printf '\\033]7740;command;\\033\\\\'
+  _treeport_command_end() {
+    local command_status=$?
+    printf '\\033]133;D;%s\\033\\\\\\033]7;kitty-shell-cwd://%s%s\\033\\\\\\033]133;A\\033\\\\' "$command_status" "$HOST" "$PWD"
   }
-  add-zsh-hook -d preexec _treeport_command_title_preexec 2>/dev/null
-  add-zsh-hook -d precmd _treeport_command_title_precmd 2>/dev/null
-  add-zsh-hook preexec _treeport_command_title_preexec
-  add-zsh-hook precmd _treeport_command_title_precmd
+  _treeport_prompt_end() {
+    printf '\\033]133;B\\033\\\\'
+  }
+  add-zsh-hook -d preexec _treeport_command_start 2>/dev/null
+  add-zsh-hook preexec _treeport_command_start
+  autoload -Uz add-zle-hook-widget 2>/dev/null && add-zle-hook-widget line-init _treeport_prompt_end
+  precmd_functions=(_treeport_command_end \${precmd_functions:#_treeport_command_end})
   if [[ -n "\${TREEPORT_RUN_COMMAND+x}" ]]; then
     _treeport_run_command=$TREEPORT_RUN_COMMAND
     _treeport_run_after=\${TREEPORT_RUN_AFTER:-shell}
@@ -53,7 +56,10 @@ if [[ -n "$TREEPORT_SHELL_INTEGRATION" ]]; then
       fi
       unset _treeport_run_command _treeport_run_after _treeport_run_result
       for hook in precmd $precmd_functions; do
-        (( $+functions[$hook] )) && $hook
+        if (( $+functions[$hook] )); then
+          () { return $1 } $run_status
+          $hook
+        fi
       done
     }
     add-zsh-hook precmd _treeport_run_precmd
@@ -68,19 +74,24 @@ const BASH_INTEGRATION = `[[ $- == *i* ]] || return
 
 unset TREEPORT_SHELL_INTEGRATION
 
-_treeport_command_title_preexec() {
-  local fallback=\${1-} line title
+_treeport_command_start() {
+  local fallback=\${1-} line
   line=$(HISTTIMEFORMAT= builtin history 1)
   line="\${line#"\${line%%[![:space:]]*}"}"
   line="\${line#* }"
-  title="\${line#"\${line%%[![:space:]]*}"}"
-  [[ -n "$title" ]] || title=$fallback
-  title=$(LC_ALL=C printf '%s' "$title" | tr -d '\\000-\\037\\177')
-  title="\${title:0:256}"
-  printf '\\033]7740;command;%s\\033\\\\' "$title"
+  line="\${line#"\${line%%[![:space:]]*}"}"
+  [[ -n "$line" ]] || line=$fallback
+  line=$(LC_ALL=C printf '%s' "$line" | tr -d '\\000-\\037\\177')
+  line=\${line//\\%/%25}
+  printf '\\033]133;C;cmdline_url=%s\\033\\\\' "\${line//;/%3B}"
 }
-_treeport_command_title_prompt() {
-  printf '\\033]7740;command;\\033\\\\'
+_treeport_command_end() {
+  local command_status=$?
+  printf '\\033]133;D;%s\\033\\\\\\033]7;kitty-shell-cwd://%s%s\\033\\\\\\033]133;A\\033\\\\' "$command_status" "$HOSTNAME" "$PWD"
+  return "$command_status"
+}
+_treeport_command_ready_prompt() {
+  [[ $PS1 == *'133;B'* ]] || PS1+='\\[\\e]133;B\\e\\\\\\]'
   [[ -n "\${_treeport_uses_debug_trap-}" ]] && _treeport_command_ready=1
 }
 
@@ -88,19 +99,19 @@ _treeport_command_title_prompt() {
 # older Bash, use DEBUG only when doing so will not replace a user trap.
 _treeport_title_integration_ready=
 if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
-  PS0='$(_treeport_command_title_preexec)'"\${PS0-}"
+  PS0='$(_treeport_command_start)'"\${PS0-}"
   _treeport_title_integration_ready=1
 elif [[ -z "$(trap -p DEBUG)" ]]; then
   _treeport_uses_debug_trap=1
   _treeport_command_ready=0
-  trap 'if [[ $_treeport_command_ready == 1 ]]; then _treeport_command_ready=0; _treeport_command_title_preexec "$BASH_COMMAND"; fi' DEBUG
+  trap 'if [[ $_treeport_command_ready == 1 ]]; then _treeport_command_ready=0; _treeport_command_start "$BASH_COMMAND"; fi' DEBUG
   _treeport_title_integration_ready=1
 fi
 if [[ -n "$_treeport_title_integration_ready" ]]; then
   if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
-    PROMPT_COMMAND=("\${PROMPT_COMMAND[@]}" _treeport_command_title_prompt)
+    PROMPT_COMMAND=(_treeport_command_end "\${PROMPT_COMMAND[@]}" _treeport_command_ready_prompt)
   else
-    PROMPT_COMMAND="\${PROMPT_COMMAND:+$PROMPT_COMMAND;}_treeport_command_title_prompt"
+    PROMPT_COMMAND="_treeport_command_end;\${PROMPT_COMMAND:+$PROMPT_COMMAND;}_treeport_command_ready_prompt"
   fi
 fi
 unset _treeport_title_integration_ready
@@ -117,7 +128,7 @@ if [[ -n "\${TREEPORT_RUN_COMMAND+x}" ]]; then
     local run_command=$_treeport_run_command hook run_status
     unset _treeport_run_command
     builtin history -s -- "$run_command"
-    _treeport_command_title_preexec "$run_command"
+    _treeport_command_start "$run_command"
     for hook in preexec "\${preexec_functions[@]}"; do
       declare -F "$hook" >/dev/null && "$hook" "$run_command"
     done
@@ -129,7 +140,8 @@ if [[ -n "\${TREEPORT_RUN_COMMAND+x}" ]]; then
     if [[ $_treeport_run_after == close || ( $_treeport_run_after == closeOnSuccess && $run_status == 0 ) ]]; then
       exit "$run_status"
     fi
-    _treeport_command_title_prompt
+    (exit "$run_status")
+    _treeport_command_end
   }
   if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
     PROMPT_COMMAND=("\${PROMPT_COMMAND[@]}" _treeport_run_prompt)
@@ -177,13 +189,25 @@ const FISH_INTEGRATION = `if set -q TREEPORT_FISH_XDG_DATA_DIR
 end
 set -e TREEPORT_SHELL_INTEGRATION
 
-function _treeport_command_title_preexec --on-event fish_preexec
-  set -l title (string replace -ar '[[:cntrl:]]' '' -- "$argv[1]" | string sub -l 256)
-  printf '\\e]7740;command;%s\\e\\\\' "$title"
+function _treeport_command_start --on-event fish_preexec
+  set -l line (string replace -ar '[[:cntrl:]]' '' -- "$argv[1]" | string replace -a % %25 | string replace -a ';' %3B)
+  printf '\\e]133;C;cmdline_url=%s\\e\\\\' "$line"
 end
 
-function _treeport_command_title_prompt --on-event fish_prompt
-  printf '\\e]7740;command;\\e\\\\'
+function _treeport_command_end --on-event fish_postexec
+  printf '\\e]133;D;%s\\e\\\\' $status
+end
+
+function _treeport_prompt_start --on-event fish_prompt
+  printf '\\e]7;kitty-shell-cwd://%s%s\\e\\\\\\e]133;A\\e\\\\' (prompt_hostname) "$PWD"
+  # The prompt function runs after this event, so wrap it once user config has loaded.
+  if not functions -q _treeport_user_prompt; and functions -q fish_prompt
+    functions -c fish_prompt _treeport_user_prompt
+    function fish_prompt
+      _treeport_user_prompt
+      printf '\\e]133;B\\e\\\\'
+    end
+  end
 end
 
 if set -q TREEPORT_RUN_COMMAND
@@ -209,7 +233,6 @@ if set -q TREEPORT_RUN_COMMAND
     if test "$_treeport_run_after" = close; or begin; test "$_treeport_run_after" = closeOnSuccess; and test $run_status -eq 0; end
       exit $run_status
     end
-    _treeport_command_title_prompt
   end
 end
 `

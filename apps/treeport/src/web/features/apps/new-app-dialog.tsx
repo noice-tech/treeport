@@ -99,10 +99,7 @@ export function NewAppDialog({
     setInputLauncher(null)
     setInputs({})
 
-    const input: CreateTerminalInput = {
-      name: launcher.name,
-      initialTitle: launcher.name
-    }
+    const input: CreateTerminalInput = { name: launcher.name }
 
     if (launcher.shellCommand !== null) {
       input.command = launcher.shellCommand

@@ -39,7 +39,6 @@ import { useProjectSwitcher } from '../sidebar/workspace-shell'
 export interface CreateTerminalInput {
   name: string
   correlationId?: string
-  initialTitle?: string
   command?: string
   afterExit?: TerminalAfterExit
   cwd?: string
@@ -82,7 +81,6 @@ export function useTerminalWorkflows({
     mutationFn: async ({
       worktreeId,
       name,
-      initialTitle,
       command,
       afterExit,
       cwd,
@@ -98,10 +96,6 @@ export function useTerminalWorkflows({
 
       const json: CreateTerminalInput & { initialSize?: TerminalSize } = {
         name
-      }
-
-      if (initialTitle) {
-        json.initialTitle = initialTitle
       }
 
       if (command) {
@@ -368,10 +362,6 @@ export function useTerminalWorkflows({
 
     if (splitPlacement) {
       mutation.splitPlacement = splitPlacement
-    }
-
-    if (input.initialTitle) {
-      mutation.initialTitle = input.initialTitle
     }
 
     if (input.command) {

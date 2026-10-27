@@ -50,7 +50,6 @@ type TerminalEffect<Result> = Effect.Effect<
 
 export interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
-  initialTitle?: string
   command?: string
   afterExit?: TerminalAfterExit
   initialSize?: TerminalSize
@@ -441,10 +440,6 @@ export class TerminalService {
           TREEPORT_WORKTREE_ID: worktree.id,
           TREEPORT_TERMINAL_ID: terminalId
         }
-      }
-
-      if (options?.initialTitle) {
-        session.initialTitle = options.initialTitle
       }
 
       if (options?.initialSize) {

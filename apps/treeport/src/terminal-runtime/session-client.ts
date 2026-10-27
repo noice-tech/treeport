@@ -111,6 +111,9 @@ export class PersistentSession implements EnginePty {
   get process(): string {
     return this.status?.process ?? ''
   }
+  get commandLine(): string[] {
+    return this.status?.commandLine ?? []
+  }
   get exitCode(): number | null {
     return this.status?.exitCode ?? null
   }

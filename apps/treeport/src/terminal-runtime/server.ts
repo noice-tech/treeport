@@ -504,10 +504,6 @@ export function makeTerminalHostServer(
                     env: { ...input.env }
                   }
 
-                  if (input.initialTitle !== undefined) {
-                    createInput.initialTitle = input.initialTitle
-                  }
-
                   if (input.initialSize !== undefined) {
                     createInput.initialSize = { ...input.initialSize }
                   }
