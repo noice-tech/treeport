@@ -136,7 +136,6 @@ interface PackageMutationBody {
 
 interface TerminalCreateBody {
   name: string
-  initialTitle?: string
   command?: string
   afterExit?: TerminalAfterExit
   cwd?: string
@@ -3381,7 +3380,6 @@ async function main(args: string[]): Promise<void> {
         base: options.fromCurrent ? 'current' : 'default',
         initialTerminal: {
           name: launcher.name,
-          initialTitle: launcher.name,
           command: commandLine
         }
       }
@@ -3409,10 +3407,7 @@ async function main(args: string[]): Promise<void> {
       return
     }
 
-    const body: TerminalCreateBody = {
-      name: launcher.name,
-      initialTitle: launcher.name
-    }
+    const body: TerminalCreateBody = { name: launcher.name }
 
     if (commandLine) {
       body.command = commandLine

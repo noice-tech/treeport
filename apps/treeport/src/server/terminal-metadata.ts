@@ -1,4 +1,3 @@
-import path from 'node:path'
 import type {
   ProductEvent,
   TerminalActivity,
@@ -44,11 +43,8 @@ type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   worktreeId: string
   status: TerminalRecord['status']
-  commandExitCode: number | null
-  terminalTitle: string | null
-  currentCommand: string | null
-  commandLine: string | null
-  launchCommandLine: string | null
+  titleState: TerminalTitleState
+  titleStateEvents: number
   runtimeScope: Scope.CloseableScope | null
   acknowledgedAttentionSequence: number
 }
@@ -195,12 +191,6 @@ export class TerminalMetadataManager {
       let entry = this.entries.get(terminal.id)
 
       if (!entry) {
-        const launchCommandLine =
-          terminal.command
-            ?.replace(/\p{Cc}/gu, '')
-            .trim()
-            .slice(0, 256) || null
-
         const persisted = this.persistedAttention.get(terminal.id)
 
         const attention =
@@ -221,16 +211,13 @@ export class TerminalMetadataManager {
           terminalId: terminal.id,
           worktreeId: terminal.worktreeId,
           status: terminal.status,
-          commandExitCode: terminal.commandExitCode ?? null,
-          title: launchCommandLine,
+          title: null,
           program: null,
           hasForegroundProcess: terminal.status === 'running' ? null : false,
           activity: IDLE_ACTIVITY,
           attention,
-          terminalTitle: null,
-          currentCommand: null,
-          commandLine: null,
-          launchCommandLine,
+          titleState: { title: null, command: null, running: null },
+          titleStateEvents: 0,
           runtimeScope: null,
           acknowledgedAttentionSequence: attention
             ? attention.unread
@@ -242,12 +229,7 @@ export class TerminalMetadataManager {
       } else {
         entry.worktreeId = terminal.worktreeId
         entry.status = terminal.status
-        entry.commandExitCode = terminal.commandExitCode ?? null
-        this.reconcileTitleState(entry, {
-          terminalTitle: entry.terminalTitle,
-          currentCommand: entry.currentCommand,
-          commandLine: entry.commandLine
-        })
+        this.reconcileTitleState(entry, entry.titleState)
       }
 
       if (entry.status === 'running') {
@@ -482,20 +464,9 @@ export class TerminalMetadataManager {
           this.terminalHost.runtimeEvents(entry.terminalId),
           (event) =>
             Effect.gen(this, function* () {
-              if (event.commandExitCode != null) {
-                entry.commandExitCode = event.commandExitCode
-                this.reconcileTitleState(entry, {
-                  terminalTitle: entry.terminalTitle,
-                  currentCommand: entry.currentCommand,
-                  commandLine: entry.commandLine
-                })
-              }
-
               if (event.titleState) {
+                entry.titleStateEvents += 1
                 this.reconcileTitleState(entry, event.titleState)
-              } else if (event.title !== undefined) {
-                entry.terminalTitle = event.title
-                this.update(entry, { title: event.title })
               }
 
               if (event.activity) {
@@ -543,6 +514,7 @@ export class TerminalMetadataManager {
         runtimeScope
       )
       yield* Effect.yieldNow()
+      const titleStateEvents = entry.titleStateEvents
 
       const [state, titleState] = yield* Effect.all([
         this.terminalHost.runtimeState(entry.terminalId),
@@ -562,7 +534,9 @@ export class TerminalMetadataManager {
       }
 
       if (titleState) {
-        this.reconcileTitleState(entry, titleState)
+        if (entry.titleStateEvents === titleStateEvents) {
+          this.reconcileTitleState(entry, titleState)
+        }
       } else if (state) {
         this.update(entry, {
           title: state.title ?? entry.title,
@@ -652,41 +626,11 @@ export class TerminalMetadataManager {
     entry: TerminalMetadataEntry,
     state: TerminalTitleState
   ): void {
-    entry.terminalTitle = state.terminalTitle?.trim().slice(0, 256) || null
-    entry.currentCommand = state.currentCommand?.trim().slice(0, 256) || null
-    entry.commandLine = state.commandLine?.trim().slice(0, 256) || null
-
-    const commandLine =
-      entry.commandLine ??
-      (entry.commandExitCode === null ? entry.launchCommandLine : null)
-
-    const token = commandLine?.match(
-      /^(?:exec\s+|command\s+)?(?:"([^"]+)"|'([^']+)'|(\S+))/
-    )
-
-    const executable = token
-      ? token[1] || token[2] || token[3] || null
-      : entry.currentCommand
-
-    const observedProgram =
-      PROGRAM_COMMANDS.get(path.basename(executable ?? '').replace(/^-/, '')) ??
-      null
-
-    const shellIdle = commandLine === null
-
+    entry.titleState = state
     this.update(entry, {
-      title: shellIdle
-        ? entry.terminalTitle
-        : (entry.terminalTitle ?? commandLine ?? entry.currentCommand),
-      program: observedProgram,
-      hasForegroundProcess:
-        entry.status !== 'running'
-          ? false
-          : shellIdle
-            ? false
-            : commandLine === null && entry.currentCommand === null
-              ? null
-              : true
+      title: state.title,
+      program: PROGRAM_COMMANDS.get(state.command?.split(' ')[0] ?? '') ?? null,
+      hasForegroundProcess: entry.status === 'running' ? state.running : false
     })
   }
 

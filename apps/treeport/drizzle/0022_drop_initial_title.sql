@@ -1,0 +1,1 @@
+UPDATE `operations` SET `request_json` = json_remove(`request_json`, '$.initialTerminal.initialTitle') WHERE `kind` = 'create' AND json_type(`request_json`, '$.initialTerminal.initialTitle') IS NOT NULL;

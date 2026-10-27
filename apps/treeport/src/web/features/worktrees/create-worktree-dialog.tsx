@@ -43,7 +43,6 @@ export function CreateWorktreeDialog({
     base: 'default' | 'current',
     initialTerminal: {
       name: string
-      initialTitle?: string
       command?: string
     },
     sourceWorktreeId?: string,

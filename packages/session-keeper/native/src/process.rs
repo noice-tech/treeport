@@ -133,6 +133,79 @@ pub fn identity(pid: u32) -> Result<Option<Identity>> {
     }))
 }
 
+/// Best-effort argument vector of a live process; empty when it cannot be read.
+#[cfg(target_os = "linux")]
+pub fn arguments(pid: u32) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+        return Vec::new();
+    };
+    split_arguments(bytes.strip_suffix(&[0]).unwrap_or(&bytes), usize::MAX)
+}
+
+#[cfg(target_os = "macos")]
+pub fn arguments(pid: u32) -> Vec<String> {
+    let mut maximum: libc::c_int = 0;
+    let mut size = std::mem::size_of::<libc::c_int>();
+    let mut name = [libc::CTL_KERN, libc::KERN_ARGMAX];
+    // SAFETY: sysctl writes at most `size` bytes into the initialized integer.
+    if unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            2,
+            (&mut maximum as *mut libc::c_int).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+        || maximum <= 0
+    {
+        return Vec::new();
+    }
+    let mut buffer = vec![0u8; maximum as usize];
+    let mut size = buffer.len();
+    let mut name = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+    // SAFETY: sysctl writes at most `size` bytes into the allocated buffer.
+    if unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+        || size < 4
+    {
+        return Vec::new();
+    }
+    // KERN_PROCARGS2 is argc, the executable path, NUL padding, then argv.
+    let count = i32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]).max(0) as usize;
+    let rest = &buffer[4..size];
+    let path = rest
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(rest.len());
+    let rest = &rest[path..];
+    let start = rest
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(rest.len());
+    split_arguments(&rest[start..], count)
+}
+
+fn split_arguments(bytes: &[u8], count: usize) -> Vec<String> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    bytes
+        .split(|byte| *byte == 0)
+        .take(count)
+        .map(|argument| String::from_utf8_lossy(argument).into_owned())
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 pub fn identity(pid: u32) -> Result<Option<Identity>> {
     let path = format!("/proc/{pid}/stat");

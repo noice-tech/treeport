@@ -45,7 +45,6 @@ export function WorktreeForm({
     base: 'default' | 'current',
     initialTerminal: {
       name: string
-      initialTitle?: string
       command?: string
     },
     sourceWorktreeId?: string,
@@ -156,7 +155,6 @@ export function WorktreeForm({
           selectedLauncher
             ? {
                 name: selectedLauncher.name,
-                initialTitle: selectedLauncher.name,
                 command: formatCommandLine([
                   selectedLauncher.executable,
                   ...resolveLauncherArgs(selectedLauncher.args, submittedInputs)

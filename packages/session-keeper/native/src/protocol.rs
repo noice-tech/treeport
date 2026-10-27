@@ -118,6 +118,8 @@ pub struct Status {
     pub owner_pid: u32,
     pub pid: u32,
     pub process: String,
+    #[serde(default)]
+    pub command_line: Vec<String>,
     pub cols: u32,
     pub rows: u32,
     pub sequence: u64,

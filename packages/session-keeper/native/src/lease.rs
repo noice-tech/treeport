@@ -171,6 +171,7 @@ pub fn recover(directory: &Path, manifest: &Manifest) -> Result<()> {
                 owner_pid: lease.admission.owner_pid,
                 pid: command.pid,
                 process: manifest.argv[0].clone(),
+                command_line: Vec::new(),
                 cols: manifest.cols,
                 rows: manifest.rows,
                 sequence: 0,

@@ -174,30 +174,24 @@ describe('terminal launcher setup pipeline', () => {
 
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-'))
     const resultPath = path.join(directory, 'spec.result')
-    const output = writable()
     await expect(
       Effect.runPromise(
         runLaunchSpec(
           spec({
             shell: '/bin/zsh',
             afterExit: 'closeOnSuccess',
-            initialTitle: '  --Review;\u001bTitle  ',
             env: { HOME: '/home/user', ZDOTDIR: '/home/user/.config/zsh' },
             shellIntegrationDir: '/treeport/integration'
           }),
           {
             spawnProcess,
             resultPath,
-            stdout: output.stream,
             signalSource: new EventEmitter()
           }
         )
       )
     ).resolves.toBe(0)
     expect(calls.map((call) => call.argv)).toEqual([['/bin/zsh', '-l']])
-    expect(output.value()).toContain(
-      '\u001b]7740;command;--Review; Title\u001b\\'
-    )
     expect(calls[0]?.env).toMatchObject({
       TREEPORT_RUN_COMMAND: "final 'hostile;argument'",
       TREEPORT_RUN_AFTER: 'closeOnSuccess',
