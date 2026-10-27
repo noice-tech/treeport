@@ -166,7 +166,9 @@ export class PlaywrightBrowserHost {
           args.push(
             '--ozone-platform=x11',
             '--hide-scrollbars',
-            '--mute-audio',
+            // EXTERNAL: Tab capture loopback still receives audio from Chromium's
+            // fake output device, but --mute-audio silences the capture too.
+            '--disable-audio-output',
             '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4'
           )
         }

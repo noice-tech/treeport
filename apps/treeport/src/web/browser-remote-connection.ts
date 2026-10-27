@@ -1,4 +1,7 @@
-import type { BrowserServerMessage } from '@treeport/shared'
+import type {
+  BrowserClientMessage,
+  BrowserServerMessage
+} from '@treeport/shared'
 import {
   connectBrowserApp,
   type BrowserVideoConnection,
@@ -6,8 +9,16 @@ import {
 } from './browser-session-client'
 import { BrowserVideoReceiver } from './browser-video-receiver'
 
+// EXTERNAL: Browsers start an AudioContext only after one of these events
+// grants the page user activation.
+const grantsUserActivation = (message: BrowserClientMessage) =>
+  (message.type === 'pointer' && message.phase !== 'move') ||
+  (message.type === 'key' && message.phase === 'down') ||
+  (message.type === 'touch' && message.phase === 'end')
+
 export interface RemoteBrowserConnection extends BrowserVideoConnection {
   stats(): ReturnType<BrowserVideoReceiver['stats']>
+  setMuted(muted: boolean): void
 }
 
 export function connectRemoteBrowser(
@@ -126,6 +137,10 @@ export function connectRemoteBrowser(
         }
       }
 
+      if (grantsUserActivation(message)) {
+        receiver.resumeAudio()
+      }
+
       if (message.type === 'pointer') {
         pressed =
           message.phase === 'down' || (pressed && message.phase !== 'up')
@@ -147,6 +162,7 @@ export function connectRemoteBrowser(
       }
     },
     stats: () => receiver.stats(),
+    setMuted: (muted) => receiver.setMuted(muted),
     dispose: () => {
       clearInterval(sampler)
       receiver.dispose()

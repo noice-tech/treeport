@@ -56,6 +56,7 @@ const GESTURE_GAP_MS = 250
 
 const BARRIER_TIMEOUT_MS = 1_000
 const MAX_MEDIA_BUFFER = 2 * 1024 * 1024
+const AUDIO_PACKET = 2
 
 const streams = new Map<string, Stream>()
 
@@ -560,7 +561,23 @@ const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
     return
   }
 
-  const key = header.getUint8(16) === 1
+  const kind = header.getUint8(16)
+
+  if (kind === AUDIO_PACKET) {
+    const socket = media.get(viewer.attachment)
+
+    if (
+      viewer.ready &&
+      socket?.readyState === WebSocket.OPEN &&
+      socket.bufferedAmount < MAX_MEDIA_BUFFER
+    ) {
+      socket.send(packet)
+    }
+
+    return
+  }
+
+  const key = kind === 1
 
   if (!viewer.ready) {
     if (key) {
