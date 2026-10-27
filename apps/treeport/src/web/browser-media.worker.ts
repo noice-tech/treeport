@@ -7,10 +7,19 @@ import type {
 // SAFETY: This module is only loaded as a dedicated worker; the web project
 // types `self` as a window.
 const scope = Object(self) as DedicatedWorkerGlobalScope
-const post = (event: BrowserMediaWorkerEvent) => scope.postMessage(event)
+
+const post = (event: BrowserMediaWorkerEvent, transfer: Transferable[] = []) =>
+  scope.postMessage(event, transfer)
+
 let canvas: OffscreenCanvas | null = null
 let context: OffscreenCanvasRenderingContext2D | null = null
 let decoder: VideoDecoder | null = null
+
+let audioDecoder: {
+  decoder: AudioDecoder
+  sampleRate: number
+  channels: number
+} | null = null
 
 let stream: {
   epoch: number
@@ -32,6 +41,77 @@ const clear = () => {
   if (canvas && context) {
     context.clearRect(0, 0, canvas.width, canvas.height)
   }
+}
+
+const closeAudioDecoder = () => {
+  if (audioDecoder && audioDecoder.decoder.state !== 'closed') {
+    audioDecoder.decoder.close()
+  }
+
+  audioDecoder = null
+}
+
+const receiveAudio = (bytes: Uint8Array<ArrayBuffer>, header: DataView) => {
+  const sampleRate = header.getUint32(4)
+  const channels = bytes[17]!
+
+  if (!globalThis.AudioDecoder || !sampleRate || !channels) {
+    return
+  }
+
+  if (
+    audioDecoder?.sampleRate !== sampleRate ||
+    audioDecoder.channels !== channels ||
+    audioDecoder.decoder.state === 'closed'
+  ) {
+    closeAudioDecoder()
+
+    const instance = new AudioDecoder({
+      output: (data) => {
+        if (audioDecoder?.decoder !== instance) {
+          data.close()
+
+          return
+        }
+
+        const planes = Array.from(
+          { length: data.numberOfChannels },
+          (_, index) => {
+            const plane = new Float32Array(data.numberOfFrames)
+            data.copyTo(plane, { planeIndex: index, format: 'f32-planar' })
+
+            return plane
+          }
+        )
+
+        post(
+          { type: 'audio', sampleRate: data.sampleRate, planes },
+          planes.map((plane) => plane.buffer)
+        )
+        data.close()
+      },
+      error: () => {
+        if (audioDecoder?.decoder === instance) {
+          audioDecoder = null
+        }
+      }
+    })
+
+    instance.configure({
+      codec: 'opus',
+      sampleRate,
+      numberOfChannels: channels
+    })
+    audioDecoder = { decoder: instance, sampleRate, channels }
+  }
+
+  audioDecoder.decoder.decode(
+    new EncodedAudioChunk({
+      type: 'key',
+      timestamp: Math.round(header.getFloat64(8)),
+      data: bytes.subarray(18)
+    })
+  )
 }
 
 const closeDecoder = () => {
@@ -308,6 +388,7 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
   }
 
   closeDecoder()
+  closeAudioDecoder()
   stream = null
   clear()
 }
@@ -323,6 +404,12 @@ const receive = (data: ArrayBuffer) => {
   const header = new DataView(data, 0, 17)
 
   if (header.getUint32(0) !== current.epoch) {
+    return
+  }
+
+  if (header.getUint8(16) === 2) {
+    receiveAudio(bytes, header)
+
     return
   }
 

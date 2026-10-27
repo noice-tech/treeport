@@ -17,6 +17,7 @@ export class BrowserVideoReceiver {
   private visible = false
   private available = false
   private disposed = false
+  private muted = false
   private stopPresentation: (() => void) | null = null
   private attempts = 0
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -86,6 +87,7 @@ export class BrowserVideoReceiver {
               modifiers: wheel.modifiers
             })
         )
+        this.webcodecs.setMuted(this.muted)
 
         if (this.mediaToken) {
           this.webcodecs.connect(this.mediaToken)
@@ -162,6 +164,15 @@ export class BrowserVideoReceiver {
     const report = await peer.getStats().catch(() => null)
 
     return report && this.peer === peer ? { connectionId, report } : null
+  }
+
+  resumeAudio(): void {
+    this.webcodecs?.resumeAudio()
+  }
+
+  setMuted(muted: boolean): void {
+    this.muted = muted
+    this.webcodecs?.setMuted(muted)
   }
 
   wheel(message: BrowserMediaWheel): boolean {

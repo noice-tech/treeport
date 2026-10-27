@@ -1,14 +1,17 @@
 export async function captureChromiumWebCodecs(
   track: MediaStreamTrack,
+  audio: MediaStreamTrack | null,
   url: string,
   token: string
 ) {
   // SAFETY: Chromium's optional window track processor is capability-checked below.
   const { MediaStreamTrackProcessor } = globalThis as typeof globalThis & {
-    MediaStreamTrackProcessor?: new (options: {
+    MediaStreamTrackProcessor?: new <
+      T extends VideoFrame | AudioData
+    >(options: {
       track: MediaStreamTrack
       maxBufferSize: number
-    }) => { readable: ReadableStream<VideoFrame> }
+    }) => { readable: ReadableStream<T> }
   }
 
   if (!MediaStreamTrackProcessor || !globalThis.VideoEncoder) {
@@ -63,12 +66,23 @@ export async function captureChromiumWebCodecs(
   const MAX_SOCKET_BUFFER = 1024 * 1024
   const socket = new WebSocket(url)
 
-  const reader = new MediaStreamTrackProcessor({
+  const reader = new MediaStreamTrackProcessor<VideoFrame>({
     track,
     maxBufferSize: 1
   }).readable.getReader()
 
+  // EXTERNAL: AudioEncoder is optional in Chromium builds without Opus; video
+  // keeps streaming silently when it is missing.
+  const audioReader =
+    audio && globalThis.AudioEncoder
+      ? new MediaStreamTrackProcessor<AudioData>({
+          track: audio,
+          maxBufferSize: 16
+        }).readable.getReader()
+      : null
+
   let encoder: VideoEncoder | null = null
+  let audioEncoder: AudioEncoder | null = null
   let stopped = false
   let latest: VideoFrame | null = null
   let latestEncoded = false
@@ -120,7 +134,14 @@ export async function captureChromiumWebCodecs(
     latest?.close()
     latest = null
     void reader.cancel().catch(() => undefined)
+    void audioReader?.cancel().catch(() => undefined)
+
+    if (audioEncoder?.state !== 'closed') {
+      audioEncoder?.close()
+    }
+
     track.stop()
+    audio?.stop()
     socket.close()
   }
 
@@ -354,7 +375,70 @@ export async function captureChromiumWebCodecs(
     }
   }
 
+  const pumpAudio = async (
+    audioReader: ReadableStreamDefaultReader<AudioData>
+  ) => {
+    while (!stopped) {
+      const { value: data, done } = await audioReader.read()
+
+      if (done) {
+        return
+      }
+
+      if (stopped || !epoch || socket.readyState !== WebSocket.OPEN) {
+        data.close()
+        continue
+      }
+
+      if (!audioEncoder) {
+        const { sampleRate, numberOfChannels } = data
+
+        const instance = new AudioEncoder({
+          output: (chunk) => {
+            if (stopped || !epoch || socket.readyState !== WebSocket.OPEN) {
+              return
+            }
+
+            const packet = new Uint8Array(18 + chunk.byteLength)
+            const header = new DataView(packet.buffer)
+            header.setUint32(0, epoch)
+            header.setUint32(4, sampleRate)
+            header.setFloat64(8, chunk.timestamp)
+            header.setUint8(16, 2)
+            header.setUint8(17, numberOfChannels)
+            chunk.copyTo(packet.subarray(18))
+            socket.send(packet)
+          },
+          error: () => {
+            void audioReader.cancel().catch(() => undefined)
+          }
+        })
+
+        instance.configure({
+          codec: 'opus',
+          sampleRate,
+          numberOfChannels,
+          bitrate: 128_000
+        })
+        audioEncoder = instance
+      }
+
+      if (
+        audioEncoder.state === 'configured' &&
+        audioEncoder.encodeQueueSize < 8
+      ) {
+        audioEncoder.encode(data)
+      }
+
+      data.close()
+    }
+  }
+
   void pump().catch((error) => fail(String(error)))
+
+  if (audioReader) {
+    void pumpAudio(audioReader).catch(() => undefined)
+  }
 
   return {
     stop,

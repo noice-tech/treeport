@@ -22,6 +22,8 @@ import {
   EllipsisHorizontalIcon,
   ShieldCheckIcon,
   ShieldExclamationIcon,
+  SpeakerWaveIcon,
+  SpeakerXMarkIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
@@ -239,6 +241,8 @@ export function BrowserAppWorkspace({
 
   const [toolsOpen, setToolsOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [audioMuted, setAudioMuted] = useState(false)
+  const audioMutedRef = useRef(audioMuted)
 
   const [
     { viewport: viewportOverride, preset: viewportPreset },
@@ -890,6 +894,7 @@ export function BrowserAppWorkspace({
       presented: playing
     })
 
+    connection.setMuted(audioMutedRef.current)
     remoteConnectionRef.current = connection
     connectionRef.current = connection
 
@@ -1946,6 +1951,23 @@ export function BrowserAppWorkspace({
               ) : null}
             </PopoverContent>
           </Popover>
+        ) : null}
+        {!localBrowser ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={audioMuted ? 'Unmute' : 'Mute'}
+            title={audioMuted ? 'Unmute' : 'Mute'}
+            aria-pressed={audioMuted}
+            onClick={() => {
+              audioMutedRef.current = !audioMuted
+              remoteConnectionRef.current?.setMuted(!audioMuted)
+              setAudioMuted(!audioMuted)
+            }}
+          >
+            {audioMuted ? <SpeakerXMarkIcon /> : <SpeakerWaveIcon />}
+          </Button>
         ) : null}
         {!localBrowser ? (
           <Button

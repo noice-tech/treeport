@@ -137,7 +137,9 @@ export class ChromiumWebCodecsVideo {
         // Bound native acquisition, not just post-capture scaling. This helper
         // is recreated on resize so a larger viewport never upscales an old track.
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
+          audio: { mandatory: {
+            chromeMediaSource: 'tab', chromeMediaSourceId: sourceId
+          } },
           video: { mandatory: {
             chromeMediaSource: 'tab', chromeMediaSourceId: sourceId,
             maxWidth: ${captureWidth}, maxHeight: ${captureHeight}, maxFrameRate: 120
@@ -151,7 +153,8 @@ export class ChromiumWebCodecsVideo {
           });
           track.contentHint = 'motion';
           globalThis.__treeportWebCodecs = await (${captureChromiumWebCodecs.toString()})(
-            track, ${JSON.stringify(`ws://127.0.0.1:${stream.port}`)}, ${JSON.stringify(stream.token)}
+            track, stream.getAudioTracks()[0] ?? null,
+            ${JSON.stringify(`ws://127.0.0.1:${stream.port}`)}, ${JSON.stringify(stream.token)}
           );
         })().catch(error => {
           stream.getTracks().forEach(track => track.stop());
