@@ -2121,7 +2121,23 @@ async function main(args: string[]): Promise<void> {
     )
   )
 
+  const browserDialogAcceptCommand = browserCommand
+    .command('dialog-accept')
+    .description('Accept the open page dialog')
+    .argument('[prompt]', 'text to enter in a prompt dialog')
+    .option('--app <app-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+
+  browserDialogAcceptCommand.action(async (prompt?: string) =>
+    printAgentResult(
+      'dialog-accept',
+      prompt === undefined ? [] : [prompt],
+      browserDialogAcceptCommand.opts<{ app?: string }>().app
+    )
+  )
+
   for (const [name, description, agentName] of [
+    ['dialog-dismiss', 'Dismiss the open page dialog', 'dialog-dismiss'],
     ['back', 'Go back in the hosted page', 'go-back'],
     ['forward', 'Go forward in the hosted page', 'go-forward'],
     ['reload', 'Reload the hosted page', 'reload'],

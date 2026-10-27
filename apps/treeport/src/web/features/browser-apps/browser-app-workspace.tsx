@@ -66,6 +66,7 @@ import {
 import { LocalBrowserWebview } from './local-browser-webview'
 import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
 import { BrowserFilePicker } from './browser-file-picker'
+import { BrowserPageDialog } from './browser-page-dialog'
 
 const viewportPresetSchema = z.enum([
   'responsive',
@@ -210,6 +211,11 @@ export function BrowserAppWorkspace({
   const [fileChooser, setFileChooser] = useState<Extract<
     BrowserServerMessage,
     { type: 'fileChooser' }
+  > | null>(null)
+
+  const [pageDialog, setPageDialog] = useState<Extract<
+    BrowserServerMessage,
+    { type: 'dialog' }
   > | null>(null)
 
   const [connectionRevision, setConnectionRevision] = useState(0)
@@ -575,6 +581,20 @@ export function BrowserAppWorkspace({
         return
       }
 
+      if (message.type === 'dialog') {
+        setPageDialog(message)
+
+        return
+      }
+
+      if (message.type === 'dialogClosed') {
+        setPageDialog((current) =>
+          current?.requestId === message.requestId ? null : current
+        )
+
+        return
+      }
+
       if (message.type === 'download') {
         const link = document.createElement('a')
         link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`
@@ -745,6 +765,7 @@ export function BrowserAppWorkspace({
         setState(message.state)
 
         if (message.type === 'ready') {
+          setPageDialog(null)
           traceBrowserOpen(app.id, 'browser.open.runtime_ready')
           setAddressFocusRevision((revision) => revision + 1)
           setFailure(null)
@@ -2716,6 +2737,15 @@ export function BrowserAppWorkspace({
                 request={fileChooser}
                 connection={connectionRef.current}
                 onCancel={() => setFileChooser(null)}
+              />
+            ) : null}
+            {pageDialog && connectionRef.current && active ? (
+              <BrowserPageDialog
+                key={pageDialog.requestId}
+                request={pageDialog}
+                url={state?.url ?? app.url}
+                connection={connectionRef.current}
+                onClose={() => setPageDialog(null)}
               />
             ) : null}
             {failure ? (

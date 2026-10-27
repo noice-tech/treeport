@@ -166,6 +166,14 @@ export const browserClientMessageSchema = Schema.Union(
     )
   }),
   Schema.Struct({
+    type: Schema.Literal('dialogResponse'),
+    requestId: browserRequestIdSchema,
+    accept: Schema.Boolean,
+    promptText: Schema.NullOr(
+      Schema.String.pipe(Schema.maxLength(BROWSER_MAX_INSERT_TEXT_LENGTH))
+    )
+  }),
+  Schema.Struct({
     type: Schema.Literal('contextMenu'),
     requestId: browserRequestIdSchema,
     x: Schema.Finite.pipe(Schema.between(0, 3_840)),
@@ -420,6 +428,17 @@ export const browserServerMessageSchema = Schema.Union(
     error: Schema.NullOr(Schema.String)
   }),
   Schema.Struct({
+    type: Schema.Literal('dialog'),
+    requestId: browserRequestIdSchema,
+    dialogType: Schema.Literal('alert', 'confirm', 'prompt'),
+    message: Schema.String,
+    defaultValue: Schema.String
+  }),
+  Schema.Struct({
+    type: Schema.Literal('dialogClosed'),
+    requestId: browserRequestIdSchema
+  }),
+  Schema.Struct({
     type: Schema.Literal('download'),
     token: opaqueTokenSchema,
     filename: Schema.String.pipe(Schema.maxLength(1_024))
@@ -568,6 +587,14 @@ export const browserAgentCommandSchema = Schema.Union(
     )
   }),
   Schema.Struct({ command: Schema.Literal('requests'), args: Schema.Tuple() }),
+  Schema.Struct({
+    command: Schema.Literal('dialog-accept'),
+    args: Schema.Union(Schema.Tuple(), Schema.Tuple(browserAgentArgumentSchema))
+  }),
+  Schema.Struct({
+    command: Schema.Literal('dialog-dismiss'),
+    args: Schema.Tuple()
+  }),
   Schema.Struct({
     command: Schema.Literal('screenshot'),
     args: Schema.Tuple()
