@@ -14,6 +14,7 @@ import * as Data from 'effect/Data'
 import type {
   Browser as PlaywrightConnection,
   CDPSession,
+  Download,
   FileChooser,
   Page
 } from 'playwright'
@@ -197,6 +198,13 @@ interface BrowserAttachment {
   refreshRate: number | null
 }
 
+interface BrowserDownload {
+  download: Download
+  filename: string
+  identity: AuthenticatedViewer | null
+  timer: ReturnType<typeof setTimeout>
+}
+
 class BrowserSchedulingError extends Data.TaggedError(
   'BrowserSchedulingError'
 )<{
@@ -318,6 +326,7 @@ export class BrowserSessionManager {
   private readonly sessionCreations = new Map<string, Promise<BrowserSession>>()
   private readonly tickets = new Map<string, BrowserTicket>()
   private readonly ownerTickets = new Map<string, BrowserOwnerTicket>()
+  private readonly downloads = new Map<string, BrowserDownload>()
   private readonly operationQueuedAt = new WeakMap<
     BrowserScheduledOperation,
     number
@@ -1300,6 +1309,80 @@ export class BrowserSessionManager {
                 .dispose()
                 .catch(() => undefined)
             }
+          },
+          download: (download) => {
+            const attachment = [...session.attachments.values()].find(
+              (candidate) =>
+                candidate.visible &&
+                !candidate.closing &&
+                session.controllerId === attachmentController(candidate)
+            )
+
+            if (
+              !runtimeReady ||
+              session.browser !== browser ||
+              session.generation !== runtimeGeneration ||
+              session.localOwner ||
+              session.closing ||
+              !attachment
+            ) {
+              void download.cancel().catch(() => undefined)
+
+              if (attachment === undefined && session.browser === browser) {
+                this.broadcastNavigationError(
+                  session,
+                  'Take control of Browser to download files.'
+                )
+              }
+
+              return
+            }
+
+            void download
+              .failure()
+              .catch((cause: unknown) =>
+                cause instanceof Error ? cause.message : 'The browser closed.'
+              )
+              .then((failure) => {
+                if (
+                  this.disposed ||
+                  attachment.closing ||
+                  session.attachments.get(attachment.id) !== attachment
+                ) {
+                  void download.delete().catch(() => undefined)
+
+                  return
+                }
+
+                if (failure !== null) {
+                  attachment.transport.sendMessage({
+                    type: 'navigationError',
+                    message:
+                      failure === 'canceled'
+                        ? `Download of ${download.suggestedFilename()} was canceled.`
+                        : `Download of ${download.suggestedFilename()} failed: ${failure}`
+                  })
+
+                  return
+                }
+
+                const token = crypto.randomBytes(32).toString('base64url')
+                const filename = download.suggestedFilename().slice(0, 255)
+                this.downloads.set(token, {
+                  download,
+                  filename,
+                  identity: attachment.identity,
+                  timer: setTimeout(() => {
+                    this.downloads.delete(token)
+                    void download.delete().catch(() => undefined)
+                  }, 10 * 60_000)
+                })
+                attachment.transport.sendMessage({
+                  type: 'download',
+                  token,
+                  filename
+                })
+              })
           },
           clipboard: (clipboard) => {
             const input = session.clipboardInput
@@ -3097,6 +3180,29 @@ export class BrowserSessionManager {
     return false
   }
 
+  async downloadFile(
+    token: string,
+    identity: AuthenticatedViewer | null
+  ): Promise<{ path: string; filename: string } | null> {
+    const entry = this.downloads.get(token)
+
+    if (
+      !entry ||
+      (entry.identity !== null &&
+        (identity === null ||
+          entry.identity.account.source !== identity.account.source ||
+          entry.identity.account.login !== identity.account.login ||
+          entry.identity.deviceId !== identity.deviceId))
+    ) {
+      return null
+    }
+
+    return {
+      path: await entry.download.path(),
+      filename: entry.filename
+    }
+  }
+
   close(connectionId: string): void {
     for (const session of this.sessions.values()) {
       const attachment = session.attachments.get(connectionId)
@@ -3874,6 +3980,12 @@ export class BrowserSessionManager {
     this.unsubscribe()
     this.tickets.clear()
     this.ownerTickets.clear()
+
+    for (const entry of this.downloads.values()) {
+      clearTimeout(entry.timer)
+    }
+
+    this.downloads.clear()
     await Promise.all(
       [...this.sessionCreations.values()].map((creation) =>
         creation.catch(() => null)

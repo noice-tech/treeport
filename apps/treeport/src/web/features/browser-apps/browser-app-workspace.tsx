@@ -574,6 +574,15 @@ export function BrowserAppWorkspace({
         return
       }
 
+      if (message.type === 'download') {
+        const link = document.createElement('a')
+        link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`
+        link.download = message.filename
+        link.click()
+
+        return
+      }
+
       if (message.type === 'clipboardWrite') {
         if (
           !stateRef.current?.controlled ||
