@@ -51,7 +51,8 @@ export class WorktreeService {
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle
+    treeTitle?: LauncherTreeTitle,
+    originWorktreeId?: string
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     return this.creation.beginCreateWorktree(
       projectId,
@@ -59,7 +60,8 @@ export class WorktreeService {
       base,
       initialTerminal,
       sourceWorktreeId,
-      treeTitle
+      treeTitle,
+      originWorktreeId
     )
   }
 
@@ -83,7 +85,8 @@ export class WorktreeService {
       initialSize?: TerminalSize
     },
     sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle
+    treeTitle?: LauncherTreeTitle,
+    originWorktreeId?: string
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -95,7 +98,8 @@ export class WorktreeService {
       base,
       initialTerminal,
       sourceWorktreeId,
-      treeTitle
+      treeTitle,
+      originWorktreeId
     )
   }
 

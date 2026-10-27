@@ -488,7 +488,8 @@ export class TerminalHostSessions {
             unavailableReason: 'Restoring retained terminal',
             recoveryPending: true,
             exitCode: null,
-            commandExitCode: null
+            commandExitCode: null,
+            parentTerminalId: input.parentTerminalId ?? null
           } satisfies HostedTerminal
         }
 
@@ -1245,6 +1246,7 @@ export class TerminalHostSessions {
         status: 'running',
         exitCode: null,
         commandExitCode: null,
+        parentTerminalId: input.parentTerminalId ?? null,
         createdAt: input.createdAt,
         updatedAt: retainedMetadata?.updatedAt ?? input.createdAt,
         cwd: input.cwd,
@@ -2240,6 +2242,7 @@ export class TerminalHostSessions {
             status: session.status,
             exitCode: session.exitCode,
             commandExitCode: session.commandExitCode ?? null,
+            parentTerminalId: session.parentTerminalId ?? null,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt
           }))

@@ -98,6 +98,7 @@ export async function createTerminalMock(page: Page, state: ProjectRecord) {
         command: body.command ?? null,
         status: 'running',
         exitCode: null,
+        parentTerminalId: null,
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01'
       }

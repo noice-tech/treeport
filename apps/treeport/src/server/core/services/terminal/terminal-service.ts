@@ -56,6 +56,7 @@ export interface TerminalLaunchOptions {
   initialSize?: TerminalSize
   cwd?: string
   env?: Record<string, string>
+  parentTerminalId?: string
 }
 
 export class TerminalService {
@@ -166,6 +167,7 @@ export class TerminalService {
           unavailableReason: terminal.unavailableReason ?? null,
           recoveryPending: terminal.recoveryPending ?? false,
           commandExitCode: terminal.commandExitCode ?? null,
+          parentTerminalId: terminal.parentTerminalId ?? null,
           createdAt: terminal.createdAt,
           updatedAt: terminal.updatedAt
         }))
@@ -451,6 +453,10 @@ export class TerminalService {
         session.initialSize = options.initialSize
       }
 
+      if (options?.parentTerminalId) {
+        session.parentTerminalId = options.parentTerminalId
+      }
+
       if (options?.setup?.tasks.length) {
         session.setupTasks = options.setup.tasks
       }
@@ -492,6 +498,7 @@ export class TerminalService {
         status: 'running',
         exitCode: null,
         commandExitCode: null,
+        parentTerminalId: options?.parentTerminalId ?? null,
         createdAt: timestamp,
         updatedAt: timestamp
       }

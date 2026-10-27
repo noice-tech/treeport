@@ -46,7 +46,8 @@ const browserResult = Type.Object(
 
 export const TREEPORT_GUIDELINES = [
   'Treeport terminals persist and are visible to the user. Use treeport_terminal_wait for runtime conditions instead of polling or sleeping.',
-  'Delete a terminal only when the user asks to stop or close its process. Never delete this Pi session terminal.',
+  'Create Treeport terminals only for long-running processes such as servers, watchers, and agents.',
+  'Delete terminals you started once their processes are no longer needed. Delete other terminals only when the user asks. Never delete this Pi session terminal.',
   'Leave browser tabs open for user inspection. Do not install a browser runtime without user approval.',
   'Do not put secrets in browser URLs or command arguments.',
   'Treeport tools target the instance inherited by this terminal, which may differ from a development instance in the current worktree. Do not mutate another instance without explicit permission.'
@@ -187,7 +188,7 @@ export function registerTreeportTools(
   )
   register(
     ['terminal', 'create'],
-    'Start a shell, development server, or agent. Use closeOnExit for one-off commands that should be removed on completion. Otherwise returns a persistent terminal ID; use inspect, capture, or wait to observe it.',
+    'Start a long-running process such as a development server, watcher, or agent. Returns a persistent terminal ID nested under this terminal; use inspect, capture, or wait to observe it.',
     Type.Object({
       tree,
       name: Type.String({ minLength: 1 }),
@@ -261,7 +262,7 @@ export function registerTreeportTools(
   )
   register(
     ['terminal', 'delete'],
-    'Delete a terminal only when the user explicitly asks to stop or close its process. Never delete the current Pi terminal.',
+    'Delete a terminal you started once its process is no longer needed, or another terminal when the user asks. Never delete the current Pi terminal.',
     Type.Object({ terminal: identifier }),
     Type.Object({ ok: Type.Boolean(), terminalId: Type.String() }),
     (p) => {

@@ -141,6 +141,7 @@ interface TerminalCreateBody {
   afterExit?: TerminalAfterExit
   cwd?: string
   env?: Record<string, string>
+  parentTerminalId?: string
 }
 
 export interface CliApplicationOptions {
@@ -2827,7 +2828,7 @@ async function main(args: string[]): Promise<void> {
       list
         .map(
           (terminal) =>
-            `${terminal.id}\t${terminal.name}\t${terminal.status}\t${terminal.command ?? ''}`
+            `${terminal.id}\t${terminal.name}\t${terminal.status}\t${terminal.command ?? ''}${terminal.parentTerminalId ? `\tparent ${terminal.parentTerminalId}` : ''}`
         )
         .join('\n')
     )
@@ -2865,6 +2866,10 @@ async function main(args: string[]): Promise<void> {
 
     if (options.closeOnExit) {
       body.afterExit = 'close'
+    }
+
+    if (contextTerminalId && contextWorktreeId === worktree.id) {
+      body.parentTerminalId = contextTerminalId
     }
 
     const result = await request(
@@ -3044,6 +3049,10 @@ async function main(args: string[]): Promise<void> {
 
     if (sourceWorktreeId) {
       request.sourceWorktreeId = sourceWorktreeId
+    }
+
+    if (contextWorktreeId) {
+      request.originWorktreeId = contextWorktreeId
     }
 
     const result = await createWorktree(project.id, request)
@@ -3390,6 +3399,10 @@ async function main(args: string[]): Promise<void> {
         createRequest.sourceWorktreeId = (await resolveWorktree('.')).id
       }
 
+      if (contextWorktreeId) {
+        createRequest.originWorktreeId = contextWorktreeId
+      }
+
       const resolvedTreeTitle = resolveLauncherTreeTitle(
         { name: launcher.name, treeTitle },
         inputs
@@ -3428,6 +3441,10 @@ async function main(args: string[]): Promise<void> {
 
     if (launcher.closeOnSuccess) {
       body.afterExit = 'closeOnSuccess'
+    }
+
+    if (contextTerminalId && contextWorktreeId === worktree!.id) {
+      body.parentTerminalId = contextTerminalId
     }
 
     const result = await request(

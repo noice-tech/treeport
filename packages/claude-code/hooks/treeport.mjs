@@ -26,7 +26,7 @@ if (process.argv[2] === 'context') {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
         permissionDecisionReason:
-          'In Treeport, start long-running commands in a persistent Treeport terminal instead: treeport terminal create --worktree . --name "<name>" -- <program> <arg> ... Observe it with treeport terminal capture or treeport terminal wait. See the treeport skill.'
+          'In Treeport, start long-running processes such as servers and watchers in a persistent Treeport terminal: treeport terminal create --worktree . --name "<name>" -- <program> <arg> ... Observe it with treeport terminal capture or treeport terminal wait, and delete it once it is no longer needed. See the treeport skill.'
       }
     }) + '\n'
   )

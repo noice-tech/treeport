@@ -70,6 +70,7 @@ export interface HostedTerminal {
   unavailableReason?: string | null | undefined
   recoveryPending?: boolean | undefined
   commandExitCode?: number | null | undefined
+  parentTerminalId?: string | null | undefined
   createdAt: string
   updatedAt: string
 }
@@ -93,6 +94,7 @@ export interface TerminalCreateInput {
   env: Record<string, string>
   setupTasks?: TerminalSetupTask[] | undefined
   setupError?: string | undefined
+  parentTerminalId?: string | undefined
 }
 
 export interface TerminalTraceContext {

@@ -524,6 +524,10 @@ export function makeTerminalHostServer(
                     createInput.setupError = input.setupError
                   }
 
+                  if (input.parentTerminalId !== undefined) {
+                    createInput.parentTerminalId = input.parentTerminalId
+                  }
+
                   yield* options.sessions.createTerminal(createInput)
                   yield* respond<'create'>(frame.id, null)
 

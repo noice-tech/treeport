@@ -49,6 +49,7 @@ async function fixture() {
       status: 'running',
       exitCode: null,
       commandExitCode: null,
+      parentTerminalId: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     },
@@ -188,7 +189,10 @@ async function runtimeFixture() {
 
     const { afterExit: _afterExit, ...terminal } = terminals[0]!
 
-    return { terminal, metadata: value.observation.metadata }
+    return {
+      terminal: { ...terminal, parentTerminalId: null },
+      metadata: value.observation.metadata
+    }
   })
 
   const subscribe = async () => {

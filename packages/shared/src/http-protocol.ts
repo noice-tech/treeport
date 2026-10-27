@@ -59,6 +59,7 @@ export const terminalRecordSchema = Schema.Struct({
   unavailableReason: Schema.optional(Schema.NullOr(Schema.String)),
   recoveryPending: Schema.optional(Schema.Boolean),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
+  parentTerminalId: nullableStringSchema,
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
@@ -170,6 +171,7 @@ export const worktreeRecordSchema = Schema.Struct({
   prunable: Schema.Boolean,
   kind: Schema.Literal('main', 'linked', 'folder'),
   managedWrapperPath: nullableStringSchema,
+  originWorktreeId: nullableStringSchema,
   decorations: Schema.Array(treeDecorationSchema),
   dirty: Schema.NullOr(dirtyStateSchema),
   terminals: Schema.Array(terminalRecordSchema),
@@ -289,6 +291,7 @@ const createOperationRequestSchema = Schema.Struct({
     })
   ),
   sourceWorktreeId: Schema.optional(Schema.String),
+  originWorktreeId: Schema.optional(Schema.String),
   treeTitle: Schema.optional(
     Schema.Struct({ command: stringArraySchema, pendingTitle: Schema.String })
   )

@@ -1387,7 +1387,8 @@ export function createApp({
             body.base,
             initialTerminal,
             body.sourceWorktreeId,
-            body.treeTitle
+            body.treeTitle,
+            body.originWorktreeId
           )
         )
 
@@ -1989,6 +1990,10 @@ export function createApp({
 
         if (body.env) {
           options.env = { ...body.env }
+        }
+
+        if (body.parentTerminalId) {
+          options.parentTerminalId = body.parentTerminalId
         }
 
         const terminal = yield* operation(() =>

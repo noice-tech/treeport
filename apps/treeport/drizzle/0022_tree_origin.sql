@@ -1,0 +1,1 @@
+ALTER TABLE `worktrees` ADD `origin_worktree_id` text;

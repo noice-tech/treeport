@@ -177,7 +177,8 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle
+    treeTitle?: LauncherTreeTitle,
+    originWorktreeId?: string
   ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     const executeCreateOperation = this.executeCreateOperation.bind(this)
 
@@ -241,6 +242,10 @@ export class WorktreeCreationService {
         request.sourceWorktreeId = sourceWorktreeId
       }
 
+      if (originWorktreeId) {
+        request.originWorktreeId = originWorktreeId
+      }
+
       if (treeTitle) {
         request.treeTitle = treeTitle
       }
@@ -273,7 +278,8 @@ export class WorktreeCreationService {
             base,
             initialTerminal,
             sourceWorktreeId,
-            treeTitle
+            treeTitle,
+            originWorktreeId
           )
         )
         .pipe(
@@ -297,7 +303,8 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle
+    treeTitle?: LauncherTreeTitle,
+    originWorktreeId?: string
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     const executeCreateWorktree = this.executeCreateWorktree.bind(this)
 
@@ -319,7 +326,8 @@ export class WorktreeCreationService {
         base,
         initialTerminal,
         sourceWorktreeId,
-        treeTitle
+        treeTitle,
+        originWorktreeId
       )
 
       yield* Effect.matchCauseEffect(creation, {
@@ -407,7 +415,8 @@ export class WorktreeCreationService {
       request.base,
       initialTerminal,
       request.sourceWorktreeId,
-      request.treeTitle
+      request.treeTitle,
+      request.originWorktreeId
     )
   }
 
@@ -417,7 +426,8 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle
+    treeTitle?: LauncherTreeTitle,
+    originWorktreeId?: string
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -465,7 +475,8 @@ export class WorktreeCreationService {
           base,
           initialTerminal,
           sourceWorktreeId,
-          treeTitle
+          treeTitle,
+          originWorktreeId
         )
       )
     })
@@ -477,7 +488,8 @@ export class WorktreeCreationService {
     base: 'default' | 'current',
     initialTerminal?: CreateInitialTerminal,
     sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle
+    treeTitle?: LauncherTreeTitle,
+    originWorktreeId?: string
   ): Effect.Effect<
     CreateWorktreeResult,
     DomainError<unknown>,
@@ -676,11 +688,19 @@ export class WorktreeCreationService {
                 true,
                 true
               )
+
               yield* database
                 .execute('worktree.creation.service.629', (db) =>
                   db.run(sql`
               UPDATE worktrees
-              SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null}
+              SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null},
+                origin_worktree_id=${
+                  project.worktrees.some(
+                    (candidate) => candidate.id === originWorktreeId
+                  )
+                    ? originWorktreeId
+                    : null
+                }
               WHERE path=${worktreePath}
             `)
                 )

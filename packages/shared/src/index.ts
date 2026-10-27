@@ -145,6 +145,7 @@ export interface TerminalRecord {
   unavailableReason?: string | null | undefined
   recoveryPending?: boolean | undefined
   commandExitCode?: number | null | undefined
+  parentTerminalId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -330,6 +331,7 @@ export interface WorktreeRecord {
   prunable: boolean
   kind: WorktreeKind
   managedWrapperPath: string | null
+  originWorktreeId: string | null
   decorations: TreeDecoration[]
   dirty: DirtyState | null
   terminals: TerminalRecord[]
@@ -507,6 +509,7 @@ export interface CreateOperationRequest {
       }
     | undefined
   sourceWorktreeId?: string | undefined
+  originWorktreeId?: string | undefined
   treeTitle?: LauncherTreeTitle | undefined
 }
 
@@ -973,6 +976,7 @@ export const createWorktreeSchema = Schema.Struct({
     default: () => 'default' as const
   }),
   sourceWorktreeId: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
+  originWorktreeId: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
   initialTerminal: Schema.optional(initialTerminalSchema),
   treeTitle: Schema.optional(
     Schema.Struct({
@@ -1027,7 +1031,8 @@ export const createTerminalSchema = Schema.Struct({
   afterExit: Schema.optional(terminalAfterExitSchema),
   cwd: Schema.optional(terminalCwdSchema),
   env: Schema.optional(terminalEnvironmentSchema),
-  initialSize: Schema.optional(terminalSizeSchema)
+  initialSize: Schema.optional(terminalSizeSchema),
+  parentTerminalId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
 })
 
 export const updateTerminalSchema = Schema.Struct({ name: terminalNameSchema })

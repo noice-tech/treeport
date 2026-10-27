@@ -27,6 +27,7 @@ export const project: ProjectRecord = {
       prunable: false,
       kind: 'main',
       managedWrapperPath: null,
+      originWorktreeId: null,
       title: null,
       pendingTitle: null,
       decorations: [],
@@ -49,6 +50,7 @@ export const project: ProjectRecord = {
           command: null,
           status: 'running',
           exitCode: null,
+          parentTerminalId: null,
           createdAt: '2026-01-01',
           updatedAt: '2026-01-01'
         }
@@ -67,6 +69,7 @@ export const project: ProjectRecord = {
       prunable: false,
       kind: 'linked',
       managedWrapperPath: null,
+      originWorktreeId: null,
       title: null,
       pendingTitle: null,
       decorations: [],
@@ -89,6 +92,7 @@ export const project: ProjectRecord = {
           command: 'pi',
           status: 'running',
           exitCode: null,
+          parentTerminalId: null,
           createdAt: '2026-01-01',
           updatedAt: '2026-01-01'
         }

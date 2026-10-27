@@ -86,6 +86,27 @@
   bottom: 50%;
 }
 
+.worktree-origin-child::before {
+  position: absolute;
+  top: -0.125rem;
+  bottom: 0;
+  left: calc(0.625rem + 1px);
+  z-index: 1;
+  border-left: 1px solid color-mix(in oklab, var(--color-white) 6%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+@media (min-width: 701px) {
+  .worktree-origin-child::before {
+    top: -0.25rem;
+  }
+}
+
+.worktree-origin-child > [data-sidebar='menu-sub'] {
+  border-color: transparent;
+}
+
 .xterm-host .wterm {
   --term-font-family:
     'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
