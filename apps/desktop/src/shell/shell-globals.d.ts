@@ -17,6 +17,7 @@ declare global {
       onTerminalSelectionActive: (
         listener: (active: boolean) => void
       ) => () => void
+      onAttentionSound: (listener: () => void) => () => void
       releaseTerminalSelection: () => void
       copyPhoneLink: (url: string) => Promise<boolean>
       phoneAccess: (id: string) => Promise<PhoneAccessResponse>
