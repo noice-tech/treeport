@@ -1332,8 +1332,17 @@ export function BrowserAppWorkspace({
     event: KeyboardEvent<HTMLVideoElement>,
     phase: 'down' | 'up'
   ) => {
+    // EXTERNAL: Non-Latin layouts report letters such as "с" for Ctrl+C. Use the
+    // physical key for shortcuts so they match what pages and the viewer expect.
+    const pressedKey =
+      (event.ctrlKey || event.metaKey) &&
+      /^[\u0080-\u{10ffff}]$/u.test(event.key) &&
+      /^Key[A-Z]$/.test(event.code)
+        ? event.code.slice(3).toLowerCase()
+        : event.key
+
     const isCopyShortcut =
-      event.key.toLowerCase() === 'c' &&
+      pressedKey.toLowerCase() === 'c' &&
       (event.metaKey || event.ctrlKey) &&
       !event.altKey &&
       !event.shiftKey
@@ -1399,18 +1408,24 @@ export function BrowserAppWorkspace({
     }
 
     const isPasteShortcut =
-      event.key.toLowerCase() === 'v' &&
+      pressedKey.toLowerCase() === 'v' &&
       (event.ctrlKey || event.metaKey) &&
       !event.altKey
 
     const isShiftInsert =
-      event.key === 'Insert' &&
+      pressedKey === 'Insert' &&
       event.shiftKey &&
       !event.ctrlKey &&
       !event.metaKey &&
       !event.altKey
 
-    if (isPasteShortcut || isShiftInsert) {
+    // EXTERNAL: Dead and compose keys only start a character; the resulting
+    // character arrives as its own key event. Playwright rejects these names.
+    if (
+      isPasteShortcut ||
+      isShiftInsert ||
+      ['Dead', 'Compose', 'Unidentified'].includes(pressedKey)
+    ) {
       return
     }
 
@@ -1423,7 +1438,7 @@ export function BrowserAppWorkspace({
     send({
       type: 'key',
       phase,
-      key: event.key,
+      key: pressedKey,
       modifiers:
         (event.altKey ? 1 : 0) |
         (event.ctrlKey ? 2 : 0) |
