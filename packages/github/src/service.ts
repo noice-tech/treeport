@@ -1,11 +1,7 @@
 import { execFile } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
-import type {
-  TreeDecorationInput,
-  TreeportProject,
-  TreeportTree
-} from '@treeport/app-sdk'
+import type { TreeportProject, TreeportTree } from '@treeport/app-sdk'
 import { treeport } from '@treeport/app-sdk/service'
 import { z } from 'zod'
 
@@ -26,12 +22,14 @@ const pullRequestSchema = z.object({
 })
 
 const checkRunsSchema = z.object({
-  check_runs: z.array(z.object({ conclusion: z.string().nullable() }))
+  check_runs: z.array(
+    z.object({ status: z.string(), conclusion: z.string().nullable() })
+  )
 })
 
-const statusSchema = z.object({ state: z.string() })
-
-type PullRequest = z.infer<typeof pullRequestSchema>
+const statusSchema = z.object({
+  statuses: z.array(z.object({ state: z.string() }))
+})
 
 interface Repository {
   host: string
@@ -153,25 +151,13 @@ const ICONS = {
   closed:
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 5.5a.75.75 0 0 1 .75.75v3.378a2.251 2.251 0 1 1-1.5 0V7.25a.75.75 0 0 1 .75-.75Zm-2.03-5.273a.75.75 0 0 1 1.06 0l.97.97.97-.97a.748.748 0 0 1 1.265.332.75.75 0 0 1-.205.729l-.97.97.97.97a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-.97-.97-.97.97a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l.97-.97-.97-.97a.75.75 0 0 1 0-1.06ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>',
   draft:
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z"/></svg>'
-}
-
-function decorationFor(pull: PullRequest): TreeDecorationInput {
-  const [tone, icon] = pull.merged_at
-    ? (['done', ICONS.merged] as const)
-    : pull.state === 'closed'
-      ? (['danger', ICONS.closed] as const)
-      : pull.draft
-        ? (['neutral', ICONS.draft] as const)
-        : (['success', ICONS.open] as const)
-
-  return {
-    text: `#${pull.number}`,
-    title: pull.title.slice(0, 240),
-    tone,
-    icon,
-    url: pull.html_url
-  }
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z"/></svg>',
+  success:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>',
+  failure:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>',
+  pending:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M8 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg>'
 }
 
 const { packageId } = await treeport.self()
@@ -225,16 +211,6 @@ async function refreshProject(project: TreeportProject): Promise<void> {
       z.array(pullRequestSchema)
     )
 
-    if (pull) {
-      await treeport.decorations.set(
-        tree.id,
-        PULL_REQUEST_KEY,
-        decorationFor(pull)
-      )
-    } else {
-      await clear(tree, PULL_REQUEST_KEY)
-    }
-
     const open = pull?.state === 'open'
 
     const [checkRuns, status] = open
@@ -254,25 +230,66 @@ async function refreshProject(project: TreeportProject): Promise<void> {
         ])
       : [null, null]
 
-    if (
-      open &&
-      (status?.state === 'failure' ||
-        status?.state === 'error' ||
-        checkRuns?.check_runs.some((run) =>
-          ['failure', 'timed_out', 'startup_failure'].includes(
-            run.conclusion ?? ''
-          )
-        ))
-    ) {
-      await treeport.decorations.set(tree.id, CHECKS_KEY, {
-        text: 'CI',
-        title: `Checks failing on #${pull.number}`,
-        tone: 'danger',
-        url: `${pull.html_url}/checks`
+    const outcomes = [
+      ...(checkRuns?.check_runs ?? []).map((run) =>
+        run.status !== 'completed'
+          ? 'pending'
+          : run.conclusion === 'skipped'
+            ? 'skipped'
+            : ['success', 'neutral'].includes(run.conclusion ?? '')
+              ? 'successful'
+              : 'failing'
+      ),
+      ...(status?.statuses ?? []).map((entry) =>
+        entry.state === 'pending'
+          ? 'pending'
+          : entry.state === 'success'
+            ? 'successful'
+            : 'failing'
+      )
+    ]
+
+    const checks = outcomes.includes('failing')
+      ? (['danger', ICONS.failure, 'Some checks were not successful'] as const)
+      : outcomes.includes('pending')
+        ? ([
+            'warning',
+            ICONS.pending,
+            "Some checks haven't completed yet"
+          ] as const)
+        : outcomes.length
+          ? (['success', ICONS.success, 'All checks have passed'] as const)
+          : null
+
+    const [tone, icon, summary] = pull?.merged_at
+      ? (['done', ICONS.merged, null] as const)
+      : pull?.state === 'closed'
+        ? (['danger', ICONS.closed, null] as const)
+        : checks
+          ? checks
+          : pull?.draft
+            ? (['neutral', ICONS.draft, null] as const)
+            : (['success', ICONS.open, null] as const)
+
+    if (pull) {
+      await treeport.decorations.set(tree.id, PULL_REQUEST_KEY, {
+        text: `#${pull.number}`,
+        title: (summary
+          ? `${pull.draft ? 'Draft · ' : ''}${summary} · ${pull.title}`
+          : pull.title
+        ).slice(0, 256),
+        tone,
+        icon,
+        url:
+          checks && checks[0] !== 'success'
+            ? `${pull.html_url}/checks`
+            : pull.html_url
       })
     } else {
-      await clear(tree, CHECKS_KEY)
+      await clear(tree, PULL_REQUEST_KEY)
     }
+
+    await clear(tree, CHECKS_KEY)
 
     if (pull?.merged_at) {
       mergedBranches.set(tree.id, branch)
