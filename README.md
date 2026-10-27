@@ -4,6 +4,8 @@
 
 Treeport is a workspace for coding agents, terminals, browser tabs, and custom apps. Run an agent, open the app it's building, and review its changes in the same tree.
 
+Treeport is also what Mitchell Hashimoto calls an [agentic inbox](https://mitchellh.com/writing/program-status-osc7501): "a single view across every running agent showing which are working, which are done, and which are waiting on you."
+
 > [!NOTE]
 > Treeport's core is under active development. It is already usable for daily development work, but some interfaces can change.
 
