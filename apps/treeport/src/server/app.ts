@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -715,6 +715,58 @@ export function createApp({
       })
     ),
     route(
+      'GET',
+      '/api/browser-downloads/:token',
+      Effect.gen(function* () {
+        if (!browserSessions) {
+          return yield* Effect.fail(
+            new DomainError(
+              'BROWSER_UNAVAILABLE',
+              'Hosted browser service is unavailable',
+              503
+            )
+          )
+        }
+
+        const params = yield* routeParams
+        const request = yield* serverRequest
+
+        const download = yield* operation(() =>
+          browserSessions.downloadFile(
+            params.token!,
+            authenticatedViewers.get(
+              NodeHttpServerRequest.toIncomingMessage(request)
+            ) ?? null
+          )
+        )
+
+        if (!download) {
+          return HttpServerResponse.empty({ status: 404 })
+        }
+
+        const stat = yield* operation(() => fs.stat(download.path))
+
+        const asciiFilename =
+          download.filename.replace(/[^\x20-\x7e]|["\\]/g, '_') || 'download'
+
+        return HttpServerResponse.stream(
+          Stream.fromAsyncIterable(
+            createReadStream(download.path),
+            (cause) => cause
+          ),
+          {
+            contentType: 'application/octet-stream',
+            contentLength: stat.size,
+            headers: {
+              'cache-control': 'no-store',
+              'content-disposition': `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(download.filename).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)}`,
+              'x-content-type-options': 'nosniff'
+            }
+          }
+        )
+      })
+    ),
+    route(
       'PUT',
       '/api/worktrees/:worktreeId/web-app-definitions/:definitionId/permission-grant',
       Effect.gen(function* () {
@@ -1363,10 +1415,6 @@ export function createApp({
         if (body.initialTerminal) {
           initialTerminal = { name: body.initialTerminal.name }
 
-          if (body.initialTerminal.initialTitle) {
-            initialTerminal.initialTitle = body.initialTerminal.initialTitle
-          }
-
           if (body.initialTerminal.command) {
             initialTerminal.command = body.initialTerminal.command
           }
@@ -1967,10 +2015,6 @@ export function createApp({
         const options: NonNullable<
           Parameters<TreeportService['terminals']['createTerminal']>[2]
         > = {}
-
-        if (body.initialTitle) {
-          options.initialTitle = body.initialTitle
-        }
 
         if (body.command) {
           options.command = body.command

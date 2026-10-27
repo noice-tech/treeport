@@ -155,7 +155,7 @@ export function BrowserAppWorkspace({
     new Map<
       string,
       {
-        resolve(clipboard: BrowserClipboard): void
+        resolve(clipboard: BrowserClipboard | null): void
         reject(reason: Error): void
       }
     >()
@@ -188,6 +188,7 @@ export function BrowserAppWorkspace({
   )
 
   const pointerActiveRef = useRef(false)
+  const pointerTypeRef = useRef('mouse')
 
   const touchesRef = useRef(
     new Map<number, { id: number; x: number; y: number }>()
@@ -574,6 +575,15 @@ export function BrowserAppWorkspace({
         return
       }
 
+      if (message.type === 'download') {
+        const link = document.createElement('a')
+        link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`
+        link.download = message.filename
+        link.click()
+
+        return
+      }
+
       if (message.type === 'clipboardWrite') {
         if (
           !stateRef.current?.controlled ||
@@ -606,10 +616,8 @@ export function BrowserAppWorkspace({
       if (message.type === 'copyResult') {
         const pending = pendingCopiesRef.current.get(message.requestId)
 
-        if (message.error !== null || message.clipboard === null) {
-          pending?.reject(
-            new Error(message.error ?? 'Nothing is selected to copy.')
-          )
+        if (message.error !== null) {
+          pending?.reject(new Error(message.error))
         } else {
           pending?.resolve(message.clipboard)
         }
@@ -1324,8 +1332,17 @@ export function BrowserAppWorkspace({
     event: KeyboardEvent<HTMLVideoElement>,
     phase: 'down' | 'up'
   ) => {
+    // EXTERNAL: Non-Latin layouts report letters such as "с" for Ctrl+C. Use the
+    // physical key for shortcuts so they match what pages and the viewer expect.
+    const pressedKey =
+      (event.ctrlKey || event.metaKey) &&
+      /^[\u0080-\u{10ffff}]$/u.test(event.key) &&
+      /^Key[A-Z]$/.test(event.code)
+        ? event.code.slice(3).toLowerCase()
+        : event.key
+
     const isCopyShortcut =
-      event.key.toLowerCase() === 'c' &&
+      pressedKey.toLowerCase() === 'c' &&
       (event.metaKey || event.ctrlKey) &&
       !event.altKey &&
       !event.shiftKey
@@ -1348,7 +1365,7 @@ export function BrowserAppWorkspace({
       const requestId = crypto.randomUUID()
       let timer: ReturnType<typeof setTimeout> | null = null
 
-      const result = new Promise<BrowserClipboard>((resolve, reject) => {
+      const result = new Promise<BrowserClipboard | null>((resolve, reject) => {
         pendingCopiesRef.current.set(requestId, { resolve, reject })
         timer = setTimeout(
           () =>
@@ -1367,6 +1384,10 @@ export function BrowserAppWorkspace({
 
       void result
         .then((clipboard) => {
+          if (clipboard === null) {
+            return
+          }
+
           // EXTERNAL: A browser may require a fresh gesture once the remote response has
           // arrived. Retain the exact payload for the explicit retry button.
           setClipboardToCopy(clipboard)
@@ -1387,18 +1408,24 @@ export function BrowserAppWorkspace({
     }
 
     const isPasteShortcut =
-      event.key.toLowerCase() === 'v' &&
+      pressedKey.toLowerCase() === 'v' &&
       (event.ctrlKey || event.metaKey) &&
       !event.altKey
 
     const isShiftInsert =
-      event.key === 'Insert' &&
+      pressedKey === 'Insert' &&
       event.shiftKey &&
       !event.ctrlKey &&
       !event.metaKey &&
       !event.altKey
 
-    if (isPasteShortcut || isShiftInsert) {
+    // EXTERNAL: Dead and compose keys only start a character; the resulting
+    // character arrives as its own key event. Playwright rejects these names.
+    if (
+      isPasteShortcut ||
+      isShiftInsert ||
+      ['Dead', 'Compose', 'Unidentified'].includes(pressedKey)
+    ) {
       return
     }
 
@@ -1411,7 +1438,7 @@ export function BrowserAppWorkspace({
     send({
       type: 'key',
       phase,
-      key: event.key,
+      key: pressedKey,
       modifiers:
         (event.altKey ? 1 : 0) |
         (event.ctrlKey ? 2 : 0) |
@@ -2331,6 +2358,8 @@ export function BrowserAppWorkspace({
                     aria-label="Browser viewport. Streamed page content is not available to assistive technology."
                     onFocus={onFocusSurface}
                     onPointerMove={(event) => {
+                      pointerTypeRef.current = event.pointerType
+
                       if (
                         contextRequestRef.current ||
                         contextRef.current ||
@@ -2352,6 +2381,7 @@ export function BrowserAppWorkspace({
                     }}
                     onMouseMove={(event) => {
                       if (
+                        pointerTypeRef.current === 'touch' ||
                         contextRequestRef.current ||
                         contextRef.current ||
                         (!stateRef.current?.controlled &&
@@ -2366,6 +2396,8 @@ export function BrowserAppWorkspace({
                       event.currentTarget.style.cursor = 'default'
                     }}
                     onPointerDown={(event) => {
+                      pointerTypeRef.current = event.pointerType
+
                       if (
                         inputBlocked ||
                         !active ||
@@ -2466,7 +2498,14 @@ export function BrowserAppWorkspace({
                     onMouseDown={(event) => {
                       event.preventDefault()
 
-                      if (event.button === 2 || inputBlocked || !active) {
+                      // EXTERNAL: iOS Safari fires compatibility mouse events after a tap
+                      // even when pointerdown is prevented, which would click twice.
+                      if (
+                        pointerTypeRef.current === 'touch' ||
+                        event.button === 2 ||
+                        inputBlocked ||
+                        !active
+                      ) {
                         return
                       }
 
@@ -2481,7 +2520,10 @@ export function BrowserAppWorkspace({
                     onMouseUp={(event) => {
                       event.preventDefault()
 
-                      if (event.button === 2) {
+                      if (
+                        pointerTypeRef.current === 'touch' ||
+                        event.button === 2
+                      ) {
                         return
                       }
 

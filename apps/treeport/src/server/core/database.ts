@@ -66,7 +66,6 @@ const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
       z
         .strictObject({
           name: z.string(),
-          initialTitle: z.string().optional(),
           command: z.string().optional(),
           afterExit: z.enum(['shell', 'close', 'closeOnSuccess']).optional(),
           initialSize: z

@@ -119,7 +119,6 @@ const createSchema = Schema.Struct({
   shell: Schema.String,
   command: Schema.NullOr(Schema.String),
   afterExit: afterExitSchema,
-  initialTitle: Schema.optional(Schema.String),
   initialSize: Schema.optional(terminalSizeSchema),
   env: Schema.Record({ key: Schema.String, value: Schema.String }),
   setupTasks: Schema.optional(Schema.Array(setupTaskSchema)),
@@ -331,16 +330,15 @@ const terminalAttentionSchema = Schema.Struct({
 })
 
 const runtimeEventSchema = Schema.Struct({
-  title: Schema.optional(Schema.String),
   activity: Schema.optional(terminalActivitySchema),
   attention: Schema.optional(terminalAttentionSchema),
   commandExitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   exitCode: Schema.optional(Schema.NullOr(Schema.Int)),
   titleState: Schema.optional(
     Schema.Struct({
-      terminalTitle: Schema.NullOr(Schema.String),
-      currentCommand: Schema.NullOr(Schema.String),
-      commandLine: Schema.optional(Schema.NullOr(Schema.String))
+      title: Schema.NullOr(Schema.String),
+      command: Schema.NullOr(Schema.String),
+      running: Schema.NullOr(Schema.Boolean)
     })
   )
 })
@@ -348,9 +346,9 @@ const runtimeEventSchema = Schema.Struct({
 const terminalStatusSchema = Schema.Literal('running', 'exited', 'unavailable')
 
 const terminalTitleStateSchema = Schema.Struct({
-  terminalTitle: Schema.NullOr(Schema.String),
-  currentCommand: Schema.NullOr(Schema.String),
-  commandLine: Schema.optional(Schema.NullOr(Schema.String))
+  title: Schema.NullOr(Schema.String),
+  command: Schema.NullOr(Schema.String),
+  running: Schema.NullOr(Schema.Boolean)
 })
 
 const hostedTerminalSchema = Schema.Struct({

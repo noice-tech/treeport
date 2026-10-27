@@ -179,7 +179,7 @@ export class PlaywrightBrowserHost {
             executablePath: runtime.executablePath,
             chromiumSandbox: true,
             headless: display === null,
-            acceptDownloads: false,
+            acceptDownloads: true,
             ignoreDefaultArgs: ['--disable-extensions'],
             args,
             env,

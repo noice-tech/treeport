@@ -420,6 +420,11 @@ export const browserServerMessageSchema = Schema.Union(
     error: Schema.NullOr(Schema.String)
   }),
   Schema.Struct({
+    type: Schema.Literal('download'),
+    token: opaqueTokenSchema,
+    filename: Schema.String.pipe(Schema.maxLength(1_024))
+  }),
+  Schema.Struct({
     type: Schema.Literal('webcodecsReady'),
     epoch: Schema.Int.pipe(Schema.between(1, 0xffffffff)),
     codec: Schema.String.pipe(Schema.maxLength(64)),

@@ -280,7 +280,6 @@ const createOperationRequestSchema = Schema.Struct({
   initialTerminal: Schema.optional(
     Schema.Struct({
       name: Schema.String,
-      initialTitle: Schema.optional(Schema.String),
       command: Schema.optional(Schema.String),
       afterExit: Schema.optional(
         Schema.Literal('shell', 'close', 'closeOnSuccess')

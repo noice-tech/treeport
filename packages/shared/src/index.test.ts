@@ -51,7 +51,6 @@ describe('API input validation', () => {
     expect(
       createTerminalSchema.parse({
         name: 'researcher',
-        initialTitle: '  Review launcher  ',
         command,
         cwd: '/repo/worktrees/topic with spaces',
         env: { CUSTOM: 'value;$HOME 雪' },
@@ -59,7 +58,6 @@ describe('API input validation', () => {
         initialSize: { cols: 132, rows: 47 }
       })
     ).toMatchObject({
-      initialTitle: 'Review launcher',
       command,
       cwd: '/repo/worktrees/topic with spaces',
       env: { CUSTOM: 'value;$HOME 雪' },
@@ -77,13 +75,12 @@ describe('API input validation', () => {
       createWorktreeSchema.parse({
         name: 'topic',
         initialTerminal: {
-          name: 'Hunk',
-          initialTitle: '  Hunk review  ',
+          name: '  Hunk  ',
           command
         }
       })
     ).toMatchObject({
-      initialTerminal: { name: 'Hunk', initialTitle: 'Hunk review', command }
+      initialTerminal: { name: 'Hunk', command }
     })
   })
 
@@ -110,18 +107,12 @@ describe('API input validation', () => {
         initialSize: { cols: 1, rows: 24 }
       }).success
     ).toBe(false)
-    expect(
-      createTerminalSchema.safeParse({
-        name: 'bad title',
-        initialTitle: ' \t '
-      }).success
-    ).toBe(false)
+    expect(createTerminalSchema.safeParse({ name: ' \t ' }).success).toBe(false)
     expect(
       createWorktreeSchema.safeParse({
         name: 'bad worktree title',
         initialTerminal: {
-          name: 'Hunk',
-          initialTitle: 'x'.repeat(TERMINAL_NAME_MAX_LENGTH + 1)
+          name: 'x'.repeat(TERMINAL_NAME_MAX_LENGTH + 1)
         }
       }).success
     ).toBe(false)

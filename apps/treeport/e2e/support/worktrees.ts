@@ -102,7 +102,6 @@ export async function createWorktreeMock(page: Page, state: ProjectRecord) {
         context?: Record<string, string>
         initialTerminal?: {
           name: string
-          initialTitle?: string
           command?: string
         }
       } = route.request().postDataJSON()

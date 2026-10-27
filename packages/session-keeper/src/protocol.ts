@@ -58,6 +58,7 @@ export const sessionStatusSchema = z
     ownerPid: z.int().positive(),
     pid: z.int().nonnegative(),
     process: z.string(),
+    commandLine: z.array(z.string()).default([]),
     cols: z.int().positive(),
     rows: z.int().positive(),
     sequence: z.int().nonnegative(),

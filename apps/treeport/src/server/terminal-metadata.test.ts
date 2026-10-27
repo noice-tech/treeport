@@ -14,7 +14,8 @@ import type {
 } from './core/terminal-attention-state-store'
 import type {
   TerminalAttachmentBackend,
-  TerminalHostRuntimeEvent
+  TerminalHostRuntimeEvent,
+  TerminalTitleState
 } from './core/terminal'
 import { TerminalMetadataManager } from './terminal-metadata'
 import { testAccess } from './test-access'
@@ -44,10 +45,10 @@ class HostDouble implements TerminalAttachmentBackend {
     string,
     Set<(event: TerminalHostRuntimeEvent) => void>
   >()
-  titleState = {
-    terminalTitle: null,
-    currentCommand: 'zsh',
-    commandLine: 'zsh'
+  titleState: TerminalTitleState = {
+    title: null,
+    command: null,
+    running: false
   }
   state: HostRuntimeState = {
     title: null,
@@ -228,9 +229,9 @@ describe('TerminalMetadataManager', () => {
 
     host.emit('terminal', {
       titleState: {
-        terminalTitle: null,
-        currentCommand: 'pi',
-        commandLine: 'pi --mode rpc'
+        title: 'pi --mode rpc',
+        command: 'pi --mode rpc',
+        running: true
       }
     })
     host.emit('terminal', {
@@ -268,11 +269,7 @@ describe('TerminalMetadataManager', () => {
     })
     refreshTerminalStatus.mockClear()
 
-    host.titleState = {
-      terminalTitle: null,
-      currentCommand: 'zsh',
-      commandLine: ''
-    }
+    host.titleState = { title: '~/repo', command: null, running: false }
     host.emit('terminal', { titleState: host.titleState })
     await vi.waitFor(() =>
       expect(manager.get('terminal').hasForegroundProcess).toBe(false)
@@ -304,9 +301,9 @@ describe('TerminalMetadataManager', () => {
 
     host.emit('terminal', {
       titleState: {
-        terminalTitle: null,
-        currentCommand: 'pi',
-        commandLine: 'pi --mode rpc'
+        title: 'pi --mode rpc',
+        command: 'pi --mode rpc',
+        running: true
       }
     })
     await vi.waitFor(() =>

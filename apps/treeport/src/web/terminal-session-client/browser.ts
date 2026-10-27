@@ -114,8 +114,6 @@ export function makeBrowser(
             })
           }
         },
-        onTitle: (title) =>
-          dependencies.update({ title: title.trim().slice(0, 256) }),
         onBell: () => dependencies.handleBell(),
         onClipboardWrite: (text) => {
           if (

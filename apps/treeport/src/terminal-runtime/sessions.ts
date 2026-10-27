@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
 import * as pty from 'node-pty'
@@ -25,7 +26,6 @@ import {
 } from '../ghostty-vt/ghostty-vt'
 import { loadGhosttyVtModule } from '../ghostty-vt/node'
 import {
-  TERMINAL_COMMAND_OSC,
   TERMINAL_PROGRESS_STALE_MS,
   type HostedTerminal,
   type TerminalCreateInput,
@@ -112,8 +112,7 @@ type ParserCommand =
   | { readonly _tag: 'Stop' }
 
 type RuntimeCommand =
-  | { readonly _tag: 'Title'; readonly title: string }
-  | { readonly _tag: 'TitleState'; readonly value: TerminalTitleState }
+  | { readonly _tag: 'TitleState' }
   | {
       readonly _tag: 'Progress'
       readonly state: 'idle' | 'working' | 'error'
@@ -147,8 +146,13 @@ interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
   status: 'running' | 'exited'
   readonly cwd: string
   readonly specPath: string | null
+  readonly shellName: string
   title: string | null
+  commandTitle: string | null
+  commandRunning: boolean | null
   commandLine: string | null
+  foreground: string | null
+  pwd: string | null
   activity: TerminalActivity
   progressFiber: Fiber.RuntimeFiber<void, never> | null
   statusRecords: Map<string, ProgramStatusRecord> | null
@@ -190,6 +194,93 @@ export interface TerminalHostSessionsOptions {
   readonly sshAgentDiscovery?: SshAgentDiscovery
   readonly sessionExecutable?: string | undefined
   readonly journalLimitBytes?: number | undefined
+}
+
+const INTERPRETERS =
+  /^(?:node|nodejs|bun|deno|python[\d.]*|ruby|perl|php|sh|bash|zsh|fish|dash)$/u
+
+function describeCommand(argv: readonly string[]): string | null {
+  const [executable = '', ...rest] = argv
+  const name = path.basename(executable).replace(/^-/u, '')
+
+  const script = INTERPRETERS.test(name)
+    ? rest.findIndex((argument) => !argument.startsWith('-'))
+    : -1
+
+  const shown =
+    script >= 0 &&
+    !rest
+      .slice(0, script)
+      .some((option) => ['-c', '-e', '-m', '--eval'].includes(option))
+      ? [path.basename(rest[script]!), ...rest.slice(script + 1)]
+      : [name, ...rest]
+
+  return (
+    shown
+      .join(' ')
+      .replace(/\p{Cc}/gu, '')
+      .trim()
+      .slice(0, 256) || null
+  )
+}
+
+function describeForeground(session: HostedTerminalSession): string | null {
+  const argv =
+    session.pty instanceof PersistentSession &&
+    session.pty.commandLine.length > 0
+      ? session.pty.commandLine
+      : [session.pty.process]
+
+  const executable = path.basename(argv[0] ?? '').replace(/^-/u, '')
+
+  return executable && executable !== session.shellName
+    ? describeCommand(argv)
+    : null
+}
+
+function describeDirectory(value: string): string | null {
+  const location = value.startsWith('kitty-shell-cwd://')
+    ? value.slice(value.indexOf('/', 'kitty-shell-cwd://'.length))
+    : value.startsWith('file:')
+      ? URL.canParse(value)
+        ? Buffer.from(
+            new URL(value).pathname.replace(/%([0-9a-f]{2})/giu, (_, hex) =>
+              String.fromCharCode(Number.parseInt(hex, 16))
+            ),
+            'latin1'
+          ).toString('utf8')
+        : null
+      : value
+
+  if (!location) {
+    return null
+  }
+
+  const home = os.homedir()
+
+  return location === home || location.startsWith(`${home}/`)
+    ? `~${location.slice(home.length)}`
+    : location
+}
+
+function titleState(session: HostedTerminalSession): TerminalTitleState {
+  if (session.commandRunning === false) {
+    return {
+      title: session.pwd ?? session.title,
+      command: null,
+      running: false
+    }
+  }
+
+  const command = session.foreground ?? session.commandLine
+
+  return {
+    title: session.commandRunning
+      ? (session.commandTitle ?? command)
+      : (session.title ?? command),
+    command,
+    running: session.commandRunning
+  }
 }
 
 function raiseAttention(
@@ -865,10 +956,7 @@ export class TerminalHostSessions {
   ): Effect.Effect<HostedTerminalSession, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const directShell =
-        input.command === null &&
-        !input.initialTitle &&
-        !input.setupTasks?.length &&
-        !input.setupError
+        input.command === null && !input.setupTasks?.length && !input.setupError
 
       const retainedMetadata = retainedOwner
         ? yield* decodeTerminalEngineMetadata(
@@ -898,10 +986,6 @@ export class TerminalHostSessions {
           cwd: input.cwd,
           env: { ...input.env },
           shellIntegrationDir: this.shellIntegrationDir
-        }
-
-        if (input.initialTitle !== undefined) {
-          spec.initialTitle = input.initialTitle
         }
 
         if (input.setupTasks !== undefined) {
@@ -1070,9 +1154,51 @@ export class TerminalHostSessions {
           },
           titleChanged: () => {
             if (hosted) {
+              hosted.title = terminal.title() || null
+
+              if (hosted.commandRunning) {
+                hosted.commandTitle = hosted.title
+              }
+
+              Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'TitleState' })
+            }
+          },
+          pwdChanged: () => {
+            if (hosted) {
+              hosted.pwd = describeDirectory(terminal.pwd())
+              Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'TitleState' })
+            }
+          },
+          semanticPrompt: (event) => {
+            const command =
+              event.command
+                .replace(/\p{Cc}/gu, '')
+                .trim()
+                .slice(0, 256) || null
+
+            // EXTERNAL: Programs such as pi mark their own message zones with
+            // bare 133;A/B/C. Only a shell reports a command line or an exit.
+            if (
+              !hosted ||
+              (event.kind === 'outputStart'
+                ? !command
+                : event.kind !== 'commandEnd')
+            ) {
+              return
+            }
+
+            hosted.commandRunning = event.kind === 'outputStart'
+            hosted.commandTitle = null
+            hosted.foreground = null
+            hosted.commandLine = hosted.commandRunning ? command : null
+            Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'TitleState' })
+
+            if (event.kind === 'commandEnd') {
               Queue.unsafeOffer(hosted.runtimeCommands, {
-                _tag: 'Title',
-                title: terminal.title()
+                _tag: 'Prompt',
+                at: hosted.processingTime,
+                batch: hosted.processingSequence,
+                replaying: hosted.replaying
               })
             }
           },
@@ -1112,37 +1238,7 @@ export class TerminalHostSessions {
               Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'Reset' })
             }
           },
-          unknownOsc: (content) => {
-            const prefix = `${TERMINAL_COMMAND_OSC};command;`
-
-            if (!hosted || !content.startsWith(prefix)) {
-              return
-            }
-
-            hosted.commandLine =
-              content
-                .slice(prefix.length)
-                .replace(/\p{Cc}/gu, '')
-                .trim()
-                .slice(0, 256) || null
-            Queue.unsafeOffer(hosted.runtimeCommands, {
-              _tag: 'TitleState',
-              value: {
-                terminalTitle: hosted.title,
-                currentCommand: hosted.pty.process || null,
-                commandLine: hosted.commandLine
-              }
-            })
-
-            if (hosted.commandLine === null) {
-              Queue.unsafeOffer(hosted.runtimeCommands, {
-                _tag: 'Prompt',
-                at: hosted.processingTime,
-                batch: hosted.processingSequence,
-                replaying: hosted.replaying
-              })
-            }
-          },
+          unknownOsc: null,
           renderHold: null,
           clipboardWrite: null
         }
@@ -1251,8 +1347,13 @@ export class TerminalHostSessions {
         updatedAt: retainedMetadata?.updatedAt ?? input.createdAt,
         cwd: input.cwd,
         specPath,
-        title: input.initialTitle ?? null,
-        commandLine: input.initialTitle ?? null,
+        shellName: path.basename(input.shell).replace(/^-/u, ''),
+        title: null,
+        commandTitle: null,
+        commandRunning: null,
+        commandLine: null,
+        foreground: null,
+        pwd: null,
         activity: IDLE_ACTIVITY,
         progressFiber: null,
         statusRecords: null,
@@ -1309,6 +1410,7 @@ export class TerminalHostSessions {
 
       yield* Effect.forkIn(this.parserWorker(session), childScope)
       yield* Effect.forkIn(this.runtimeWorker(session), childScope)
+      yield* Effect.forkIn(this.foregroundWorker(session), childScope)
 
       return session
     })
@@ -1464,27 +1566,47 @@ export class TerminalHostSessions {
     })
   }
 
+  private refreshForeground(
+    session: HostedTerminalSession
+  ): Effect.Effect<void> {
+    return Effect.gen(function* () {
+      if (session.pty instanceof PersistentSession) {
+        const owner = session.pty
+        yield* nodePromise(() => owner.refreshStatus()).pipe(Effect.ignore)
+      }
+
+      const foreground = describeForeground(session)
+
+      if (foreground !== session.foreground) {
+        session.foreground = foreground
+        Queue.unsafeOffer(session.runtimeCommands, { _tag: 'TitleState' })
+      }
+    })
+  }
+
+  private foregroundWorker(
+    session: HostedTerminalSession
+  ): Effect.Effect<void> {
+    return Effect.forever(
+      Effect.gen(this, function* () {
+        yield* Effect.sleep('1 second')
+
+        if (session.status === 'running' && session.commandRunning !== false) {
+          yield* this.refreshForeground(session)
+        }
+      })
+    )
+  }
+
   private runtimeWorker(session: HostedTerminalSession): Effect.Effect<void> {
     return Effect.forever(
       Effect.gen(this, function* () {
         const command = yield* Queue.take(session.runtimeCommands)
 
         switch (command._tag) {
-          case 'Title':
-            session.title = command.title
-            yield* PubSub.publish(session.runtime, {
-              title: command.title,
-              titleState: {
-                terminalTitle: command.title,
-                currentCommand: session.pty.process || null,
-                commandLine: session.commandLine
-              }
-            })
-
-            return
           case 'TitleState':
             yield* PubSub.publish(session.runtime, {
-              titleState: command.value
+              titleState: titleState(session)
             })
 
             return
@@ -1835,7 +1957,7 @@ export class TerminalHostSessions {
       Effect.map((session) =>
         session
           ? {
-              title: session.title,
+              title: titleState(session).title,
               status: session.status,
               activity: session.activity,
               attention: session.attention
@@ -2376,16 +2498,11 @@ export class TerminalHostSessions {
         return null
       }
 
-      if (session.pty instanceof PersistentSession) {
-        const owner = session.pty
-        yield* nodePromise(() => owner.refreshStatus()).pipe(Effect.orDie)
+      if (session.commandRunning !== false) {
+        yield* this.refreshForeground(session)
       }
 
-      return {
-        terminalTitle: session.title,
-        currentCommand: session.pty.process || null,
-        commandLine: session.commandLine
-      }
+      return titleState(session)
     })
   }
 

@@ -1,7 +1,4 @@
 export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
-export const TERMINAL_NAME_MAX_LENGTH = 120
-
-export const TERMINAL_COMMAND_OSC = 7740
 
 type TerminalAfterExit = 'shell' | 'close' | 'closeOnSuccess'
 
@@ -37,7 +34,6 @@ export interface TerminalLaunchSpec {
   shell: string
   command: string | null
   afterExit: TerminalAfterExit
-  initialTitle?: string | undefined
   cwd: string
   env: Record<string, string>
   shellIntegrationDir?: string | undefined
@@ -54,9 +50,9 @@ export interface TerminalSessionState {
 }
 
 export interface TerminalTitleState {
-  terminalTitle: string | null
-  currentCommand: string | null
-  commandLine?: string | null | undefined
+  title: string | null
+  command: string | null
+  running: boolean | null
 }
 
 export interface HostedTerminal {
@@ -89,7 +85,6 @@ export interface TerminalCreateInput {
   shell: string
   command: string | null
   afterExit: TerminalAfterExit
-  initialTitle?: string | undefined
   initialSize?: TerminalSize | undefined
   env: Record<string, string>
   setupTasks?: TerminalSetupTask[] | undefined
@@ -104,7 +99,6 @@ export interface TerminalTraceContext {
 }
 
 export interface TerminalHostRuntimeEvent {
-  title?: string | undefined
   activity?: TerminalActivity | undefined
   attention?: TerminalAttention | undefined
   commandExitCode?: number | null | undefined

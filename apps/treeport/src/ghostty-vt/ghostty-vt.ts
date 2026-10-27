@@ -55,10 +55,18 @@ export interface GhosttyProgramStatus {
   readonly message: string
 }
 
+interface GhosttySemanticPrompt {
+  readonly kind: 'promptStart' | 'inputStart' | 'outputStart' | 'commandEnd'
+  readonly exitCode: number | null
+  readonly command: string
+}
+
 export interface GhosttyTerminalCallbacks {
   writePty: ((data: Uint8Array) => void) | null
   bell: (() => void) | null
   titleChanged: (() => void) | null
+  pwdChanged: (() => void) | null
+  semanticPrompt: ((event: GhosttySemanticPrompt) => void) | null
   progress: ((state: number, value: number) => void) | null
   programStatus: ((report: GhosttyProgramStatus) => void) | null
   reset: (() => void) | null
@@ -383,6 +391,62 @@ export class GhosttyTerminal {
       )
     }
 
+    if (callbacks.pwdChanged) {
+      const pwdChanged = callbacks.pwdChanged
+      this.set(
+        option('PWD_CHANGED'),
+        vt.callback(() => pwdChanged(), 2, false)
+      )
+    }
+
+    if (callbacks.semanticPrompt) {
+      const semanticPrompt = callbacks.semanticPrompt
+
+      const field = (name: string) =>
+        vt.offset('GhosttyTerminalSemanticPrompt', name)
+
+      const kinds = new Map(
+        (
+          [
+            ['PROMPT_START', 'promptStart'],
+            ['INPUT_START', 'inputStart'],
+            ['OUTPUT_START', 'outputStart'],
+            ['COMMAND_END', 'commandEnd']
+          ] as const
+        ).map(([name, kind]) => [
+          vt.value('GhosttySemanticPromptKind', name),
+          kind
+        ])
+      )
+
+      this.set(
+        option('SEMANTIC_PROMPT'),
+        vt.callback(
+          (_terminal, _user, event) => {
+            const view = vt.view()
+            const kind = kinds.get(view.getInt32(event + field('kind'), true))
+
+            if (!kind) {
+              return
+            }
+
+            semanticPrompt({
+              kind,
+              exitCode: view.getUint8(event + field('has_exit_code'))
+                ? view.getInt32(event + field('exit_code'), true)
+                : null,
+              command: vt.string(
+                view.getUint32(event + field('command'), true),
+                view.getUint32(event + field('command') + 4, true)
+              )
+            })
+          },
+          3,
+          false
+        )
+      )
+    }
+
     if (callbacks.progress) {
       const progress = callbacks.progress
       const state = vt.offset('GhosttyTerminalProgressReport', 'state')
@@ -682,6 +746,13 @@ export class GhosttyTerminal {
 
   title(): string {
     const ptr = this.get('TITLE', (view, out) => view.getUint32(out, true))
+    const length = this.vt.view().getUint32(this.vt.scratch + 4, true)
+
+    return this.vt.string(ptr, length)
+  }
+
+  pwd(): string {
+    const ptr = this.get('PWD', (view, out) => view.getUint32(out, true))
     const length = this.vt.view().getUint32(this.vt.scratch + 4, true)
 
     return this.vt.string(ptr, length)

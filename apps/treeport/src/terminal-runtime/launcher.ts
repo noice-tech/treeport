@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import * as Effect from 'effect/Effect'
-import { TERMINAL_NAME_MAX_LENGTH, type TerminalLaunchSpec } from './contract'
+import type { TerminalLaunchSpec } from './contract'
 import { integrateShellLaunch } from './shell-integration'
 
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
@@ -15,12 +15,6 @@ const launchSpecSchema = z
     shell: z.string(),
     command: z.string().nullable(),
     afterExit: z.enum(['shell', 'close', 'closeOnSuccess']),
-    initialTitle: z
-      .string()
-      .trim()
-      .min(1)
-      .max(TERMINAL_NAME_MAX_LENGTH)
-      .optional(),
     cwd: z.string(),
     env: z.record(z.string(), z.string()),
     shellIntegrationDir: z.string().optional(),
@@ -332,14 +326,6 @@ export function runLaunchSpec(
       }
     } else if (spec.command !== null) {
       command.argv = [...command.argv, '-i', '-c', spec.command]
-    }
-
-    const initialTitle = spec.initialTitle
-      ? safeDiagnostic(spec.initialTitle)
-      : ''
-
-    if (initialTitle && spec.shellIntegrationDir) {
-      stdout.write(`\u001b]7740;command;${initialTitle}\u001b\\`)
     }
 
     const result = yield* runChild(command.argv, {

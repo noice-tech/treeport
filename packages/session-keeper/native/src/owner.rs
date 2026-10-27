@@ -36,6 +36,7 @@ impl Handle {
             owner_pid: std::process::id(),
             pid: pty.pid,
             process: manifest.argv[0].clone(),
+            command_line: Vec::new(),
             cols: manifest.cols,
             rows: manifest.rows,
             sequence: 0,
@@ -405,10 +406,11 @@ impl Owner {
             && matches!(command, Command::Attach { .. } | Command::Status)
         {
             let descriptor = self.pty.descriptor.clone();
-            if let Some(name) =
-                tokio::task::spawn_blocking(move || pty::foreground_name(&descriptor)).await??
+            if let Some((name, command_line)) =
+                tokio::task::spawn_blocking(move || pty::foreground(&descriptor)).await??
             {
                 self.status.process = name;
+                self.status.command_line = command_line;
                 self.publish(false);
             }
         }

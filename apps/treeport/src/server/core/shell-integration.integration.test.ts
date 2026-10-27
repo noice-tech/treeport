@@ -86,14 +86,13 @@ async function verifyCommandLifecycle(
     waitForOutput(
       () => output,
       (value) =>
-        value.includes(startupMarker) &&
-        value.includes('\u001b]7740;command;\u001b\\')
+        value.includes(startupMarker) && value.includes('\u001b]133;A\u001b\\')
     )
   ).resolves.toContain(startupMarker)
 
   const command = `printf 'treeport-shell-result\\n'`
   child.write(`${command}\r`)
-  const commandSequence = `\u001b]7740;command;${command}\u001b\\`
+  const commandSequence = `\u001b]133;C;cmdline_url=${command.replaceAll(';', '%3B')}\u001b\\`
 
   const completed = await waitForOutput(
     () => output,
@@ -107,7 +106,7 @@ async function verifyCommandLifecycle(
           commandIndex + commandSequence.length
         ) >= 0 &&
         value.indexOf(
-          '\u001b]7740;command;\u001b\\',
+          '\u001b]133;D;0\u001b\\',
           commandIndex + commandSequence.length
         ) >= 0
       )

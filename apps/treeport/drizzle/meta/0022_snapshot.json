@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "019f7a3b-dc6e-4f65-9848-f831c3ec8336",
+  "id": "bb5fc827-80d6-4456-a203-33156cef4f21",
   "prevId": "41f3ff96-9f82-4d0f-bee2-34322b8ddd0f",
   "tables": {
     "browser_apps": {
@@ -879,13 +879,6 @@
         },
         "managed_wrapper_path": {
           "name": "managed_wrapper_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "origin_worktree_id": {
-          "name": "origin_worktree_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
