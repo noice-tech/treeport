@@ -65,6 +65,7 @@ async function fixture(command: string | null) {
     command,
     status: 'running',
     exitCode: null,
+    parentTerminalId: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
