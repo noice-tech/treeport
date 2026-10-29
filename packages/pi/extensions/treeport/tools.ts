@@ -44,10 +44,17 @@ const browserResult = Type.Object(
   { additionalProperties: true }
 )
 
+function isPiSessionTerminal(terminal: string): boolean {
+  return (
+    terminal === '.' || terminal === process.env.TREEPORT_TERMINAL_ID?.trim()
+  )
+}
+
 export const TREEPORT_GUIDELINES = [
   'Treeport terminals persist and are visible to the user. Use treeport_terminal_wait for runtime conditions instead of polling or sleeping.',
   'Create Treeport terminals only for long-running processes such as servers, watchers, and agents.',
   'Delete terminals you started once their processes are no longer needed. Delete other terminals only when the user asks. Never delete this Pi session terminal.',
+  'Send input only to terminals you started or the user asked you to drive, never to this Pi session terminal. After sending, use treeport_terminal_wait and treeport_terminal_capture to observe the result.',
   'Leave browser tabs open for user inspection. Do not install a browser runtime without user approval.',
   'Do not put secrets in browser URLs or command arguments.',
   'Treeport tools target the instance inherited by this terminal, which may differ from a development instance in the current worktree. Do not mutate another instance without explicit permission.'
@@ -67,7 +74,7 @@ export function registerTreeportTools(
     args: (params: Static<P>) => string[] = () => [],
     timeout: (params: Static<P>) => number = () => 30_000
   ) => {
-    const name = `treeport_${command.join('_')}`
+    const name = `treeport_${command.join('_').replaceAll('-', '_')}`
     names.push(name)
     pi.registerTool({
       name,
@@ -261,15 +268,74 @@ export function registerTreeportTools(
     (p) => ((p.timeoutSeconds ?? 30) + 5) * 1000
   )
   register(
+    ['terminal', 'send-keys'],
+    'Send keys like tmux send-keys. Each key that names a key, such as Enter, Escape, Tab, BSpace, Up, Down, PageUp, F1, or C-c, M-x, S-Tab, is sent as that key; any other key is typed literally. Fails if the terminal has exited.',
+    Type.Object({
+      terminal: identifier,
+      keys: Type.Array(Type.String({ minLength: 1 }), {
+        minItems: 1,
+        description:
+          'Key names or text, for example ["npm test", "Enter"] or ["C-c"].'
+      }),
+      literal: Type.Optional(
+        Type.Boolean({ description: 'Type every key literally.' })
+      ),
+      repeat: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          maximum: 1024,
+          description: 'Send the keys this many times.'
+        })
+      )
+    }),
+    Type.Object({ ok: Type.Boolean(), terminalId: Type.String() }),
+    (p) => {
+      if (isPiSessionTerminal(p.terminal)) {
+        throw new Error('Cannot send input to the current Pi session terminal.')
+      }
+
+      return [
+        p.terminal,
+        ...(p.literal ? ['--literal'] : []),
+        ...(p.repeat === undefined ? [] : [`--repeat=${p.repeat}`]),
+        '--',
+        ...p.keys
+      ]
+    }
+  )
+  register(
+    ['terminal', 'send-text'],
+    'Paste text, such as a multi-line prompt, into a terminal. Uses bracketed paste when the application enables it, so newlines do not submit; send Enter with treeport_terminal_send_keys to submit. Fails if the terminal has exited.',
+    Type.Object({
+      terminal: identifier,
+      text: Type.String({ minLength: 1, pattern: '^(?!-$)' }),
+      paste: Type.Optional(
+        Type.Boolean({
+          description: 'Set false to type the text instead of pasting it.'
+        })
+      )
+    }),
+    Type.Object({ ok: Type.Boolean(), terminalId: Type.String() }),
+    (p) => {
+      if (isPiSessionTerminal(p.terminal)) {
+        throw new Error('Cannot send input to the current Pi session terminal.')
+      }
+
+      return [
+        p.terminal,
+        ...(p.paste === false ? ['--no-paste'] : []),
+        '--',
+        p.text
+      ]
+    }
+  )
+  register(
     ['terminal', 'delete'],
     'Delete a terminal you started once its process is no longer needed, or another terminal when the user asks. Never delete the current Pi terminal.',
     Type.Object({ terminal: identifier }),
     Type.Object({ ok: Type.Boolean(), terminalId: Type.String() }),
     (p) => {
-      if (
-        p.terminal === '.' ||
-        p.terminal === process.env.TREEPORT_TERMINAL_ID?.trim()
-      ) {
+      if (isPiSessionTerminal(p.terminal)) {
         throw new Error('Cannot delete the current Pi session terminal.')
       }
 

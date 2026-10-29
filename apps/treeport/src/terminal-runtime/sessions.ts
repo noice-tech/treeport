@@ -33,6 +33,7 @@ import {
   type TerminalHostRuntimeEvent,
   type TerminalHostSnapshot,
   type TerminalActivity,
+  type TerminalInputStep,
   type TerminalAttention,
   type TerminalLaunchSpec,
   type TerminalProcess,
@@ -2113,6 +2114,137 @@ export class TerminalHostSessions {
       ),
       Effect.asVoid
     )
+  }
+
+  input(
+    terminalId: string,
+    steps: readonly TerminalInputStep[]
+  ): Effect.Effect<boolean, TerminalHostSessionError> {
+    return Effect.gen(this, function* () {
+      const session = yield* this.session(terminalId)
+
+      if (session?.status !== 'running') {
+        return false
+      }
+
+      yield* this.drainParser(session)
+      const cursor = session.terminal.mode(1) ? '\u001bO' : '\u001b['
+      let data = ''
+
+      for (const step of steps) {
+        if (step.type === 'text') {
+          if (!step.paste) {
+            data += step.text
+            continue
+          }
+
+          const text = step.text.replace(/\r?\n/g, '\r')
+          // EXTERNAL: Strip ESC so pasted text cannot end bracketed paste and inject commands.
+          data += session.terminal.mode(2004)
+            ? `\u001b[200~${text.replaceAll('\u001b', '')}\u001b[201~`
+            : text
+          continue
+        }
+
+        const modifier =
+          1 + Number(step.shift) + 2 * Number(step.alt) + 4 * Number(step.ctrl)
+
+        const final: string | undefined = {
+          Up: 'A',
+          Down: 'B',
+          Right: 'C',
+          Left: 'D',
+          Home: 'H',
+          End: 'F',
+          F1: 'P',
+          F2: 'Q',
+          F3: 'R',
+          F4: 'S'
+        }[step.key]
+
+        const tilde: number | undefined = {
+          IC: 2,
+          DC: 3,
+          PageUp: 5,
+          PageDown: 6,
+          F5: 15,
+          F6: 17,
+          F7: 18,
+          F8: 19,
+          F9: 20,
+          F10: 21,
+          F11: 23,
+          F12: 24
+        }[step.key]
+
+        if (final) {
+          data +=
+            modifier > 1
+              ? `\u001b[1;${modifier}${final}`
+              : `${step.key.startsWith('F') ? '\u001bO' : cursor}${final}`
+          continue
+        }
+
+        if (tilde) {
+          data +=
+            modifier > 1 ? `\u001b[${tilde};${modifier}~` : `\u001b[${tilde}~`
+          continue
+        }
+
+        if (step.key === 'BTab' || (step.key === 'Tab' && step.shift)) {
+          data += '\u001b[Z'
+          continue
+        }
+
+        if (step.key === 'Enter' && step.shift) {
+          data += '\u001b[13;2u'
+          continue
+        }
+
+        let char: string =
+          {
+            Enter: '\r',
+            Escape: '\u001b',
+            Tab: '\t',
+            BSpace: '\u007f',
+            Space: ' '
+          }[step.key] ?? step.key
+
+        if (char.length !== 1) {
+          return yield* Effect.fail(
+            new TerminalHostSessionError({
+              message: `Unknown terminal key: ${step.key}`
+            })
+          )
+        }
+
+        if (step.shift) {
+          char = char.toUpperCase()
+        }
+
+        const code = char.toUpperCase().charCodeAt(0)
+
+        if (step.ctrl && char === ' ') {
+          char = '\u0000'
+        } else if (step.ctrl && char === '?') {
+          char = '\u007f'
+        } else if (step.ctrl && code >= 64 && code <= 95) {
+          char = String.fromCharCode(code & 31)
+        }
+
+        data += step.alt ? `\u001b${char}` : char
+      }
+
+      const pty = session.pty
+
+      if (pty instanceof PersistentSession) {
+        yield* nodePromise(() => pty.writeAndWait(data))
+      } else {
+        pty.write(data)
+      }
+
+      return true
+    })
   }
 
   prepareQueryAuthority(

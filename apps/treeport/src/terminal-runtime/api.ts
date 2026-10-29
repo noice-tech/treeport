@@ -152,6 +152,25 @@ const terminalHostInputSchemas = {
       generation: positiveInteger
     })
   }),
+  input: Schema.Struct({
+    terminalId: nonEmptyString,
+    steps: Schema.Array(
+      Schema.Union(
+        Schema.Struct({
+          type: Schema.Literal('text'),
+          text: Schema.String,
+          paste: Schema.Boolean
+        }),
+        Schema.Struct({
+          type: Schema.Literal('key'),
+          key: nonEmptyString,
+          ctrl: Schema.Boolean,
+          alt: Schema.Boolean,
+          shift: Schema.Boolean
+        })
+      )
+    )
+  }),
   prepareQueryAuthority: terminalIdSchema,
   activateQueryAuthority: Schema.Struct({
     terminalId: nonEmptyString,
@@ -204,6 +223,7 @@ const TERMINAL_HOST_REQUEST_METHODS = [
   'unsubscribeRuntime',
   'runtimeState',
   'write',
+  'input',
   'prepareQueryAuthority',
   'activateQueryAuthority',
   'hostQueryAuthority',
@@ -292,6 +312,7 @@ export interface TerminalHostResults {
     attention: TerminalAttention | null
   } | null
   write: null
+  input: boolean
   prepareQueryAuthority: { transitionId: string; fence: number }
   activateQueryAuthority: null
   hostQueryAuthority: null
@@ -404,6 +425,7 @@ const terminalHostResultSchemas = {
     })
   ),
   write: nullResultSchema,
+  input: Schema.Boolean,
   prepareQueryAuthority: Schema.Struct({
     transitionId: Schema.String,
     fence: Schema.NonNegativeInt
