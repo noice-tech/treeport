@@ -3,10 +3,11 @@
 @source './';
 
 .app-frame {
-  height: var(--app-visual-viewport-height, 100dvh);
+  height: var(--app-frame-height, 100dvh);
   transform: translateY(var(--app-visual-viewport-offset-top, 0px));
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
-    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    var(--app-keyboard-inset, env(safe-area-inset-bottom, 0px))
+    env(safe-area-inset-left, 0px);
 }
 
 @media (min-width: 702px) {
