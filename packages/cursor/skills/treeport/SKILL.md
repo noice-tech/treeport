@@ -55,6 +55,7 @@ treeport browser fill e14 "value"
 treeport browser press Enter
 treeport browser console
 treeport browser network
+treeport browser run 'return await page.title()'
 treeport browser screenshot
 ```
 

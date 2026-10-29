@@ -821,9 +821,11 @@ export function createApp({
                     recovery:
                       input.command === 'snapshot'
                         ? `Retry \`treeport browser snapshot --app ${params.appId}\`.`
-                        : input.command === 'screenshot'
-                          ? `Open Browser ${params.appId} in Treeport, then retry the screenshot.`
-                          : `Run \`treeport browser snapshot --app ${params.appId}\`, then retry this Browser command.`
+                        : input.command === 'run'
+                          ? 'Fix the script, then retry. Use `return` to print a value.'
+                          : input.command === 'screenshot'
+                            ? `Open Browser ${params.appId} in Treeport, then retry the screenshot.`
+                            : `Run \`treeport browser snapshot --app ${params.appId}\`, then retry this Browser command.`
                   }
                 )
           )

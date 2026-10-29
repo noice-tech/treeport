@@ -33,6 +33,7 @@ import { ChromiumWebCodecsVideo } from './chromium-webcodecs-video'
 import { PlaywrightBrowserHost } from './browser-page-host'
 import { browserRuntime } from './browser-runtime'
 import { browserNavigation } from './browser-navigation'
+import { runBrowserScript } from './browser-script'
 import { browserKey, browserTouch, browserWheel } from './browser-input'
 import { installBrowserClipboardBridge } from './browser-clipboard-bridge'
 import { browserCursor } from './browser-cursor'
@@ -1143,6 +1144,17 @@ export class PlaywrightBrowser {
 
     if (input.command === 'requests') {
       return this.requests.join('\n') || 'No network requests.'
+    }
+
+    if (input.command === 'run') {
+      let output = 'A page dialog opened before the script finished.'
+
+      await interact(async () => {
+        output = await runBrowserScript(page, input.args[0])
+      })
+      await this.refreshPageState()
+
+      return output
     }
 
     if (input.command === 'screenshot') {

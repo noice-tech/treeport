@@ -2121,6 +2121,42 @@ async function main(args: string[]): Promise<void> {
     )
   )
 
+  const browserRunCommand = browserCommand
+    .command('run')
+    .description(
+      'Run Playwright code against the hosted page; `page` and `context` are in scope, and returned values and console output are printed'
+    )
+    .argument(
+      '[code]',
+      'async function body, for example "return await page.title()"; read from stdin when omitted or -'
+    )
+    .option('--app <app-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+
+  browserRunCommand.action(async (code?: string) => {
+    let script = code ?? '-'
+
+    if (script === '-') {
+      const chunks: Buffer[] = []
+
+      for await (const chunk of process.stdin) {
+        chunks.push(Buffer.from(chunk))
+      }
+
+      script = Buffer.concat(chunks).toString('utf8')
+    }
+
+    if (!script.trim()) {
+      throw new CliError('Provide browser script code or pipe it on stdin.', 2)
+    }
+
+    await printAgentResult(
+      'run',
+      [script],
+      browserRunCommand.opts<{ app?: string }>().app
+    )
+  })
+
   const browserDialogAcceptCommand = browserCommand
     .command('dialog-accept')
     .description('Accept the open page dialog')
