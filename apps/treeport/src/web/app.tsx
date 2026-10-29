@@ -261,10 +261,6 @@ function WorkspaceApp() {
   }, [selectedWorktree?.id])
 
   const setAppsPanelOpen = useCallback((worktreeId: string, open: boolean) => {
-    if (!open) {
-      setFullViewWorktreeId(null)
-    }
-
     setAppsPanelOpenByWorktree((current) =>
       current[worktreeId] === open
         ? current
