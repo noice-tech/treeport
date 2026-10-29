@@ -20,13 +20,13 @@ if (process.argv[2] === 'context') {
   )
 } else if (JSON.parse(input).tool_input?.run_in_background === true) {
   // EXTERNAL: Background shells are hidden from the user and die with this session.
+  // Only add guidance; omitting permissionDecision keeps Claude Code's normal permission flow.
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          'In Treeport, start long-running processes such as servers and watchers in a persistent Treeport terminal: treeport terminal create --worktree . --name "<name>" -- <program> <arg> ... Observe it with treeport terminal capture or treeport terminal wait, and delete it once it is no longer needed. See the treeport skill.'
+        additionalContext:
+          'In Treeport, start long-running processes such as servers and watchers in a persistent Treeport terminal instead of a background shell: treeport terminal create --worktree . --name "<name>" -- <program> <arg> ... Observe it with treeport terminal capture or treeport terminal wait, and delete it once it is no longer needed. See the treeport skill.'
       }
     }) + '\n'
   )
