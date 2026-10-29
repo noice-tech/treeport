@@ -588,6 +588,10 @@ export const browserAgentCommandSchema = Schema.Union(
   }),
   Schema.Struct({ command: Schema.Literal('requests'), args: Schema.Tuple() }),
   Schema.Struct({
+    command: Schema.Literal('run'),
+    args: Schema.Tuple(Schema.String.pipe(Schema.maxLength(100_000)))
+  }),
+  Schema.Struct({
     command: Schema.Literal('dialog-accept'),
     args: Schema.Union(Schema.Tuple(), Schema.Tuple(browserAgentArgumentSchema))
   }),

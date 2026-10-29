@@ -54,6 +54,7 @@ import {
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
 import { browserNavigation } from './browser-navigation'
+import { runBrowserScript } from './browser-script'
 import { PlaywrightBrowserHost } from './browser-page-host'
 import { BrowserVideoViewer } from './browser-video-viewer'
 import { BrowserRelay } from './browser-relay-client'
@@ -3943,6 +3944,10 @@ export class BrowserSessionManager {
 
     if (input.command === 'requests') {
       return automation.requests.join('\n') || 'No network requests.'
+    }
+
+    if (input.command === 'run') {
+      return runBrowserScript(page, input.args[0])
     }
 
     if (input.command === 'screenshot') {
