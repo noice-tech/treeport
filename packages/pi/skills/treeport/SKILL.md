@@ -156,7 +156,7 @@ cat prompt.md | treeport terminal send-text <terminal-id>
 treeport terminal send-keys <terminal-id> Enter
 ```
 
-Input is delivered even while a person is viewing the terminal, and sending to an exited terminal fails. Only send input to terminals you started or the user asked you to drive. Follow up with `terminal wait` and `terminal capture` to observe the result.
+Input is delivered even while a person is viewing the terminal, and sending to an exited terminal fails. Follow up with `terminal wait` and `terminal capture` to observe the result.
 
 ## Register and run launchers
 

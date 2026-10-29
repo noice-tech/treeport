@@ -54,7 +54,7 @@ export const TREEPORT_GUIDELINES = [
   'Treeport terminals persist and are visible to the user. Use treeport_terminal_wait for runtime conditions instead of polling or sleeping.',
   'Create Treeport terminals only for long-running processes such as servers, watchers, and agents.',
   'Delete terminals you started once their processes are no longer needed. Delete other terminals only when the user asks. Never delete this Pi session terminal.',
-  'Send input only to terminals you started or the user asked you to drive, never to this Pi session terminal. After sending, use treeport_terminal_wait and treeport_terminal_capture to observe the result.',
+  'After sending terminal input, use treeport_terminal_wait and treeport_terminal_capture to observe the result.',
   'Leave browser tabs open for user inspection. Do not install a browser runtime without user approval.',
   'Do not put secrets in browser URLs or command arguments.',
   'Treeport tools target the instance inherited by this terminal, which may differ from a development instance in the current worktree. Do not mutate another instance without explicit permission.'
