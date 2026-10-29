@@ -112,21 +112,31 @@ export function makeHost(
                 '.wterm textarea'
               )
 
+            // EXTERNAL: With a hardware keyboard, iPadOS shows only the short shortcut bar
+            // but still scrolls the visual viewport to reveal the focused textarea.
             const keyboardOpen =
               document.activeElement === textarea &&
-              viewport.height < document.documentElement.clientHeight - 100
+              (viewport.height < document.documentElement.clientHeight ||
+                viewport.offsetTop > 0)
 
             if (!keyboardOpen) {
-              appFrame.style.removeProperty('--app-visual-viewport-height')
+              appFrame.style.removeProperty('--app-frame-height')
+              appFrame.style.removeProperty('--app-keyboard-inset')
               appFrame.style.removeProperty('--app-visual-viewport-offset-top')
 
               return
             }
 
-            // EXTERNAL: The visual viewport already excludes Safari's toolbars.
+            // EXTERNAL: The visual viewport already excludes Safari's toolbars. The frame
+            // still reaches the layout viewport bottom so its background fills the area
+            // behind the keyboard, while padding keeps content above it.
+            const frameHeight =
+              document.documentElement.clientHeight - viewport.offsetTop
+
+            appFrame.style.setProperty('--app-frame-height', `${frameHeight}px`)
             appFrame.style.setProperty(
-              '--app-visual-viewport-height',
-              `${viewport.height}px`
+              '--app-keyboard-inset',
+              `${Math.max(0, frameHeight - viewport.height)}px`
             )
             appFrame.style.setProperty(
               '--app-visual-viewport-offset-top',
@@ -146,7 +156,8 @@ export function makeHost(
             window.cancelAnimationFrame(viewportFrame)
           }
 
-          appFrame.style.removeProperty('--app-visual-viewport-height')
+          appFrame.style.removeProperty('--app-frame-height')
+          appFrame.style.removeProperty('--app-keyboard-inset')
           appFrame.style.removeProperty('--app-visual-viewport-offset-top')
         }
       }
