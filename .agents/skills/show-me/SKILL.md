@@ -1,11 +1,11 @@
 ---
 description: Help the user understand the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts.
-disable-model-invocation: true
+disable-model-invocation: false
 metadata:
     github-path: skills/show-me
-    github-ref: refs/tags/v1.0.0
+    github-ref: refs/tags/v1.0.2
     github-repo: https://github.com/noice-tech/skills
-    github-tree-sha: cfe2f5700fe81bf9aed9a0d528dfb430ecad2c9f
+    github-tree-sha: 15e1b71391b7c0c1392332be6fe3ceaa71ac40a5
 name: show-me
 ---
 Help the user understand the current topic of conversation visually. Skip the preamble and keep prose brief. Pick the smallest view that makes the key point clear.
