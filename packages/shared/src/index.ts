@@ -93,6 +93,41 @@ export const TERMINAL_ARGUMENT_MAX_LENGTH = 4_096
 export const LAUNCHER_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
 export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
+export const TERMINAL_INPUT_MAX_STEPS = 1_024
+export const TERMINAL_INPUT_TEXT_MAX_LENGTH = 1_048_576
+
+// EXTERNAL: Key names follow tmux send-keys so agents can reuse its syntax.
+export const TERMINAL_INPUT_KEYS = [
+  'Enter',
+  'Escape',
+  'Tab',
+  'BTab',
+  'BSpace',
+  'Space',
+  'Up',
+  'Down',
+  'Left',
+  'Right',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'IC',
+  'DC',
+  'F1',
+  'F2',
+  'F3',
+  'F4',
+  'F5',
+  'F6',
+  'F7',
+  'F8',
+  'F9',
+  'F10',
+  'F11',
+  'F12'
+] as const
+
 export const WEB_APP_INPUT_MAX_BYTES = 64 * 1024
 export const TREE_FILE_MAX_BYTES = 2 * 1024 * 1024
 export const TREE_FILE_LIST_MAX_ENTRIES = 50_000
@@ -673,6 +708,33 @@ export const terminalCaptureQuerySchema = Schema.Struct({
     { default: () => TERMINAL_CAPTURE_DEFAULT_LINES }
   )
 })
+
+export const terminalSendInputSchema = Schema.Struct({
+  steps: Schema.Array(
+    Schema.Union(
+      Schema.Struct({
+        type: Schema.Literal('text'),
+        text: Schema.String.pipe(
+          Schema.minLength(1),
+          Schema.maxLength(TERMINAL_INPUT_TEXT_MAX_LENGTH)
+        ),
+        paste: Schema.Boolean
+      }),
+      Schema.Struct({
+        type: Schema.Literal('key'),
+        key: Schema.Union(
+          Schema.Literal(...TERMINAL_INPUT_KEYS),
+          Schema.String.pipe(Schema.length(1))
+        ),
+        ctrl: Schema.Boolean,
+        alt: Schema.Boolean,
+        shift: Schema.Boolean
+      })
+    )
+  ).pipe(Schema.minItems(1), Schema.maxItems(TERMINAL_INPUT_MAX_STEPS))
+})
+
+export type TerminalSendInput = typeof terminalSendInputSchema.Type
 
 export const registerProjectSchema = Schema.Struct({
   path: Schema.Trim.pipe(Schema.minLength(1)),

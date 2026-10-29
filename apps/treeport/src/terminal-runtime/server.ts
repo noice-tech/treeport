@@ -646,6 +646,20 @@ export function makeTerminalHostServer(
                   return
                 }
 
+                case 'input': {
+                  const input = yield* decodeTerminalHostInput(
+                    'input',
+                    frame.input
+                  )
+
+                  yield* respond<'input'>(
+                    frame.id,
+                    yield* options.sessions.input(input.terminalId, input.steps)
+                  )
+
+                  return
+                }
+
                 case 'prepareQueryAuthority': {
                   const input = yield* decodeTerminalHostInput(
                     'prepareQueryAuthority',

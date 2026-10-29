@@ -20,6 +20,7 @@ import type {
   TerminalHostAttachment,
   TerminalHostOutput,
   TerminalHostRuntimeEvent,
+  TerminalInputStep,
   TerminalProcess,
   TerminalSessionBackend,
   TerminalSessionState,
@@ -587,6 +588,10 @@ export class TerminalHostClient
 
   captureTerminal(terminalId: string, lines: number) {
     return this.request('capture', { terminalId, lines })
+  }
+
+  inputTerminal(terminalId: string, steps: readonly TerminalInputStep[]) {
+    return this.request('input', { terminalId, steps })
   }
 
   renameTerminal(terminalId: string, name: string, updatedAt: string) {

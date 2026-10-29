@@ -139,6 +139,25 @@ treeport terminal wait <terminal-id> --until exit
 
 Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no activity has been observed, and then wait for `idle`. Activity depends on the child application reporting it, with OSC `7501` program status or OSC `9;4` progress; once an application sends OSC `7501`, Treeport ignores its OSC `9;4` until a full terminal reset. For Pi, `terminal.showTerminalProgress` must be enabled for OSC `9;4`. Applications using OSC `9;4` should clear progress or refresh active progress more frequently than the five-minute lease. An `idle` activity is not proof that every application supports progress reporting.
 
+Send input to a terminal, for example to answer a prompt or drive a TUI. `send-keys` follows `tmux send-keys`: an argument that names a key is sent as that key, and any other argument is typed literally.
+
+```sh
+treeport terminal send-keys <terminal-id> 'npm test' Enter
+treeport terminal send-keys <terminal-id> C-c
+treeport terminal send-keys <terminal-id> -N 3 Down Enter
+```
+
+Keys include `Enter`, `Escape`, `Tab`, `BTab`, `BSpace`, `Space`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `IC`, `DC`, and `F1` through `F12`. Prefix `C-`, `M-`, or `S-` for Ctrl, Alt, or Shift. `-l` types every argument literally.
+
+Paste text, such as a multi-line prompt, with `send-text`. It uses bracketed paste when the application enables it, so newlines do not submit early. Send `Enter` separately to submit:
+
+```sh
+cat prompt.md | treeport terminal send-text <terminal-id>
+treeport terminal send-keys <terminal-id> Enter
+```
+
+Sending to an exited terminal fails. Follow up with `terminal wait` and `terminal capture` to observe the result.
+
 ## Register and run launchers
 
 Launchers are saved programs that the Treeport UI and `treeport launch` start in a tree. A lowercase `${name}` inside an argument is an input that the caller fills in when launching. Treeport passes input values through without interpreting them.

@@ -9,6 +9,7 @@ import {
   type TerminalHostOutput,
   type TerminalHostRuntimeEvent,
   type TerminalHostSnapshot,
+  type TerminalInputStep,
   type TerminalProcess,
   type TerminalSessionState,
   type TerminalTitleState,
@@ -20,6 +21,7 @@ export {
   type TerminalCreateInput,
   type TerminalHostOutput,
   type TerminalHostRuntimeEvent,
+  type TerminalInputStep,
   type TerminalLaunchSpec,
   type TerminalProcess,
   type TerminalSessionState,
@@ -94,6 +96,10 @@ export interface TerminalSessionBackend {
     terminalId: string,
     lines: number
   ): Effect.Effect<string | null, unknown>
+  inputTerminal(
+    terminalId: string,
+    steps: readonly TerminalInputStep[]
+  ): Effect.Effect<boolean, unknown>
   killTerminal(
     terminalId: string,
     trace?: TerminalTraceContext

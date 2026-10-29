@@ -40,6 +40,15 @@ treeport terminal wait <terminal-id> --until exit --timeout 10m
 
 `idle` means no `working` activity, not proof that every application has completed. `attention` waits for the next attention event, not an already-unread notification. Inspect first when the process may already have finished. Terminal creation success does not prove its command succeeded; inspect output and exit status.
 
+Send input like `tmux send-keys`: key names such as `Enter`, `Escape`, `Up`, and `C-c` are sent as keys, and other arguments are typed literally. Paste multi-line text with `send-text`, which reads stdin when no text is given, then submit with `Enter`:
+
+```sh
+treeport terminal send-keys <terminal-id> 'npm test' Enter
+treeport terminal send-keys <terminal-id> C-c
+cat prompt.md | treeport terminal send-text <terminal-id>
+treeport terminal send-keys <terminal-id> Enter
+```
+
 Delete terminals you started with `treeport terminal delete <terminal-id>` once their processes are no longer needed. Never delete other terminals unless the user explicitly asks, and never delete your own Claude Code terminal.
 
 ## Shared browser

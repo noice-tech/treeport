@@ -16,6 +16,10 @@ export interface TerminalActivity {
   since: string | null
 }
 
+export type TerminalInputStep =
+  | { type: 'text'; text: string; paste: boolean }
+  | { type: 'key'; key: string; ctrl: boolean; alt: boolean; shift: boolean }
+
 export interface TerminalAttention {
   sequence: number
   at: string

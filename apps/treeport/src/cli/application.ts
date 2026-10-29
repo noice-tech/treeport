@@ -36,6 +36,8 @@ import {
   terminalCaptureResponseSchema,
   TERMINAL_CAPTURE_DEFAULT_LINES,
   TERMINAL_CAPTURE_MAX_LINES,
+  TERMINAL_INPUT_KEYS,
+  TERMINAL_INPUT_MAX_STEPS,
   TREE_DECORATION_TONES,
   terminalObservationResponseSchema,
   terminalResponseSchema,
@@ -54,6 +56,7 @@ import {
   type TerminalAfterExit,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
+  type TerminalSendInput,
   type WebAppDefinition,
   type WebAppInput,
   type WorktreeRecord
@@ -3041,6 +3044,142 @@ async function main(args: string[]): Promise<void> {
       () =>
         `${result.terminal.name} (${result.terminal.id}) reached ${result.condition} at ${result.observedAt}`
     )
+  })
+
+  const terminalSendKeysCommand = terminalCommand
+    .command('send-keys')
+    .description('Send keys to a terminal, like tmux send-keys')
+    .argument('<terminal-id-or-dot>', 'terminal to receive input')
+    .argument(
+      '<key...>',
+      'key names such as Enter, C-c, or Up; other text is typed literally'
+    )
+    .option('-l, --literal', 'type every argument literally')
+    .option('-N, --repeat <count>', 'send the keys this many times')
+    .option('--json', 'emit machine-readable JSON')
+    .addHelpText(
+      'after',
+      `\nKeys: ${TERMINAL_INPUT_KEYS.join(' ')}.\nPrefix C-, M-, or S- for Ctrl, Alt, or Shift, as in C-c or M-Left.\n`
+    )
+
+  terminalSendKeysCommand.action(async (identifier: string, keys: string[]) => {
+    const options = terminalSendKeysCommand.opts<{
+      literal?: boolean
+      repeat?: string
+    }>()
+
+    const repeat = Number(options.repeat ?? '1')
+
+    if (
+      !/^[1-9]\d*$/.test(options.repeat ?? '1') ||
+      repeat * keys.length > TERMINAL_INPUT_MAX_STEPS
+    ) {
+      throw new CliError(
+        `-N must be a positive integer, with at most ${TERMINAL_INPUT_MAX_STEPS} keys in total`,
+        2
+      )
+    }
+
+    const steps: TerminalSendInput['steps'][number][] = keys.map((argument) => {
+      const text = { type: 'text' as const, text: argument, paste: false }
+
+      if (options.literal) {
+        return text
+      }
+
+      // EXTERNAL: As in tmux, C-, M-, and S- prefixes apply only when the rest names a key.
+      const match = /^((?:[CMS]-)*)(.+)$/i.exec(argument)!
+      const name = match[2]!.toLowerCase()
+
+      const key =
+        TERMINAL_INPUT_KEYS.find(
+          (candidate) => candidate.toLowerCase() === name
+        ) ??
+        {
+          ppage: 'PageUp',
+          pgup: 'PageUp',
+          npage: 'PageDown',
+          pgdn: 'PageDown',
+          insert: 'IC',
+          delete: 'DC'
+        }[name] ??
+        (match[2]!.length === 1 ? match[2]! : null)
+
+      if (!key) {
+        return text
+      }
+
+      const modifiers = match[1]!.toUpperCase()
+
+      return {
+        type: 'key' as const,
+        key,
+        ctrl: modifiers.includes('C'),
+        alt: modifiers.includes('M'),
+        shift: modifiers.includes('S')
+      }
+    })
+
+    const terminalId = resolveTerminalId(identifier)
+
+    await request(
+      `/api/terminals/${encodeURIComponent(terminalId)}/input`,
+      okResponseSchema,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          steps: Array.from({ length: repeat }, () => steps).flat()
+        } satisfies TerminalSendInput)
+      }
+    )
+
+    if (jsonOutput) {
+      print({ ok: true, terminalId })
+    }
+  })
+
+  const terminalSendTextCommand = terminalCommand
+    .command('send-text')
+    .description('Paste text into a terminal, like wezterm cli send-text')
+    .argument('<terminal-id-or-dot>', 'terminal to receive input')
+    .argument('[text]', 'text to send; read from stdin when omitted or -')
+    .option('--no-paste', 'type the text instead of using bracketed paste')
+    .option('--json', 'emit machine-readable JSON')
+
+  terminalSendTextCommand.action(async (identifier: string, value?: string) => {
+    const { paste } = terminalSendTextCommand.opts<{ paste: boolean }>()
+    let text = value ?? '-'
+
+    if (text === '-') {
+      const chunks: Buffer[] = []
+
+      for await (const chunk of process.stdin) {
+        chunks.push(Buffer.from(chunk))
+      }
+
+      text = Buffer.concat(chunks).toString('utf8')
+    }
+
+    if (!text) {
+      throw new CliError('Provide text or pipe it on stdin.', 2)
+    }
+
+    const terminalId = resolveTerminalId(identifier)
+
+    await request(
+      `/api/terminals/${encodeURIComponent(terminalId)}/input`,
+      okResponseSchema,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          steps: [{ type: 'text', text, paste }]
+        } satisfies TerminalSendInput)
+      }
+    )
+
+    if (jsonOutput) {
+      print({ ok: true, terminalId })
+    }
   })
 
   const terminalDeleteCommand = terminalCommand

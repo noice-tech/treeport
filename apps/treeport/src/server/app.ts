@@ -74,6 +74,7 @@ import {
   terminalAttentionAcknowledgementSchema,
   terminalCaptureQuerySchema,
   terminalCaptureResponseSchema,
+  terminalSendInputSchema,
   terminalObservationResponseSchema,
   launcherDefinitionListingSchema,
   launcherDefinitionsQuerySchema,
@@ -2116,6 +2117,38 @@ export function createApp({
           lineLimit: query.lines,
           content
         })
+      })
+    ),
+    route(
+      'POST',
+      '/api/terminals/:terminalId/input',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(terminalSendInputSchema)
+
+        const terminal = yield* operation(() =>
+          service.terminals.getTerminal(params.terminalId!)
+        )
+
+        const written = yield* operation(() =>
+          service.terminalAttachmentMutation(
+            terminal.id,
+            terminalHost.inputTerminal(terminal.id, body.steps)
+          )
+        )
+
+        if (!written) {
+          return yield* Effect.fail(
+            new DomainError(
+              'TERMINAL_INPUT_UNAVAILABLE',
+              'Terminal is not running',
+              409,
+              { terminalId: terminal.id }
+            )
+          )
+        }
+
+        return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
     route(

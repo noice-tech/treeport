@@ -873,6 +873,10 @@ export class TerminalHostDouble implements TerminalSessionBackend {
     return Effect.succeed(null)
   }
 
+  inputTerminal() {
+    return Effect.succeed(false)
+  }
+
   killTerminal(terminalId: string) {
     return Effect.gen(this, function* () {
       if (this.system.terminalKillFails) {
