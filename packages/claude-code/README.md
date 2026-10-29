@@ -27,6 +27,6 @@ The plugin acts only in a terminal that Treeport manages. Outside Treeport, its 
 
 - Adds the Treeport skill, so Claude starts servers in persistent Treeport terminals, uses the shared browser, and creates separate trees.
 - Tells Claude at session start that it runs in a Treeport terminal.
-- Blocks background Bash commands and points Claude to `treeport terminal create`, so long-running processes stay visible and keep running after the session ends.
+- Reminds Claude, when it runs a background Bash command, to use `treeport terminal create` for long-running processes, so they stay visible and keep running after the session ends.
 
 Claude Code reports its working, blocked, and done status to Treeport on its own.
