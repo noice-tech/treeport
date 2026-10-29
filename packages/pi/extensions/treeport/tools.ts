@@ -44,12 +44,6 @@ const browserResult = Type.Object(
   { additionalProperties: true }
 )
 
-function isPiSessionTerminal(terminal: string): boolean {
-  return (
-    terminal === '.' || terminal === process.env.TREEPORT_TERMINAL_ID?.trim()
-  )
-}
-
 export const TREEPORT_GUIDELINES = [
   'Treeport terminals persist and are visible to the user. Use treeport_terminal_wait for runtime conditions instead of polling or sleeping.',
   'Create Treeport terminals only for long-running processes such as servers, watchers, and agents.',
@@ -289,19 +283,13 @@ export function registerTreeportTools(
       )
     }),
     Type.Object({ ok: Type.Boolean(), terminalId: Type.String() }),
-    (p) => {
-      if (isPiSessionTerminal(p.terminal)) {
-        throw new Error('Cannot send input to the current Pi session terminal.')
-      }
-
-      return [
-        p.terminal,
-        ...(p.literal ? ['--literal'] : []),
-        ...(p.repeat === undefined ? [] : [`--repeat=${p.repeat}`]),
-        '--',
-        ...p.keys
-      ]
-    }
+    (p) => [
+      p.terminal,
+      ...(p.literal ? ['--literal'] : []),
+      ...(p.repeat === undefined ? [] : [`--repeat=${p.repeat}`]),
+      '--',
+      ...p.keys
+    ]
   )
   register(
     ['terminal', 'send-text'],
@@ -316,18 +304,12 @@ export function registerTreeportTools(
       )
     }),
     Type.Object({ ok: Type.Boolean(), terminalId: Type.String() }),
-    (p) => {
-      if (isPiSessionTerminal(p.terminal)) {
-        throw new Error('Cannot send input to the current Pi session terminal.')
-      }
-
-      return [
-        p.terminal,
-        ...(p.paste === false ? ['--no-paste'] : []),
-        '--',
-        p.text
-      ]
-    }
+    (p) => [
+      p.terminal,
+      ...(p.paste === false ? ['--no-paste'] : []),
+      '--',
+      p.text
+    ]
   )
   register(
     ['terminal', 'delete'],
@@ -335,7 +317,10 @@ export function registerTreeportTools(
     Type.Object({ terminal: identifier }),
     Type.Object({ ok: Type.Boolean(), terminalId: Type.String() }),
     (p) => {
-      if (isPiSessionTerminal(p.terminal)) {
+      if (
+        p.terminal === '.' ||
+        p.terminal === process.env.TREEPORT_TERMINAL_ID?.trim()
+      ) {
         throw new Error('Cannot delete the current Pi session terminal.')
       }
 
