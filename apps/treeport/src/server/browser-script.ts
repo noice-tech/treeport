@@ -1,27 +1,23 @@
 import vm from 'node:vm'
-import { inspect } from 'node:util'
+import { formatWithOptions } from 'node:util'
 import type { Page } from 'playwright'
 
-// Runs caller-authored Playwright code as an async function body with `page`
-// and `context` in scope. The vm context keeps daemon globals out of reach by
-// accident and bounds synchronous loops; it is not a security boundary.
 export async function runBrowserScript(
   page: Page,
   code: string
 ): Promise<string> {
   const lines: string[] = []
 
-  const format = (value: unknown) =>
-    typeof value === 'string' ? value : inspect(value, { depth: 6 })
-
-  const log = (...values: unknown[]) => {
-    lines.push(values.map(format).join(' '))
+  const log = (...values: Parameters<typeof console.log>) => {
+    lines.push(formatWithOptions({ depth: 6 }, ...values))
   }
 
   const script = new vm.Script(`(async () => {\n${code}\n})()`, {
     filename: 'treeport-browser-run.js'
   })
 
+  // EXTERNAL: node:vm isolates globals and bounds synchronous loops, but it is
+  // not a security boundary; callers already hold terminal-level access.
   const sandbox = vm.createContext({
     page,
     context: page.context(),
@@ -45,7 +41,7 @@ export async function runBrowserScript(
   ]).finally(() => clearTimeout(timer!))
 
   if (result !== undefined) {
-    lines.push(format(result))
+    lines.push(formatWithOptions({ depth: 6 }, result))
   }
 
   return lines.join('\n') || 'Script completed without output.'
