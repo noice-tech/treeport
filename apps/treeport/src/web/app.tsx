@@ -1671,11 +1671,60 @@ function WorkspaceApp() {
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
 
+      const zoom =
+        event.key === '=' || event.key === '+'
+          ? 'zoom-in'
+          : event.key === '-'
+            ? 'zoom-out'
+            : event.key === '0'
+              ? 'zoom-reset'
+              : null
+
+      if (zoom && modifierPressed && !event.altKey && !event.isComposing) {
+        if (!workspaceActionsBlocked && terminalSessions.zoomFocused(zoom)) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+
+        return
+      }
+
       if (event.isComposing || event.shiftKey || !modifierPressed) {
         return
       }
 
       if (!event.altKey) {
+        if (usesMacKeyboard && event.key.toLowerCase() === 'b') {
+          event.preventDefault()
+          event.stopPropagation()
+
+          if (!event.repeat && !workspaceActionsBlocked && selectedWorktree) {
+            toggleAppsPanel()
+          }
+
+          return
+        }
+
+        if (event.key.toLowerCase() === 'p') {
+          event.preventDefault()
+          event.stopPropagation()
+
+          if (
+            !event.repeat &&
+            !workspaceActionsBlocked &&
+            selectedProject &&
+            selectedWorktree
+          ) {
+            openDialog({
+              type: 'app',
+              projectId: selectedProject.id,
+              worktreeId: selectedWorktree.id
+            })
+          }
+
+          return
+        }
+
         if (
           event.key.toLowerCase() !== 't' ||
           workspaceActionsBlocked ||
@@ -1724,6 +1773,7 @@ function WorkspaceApp() {
 
         createSplitTerminal(direction)
       } else if (
+        !usesMacKeyboard &&
         event.key.toLocaleLowerCase() === 'b' &&
         !workspaceActionsBlocked &&
         selectedWorktree
@@ -1746,6 +1796,7 @@ function WorkspaceApp() {
     createSplitTerminal,
     desktopBridge,
     dismissToolPicker,
+    selectedProject,
     selectedWorktree,
     toggleAppsPanel,
     toolLaunchDisabled,

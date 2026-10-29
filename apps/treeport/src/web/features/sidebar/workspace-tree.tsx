@@ -405,11 +405,7 @@ export function WorkspaceTree({
       : 'Ctrl+N'
     : null
 
-  const newAppShortcut = desktopBridge?.onCommand
-    ? desktopBridge.platform === 'darwin'
-      ? '⌘⇧T'
-      : 'Ctrl+Shift+T'
-    : null
+  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
 
   const orderedWorktrees = new Map(
     projects.map((project) => {
@@ -695,17 +691,12 @@ export function WorkspaceTree({
                             <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center max-[700px]:static max-[700px]:shrink-0">
                               <SidebarAction
                                 label={`New app in ${worktree.name}`}
-                                tooltip={`New app in ${worktree.name}${
-                                  newAppShortcut ? ` — ${newAppShortcut}` : ''
+                                tooltip={`New app in ${worktree.name} — ${
+                                  usesMacKeyboard ? '⌘P' : 'Ctrl+P'
                                 }`}
-                                {...(newAppShortcut
-                                  ? {
-                                      keyShortcuts:
-                                        desktopBridge?.platform === 'darwin'
-                                          ? 'Meta+Shift+T'
-                                          : 'Control+Shift+T'
-                                    }
-                                  : {})}
+                                keyShortcuts={
+                                  usesMacKeyboard ? 'Meta+P' : 'Control+P'
+                                }
                                 className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 active:bg-transparent max-[700px]:text-zinc-300 min-[701px]:size-6"
                                 onClick={(trigger) =>
                                   onOpenAppDialog(project, worktree, trigger)

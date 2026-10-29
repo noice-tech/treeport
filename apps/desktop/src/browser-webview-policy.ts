@@ -1209,7 +1209,7 @@ export function installBrowserWebviewPolicy(options: {
 
       // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
       const command: DesktopCommand | undefined = input.alt
-        ? !input.shift && code === 'keyb'
+        ? !input.shift && code === 'keyb' && process.platform !== 'darwin'
           ? 'toggle-apps-panel'
           : undefined
         : input.shift
@@ -1217,20 +1217,22 @@ export function installBrowserWebviewPolicy(options: {
             ? 'select-previous-worktree'
             : code === 'bracketright'
               ? 'select-next-worktree'
-              : key === 't'
-                ? 'new-app'
-                : undefined
+              : undefined
           : key === 't'
             ? 'new-terminal'
-            : key === 'w'
-              ? 'close-app'
-              : key === 'l'
-                ? 'focus-location'
-                : key === 'f'
-                  ? 'find-in-page'
-                  : /^[1-9]$/.test(key)
-                    ? (`select-tab-${key}` as DesktopCommand)
-                    : undefined
+            : key === 'p'
+              ? 'new-app'
+              : key === 'b' && process.platform === 'darwin'
+                ? 'toggle-apps-panel'
+                : key === 'w'
+                  ? 'close-app'
+                  : key === 'l'
+                    ? 'focus-location'
+                    : key === 'f'
+                      ? 'find-in-page'
+                      : /^[1-9]$/.test(key)
+                        ? (`select-tab-${key}` as DesktopCommand)
+                        : undefined
 
       if (
         input.type !== 'keyDown' ||
