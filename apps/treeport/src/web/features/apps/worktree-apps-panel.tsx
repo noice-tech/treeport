@@ -246,7 +246,7 @@ export function AppsPanelToggle({
   onToggleFullView: () => void
 }) {
   const shortcut = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
-    ? '⌥⌘B'
+    ? '⌘B'
     : 'Ctrl+Alt+B'
 
   return (

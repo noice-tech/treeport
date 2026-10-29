@@ -466,7 +466,7 @@ function installRendererSecurity(
 
     // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
     const command: DesktopCommand | undefined = input.alt
-      ? !input.shift && code === 'keyb'
+      ? !input.shift && code === 'keyb' && process.platform !== 'darwin'
         ? 'toggle-apps-panel'
         : undefined
       : input.shift
@@ -474,18 +474,20 @@ function installRendererSecurity(
           ? 'select-previous-worktree'
           : code === 'bracketright'
             ? 'select-next-worktree'
-            : key === 't'
-              ? 'new-app'
-              : undefined
+            : undefined
         : key === 'n'
           ? 'new-worktree'
           : key === 't'
             ? 'new-terminal'
-            : key === 'w'
-              ? 'close-app'
-              : /^[1-9]$/.test(key)
-                ? (`select-tab-${key}` as DesktopCommand)
-                : undefined
+            : key === 'p'
+              ? 'new-app'
+              : key === 'b' && process.platform === 'darwin'
+                ? 'toggle-apps-panel'
+                : key === 'w'
+                  ? 'close-app'
+                  : /^[1-9]$/.test(key)
+                    ? (`select-tab-${key}` as DesktopCommand)
+                    : undefined
 
     if (
       input.type !== 'keyDown' ||
@@ -775,7 +777,7 @@ function installMenu(): void {
         {
           id: 'new-app',
           label: 'New app…',
-          accelerator: 'CommandOrControl+Shift+T',
+          accelerator: 'CommandOrControl+P',
           click: () => sendDesktopCommand('new-app')
         },
         { type: 'separator' },
