@@ -283,6 +283,10 @@ function WorktreeShell({
         type="button"
         className={classes}
         onClick={pending ? undefined : onClick}
+        onMouseDown={(event) => {
+          // EXTERNAL: A pointer click on iPadOS blurs the terminal and drops the keyboard mid-switch.
+          event.preventDefault()
+        }}
         title={title}
         role={pending ? 'status' : undefined}
         aria-label={pending ? `Creating tree ${name}` : ariaLabel}
@@ -925,9 +929,8 @@ export function WorkspaceTree({
                                       )}
                                       onClick={() => selectTerminal(terminal)}
                                       onMouseDown={(event) => {
-                                        if (event.button === 1) {
-                                          event.preventDefault()
-                                        }
+                                        // EXTERNAL: A pointer click on iPadOS blurs the terminal and drops the keyboard mid-switch.
+                                        event.preventDefault()
                                       }}
                                       onAuxClick={(event) => {
                                         if (event.button !== 1) {

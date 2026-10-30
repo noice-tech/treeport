@@ -7,6 +7,120 @@ import {
 } from './state'
 import { isIOS } from '../lib/platform'
 
+let keyboardViewportInstalled = false
+let keyboardHold: HTMLTextAreaElement | null = null
+let keyboardHoldRelease: number | null = null
+
+// EXTERNAL: iOS hides the keyboard as soon as no editable element has focus, and a new
+// terminal may need a server round trip before it exists. A hidden field keeps the
+// keyboard up until the next terminal takes focus, or briefly if none arrives.
+function holdKeyboard(): void {
+  if (!keyboardHold) {
+    keyboardHold = document.createElement('textarea')
+    keyboardHold.tabIndex = -1
+    keyboardHold.setAttribute('aria-hidden', 'true')
+    keyboardHold.setAttribute('autocapitalize', 'off')
+    keyboardHold.setAttribute('autocomplete', 'off')
+    keyboardHold.style.cssText =
+      'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none'
+    document.body.appendChild(keyboardHold)
+  }
+
+  const hold = keyboardHold
+  hold.focus({ preventScroll: true })
+
+  if (keyboardHoldRelease !== null) {
+    window.clearTimeout(keyboardHoldRelease)
+  }
+
+  keyboardHoldRelease = window.setTimeout(() => {
+    keyboardHoldRelease = null
+
+    if (document.activeElement === hold) {
+      hold.blur()
+    }
+  }, 3000)
+}
+
+function installKeyboardViewport(): void {
+  const viewport = window.visualViewport
+
+  if (keyboardViewportInstalled || !isIOS() || !viewport) {
+    return
+  }
+
+  keyboardViewportInstalled = true
+  let viewportFrame: number | null = null
+
+  // EXTERNAL: WebKit leaves the layout viewport unchanged when the software keyboard
+  // opens. Size and position the application against the visual viewport
+  // instead of scrolling the document between the cursor and accessory row.
+  // One page-wide owner keeps the frame steady while focus moves between terminals.
+  const syncKeyboardViewport = () => {
+    if (viewportFrame !== null) {
+      window.cancelAnimationFrame(viewportFrame)
+    }
+
+    viewportFrame = window.requestAnimationFrame(() => {
+      viewportFrame = null
+      const appFrame = document.querySelector<HTMLElement>('.app-frame')
+
+      if (!appFrame) {
+        return
+      }
+
+      const focused = document.activeElement
+
+      // EXTERNAL: With a hardware keyboard, iPadOS shows only the short shortcut bar
+      // but still scrolls the visual viewport to reveal the focused textarea.
+      const viewportReduced =
+        viewport.height < document.documentElement.clientHeight ||
+        viewport.offsetTop > 0
+
+      const focusMovingBetweenTerminals = !focused || focused === document.body
+
+      if (focusMovingBetweenTerminals && viewportReduced) {
+        return
+      }
+
+      const keyboardOpen =
+        focused instanceof HTMLTextAreaElement &&
+        (focused === keyboardHold || focused.closest('.xterm-host') !== null) &&
+        viewportReduced
+
+      if (!keyboardOpen) {
+        appFrame.style.removeProperty('--app-frame-height')
+        appFrame.style.removeProperty('--app-keyboard-inset')
+        appFrame.style.removeProperty('--app-visual-viewport-offset-top')
+
+        return
+      }
+
+      // EXTERNAL: The visual viewport already excludes Safari's toolbars. The frame
+      // still reaches the layout viewport bottom so its background fills the area
+      // behind the keyboard, while padding keeps content above it.
+      const frameHeight =
+        document.documentElement.clientHeight - viewport.offsetTop
+
+      appFrame.style.setProperty('--app-frame-height', `${frameHeight}px`)
+      appFrame.style.setProperty(
+        '--app-keyboard-inset',
+        `${Math.max(0, frameHeight - viewport.height)}px`
+      )
+      appFrame.style.setProperty(
+        '--app-visual-viewport-offset-top',
+        `${viewport.offsetTop}px`
+      )
+    })
+  }
+
+  viewport.addEventListener('resize', syncKeyboardViewport)
+  viewport.addEventListener('scroll', syncKeyboardViewport)
+  document.addEventListener('focusin', syncKeyboardViewport)
+  document.addEventListener('focusout', syncKeyboardViewport)
+  syncKeyboardViewport()
+}
+
 interface Dependencies {
   cancelControllerResizeIntent(clearPending?: boolean): void
   connect(): void
@@ -35,7 +149,6 @@ export function makeHost(
     let detachedScroll: { top: number; following: boolean } | null = null
     let wakeListenersAttached = false
     let resizeObserver: ResizeObserver | null = null
-    let keyboardViewportCleanup: (() => void) | null = null
     const reconnectWhenOnline = () => dependencies.reconnectImmediately()
 
     const reconnectWhenVisible = () => {
@@ -84,79 +197,10 @@ export function makeHost(
         }
       }
 
-      keyboardViewportCleanup?.()
-      keyboardViewportCleanup = null
+      installKeyboardViewport()
 
-      const viewport = window.visualViewport
-      const appFrame = document.querySelector<HTMLElement>('.app-frame')
-
-      if (isIOS() && viewport && appFrame) {
-        // EXTERNAL: WebKit leaves the layout viewport unchanged when the software keyboard
-        // opens. Size and position the application against the visual viewport
-        // instead of scrolling the document between the cursor and accessory row.
-        let viewportFrame: number | null = null
-
-        const syncKeyboardViewport = () => {
-          if (viewportFrame !== null) {
-            window.cancelAnimationFrame(viewportFrame)
-          }
-
-          viewportFrame = window.requestAnimationFrame(() => {
-            viewportFrame = null
-
-            const textarea =
-              state.wrapper?.querySelector<HTMLTextAreaElement>(
-                '.wterm textarea'
-              )
-
-            // EXTERNAL: With a hardware keyboard, iPadOS shows only the short shortcut bar
-            // but still scrolls the visual viewport to reveal the focused textarea.
-            const keyboardOpen =
-              document.activeElement === textarea &&
-              (viewport.height < document.documentElement.clientHeight ||
-                viewport.offsetTop > 0)
-
-            if (!keyboardOpen) {
-              appFrame.style.removeProperty('--app-frame-height')
-              appFrame.style.removeProperty('--app-keyboard-inset')
-              appFrame.style.removeProperty('--app-visual-viewport-offset-top')
-
-              return
-            }
-
-            // EXTERNAL: The visual viewport already excludes Safari's toolbars. The frame
-            // still reaches the layout viewport bottom so its background fills the area
-            // behind the keyboard, while padding keeps content above it.
-            const frameHeight =
-              document.documentElement.clientHeight - viewport.offsetTop
-
-            appFrame.style.setProperty('--app-frame-height', `${frameHeight}px`)
-            appFrame.style.setProperty(
-              '--app-keyboard-inset',
-              `${Math.max(0, frameHeight - viewport.height)}px`
-            )
-            appFrame.style.setProperty(
-              '--app-visual-viewport-offset-top',
-              `${viewport.offsetTop}px`
-            )
-          })
-        }
-
-        viewport.addEventListener('resize', syncKeyboardViewport)
-        viewport.addEventListener('scroll', syncKeyboardViewport)
-        syncKeyboardViewport()
-        keyboardViewportCleanup = () => {
-          viewport.removeEventListener('resize', syncKeyboardViewport)
-          viewport.removeEventListener('scroll', syncKeyboardViewport)
-
-          if (viewportFrame !== null) {
-            window.cancelAnimationFrame(viewportFrame)
-          }
-
-          appFrame.style.removeProperty('--app-frame-height')
-          appFrame.style.removeProperty('--app-keyboard-inset')
-          appFrame.style.removeProperty('--app-visual-viewport-offset-top')
-        }
+      if (document.activeElement === keyboardHold) {
+        state.terminal?.focus()
       }
 
       resizeObserver?.disconnect()
@@ -193,8 +237,6 @@ export function makeHost(
         wakeListenersAttached = false
       }
 
-      keyboardViewportCleanup?.()
-      keyboardViewportCleanup = null
       dependencies.cancelControllerResizeIntent(false)
       state.selectionDragCancel?.()
       const element = state.terminal?.element
@@ -208,6 +250,10 @@ export function makeHost(
         state.terminal?.setRenderingPaused(true)
       }
 
+      if (isIOS() && state.wrapper?.contains(document.activeElement)) {
+        holdKeyboard()
+      }
+
       state.wrapper?.remove()
       state.host = null
       dependencies.update({ hoveredLink: null })
@@ -217,14 +263,6 @@ export function makeHost(
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         state.wrapper?.remove()
-      })
-    )
-
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        const cleanup = keyboardViewportCleanup
-        keyboardViewportCleanup = null
-        cleanup?.()
       })
     )
 

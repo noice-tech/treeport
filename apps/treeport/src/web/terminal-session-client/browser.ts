@@ -119,7 +119,7 @@ export function makeBrowser(
           if (
             !dependencies.canInput() ||
             state.snapshotValue.phase !== 'ready' ||
-            wrapper.style.visibility === 'hidden' ||
+            wrapper.style.opacity === '0' ||
             !document.hasFocus() ||
             !wrapper.contains(document.activeElement) ||
             !text
