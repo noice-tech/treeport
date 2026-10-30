@@ -156,11 +156,11 @@ async function fixture(command: string | null) {
 }
 
 describe.skipIf(!zsh)('terminal titles for foreground programs', () => {
-  it('shows the program a launched command is running', async () => {
+  it('shows the terminal name while a launched command is running', async () => {
     const terminal = await fixture('touch started && sleep 30')
     await terminal.started()
 
-    await terminal.expectTitle('sleep 30')
+    await terminal.expectTitle('Agent process')
   })
 
   it('shows typed programs, titles they set, and the directory at the prompt', async () => {

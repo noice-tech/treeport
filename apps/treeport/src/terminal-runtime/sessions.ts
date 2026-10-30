@@ -151,6 +151,7 @@ interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
   title: string | null
   commandTitle: string | null
   commandRunning: boolean | null
+  launchRunning: boolean
   commandLine: string | null
   foreground: string | null
   pwd: string | null
@@ -234,7 +235,9 @@ function describeForeground(session: HostedTerminalSession): string | null {
 
   const executable = path.basename(argv[0] ?? '').replace(/^-/u, '')
 
-  return executable && executable !== session.shellName
+  return executable &&
+    executable !== session.shellName &&
+    !(session.specPath && argv.includes(session.specPath))
     ? describeCommand(argv)
     : null
 }
@@ -267,7 +270,9 @@ function describeDirectory(value: string): string | null {
 function titleState(session: HostedTerminalSession): TerminalTitleState {
   if (session.commandRunning === false) {
     return {
-      title: session.pwd ?? session.title,
+      title: session.launchRunning
+        ? session.name
+        : (session.pwd ?? session.title),
       command: null,
       running: false
     }
@@ -277,8 +282,9 @@ function titleState(session: HostedTerminalSession): TerminalTitleState {
 
   return {
     title: session.commandRunning
-      ? (session.commandTitle ?? command)
-      : (session.title ?? command),
+      ? (session.commandTitle ??
+        (session.launchRunning ? session.name : command))
+      : (session.title ?? (session.launchRunning ? session.name : command)),
     command,
     running: session.commandRunning
   }
@@ -1188,6 +1194,10 @@ export class TerminalHostSessions {
               return
             }
 
+            // EXTERNAL: Shells report 133;D at their first prompt, before the
+            // launched command starts.
+            hosted.launchRunning &&=
+              event.kind === 'outputStart' || !hosted.commandRunning
             hosted.commandRunning = event.kind === 'outputStart'
             hosted.commandTitle = null
             hosted.foreground = null
@@ -1352,6 +1362,7 @@ export class TerminalHostSessions {
         title: null,
         commandTitle: null,
         commandRunning: null,
+        launchRunning: input.command !== null,
         commandLine: null,
         foreground: null,
         pwd: null,
@@ -2595,6 +2606,10 @@ export class TerminalHostSessions {
 
           session.name = name
           session.updatedAt = updatedAt
+
+          if (session.launchRunning) {
+            Queue.unsafeOffer(session.runtimeCommands, { _tag: 'TitleState' })
+          }
         })
       ),
       Effect.asVoid
