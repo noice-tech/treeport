@@ -1319,6 +1319,288 @@ child.once('exit', (code) => process.exit(code ?? 1))
     40_000
   )
 
+  it('relaunches terminals beneath their retained history after a reboot', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-reboot-test-')
+    )
+
+    roots.push(root)
+    const runtimeDir = path.join(root, 'runtime')
+    const workDir = path.join(root, 'work')
+    await Promise.all(
+      [path.join(root, 'data'), runtimeDir, workDir].map((directory) =>
+        fs.mkdir(directory, { recursive: true })
+      )
+    )
+
+    const options = {
+      dataDir: path.join(root, 'data'),
+      runtimeDir,
+      launcherPath: path.join(
+        repositoryRoot,
+        'apps/treeport/dist/node/server/core/launcher.js'
+      ),
+      engineWorkerPath: path.join(
+        repositoryRoot,
+        'apps/treeport/dist/node/server/terminal-engine-worker.js'
+      ),
+      sessionExecutable: path.join(
+        repositoryRoot,
+        `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
+      )
+    }
+
+    const sessionStatuses = async () => {
+      const names = await fs.readdir(root, { recursive: true })
+
+      return Promise.all(
+        names
+          .filter(
+            (name) =>
+              name.includes('/sessions/') && name.endsWith('/status.json')
+          )
+          .map(async (name) => ({
+            directory: path.dirname(path.join(root, name)),
+            status: sessionStatusSchema.parse(
+              JSON.parse(await fs.readFile(path.join(root, name), 'utf8'))
+            )
+          }))
+      )
+    }
+
+    const type = async (
+      daemon: LegacyClient,
+      terminalId: string,
+      data: string,
+      generation: number
+    ) => {
+      const transition = await daemon.prepareQueryAuthority(terminalId)
+      await daemon.activateQueryAuthority(
+        terminalId,
+        transition.transitionId,
+        'test-viewer',
+        generation,
+        { width: 9, height: 18 }
+      )
+      await daemon.write(terminalId, data, {
+        attachmentId: 'test-viewer',
+        generation
+      })
+    }
+
+    const firstDaemon = await connectOrStartTerminalHost(options)
+    clients.add(firstDaemon)
+    await firstDaemon.createTerminal({
+      terminalId: 'reboot-shell',
+      worktreeId: 'worktree-reboot',
+      name: 'Shell',
+      createdAt: new Date().toISOString(),
+      cwd: root,
+      shell: '/bin/bash',
+      command: null,
+      afterExit: 'shell',
+      env: {}
+    })
+    await firstDaemon.createTerminal({
+      terminalId: 'reboot-command',
+      worktreeId: 'worktree-reboot',
+      name: 'Server',
+      createdAt: new Date().toISOString(),
+      cwd: root,
+      shell: '/bin/bash',
+      command: `exec ${formatCommandLine([
+        process.execPath,
+        '-e',
+        "console.log('SERVER_PID ' + process.pid); setInterval(() => {}, 1000)"
+      ])}`,
+      afterExit: 'shell',
+      env: {}
+    })
+    await type(
+      firstDaemon,
+      'reboot-shell',
+      `cd ${formatCommandLine([workDir])} && printf '\\033[32m%s\\033[0m\\n' BEFORE_REBOOT\r`,
+      1
+    )
+    await waitFor(
+      async () =>
+        (await firstDaemon.captureTerminal('reboot-shell', 20))?.includes(
+          'BEFORE_REBOOT\n'
+        ) ?? false,
+      'The shell did not run its pre-reboot command',
+      10_000
+    )
+    await waitFor(
+      async () =>
+        (await firstDaemon.captureTerminal('reboot-command', 20))?.includes(
+          'SERVER_PID'
+        ) ?? false,
+      'The command did not start',
+      10_000
+    )
+
+    const firstServerPid = Number(
+      /SERVER_PID (\d+)/u.exec(
+        (await firstDaemon.captureTerminal('reboot-command', 20))!
+      )![1]
+    )
+
+    const rebooted = await sessionStatuses()
+    expect(rebooted).toHaveLength(2)
+    await firstDaemon.dispose()
+    clients.delete(firstDaemon)
+
+    // EXTERNAL: A stopped keeper cannot journal its command's exit, as after power loss.
+    for (const { status } of rebooted) {
+      process.kill(status.ownerPid, 'SIGSTOP')
+      process.kill(-status.pid, 'SIGKILL')
+      process.kill(status.ownerPid, 'SIGKILL')
+    }
+
+    await waitFor(
+      () =>
+        rebooted.every(
+          ({ status }) =>
+            !processExists(status.ownerPid) && !processExists(status.pid)
+        ),
+      'The rebooted sessions did not exit'
+    )
+
+    const restoredDaemon = await connectOrStartTerminalHost(options)
+    clients.add(restoredDaemon)
+    await waitFor(
+      async () =>
+        !(await restoredDaemon.terminalState('reboot-shell')).recoveryPending &&
+        !(await restoredDaemon.terminalState('reboot-command')).recoveryPending,
+      'Reboot recovery did not settle',
+      10_000
+    )
+    expect(await restoredDaemon.terminalState('reboot-shell')).toEqual({
+      status: 'running',
+      exitCode: null,
+      commandExitCode: null
+    })
+    expect(await restoredDaemon.terminalState('reboot-command')).toEqual({
+      status: 'running',
+      exitCode: null,
+      commandExitCode: null
+    })
+
+    const relaunched = await sessionStatuses()
+    expect(relaunched).toHaveLength(2)
+
+    for (const { directory, status } of relaunched) {
+      hostPids.add(status.ownerPid)
+      expect(rebooted.map((session) => session.directory)).not.toContain(
+        directory
+      )
+    }
+
+    await waitFor(
+      async () =>
+        (await restoredDaemon.captureTerminal('reboot-shell', 50))?.includes(
+          '[Restored '
+        ) ?? false,
+      'The relaunched shell did not print its retained history',
+      10_000
+    )
+
+    const shellAttachment = await restoredDaemon.attach(
+      'reboot-shell',
+      () => undefined
+    )
+
+    const restoredShell = await restoreTestSnapshot(shellAttachment!.data)
+    expect(restoredShell.text('VT')).toContain('2mBEFORE_REBOOT\u001b[0m')
+    expect(restoredShell.text().indexOf('BEFORE_REBOOT\n')).toBeLessThan(
+      restoredShell.text().indexOf('[Restored ')
+    )
+    restoredShell.dispose()
+    shellAttachment?.unsubscribe()
+    await type(restoredDaemon, 'reboot-shell', 'echo "AFTER_REBOOT:$PWD"\r', 1)
+    await waitFor(
+      async () =>
+        (await restoredDaemon.captureTerminal('reboot-shell', 50))?.includes(
+          `AFTER_REBOOT:${workDir}`
+        ) ?? false,
+      'The relaunched shell did not accept input in its last directory',
+      10_000
+    )
+    await waitFor(
+      async () =>
+        [
+          ...(
+            (await restoredDaemon.captureTerminal('reboot-command', 50)) ?? ''
+          ).matchAll(/SERVER_PID (\d+)/gu)
+        ].length === 2,
+      'The interrupted command was not started again',
+      10_000
+    )
+
+    const restoredCommand = (await restoredDaemon.captureTerminal(
+      'reboot-command',
+      50
+    ))!
+
+    const serverPids = [...restoredCommand.matchAll(/SERVER_PID (\d+)/gu)].map(
+      (match) => Number(match[1])
+    )
+
+    expect(serverPids[0]).toBe(firstServerPid)
+    expect(processExists(serverPids[1]!)).toBe(true)
+    expect(restoredCommand.indexOf('[Restored ')).toBeGreaterThan(
+      restoredCommand.indexOf(`SERVER_PID ${firstServerPid}`)
+    )
+    await restoredDaemon.dispose()
+    clients.delete(restoredDaemon)
+
+    const reattachedDaemon = await connectOrStartTerminalHost(options)
+    clients.add(reattachedDaemon)
+    await waitFor(
+      async () =>
+        !(await reattachedDaemon.terminalState('reboot-shell'))
+          .recoveryPending &&
+        !(await reattachedDaemon.terminalState('reboot-command'))
+          .recoveryPending,
+      'Relaunched session recovery did not settle',
+      10_000
+    )
+    expect((await reattachedDaemon.terminalState('reboot-shell')).status).toBe(
+      'running'
+    )
+    expect(
+      await reattachedDaemon.captureTerminal('reboot-shell', 50)
+    ).toContain(`AFTER_REBOOT:${workDir}`)
+    expect(
+      (await reattachedDaemon.listProcesses('worktree-reboot')).map(
+        (item) => item.pid
+      )
+    ).toEqual(
+      expect.arrayContaining(relaunched.map(({ status }) => status.pid))
+    )
+    await reattachedDaemon.killTerminal('reboot-shell')
+    await reattachedDaemon.killTerminal('reboot-command')
+
+    for (const { status } of relaunched) {
+      await waitFor(
+        () => !processExists(status.ownerPid),
+        'A relaunched session keeper did not close'
+      )
+      hostPids.delete(status.ownerPid)
+    }
+
+    expect(
+      await fs.readdir(
+        path.join(
+          runtimeDir,
+          'terminal-engine',
+          'terminal-host-' + reattachedDaemon.record.hostKey,
+          'terminal-specs'
+        )
+      )
+    ).toEqual([])
+  }, 60_000)
+
   it('delivers live output after a large snapshot without dropping or reordering frames', async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-large-snapshot-')
