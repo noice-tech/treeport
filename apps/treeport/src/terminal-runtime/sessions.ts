@@ -41,7 +41,7 @@ import {
   type TerminalTitleState
 } from './contract'
 import { PersistentSession } from './session-client'
-import { decodeTerminalEngineMetadata } from './api'
+import { decodeTerminalEngineMetadata, terminalSessionName } from './api'
 import {
   integrateShellLaunch,
   prepareShellIntegration
@@ -535,17 +535,14 @@ export class TerminalHostSessions {
           )
         )
 
-        const { input } = yield* decodeTerminalEngineMetadata(
-          owner.manifest.metadata
-        ).pipe(Effect.mapError(effectError))
+        const { input, sessionGeneration = 0 } =
+          yield* decodeTerminalEngineMetadata(owner.manifest.metadata).pipe(
+            Effect.mapError(effectError)
+          )
 
         if (
           path.basename(directory) !==
-          crypto
-            .createHash('sha256')
-            .update(input.terminalId)
-            .digest('hex')
-            .slice(0, 40)
+          terminalSessionName(input.terminalId, sessionGeneration)
         ) {
           return yield* Effect.fail(
             effectError(
@@ -587,16 +584,124 @@ export class TerminalHostSessions {
 
         this.unavailable.set(input.terminalId, recovery)
 
-        const restore = this.createTerminal(
-          {
-            ...input,
-            setupTasks: input.setupTasks?.map((task) => ({
-              ...task,
-              argv: [...task.argv]
-            }))
-          },
-          owner
-        ).pipe(
+        const restore = Effect.gen(this, function* () {
+          yield* this.createTerminal(
+            {
+              ...input,
+              setupTasks: input.setupTasks?.map((task) => ({
+                ...task,
+                argv: [...task.argv]
+              }))
+            },
+            owner
+          )
+
+          const archived = (yield* SynchronizedRef.get(this.sessions)).get(
+            input.terminalId
+          )
+
+          if (
+            !archived ||
+            !owner.archived ||
+            owner.startupAborted ||
+            archived.exitCode !== null
+          ) {
+            return
+          }
+
+          const command =
+            archived.commandExitCode === null ? input.command : null
+
+          const pwd = archived.pwd?.replace(/^~(?=\/|$)/u, os.homedir()) ?? null
+
+          const cwd =
+            command === null &&
+            pwd !== null &&
+            (yield* nodePromise(() =>
+              fs.stat(pwd).then(
+                (stats) => stats.isDirectory(),
+                () => false
+              )
+            ))
+              ? pwd
+              : input.cwd
+
+          // EXTERNAL: The formatter reads the active screen; leave a full-screen
+          // program's alternate screen to keep the shell history beneath it.
+          archived.terminal.write('\x1b[?1049l')
+          const history = archived.terminal.text('VT')
+
+          // EXTERNAL: The keeper refuses to close a session whose command outlived
+          // it; that terminal stays retained output rather than starting twice.
+          const closed = yield* nodePromise(() => owner.terminate()).pipe(
+            Effect.as(true),
+            Effect.catchAll(() => Effect.succeed(false))
+          )
+
+          if (!closed) {
+            return
+          }
+
+          yield* SynchronizedRef.update(this.sessions, (current) => {
+            const next = new Map(current)
+            next.delete(input.terminalId)
+
+            return next
+          })
+          yield* Scope.close(archived.scope, Exit.void)
+
+          if (archived.specPath) {
+            const specPath = archived.specPath
+            yield* nodePromise(() =>
+              Promise.all(
+                ['', '.result', '.result.tmp'].map((suffix) =>
+                  fs.rm(`${specPath}${suffix}`, { force: true })
+                )
+              )
+            )
+          }
+
+          const restored = {
+            outputPath: path.join(
+              this.options.runtimeDir,
+              'terminal-specs',
+              `${path.basename(directory)}-${crypto.randomUUID()}.restore`
+            ),
+            generation: sessionGeneration + 1
+          }
+
+          yield* nodePromise(() =>
+            fs.writeFile(
+              restored.outputPath,
+              `${history}\x1b[0m\r\n\x1b[2m[Restored ${new Date().toLocaleString()}]\x1b[0m\r\n`,
+              { mode: 0o600 }
+            )
+          )
+          yield* this.createTerminal(
+            {
+              ...input,
+              cwd,
+              command,
+              setupTasks: undefined,
+              setupError: undefined,
+              initialSize: {
+                cols: owner.manifest.cols,
+                rows: owner.manifest.rows
+              }
+            },
+            null,
+            restored
+          ).pipe(
+            Effect.catchAll((error) =>
+              Effect.logError('Failed to relaunch restored terminal').pipe(
+                Effect.annotateLogs({
+                  terminalId: input.terminalId,
+                  cause: error.message
+                })
+              )
+            )
+          )
+        }).pipe(
           Effect.tap(() =>
             Effect.sync(() => {
               this.unavailable.delete(input.terminalId)
@@ -686,10 +791,15 @@ export class TerminalHostSessions {
 
   createTerminal(
     input: TerminalCreateInput,
-    retainedOwner: PersistentSession | null = null
+    retainedOwner: PersistentSession | null = null,
+    restored: { outputPath: string; generation: number } | null = null
   ): Effect.Effect<void, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
-      if (!retainedOwner && this.unavailable.has(input.terminalId)) {
+      if (
+        !retainedOwner &&
+        restored === null &&
+        this.unavailable.has(input.terminalId)
+      ) {
         return yield* Effect.fail(
           new TerminalHostSessionError({
             message:
@@ -726,7 +836,7 @@ export class TerminalHostSessions {
 
       return yield* Effect.gen(this, function* () {
         hosted = yield* Scope.extend(
-          this.acquireSession(input, childScope, retainedOwner),
+          this.acquireSession(input, childScope, retainedOwner, restored),
           childScope
         )
         const ownedSession = hosted
@@ -878,7 +988,7 @@ export class TerminalHostSessions {
             yield* Effect.logWarning(
               owner.startupAborted
                 ? `Terminal startup for ${input.terminalId} was aborted before command admission; recovered its retained diagnostic.`
-                : `Session keeper for ${input.terminalId} is gone; recovered retained output as an exited terminal. Its final output or exit status may be incomplete.`
+                : `Session keeper for ${input.terminalId} is gone; recovered its retained output. Its final output or exit status may be incomplete.`
             )
           }
 
@@ -953,7 +1063,8 @@ export class TerminalHostSessions {
   private acquireSession(
     input: TerminalCreateInput,
     childScope: Scope.CloseableScope,
-    retainedOwner: PersistentSession | null
+    retainedOwner: PersistentSession | null,
+    restored: { outputPath: string; generation: number } | null
   ): Effect.Effect<HostedTerminalSession, TerminalHostSessionError> {
     return Effect.gen(this, function* () {
       const directShell =
@@ -1258,18 +1369,28 @@ export class TerminalHostSessions {
                 directory: path.join(
                   this.options.runtimeDir,
                   'sessions',
-                  crypto
-                    .createHash('sha256')
-                    .update(input.terminalId)
-                    .digest('hex')
-                    .slice(0, 40)
+                  terminalSessionName(
+                    input.terminalId,
+                    restored?.generation ?? 0
+                  )
                 ),
                 executable: this.persistentOptions.sessionExecutable!,
                 terminalId: input.terminalId,
                 journalLimitBytes: this.persistentOptions.journalLimitBytes,
-                argv: directShell
-                  ? directLaunch.argv
-                  : [process.execPath, this.options.launcherPath, specPath!],
+                argv: [
+                  ...(restored === null
+                    ? []
+                    : [
+                        '/bin/sh',
+                        '-c',
+                        'cat -- "$1"; rm -f -- "$1"; shift; exec "$@"',
+                        'sh',
+                        restored.outputPath
+                      ]),
+                  ...(directShell
+                    ? directLaunch.argv
+                    : [process.execPath, this.options.launcherPath, specPath!])
+                ],
                 cwd: input.cwd,
                 env: directShell ? directEnvironment : inheritedEnvironment,
                 cols: size.cols,
@@ -1278,7 +1399,8 @@ export class TerminalHostSessions {
                   ...input,
                   engineVersion: 1,
                   launchSpecPath: specPath,
-                  updatedAt: input.createdAt
+                  updatedAt: input.createdAt,
+                  sessionGeneration: restored?.generation ?? 0
                 })
               })
             )

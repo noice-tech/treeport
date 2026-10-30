@@ -4,7 +4,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as Effect from 'effect/Effect'
-import { decodeTerminalEngineMetadata, type TerminalHostRecord } from './api'
+import {
+  decodeTerminalEngineMetadata,
+  terminalSessionName,
+  type TerminalHostRecord
+} from './api'
 import { inspectLegacyTerminalHost } from './legacy-host'
 import { PersistentSession } from './session-client'
 
@@ -71,11 +75,10 @@ export async function probeTerminalHostCompatibility(
 
       if (
         name !==
-        crypto
-          .createHash('sha256')
-          .update(metadata.input.terminalId)
-          .digest('hex')
-          .slice(0, 40)
+        terminalSessionName(
+          metadata.input.terminalId,
+          metadata.sessionGeneration ?? 0
+        )
       ) {
         throw new Error('Session metadata does not identify its directory')
       }

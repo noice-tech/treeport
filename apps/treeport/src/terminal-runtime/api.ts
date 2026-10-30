@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
@@ -508,6 +509,19 @@ export function decodeTerminalHostInput<
   >
 }
 
+// EXTERNAL: A session keeper never admits a second command into a directory it
+// once owned, so each relaunch of a terminal gets its own directory.
+export function terminalSessionName(
+  terminalId: string,
+  generation: number
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(generation === 0 ? terminalId : `${terminalId}\0${generation}`)
+    .digest('hex')
+    .slice(0, 40)
+}
+
 export function decodeTerminalEngineMetadata(source: string) {
   return Effect.gen(function* () {
     const parsed = yield* Effect.try({
@@ -519,7 +533,8 @@ export function decodeTerminalEngineMetadata(source: string) {
       Schema.Struct({
         engineVersion: Schema.Literal(1),
         launchSpecPath: Schema.NullOr(Schema.String),
-        updatedAt: Schema.String
+        updatedAt: Schema.String,
+        sessionGeneration: Schema.optional(Schema.NonNegativeInt)
       })
     )(parsed).pipe(
       Effect.mapError((cause) => new TerminalHostFrameDecodeError({ cause }))
