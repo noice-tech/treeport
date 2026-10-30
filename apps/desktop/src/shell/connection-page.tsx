@@ -43,17 +43,21 @@ export function ConnectionPage({
   const state = useShellState()
   const [connectingVisible, setConnectingVisible] = useState(false)
 
-  useEffect(() => {
-    if (state?.connection.status !== 'connecting') {
-      setConnectingVisible(false)
+  const connecting = state?.connection.status === 'connecting'
 
+  if (!connecting && connectingVisible) {
+    setConnectingVisible(false)
+  }
+
+  useEffect(() => {
+    if (!connecting) {
       return
     }
 
     const timer = setTimeout(() => setConnectingVisible(true), 300)
 
     return () => clearTimeout(timer)
-  }, [state?.connection.status])
+  }, [connecting])
 
   if (!state) {
     return null

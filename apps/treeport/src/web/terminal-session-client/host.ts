@@ -5,6 +5,7 @@ import {
   type TerminalSessionState,
   type TerminalSessionSnapshot
 } from './state'
+import { isIOS } from '../lib/platform'
 
 interface Dependencies {
   cancelControllerResizeIntent(clearPending?: boolean): void
@@ -86,14 +87,10 @@ export function makeHost(
       keyboardViewportCleanup?.()
       keyboardViewportCleanup = null
 
-      const isIOS =
-        /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-
       const viewport = window.visualViewport
       const appFrame = document.querySelector<HTMLElement>('.app-frame')
 
-      if (isIOS && viewport && appFrame) {
+      if (isIOS() && viewport && appFrame) {
         // EXTERNAL: WebKit leaves the layout viewport unchanged when the software keyboard
         // opens. Size and position the application against the visual viewport
         // instead of scrolling the document between the cursor and accessory row.

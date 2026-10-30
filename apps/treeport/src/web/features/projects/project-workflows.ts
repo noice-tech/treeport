@@ -99,8 +99,10 @@ export function useProjectWorkflows({
     }
   })
 
+  const { mutate: mutateCloseProject } = closeProject
+
   const requestProjectClose = (project: ProjectRecord) =>
-    closeProject.mutate(project)
+    mutateCloseProject(project)
 
   const projectOpened = async (
     project: ProjectRecord,

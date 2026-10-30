@@ -1,3 +1,4 @@
+import type { RefObject } from 'react'
 import type { BrowserApp, WebApp } from '@treeport/shared'
 import {
   AlertDialog,
@@ -24,7 +25,7 @@ export function CloseAppDialog({
   app: StoredApp | null
   reason: 'browser-before-unload' | 'stored-data' | 'unsaved-changes' | null
   busy: boolean
-  restoreFocusTo: HTMLElement | null
+  restoreFocusTo: RefObject<HTMLElement | null>
   onOpenChange: (open: boolean) => void
   onConfirm: (app: StoredApp) => void
 }) {

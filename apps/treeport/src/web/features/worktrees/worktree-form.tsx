@@ -20,6 +20,7 @@ import {
   launcherInputLabel
 } from '../../launcher-definition'
 import { FilePasteTextarea } from '../../components/file-paste-textarea'
+import { isApplePlatform } from '../../lib/platform'
 
 const INITIAL_LAUNCHER_STORAGE_KEY = 'treeport-initial-launcher'
 
@@ -52,7 +53,7 @@ export function WorktreeForm({
   ) => void
 }) {
   const submitButtonRef = useRef<HTMLButtonElement>(null)
-  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  const usesMacKeyboard = isApplePlatform()
   const [name, setName] = useState('')
   const [baseValue, setBaseValue] = useState('default')
   const [inputs, setInputs] = useState<Record<string, string>>({})

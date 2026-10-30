@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { toast } from 'sonner'
 import {
   useMutation,
@@ -101,26 +101,35 @@ export function useWorktreeWorkflows({
     []
   )
 
-  const serverPendingWorktrees: PendingWorktreeCreation[] = (
-    creationsQuery.data ?? []
-  ).flatMap((operation) => {
-    if (operation.kind !== 'create') {
-      return []
-    }
-
-    return operation.projectId
-      ? [
-          {
-            id: operation.id,
-            projectId: operation.projectId,
-            typedName: operation.request.name,
-            pendingTitle: operation.request.treeTitle?.pendingTitle ?? null
+  const serverPendingWorktrees = useMemo(
+    () =>
+      (creationsQuery.data ?? []).flatMap(
+        (operation): PendingWorktreeCreation[] => {
+          if (operation.kind !== 'create') {
+            return []
           }
-        ]
-      : []
-  })
 
-  useEffect(() => {
+          return operation.projectId
+            ? [
+                {
+                  id: operation.id,
+                  projectId: operation.projectId,
+                  typedName: operation.request.name,
+                  pendingTitle:
+                    operation.request.treeTitle?.pendingTitle ?? null
+                }
+              ]
+            : []
+        }
+      ),
+    [creationsQuery.data]
+  )
+
+  const [mergedServerPendingWorktrees, setMergedServerPendingWorktrees] =
+    useState<PendingWorktreeCreation[] | null>(null)
+
+  if (mergedServerPendingWorktrees !== serverPendingWorktrees) {
+    setMergedServerPendingWorktrees(serverPendingWorktrees)
     setTrackedCreations((current) => {
       const additions = serverPendingWorktrees.filter(
         (pending) => !current.some((creation) => creation.id === pending.id)
@@ -133,10 +142,11 @@ export function useWorktreeWorkflows({
             ...additions.map((creation) => ({ ...creation, owned: false }))
           ]
     })
-  }, [serverPendingWorktrees])
+  }
+
   const handledCreationsRef = useRef(new Set<string>())
 
-  const trackedCreationQueries = useQueries({
+  const trackedCreationOperations = useQueries({
     queries: trackedCreations.map((creation) => ({
       queryKey: ['operation', creation.id] as const,
       queryFn: async () =>
@@ -148,51 +158,60 @@ export function useWorktreeWorkflows({
           )
         ).operation,
       refetchInterval: 500
-    }))
+    })),
+    combine: (results) => results.map((result) => result.data)
   })
 
-  const materializedCreationIds = new Set(
-    trackedCreationQueries.flatMap((query) => {
-      const operation = query.data
+  const materializedCreationIds = useMemo(
+    () =>
+      new Set(
+        trackedCreationOperations.flatMap((operation) => {
+          if (
+            operation?.status !== 'completed' ||
+            operation.kind !== 'create'
+          ) {
+            return []
+          }
 
-      if (operation?.status !== 'completed' || operation.kind !== 'create') {
-        return []
-      }
+          const worktreeId =
+            operation.result?.worktreeId ?? operation.worktreeId
 
-      const worktreeId = operation.result?.worktreeId ?? operation.worktreeId
+          return worktreeId &&
+            projects.some((project) =>
+              project.worktrees.some((worktree) => worktree.id === worktreeId)
+            )
+            ? [operation.id]
+            : []
+        })
+      ),
+    [trackedCreationOperations, projects]
+  )
 
-      return worktreeId &&
-        projects.some((project) =>
-          project.worktrees.some((worktree) => worktree.id === worktreeId)
+  const pendingWorktrees = useMemo(() => {
+    const visibleServerPendingWorktrees = serverPendingWorktrees.filter(
+      (pending) => !materializedCreationIds.has(pending.id)
+    )
+
+    const serverPendingIds = new Set(
+      visibleServerPendingWorktrees.map((pending) => pending.id)
+    )
+
+    return [
+      ...visibleServerPendingWorktrees,
+      ...trackedCreations
+        .filter(
+          (creation) =>
+            !serverPendingIds.has(creation.id) &&
+            !materializedCreationIds.has(creation.id)
         )
-        ? [operation.id]
-        : []
-    })
-  )
-
-  const visibleServerPendingWorktrees = serverPendingWorktrees.filter(
-    (pending) => !materializedCreationIds.has(pending.id)
-  )
-
-  const serverPendingIds = new Set(
-    visibleServerPendingWorktrees.map((pending) => pending.id)
-  )
-
-  const pendingWorktrees = [
-    ...visibleServerPendingWorktrees,
-    ...trackedCreations
-      .filter(
-        (creation) =>
-          !serverPendingIds.has(creation.id) &&
-          !materializedCreationIds.has(creation.id)
-      )
-      .map(({ id, projectId, typedName, pendingTitle }) => ({
-        id,
-        projectId,
-        typedName,
-        pendingTitle
-      }))
-  ]
+        .map(({ id, projectId, typedName, pendingTitle }) => ({
+          id,
+          projectId,
+          typedName,
+          pendingTitle
+        }))
+    ]
+  }, [serverPendingWorktrees, materializedCreationIds, trackedCreations])
 
   const [localPendingRemovals, setLocalPendingRemovals] = useState<
     Record<string, RemovalStage>
@@ -335,9 +354,10 @@ export function useWorktreeWorkflows({
     }
   })
 
+  const { mutate: mutateCreateWorktree } = createWorktree
+
   useEffect(() => {
-    trackedCreationQueries.forEach((query, index) => {
-      const operation = query.data
+    trackedCreationOperations.forEach((operation, index) => {
       const tracked = trackedCreations[index]
 
       if (
@@ -407,7 +427,7 @@ export function useWorktreeWorkflows({
     materializedCreationIds,
     queryClient,
     setDrawerOpen,
-    trackedCreationQueries,
+    trackedCreationOperations,
     trackedCreations
   ])
 
@@ -454,7 +474,7 @@ export function useWorktreeWorkflows({
     }
 
     onWorktreeSubmitted()
-    createWorktree.mutate(pending)
+    mutateCreateWorktree(pending)
   }
 
   const setRemovalStage = (worktreeId: string, stage: RemovalStage) =>
@@ -486,25 +506,28 @@ export function useWorktreeWorkflows({
   ): Promise<void> => {
     setRemovalStage(worktree.id, 'removing')
 
-    try {
-      const acceptedOperation = (
-        await parseResponse(
-          rpc.api.worktrees[':worktreeId'].remove.$post({
-            param: { worktreeId: worktree.id },
-            json: {
-              confirmationToken: preview.confirmationToken,
-              confirmDestructive,
-              skipCleanup
-            }
-          })
-        )
-      ).operation
+    const removal = await parseResponse(
+      rpc.api.worktrees[':worktreeId'].remove.$post({
+        param: { worktreeId: worktree.id },
+        json: {
+          confirmationToken: preview.confirmationToken,
+          confirmDestructive,
+          skipCleanup
+        }
+      })
+    ).then(
+      ({ operation }) =>
+        operation.kind === 'remove'
+          ? { operation, error: null }
+          : {
+              operation: null,
+              error: new Error('Tree removal returned an unexpected operation')
+            },
+      (error) => ({ operation: null, error })
+    )
 
-      if (acceptedOperation.kind !== 'remove') {
-        throw new Error('Tree removal returned an unexpected operation')
-      }
-
-      removals.trackRemoval(acceptedOperation)
+    if (removal.operation) {
+      removals.trackRemoval(removal.operation)
 
       for (const previous of removals.operations) {
         if (
@@ -518,56 +541,56 @@ export function useWorktreeWorkflows({
       releaseRemoval(worktree.id)
       onRemovalDismiss(worktree.id)
       void queryClient.invalidateQueries({ queryKey: ['worktree-removals'] })
-    } catch (error) {
-      if (
-        errorDetails(error).code === 'REMOVE_PREVIEW_STALE' &&
-        staleRetriesRemaining > 0
-      ) {
-        setRemovalStage(worktree.id, 'checking')
 
-        try {
-          const freshPreview = (
-            await parseResponse(
-              rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
-                param: { worktreeId: worktree.id }
-              })
-            )
-          ).preview
+      return
+    }
 
-          if (freshPreview.eligible && freshPreview.warnings.length === 0) {
-            await submitRemoval(
-              worktree,
-              freshPreview,
-              skipCleanup,
-              staleRetriesRemaining - 1,
-              skipCleanup
-            )
+    if (
+      errorDetails(removal.error).code === 'REMOVE_PREVIEW_STALE' &&
+      staleRetriesRemaining > 0
+    ) {
+      setRemovalStage(worktree.id, 'checking')
 
-            return
-          }
-
-          releaseRemoval(worktree.id)
-          onRemovalNeedsConfirmation(
-            worktree,
-            freshPreview,
-            undefined,
-            skipCleanup
-          )
-
-          return
-        } catch (refreshError) {
+      const freshPreview = await parseResponse(
+        rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
+          param: { worktreeId: worktree.id }
+        })
+      ).then(
+        (response) => response.preview,
+        (refreshError) => {
           releaseRemoval(worktree.id)
           notifyError(refreshError, {
             operation: `refresh removal details for tree “${worktree.name}”`
           })
 
-          return
+          return null
         }
+      )
+
+      if (!freshPreview) {
+        return
+      }
+
+      if (freshPreview.eligible && freshPreview.warnings.length === 0) {
+        await submitRemoval(
+          worktree,
+          freshPreview,
+          skipCleanup,
+          staleRetriesRemaining - 1,
+          skipCleanup
+        )
+
+        return
       }
 
       releaseRemoval(worktree.id)
-      notifyError(error, { operation: `remove tree “${worktree.name}”` })
+      onRemovalNeedsConfirmation(worktree, freshPreview, undefined, skipCleanup)
+
+      return
     }
+
+    releaseRemoval(worktree.id)
+    notifyError(removal.error, { operation: `remove tree “${worktree.name}”` })
   }
 
   const prepareRemoval = async (
@@ -584,29 +607,34 @@ export function useWorktreeWorkflows({
     removalGuardsRef.current.add(worktree.id)
     setRemovalStage(worktree.id, 'checking')
 
-    try {
-      const preview = (
-        await parseResponse(
-          rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
-            param: { worktreeId: worktree.id }
-          })
-        )
-      ).preview
-
-      if (preview.eligible && preview.warnings.length === 0) {
-        await submitRemoval(worktree, preview, false, 1)
-
-        return
-      }
-
-      releaseRemoval(worktree.id)
-      onRemovalNeedsConfirmation(worktree, preview, trigger)
-    } catch (error) {
-      releaseRemoval(worktree.id)
-      notifyError(error, {
-        operation: `check whether tree “${worktree.name}” can be removed`
+    const preview = await parseResponse(
+      rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
+        param: { worktreeId: worktree.id }
       })
+    ).then(
+      (response) => response.preview,
+      (error) => {
+        releaseRemoval(worktree.id)
+        notifyError(error, {
+          operation: `check whether tree “${worktree.name}” can be removed`
+        })
+
+        return null
+      }
+    )
+
+    if (!preview) {
+      return
     }
+
+    if (preview.eligible && preview.warnings.length === 0) {
+      await submitRemoval(worktree, preview, false, 1)
+
+      return
+    }
+
+    releaseRemoval(worktree.id)
+    onRemovalNeedsConfirmation(worktree, preview, trigger)
   }
 
   const confirmRemoval = (
@@ -641,23 +669,28 @@ export function useWorktreeWorkflows({
     removalGuardsRef.current.add(worktree.id)
     setRemovalStage(worktree.id, 'checking')
 
-    try {
-      const preview = (
-        await parseResponse(
-          rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
-            param: { worktreeId: worktree.id }
-          })
-        )
-      ).preview
-
-      releaseRemoval(worktree.id)
-      onRemovalNeedsConfirmation(worktree, preview)
-    } catch (error) {
-      releaseRemoval(worktree.id)
-      notifyError(error, {
-        operation: `retry removal for tree “${worktree.name}”`
+    const preview = await parseResponse(
+      rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
+        param: { worktreeId: worktree.id }
       })
+    ).then(
+      (response) => response.preview,
+      (error) => {
+        releaseRemoval(worktree.id)
+        notifyError(error, {
+          operation: `retry removal for tree “${worktree.name}”`
+        })
+
+        return null
+      }
+    )
+
+    if (!preview) {
+      return
     }
+
+    releaseRemoval(worktree.id)
+    onRemovalNeedsConfirmation(worktree, preview)
   }
 
   return {

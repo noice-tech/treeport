@@ -50,6 +50,7 @@ import { WebAppIcon } from '../web-apps/web-app-icon'
 import { describeWebAppPermissions } from '../web-apps/web-app-permissions'
 import { useToolPicker } from './tool-picker-context'
 import { useWorkspaceSurfaceFocus } from './workspace-surface-focus-context'
+import { isApplePlatform } from '../../lib/platform'
 
 interface ToolPickerActionsProps {
   definitions: WebAppDefinition[]
@@ -245,9 +246,7 @@ export function AppsPanelToggle({
   onToggle: () => void
   onToggleFullView: () => void
 }) {
-  const shortcut = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
-    ? '⌘B'
-    : 'Ctrl+Alt+B'
+  const shortcut = isApplePlatform() ? '⌘B' : 'Ctrl+Alt+B'
 
   return (
     <div className="absolute top-1 right-1 z-40 flex items-center gap-1">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useQueries,
   useQuery,
@@ -29,24 +29,25 @@ export function useWorktreeRemovals() {
 
   const [tracked, setTracked] = useState<RemoveOperationRecord[]>([])
 
-  const operationsById = new Map(
-    tracked.map((operation) => [operation.id, operation])
+  const discovered = useMemo(() => {
+    const operationsById = new Map(
+      tracked.map((operation) => [operation.id, operation])
+    )
+
+    for (const operation of activeQuery.data ?? []) {
+      operationsById.set(operation.id, operation)
+    }
+
+    return [...operationsById.values()]
+  }, [tracked, activeQuery.data])
+
+  const untrackedOperations = discovered.filter(
+    (operation) => !tracked.some((item) => item.id === operation.id)
   )
 
-  for (const operation of activeQuery.data ?? []) {
-    operationsById.set(operation.id, operation)
+  if (untrackedOperations.length) {
+    setTracked([...tracked, ...untrackedOperations])
   }
-
-  const discovered = [...operationsById.values()]
-  useEffect(() => {
-    setTracked((current) => {
-      const additions = discovered.filter(
-        (operation) => !current.some((item) => item.id === operation.id)
-      )
-
-      return additions.length ? [...current, ...additions] : current
-    })
-  }, [discovered])
 
   const operations = useQueries({
     queries: discovered.map((operation) => ({

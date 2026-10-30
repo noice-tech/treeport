@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   PRESENCE_HEARTBEAT_MS,
   type ViewerIdentity,
@@ -60,7 +60,11 @@ export function useWorkspacePresence(
   })
 
   const latest = useRef({ worktreeId, focusedAppId })
-  latest.current = { worktreeId, focusedAppId }
+
+  useLayoutEffect(() => {
+    latest.current = { worktreeId, focusedAppId }
+  })
+
   const publish = useRef(() => {})
 
   useEffect(() => {

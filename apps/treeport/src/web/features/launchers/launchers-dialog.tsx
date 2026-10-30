@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, type RefObject } from 'react'
 import type { Launcher } from '@treeport/shared'
 import {
   Dialog,
@@ -25,7 +25,7 @@ export function LaunchersDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  restoreFocusTo: HTMLElement | null
+  restoreFocusTo: RefObject<HTMLElement | null>
   launchers: Launcher[]
   loading: boolean
   loadError: boolean

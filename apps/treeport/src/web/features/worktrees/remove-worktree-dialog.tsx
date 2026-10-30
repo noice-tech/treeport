@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, type RefObject } from 'react'
 import type { RemoveOperationRecord, RemovePreview } from '@treeport/shared'
 import {
   AlertDialog,
@@ -12,6 +12,7 @@ import {
 } from '../../components/ui/alert-dialog'
 import { Button } from '../../components/ui/button'
 import type { RemovalWorktree } from './worktree-workflows'
+import { isApplePlatform } from '../../lib/platform'
 
 export function RemoveWorktreeDialog({
   worktree,
@@ -31,13 +32,13 @@ export function RemoveWorktreeDialog({
   skipCleanup: boolean
   busy: boolean
   onOpenChange: (open: boolean) => void
-  restoreFocusTo: HTMLElement | null
+  restoreFocusTo: RefObject<HTMLElement | null>
   onConfirm: (worktree: RemovalWorktree, preview: RemovePreview) => void
   onSkipCleanup: (worktree: RemovalWorktree, preview: RemovePreview) => void
   onRetry: (worktree: RemovalWorktree) => void
 }) {
   const confirmButtonRef = useRef<HTMLButtonElement>(null)
-  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  const usesMacKeyboard = isApplePlatform()
   const destructive = Boolean(preview?.warnings.length) || skipCleanup
   const name = preview?.name ?? worktree?.name
   const branch = preview?.branch

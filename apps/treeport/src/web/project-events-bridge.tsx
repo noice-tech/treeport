@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { RpcClient } from '@effect/rpc'
 import {
@@ -31,11 +31,15 @@ export function useProjectEventsBridge(
 ): boolean {
   const queryClient = useQueryClient()
   const onPresenceChangedRef = useRef(onPresenceChanged)
-  onPresenceChangedRef.current = onPresenceChanged
   const onAppOpenRequestedRef = useRef(onAppOpenRequested)
-  onAppOpenRequestedRef.current = onAppOpenRequested
   const onWorkspaceOpenRequestedRef = useRef(onWorkspaceOpenRequested)
-  onWorkspaceOpenRequestedRef.current = onWorkspaceOpenRequested
+
+  useLayoutEffect(() => {
+    onPresenceChangedRef.current = onPresenceChanged
+    onAppOpenRequestedRef.current = onAppOpenRequested
+    onWorkspaceOpenRequestedRef.current = onWorkspaceOpenRequested
+  })
+
   const [eventsDisconnected, setEventsDisconnected] = useState(false)
 
   useEffect(() => {
