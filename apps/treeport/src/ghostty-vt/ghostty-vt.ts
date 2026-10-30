@@ -797,7 +797,7 @@ export class GhosttyTerminal {
     )
   }
 
-  text(): string {
+  text(format: 'PLAIN' | 'VT' = 'PLAIN'): string {
     const { vt } = this
     const options = 'GhosttyFormatterTerminalOptions'
     const extra = 'GhosttyFormatterTerminalExtra'
@@ -808,13 +808,20 @@ export class GhosttyTerminal {
     view.setUint32(ptr, vt.size(options), true)
     view.setInt32(
       ptr + vt.offset(options, 'emit'),
-      vt.value('GhosttyFormatterFormat', 'PLAIN'),
+      vt.value('GhosttyFormatterFormat', format),
       true
     )
     view.setUint8(ptr + vt.offset(options, 'trim'), 1)
     const extraPtr = ptr + vt.offset(options, 'extra')
     view.setUint32(extraPtr, vt.size(extra), true)
-    view.setUint32(extraPtr + vt.offset(extra, 'screen'), vt.size(screen), true)
+    const screenPtr = extraPtr + vt.offset(extra, 'screen')
+    view.setUint32(screenPtr, vt.size(screen), true)
+
+    if (format === 'VT') {
+      view.setUint8(ptr + vt.offset(options, 'unwrap'), 1)
+      view.setUint8(screenPtr + vt.offset(screen, 'style'), 1)
+      view.setUint8(screenPtr + vt.offset(screen, 'hyperlink'), 1)
+    }
 
     const formatter = vt.opaque('ghostty_formatter_terminal_new', (out) =>
       vt.call('ghostty_formatter_terminal_new', 0, out, this.handle, ptr)
