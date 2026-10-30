@@ -102,6 +102,7 @@ import { cn } from './lib/utils'
 import { browserTrace, newBrowserCorrelationId } from './agent-tracing'
 
 import { LoadingFallback } from './loading-fallback'
+import { isApplePlatform } from './lib/platform'
 
 const BrowserAppWorkspace = lazy(() =>
   import('./features/browser-apps/browser-app-workspace').then((module) => ({
@@ -172,6 +173,7 @@ function WorkspaceApp() {
   const queryClient = useQueryClient()
   const location = useLocation()
   const projectsQuery = useQuery(projectsQueryOptions)
+  const { refetch: refetchProjects } = projectsQuery
   const removals = useWorktreeRemovals()
 
   const projects = useMemo(
@@ -186,16 +188,26 @@ function WorkspaceApp() {
   )
 
   const launchersQuery = useQuery(launchersQueryOptions)
+  const { refetch: refetchLaunchers } = launchersQuery
   const launchers = launchersQuery.data ?? []
 
   const storedResumePath = localStorage.getItem(
     LAST_WORKSPACE_ROUTE_STORAGE_KEY
   )
 
-  const workspaceResolution =
-    projectsQuery.data && removals.ready
-      ? resolveWorkspaceRoute(projects, location.pathname, storedResumePath)
-      : null
+  const workspaceResolution = useMemo(
+    () =>
+      projectsQuery.data && removals.ready
+        ? resolveWorkspaceRoute(projects, location.pathname, storedResumePath)
+        : null,
+    [
+      projectsQuery.data,
+      removals.ready,
+      projects,
+      location.pathname,
+      storedResumePath
+    ]
+  )
 
   const selectedProject = workspaceResolution?.selection.project ?? null
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
@@ -224,7 +236,7 @@ function WorkspaceApp() {
   } = useSidebar()
 
   const projectSwitcher = useProjectSwitcher()
-  const projectSwitcherOpen = projectSwitcher.open
+  const { dismissedIntoTerminalRef } = projectSwitcher
   const [dialog, setDialog] = useState<AppDialog>(null)
 
   const [desktopNotificationsOpen, setDesktopNotificationsOpen] =
@@ -241,8 +253,7 @@ function WorkspaceApp() {
     [desktopBridge]
   )
 
-  const workspaceActionsBlocked =
-    dialog !== null || projectSwitcherOpen || (isMobile && drawerOpen)
+  const workspaceActionsBlocked = dialog !== null || (isMobile && drawerOpen)
 
   const [retainedAppIds, setRetainedAppIds] = useState<Set<string>>(
     () => new Set()
@@ -256,11 +267,14 @@ function WorkspaceApp() {
     null
   )
 
-  useEffect(() => {
+  if (
+    fullViewWorktreeId !== null &&
+    fullViewWorktreeId !== selectedWorktree?.id
+  ) {
     setFullViewWorktreeId(null)
-  }, [selectedWorktree?.id])
+  }
 
-  const setAppsPanelOpen = useCallback((worktreeId: string, open: boolean) => {
+  const setAppsPanelOpen = (worktreeId: string, open: boolean) => {
     setAppsPanelOpenByWorktree((current) =>
       current[worktreeId] === open
         ? current
@@ -270,7 +284,7 @@ function WorkspaceApp() {
       `${APPS_PANEL_OPEN_STORAGE_PREFIX}${worktreeId}`,
       String(open)
     )
-  }, [])
+  }
 
   const appsPanelOpen = selectedWorktree
     ? (appsPanelOpenByWorktree[selectedWorktree.id] ??
@@ -300,110 +314,103 @@ function WorkspaceApp() {
     [selectedWorktree]
   )
 
-  const reorderTerminals = useCallback(
-    (worktree: WorktreeRecord, itemIds: string[]) => {
-      queryClient.setQueryData<ProjectRecord[]>(
-        projectsQueryOptions.queryKey,
-        (current) =>
-          current?.map((project) => ({
-            ...project,
-            worktrees: project.worktrees.map((candidate) => {
-              if (candidate.id !== worktree.id) {
-                return candidate
-              }
+  const reorderTerminals = (worktree: WorktreeRecord, itemIds: string[]) => {
+    queryClient.setQueryData<ProjectRecord[]>(
+      projectsQueryOptions.queryKey,
+      (current) =>
+        current?.map((project) => ({
+          ...project,
+          worktrees: project.worktrees.map((candidate) => {
+            if (candidate.id !== worktree.id) {
+              return candidate
+            }
 
-              const terminalsById = new Map(
-                candidate.terminals.map((terminal) => [terminal.id, terminal])
+            const terminalsById = new Map(
+              candidate.terminals.map((terminal) => [terminal.id, terminal])
+            )
+
+            return {
+              ...candidate,
+              terminals: itemIds.map((terminalId) =>
+                terminalsById.get(terminalId)!
               )
-
-              return {
-                ...candidate,
-                terminals: itemIds.map((terminalId) =>
-                  terminalsById.get(terminalId)!
-                )
-              }
-            })
-          }))
-      )
-      void parseResponse(
-        rpc.api.worktrees[':worktreeId'].terminals.order.$put({
-          param: { worktreeId: worktree.id },
-          json: { itemIds }
+            }
+          })
+        }))
+    )
+    void parseResponse(
+      rpc.api.worktrees[':worktreeId'].terminals.order.$put({
+        param: { worktreeId: worktree.id },
+        json: { itemIds }
+      })
+    ).then(
+      () =>
+        queryClient.invalidateQueries({
+          queryKey: projectsQueryOptions.queryKey
+        }),
+      (error) => {
+        notifyError(error, {
+          operation: `reorder terminals in tree “${worktree.name}”`
         })
-      ).then(
-        () =>
-          queryClient.invalidateQueries({
-            queryKey: projectsQueryOptions.queryKey
-          }),
-        (error) => {
-          notifyError(error, {
-            operation: `reorder terminals in tree “${worktree.name}”`
-          })
 
-          return queryClient.invalidateQueries({
-            queryKey: projectsQueryOptions.queryKey
-          })
-        }
-      )
-    },
-    [queryClient]
-  )
-
-  const reorderTools = useCallback(
-    (itemIds: string[]) => {
-      if (!selectedWorktree) {
-        return
+        return queryClient.invalidateQueries({
+          queryKey: projectsQueryOptions.queryKey
+        })
       }
+    )
+  }
 
-      queryClient.setQueryData<ProjectRecord[]>(
-        projectsQueryOptions.queryKey,
-        (current) =>
-          current?.map((project) => ({
-            ...project,
-            worktrees: project.worktrees.map((worktree) => {
-              if (worktree.id !== selectedWorktree.id) {
-                return worktree
-              }
+  const reorderTools = (itemIds: string[]) => {
+    if (!selectedWorktree) {
+      return
+    }
 
-              const appsById = new Map(
-                worktree.workspaceItems.map((app) => [app.id, app])
+    queryClient.setQueryData<ProjectRecord[]>(
+      projectsQueryOptions.queryKey,
+      (current) =>
+        current?.map((project) => ({
+          ...project,
+          worktrees: project.worktrees.map((worktree) => {
+            if (worktree.id !== selectedWorktree.id) {
+              return worktree
+            }
+
+            const appsById = new Map(
+              worktree.workspaceItems.map((app) => [app.id, app])
+            )
+
+            const orderedTools = itemIds.map((appId) => appsById.get(appId)!)
+
+            return {
+              ...worktree,
+              workspaceItems: worktree.workspaceItems.map((app) =>
+                app.kind === 'terminal' ? app : orderedTools.shift()!
               )
-
-              const orderedTools = itemIds.map((appId) => appsById.get(appId)!)
-              let toolIndex = 0
-
-              return {
-                ...worktree,
-                workspaceItems: worktree.workspaceItems.map((app) =>
-                  app.kind === 'terminal' ? app : orderedTools[toolIndex++]!
-                )
-              }
-            })
-          }))
-      )
-      void parseResponse(
-        rpc.api.worktrees[':worktreeId'].apps.order.$put({
-          param: { worktreeId: selectedWorktree.id },
-          json: { itemIds }
+            }
+          })
+        }))
+    )
+    void parseResponse(
+      rpc.api.worktrees[':worktreeId'].apps.order.$put({
+        param: { worktreeId: selectedWorktree.id },
+        json: { itemIds }
+      })
+    ).then(
+      () =>
+        queryClient.invalidateQueries({
+          queryKey: projectsQueryOptions.queryKey
+        }),
+      (error) => {
+        notifyError(error, {
+          operation: `reorder tools in tree “${selectedWorktree.name}”`
         })
-      ).then(
-        () =>
-          queryClient.invalidateQueries({
-            queryKey: projectsQueryOptions.queryKey
-          }),
-        (error) => {
-          notifyError(error, {
-            operation: `reorder tools in tree “${selectedWorktree.name}”`
-          })
 
-          return queryClient.invalidateQueries({
-            queryKey: projectsQueryOptions.queryKey
-          })
-        }
-      )
-    },
-    [queryClient, selectedWorktree]
-  )
+        return queryClient.invalidateQueries({
+          queryKey: projectsQueryOptions.queryKey
+        })
+      }
+    )
+  }
 
   const rememberedActiveApp = selectedWorktreeTools.find(
     (app) => app.id === activeAppByWorktree[selectedWorktree?.id ?? '']
@@ -417,7 +424,7 @@ function WorkspaceApp() {
 
   const activeAppId = activeApp?.id ?? null
 
-  const retainApp = useCallback((appId: string) => {
+  const retainApp = (appId: string) => {
     setRetainedAppIds((current) => {
       if (current.has(appId)) {
         return current
@@ -428,20 +435,46 @@ function WorkspaceApp() {
 
       return next
     })
-  }, [])
+  }
 
-  const revealTool = useCallback(
-    (app: BrowserApp | WebApp, preserveTerminalFocus: boolean) => {
-      retainApp(app.id)
-      setActiveAppByWorktree((current) => ({
-        ...current,
-        [app.worktreeId]: app.id
-      }))
-      setAppsPanelOpen(app.worktreeId, true)
-      setPreserveTerminalFocusAppId(preserveTerminalFocus ? app.id : null)
-    },
-    [retainApp, setAppsPanelOpen]
-  )
+  const canonicalSelectedApp = workspaceResolution?.canonical
+    ? selectedApp
+    : null
+
+  const [rememberedSelectedAppId, setRememberedSelectedAppId] = useState<
+    string | null
+  >(null)
+
+  if ((canonicalSelectedApp?.id ?? null) !== rememberedSelectedAppId) {
+    setRememberedSelectedAppId(canonicalSelectedApp?.id ?? null)
+
+    if (canonicalSelectedApp) {
+      const { id: appId, worktreeId } = canonicalSelectedApp
+
+      retainApp(appId)
+      setActiveAppByWorktree((current) =>
+        current[worktreeId] === appId
+          ? current
+          : { ...current, [worktreeId]: appId }
+      )
+      setAppsPanelOpenByWorktree((current) =>
+        current[worktreeId] ? current : { ...current, [worktreeId]: true }
+      )
+    }
+  }
+
+  const revealTool = (
+    app: BrowserApp | WebApp,
+    preserveTerminalFocus: boolean
+  ) => {
+    retainApp(app.id)
+    setActiveAppByWorktree((current) => ({
+      ...current,
+      [app.worktreeId]: app.id
+    }))
+    setAppsPanelOpen(app.worktreeId, true)
+    setPreserveTerminalFocusAppId(preserveTerminalFocus ? app.id : null)
+  }
 
   const [webAppReloadRevisions, setWebAppReloadRevisions] = useState<
     Record<string, number>
@@ -455,7 +488,7 @@ function WorkspaceApp() {
     () => new Set()
   )
 
-  const setWebAppDirty = useCallback((appId: string, dirty: boolean) => {
+  const setWebAppDirty = (appId: string, dirty: boolean) => {
     setDirtyWebAppIds((current) => {
       if (current.has(appId) === dirty) {
         return current
@@ -471,129 +504,61 @@ function WorkspaceApp() {
 
       return next
     })
-  }, [])
+  }
 
   const [browserAppFavicons, setBrowserAppFavicons] = useState<
     Record<string, string | null>
   >({})
 
-  const updateBrowserAppFavicon = useCallback(
-    (appId: string, faviconUrl: string | null) => {
-      setBrowserAppFavicons((current) =>
-        (current[appId] ?? null) === faviconUrl
-          ? current
-          : { ...current, [appId]: faviconUrl }
-      )
-    },
-    []
-  )
+  const updateBrowserAppFavicon = (
+    appId: string,
+    faviconUrl: string | null
+  ) => {
+    setBrowserAppFavicons((current) =>
+      (current[appId] ?? null) === faviconUrl
+        ? current
+        : { ...current, [appId]: faviconUrl }
+    )
+  }
 
   const [browserAppLoading, setBrowserAppLoading] = useState<
     Record<string, boolean>
   >({})
 
-  const updateBrowserAppLoading = useCallback(
-    (appId: string, loading: boolean) => {
-      setBrowserAppLoading((current) => {
-        if (Boolean(current[appId]) === loading) {
+  const updateBrowserAppLoading = (appId: string, loading: boolean) => {
+    setBrowserAppLoading((current) => {
+      if (Boolean(current[appId]) === loading) {
+        return current
+      }
+
+      const next = { ...current }
+
+      if (loading) {
+        next[appId] = true
+      } else {
+        delete next[appId]
+      }
+
+      return next
+    })
+  }
+
+  const setWebAppRuntimeTitle = (appId: string, title: string | null) => {
+    setWebAppRuntimeTitles((current) => {
+      if (title === null) {
+        if (current[appId] === undefined) {
           return current
         }
 
         const next = { ...current }
-
-        if (loading) {
-          next[appId] = true
-        } else {
-          delete next[appId]
-        }
+        delete next[appId]
 
         return next
-      })
-    },
-    []
-  )
-
-  const setWebAppRuntimeTitle = useCallback(
-    (appId: string, title: string | null) => {
-      setWebAppRuntimeTitles((current) => {
-        if (title === null) {
-          if (current[appId] === undefined) {
-            return current
-          }
-
-          const next = { ...current }
-          delete next[appId]
-
-          return next
-        }
-
-        return current[appId] === title
-          ? current
-          : { ...current, [appId]: title }
-      })
-    },
-    []
-  )
-
-  useEffect(() => {
-    const apps = projects.flatMap((project) =>
-      project.worktrees.flatMap((worktree) => worktree.workspaceItems)
-    )
-
-    const appIds = new Set(apps.map((app) => app.id))
-
-    const webAppIds = new Set(
-      apps.filter((app) => app.kind === 'web').map((app) => app.id)
-    )
-
-    setWebAppRuntimeTitles((current) => {
-      const removedIds = Object.keys(current).filter(
-        (appId) => !webAppIds.has(appId)
-      )
-
-      if (removedIds.length === 0) {
-        return current
       }
 
-      const next = { ...current }
-      removedIds.forEach((appId) => delete next[appId])
-
-      return next
+      return current[appId] === title ? current : { ...current, [appId]: title }
     })
-    setBrowserAppFavicons((current) => {
-      const removedIds = Object.keys(current).filter(
-        (appId) => !appIds.has(appId)
-      )
-
-      if (removedIds.length === 0) {
-        return current
-      }
-
-      const next = { ...current }
-      removedIds.forEach((appId) => delete next[appId])
-
-      return next
-    })
-    setBrowserAppLoading((current) => {
-      const removedIds = Object.keys(current).filter(
-        (appId) => !appIds.has(appId)
-      )
-
-      if (removedIds.length === 0) {
-        return current
-      }
-
-      const next = { ...current }
-      removedIds.forEach((appId) => delete next[appId])
-
-      return next
-    })
-    setDirtyWebAppIds((current) => {
-      const next = new Set([...current].filter((appId) => webAppIds.has(appId)))
-
-      return next.size === current.size ? current : next
-    })
-  }, [projects])
+  }
 
   const appDialogProject =
     dialog?.type === 'app'
@@ -625,8 +590,17 @@ function WorkspaceApp() {
     launcherDefinitionsQueryOptions(launcherDefinitionsContext)
   )
 
-  const availableLaunchers = launcherDefinitionsQuery.data?.definitions ?? []
-  const launcherDiagnostics = launcherDefinitionsQuery.data?.diagnostics ?? []
+  const { refetch: refetchLauncherDefinitions } = launcherDefinitionsQuery
+
+  const availableLaunchers = useMemo(
+    () => launcherDefinitionsQuery.data?.definitions ?? [],
+    [launcherDefinitionsQuery.data]
+  )
+
+  const launcherDiagnostics = useMemo(
+    () => launcherDefinitionsQuery.data?.diagnostics ?? [],
+    [launcherDefinitionsQuery.data]
+  )
 
   const webAppDefinitionsQuery = useQuery({
     queryKey: ['web-app-definitions', webAppDefinitionsWorktree?.id],
@@ -640,6 +614,11 @@ function WorkspaceApp() {
       ).definitions,
     enabled: Boolean(webAppDefinitionsWorktree)
   })
+
+  const webAppDefinitions = useMemo(
+    () => webAppDefinitionsQuery.data ?? [],
+    [webAppDefinitionsQuery.data]
+  )
 
   const createWebApp = useMutation({
     mutationFn: ({
@@ -748,6 +727,8 @@ function WorkspaceApp() {
     }
   })
 
+  const { mutate: mutateCreateWebApp } = createWebApp
+
   const createBrowserApp = useMutation({
     mutationFn: ({
       worktree,
@@ -817,6 +798,8 @@ function WorkspaceApp() {
     }
   })
 
+  const { mutate: mutateCreateBrowserApp } = createBrowserApp
+
   const closeApp = useMutation({
     mutationFn: ({
       app,
@@ -866,6 +849,8 @@ function WorkspaceApp() {
       })
       setWebAppRuntimeTitle(app.id, null)
       setWebAppDirty(app.id, false)
+      updateBrowserAppFavicon(app.id, null)
+      updateBrowserAppLoading(app.id, false)
       setPreserveTerminalFocusAppId((current) =>
         current === app.id ? null : current
       )
@@ -971,6 +956,7 @@ function WorkspaceApp() {
         errorDetails(error).code === 'BROWSER_BEFORE_UNLOAD'
       ) {
         browserTrace('app.remove.confirmation.required', correlationId, {
+          // oxlint-disable-next-line react/purity -- onError runs after the mutation settles, not during render.
           elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
           appId: app.id,
           reason: 'browser-before-unload'
@@ -984,6 +970,7 @@ function WorkspaceApp() {
       }
 
       browserTrace('app.remove.failed', correlationId, {
+        // oxlint-disable-next-line react/purity -- onError runs after the mutation settles, not during render.
         elapsedMs: Number((performance.now() - requestedAt).toFixed(3)),
         appId: app.id,
         appKind: app.kind
@@ -991,6 +978,8 @@ function WorkspaceApp() {
       notifyError(error, { operation: `close app “${app.title}”` })
     }
   })
+
+  const { mutate: mutateCloseApp } = closeApp
 
   const startAppClose = (
     app: BrowserApp | WebApp,
@@ -1005,7 +994,7 @@ function WorkspaceApp() {
       worktreeId: app.worktreeId
     })
     const request = { app, ...options, correlationId, requestedAt }
-    closeApp.mutate(trigger ? { ...request, trigger } : request)
+    mutateCloseApp(trigger ? { ...request, trigger } : request)
   }
 
   const requestCloseApp = (app: BrowserApp | WebApp, trigger?: HTMLElement) => {
@@ -1041,166 +1030,153 @@ function WorkspaceApp() {
     )
   }
 
-  const navigateAppOpenRequest = useCallback(
-    (request: ProductEventDataMap['app.open_requested']) => {
-      const webApp = request.app.kind === 'web'
+  const navigateAppOpenRequest = (
+    request: ProductEventDataMap['app.open_requested']
+  ) => {
+    const webApp = request.app.kind === 'web'
 
-      if (request.requestId) {
-        browserTrace(
-          webApp
-            ? 'web_app.open.event_received'
-            : 'browser.open.event_received',
-          request.requestId,
-          {
-            appId: request.appId
-          }
-        )
-      }
-
-      if (
-        !openRequestMatchesWorkspace(
-          request.sourceTerminalId,
-          request.sourceAppId,
-          selectedTerminalId,
-          activeAppId
-        )
-      ) {
-        return
-      }
-
-      if (request.requestId) {
-        if (webApp) {
-          registerWebAppOpen(request.appId, request.requestId)
-          traceWebAppOpen(request.appId, 'web_app.open.ui_requested')
-        } else {
-          registerBrowserOpen(request.appId, request.requestId)
-          traceBrowserOpen(request.appId, 'browser.open.ui_requested')
+    if (request.requestId) {
+      browserTrace(
+        webApp ? 'web_app.open.event_received' : 'browser.open.event_received',
+        request.requestId,
+        {
+          appId: request.appId
         }
-      }
-
-      revealTool(
-        request.app,
-        request.sourceTerminalId !== null &&
-          request.sourceTerminalId === selectedTerminalId
       )
-      setWebAppReloadRevisions((current) => ({
-        ...current,
-        [request.appId]: (current[request.appId] ?? 0) + 1
-      }))
-      queryClient.setQueryData<ProjectRecord[]>(
-        projectsQueryOptions.queryKey,
-        (current) =>
-          current?.map((project) => ({
-            ...project,
-            worktrees: project.worktrees.map((worktree) =>
-              worktree.id !== request.worktreeId
-                ? worktree
-                : {
-                    ...worktree,
-                    workspaceItems: worktree.workspaceItems.some(
-                      (app) => app.id === request.appId
-                    )
-                      ? worktree.workspaceItems.map((app) =>
-                          app.id === request.appId ? request.app : app
-                        )
-                      : [...worktree.workspaceItems, request.app]
-                  }
-            )
-          }))
+    }
+
+    if (
+      !openRequestMatchesWorkspace(
+        request.sourceTerminalId,
+        request.sourceAppId,
+        selectedTerminalId,
+        activeAppId
       )
+    ) {
+      return
+    }
 
-      const currentProjects =
-        queryClient.getQueryData<ProjectRecord[]>(
-          projectsQueryOptions.queryKey
-        ) ?? []
-
-      const target = targetForApp(currentProjects, request.app)
-
-      const navigation = target
-        ? navigateToWorkspace(target)
-        : queryClient
-            .invalidateQueries({
-              queryKey: projectsQueryOptions.queryKey
-            })
-            .then(async () => {
-              const freshProjects =
-                queryClient.getQueryData<ProjectRecord[]>(
-                  projectsQueryOptions.queryKey
-                ) ?? []
-
-              const freshTarget = targetForApp(freshProjects, request.app)
-
-              if (freshTarget) {
-                await navigateToWorkspace(freshTarget)
-              }
-            })
-
-      void navigation
-        .then(() => {
-          if (request.requestId) {
-            browserTrace(
-              webApp
-                ? 'web_app.open.workspace_navigated'
-                : 'browser.open.workspace_navigated',
-              request.requestId,
-              {
-                appId: request.appId
-              }
-            )
-          }
-        })
-        .catch((error) => {
-          notifyError(error, { operation: 'open app' })
-        })
-    },
-    [
-      activeAppId,
-      navigateToWorkspace,
-      queryClient,
-      revealTool,
-      selectedTerminalId
-    ]
-  )
-
-  const navigateWorkspaceOpenRequest = useCallback(
-    (request: ProductEventDataMap['workspace.open_requested']) => {
-      if (
-        !openRequestMatchesTerminal(
-          request.sourceTerminalId,
-          selectedTerminalId
-        )
-      ) {
-        return
+    if (request.requestId) {
+      if (webApp) {
+        registerWebAppOpen(request.appId, request.requestId)
+        traceWebAppOpen(request.appId, 'web_app.open.ui_requested')
+      } else {
+        registerBrowserOpen(request.appId, request.requestId)
+        traceBrowserOpen(request.appId, 'browser.open.ui_requested')
       }
+    }
 
-      void queryClient
-        .invalidateQueries({
-          queryKey: projectsQueryOptions.queryKey
-        })
-        .then(async () => {
-          const freshProjects =
-            queryClient.getQueryData<ProjectRecord[]>(
-              projectsQueryOptions.queryKey
-            ) ?? []
+    revealTool(
+      request.app,
+      request.sourceTerminalId !== null &&
+        request.sourceTerminalId === selectedTerminalId
+    )
+    setWebAppReloadRevisions((current) => ({
+      ...current,
+      [request.appId]: (current[request.appId] ?? 0) + 1
+    }))
+    queryClient.setQueryData<ProjectRecord[]>(
+      projectsQueryOptions.queryKey,
+      (current) =>
+        current?.map((project) => ({
+          ...project,
+          worktrees: project.worktrees.map((worktree) =>
+            worktree.id !== request.worktreeId
+              ? worktree
+              : {
+                  ...worktree,
+                  workspaceItems: worktree.workspaceItems.some(
+                    (app) => app.id === request.appId
+                  )
+                    ? worktree.workspaceItems.map((app) =>
+                        app.id === request.appId ? request.app : app
+                      )
+                    : [...worktree.workspaceItems, request.app]
+                }
+          )
+        }))
+    )
 
-          const worktree = freshProjects
-            .flatMap((project) => project.worktrees)
-            .find((candidate) => candidate.id === request.worktreeId)
+    const currentProjects =
+      queryClient.getQueryData<ProjectRecord[]>(
+        projectsQueryOptions.queryKey
+      ) ?? []
 
-          const target = worktree
-            ? targetForWorktree(freshProjects, worktree)
-            : null
+    const target = targetForApp(currentProjects, request.app)
 
-          if (target) {
-            await navigateToWorkspace(target)
-          }
-        })
-        .catch((error) => {
-          notifyError(error, { operation: 'open workspace' })
-        })
-    },
-    [navigateToWorkspace, queryClient, selectedTerminalId]
-  )
+    const navigation = target
+      ? navigateToWorkspace(target)
+      : queryClient
+          .invalidateQueries({
+            queryKey: projectsQueryOptions.queryKey
+          })
+          .then(async () => {
+            const freshProjects =
+              queryClient.getQueryData<ProjectRecord[]>(
+                projectsQueryOptions.queryKey
+              ) ?? []
+
+            const freshTarget = targetForApp(freshProjects, request.app)
+
+            if (freshTarget) {
+              await navigateToWorkspace(freshTarget)
+            }
+          })
+
+    void navigation
+      .then(() => {
+        if (request.requestId) {
+          browserTrace(
+            webApp
+              ? 'web_app.open.workspace_navigated'
+              : 'browser.open.workspace_navigated',
+            request.requestId,
+            {
+              appId: request.appId
+            }
+          )
+        }
+      })
+      .catch((error) => {
+        notifyError(error, { operation: 'open app' })
+      })
+  }
+
+  const navigateWorkspaceOpenRequest = (
+    request: ProductEventDataMap['workspace.open_requested']
+  ) => {
+    if (
+      !openRequestMatchesTerminal(request.sourceTerminalId, selectedTerminalId)
+    ) {
+      return
+    }
+
+    void queryClient
+      .invalidateQueries({
+        queryKey: projectsQueryOptions.queryKey
+      })
+      .then(async () => {
+        const freshProjects =
+          queryClient.getQueryData<ProjectRecord[]>(
+            projectsQueryOptions.queryKey
+          ) ?? []
+
+        const worktree = freshProjects
+          .flatMap((project) => project.worktrees)
+          .find((candidate) => candidate.id === request.worktreeId)
+
+        const target = worktree
+          ? targetForWorktree(freshProjects, worktree)
+          : null
+
+        if (target) {
+          await navigateToWorkspace(target)
+        }
+      })
+      .catch((error) => {
+        notifyError(error, { operation: 'open workspace' })
+      })
+  }
 
   const presenceFocusedAppId =
     dialog !== null
@@ -1227,31 +1203,29 @@ function WorkspaceApp() {
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
 
-  const openDialog = (
-    nextDialog: Exclude<AppDialog, null>,
-    trigger?: HTMLElement
-  ) => {
-    dialogTriggerRef.current =
-      trigger ??
-      (document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null)
-    setDialog(nextDialog)
-  }
+  const openDialog = useCallback(
+    (nextDialog: Exclude<AppDialog, null>, trigger?: HTMLElement) => {
+      dialogTriggerRef.current =
+        trigger ??
+        (document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null)
+      setDialog(nextDialog)
+    },
+    [setDialog]
+  )
+
+  const canonicalSelectedAppWorktreeId =
+    canonicalSelectedApp?.worktreeId ?? null
 
   useEffect(() => {
-    if (!workspaceResolution?.canonical || !selectedApp) {
-      return
+    if (canonicalSelectedAppWorktreeId) {
+      localStorage.setItem(
+        `${APPS_PANEL_OPEN_STORAGE_PREFIX}${canonicalSelectedAppWorktreeId}`,
+        'true'
+      )
     }
-
-    retainApp(selectedApp.id)
-    setActiveAppByWorktree((current) =>
-      current[selectedApp.worktreeId] === selectedApp.id
-        ? current
-        : { ...current, [selectedApp.worktreeId]: selectedApp.id }
-    )
-    setAppsPanelOpen(selectedApp.worktreeId, true)
-  }, [retainApp, selectedApp, setAppsPanelOpen, workspaceResolution?.canonical])
+  }, [canonicalSelectedAppWorktreeId])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
@@ -1287,14 +1261,16 @@ function WorkspaceApp() {
     }
   }, [workspaceResolution?.canonical, workspaceResolution?.target.pathname])
 
+  const syncDegraded =
+    projectsQuery.data !== undefined &&
+    (eventsDisconnected || projectsQuery.isRefetchError)
+
+  if (!syncDegraded && showSyncDegraded) {
+    setShowSyncDegraded(false)
+  }
+
   useEffect(() => {
-    const degraded =
-      projectsQuery.data !== undefined &&
-      (eventsDisconnected || projectsQuery.isRefetchError)
-
-    if (!degraded) {
-      setShowSyncDegraded(false)
-
+    if (!syncDegraded) {
       return
     }
 
@@ -1304,65 +1280,49 @@ function WorkspaceApp() {
     )
 
     return () => window.clearTimeout(timer)
-  }, [eventsDisconnected, projectsQuery.data, projectsQuery.isRefetchError])
+  }, [syncDegraded])
 
-  const retainedApps = useMemo(
-    () =>
-      projects
-        .flatMap((project) => project.worktrees)
-        .flatMap((worktree) => worktree.workspaceItems)
-        .filter(
-          (app): app is BrowserApp | WebApp =>
-            app.kind !== 'terminal' &&
-            (retainedAppIds.has(app.id) || app.id === activeAppId)
-        ),
-    [activeAppId, projects, retainedAppIds]
-  )
+  const retainedApps = projects
+    .flatMap((project) => project.worktrees)
+    .flatMap((worktree) => worktree.workspaceItems)
+    .filter(
+      (app): app is BrowserApp | WebApp =>
+        app.kind !== 'terminal' &&
+        (retainedAppIds.has(app.id) || app.id === activeAppId)
+    )
 
-  const navigateToTerminal = useCallback(
-    (terminal: TerminalRecord) => {
-      const target = targetForTerminal(projects, terminal)
+  const navigateToTerminal = (terminal: TerminalRecord) => {
+    const target = targetForTerminal(projects, terminal)
 
-      if (target) {
-        void navigateToWorkspace(target)
-      }
+    if (target) {
+      void navigateToWorkspace(target)
+    }
 
-      closeDrawerAfterNavigation()
-    },
-    [closeDrawerAfterNavigation, navigateToWorkspace, projects]
-  )
+    closeDrawerAfterNavigation()
+  }
 
   const autoStartedWorktreeIdRef = useRef<string | null>(null)
   const [, requestAutoStart] = useReducer((revision: number) => revision + 1, 0)
 
-  const selectWorktree = useCallback(
-    (worktree: WorktreeRecord) => {
-      setFullViewWorktreeId(null)
-      focusSurface('terminal')
-      const target = targetForWorktree(projects, worktree, selectedTerminalId)
+  const selectWorktree = (worktree: WorktreeRecord) => {
+    setFullViewWorktreeId(null)
+    focusSurface('terminal')
+    const target = targetForWorktree(projects, worktree, selectedTerminalId)
 
-      if (target) {
-        void navigateToWorkspace(target)
-      }
+    if (target) {
+      void navigateToWorkspace(target)
+    }
 
-      if (
-        worktree.terminals.length === 0 &&
-        autoStartedWorktreeIdRef.current === worktree.id
-      ) {
-        autoStartedWorktreeIdRef.current = null
-        requestAutoStart()
-      }
+    if (
+      worktree.terminals.length === 0 &&
+      autoStartedWorktreeIdRef.current === worktree.id
+    ) {
+      autoStartedWorktreeIdRef.current = null
+      requestAutoStart()
+    }
 
-      closeDrawerAfterNavigation()
-    },
-    [
-      closeDrawerAfterNavigation,
-      focusSurface,
-      navigateToWorkspace,
-      projects,
-      selectedTerminalId
-    ]
-  )
+    closeDrawerAfterNavigation()
+  }
 
   const rememberedTargetForProject = (project: ProjectRecord) =>
     targetForProject(
@@ -1376,8 +1336,7 @@ function WorkspaceApp() {
     setFullViewWorktreeId(null)
     focusSurface('terminal')
     const target = rememberedTargetForProject(project)
-    projectSwitcher.dismissedIntoTerminalRef.current =
-      !isMobile && target.kind === 'terminal'
+    dismissedIntoTerminalRef.current = !isMobile && target.kind === 'terminal'
     void navigateToWorkspace(target, false, !isMobile)
     projectSwitcher.setOpen(false)
     closeDrawerAfterNavigation()
@@ -1400,8 +1359,7 @@ function WorkspaceApp() {
   const projectOpenedFromSwitcher = (project: ProjectRecord) => {
     focusSurface('terminal')
     const target = rememberedTargetForProject(project)
-    projectSwitcher.dismissedIntoTerminalRef.current =
-      !isMobile && target.kind === 'terminal'
+    dismissedIntoTerminalRef.current = !isMobile && target.kind === 'terminal'
 
     return projectOpened(project, !isMobile)
   }
@@ -1475,87 +1433,70 @@ function WorkspaceApp() {
     )
   }
 
-  const selectTerminal = useCallback(
-    (terminal: TerminalRecord) => {
-      setFullViewWorktreeId(null)
-      focusSurface('terminal')
-      setDesktopNotificationsOpen(false)
-      setMobileNotificationsOpen(false)
-      navigateToTerminal(terminal)
-    },
-    [focusSurface, navigateToTerminal]
-  )
+  const selectTerminal = (terminal: TerminalRecord) => {
+    setFullViewWorktreeId(null)
+    focusSurface('terminal')
+    setDesktopNotificationsOpen(false)
+    setMobileNotificationsOpen(false)
+    navigateToTerminal(terminal)
+  }
 
-  const selectApp = useCallback(
-    (app: BrowserApp | WebApp) => {
-      focusSurface('tool')
-      revealTool(app, false)
+  const selectApp = (app: BrowserApp | WebApp) => {
+    focusSurface('tool')
+    revealTool(app, false)
 
-      const target = targetForApp(projects, app)
+    const target = targetForApp(projects, app)
 
-      if (target) {
-        void navigateToWorkspace(target)
-      }
+    if (target) {
+      void navigateToWorkspace(target)
+    }
 
-      closeDrawerAfterNavigation()
-    },
-    [
-      closeDrawerAfterNavigation,
-      focusSurface,
-      navigateToWorkspace,
-      projects,
-      revealTool
-    ]
-  )
+    closeDrawerAfterNavigation()
+  }
 
-  const selectWorkspaceByIndex = useCallback(
-    (index: number) => {
-      if (workspaceActionsBlocked || !selectedWorktree) {
-        return false
-      }
-
-      const terminal = selectedWorktree.terminals[index]
-
-      if (terminal) {
-        selectTerminal(terminal)
-
-        return true
-      }
-
+  const selectWorkspaceByIndex = (index: number) => {
+    if (
+      workspaceActionsBlocked ||
+      projectSwitcher.openRef.current ||
+      !selectedWorktree
+    ) {
       return false
-    },
-    [selectedWorktree, selectTerminal, workspaceActionsBlocked]
-  )
+    }
 
-  const selectFocusedSurfaceByIndex = useCallback(
-    (index: number) => {
-      if (workspaceActionsBlocked || !selectedWorktree) {
+    const terminal = selectedWorktree.terminals[index]
+
+    if (terminal) {
+      selectTerminal(terminal)
+
+      return true
+    }
+
+    return false
+  }
+
+  const selectFocusedSurfaceByIndex = (index: number) => {
+    if (
+      workspaceActionsBlocked ||
+      projectSwitcher.openRef.current ||
+      !selectedWorktree
+    ) {
+      return false
+    }
+
+    if (appsPanelOpen && focusedSurfaceRef.current === 'tool') {
+      const app = selectedWorktreeTools[index]
+
+      if (!app) {
         return false
       }
 
-      if (appsPanelOpen && focusedSurfaceRef.current === 'tool') {
-        const app = selectedWorktreeTools[index]
+      selectApp(app)
 
-        if (!app) {
-          return false
-        }
+      return true
+    }
 
-        selectApp(app)
-
-        return true
-      }
-
-      return selectWorkspaceByIndex(index)
-    },
-    [
-      selectedWorktree,
-      selectApp,
-      selectedWorktreeTools,
-      selectWorkspaceByIndex,
-      appsPanelOpen,
-      workspaceActionsBlocked
-    ]
-  )
+    return selectWorkspaceByIndex(index)
+  }
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -1621,7 +1562,7 @@ function WorkspaceApp() {
     )
   })
 
-  const toggleAppsPanel = useCallback(() => {
+  const toggleAppsPanel = () => {
     if (!selectedWorktree) {
       return
     }
@@ -1644,29 +1585,24 @@ function WorkspaceApp() {
     }
 
     setAppsPanelOpen(selectedWorktree.id, true)
-  }, [
-    activeApp,
-    focusSurface,
-    retainApp,
-    selectedWorktree,
-    selectedWorktreeTools,
-    setAppsPanelOpen,
-    appsPanelOpen
-  ])
+  }
 
-  const focusToolSurface = useCallback(() => {
+  const focusToolSurface = () => {
     focusSurface('tool')
     setPreserveTerminalFocusAppId(null)
-  }, [focusSurface])
+  }
 
   useEffect(() => {
     if (desktopBridge?.onCommand) {
       return
     }
 
-    const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+    const usesMacKeyboard = isApplePlatform()
 
     const keydown = (event: KeyboardEvent) => {
+      const actionsBlocked =
+        workspaceActionsBlocked || projectSwitcher.openRef.current
+
       const modifierPressed = usesMacKeyboard
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
@@ -1681,7 +1617,7 @@ function WorkspaceApp() {
               : null
 
       if (zoom && modifierPressed && !event.altKey && !event.isComposing) {
-        if (!workspaceActionsBlocked && terminalSessions.zoomFocused(zoom)) {
+        if (!actionsBlocked && terminalSessions.zoomFocused(zoom)) {
           event.preventDefault()
           event.stopPropagation()
         }
@@ -1698,7 +1634,7 @@ function WorkspaceApp() {
           event.preventDefault()
           event.stopPropagation()
 
-          if (!event.repeat && !workspaceActionsBlocked && selectedWorktree) {
+          if (!event.repeat && !actionsBlocked && selectedWorktree) {
             toggleAppsPanel()
           }
 
@@ -1711,7 +1647,7 @@ function WorkspaceApp() {
 
           if (
             !event.repeat &&
-            !workspaceActionsBlocked &&
+            !actionsBlocked &&
             selectedProject &&
             selectedWorktree
           ) {
@@ -1727,7 +1663,7 @@ function WorkspaceApp() {
 
         if (
           event.key.toLowerCase() !== 't' ||
-          workspaceActionsBlocked ||
+          actionsBlocked ||
           !appsPanelOpen ||
           focusedSurfaceRef.current !== 'tool' ||
           !selectedWorktree
@@ -1744,7 +1680,7 @@ function WorkspaceApp() {
           !createBrowserApp.isPending
         ) {
           dismissToolPicker()
-          createBrowserApp.mutate({ worktree: selectedWorktree })
+          mutateCreateBrowserApp({ worktree: selectedWorktree })
         }
 
         return
@@ -1764,7 +1700,7 @@ function WorkspaceApp() {
       if (direction) {
         if (
           event.repeat ||
-          workspaceActionsBlocked ||
+          actionsBlocked ||
           focusedSurfaceRef.current === 'tool' ||
           !selectedTerminal
         ) {
@@ -1775,7 +1711,7 @@ function WorkspaceApp() {
       } else if (
         !usesMacKeyboard &&
         event.key.toLocaleLowerCase() === 'b' &&
-        !workspaceActionsBlocked &&
+        !actionsBlocked &&
         selectedWorktree
       ) {
         toggleAppsPanel()
@@ -1792,7 +1728,7 @@ function WorkspaceApp() {
     return () => document.removeEventListener('keydown', keydown, true)
   }, [
     createBrowserApp.isPending,
-    createBrowserApp.mutate,
+    mutateCreateBrowserApp,
     createSplitTerminal,
     desktopBridge,
     dismissToolPicker,
@@ -1801,7 +1737,8 @@ function WorkspaceApp() {
     toggleAppsPanel,
     toolLaunchDisabled,
     appsPanelOpen,
-    workspaceActionsBlocked
+    workspaceActionsBlocked,
+    projectSwitcher
   ])
 
   useEffect(() => {
@@ -1810,12 +1747,15 @@ function WorkspaceApp() {
     }
 
     return desktopBridge.onCommand((command) => {
+      const actionsBlocked =
+        workspaceActionsBlocked || projectSwitcher.openRef.current
+
       if (
         command === 'zoom-in' ||
         command === 'zoom-out' ||
         command === 'zoom-reset'
       ) {
-        if (workspaceActionsBlocked || !terminalSessions.zoomFocused(command)) {
+        if (actionsBlocked || !terminalSessions.zoomFocused(command)) {
           desktopBridge.zoomPage?.(command)
         }
 
@@ -1830,7 +1770,7 @@ function WorkspaceApp() {
         return
       }
 
-      if (workspaceActionsBlocked) {
+      if (actionsBlocked) {
         return
       }
 
@@ -1891,7 +1831,7 @@ function WorkspaceApp() {
         if (toolSurfaceHasFocus) {
           if (!toolLaunchDisabled && !createBrowserApp.isPending) {
             dismissToolPicker()
-            createBrowserApp.mutate({ worktree: selectedWorktree })
+            mutateCreateBrowserApp({ worktree: selectedWorktree })
           }
         } else {
           const correlationId = newBrowserCorrelationId()
@@ -1928,14 +1868,15 @@ function WorkspaceApp() {
     selectedTerminal,
     selectedWorktree,
     createBrowserApp.isPending,
-    createBrowserApp.mutate,
+    mutateCreateBrowserApp,
     dismissToolPicker,
     selectFocusedSurfaceByIndex,
     selectWorktree,
     toggleAppsPanel,
     toolLaunchDisabled,
     appsPanelOpen,
-    workspaceActionsBlocked
+    workspaceActionsBlocked,
+    projectSwitcher
   ])
 
   return (
@@ -2004,7 +1945,7 @@ function WorkspaceApp() {
           selectedTerminalId={selectedTerminalId}
           pendingWorktrees={pendingWorktrees}
           pendingRemovals={pendingRemovals}
-          onRetryProjects={() => void projectsQuery.refetch()}
+          onRetryProjects={() => void refetchProjects()}
           onSelectTerminal={selectTerminal}
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
           onReorderTerminals={reorderTerminals}
@@ -2034,7 +1975,7 @@ function WorkspaceApp() {
               return
             }
 
-            createBrowserApp.mutate({ worktree, url })
+            mutateCreateBrowserApp({ worktree, url })
           }}
         />
       </WorkspaceSidebar>
@@ -2113,7 +2054,7 @@ function WorkspaceApp() {
                 webAppRuntimeTitles={webAppRuntimeTitles}
                 browserAppLoading={browserAppLoading}
                 browserAppFavicons={browserAppFavicons}
-                definitions={webAppDefinitionsQuery.data ?? []}
+                definitions={webAppDefinitions}
                 definitionsLoading={
                   appsPanelOpen && webAppDefinitionsQuery.isPending
                 }
@@ -2127,10 +2068,10 @@ function WorkspaceApp() {
                 onCloseApp={requestCloseApp}
                 onReorderApps={reorderTools}
                 onCreateBrowserApp={() =>
-                  createBrowserApp.mutate({ worktree: selectedWorktree })
+                  mutateCreateBrowserApp({ worktree: selectedWorktree })
                 }
                 onOpenWebApp={(definition) =>
-                  createWebApp.mutate({
+                  mutateCreateWebApp({
                     worktree: selectedWorktree,
                     definition,
                     input: null
@@ -2226,30 +2167,30 @@ function WorkspaceApp() {
       <OpenProjectDialog
         open={dialog?.type === 'project'}
         onOpenChange={(open) => !open && setDialog(null)}
-        restoreFocusTo={dialogTriggerRef.current}
+        restoreFocusTo={dialogTriggerRef}
         onOpened={projectOpened}
       />
       <CreateWorktreeDialog
         project={dialog?.type === 'worktree' ? dialog.project : null}
         onOpenChange={(open) => !open && setDialog(null)}
-        restoreFocusTo={dialogTriggerRef.current}
+        restoreFocusTo={dialogTriggerRef}
         launchers={availableLaunchers}
         launcherDiagnostics={launcherDiagnostics}
         launchersLoading={launcherDefinitionsQuery.isPending}
         launchersError={launcherDefinitionsQuery.isError}
-        onRetryLaunchers={() => void launcherDefinitionsQuery.refetch()}
+        onRetryLaunchers={() => void refetchLauncherDefinitions()}
         onSubmit={submitWorktreeCreation}
       />
       <NewAppDialog
         open={dialog?.type === 'app'}
         onOpenChange={(open) => !open && setDialog(null)}
-        restoreFocusTo={dialogTriggerRef.current}
+        restoreFocusTo={dialogTriggerRef}
         worktreeName={appDialogWorktree?.name ?? null}
         launchers={availableLaunchers}
         launcherDiagnostics={launcherDiagnostics}
         launchersLoading={launcherDefinitionsQuery.isPending}
         launchersError={launcherDefinitionsQuery.isError}
-        webAppDefinitions={webAppDefinitionsQuery.data ?? []}
+        webAppDefinitions={webAppDefinitions}
         webAppDefinitionsLoading={
           Boolean(appDialogWorktree) && webAppDefinitionsQuery.isPending
         }
@@ -2273,7 +2214,7 @@ function WorkspaceApp() {
         }}
         onCreateBrowserApp={() => {
           if (appDialogWorktree) {
-            createBrowserApp.mutate({ worktree: appDialogWorktree })
+            mutateCreateBrowserApp({ worktree: appDialogWorktree })
           }
         }}
         onCreateWebApp={(definition) => {
@@ -2281,7 +2222,7 @@ function WorkspaceApp() {
             return
           }
 
-          createWebApp.mutate({
+          mutateCreateWebApp({
             worktree: appDialogWorktree,
             definition,
             input: null
@@ -2292,18 +2233,18 @@ function WorkspaceApp() {
       <LaunchersDialog
         open={dialog?.type === 'launchers'}
         onOpenChange={(open) => !open && setDialog(null)}
-        restoreFocusTo={dialogTriggerRef.current}
+        restoreFocusTo={dialogTriggerRef}
         launchers={launchers}
         loading={launchersQuery.isPending}
         loadError={launchersQuery.isError}
-        onRetry={() => void launchersQuery.refetch()}
+        onRetry={() => void refetchLaunchers()}
       />
       <CloseAppDialog
         app={dialog?.type === 'close-app' ? dialog.app : null}
         reason={dialog?.type === 'close-app' ? dialog.reason : null}
         busy={closeApp.isPending}
         onOpenChange={(open) => !open && setDialog(null)}
-        restoreFocusTo={dialogTriggerRef.current}
+        restoreFocusTo={dialogTriggerRef}
         onConfirm={(app) => {
           startAppClose(
             app,
@@ -2323,7 +2264,7 @@ function WorkspaceApp() {
           pendingRemovals[dialog.worktree.id] !== undefined
         }
         onOpenChange={(open) => !open && setDialog(null)}
-        restoreFocusTo={dialogTriggerRef.current}
+        restoreFocusTo={dialogTriggerRef}
         onConfirm={confirmRemoval}
         onSkipCleanup={removeWithoutCleanup}
         onRetry={(worktree) => void retryRemoval(worktree)}

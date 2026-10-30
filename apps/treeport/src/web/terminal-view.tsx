@@ -111,7 +111,11 @@ export function TerminalView({
   const [pasteUploading, setPasteUploading] = useState(false)
   const onStatusChangeRef = useRef(onStatusChange)
   const readyTraceTerminalRef = useRef<string | null>(null)
-  onStatusChangeRef.current = onStatusChange
+
+  useLayoutEffect(() => {
+    onStatusChangeRef.current = onStatusChange
+  })
+
   const isMobile = useIsMobile()
   const unavailable = terminal?.status === 'unavailable'
   const [retrying, setRetrying] = useState(false)
@@ -153,8 +157,6 @@ export function TerminalView({
 
   useLayoutEffect(() => {
     if (!terminal || unavailable) {
-      setSession(null)
-
       return
     }
 
@@ -167,6 +169,7 @@ export function TerminalView({
     }
 
     const next = terminalSessions.acquire(terminal.id)
+    // oxlint-disable-next-line react/set-state-in-effect -- acquire is ref-counted and evicts sessions, so it cannot run during render.
     setSession(next)
 
     return () => terminalSessions.release(terminal.id)
@@ -553,7 +556,7 @@ export function TerminalView({
                 <DialogContent
                   className="max-w-sm gap-3 p-4"
                   mobilePresentation="dialog"
-                  restoreFocusTo={pasteTriggerRef.current}
+                  restoreFocusTo={pasteTriggerRef}
                 >
                   <DialogHeader>
                     <DialogTitle className="text-lg sm:text-lg">

@@ -243,6 +243,25 @@ export default defineConfig({
       }
     },
     {
+      files: ['**/*.tsx', 'apps/treeport/src/web/**/*.ts'],
+      plugins: ['react'],
+      rules: {
+        'react/rules-of-hooks': 'error',
+        'react/error-boundaries': 'error',
+        'react/globals': 'error',
+        'react/immutability': 'error',
+        'react/incompatible-library': 'error',
+        'react/preserve-manual-memoization': 'error',
+        'react/purity': 'error',
+        'react/refs': 'error',
+        'react/set-state-in-effect': 'error',
+        'react/set-state-in-render': 'error',
+        'react/static-components': 'error',
+        'react/use-memo': 'error',
+        'react/void-use-memo': 'error'
+      }
+    },
+    {
       files: [
         'apps/treeport/src/web/**/*.ts',
         'apps/treeport/src/web/**/*.tsx'

@@ -27,6 +27,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -353,7 +354,11 @@ function ChangedFileTree({
 
   // EXTERNAL: useFileTree captures options once; callbacks must read the current data.
   const current = useRef({ tree, onSelect })
-  current.current = { tree, onSelect }
+
+  useLayoutEffect(() => {
+    current.current = { tree, onSelect }
+  })
+
   const previousTree = useRef(tree)
 
   const { model } = useFileTree({
@@ -657,7 +662,6 @@ function ImagePreview({
 function ReviewApp() {
   const [loaded, setLoaded] = useState<LoadedReview | null>(null)
   const loadedRef = useRef(loaded)
-  loadedRef.current = loaded
 
   const loadedDiff = useRef<{
     uncommitted: GitDiff
@@ -669,16 +673,20 @@ function ReviewApp() {
   const [error, setError] = useState<string | null>(null)
   const [comments, setComments] = useState<ReviewComment[]>([])
   const commentsRef = useRef(comments)
-  commentsRef.current = comments
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set())
   const viewedFilesRef = useRef(viewedFiles)
-  viewedFilesRef.current = viewedFiles
   const [imageSources, setImageSources] = useState<Set<string>>(new Set())
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const collapsedFilesRef = useRef(collapsedFiles)
-  collapsedFilesRef.current = collapsedFiles
   const fileStateLoaded = useRef(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
+
+  useLayoutEffect(() => {
+    loadedRef.current = loaded
+    commentsRef.current = comments
+    viewedFilesRef.current = viewedFiles
+    collapsedFilesRef.current = collapsedFiles
+  })
 
   const [selectedLines, setSelectedLines] = useState<{
     file: string
@@ -1368,24 +1376,48 @@ function ReviewApp() {
     [createMatchRange, findMatches, setCollapsed, updateFindHighlights]
   )
 
-  useEffect(() => {
+  const [revealedFindMatches, setRevealedFindMatches] = useState(findMatches)
+
+  if (revealedFindMatches !== findMatches) {
+    setRevealedFindMatches(findMatches)
     setActiveFindMatch(findMatches.length ? 0 : -1)
 
-    if (findMatches.length) {
-      const match = findMatches[0]!
-      setImageSources((current) => new Set(current).add(match.file))
-      setCollapsed(match.file, false)
-      setSelectedFile(match.file)
-      requestAnimationFrame(() => {
-        const range = createMatchRange(match)
-        const line = range?.startContainer.parentElement?.closest('[data-line]')
+    const match = findMatches[0]
 
-        if (line instanceof HTMLElement) {
-          line.scrollIntoView({ block: 'center' })
+    if (match) {
+      setImageSources((current) => new Set(current).add(match.file))
+      setCollapsedFiles((current) => {
+        if (!current.has(match.file)) {
+          return current
         }
+
+        const next = new Set(current)
+        next.delete(match.file)
+
+        return next
       })
+      setSelectedFile(match.file)
     }
-  }, [createMatchRange, findMatches, setCollapsed])
+  }
+
+  useEffect(() => {
+    const match = findMatches[0]
+
+    if (!match) {
+      return
+    }
+
+    const file = loadedRef.current?.files.find((item) => item.id === match.file)
+    void loadFile(match.file, file?.scope === 'uncommitted')
+    requestAnimationFrame(() => {
+      const range = createMatchRange(match)
+      const line = range?.startContainer.parentElement?.closest('[data-line]')
+
+      if (line instanceof HTMLElement) {
+        line.scrollIntoView({ block: 'center' })
+      }
+    })
+  }, [createMatchRange, findMatches, loadFile])
 
   const openFind = useCallback(() => {
     if (!findOpen) {

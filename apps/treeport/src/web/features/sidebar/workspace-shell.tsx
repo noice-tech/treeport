@@ -1,6 +1,8 @@
 import {
   createContext,
+  useCallback,
   useContext,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -21,7 +23,7 @@ const DEFAULT_SIDEBAR_WIDTH = 272
 const SIDEBAR_WIDTH_STORAGE_KEY = 'treeport-sidebar-width'
 
 interface ProjectSwitcherContextValue {
-  open: boolean
+  openRef: RefObject<boolean>
   setOpen: (open: boolean) => void
   triggerRef: RefObject<HTMLButtonElement | null>
   dismissedIntoTerminalRef: RefObject<boolean>
@@ -29,6 +31,8 @@ interface ProjectSwitcherContextValue {
 
 const ProjectSwitcherContext =
   createContext<ProjectSwitcherContextValue | null>(null)
+
+const ProjectSwitcherOpenContext = createContext(false)
 
 interface SidebarResizeContextValue {
   width: number
@@ -55,10 +59,30 @@ export function useProjectSwitcher() {
   return context
 }
 
+export function useProjectSwitcherOpen() {
+  return useContext(ProjectSwitcherOpenContext)
+}
+
 export function WorkspaceShell({ children }: { children: ReactNode }) {
-  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
+  const [projectSwitcherOpen, setProjectSwitcherOpenState] = useState(false)
+  const projectSwitcherOpenRef = useRef(false)
   const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null)
   const projectSwitcherDismissedIntoTerminalRef = useRef(false)
+
+  const setProjectSwitcherOpen = useCallback((open: boolean) => {
+    projectSwitcherOpenRef.current = open
+    setProjectSwitcherOpenState(open)
+  }, [])
+
+  const projectSwitcher = useMemo(
+    () => ({
+      openRef: projectSwitcherOpenRef,
+      setOpen: setProjectSwitcherOpen,
+      triggerRef: projectSwitcherTriggerRef,
+      dismissedIntoTerminalRef: projectSwitcherDismissedIntoTerminalRef
+    }),
+    [setProjectSwitcherOpen]
+  )
 
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const savedWidth = Number.parseInt(
@@ -80,35 +104,30 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ProjectSwitcherContext.Provider
-      value={{
-        open: projectSwitcherOpen,
-        setOpen: setProjectSwitcherOpen,
-        triggerRef: projectSwitcherTriggerRef,
-        dismissedIntoTerminalRef: projectSwitcherDismissedIntoTerminalRef
-      }}
-    >
-      <SidebarResizeContext.Provider
-        value={{
-          width: sidebarWidth,
-          resizing: resizingSidebar,
-          setWidth: setAndSaveSidebarWidth,
-          setResizing: setResizingSidebar
-        }}
-      >
-        <SidebarProvider
-          className={cn(
-            'app-frame isolate grid min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-900 max-[701px]:grid-cols-1 max-[701px]:grid-rows-[2.5rem_minmax(0,1fr)] max-[701px]:bg-zinc-950',
-            resizingSidebar && 'select-none'
-          )}
-          style={{
-            '--sidebar-width': `${sidebarWidth}px`,
-            '--sidebar-width-mobile': 'min(88vw, 18rem)'
+    <ProjectSwitcherContext.Provider value={projectSwitcher}>
+      <ProjectSwitcherOpenContext.Provider value={projectSwitcherOpen}>
+        <SidebarResizeContext.Provider
+          value={{
+            width: sidebarWidth,
+            resizing: resizingSidebar,
+            setWidth: setAndSaveSidebarWidth,
+            setResizing: setResizingSidebar
           }}
         >
-          {children}
-        </SidebarProvider>
-      </SidebarResizeContext.Provider>
+          <SidebarProvider
+            className={cn(
+              'app-frame isolate grid min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-900 max-[701px]:grid-cols-1 max-[701px]:grid-rows-[2.5rem_minmax(0,1fr)] max-[701px]:bg-zinc-950',
+              resizingSidebar && 'select-none'
+            )}
+            style={{
+              '--sidebar-width': `${sidebarWidth}px`,
+              '--sidebar-width-mobile': 'min(88vw, 18rem)'
+            }}
+          >
+            {children}
+          </SidebarProvider>
+        </SidebarResizeContext.Provider>
+      </ProjectSwitcherOpenContext.Provider>
     </ProjectSwitcherContext.Provider>
   )
 }
@@ -122,6 +141,7 @@ export function WorkspaceMain({
 }) {
   const { isMobile, openMobile } = useSidebar()
   const projectSwitcher = useProjectSwitcher()
+  const { dismissedIntoTerminalRef } = projectSwitcher
 
   return (
     <SidebarInset asChild>
@@ -130,8 +150,8 @@ export function WorkspaceMain({
         inert={isMobile && openMobile ? true : undefined}
         aria-hidden={isMobile && openMobile ? true : undefined}
         onPointerDownCapture={() => {
-          if (projectSwitcher.open) {
-            projectSwitcher.dismissedIntoTerminalRef.current = true
+          if (projectSwitcher.openRef.current) {
+            dismissedIntoTerminalRef.current = true
             projectSwitcher.setOpen(false)
           }
         }}

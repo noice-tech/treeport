@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -34,7 +34,7 @@ import {
   registerTerminalCorrelation
 } from '../../agent-tracing'
 import { useWorkspaceSurfaceFocus } from '../apps/workspace-surface-focus-context'
-import { useProjectSwitcher } from '../sidebar/workspace-shell'
+import { useProjectSwitcherOpen } from '../sidebar/workspace-shell'
 
 export interface CreateTerminalInput {
   name: string
@@ -74,7 +74,11 @@ export function useTerminalWorkflows({
   const closeRequestTailRef = useRef(Promise.resolve())
   const nextCreateSequenceRef = useRef(0)
   const locationPathRef = useRef(location.pathname)
-  locationPathRef.current = location.pathname
+
+  useLayoutEffect(() => {
+    locationPathRef.current = location.pathname
+  })
+
   const selectedTerminalId = selectedTerminal?.id ?? null
 
   const createTerminal = useMutation({
@@ -236,6 +240,8 @@ export function useTerminalWorkflows({
     }
   })
 
+  const { mutate: mutateCreateTerminal } = createTerminal
+
   const closeTerminal = useMutation({
     mutationFn: ({
       terminal,
@@ -309,6 +315,8 @@ export function useTerminalWorkflows({
       }
     }
   })
+
+  const { mutate: mutateCloseTerminal } = closeTerminal
 
   const createTerminalInWorktree = (
     project: ProjectRecord,
@@ -384,7 +392,7 @@ export function useTerminalWorkflows({
       mutation.initialSize = initialSize
     }
 
-    createTerminal.mutate(mutation)
+    mutateCreateTerminal(mutation)
   }
 
   const requestCloseTerminal = (
@@ -481,7 +489,7 @@ export function useTerminalWorkflows({
     browserTrace('terminal.remove.cache.updated', correlationId, {
       terminalId: terminal.id
     })
-    closeTerminal.mutate({ terminal, index, correlationId, queuedAt })
+    mutateCloseTerminal({ terminal, index, correlationId, queuedAt })
   }
 
   return {
@@ -506,7 +514,7 @@ export function TerminalWorkspace({
   const queryClient = useQueryClient()
   const { focusedSurface } = useWorkspaceSurfaceFocus()
   const { isMobile, openMobile: drawerOpen } = useSidebar()
-  const { open: projectSwitcherOpen } = useProjectSwitcher()
+  const projectSwitcherOpen = useProjectSwitcherOpen()
 
   const autoFocusBlocked =
     focusedSurface === 'tool' ||

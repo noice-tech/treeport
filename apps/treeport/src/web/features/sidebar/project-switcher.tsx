@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowPathIcon,
@@ -34,7 +34,8 @@ import { terminalActivityLabel } from '../../terminal-session'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
 import { notifyError } from '../notifications/error-notifications'
 import { SidebarAction } from './sidebar-action'
-import { useProjectSwitcher } from './workspace-shell'
+import { useProjectSwitcher, useProjectSwitcherOpen } from './workspace-shell'
+import { isApplePlatform, isIOS } from '../../lib/platform'
 
 export interface ProjectSwitcherProps {
   projects: ProjectRecord[]
@@ -121,7 +122,7 @@ function ProjectMark({
 }
 
 export function ProjectSwitcherShortcut({ blocked }: { blocked: boolean }) {
-  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  const usesMacKeyboard = isApplePlatform()
   const { isMobile, setOpenMobile } = useSidebar()
   const projectSwitcher = useProjectSwitcher()
 
@@ -170,9 +171,12 @@ export function ProjectSwitcher({
   onRequestProjectClose: requestProjectClose,
   onOpenProjectDialog
 }: ProjectSwitcherProps) {
-  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  const usesMacKeyboard = isApplePlatform()
   const { isMobile } = useSidebar()
   const projectSwitcher = useProjectSwitcher()
+  const { dismissedIntoTerminalRef, triggerRef } = projectSwitcher
+  const skipSearchFocusRef = useRef(false)
+  const projectSwitcherOpen = useProjectSwitcherOpen()
   const queryClient = useQueryClient()
 
   const { attention: terminalAttention, activity: terminalActivity } =
@@ -186,7 +190,7 @@ export function ProjectSwitcher({
 
   const recentProjectsQuery = useQuery({
     ...recentProjectsQueryOptions,
-    enabled: projectSwitcher.open
+    enabled: projectSwitcherOpen
   })
 
   const reopenProject = useMutation({
@@ -281,17 +285,26 @@ export function ProjectSwitcher({
 
   return (
     <Popover
-      open={projectSwitcher.open}
+      open={projectSwitcherOpen}
       onOpenChange={(open) => {
         projectSwitcher.setOpen(open)
+
+        if (!open) {
+          skipSearchFocusRef.current = false
+        }
+
         setHighlightedProjectId(null)
         setProjectSearch('')
       }}
     >
       <PopoverTrigger asChild>
         <Button
-          ref={projectSwitcher.triggerRef}
+          ref={triggerRef}
           type="button"
+          onPointerDown={(event) => {
+            skipSearchFocusRef.current =
+              event.pointerType === 'touch' || isIOS()
+          }}
           variant="ghost"
           className="h-8 w-full min-w-0 flex-1 justify-start gap-2 px-1.5 text-[0.8125rem] min-[701px]:text-sm text-zinc-100 hover:bg-white/5 min-[701px]:h-9"
           aria-label={
@@ -322,14 +335,14 @@ export function ProjectSwitcher({
         portalled={!isMobile}
         className="grid w-[min(17rem,calc(100vw-1rem))] grid-cols-1 gap-1 p-1 animate-none! min-[701px]:w-60"
         onOpenAutoFocus={(event) => {
-          if (isMobile) {
+          if (isMobile || skipSearchFocusRef.current) {
             event.preventDefault()
           }
         }}
         onCloseAutoFocus={(event) => {
-          if (projectSwitcher.dismissedIntoTerminalRef.current) {
+          if (dismissedIntoTerminalRef.current) {
             event.preventDefault()
-            projectSwitcher.dismissedIntoTerminalRef.current = false
+            dismissedIntoTerminalRef.current = false
           }
         }}
       >
@@ -406,7 +419,6 @@ export function ProjectSwitcher({
                 ? `project-switcher-option-${highlightedProjectOption.project.id}`
                 : undefined
             }
-            autoFocus={!isMobile}
           />
         </div>
         <div className="grid max-h-[min(28rem,70dvh)] min-w-0 grid-cols-1 gap-0.5 overflow-x-hidden overflow-y-auto p-0.5 min-[701px]:max-h-[min(22rem,70dvh)] min-[701px]:gap-0.5 min-[701px]:p-0 [scrollbar-color:var(--color-zinc-700)_transparent]">

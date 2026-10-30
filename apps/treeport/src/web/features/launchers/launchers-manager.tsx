@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   PlusIcon,
@@ -73,7 +73,7 @@ export function LaunchersManager({
   loadError: boolean
   onRetry: () => void
   onClose: () => void
-  restoreFocusTo: HTMLElement | null
+  restoreFocusTo: RefObject<HTMLElement | null>
 }) {
   const queryClient = useQueryClient()
   const nameInput = useRef<HTMLInputElement>(null)

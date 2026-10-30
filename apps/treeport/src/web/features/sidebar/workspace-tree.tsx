@@ -66,6 +66,7 @@ import type {
 } from '../worktrees/worktree-workflows'
 import { WorktreeTitleDialog } from '../worktrees/worktree-title-dialog'
 import { SidebarAction } from './sidebar-action'
+import { isApplePlatform } from '../../lib/platform'
 
 function copyText(text: string) {
   const copyBuffer = document.createElement('textarea')
@@ -405,7 +406,7 @@ export function WorkspaceTree({
       : 'Ctrl+N'
     : null
 
-  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  const usesMacKeyboard = isApplePlatform()
 
   const orderedWorktrees = new Map(
     projects.map((project) => {

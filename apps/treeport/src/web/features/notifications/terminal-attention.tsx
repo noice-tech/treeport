@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { ProjectRecord } from '@treeport/shared'
 import {
   terminalSessions,
@@ -51,9 +51,11 @@ export function TerminalAttention({
     } satisfies Presence
   })
 
-  latest.current.projects = projects
-  latest.current.selectedTerminalId = selectedTerminalId
-  latest.current.titles = titles
+  useLayoutEffect(() => {
+    latest.current.projects = projects
+    latest.current.selectedTerminalId = selectedTerminalId
+    latest.current.titles = titles
+  })
 
   const acknowledgeSelectedTerminal = () => {
     const current = latest.current

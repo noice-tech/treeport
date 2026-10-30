@@ -12,6 +12,7 @@ import {
 import { parseResponse, rpc, treeFilesRpc } from '../../api'
 import { errorDescription, errorDetails } from '../../error-message'
 import { cn } from '../../lib/utils'
+import { useProjectSwitcherOpen } from '../sidebar/workspace-shell'
 import { traceWebAppOpen } from '../../web-app-open-tracing'
 
 export function WebAppWorkspace({
@@ -19,7 +20,7 @@ export function WebAppWorkspace({
   active,
   title,
   reloadRevision,
-  autoFocusBlocked,
+  autoFocusBlocked: workspaceAutoFocusBlocked,
   onTitleChange,
   onDirtyChange,
   onSelectWorkspace,
@@ -35,6 +36,8 @@ export function WebAppWorkspace({
   onSelectWorkspace: (index: number) => void
   onFocusSurface: () => void
 }) {
+  const projectSwitcherOpen = useProjectSwitcherOpen()
+  const autoFocusBlocked = workspaceAutoFocusBlocked || projectSwitcherOpen
   const frameRef = useRef<HTMLIFrameElement>(null)
   const appWindowRef = useRef<Window | null>(null)
   // EXTERNAL: Sandbox changes only take effect on a new document, so remount on policy changes.

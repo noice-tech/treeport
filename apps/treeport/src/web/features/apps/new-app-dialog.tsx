@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type RefObject } from 'react'
 import {
   Cog6ToothIcon,
   CommandLineIcon,
@@ -61,7 +61,7 @@ export function NewAppDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  restoreFocusTo: HTMLElement | null
+  restoreFocusTo: RefObject<HTMLElement | null>
   worktreeName: string | null
   launchers: LauncherDefinition[]
   launcherDiagnostics: LauncherDefinitionDiagnostic[]

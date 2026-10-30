@@ -7,7 +7,7 @@ import { type Connect, defineConfig } from 'vite'
 export default defineConfig({
   publicDir: 'web/public',
   plugins: [
-    react(),
+    react({ babel: { plugins: ['babel-plugin-react-compiler'] } }),
     tailwindcss(),
     {
       name: 'treeport-dev-compression',

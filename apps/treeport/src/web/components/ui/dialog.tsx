@@ -44,7 +44,7 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
-    restoreFocusTo?: HTMLElement | null
+    restoreFocusTo?: React.RefObject<HTMLElement | null>
     mobilePresentation?: 'sheet' | 'dialog'
     overlayClassName?: string
   }
@@ -96,9 +96,12 @@ const DialogContent = React.forwardRef<
           onCloseAutoFocus={(event) => {
             onCloseAutoFocus?.(event)
 
-            if (!event.defaultPrevented && restoreFocusTo?.isConnected) {
+            if (
+              !event.defaultPrevented &&
+              restoreFocusTo?.current?.isConnected
+            ) {
               event.preventDefault()
-              restoreFocusTo.focus()
+              restoreFocusTo.current.focus()
             }
           }}
           {...props}

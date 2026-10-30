@@ -1,7 +1,6 @@
 import type { DesktopBrowserPermissionPrompt } from '@treeport/desktop-bridge'
 import { z } from 'zod'
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -69,6 +68,8 @@ import { LocalBrowserWebview } from './local-browser-webview'
 import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
 import { BrowserFilePicker } from './browser-file-picker'
 import { BrowserPageDialog } from './browser-page-dialog'
+import { useProjectSwitcherOpen } from '../sidebar/workspace-shell'
+import { isApplePlatform } from '../../lib/platform'
 
 const viewportPresetSchema = z.enum([
   'responsive',
@@ -86,6 +87,24 @@ const viewportSettingsSchema = z.object({
     .nullable(),
   preset: viewportPresetSchema
 })
+
+function readStoredViewportSettings(
+  appId: string
+): z.infer<typeof viewportSettingsSchema> {
+  try {
+    const stored = sessionStorage.getItem(`treeport-browser-viewport:${appId}`)
+
+    const parsed = viewportSettingsSchema.safeParse(
+      stored ? JSON.parse(stored) : null
+    )
+
+    if (parsed.success) {
+      return parsed.data
+    }
+  } catch {}
+
+  return { viewport: null, preset: 'responsive' }
+}
 
 function parseBrowserAddress(value: string): URL | null {
   const input = value.trim()
@@ -129,8 +148,8 @@ function parseBrowserAddress(value: string): URL | null {
 export function BrowserAppWorkspace({
   app,
   active,
-  autoFocusBlocked,
-  inputBlocked,
+  autoFocusBlocked: workspaceAutoFocusBlocked,
+  inputBlocked: workspaceInputBlocked,
   permissionPrompt,
   onLoadingChange,
   onFaviconChange,
@@ -145,6 +164,9 @@ export function BrowserAppWorkspace({
   onFaviconChange: (appId: string, faviconUrl: string | null) => void
   onFocusSurface: () => void
 }) {
+  const projectSwitcherOpen = useProjectSwitcherOpen()
+  const autoFocusBlocked = workspaceAutoFocusBlocked || projectSwitcherOpen
+  const inputBlocked = workspaceInputBlocked || projectSwitcherOpen
   const sectionRef = useRef<HTMLElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasHostRef = useRef<HTMLDivElement>(null)
@@ -153,6 +175,10 @@ export function BrowserAppWorkspace({
   const inputRef = useRef<HTMLInputElement>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserAppConnection | null>(null)
+
+  const [connection, setConnection] = useState<BrowserAppConnection | null>(
+    null
+  )
 
   const pendingCopiesRef = useRef(
     new Map<
@@ -253,23 +279,7 @@ export function BrowserAppWorkspace({
   const [
     { viewport: viewportOverride, preset: viewportPreset },
     setViewportSettings
-  ] = useState<z.infer<typeof viewportSettingsSchema>>(() => {
-    try {
-      const stored = sessionStorage.getItem(
-        `treeport-browser-viewport:${app.id}`
-      )
-
-      const parsed = viewportSettingsSchema.safeParse(
-        stored ? JSON.parse(stored) : null
-      )
-
-      if (parsed.success) {
-        return parsed.data
-      }
-    } catch {}
-
-    return { viewport: null, preset: 'responsive' }
-  })
+  ] = useState(() => readStoredViewportSettings(app.id))
 
   const viewportOverrideRef = useRef(viewportOverride)
   const [viewportSpace, setViewportSpace] = useState({ width: 0, height: 0 })
@@ -330,27 +340,29 @@ export function BrowserAppWorkspace({
     setPermissionSettingsBusy(true)
     setPermissionSettingsError(null)
 
-    try {
-      const bridge = window.treeportDesktop
+    const bridge = window.treeportDesktop
 
-      if (
-        !bridge ||
-        !(await bridge.resetBrowserPermissions?.(app.id, origin, capability))
-      ) {
-        setPermissionSettingsError(
-          'Could not reset website permissions. The page may have navigated.'
+    const failure = await Promise.resolve(
+      bridge?.resetBrowserPermissions?.(app.id, origin, capability)
+    )
+      .then(async (reset) => {
+        if (!bridge || !reset) {
+          return 'Could not reset website permissions. The page may have navigated.'
+        }
+
+        setPermissionSettings(
+          (await bridge.browserPermissions?.(app.id)) ?? null
         )
 
-        return
-      }
+        return null
+      })
+      .catch(() => 'Could not reset website permissions.')
 
-      const settings = (await bridge.browserPermissions?.(app.id)) ?? null
-      setPermissionSettings(settings)
-    } catch {
-      setPermissionSettingsError('Could not reset website permissions.')
-    } finally {
-      setPermissionSettingsBusy(false)
+    if (failure) {
+      setPermissionSettingsError(failure)
     }
+
+    setPermissionSettingsBusy(false)
   }
 
   const respondPermission = (allow: boolean) => {
@@ -371,23 +383,20 @@ export function BrowserAppWorkspace({
     })
   }, [active, localBrowser, app])
 
-  const send = useCallback(
-    (message: Parameters<BrowserAppConnection['send']>[0]) => {
-      connectionRef.current?.send(message)
-    },
-    []
-  )
+  const send = (message: Parameters<BrowserAppConnection['send']>[0]) => {
+    connectionRef.current?.send(message)
+  }
 
-  const cancelTouches = useCallback(() => {
+  const cancelTouches = () => {
     if (touchesRef.current.size === 0) {
       return
     }
 
     touchesRef.current.clear()
     send({ type: 'touch', phase: 'cancel', points: [] })
-  }, [send])
+  }
 
-  const dismissContext = useCallback(() => {
+  const dismissContext = () => {
     contextRequestRef.current = null
 
     if (contextTimeoutRef.current) {
@@ -401,13 +410,9 @@ export function BrowserAppWorkspace({
 
     contextRef.current = null
     setContextMenu(null)
-  }, [send])
+  }
 
   useEffect(() => {
-    if (!active || inputBlocked) {
-      dismissContext()
-    }
-
     const cancelPending = () => {
       if (contextRequestRef.current) {
         dismissContext()
@@ -496,20 +501,20 @@ export function BrowserAppWorkspace({
     }, 10_000)
   }
 
-  const focusPage = useCallback(() => {
+  const focusPage = () => {
     const page =
       videoRef.current ??
       sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
 
     page?.focus({ preventScroll: true })
-  }, [])
+  }
 
-  const focusAddress = useCallback(() => {
+  const focusAddress = () => {
     inputRef.current?.focus({ preventScroll: true })
     inputRef.current?.select()
-  }, [])
+  }
 
-  const focusFind = useCallback(() => {
+  const focusFind = () => {
     if (!stateRef.current?.controlled) {
       return
     }
@@ -519,362 +524,349 @@ export function BrowserAppWorkspace({
       findInputRef.current?.focus({ preventScroll: true })
       findInputRef.current?.select()
     })
-  }, [])
+  }
 
-  const findInPage = useCallback(
-    (text: string, forward: boolean, findNext: boolean) => {
-      const webview =
-        sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
+  const findInPage = (text: string, forward: boolean, findNext: boolean) => {
+    const webview =
+      sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
 
-      if (webview) {
-        if (text) {
-          webview.findInPage(
-            text,
-            findNext ? { forward, findNext: true } : undefined
-          )
-        } else {
-          webview.stopFindInPage('clearSelection')
-        }
-
-        return
+    if (webview) {
+      if (text) {
+        webview.findInPage(
+          text,
+          findNext ? { forward, findNext: true } : undefined
+        )
+      } else {
+        webview.stopFindInPage('clearSelection')
       }
 
-      if (!text) {
-        send({ type: 'stopFind' })
+      return
+    }
 
-        return
-      }
+    if (!text) {
+      send({ type: 'stopFind' })
 
-      send({ type: 'takeControl' })
-      send({ type: 'find', text, forward, findNext })
-    },
-    [send]
-  )
+      return
+    }
 
-  const closeFind = useCallback(() => {
+    send({ type: 'takeControl' })
+    send({ type: 'find', text, forward, findNext })
+  }
+
+  const closeFind = () => {
     setFindOpen(false)
     findInPage('', true, false)
     window.requestAnimationFrame(focusPage)
-  }, [findInPage, focusPage])
+  }
 
-  const receiveMessage = useCallback(
-    (message: BrowserServerMessage) => {
+  const receiveMessage = (message: BrowserServerMessage) => {
+    if (
+      message.type === 'videoReady' ||
+      message.type === 'videoAnswer' ||
+      message.type === 'webcodecsReady'
+    ) {
+      return
+    }
+
+    if (message.type === 'fileChooser') {
+      setFileChooser(message)
+
+      return
+    }
+
+    if (message.type === 'fileChooserClosed') {
+      setFileChooser((current) =>
+        current?.requestId === message.requestId ? null : current
+      )
+
+      if (message.error) {
+        setError(message.error)
+      }
+
+      return
+    }
+
+    if (message.type === 'dialog') {
+      setPageDialog(message)
+
+      return
+    }
+
+    if (message.type === 'dialogClosed') {
+      setPageDialog((current) =>
+        current?.requestId === message.requestId ? null : current
+      )
+
+      return
+    }
+
+    if (message.type === 'download') {
+      const link = document.createElement('a')
+      link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`
+      link.download = message.filename
+      link.click()
+
+      return
+    }
+
+    if (message.type === 'clipboardWrite') {
       if (
-        message.type === 'videoReady' ||
-        message.type === 'videoAnswer' ||
-        message.type === 'webcodecsReady'
+        !stateRef.current?.controlled ||
+        !videoRef.current ||
+        sectionRef.current?.inert
       ) {
         return
       }
 
-      if (message.type === 'fileChooser') {
-        setFileChooser(message)
-
-        return
-      }
-
-      if (message.type === 'fileChooserClosed') {
-        setFileChooser((current) =>
-          current?.requestId === message.requestId ? null : current
+      const clipboard = message.clipboard
+      setError(null)
+      setClipboardToCopy(clipboard)
+      void writeBrowserClipboard(clipboard)
+        .then(() =>
+          setClipboardToCopy((current) =>
+            current === clipboard ? null : current
+          )
+        )
+        .catch((cause: unknown) =>
+          setError(
+            cause instanceof Error
+              ? `Couldn’t copy: ${cause.message}`
+              : 'Couldn’t copy. Click Copy to clipboard to retry.'
+          )
         )
 
-        if (message.error) {
-          setError(message.error)
+      return
+    }
+
+    if (message.type === 'copyResult') {
+      const pending = pendingCopiesRef.current.get(message.requestId)
+
+      if (message.error !== null) {
+        pending?.reject(new Error(message.error))
+      } else {
+        pending?.resolve(message.clipboard)
+      }
+
+      return
+    }
+
+    const canvas = videoRef.current
+
+    if (message.type === 'contextResult') {
+      if (message.requestId !== contextRequestRef.current) {
+        if (message.contextId) {
+          send({ type: 'dismissContext', contextId: message.contextId })
         }
 
         return
       }
 
-      if (message.type === 'dialog') {
-        setPageDialog(message)
+      contextRequestRef.current = null
 
+      if (contextTimeoutRef.current) {
+        clearTimeout(contextTimeoutRef.current)
+        contextTimeoutRef.current = null
+      }
+
+      contextRef.current = message.contextId ? message : null
+      setContextMenu(contextRef.current)
+
+      return
+    }
+
+    if (message.type === 'contextActionResult') {
+      const pending = contextActionRef.current
+
+      if (message.requestId !== pending?.requestId) {
         return
       }
 
-      if (message.type === 'dialogClosed') {
-        setPageDialog((current) =>
-          current?.requestId === message.requestId ? null : current
-        )
+      contextActionRef.current = null
 
-        return
+      if (pending.timeout) {
+        clearTimeout(pending.timeout)
       }
 
-      if (message.type === 'download') {
-        const link = document.createElement('a')
-        link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`
-        link.download = message.filename
-        link.click()
-
-        return
-      }
-
-      if (message.type === 'clipboardWrite') {
-        if (
-          !stateRef.current?.controlled ||
-          !videoRef.current ||
-          sectionRef.current?.inert
-        ) {
-          return
-        }
-
-        const clipboard = message.clipboard
-        setError(null)
-        setClipboardToCopy(clipboard)
-        void writeBrowserClipboard(clipboard)
-          .then(() =>
-            setClipboardToCopy((current) =>
-              current === clipboard ? null : current
-            )
+      if (message.action === 'copyLink') {
+        if (message.linkUrl) {
+          pending.resolveCopy?.(
+            new Blob([message.linkUrl], { type: 'text/plain' })
           )
-          .catch((cause: unknown) =>
-            setError(
-              cause instanceof Error
-                ? `Couldn’t copy: ${cause.message}`
-                : 'Couldn’t copy. Click Copy to clipboard to retry.'
-            )
-          )
-
-        return
-      }
-
-      if (message.type === 'copyResult') {
-        const pending = pendingCopiesRef.current.get(message.requestId)
-
-        if (message.error !== null) {
-          pending?.reject(new Error(message.error))
         } else {
-          pending?.resolve(message.clipboard)
+          pending.rejectCopy?.(new Error('The link is unavailable.'))
         }
-
-        return
       }
 
-      const canvas = videoRef.current
-
-      if (message.type === 'contextResult') {
-        if (message.requestId !== contextRequestRef.current) {
-          if (message.contextId) {
-            send({ type: 'dismissContext', contextId: message.contextId })
-          }
-
-          return
-        }
-
-        contextRequestRef.current = null
-
-        if (contextTimeoutRef.current) {
-          clearTimeout(contextTimeoutRef.current)
-          contextTimeoutRef.current = null
-        }
-
-        contextRef.current = message.contextId ? message : null
-        setContextMenu(contextRef.current)
-
-        return
+      if (message.action === 'inspect' && message.backendNodeId !== null) {
+        void window.treeportDesktop
+          ?.inspectBrowserElement?.(
+            app.id,
+            message.backendNodeId,
+            message.targetId
+          )
+          .then((opened) => {
+            if (!opened) {
+              setError('Remote element inspection is unavailable.')
+            }
+          })
+          .catch(() => setError('Could not open remote DevTools.'))
       }
 
-      if (message.type === 'contextActionResult') {
-        const pending = contextActionRef.current
+      return
+    }
 
-        if (message.requestId !== pending?.requestId) {
-          return
-        }
-
-        contextActionRef.current = null
-
-        if (pending.timeout) {
-          clearTimeout(pending.timeout)
-        }
-
-        if (message.action === 'copyLink') {
-          if (message.linkUrl) {
-            pending.resolveCopy?.(
-              new Blob([message.linkUrl], { type: 'text/plain' })
-            )
-          } else {
-            pending.rejectCopy?.(new Error('The link is unavailable.'))
-          }
-        }
-
-        if (message.action === 'inspect' && message.backendNodeId !== null) {
-          void window.treeportDesktop
-            ?.inspectBrowserElement?.(
-              app.id,
-              message.backendNodeId,
-              message.targetId
-            )
-            .then((opened) => {
-              if (!opened) {
-                setError('Remote element inspection is unavailable.')
-              }
-            })
-            .catch(() => setError('Could not open remote DevTools.'))
-        }
-
-        return
+    if (message.type === 'cursor') {
+      if (canvas && stateRef.current?.controlled) {
+        canvas.style.cursor = message.cursor
       }
 
-      if (message.type === 'cursor') {
-        if (canvas && stateRef.current?.controlled) {
-          canvas.style.cursor = message.cursor
-        }
+      return
+    }
 
-        return
-      }
+    if (
+      message.type === 'ready' ||
+      message.type === 'state' ||
+      message.type === 'controlChanged'
+    ) {
+      const previousUrl = stateRef.current?.url ?? app.url
 
       if (
         message.type === 'ready' ||
-        message.type === 'state' ||
-        message.type === 'controlChanged'
+        !message.state.controlled ||
+        message.state.loading ||
+        message.state.url !== previousUrl
       ) {
-        const previousUrl = stateRef.current?.url ?? app.url
-
-        if (
-          message.type === 'ready' ||
-          !message.state.controlled ||
-          message.state.loading ||
-          message.state.url !== previousUrl
-        ) {
-          dismissContext()
-          contextActionRef.current?.rejectCopy?.(
-            new Error('The browser context changed.')
-          )
-          contextActionRef.current = null
-        }
-
-        if (
-          canvas &&
-          (message.type === 'ready' ||
-            !message.state.controlled ||
-            message.state.url !== previousUrl)
-        ) {
-          canvas.style.cursor = 'default'
-
-          if (message.state.controlled && message.state.url !== previousUrl) {
-            cancelTouches()
-          } else {
-            touchesRef.current.clear()
-          }
-        }
-
-        stateRef.current = message.state
-
-        if (
-          message.state.viewport.width > 0 &&
-          message.state.viewport.height > 0
-        ) {
-          viewportRef.current = message.state.viewport
-        }
-
-        setState(message.state)
-
-        if (message.type === 'ready') {
-          setPageDialog(null)
-          traceBrowserOpen(app.id, 'browser.open.runtime_ready')
-          setAddressFocusRevision((revision) => revision + 1)
-          setFailure(null)
-        }
-
-        onLoadingChange(app.id, message.state.loading)
-        onFaviconChange(app.id, message.state.faviconUrl)
-
-        if (!addressDirtyRef.current && message.state.url !== previousUrl) {
-          setError(null)
-        }
-
-        const pendingNavigation = pendingNavigationRef.current
-
-        const validUrl =
-          decodeUnknownOrNull(browserObservedUrlSchema, message.state.url) !==
-          null
-
-        const navigationStarted =
-          pendingNavigation === null ||
-          (validUrl &&
-            (message.state.url === pendingNavigation.targetUrl ||
-              message.state.url !== pendingNavigation.startUrl))
-
-        if (!navigationStarted) {
-          return
-        }
-
-        pendingNavigationRef.current = null
-
-        const receivedAddress =
-          message.state.url === 'about:blank'
-            ? ''
-            : validUrl
-              ? message.state.url
-              : null
-
-        if (receivedAddress === null) {
-          return
-        }
-
-        if (addressDirtyRef.current) {
-          if (
-            document.activeElement === inputRef.current ||
-            message.state.url === previousUrl
-          ) {
-            return
-          }
-
-          addressDirtyRef.current = false
-          setError(null)
-        }
-
-        setInputValue(receivedAddress)
-
-        return
+        dismissContext()
+        contextActionRef.current?.rejectCopy?.(
+          new Error('The browser context changed.')
+        )
+        contextActionRef.current = null
       }
-
-      if (canvas) {
-        canvas.style.cursor = 'default'
-      }
-
-      setFileChooser(null)
-      dismissContext()
-      contextActionRef.current?.rejectCopy?.(
-        new Error('The browser action failed.')
-      )
-      contextActionRef.current = null
-      onLoadingChange(app.id, false)
 
       if (
-        message.type === 'browserUnavailable' ||
-        message.type === 'videoUnavailable'
+        canvas &&
+        (message.type === 'ready' ||
+          !message.state.controlled ||
+          message.state.url !== previousUrl)
       ) {
-        if (message.type === 'browserUnavailable') {
-          stateRef.current = null
-          setState(null)
-          onFaviconChange(app.id, null)
+        canvas.style.cursor = 'default'
+
+        if (message.state.controlled && message.state.url !== previousUrl) {
+          cancelTouches()
+        } else {
+          touchesRef.current.clear()
         }
+      }
 
-        setFailure({ message: message.message })
+      stateRef.current = message.state
 
+      if (
+        message.state.viewport.width > 0 &&
+        message.state.viewport.height > 0
+      ) {
+        viewportRef.current = message.state.viewport
+      }
+
+      setState(message.state)
+
+      if (message.type === 'ready') {
+        setPageDialog(null)
+        traceBrowserOpen(app.id, 'browser.open.runtime_ready')
+        setAddressFocusRevision((revision) => revision + 1)
+        setFailure(null)
+      }
+
+      onLoadingChange(app.id, message.state.loading)
+      onFaviconChange(app.id, message.state.faviconUrl)
+
+      if (!addressDirtyRef.current && message.state.url !== previousUrl) {
+        setError(null)
+      }
+
+      const pendingNavigation = pendingNavigationRef.current
+
+      const validUrl =
+        decodeUnknownOrNull(browserObservedUrlSchema, message.state.url) !==
+        null
+
+      const navigationStarted =
+        pendingNavigation === null ||
+        (validUrl &&
+          (message.state.url === pendingNavigation.targetUrl ||
+            message.state.url !== pendingNavigation.startUrl))
+
+      if (!navigationStarted) {
         return
       }
 
       pendingNavigationRef.current = null
 
-      if (
-        message.type === 'videoSettingsResult' ||
-        message.type === 'videoChannel'
-      ) {
+      const receivedAddress =
+        message.state.url === 'about:blank'
+          ? ''
+          : validUrl
+            ? message.state.url
+            : null
+
+      if (receivedAddress === null) {
         return
       }
 
-      setError(message.type === 'closed' ? message.reason : message.message)
-    },
-    [
-      cancelTouches,
-      dismissContext,
-      send,
-      onLoadingChange,
-      onFaviconChange,
-      app.id
-    ]
-  )
+      if (addressDirtyRef.current) {
+        if (
+          document.activeElement === inputRef.current ||
+          message.state.url === previousUrl
+        ) {
+          return
+        }
+
+        addressDirtyRef.current = false
+        setError(null)
+      }
+
+      setInputValue(receivedAddress)
+
+      return
+    }
+
+    if (canvas) {
+      canvas.style.cursor = 'default'
+    }
+
+    setFileChooser(null)
+    dismissContext()
+    contextActionRef.current?.rejectCopy?.(
+      new Error('The browser action failed.')
+    )
+    contextActionRef.current = null
+    onLoadingChange(app.id, false)
+
+    if (
+      message.type === 'browserUnavailable' ||
+      message.type === 'videoUnavailable'
+    ) {
+      if (message.type === 'browserUnavailable') {
+        stateRef.current = null
+        setState(null)
+        onFaviconChange(app.id, null)
+      }
+
+      setFailure({ message: message.message })
+
+      return
+    }
+
+    pendingNavigationRef.current = null
+
+    if (
+      message.type === 'videoSettingsResult' ||
+      message.type === 'videoChannel'
+    ) {
+      return
+    }
+
+    setError(message.type === 'closed' ? message.reason : message.message)
+  }
 
   useEffect(() => {
     if (localBrowser) {
@@ -918,6 +910,7 @@ export function BrowserAppWorkspace({
     connection.setMuted(audioMutedRef.current)
     remoteConnectionRef.current = connection
     connectionRef.current = connection
+    setConnection(connection)
 
     return () => {
       if (touchesRef.current.size > 0) {
@@ -927,6 +920,7 @@ export function BrowserAppWorkspace({
 
       if (connectionRef.current === connection) {
         connectionRef.current = null
+        setConnection(null)
       }
 
       if (videoRef.current) {
@@ -951,68 +945,63 @@ export function BrowserAppWorkspace({
     }
   }, [connectionRevision, localBrowser, app.id, receiveMessage, send])
 
-  const setLocalConnection = useCallback(
-    (connection: BrowserAppConnection | null) => {
-      connectionRef.current = connection
-      const pendingNavigation = pendingNavigationRef.current
+  const setLocalConnection = (connection: BrowserAppConnection | null) => {
+    connectionRef.current = connection
+    setConnection(connection)
+    const pendingNavigation = pendingNavigationRef.current
 
-      if (connection && pendingNavigation) {
-        connection.send({ type: 'navigate', url: pendingNavigation.targetUrl })
-      }
-    },
-    []
-  )
+    if (connection && pendingNavigation) {
+      connection.send({ type: 'navigate', url: pendingNavigation.targetUrl })
+    }
+  }
 
-  const setLocalBrowserPaintRetention = useCallback(
-    async (retained: boolean) => {
-      setLocalBrowserPaintRetained(retained)
+  const setLocalBrowserPaintRetention = async (retained: boolean) => {
+    setLocalBrowserPaintRetained(retained)
 
-      if (!retained) {
-        return true
-      }
+    if (!retained) {
+      return true
+    }
 
-      let timer: number | null = null
+    let timer: number | null = null
 
-      const layoutReady = await Promise.race([
-        new Promise<true>((resolve) =>
-          window.requestAnimationFrame(() =>
-            window.requestAnimationFrame(() => resolve(true))
-          )
-        ),
-        new Promise<false>((resolve) => {
-          timer = window.setTimeout(() => resolve(false), 2_000)
-        })
-      ])
+    const layoutReady = await Promise.race([
+      new Promise<true>((resolve) =>
+        window.requestAnimationFrame(() =>
+          window.requestAnimationFrame(() => resolve(true))
+        )
+      ),
+      new Promise<false>((resolve) => {
+        timer = window.setTimeout(() => resolve(false), 2_000)
+      })
+    ])
 
-      if (timer) {
-        window.clearTimeout(timer)
-      }
+    if (timer) {
+      window.clearTimeout(timer)
+    }
 
-      const section = sectionRef.current
-      const webview = section?.querySelector<TreeportBrowserWebview>('webview')
+    const section = sectionRef.current
+    const webview = section?.querySelector<TreeportBrowserWebview>('webview')
 
-      if (
-        !layoutReady ||
-        !section?.isConnected ||
-        !webview?.isConnected ||
-        !section.checkVisibility() ||
-        !webview.checkVisibility()
-      ) {
-        return false
-      }
+    if (
+      !layoutReady ||
+      !section?.isConnected ||
+      !webview?.isConnected ||
+      !section.checkVisibility() ||
+      !webview.checkVisibility()
+    ) {
+      return false
+    }
 
-      const sectionBounds = section.getBoundingClientRect()
-      const webviewBounds = webview.getBoundingClientRect()
+    const sectionBounds = section.getBoundingClientRect()
+    const webviewBounds = webview.getBoundingClientRect()
 
-      return (
-        sectionBounds.width > 0 &&
-        sectionBounds.height > 0 &&
-        webviewBounds.width > 0 &&
-        webviewBounds.height > 0
-      )
-    },
-    []
-  )
+    return (
+      sectionBounds.width > 0 &&
+      sectionBounds.height > 0 &&
+      webviewBounds.width > 0 &&
+      webviewBounds.height > 0
+    )
+  }
 
   useEffect(() => {
     if (localBrowser) {
@@ -1078,7 +1067,12 @@ export function BrowserAppWorkspace({
           Math.min(2_160, Math.floor(entry.contentRect.height / 2) * 2)
         )
       }
-      timer ??= setTimeout(() => {
+
+      if (timer) {
+        return
+      }
+
+      timer = setTimeout(() => {
         timer = null
 
         if (viewport) {
@@ -1169,7 +1163,7 @@ export function BrowserAppWorkspace({
     }
 
     const focusBrowserControl = (event: globalThis.KeyboardEvent) => {
-      const applePlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+      const applePlatform = isApplePlatform()
 
       const modifier = applePlatform
         ? event.metaKey && !event.ctrlKey
@@ -1301,50 +1295,47 @@ export function BrowserAppWorkspace({
     }
   }
 
-  const point = useCallback(
-    (event: {
-      currentTarget: HTMLVideoElement
-      clientX: number
-      clientY: number
-    }) => {
-      const canvas = event.currentTarget
-      const bounds = canvas.getBoundingClientRect()
-      const viewport = stateRef.current?.viewport ?? viewportRef.current
+  const point = (event: {
+    currentTarget: HTMLVideoElement
+    clientX: number
+    clientY: number
+  }) => {
+    const canvas = event.currentTarget
+    const bounds = canvas.getBoundingClientRect()
+    const viewport = stateRef.current?.viewport ?? viewportRef.current
 
-      const image =
-        canvas.videoWidth && canvas.videoHeight
-          ? { width: canvas.videoWidth, height: canvas.videoHeight }
-          : viewport
+    const image =
+      canvas.videoWidth && canvas.videoHeight
+        ? { width: canvas.videoWidth, height: canvas.videoHeight }
+        : viewport
 
-      const scale = Math.min(
-        bounds.width / image.width,
-        bounds.height / image.height
-      )
+    const scale = Math.min(
+      bounds.width / image.width,
+      bounds.height / image.height
+    )
 
-      const width = image.width * scale
-      const height = image.height * scale
-      const left = bounds.left + (bounds.width - width) / 2
-      const top = bounds.top + (bounds.height - height) / 2
+    const width = image.width * scale
+    const height = image.height * scale
+    const left = bounds.left + (bounds.width - width) / 2
+    const top = bounds.top + (bounds.height - height) / 2
 
-      return {
-        x: Math.max(
-          0,
-          Math.min(
-            viewport.width,
-            ((event.clientX - left) / width) * viewport.width
-          )
-        ),
-        y: Math.max(
-          0,
-          Math.min(
-            viewport.height,
-            ((event.clientY - top) / height) * viewport.height
-          )
+    return {
+      x: Math.max(
+        0,
+        Math.min(
+          viewport.width,
+          ((event.clientX - left) / width) * viewport.width
         )
-      }
-    },
-    []
-  )
+      ),
+      y: Math.max(
+        0,
+        Math.min(
+          viewport.height,
+          ((event.clientY - top) / height) * viewport.height
+        )
+      )
+    }
+  }
 
   const button = (value: number): 'left' | 'right' | 'middle' =>
     value === 2 ? 'right' : value === 1 ? 'middle' : 'left'
@@ -2750,23 +2741,23 @@ export function BrowserAppWorkspace({
               </div>
             ) : null}
             {fileChooser &&
-            connectionRef.current &&
+            connection &&
             state?.controlled &&
             active &&
             !inputBlocked ? (
               <BrowserFilePicker
                 key={fileChooser.requestId}
                 request={fileChooser}
-                connection={connectionRef.current}
+                connection={connection}
                 onCancel={() => setFileChooser(null)}
               />
             ) : null}
-            {pageDialog && connectionRef.current && active ? (
+            {pageDialog && connection && active ? (
               <BrowserPageDialog
                 key={pageDialog.requestId}
                 request={pageDialog}
                 url={state?.url ?? app.url}
-                connection={connectionRef.current}
+                connection={connection}
                 onClose={() => setPageDialog(null)}
               />
             ) : null}

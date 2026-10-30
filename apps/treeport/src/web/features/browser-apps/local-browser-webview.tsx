@@ -1,5 +1,5 @@
 import { supportsLocalBrowser } from '../../desktop-capabilities'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   browserObservedUrlSchema,
   decodeUnknownOrNull,
@@ -82,9 +82,13 @@ export function LocalBrowserWebview({
   const { dismiss: dismissToolPicker } = useToolPicker()
   const webviewRef = useRef<TreeportBrowserWebview>(null)
   const activeRef = useRef(active)
-  activeRef.current = active
   const inputBlockedRef = useRef(inputBlocked)
-  inputBlockedRef.current = inputBlocked
+
+  useLayoutEffect(() => {
+    activeRef.current = active
+    inputBlockedRef.current = inputBlocked
+  })
+
   const initialAppRef = useRef(app)
   const ownerClientIdRef = useRef(crypto.randomUUID())
 
@@ -235,7 +239,8 @@ export function LocalBrowserWebview({
     const updateFavicon = (event: Event) => {
       // SAFETY: Electron's page-favicon-updated event supplies a string array.
       const { favicons } = event as Event & { favicons: string[] }
-      const revision = ++faviconRevision
+      faviconRevision += 1
+      const revision = faviconRevision
       void webview
         .executeJavaScript<ReturnType<typeof readBrowserPageMetadata>>(
           `(${readBrowserPageMetadata.toString()})()`
@@ -256,7 +261,7 @@ export function LocalBrowserWebview({
 
     const refresh = (event: Event) => {
       if (event.type === 'did-navigate') {
-        faviconRevision++
+        faviconRevision += 1
         faviconUrl = null
       }
 
@@ -317,9 +322,9 @@ export function LocalBrowserWebview({
 
       applyRemoteViewport(locked ? viewport : null)
 
-      const viewportChanged =
-        previousViewport?.width !== remoteViewport?.width ||
-        previousViewport?.height !== remoteViewport?.height
+      const widthChanged = previousViewport?.width !== remoteViewport?.width
+      const heightChanged = previousViewport?.height !== remoteViewport?.height
+      const viewportChanged = widthChanged || heightChanged
 
       const paintable = await onPaintRetentionChange(retainPaint).then(
         (result) => result,
@@ -457,7 +462,8 @@ export function LocalBrowserWebview({
         traceBrowserOpen(app.id, 'browser.local.command_dispatched', {
           command: message.type
         })
-        const revision = ++commandRevision
+        commandRevision += 1
+        const revision = commandRevision
 
         const navigationFailed = (cause: unknown) => {
           if (disposed || revision !== commandRevision) {

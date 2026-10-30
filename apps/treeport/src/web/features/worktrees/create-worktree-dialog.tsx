@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef } from 'react'
+import { lazy, Suspense, useRef, type RefObject } from 'react'
 import type {
   ProjectRecord,
   LauncherDefinition,
@@ -31,7 +31,7 @@ export function CreateWorktreeDialog({
 }: {
   project: ProjectRecord | null
   onOpenChange: (open: boolean) => void
-  restoreFocusTo: HTMLElement | null
+  restoreFocusTo: RefObject<HTMLElement | null>
   launchers: LauncherDefinition[]
   launcherDiagnostics: LauncherDefinitionDiagnostic[]
   launchersLoading: boolean

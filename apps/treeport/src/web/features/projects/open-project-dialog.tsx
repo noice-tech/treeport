@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, type RefObject } from 'react'
 import type { ProjectRecord } from '@treeport/shared'
 import {
   Dialog,
@@ -21,7 +21,7 @@ export function OpenProjectDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  restoreFocusTo: HTMLElement | null
+  restoreFocusTo: RefObject<HTMLElement | null>
   onOpened: (project: ProjectRecord) => Promise<void>
 }) {
   return (

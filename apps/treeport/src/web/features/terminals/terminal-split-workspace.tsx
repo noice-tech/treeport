@@ -1,7 +1,8 @@
 import {
-  useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
+  useState,
   useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent,
@@ -178,7 +179,6 @@ export function TerminalSplitWorkspace({
     terminalWorkspaceLayouts.getSnapshot
   )
   const terminalIds = worktree.terminals.map((terminal) => terminal.id)
-  const terminalIdSignature = terminalIds.join('\u0000')
 
   const layout = normalizeTerminalWorkspaceLayout(
     terminalWorkspaceLayouts.read(worktree.id),
@@ -207,62 +207,94 @@ export function TerminalSplitWorkspace({
     terminalLayoutDrag.getSnapshot
   )
 
-  const dropTargetAt = useCallback(
-    (snapshot: TerminalLayoutDragSnapshot): TerminalDropTarget | null => {
-      const workspace = workspaceRef.current
+  const dropTargetAt = (
+    snapshot: TerminalLayoutDragSnapshot
+  ): TerminalDropTarget | null => {
+    const workspace = workspaceRef.current
 
-      if (!workspace || snapshot.terminal.worktreeId !== worktree.id) {
-        return null
-      }
+    if (!workspace || snapshot.terminal.worktreeId !== worktree.id) {
+      return null
+    }
 
-      const pane = Array.from(
-        workspace.querySelectorAll<HTMLElement>('[data-terminal-pane-id]')
-      ).find((candidate) => {
-        const bounds = candidate.getBoundingClientRect()
+    const pane = Array.from(
+      workspace.querySelectorAll<HTMLElement>('[data-terminal-pane-id]')
+    ).find((candidate) => {
+      const bounds = candidate.getBoundingClientRect()
 
-        return (
-          snapshot.clientX >= bounds.left &&
-          snapshot.clientX <= bounds.right &&
-          snapshot.clientY >= bounds.top &&
-          snapshot.clientY <= bounds.bottom
-        )
-      })
+      return (
+        snapshot.clientX >= bounds.left &&
+        snapshot.clientX <= bounds.right &&
+        snapshot.clientY >= bounds.top &&
+        snapshot.clientY <= bounds.bottom
+      )
+    })
 
-      if (!pane) {
-        return null
-      }
+    if (!pane) {
+      return null
+    }
 
-      const terminalId = pane.dataset.terminalPaneId
+    const terminalId = pane.dataset.terminalPaneId
 
-      if (!terminalId || terminalId === snapshot.terminal.id) {
-        return null
-      }
+    if (!terminalId || terminalId === snapshot.terminal.id) {
+      return null
+    }
 
-      const bounds = pane.getBoundingClientRect()
-      const x = (snapshot.clientX - bounds.left) / bounds.width
-      const y = (snapshot.clientY - bounds.top) / bounds.height
-      const distances = [x, 1 - x, y, 1 - y]
-      const directions = ['left', 'right', 'up', 'down'] as const
+    const bounds = pane.getBoundingClientRect()
+    const x = (snapshot.clientX - bounds.left) / bounds.width
+    const y = (snapshot.clientY - bounds.top) / bounds.height
+    const distances = [x, 1 - x, y, 1 - y]
+    const directions = ['left', 'right', 'up', 'down'] as const
 
-      return {
-        terminalId,
-        direction: directions[distances.indexOf(Math.min(...distances))]!,
-        bounds
-      }
-    },
-    [worktree.id]
-  )
+    return {
+      terminalId,
+      direction: directions[distances.indexOf(Math.min(...distances))]!,
+      bounds
+    }
+  }
 
   const activeDrag =
     dragSnapshot?.terminal.worktreeId === worktree.id ? dragSnapshot : null
 
-  const dropTarget = activeDrag ? dropTargetAt(activeDrag) : null
+  const [dropOverlay, setDropOverlay] = useState<{
+    direction: TerminalDropTarget['direction']
+    style: CSSProperties
+  } | null>(null)
 
-  const updateLayout = useCallback(
-    (update: (current: TerminalWorkspaceLayout) => TerminalWorkspaceLayout) =>
-      terminalWorkspaceLayouts.update(worktree.id, terminalIds, update),
-    [terminalIdSignature, worktree.id]
-  )
+  useLayoutEffect(() => {
+    const dropTarget = activeDrag ? dropTargetAt(activeDrag) : null
+    const workspaceBounds = workspaceRef.current?.getBoundingClientRect()
+
+    if (!dropTarget || !workspaceBounds) {
+      setDropOverlay(null)
+
+      return
+    }
+
+    const vertical =
+      dropTarget.direction === 'left' || dropTarget.direction === 'right'
+
+    setDropOverlay({
+      direction: dropTarget.direction,
+      style: {
+        left:
+          dropTarget.bounds.left -
+          workspaceBounds.left +
+          (dropTarget.direction === 'right' ? dropTarget.bounds.width / 2 : 0),
+        top:
+          dropTarget.bounds.top -
+          workspaceBounds.top +
+          (dropTarget.direction === 'down' ? dropTarget.bounds.height / 2 : 0),
+        width: vertical ? dropTarget.bounds.width / 2 : dropTarget.bounds.width,
+        height: vertical
+          ? dropTarget.bounds.height
+          : dropTarget.bounds.height / 2
+      }
+    })
+  }, [activeDrag, dropTargetAt])
+
+  const updateLayout = (
+    update: (current: TerminalWorkspaceLayout) => TerminalWorkspaceLayout
+  ) => terminalWorkspaceLayouts.update(worktree.id, terminalIds, update)
 
   useEffect(
     () =>
@@ -367,46 +399,20 @@ export function TerminalSplitWorkspace({
     )
   }
 
-  let dropOverlayStyle: CSSProperties | undefined
-
-  if (dropTarget) {
-    const workspaceBounds = workspaceRef.current?.getBoundingClientRect()
-
-    if (workspaceBounds) {
-      const vertical =
-        dropTarget.direction === 'left' || dropTarget.direction === 'right'
-
-      dropOverlayStyle = {
-        left:
-          dropTarget.bounds.left -
-          workspaceBounds.left +
-          (dropTarget.direction === 'right' ? dropTarget.bounds.width / 2 : 0),
-        top:
-          dropTarget.bounds.top -
-          workspaceBounds.top +
-          (dropTarget.direction === 'down' ? dropTarget.bounds.height / 2 : 0),
-        width: vertical ? dropTarget.bounds.width / 2 : dropTarget.bounds.width,
-        height: vertical
-          ? dropTarget.bounds.height
-          : dropTarget.bounds.height / 2
-      }
-    }
-  }
-
   return (
     <main
       ref={workspaceRef}
       className="relative grid min-h-0 min-w-0 overflow-hidden bg-zinc-950"
       aria-label={`${worktree.name} terminal workspace`}
     >
-      {dropOverlayStyle && dropTarget ? (
+      {dropOverlay ? (
         <div
           className="pointer-events-none absolute z-40 grid place-items-center bg-accent-400/10 p-3 ring-2 ring-inset ring-accent-400"
-          style={dropOverlayStyle}
+          style={dropOverlay.style}
           aria-hidden="true"
         >
           <span className="rounded-md bg-zinc-950/90 px-2 py-1 text-xs font-medium text-accent-100 shadow">
-            Split {dropTarget.direction}
+            Split {dropOverlay.direction}
           </span>
         </div>
       ) : null}
