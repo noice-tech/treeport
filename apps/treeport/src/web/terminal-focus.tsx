@@ -6,8 +6,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode
+  type ReactNode,
+  type RefObject
 } from 'react'
+import { isIOS } from './lib/platform'
 import type { TerminalSession } from './terminal-session'
 
 interface TerminalFocusRequest {
@@ -24,8 +26,29 @@ const TerminalFocusRequestContext = createContext<TerminalFocusRequest | null>(
   null
 )
 
+const TerminalFocusedBeforeInputContext = createContext<RefObject<boolean>>({
+  current: false
+})
+
 export function TerminalFocusProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<TerminalFocusRequest | null>(null)
+  const terminalFocusedBeforeInput = useRef(false)
+
+  useEffect(() => {
+    const recordTerminalFocus = () => {
+      terminalFocusedBeforeInput.current = Boolean(
+        document.activeElement?.closest('.xterm-host')
+      )
+    }
+
+    window.addEventListener('pointerdown', recordTerminalFocus, true)
+    window.addEventListener('keydown', recordTerminalFocus, true)
+
+    return () => {
+      window.removeEventListener('pointerdown', recordTerminalFocus, true)
+      window.removeEventListener('keydown', recordTerminalFocus, true)
+    }
+  }, [])
 
   const setTerminalFocusIntent = useCallback(
     (terminalId: string, focus: boolean) => {
@@ -41,7 +64,9 @@ export function TerminalFocusProvider({ children }: { children: ReactNode }) {
   return (
     <SetTerminalFocusIntentContext value={setTerminalFocusIntent}>
       <TerminalFocusRequestContext value={request}>
-        {children}
+        <TerminalFocusedBeforeInputContext value={terminalFocusedBeforeInput}>
+          {children}
+        </TerminalFocusedBeforeInputContext>
       </TerminalFocusRequestContext>
     </SetTerminalFocusIntentContext>
   )
@@ -72,6 +97,11 @@ export function useTerminalAutoFocus({
   blocked: boolean
 }): void {
   const request = useContext(TerminalFocusRequestContext)
+
+  const terminalFocusedBeforeInput = useContext(
+    TerminalFocusedBeforeInputContext
+  )
+
   const previousTerminalId = useRef<string | null>(null)
   const observedRequestSequence = useRef(0)
   const pendingTerminalId = useRef<string | null>(null)
@@ -116,6 +146,13 @@ export function useTerminalAutoFocus({
       return
     }
 
+    // EXTERNAL: iOS raising its keyboard mid-switch stutters the layout, so only keep focus that a terminal already had.
+    if (isIOS() && !terminalFocusedBeforeInput.current) {
+      pendingTerminalId.current = null
+
+      return
+    }
+
     const frame = window.requestAnimationFrame(() => {
       if (
         focusBlocked.current ||
@@ -131,5 +168,5 @@ export function useTerminalAutoFocus({
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [blocked, request, session, terminalId])
+  }, [blocked, request, session, terminalFocusedBeforeInput, terminalId])
 }

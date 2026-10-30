@@ -189,13 +189,7 @@ export class TerminalSession {
       this.requestControl()
     }
 
-    if (this.state.wrapper?.style.visibility === 'hidden') {
-      this.state.focusAfterRender = true
-
-      return
-    }
-
-    this.state.focusAfterRender = false
+    this.state.focusAfterRender = this.state.wrapper?.style.opacity === '0'
     this.state.terminal?.focus()
   }
 

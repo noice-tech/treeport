@@ -146,7 +146,7 @@ export function makeProtocol(
           state.focusAfterRender ||= state.wrapper.contains(
             document.activeElement
           )
-          state.wrapper.style.visibility = 'hidden'
+          state.wrapper.style.opacity = '0'
         }
 
         dependencies.enqueueRender(
@@ -165,7 +165,7 @@ export function makeProtocol(
             )
 
             if (state.wrapper) {
-              state.wrapper.style.visibility = ''
+              state.wrapper.style.opacity = ''
 
               if (state.focusAfterRender && state.host) {
                 dependencies.focus()
