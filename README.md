@@ -25,7 +25,7 @@ gh repo fork noice-tech/treeport --clone && cd treeport
 pnpm install --frozen-lockfile && pnpm cli:install && pnpm start
 ```
 
-To update, run `pnpm sync`, then `pnpm start` again (or `pnpm pm2:restart` under pm2).
+To update, run `pnpm sync`.
 
 See [Run Treeport](https://treeport.app/getting-started/installation/) for prerequisites, the CLI, updates, and desktop builds. [Service supervision](https://treeport.app/features/service-supervision/) covers optional pm2 setup. For another device, configure [private remote access](https://treeport.app/features/remote-access/); do not expose Treeport directly to the public internet.
 

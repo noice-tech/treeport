@@ -31,10 +31,10 @@ There are no prebuilt downloads or automatic updates.
 ## Updates
 
 ```sh
-pnpm sync && pnpm start
+pnpm sync
 ```
 
-`pnpm sync` pulls the latest changes and stops if your clone has diverged, so you can merge. `pnpm start` installs and builds whatever changed. With pm2, run `pnpm sync && pnpm pm2:restart` instead; it builds before restarting, so a failed build leaves the running server untouched. A fork pulls from its own remote, so sync it with upstream first (GitHub **Sync fork** or `gh repo sync`). Rebuild the desktop app separately if you use it.
+`pnpm sync` pulls the latest changes, installs dependencies, rebuilds what changed, and restarts the pm2 `treeport` process. Without pm2, restart `pnpm start` afterwards. If your clone has diverged or the build fails, it stops and leaves the running server untouched. A fork pulls from its own remote, so sync it with upstream first (GitHub **Sync fork** or `gh repo sync`). Rebuild the desktop app separately if you use it.
 
 ## Start working
 
