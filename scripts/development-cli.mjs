@@ -14,15 +14,13 @@ const daemonRecordSchema = z.strictObject({
   apiUrl: z.url(),
   dataDir: z.string().min(1),
   startedAt: z.string(),
-  installationMethod: z.literal('development'),
-  daemonLifecycle: z.literal('external')
+  installationMethod: z.literal('development')
 })
 
 const healthSchema = z.looseObject({
   pid: z.number().int().positive(),
   instanceId: z.string().min(1),
-  installationMethod: z.literal('development'),
-  daemonLifecycle: z.literal('external')
+  installationMethod: z.literal('development')
 })
 
 const repositoryRoot = path.resolve(
@@ -119,8 +117,7 @@ const healthMatches =
   health !== null &&
   health.pid === record?.pid &&
   health.instanceId === record?.instanceId &&
-  health.installationMethod === 'development' &&
-  health.daemonLifecycle === 'external'
+  health.installationMethod === 'development'
 
 if (!processMatches || !healthMatches) {
   console.error(
@@ -166,8 +163,6 @@ process.env.TREEPORT_DATA_DIR = canonicalExpectedDataDirectory
 process.env.TREEPORT_RUNTIME_DIR = runtimeDirectory
 
 process.env.TREEPORT_DAEMON_RECORD = recordPath
-
-process.env.TREEPORT_DAEMON_LIFECYCLE = 'external'
 
 process.env.TREEPORT_CLI_ENTRYPOINT = process.argv[1]
 

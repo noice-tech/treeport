@@ -259,7 +259,6 @@ async function fixture(
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1',
     remoteUrl: null,
-    daemonLifecycle: 'treeport',
     webDevelopment: false
   } satisfies AppConfig
 

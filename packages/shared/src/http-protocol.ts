@@ -648,7 +648,6 @@ export const healthResponseSchema = Schema.Struct({
   pid: Schema.Int,
   instanceId: nullableStringSchema,
   installationMethod: Schema.String,
-  daemonLifecycle: Schema.Literal('treeport', 'external'),
   url: Schema.String
 })
 

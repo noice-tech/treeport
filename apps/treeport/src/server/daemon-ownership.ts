@@ -13,7 +13,6 @@ interface DaemonRecord {
   dataDir: string
   startedAt: string
   installationMethod: string
-  daemonLifecycle: 'treeport' | 'external'
 }
 
 function processExists(pid: number): boolean {
@@ -51,8 +50,7 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
     apiUrl: config.apiUrl,
     dataDir: config.dataDir,
     startedAt: new Date().toISOString(),
-    installationMethod: config.installationMethod ?? 'development',
-    daemonLifecycle: config.daemonLifecycle
+    installationMethod: config.installationMethod ?? 'development'
   }
 
   const openLock = () =>

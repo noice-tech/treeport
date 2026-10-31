@@ -22,7 +22,7 @@ Follow the platform-specific instructions printed by `pm2 startup`. Keep the clo
 - `pm2 stop treeport` stops the server.
 - After `git pull`, `pnpm pm2:restart` installs dependencies, builds, and restarts it.
 
-Use your supervisor, not `treeport start` or `treeport stop`, to control an externally managed server.
+Use your supervisor to start, restart, and stop the server.
 
 ## Terminal persistence
 

@@ -437,7 +437,6 @@ export class TerminalService {
           TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),
           TREEPORT_DATA_DIR: config.dataDir,
           TREEPORT_RUNTIME_DIR: config.runtimeDir,
-          TREEPORT_DAEMON_LIFECYCLE: config.daemonLifecycle,
           TREEPORT_PROJECT_ID: worktree.projectId,
           TREEPORT_WORKTREE_ID: worktree.id,
           TREEPORT_TERMINAL_ID: terminalId

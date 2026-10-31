@@ -14,7 +14,6 @@ import treeportExtension from './index.ts'
 const managed = {
   managed: true,
   apiUrl: 'http://127.0.0.1:8733',
-  daemonLifecycle: 'external',
   project: { id: 'project-1', name: 'Treeport', kind: 'repository' },
   worktree: {
     id: 'tree-1',

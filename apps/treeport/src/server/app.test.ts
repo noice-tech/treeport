@@ -44,7 +44,6 @@ function fixture(webDist = '/missing') {
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
-    daemonLifecycle: 'treeport',
     webDevelopment: false
   }
 
@@ -846,8 +845,7 @@ describe('HTTP API validation', () => {
     expect(await response.json()).toMatchObject({
       ok: true,
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
-      hostname: os.hostname(),
-      daemonLifecycle: 'treeport'
+      hostname: os.hostname()
     })
   })
 

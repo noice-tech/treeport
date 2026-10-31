@@ -21,15 +21,13 @@ const daemonRecordSchema = z.object({
   instanceId: z.string().min(1),
   apiUrl: z.string().min(1),
   dataDir: z.string().min(1),
-  installationMethod: z.string(),
-  daemonLifecycle: z.string()
+  installationMethod: z.string()
 })
 
 const daemonHealthSchema = z.object({
   pid: z.number().int().positive(),
   instanceId: z.string().min(1),
-  installationMethod: z.string(),
-  daemonLifecycle: z.string()
+  installationMethod: z.string()
 })
 
 const terminalHostRecordSchema = z.looseObject({
@@ -151,7 +149,6 @@ async function stopDaemon(dataDir, runtimeDir, timeoutMs) {
 
   if (
     recordDataDir !== dataDir ||
-    record.daemonLifecycle !== 'external' ||
     record.installationMethod !== 'development'
   ) {
     throw new Error(
@@ -200,7 +197,6 @@ async function stopDaemon(dataDir, runtimeDir, timeoutMs) {
   if (
     health?.pid !== record.pid ||
     health?.instanceId !== record.instanceId ||
-    health?.daemonLifecycle !== 'external' ||
     health?.installationMethod !== 'development'
   ) {
     throw new Error(

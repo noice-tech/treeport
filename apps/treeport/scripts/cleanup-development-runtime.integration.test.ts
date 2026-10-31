@@ -72,7 +72,6 @@ async function startDaemon(
       response.end(JSON.stringify({
         pid: process.pid,
         instanceId: ${JSON.stringify(instanceId)},
-        daemonLifecycle: 'external',
         installationMethod: 'development'
       }))
     })
@@ -100,8 +99,7 @@ async function startDaemon(
     apiUrl,
     dataDir,
     startedAt: new Date().toISOString(),
-    installationMethod: 'development',
-    daemonLifecycle: 'external'
+    installationMethod: 'development'
   }
 
   await Promise.all([

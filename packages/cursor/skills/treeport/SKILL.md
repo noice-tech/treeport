@@ -12,7 +12,7 @@ Treeport keeps projects, Git worktrees (trees), persistent terminals, and browse
 
 ## Start with context
 
-Run `treeport context` before Treeport operations. It identifies this terminal, project, tree, API instance, and daemon lifecycle.
+Run `treeport context` before Treeport operations. It identifies this terminal, project, tree, and API instance.
 
 Use the inherited instance and exact IDs from context. Never infer the target from the current folder, a familiar port, or the visible Treeport window. A worktree's development instance may differ from the instance hosting this terminal. Do not mutate another instance without permission.
 
@@ -97,7 +97,7 @@ Add `--repo` to save the launcher in the current tree's `.treeport/settings.json
 
 ## Safety and command discovery
 
-- For an `external` daemon lifecycle, never run `treeport start` or `treeport stop`; its parent owns lifecycle management.
+- The user's shell or supervisor owns server startup and shutdown.
 - Do not run `sudo` or change remote exposure without explicit permission.
 - Use normal command output for reading; add `--json` for programmatic parsing, before the `--` separator.
 - Use `treeport <command> --help` for options not shown here.
