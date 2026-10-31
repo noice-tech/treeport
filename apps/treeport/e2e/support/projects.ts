@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { RecentProjectRecord } from '@treeport/shared'
+import type { RecentProjectRecord } from '#protocol/project'
 import { project } from './project'
 import type { MockAppOptions } from './types'
 

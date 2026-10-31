@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { UsersIcon } from 'lucide-react'
-import type { WorkspacePresence, WorktreeRecord } from '@treeport/shared'
+import type { WorkspacePresence } from '#protocol/presence'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { Button } from '../../components/ui/button'
 import {
   Popover,

@@ -5,7 +5,7 @@ import * as ExecutionStrategy from 'effect/ExecutionStrategy'
 import * as Fiber from 'effect/Fiber'
 import * as Scope from 'effect/Scope'
 import * as ManagedRuntime from 'effect/ManagedRuntime'
-import { tracingLayerFromEnvironment } from '@treeport/shared/tracing'
+import { tracingLayerFromEnvironment } from '@treeport/tracing'
 
 export class DesktopRuntime {
   readonly scope: Scope.CloseableScope

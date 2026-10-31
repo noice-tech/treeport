@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { BrowserServerMessage } from '@treeport/shared'
+import type { BrowserServerMessage } from '#protocol/browser'
 import type { BrowserAppConnection } from '../../browser-session-client'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'

@@ -6,19 +6,22 @@ import { z } from 'zod'
 import * as Effect from 'effect/Effect'
 import {
   createLauncherSchema,
-  decodeUnknownOrNull,
-  isSchemaValue,
-  type PackageListing,
-  type PackageOperationResult,
-  type PackageResourceDiagnostic,
-  type PackageScope,
-  type PackageSource,
-  type ProjectRecord,
-  type LauncherDefinition,
+  type LauncherDefinition
+} from '#protocol/launcher'
+import { decodeUnknownOrNull, isSchemaValue } from '#protocol/schema'
+import type {
+  PackageListing,
+  PackageOperationResult,
+  PackageResourceDiagnostic,
+  PackageScope,
+  PackageSource
+} from '#protocol/package'
+import type { ProjectRecord } from '#protocol/project'
+import {
   type WebAppDefinition,
-  type WebAppPermission,
   webAppPermissionSchema
-} from '@treeport/shared'
+} from '#protocol/web-app'
+import type { WebAppPermission } from '@treeport/app-sdk'
 import type { AppConfig } from './config.ts'
 import { DomainError } from './domain.ts'
 import { PackageMutations } from './services/package/package-mutations.ts'

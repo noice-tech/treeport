@@ -1,4 +1,4 @@
-import { formatCommandLine } from '@treeport/shared'
+import { formatCommandLine } from '#protocol/terminal'
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-reflect-get, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- Test-only adapters intentionally bridge the former Promise/callback fixtures to the Effect API. */
 import fs from 'node:fs/promises'
 import net from 'node:net'

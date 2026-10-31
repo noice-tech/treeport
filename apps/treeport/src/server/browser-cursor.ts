@@ -1,5 +1,6 @@
 import type { Frame, JSHandle, Page } from 'playwright'
-import { browserCursorSchema, decodeUnknownOrNull } from '@treeport/shared'
+import { browserCursorSchema } from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
 
 export async function browserCursor(
   page: Page,

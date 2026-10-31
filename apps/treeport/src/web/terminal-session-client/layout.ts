@@ -2,10 +2,10 @@ import type { SessionTimer } from './timers'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
-import {
-  type TerminalClientToServerEvents,
-  type TerminalSize
-} from '@treeport/shared'
+import type {
+  TerminalClientToServerEvents,
+  TerminalSize
+} from '#protocol/terminal-session'
 import { setTerminalFontSize } from '../terminal-browser'
 import {
   type TerminalSessionState,

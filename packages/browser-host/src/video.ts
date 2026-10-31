@@ -1,4 +1,4 @@
-import type { BrowserClipboard } from './browser-clipboard.ts'
+import type { BrowserClipboard } from './clipboard.ts'
 import * as Schema from 'effect/Schema'
 
 export const browserVideoSettingsSchema = Schema.Struct({

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import {
-  decodeUnknownOrNull,
   terminalBinarySchema,
   terminalInputSchema,
   terminalOutputAckSchema,
@@ -21,7 +21,7 @@ import {
   type TerminalProtocolInput,
   type TerminalServerEvent,
   type TerminalServerPayload
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'

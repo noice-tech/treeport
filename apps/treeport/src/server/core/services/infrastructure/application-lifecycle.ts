@@ -1,4 +1,4 @@
-import type { OperationRecord } from '@treeport/shared'
+import type { OperationRecord } from '#protocol/operation'
 import { sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'

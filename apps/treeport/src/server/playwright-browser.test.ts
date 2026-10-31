@@ -3,8 +3,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, expectTypeOf, it, onTestFinished, vi } from 'vitest'
-import { parseBrowserOwnerServerMessage } from '@treeport/shared'
-import type { BrowserRuntimeState } from '@treeport/shared'
+import { parseBrowserOwnerServerMessage } from '#protocol/browser'
+import type { BrowserRuntimeState } from '#protocol/browser'
 import {
   prepareBrowserVideoExtension,
   type BrowserCapturePage

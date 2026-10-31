@@ -8,11 +8,8 @@ import {
   vi
 } from 'vitest'
 import { readFileSync } from 'node:fs'
-import {
-  type JsonValue,
-  type TerminalActivity,
-  type TerminalSize
-} from '@treeport/shared'
+import type { JsonValue } from '@treeport/app-sdk'
+import type { TerminalActivity, TerminalSize } from '#protocol/terminal-session'
 import * as Effect from 'effect/Effect'
 import { GhosttyTerminal } from '../ghostty-vt/ghostty-vt'
 import { GhosttyTerminalCore } from './terminal-session-client/ghostty-core'

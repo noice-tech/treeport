@@ -1,14 +1,14 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
-import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
-import { browserObservedUrlSchema } from './browser-protocol.ts'
-import { jsonValueSchema } from './json-schema.ts'
-import { workspacePresenceSchema } from './presence-protocol.ts'
+import { browserObservedUrlSchema } from '@treeport/browser-host'
+import * as Either from 'effect/Either'
+import { jsonValueSchema } from './json.ts'
+import { webAppPermissionSchema } from './web-app.ts'
+import { workspacePresenceSchema } from './presence.ts'
 import {
   terminalRuntimeMetadataFields,
   terminalRuntimeMetadataSchema
-} from './terminal-protocol.ts'
-import { webAppPermissionSchema } from './web-app-protocol.ts'
+} from './terminal-session.ts'
 
 export const EVENT_PROTOCOL_VERSION = 3
 
@@ -253,7 +253,7 @@ export const eventsSnapshotSchema = Schema.Struct({
 
 export type EventsSnapshot = Schema.Schema.Type<typeof eventsSnapshotSchema>
 
-export const socketHandshakeSchema = Schema.Struct({
+const socketHandshakeSchema = Schema.Struct({
   type: Schema.Literal('handshake'),
   auth: jsonValueSchema,
   query: Schema.Record({ key: Schema.String, value: Schema.String })
@@ -261,7 +261,7 @@ export const socketHandshakeSchema = Schema.Struct({
 
 export type SocketHandshake = Schema.Schema.Type<typeof socketHandshakeSchema>
 
-export const socketMessageSchema = Schema.Struct({
+const socketMessageSchema = Schema.Struct({
   event: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(80)),
   payload: jsonValueSchema
 })

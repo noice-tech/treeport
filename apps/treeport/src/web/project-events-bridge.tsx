@@ -3,14 +3,14 @@ import { useQueryClient } from '@tanstack/react-query'
 import { RpcClient } from '@effect/rpc'
 import {
   EVENT_PROTOCOL_VERSION,
-  TreeportRpcs,
-  treeportRpcClientLayer,
   type EventsSnapshot,
-  type NetworkProductEvent,
-  type ProductEventDataMap,
-  type ProjectRecord,
-  type WorkspacePresence
-} from '@treeport/shared'
+  type NetworkProductEvent
+} from '#protocol/socket'
+import { TreeportRpcs } from '#protocol/rpc'
+import { treeportRpcClientLayer } from '#protocol/rpc-client'
+import type { ProductEventDataMap } from '#protocol/events'
+import type { ProjectRecord } from '#protocol/project'
+import type { WorkspacePresence } from '#protocol/presence'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Stream from 'effect/Stream'

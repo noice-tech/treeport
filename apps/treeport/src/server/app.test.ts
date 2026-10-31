@@ -14,11 +14,9 @@ import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  DESKTOP_PROTOCOL_VERSION,
-  type JsonValue,
-  type TerminalRuntimeMetadata
-} from '@treeport/shared'
+import { DESKTOP_PROTOCOL_VERSION } from '#protocol/api'
+import type { JsonValue } from '@treeport/app-sdk'
+import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
 import {
   DomainError,
   ProductEventBus,

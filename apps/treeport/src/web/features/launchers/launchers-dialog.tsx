@@ -1,5 +1,5 @@
 import { lazy, Suspense, type RefObject } from 'react'
-import type { Launcher } from '@treeport/shared'
+import type { Launcher } from '#protocol/launcher'
 import {
   Dialog,
   DialogContent,

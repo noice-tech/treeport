@@ -1,6 +1,6 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
-import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
+import * as Either from 'effect/Either'
 
 export const SOCKET_PATH = '/api/socket'
 export const TERMINAL_PROTOCOL_VERSION = 10
@@ -42,7 +42,7 @@ export const terminalSizeSchema = Schema.Struct(dimensions)
 
 export type TerminalSize = Schema.Schema.Type<typeof terminalSizeSchema>
 
-export const terminalActivitySchema = Schema.Struct({
+const terminalActivitySchema = Schema.Struct({
   state: Schema.Literal('idle', 'working', 'blocked', 'done', 'error'),
   kind: Schema.NullOr(Schema.Literal('permission', 'question', 'auth')),
   progress: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100))),
@@ -53,7 +53,7 @@ export const terminalActivitySchema = Schema.Struct({
 
 export type TerminalActivity = Schema.Schema.Type<typeof terminalActivitySchema>
 
-export const terminalAttentionReasonSchema = Schema.Literal(
+const terminalAttentionReasonSchema = Schema.Literal(
   'bell',
   'done',
   'blocked',
@@ -64,7 +64,7 @@ export type TerminalAttentionReason = Schema.Schema.Type<
   typeof terminalAttentionReasonSchema
 >
 
-export const terminalProgramSchema = Schema.Literal('pi', 'claude', 'codex')
+const terminalProgramSchema = Schema.Literal('pi', 'claude', 'codex')
 
 export type TerminalProgram = Schema.Schema.Type<typeof terminalProgramSchema>
 
@@ -93,10 +93,6 @@ export const terminalRuntimeMetadataSchema = Schema.mutable(
 export const terminalAttentionAcknowledgementSchema = Schema.Struct({
   sequence: positiveInt
 })
-
-export type TerminalAttentionAcknowledgement = Schema.Schema.Type<
-  typeof terminalAttentionAcknowledgementSchema
->
 
 export type TerminalRuntimeMetadata = Schema.Schema.Type<
   typeof terminalRuntimeMetadataSchema
@@ -141,7 +137,7 @@ export function terminalAttentionNotification(input: {
   }
 }
 
-export const terminalAuthSchema = Schema.Struct({
+const terminalAuthSchema = Schema.Struct({
   terminalId,
   clientId,
   ...dimensions
@@ -193,38 +189,38 @@ const terminalReadyBase = {
   reset: Schema.Literal('full')
 }
 
-export const terminalReadySchema = Schema.Struct({
+const terminalReadySchema = Schema.Struct({
   ...terminalReadyBase,
   ...dimensions,
   revision: positiveInt,
   snapshot: Schema.String
 })
 
-export const terminalDimensionsSchema = Schema.Struct({
+const terminalDimensionsSchema = Schema.Struct({
   ...dimensions,
   revision: positiveInt
 })
 
-export const terminalOutputSchema = Schema.Struct({
+const terminalOutputSchema = Schema.Struct({
   streamId,
   sequence: positiveInt,
   data: Schema.String
 })
 
-export const terminalTitleSchema = Schema.Struct({
+const terminalTitleSchema = Schema.Struct({
   title: Schema.String.pipe(Schema.maxLength(256))
 })
 
-export const terminalControlSchema = Schema.Struct({
+const terminalControlSchema = Schema.Struct({
   generation,
   controller: Schema.Boolean
 })
 
-export const terminalExitSchema = Schema.Struct({
+const terminalExitSchema = Schema.Struct({
   exitCode: Schema.NullOr(Schema.Int)
 })
 
-export const terminalQueryAuthoritySchema = Schema.Struct({
+const terminalQueryAuthoritySchema = Schema.Struct({
   generation,
   transitionId: Schema.NullOr(
     Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
@@ -232,9 +228,9 @@ export const terminalQueryAuthoritySchema = Schema.Struct({
   active: Schema.Boolean
 })
 
-export const terminalInputAckSchema = Schema.Struct({ generation })
+const terminalInputAckSchema = Schema.Struct({ generation })
 
-export const terminalErrorSchema = Schema.Struct({
+const terminalErrorSchema = Schema.Struct({
   code: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(80)),
   message: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000)),
   retryable: Schema.Boolean
@@ -244,45 +240,39 @@ export type TerminalAuth = Schema.Schema.Type<typeof terminalAuthSchema>
 
 export type TerminalInput = Schema.Schema.Type<typeof terminalInputSchema>
 
-export type TerminalInputAck = Schema.Schema.Type<typeof terminalInputAckSchema>
+type TerminalInputAck = Schema.Schema.Type<typeof terminalInputAckSchema>
 
-export type TerminalBinary = Schema.Schema.Type<typeof terminalBinarySchema>
+type TerminalBinary = Schema.Schema.Type<typeof terminalBinarySchema>
 
-export type TerminalResize = Schema.Schema.Type<typeof terminalResizeSchema>
+type TerminalResize = Schema.Schema.Type<typeof terminalResizeSchema>
 
-export type TerminalTakeControl = Schema.Schema.Type<
-  typeof terminalTakeControlSchema
->
+type TerminalTakeControl = Schema.Schema.Type<typeof terminalTakeControlSchema>
 
-export type TerminalTakeControlPayload = TerminalTakeControl
+type TerminalTakeControlPayload = TerminalTakeControl
 
-export type TerminalOutputAck = Schema.Schema.Type<
-  typeof terminalOutputAckSchema
->
+type TerminalOutputAck = Schema.Schema.Type<typeof terminalOutputAckSchema>
 
-export type TerminalQueryAuthorityRequest = Schema.Schema.Type<
+type TerminalQueryAuthorityRequest = Schema.Schema.Type<
   typeof terminalQueryAuthorityRequestSchema
 >
 
 export type TerminalReady = Schema.Schema.Type<typeof terminalReadySchema>
 
-export type TerminalDimensions = Schema.Schema.Type<
-  typeof terminalDimensionsSchema
->
+type TerminalDimensions = Schema.Schema.Type<typeof terminalDimensionsSchema>
 
-export type TerminalOutput = Schema.Schema.Type<typeof terminalOutputSchema>
+type TerminalOutput = Schema.Schema.Type<typeof terminalOutputSchema>
 
-export type TerminalTitle = Schema.Schema.Type<typeof terminalTitleSchema>
+type TerminalTitle = Schema.Schema.Type<typeof terminalTitleSchema>
 
-export type TerminalControl = Schema.Schema.Type<typeof terminalControlSchema>
+type TerminalControl = Schema.Schema.Type<typeof terminalControlSchema>
 
-export type TerminalExit = Schema.Schema.Type<typeof terminalExitSchema>
+type TerminalExit = Schema.Schema.Type<typeof terminalExitSchema>
 
-export type TerminalQueryAuthority = Schema.Schema.Type<
+type TerminalQueryAuthority = Schema.Schema.Type<
   typeof terminalQueryAuthoritySchema
 >
 
-export type TerminalError = Schema.Schema.Type<typeof terminalErrorSchema>
+type TerminalError = Schema.Schema.Type<typeof terminalErrorSchema>
 
 export interface TerminalClientEventPayloads {
   input: TerminalInput

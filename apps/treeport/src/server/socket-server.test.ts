@@ -18,20 +18,22 @@ import type {
   BrowserOwnerServerToClientEvents,
   BrowserServerMessage,
   BrowserServerToClientEvents,
+  BrowserApp
+} from '#protocol/browser'
+import type {
   TerminalClientToServerEvents,
   TerminalRuntimeMetadata,
   TerminalReady,
-  TerminalRecord,
-  TerminalServerToClientEvents,
-  BrowserApp,
-  WebApp,
+  TerminalServerToClientEvents
+} from '#protocol/terminal-session'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WebApp } from '@treeport/app-sdk'
+import type {
   ProtocolSocket,
   ProtocolSocketOptions
-} from '@treeport/shared'
-import {
-  createProtocolSocket,
-  TERMINAL_PROTOCOL_VERSION
-} from '@treeport/shared'
+} from '#protocol/socket-client'
+import { createProtocolSocket } from '#protocol/socket-client'
+import { TERMINAL_PROTOCOL_VERSION } from '#protocol/terminal-session'
 import { testAccess } from './test-access.ts'
 import { TerminalAttachmentManager } from './terminal-attachments.ts'
 import {

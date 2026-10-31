@@ -1,4 +1,4 @@
-import { formatCommandLine } from '@treeport/shared'
+import { formatCommandLine } from '#protocol/terminal'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import http from 'node:http'

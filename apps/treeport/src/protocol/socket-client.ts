@@ -1,13 +1,13 @@
-import * as Effect from 'effect/Effect'
-import type * as Fiber from 'effect/Fiber'
-import * as FiberId from 'effect/FiberId'
-import * as Layer from 'effect/Layer'
-import * as Queue from 'effect/Queue'
-import * as Socket from '@effect/platform/Socket'
-import { parseSocketMessage } from './socket-protocol.ts'
-import { decodeUnknownOrNull } from './schema.ts'
-import { SOCKET_PATH } from './terminal-protocol.ts'
 import * as Schema from 'effect/Schema'
+import type * as Fiber from 'effect/Fiber'
+import * as Queue from 'effect/Queue'
+import * as Effect from 'effect/Effect'
+import * as Socket from '@effect/platform/Socket'
+import * as Layer from 'effect/Layer'
+import * as FiberId from 'effect/FiberId'
+import { SOCKET_PATH } from './terminal-session.ts'
+import { parseSocketMessage } from './socket.ts'
+import { decodeUnknownOrNull } from './schema.ts'
 
 type EventArguments<
   Events,

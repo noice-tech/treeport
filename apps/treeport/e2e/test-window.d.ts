@@ -1,4 +1,4 @@
-import type { NetworkProductEvent } from '@treeport/shared'
+import type { NetworkProductEvent } from '#protocol/socket'
 
 declare global {
   type TreeportTestDesktopCommand =

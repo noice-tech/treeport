@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isIP } from 'node:net'
-import type { ViewerIdentity } from '@treeport/shared'
+import type { ViewerIdentity } from '#protocol/presence'
 
 const MAX_HOST_BYTES = 512
 const MAX_LOGIN_BYTES = 320

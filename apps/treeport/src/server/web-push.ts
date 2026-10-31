@@ -6,10 +6,9 @@ import webpush from 'web-push'
 import * as Schema from 'effect/Schema'
 import {
   pushSubscriptionSchema,
-  type WebPushSubscription,
-  type ViewerIdentity,
-  type WorkspacePresence
-} from '@treeport/shared'
+  type WebPushSubscription
+} from '#protocol/push'
+import type { ViewerIdentity, WorkspacePresence } from '#protocol/presence'
 import { DomainError } from './core/index.ts'
 
 const stateSchema = Schema.Struct({

@@ -3,7 +3,7 @@ import type {
   TerminalAttentionReason,
   TerminalProgram,
   TerminalSize
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import { TerminalSession } from './terminal-session-client'
 import { TerminalSessionPool } from './terminal-session-pool'
 import type { TerminalFontZoom } from './terminal-session-client/state'

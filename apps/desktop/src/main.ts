@@ -1,10 +1,8 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import {
-  browserUrlSchema,
-  decodeUnknownOrNull
-} from '@treeport/shared/browser-host'
+import { browserUrlSchema } from '@treeport/browser-host'
+import { decodeUnknownOrNull } from './schema.ts'
 import {
   app,
   BrowserWindow,

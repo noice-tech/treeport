@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { TerminalRuntimeMetadata } from '@treeport/shared'
+import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
 import { installDesktopBridge, installKeyboardPlatform } from './desktop'
 import { createAppMock } from './apps'
 import { createLauncherMock } from './launchers'

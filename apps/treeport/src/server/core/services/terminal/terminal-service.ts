@@ -1,12 +1,9 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type {
-  TerminalAfterExit,
-  TerminalRecord,
-  TerminalSize,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { TerminalAfterExit, TerminalRecord } from '#protocol/terminal'
+import type { TerminalSize } from '#protocol/terminal-session'
+import type { WorktreeRecord } from '#protocol/worktree'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'

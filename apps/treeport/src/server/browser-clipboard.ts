@@ -2,9 +2,9 @@ import {
   BROWSER_MAX_CLIPBOARD_LENGTH,
   browserClipboardSchema,
   copyBrowserPage,
-  decodeUnknownOrNull,
   type BrowserClipboard
-} from '@treeport/shared'
+} from '@treeport/browser-host/clipboard'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import type { CDPSession, Page } from 'playwright'
 
 export interface BrowserClipboardReader {

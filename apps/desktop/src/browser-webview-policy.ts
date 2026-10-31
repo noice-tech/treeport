@@ -1,8 +1,5 @@
-import {
-  browserAppIdSchema,
-  browserUrlSchema,
-  decodeUnknownOrNull
-} from '@treeport/shared/browser-host'
+import { browserAppIdSchema, browserUrlSchema } from '@treeport/browser-host'
+import { decodeUnknownOrNull } from './schema.ts'
 import {
   appendFileSync,
   mkdirSync,

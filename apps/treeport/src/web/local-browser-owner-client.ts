@@ -1,17 +1,15 @@
-import {
-  apiErrorBodySchema,
-  browserOwnerTicketResponseSchema,
-  createProtocolSocket,
-  decodeUnknownOrNull
-} from '@treeport/shared'
+import { apiErrorBodySchema } from '#protocol/api'
+import { browserOwnerTicketResponseSchema } from '#protocol/browser'
+import { createProtocolSocket } from '#protocol/socket-client'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import type {
   BrowserOwnerClientMessage,
   BrowserOwnerClientToServerEvents,
   BrowserOwnerServerMessage,
   BrowserOwnerServerToClientEvents,
   BrowserRuntimeState
-} from '@treeport/shared'
-import { parseBrowserOwnerServerMessage } from '@treeport/shared'
+} from '#protocol/browser'
+import { parseBrowserOwnerServerMessage } from '#protocol/browser'
 
 interface LocalBrowserOwnerSocket {
   connected: boolean

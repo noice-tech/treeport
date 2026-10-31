@@ -4,15 +4,15 @@ import { SharedRead } from './shared-read.ts'
 import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { DirtyState } from '#protocol/worktree'
 import type {
-  DirtyState,
   GitDiff,
   GitDiffRequest,
   GitDiffFile,
   GitDiffImage,
   GitDiffImageRequest,
   GitFileDiff
-} from '@treeport/shared'
+} from '@treeport/app-sdk'
 import * as Context from 'effect/Context'
 import * as Data from 'effect/Data'
 import * as Deferred from 'effect/Deferred'

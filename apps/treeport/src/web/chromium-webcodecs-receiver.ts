@@ -1,4 +1,5 @@
-import { SOCKET_PATH, type BrowserServerMessage } from '@treeport/shared'
+import { SOCKET_PATH } from '#protocol/terminal-session'
+import type { BrowserServerMessage } from '#protocol/browser'
 import type {
   BrowserMediaWheel,
   BrowserMediaWorkerCommand,

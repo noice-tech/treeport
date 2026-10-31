@@ -6,7 +6,7 @@ import {
   FolderIcon,
   HomeIcon
 } from '@heroicons/react/16/solid'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
 import { parseResponse, rpc } from '../../api'
 import { errorMessage } from '../../error-message'
 import { Button } from '../../components/ui/button'

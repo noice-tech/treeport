@@ -1,9 +1,9 @@
 import {
   BROWSER_MAX_CLIPBOARD_LENGTH,
   browserClipboardSchema,
-  decodeUnknownOrNull,
   type BrowserClipboard
-} from '@treeport/shared'
+} from '@treeport/browser-host/clipboard'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import type { Page } from 'playwright'
 
 export async function installBrowserClipboardBridge(

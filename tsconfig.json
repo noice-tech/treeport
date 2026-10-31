@@ -1,7 +1,8 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/shared" },
+    { "path": "packages/browser-host" },
+    { "path": "packages/tracing" },
     { "path": "apps/treeport" },
     { "path": "apps/desktop" }
   ]

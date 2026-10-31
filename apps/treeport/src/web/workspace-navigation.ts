@@ -1,10 +1,8 @@
-import type {
-  BrowserApp,
-  ProjectRecord,
-  TerminalRecord,
-  WebApp,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { BrowserApp } from '#protocol/browser'
+import type { ProjectRecord } from '#protocol/project'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WebApp } from '@treeport/app-sdk'
+import type { WorktreeRecord } from '#protocol/worktree'
 
 export const LAST_WORKSPACE_ROUTE_STORAGE_KEY = 'treeport-last-workspace-route'
 

@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   WORKTREE_TITLE_MAX_LENGTH,
   type WorktreeRecord
-} from '@treeport/shared'
+} from '#protocol/worktree'
 import { parseResponse, rpc } from '../../api'
 import { Button } from '../../components/ui/button'
 import {

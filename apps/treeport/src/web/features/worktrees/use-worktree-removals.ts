@@ -5,7 +5,7 @@ import {
   useQueryClient,
   type Query
 } from '@tanstack/react-query'
-import type { RemoveOperationRecord } from '@treeport/shared'
+import type { RemoveOperationRecord } from '#protocol/operation'
 import { parseResponse, rpc } from '../../api'
 
 export function useWorktreeRemovals() {

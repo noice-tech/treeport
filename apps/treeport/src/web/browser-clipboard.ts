@@ -1,4 +1,4 @@
-import type { BrowserClipboard } from '@treeport/shared'
+import type { BrowserClipboard } from '@treeport/browser-host/clipboard'
 
 export async function writeBrowserClipboard(
   value: BrowserClipboard

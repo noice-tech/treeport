@@ -3,4 +3,4 @@ export {
   currentTraceContext,
   makeTracingLayer,
   tracingLayerFromEnvironment
-} from '@treeport/shared/tracing'
+} from '@treeport/tracing'

@@ -15,7 +15,8 @@ import { makeProtocol } from './terminal-session-client/protocol'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
-import { createProtocolSocket, type TerminalSize } from '@treeport/shared'
+import { createProtocolSocket } from '#protocol/socket-client'
+import type { TerminalSize } from '#protocol/terminal-session'
 import {
   TerminalSessionState,
   type TerminalSessionSnapshot,

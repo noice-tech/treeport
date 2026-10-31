@@ -1,15 +1,15 @@
 import { useRef, useState } from 'react'
+import { availableTreeName } from '#protocol/worktree'
+import { formatCommandLine } from '#protocol/terminal'
 import {
-  availableTreeName,
-  formatCommandLine,
   launcherInputNames,
   resolveLauncherArgs,
   resolveLauncherTreeTitle,
   type LauncherTreeTitle,
-  type ProjectRecord,
   type LauncherDefinition,
   type LauncherDefinitionDiagnostic
-} from '@treeport/shared'
+} from '#protocol/launcher'
+import type { ProjectRecord } from '#protocol/project'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'

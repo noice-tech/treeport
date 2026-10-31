@@ -3,7 +3,7 @@ import {
   type PresenceUpdate,
   type ViewerIdentity,
   type WorkspacePresence
-} from '@treeport/shared'
+} from '#protocol/presence'
 import { DomainError, type ProductEventBus } from './core/index.ts'
 
 export class WorkspacePresenceManager {

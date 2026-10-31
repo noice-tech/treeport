@@ -6,7 +6,7 @@ import {
   parseBrowserMediaClientMessage,
   parseBrowserServerMessage,
   type BrowserMediaClientMessage
-} from '@treeport/shared'
+} from '#protocol/browser'
 import type {
   BrowserRelayCommand,
   BrowserRelayEvent

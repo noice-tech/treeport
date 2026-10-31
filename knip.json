@@ -17,11 +17,6 @@
         "src/server/browser-relay.ts",
         "src/terminal-runtime/engine-worker.ts",
         "src/terminal-runtime/launcher.ts"
-      ],
-      "ignoreDependencies": [
-        "@effect/opentelemetry",
-        "@opentelemetry/sdk-trace-base",
-        "@opentelemetry/sdk-trace-node"
       ]
     },
     "apps/desktop": {

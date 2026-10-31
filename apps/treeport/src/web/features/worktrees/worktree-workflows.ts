@@ -6,14 +6,11 @@ import {
   useQuery,
   useQueryClient
 } from '@tanstack/react-query'
-import type {
-  LauncherTreeTitle,
-  ProjectRecord,
-  RemoveOperationRecord,
-  RemovePreview,
-  TerminalSize,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { LauncherTreeTitle } from '#protocol/launcher'
+import type { ProjectRecord } from '#protocol/project'
+import type { RemoveOperationRecord, RemovePreview } from '#protocol/operation'
+import type { TerminalSize } from '#protocol/terminal-session'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { parseResponse, rpc } from '../../api'
 import { errorDetails } from '../../error-message'
 import { projectsQueryKey } from '../../project-metadata'

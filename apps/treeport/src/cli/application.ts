@@ -5,60 +5,78 @@ import { Command, CommanderError } from 'commander'
 import { RpcClient } from '@effect/rpc'
 import {
   apiErrorBodySchema,
+  okResponseSchema,
+  type ApiErrorBody,
+  type TreeportContext
+} from '#protocol/api'
+import {
   availableTreeName,
+  TREE_DECORATION_TONES,
+  worktreeResponseSchema,
+  type WorktreeRecord
+} from '#protocol/worktree'
+import {
   browserAgentResponseSchema,
   browserInstallResponseSchema,
   browserInstallStatusSchema,
-  decodeUnknownOrNull,
+  openBrowserAppResponseSchema,
+  type BrowserApp
+} from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import {
   EVENT_PROTOCOL_VERSION,
+  type EventsSnapshot,
+  type NetworkProductEvent
+} from '#protocol/socket'
+import {
   formatCommandLine,
+  terminalCaptureResponseSchema,
+  TERMINAL_CAPTURE_DEFAULT_LINES,
+  TERMINAL_CAPTURE_MAX_LINES,
+  TERMINAL_INPUT_KEYS,
+  TERMINAL_INPUT_MAX_STEPS,
+  terminalObservationResponseSchema,
+  terminalResponseSchema,
+  type TerminalAfterExit,
+  type TerminalRecord,
+  type TerminalSendInput
+} from '#protocol/terminal'
+import {
   launcherDefinitionListingSchema,
   launcherInputNames,
   launcherResponseSchema,
   launchersResponseSchema,
   repositoryLauncherSchema,
   resolveLauncherArgs,
-  resolveLauncherTreeTitle,
-  TreeportRpcs,
-  treeportRpcClientLayer,
-  okResponseSchema,
-  openBrowserAppResponseSchema,
+  resolveLauncherTreeTitle
+} from '#protocol/launcher'
+import { TreeportRpcs } from '#protocol/rpc'
+import { treeportRpcClientLayer } from '#protocol/rpc-client'
+import {
   openWebAppResponseSchema,
-  operationResponseSchema,
-  packageListingResponseSchema,
-  packageOperationResponseSchema,
-  packageProjectResponseSchema,
-  packageReloadResponseSchema,
-  projectResponseSchema,
-  projectsResponseSchema,
-  removePreviewResponseSchema,
-  terminalCaptureResponseSchema,
-  TERMINAL_CAPTURE_DEFAULT_LINES,
-  TERMINAL_CAPTURE_MAX_LINES,
-  TERMINAL_INPUT_KEYS,
-  TERMINAL_INPUT_MAX_STEPS,
-  TREE_DECORATION_TONES,
-  terminalObservationResponseSchema,
-  terminalResponseSchema,
   WEB_APP_INPUT_MAX_BYTES,
   webAppDefinitionsResponseSchema,
   webAppInputSchema,
-  worktreeResponseSchema,
-  type ApiErrorBody,
-  type BrowserApp,
-  type CreateOperationRequest,
-  type EventsSnapshot,
-  type NetworkProductEvent,
-  type ProjectRecord,
-  type TreeportContext,
-  type TerminalAfterExit,
-  type TerminalRecord,
-  type TerminalRuntimeMetadata,
-  type TerminalSendInput,
-  type WebAppDefinition,
-  type WebAppInput,
-  type WorktreeRecord
-} from '@treeport/shared'
+  type WebAppDefinition
+} from '#protocol/web-app'
+import {
+  operationResponseSchema,
+  removePreviewResponseSchema,
+  type CreateOperationRequest
+} from '#protocol/operation'
+import {
+  packageListingResponseSchema,
+  packageOperationResponseSchema,
+  packageProjectResponseSchema,
+  packageReloadResponseSchema
+} from '#protocol/package'
+import {
+  projectResponseSchema,
+  projectsResponseSchema,
+  type ProjectRecord
+} from '#protocol/project'
+import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
+import type { WebAppInput } from '@treeport/app-sdk'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Schema from 'effect/Schema'

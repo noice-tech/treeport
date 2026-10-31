@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { BrowserOwnerServerMessage } from '@treeport/shared'
+import type { BrowserOwnerServerMessage } from '#protocol/browser'
 import { connectLocalBrowserOwner } from './local-browser-owner-client'
 
 afterEach(() => {

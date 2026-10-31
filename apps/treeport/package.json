@@ -8,6 +8,9 @@
     "treeport": "bin/treeport"
   },
   "main": "src/cli/index.ts",
+  "imports": {
+    "#protocol/*": "./src/protocol/*.ts"
+  },
   "scripts": {
     "clean": "rm -rf dist dist-types",
     "build": "pnpm build:web",
@@ -40,20 +43,19 @@
   },
   "homepage": "https://treeport.app",
   "dependencies": {
-    "@effect/opentelemetry": "^0.64.0",
     "@effect/platform": "^0.97.1",
     "@effect/platform-node": "^0.108.1",
     "@effect/rpc": "^0.76.2",
     "@libsql/client": "^0.17.4",
-    "@opentelemetry/sdk-trace-base": "^2.11.0",
-    "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@playwright/cli": "0.1.18",
     "@radix-ui/react-context-menu": "^2.3.7",
     "@treeport/app-sdk": "workspace:*",
+    "@treeport/browser-host": "workspace:*",
     "@treeport/github": "workspace:*",
     "@treeport/review": "workspace:*",
     "@treeport/vscode": "workspace:*",
     "@treeport/session-keeper": "workspace:*",
+    "@treeport/tracing": "workspace:*",
     "@vitejs/plugin-react": "catalog:",
     "cmdk": "^1.1.1",
     "commander": "14.0.3",
@@ -81,7 +83,6 @@
     "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-router": "^1.170.18",
     "@treeport/desktop-bridge": "workspace:*",
-    "@treeport/shared": "workspace:*",
     "@treeport/theme": "workspace:*",
     "@types/compression": "^1.8.1",
     "@types/react": "catalog:",

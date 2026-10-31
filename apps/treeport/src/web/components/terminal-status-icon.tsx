@@ -2,7 +2,7 @@ import type {
   TerminalActivity,
   TerminalAttentionReason,
   TerminalProgram
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import { cn } from '../lib/utils'
 
 const COMET_FRAMES = 132

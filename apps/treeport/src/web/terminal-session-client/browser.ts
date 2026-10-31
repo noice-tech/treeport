@@ -1,7 +1,7 @@
 import * as Effect from 'effect/Effect'
 import { WTerm } from '@wterm/dom'
 import { toast } from 'sonner'
-import { type TerminalClientToServerEvents } from '@treeport/shared'
+import type { TerminalClientToServerEvents } from '#protocol/terminal-session'
 import {
   setTerminalFontSize,
   terminalKeyboardInput,

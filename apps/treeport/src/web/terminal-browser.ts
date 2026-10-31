@@ -1,5 +1,5 @@
 import type { WTerm } from '@wterm/dom'
-import type { TerminalActivity } from '@treeport/shared'
+import type { TerminalActivity } from '#protocol/terminal-session'
 
 import {
   browserTrace,

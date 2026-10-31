@@ -14,7 +14,8 @@ import {
   ClipboardDocumentIcon,
   EllipsisHorizontalIcon
 } from '@heroicons/react/16/solid'
-import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WorktreeRecord } from '#protocol/worktree'
 import {
   ContextMenu,
   ContextMenuContent,

@@ -7,7 +7,7 @@ import {
   text,
   uniqueIndex
 } from 'drizzle-orm/sqlite-core'
-import { PROJECT_COLORS } from '@treeport/shared'
+import { PROJECT_COLORS } from '#protocol/project'
 
 export const projects = sqliteTable(
   'projects',

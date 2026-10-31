@@ -1,4 +1,4 @@
-export type { TerminalActivity } from '@treeport/shared'
+export type { TerminalActivity } from '#protocol/terminal-session'
 
 export {
   terminalKeyboardInput,

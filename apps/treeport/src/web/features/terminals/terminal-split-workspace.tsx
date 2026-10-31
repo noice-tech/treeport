@@ -9,7 +9,8 @@ import {
   type PointerEvent,
   type ReactNode
 } from 'react'
-import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { cn } from '../../lib/utils'
 import { TerminalView } from '../../terminal-view'
 import {

@@ -1,5 +1,6 @@
 import type { RefObject } from 'react'
-import type { BrowserApp, WebApp } from '@treeport/shared'
+import type { BrowserApp } from '#protocol/browser'
+import type { WebApp } from '@treeport/app-sdk'
 import {
   AlertDialog,
   AlertDialogAction,

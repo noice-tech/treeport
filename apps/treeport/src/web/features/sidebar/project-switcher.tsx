@@ -13,7 +13,7 @@ import {
   type ProjectColor,
   type ProjectRecord,
   type RecentProjectRecord
-} from '@treeport/shared'
+} from '#protocol/project'
 import { parseResponse, rpc } from '../../api'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { Button } from '../../components/ui/button'

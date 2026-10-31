@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from 'react'
-import type { RemoveOperationRecord, RemovePreview } from '@treeport/shared'
+import type { RemoveOperationRecord, RemovePreview } from '#protocol/operation'
 import {
   AlertDialog,
   AlertDialogAction,

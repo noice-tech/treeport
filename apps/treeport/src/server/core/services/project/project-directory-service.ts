@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { DirectoryBrowseResponse } from '@treeport/shared'
+import type { DirectoryBrowseResponse } from '#protocol/project'
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
 import { DomainError } from '../../domain.ts'

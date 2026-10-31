@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import type { Launcher, LauncherDefinitionListing } from '@treeport/shared'
+import type { Launcher, LauncherDefinitionListing } from '#protocol/launcher'
 import { and, asc, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import { mapLauncher } from '../../database.ts'

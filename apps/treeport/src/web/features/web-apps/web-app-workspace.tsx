@@ -1,14 +1,13 @@
 import { Activity, useEffect, useRef, useState } from 'react'
 import { ArrowPathIcon } from '@heroicons/react/16/solid'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import {
-  decodeUnknownOrNull,
   appDirtyMessageSchema,
   appRequestMessageSchema,
   appTitleMessageSchema,
-  workspaceSelectionMessageSchema,
-  type WebApp,
-  type GitFileDiffRequest
-} from '@treeport/shared'
+  workspaceSelectionMessageSchema
+} from '#protocol/web-app'
+import type { WebApp, GitFileDiffRequest } from '@treeport/app-sdk'
 import { parseResponse, rpc, treeFilesRpc } from '../../api'
 import { errorDescription, errorDetails } from '../../error-message'
 import { cn } from '../../lib/utils'

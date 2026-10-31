@@ -3,13 +3,15 @@ import {
   type TerminalInputModifiers
 } from '../terminal-browser'
 import type { WTerm } from '@wterm/dom'
-import {
-  type ProtocolSocket,
-  type ProtocolSocketOptions,
-  type TerminalClientToServerEvents,
-  type TerminalSize,
-  type TerminalServerToClientEvents
-} from '@treeport/shared'
+import type {
+  ProtocolSocket,
+  ProtocolSocketOptions
+} from '#protocol/socket-client'
+import type {
+  TerminalClientToServerEvents,
+  TerminalSize,
+  TerminalServerToClientEvents
+} from '#protocol/terminal-session'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
 

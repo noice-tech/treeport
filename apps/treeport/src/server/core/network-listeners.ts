@@ -4,7 +4,7 @@ import path from 'node:path'
 import type {
   WorktreeListener,
   WorktreeListenerDiscovery
-} from '@treeport/shared'
+} from '@treeport/app-sdk'
 import * as Context from 'effect/Context'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'

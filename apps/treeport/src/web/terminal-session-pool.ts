@@ -1,4 +1,4 @@
-import type { TerminalSize } from '@treeport/shared'
+import type { TerminalSize } from '#protocol/terminal-session'
 import { TerminalSession } from './terminal-session-client'
 import type { TerminalFontZoom } from './terminal-session-client/state'
 

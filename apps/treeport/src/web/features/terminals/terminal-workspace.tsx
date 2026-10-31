@@ -1,13 +1,10 @@
 import { useLayoutEffect, useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
-import type {
-  ProjectRecord,
-  TerminalAfterExit,
-  TerminalRecord,
-  TerminalSize,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
+import type { TerminalAfterExit, TerminalRecord } from '#protocol/terminal'
+import type { TerminalSize } from '#protocol/terminal-session'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { parseResponse, rpc } from '../../api'
 import { useSidebar } from '../../components/ui/sidebar'
 import {

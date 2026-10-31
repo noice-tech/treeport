@@ -1,14 +1,11 @@
 import { existsSync, watch } from 'node:fs'
 import path from 'node:path'
-import { decodeUnknownOrNull, webAppInputSchema } from '@treeport/shared'
-import type {
-  BrowserApp,
-  ProjectRecord,
-  RecentProjectRecord,
-  WebApp,
-  WebAppPermission,
-  WorktreeRecord
-} from '@treeport/shared'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import { webAppInputSchema } from '#protocol/web-app'
+import type { BrowserApp } from '#protocol/browser'
+import type { ProjectRecord, RecentProjectRecord } from '#protocol/project'
+import type { WebApp, WebAppPermission } from '@treeport/app-sdk'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Deferred from 'effect/Deferred'

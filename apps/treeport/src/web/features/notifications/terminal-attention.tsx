@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
 import {
   terminalSessions,
   type TerminalAttentionEvent

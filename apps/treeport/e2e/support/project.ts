@@ -1,4 +1,4 @@
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
 
 export const project: ProjectRecord = {
   id: 'proj_1',

@@ -5,17 +5,16 @@ import {
   WORKTREE_TITLE_MAX_LENGTH,
   availableTreeName,
   normalizeWorktreeName
-} from '@treeport/shared'
+} from '#protocol/worktree'
 import type {
   CreateOperationRequest,
-  LauncherTreeTitle,
-  OperationRecord,
-  ProjectRecord,
-  TerminalRecord,
-  TerminalAfterExit,
-  TerminalSize,
-  WorktreeRecord
-} from '@treeport/shared'
+  OperationRecord
+} from '#protocol/operation'
+import type { LauncherTreeTitle } from '#protocol/launcher'
+import type { ProjectRecord } from '#protocol/project'
+import type { TerminalRecord, TerminalAfterExit } from '#protocol/terminal'
+import type { TerminalSize } from '#protocol/terminal-session'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'

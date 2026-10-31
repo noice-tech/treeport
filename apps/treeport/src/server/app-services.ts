@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { Duplex } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { AppService } from '@treeport/shared'
+import type { AppService } from '#protocol/web-app'
 import { DomainError } from './core/domain.ts'
 import type { PackageServiceDeclaration } from './core/package-system.ts'
 

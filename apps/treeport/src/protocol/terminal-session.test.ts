@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest'
+import { parseEventsSnapshot, parseProductEvent } from './socket.ts'
 import {
-  parseEventsSnapshot,
-  parseProductEvent,
   parseTerminalAuth,
   parseTerminalClientEvent,
   parseTerminalRuntimeMetadata,
   parseTerminalServerEvent,
   terminalAttentionAcknowledgementSchema as terminalAttentionAcknowledgementEffectSchema,
   terminalSizeSchema as terminalSizeEffectSchema
-} from './index.ts'
+} from './terminal-session.ts'
 import { testSchema } from './schema.test-support.ts'
 
 const terminalAttentionAcknowledgementSchema = testSchema(

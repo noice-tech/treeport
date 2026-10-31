@@ -2,11 +2,10 @@ import type * as HttpApp from '@effect/platform/HttpApp'
 import { RpcSerialization, RpcServer } from '@effect/rpc'
 import {
   TreeportRpcs,
-  parseProductEvent,
-  type NetworkProductEvent,
   type ProjectEventsFailure,
   type ProjectEventsItem
-} from '@treeport/shared'
+} from '#protocol/rpc'
+import { parseProductEvent, type NetworkProductEvent } from '#protocol/socket'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'

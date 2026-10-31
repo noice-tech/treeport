@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { BrowserServerMessage } from '@treeport/shared'
+import type { BrowserServerMessage } from '#protocol/browser'
 import {
   connectBrowserApp,
   type BrowserAppSocket

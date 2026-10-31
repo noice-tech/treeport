@@ -3,7 +3,7 @@ import type {
   TerminalAttentionReason,
   TerminalProgram,
   TerminalRuntimeMetadata
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import { parseResponse, rpc } from './api'
 
 export interface TerminalAttentionMetadata {

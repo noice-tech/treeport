@@ -6,11 +6,11 @@ import * as Schema from 'effect/Schema'
 import type {
   LauncherDefinition,
   LauncherDefinitionDiagnostic
-} from '@treeport/shared'
+} from '#protocol/launcher'
 import {
   repositoryLauncherSchema,
   repositoryLaunchersSettingsSchema
-} from '@treeport/shared'
+} from '#protocol/launcher'
 
 const CONFIG_PATH = path.join('.treeport', 'settings.json')
 
