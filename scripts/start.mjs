@@ -16,21 +16,11 @@ const serverEntry = path.join(
 
 const webDist = path.join(root, 'apps', 'treeport', 'dist', 'web')
 
-for (const [label, command, args] of [
-  ['install dependencies', 'pnpm', ['install', '--frozen-lockfile']],
-  [
-    'build Treeport',
-    path.join(root, 'node_modules', '.bin', 'turbo'),
-    [
-      'run',
-      'build',
-      '--filter=@treeport/treeport...',
-      '--ui=stream',
-      '--output-logs=errors-only'
-    ]
-  ]
+for (const [label, args] of [
+  ['install dependencies', ['install', '--frozen-lockfile']],
+  ['build Treeport', ['build:server']]
 ]) {
-  const step = spawnSync(command, args, { cwd: root, stdio: 'inherit' })
+  const step = spawnSync('pnpm', args, { cwd: root, stdio: 'inherit' })
 
   if (step.status !== 0) {
     console.error(

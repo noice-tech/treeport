@@ -20,7 +20,7 @@ Follow the platform-specific instructions printed by `pm2 startup`. Keep the clo
 - `pm2 status treeport` shows the process.
 - `pm2 logs treeport` shows supervisor output.
 - `pm2 stop treeport` stops the server.
-- `pnpm sync && pm2 restart treeport` updates it; each start installs and builds what changed.
+- `pnpm sync && pnpm pm2:restart` updates it. It installs and builds first, then restarts only if that succeeded.
 
 Use your supervisor to start, restart, and stop the server.
 
