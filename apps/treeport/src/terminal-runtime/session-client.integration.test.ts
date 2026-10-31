@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   getSessionKeeperPayload,
   withSessionRecovery
@@ -89,6 +89,8 @@ async function fixture(argv: string[]) {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
+
   for (const handle of handles.splice(0)) {
     handle.dispose()
   }
@@ -111,7 +113,34 @@ afterEach(async () => {
 })
 
 describe('Rust persistent session control and cleanup', () => {
-  it('excludes recovery and duplicate admission while owned, and serializes archive cleanup', async () => {
+  it('launches through a user scope when available, excludes duplicate admission, and serializes archive cleanup', async () => {
+    const commands = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-scope-'))
+    roots.push(commands)
+    const invocation = path.join(commands, 'invocation.json')
+
+    if (process.platform === 'linux') {
+      await fs.writeFile(
+        path.join(commands, 'systemctl'),
+        '#!/bin/sh\nexit 0\n',
+        { mode: 0o700 }
+      )
+      await fs.writeFile(
+        path.join(commands, 'systemd-run'),
+        `#!${process.execPath}
+const fs = require('node:fs')
+const { spawnSync } = require('node:child_process')
+const args = process.argv.slice(2)
+if (args[0] === '--help') { console.log('--expand-environment'); process.exit(0) }
+fs.writeFileSync(${JSON.stringify(invocation)}, JSON.stringify(args))
+const command = args.slice(args.indexOf('--') + 1)
+const result = spawnSync(command[0], command.slice(1), { stdio: 'inherit' })
+process.exit(result.status ?? 1)
+`,
+        { mode: 0o700 }
+      )
+      vi.stubEnv('PATH', `${commands}:${process.env.PATH}`)
+    }
+
     const value = await fixture([
       process.execPath,
       '-e',
@@ -119,6 +148,20 @@ describe('Rust persistent session control and cleanup', () => {
     ])
 
     await waitFor(() => value.output().includes('READY'))
+
+    if (process.platform === 'linux') {
+      expect(JSON.parse(await fs.readFile(invocation, 'utf8'))).toEqual([
+        '--user',
+        '--scope',
+        '--quiet',
+        '--expand-environment=no',
+        '--',
+        getSessionKeeperPayload(),
+        '--detach',
+        value.directory
+      ])
+    }
+
     const socket = value.session.manifest.socketPath
     await fs.rename(socket, socket + '.hidden')
     sockets.add(socket + '.hidden')

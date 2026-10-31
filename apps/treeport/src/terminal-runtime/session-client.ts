@@ -3,7 +3,8 @@ import fs from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 import {
   closeSession,
   inspectSession,
@@ -187,7 +188,44 @@ export class PersistentSession implements EnginePty {
           ? options.terminalId
           : `term_${crypto.createHash('sha256').update(options.terminalId).digest('hex').slice(0, 32)}`
 
-    const child = spawn(options.executable, ['--detach', options.directory], {
+    // EXTERNAL: A detached process still inherits its parent's cgroup. Move the bootstrap
+    // into a user scope before it forks the keeper, so stopping a supervisor's
+    // control group cannot kill terminals. A scope stays alive while any of its
+    // descendants remain, even after the short-lived bootstrap exits.
+    const systemd =
+      process.platform === 'linux'
+        ? await Promise.all([
+            promisify(execFile)(
+              'systemctl',
+              ['--user', 'show', '--property=Version', '--value'],
+              { timeout: 2000 }
+            ),
+            promisify(execFile)('systemd-run', ['--help'], { timeout: 2000 })
+          ]).then(
+            ([, help]) => help.stdout,
+            () => null
+          )
+        : null
+
+    const executable = systemd === null ? options.executable : 'systemd-run'
+
+    const args =
+      systemd === null
+        ? ['--detach', options.directory]
+        : [
+            '--user',
+            '--scope',
+            '--quiet',
+            ...(systemd.includes('--expand-environment')
+              ? ['--expand-environment=no']
+              : []),
+            '--',
+            options.executable,
+            '--detach',
+            options.directory
+          ]
+
+    const child = spawn(executable, args, {
       argv0:
         terminalId === null
           ? 'treeport-session'
