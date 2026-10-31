@@ -1,15 +1,15 @@
 import * as Schema from 'effect/Schema'
 
-export { decodeUnknownOrNull } from './schema.js'
+export { decodeUnknownOrNull } from './schema.ts'
 
 export {
   BROWSER_VIDEO_CAPTURE_SOURCE,
   DEFAULT_BROWSER_VIDEO_SETTINGS,
   browserVideoSettingsSchema,
   type BrowserVideoSettings
-} from './browser-video.js'
+} from './browser-video.ts'
 
-export { browserClipboardSchema, copyBrowserPage } from './browser-clipboard.js'
+export { browserClipboardSchema, copyBrowserPage } from './browser-clipboard.ts'
 
 export const BROWSER_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 

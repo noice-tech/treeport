@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { openWorkspace, type LaunchCommand } from './open'
+import { openWorkspace, type LaunchCommand } from './open.ts'
 
 const workspaceUrl =
   'http://127.0.0.1:8733/projects/project%20one/worktrees/worktree%26two'

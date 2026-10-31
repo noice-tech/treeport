@@ -1,6 +1,6 @@
 import * as Effect from 'effect/Effect'
 import { describe, expect, it } from 'vitest'
-import { MutationLocks } from './mutation-locks'
+import { MutationLocks } from './mutation-locks.ts'
 
 describe('MutationLocks', () => {
   it('admits only one competing acquisition and releases all keys together', async () => {

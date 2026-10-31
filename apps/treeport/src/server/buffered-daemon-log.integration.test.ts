@@ -2,12 +2,9 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createBufferedDaemonLog } from './buffered-daemon-log'
+import { createBufferedDaemonLog } from './buffered-daemon-log.ts'
 
-const entry = new URL(
-  '../../dist/node/server/daemon-log-worker.js',
-  import.meta.url
-)
+const entry = new URL('./daemon-log-worker.ts', import.meta.url)
 
 describe('buffered daemon diagnostics', () => {
   it('flushes queued logs in order without needing the main event loop', async () => {

@@ -8,11 +8,11 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TerminalHostSessions } from '../terminal-runtime/sessions'
-import { ProductEventBus } from './core/events'
-import type { TreeportService } from './core/index'
-import { TerminalMetadataManager } from './terminal-metadata'
-import { testAccess } from './test-access'
+import { TerminalHostSessions } from '../terminal-runtime/sessions.ts'
+import { ProductEventBus } from './core/events.ts'
+import type { TreeportService } from './core/index.ts'
+import { TerminalMetadataManager } from './terminal-metadata.ts'
+import { testAccess } from './test-access.ts'
 
 const zsh = (() => {
   try {
@@ -50,7 +50,7 @@ async function fixture(command: string | null) {
         runtimeDir: root,
         launcherPath: path.resolve(
           import.meta.dirname,
-          '../../dist/node/server/core/launcher.js'
+          '../terminal-runtime/launcher.ts'
         ),
         sessionExecutable: getSessionKeeperPayload()
       }),

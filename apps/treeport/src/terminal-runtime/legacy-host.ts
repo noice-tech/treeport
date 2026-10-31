@@ -11,7 +11,7 @@ import {
   encodeTerminalHostFrame,
   makeTerminalHostFrameDecoder,
   type TerminalHostRecord
-} from './api'
+} from './api.ts'
 
 const nonEmptyString = Schema.String.pipe(Schema.minLength(1))
 const positiveInteger = Schema.Int.pipe(Schema.positive())

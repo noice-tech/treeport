@@ -57,8 +57,8 @@ for (const name of files) {
       specifier.startsWith('node:') ||
       specifier.startsWith('effect/') ||
       specifier.startsWith('@effect/') ||
-      specifier === '../ghostty-vt/ghostty-vt' ||
-      specifier === '../ghostty-vt/node' ||
+      specifier === '../ghostty-vt/ghostty-vt.ts' ||
+      specifier === '../ghostty-vt/node.ts' ||
       specifier === 'node-pty' ||
       specifier === 'zod' ||
       (['session-client.ts', 'session-protocol.ts'].includes(name) &&
@@ -76,8 +76,8 @@ for (const name of files) {
       specifier.startsWith('node:') ||
       specifier === 'node-pty' ||
       specifier === 'zod' ||
-      specifier === './session-journal' ||
-      specifier === './session-protocol'
+      specifier === './session-journal.ts' ||
+      specifier === './session-protocol.ts'
 
     if (!allowed || (persistentPrimitive && !ownerAllowed)) {
       violations.push(`${name}: ${specifier}`)

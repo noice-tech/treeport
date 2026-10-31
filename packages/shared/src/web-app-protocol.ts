@@ -1,5 +1,5 @@
 import * as Schema from 'effect/Schema'
-import { jsonValueSchema } from './json-schema.js'
+import { jsonValueSchema } from './json-schema.ts'
 
 export const webAppPermissionSchema = Schema.Literal(
   'same-origin',

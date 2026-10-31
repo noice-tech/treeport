@@ -6,19 +6,19 @@ import type {
 import * as Effect from 'effect/Effect'
 import * as Stream from 'effect/Stream'
 import { describe, expect, it, vi } from 'vitest'
-import { ProductEventBus } from './core/events'
-import type { TreeportService } from './core/index'
+import { ProductEventBus } from './core/events.ts'
+import type { TreeportService } from './core/index.ts'
 import type {
   TerminalAttentionState,
   TerminalAttentionStateStore
-} from './core/terminal-attention-state-store'
+} from './core/terminal-attention-state-store.ts'
 import type {
   TerminalAttachmentBackend,
   TerminalHostRuntimeEvent,
   TerminalTitleState
-} from './core/terminal'
-import { TerminalMetadataManager } from './terminal-metadata'
-import { testAccess } from './test-access'
+} from './core/terminal.ts'
+import { TerminalMetadataManager } from './terminal-metadata.ts'
+import { testAccess } from './test-access.ts'
 
 const IDLE: TerminalActivity = {
   state: 'idle',

@@ -11,17 +11,17 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
-import type { TreeportService } from './core/index'
-import { DomainError } from './core/index'
-import { DatabasePort } from './core/database'
-import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
+import type { TreeportService } from './core/index.ts'
+import { DomainError } from './core/index.ts'
+import { DatabasePort } from './core/database.ts'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
 import {
   DatabaseTerminalAttentionStateStore,
   type TerminalAttentionState,
   type TerminalAttentionStateStore
-} from './core/terminal-attention-state-store'
-import type { TerminalTitleState } from './core/terminal'
-import type { TerminalAttachmentBackend } from './core/terminal'
+} from './core/terminal-attention-state-store.ts'
+import type { TerminalTitleState } from './core/terminal.ts'
+import type { TerminalAttachmentBackend } from './core/terminal.ts'
 
 const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
   ['pi', 'pi'],
@@ -91,11 +91,17 @@ export class TerminalMetadataManager {
   private unsubscribeEvents: (() => void) | null = null
   private disposed = false
 
+  private readonly service: TreeportService
+  private readonly terminalHost: TerminalAttachmentBackend
+
   constructor(
-    private readonly service: TreeportService,
-    private readonly terminalHost: TerminalAttachmentBackend,
+    service: TreeportService,
+    terminalHost: TerminalAttachmentBackend,
     attentionStateStore: TerminalAttentionStateStore
   ) {
+    this.service = service
+    this.terminalHost = terminalHost
+
     this.attentionStateStore = attentionStateStore
   }
 

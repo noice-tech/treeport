@@ -2,8 +2,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
-import { fixture } from './service.integration-fixture'
-import { MutationLocks } from './services/infrastructure/mutation-locks'
+import { fixture } from './service.integration-fixture.ts'
+import { MutationLocks } from './services/infrastructure/mutation-locks.ts'
 
 describe('terminal operations', () => {
   it('publishes command completion without exiting or closing the fallback session', async () => {

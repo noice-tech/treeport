@@ -13,11 +13,11 @@ import * as Exit from 'effect/Exit'
 import type * as Scope from 'effect/Scope'
 import * as Queue from 'effect/Queue'
 import * as Stream from 'effect/Stream'
-import type { TreeportService } from './core/index'
-import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
-import { networkTelemetry } from './network-telemetry'
-import type { TerminalMetadataManager } from './terminal-metadata'
-import type { WorkspacePresenceManager } from './workspace-presence'
+import type { TreeportService } from './core/index.ts'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
+import { networkTelemetry } from './network-telemetry.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
+import type { WorkspacePresenceManager } from './workspace-presence.ts'
 
 const EVENT_QUEUE_CAPACITY = 256
 

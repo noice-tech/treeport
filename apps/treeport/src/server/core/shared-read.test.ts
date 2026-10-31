@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SharedRead } from './shared-read'
+import { SharedRead } from './shared-read.ts'
 
 describe('shared Git reads', () => {
   it('shares work without letting one reader cancel another', async () => {

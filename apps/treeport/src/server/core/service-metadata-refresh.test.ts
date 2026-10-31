@@ -2,8 +2,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { expect, it } from 'vitest'
-import { ProjectSnapshotOperations } from './services/domain-services'
-import { fixture } from './service.integration-fixture'
+import { ProjectSnapshotOperations } from './services/domain-services.ts'
+import { fixture } from './service.integration-fixture.ts'
 
 it('keeps metadata reads Git-free, refreshes dirty state in the background, and discovers external trees', async () => {
   const { main, runner, service } = await fixture()

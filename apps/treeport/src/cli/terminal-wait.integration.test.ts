@@ -15,13 +15,13 @@ import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ProductEventBus, type TreeportService } from '../server/core/index'
-import { makeRpcHttpApp } from '../server/rpc-server'
-import { testAccess } from '../server/test-access'
-import type { TerminalMetadataManager } from '../server/terminal-metadata'
-import { WorkspacePresenceManager } from '../server/workspace-presence'
-import { TerminalHostSessions } from '../terminal-runtime/sessions'
-import { runCliApplication } from './application'
+import { ProductEventBus, type TreeportService } from '../server/core/index.ts'
+import { makeRpcHttpApp } from '../server/rpc-server.ts'
+import { testAccess } from '../server/test-access.ts'
+import type { TerminalMetadataManager } from '../server/terminal-metadata.ts'
+import { WorkspacePresenceManager } from '../server/workspace-presence.ts'
+import { TerminalHostSessions } from '../terminal-runtime/sessions.ts'
+import { runCliApplication } from './application.ts'
 
 interface TerminalObservation {
   terminal: TerminalRecord
@@ -167,7 +167,7 @@ async function runtimeFixture() {
     runtimeDir: root,
     launcherPath: path.resolve(
       import.meta.dirname,
-      '../../dist/node/server/core/launcher.js'
+      '../terminal-runtime/launcher.ts'
     ),
     sessionExecutable: getSessionKeeperPayload()
   }

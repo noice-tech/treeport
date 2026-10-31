@@ -8,8 +8,8 @@ import {
   parseBrowserAuth,
   parseBrowserClientMessage,
   parseBrowserServerMessage
-} from './browser-protocol.js'
-import { testSchema } from './schema.test-support.js'
+} from './browser-protocol.ts'
+import { testSchema } from './schema.test-support.ts'
 
 const browserAgentCommandSchema = testSchema(browserAgentCommandEffectSchema)
 const browserOwnerAuthSchema = testSchema(browserOwnerAuthEffectSchema)

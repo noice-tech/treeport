@@ -293,10 +293,13 @@ export class GhosttyVt {
 export class GhosttyTerminal {
   private disposed = false
 
-  private constructor(
-    readonly vt: GhosttyVt,
-    readonly handle: number
-  ) {}
+  readonly vt: GhosttyVt
+  readonly handle: number
+
+  private constructor(vt: GhosttyVt, handle: number) {
+    this.vt = vt
+    this.handle = handle
+  }
 
   static create(
     module: WebAssembly.Module,

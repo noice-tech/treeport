@@ -16,7 +16,7 @@ import {
   StdinCommandError,
   TimeoutCommandError,
   runCheckedEffect
-} from './command'
+} from './command.ts'
 
 const roots: string[] = []
 

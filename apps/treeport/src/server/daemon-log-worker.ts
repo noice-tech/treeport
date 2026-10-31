@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import { appendDaemonLog } from './daemon-log'
+import { appendDaemonLog } from './daemon-log.ts'
 
 // SAFETY: The daemon creates this private worker with this exact data shape.
 const { logPath, completion } = workerData as {

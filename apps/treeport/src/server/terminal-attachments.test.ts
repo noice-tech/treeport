@@ -12,11 +12,11 @@ import {
   type TerminalServerEventPayloads,
   type TerminalServerPayload
 } from '@treeport/shared'
-import type { TreeportService } from './core/index'
-import { TerminalAttachmentManager } from './terminal-attachments'
-import type { TerminalAttachmentBackend } from './core/terminal'
-import type { TerminalMetadataManager } from './terminal-metadata'
-import { testAccess } from './test-access'
+import type { TreeportService } from './core/index.ts'
+import { TerminalAttachmentManager } from './terminal-attachments.ts'
+import type { TerminalAttachmentBackend } from './core/terminal.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
+import { testAccess } from './test-access.ts'
 
 class HostDouble implements TerminalAttachmentBackend {
   readonly outputListeners = new Set<(data: string, sequence: number) => void>()
@@ -176,7 +176,11 @@ class TransportDouble {
     | ((event: TerminalServerEvent, payload: TerminalServerPayload) => void)
     | null = null
 
-  constructor(readonly id: string) {}
+  readonly id: string
+
+  constructor(id: string) {
+    this.id = id
+  }
 
   isConnected = () => this.connected
 

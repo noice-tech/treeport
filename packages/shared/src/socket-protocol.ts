@@ -1,14 +1,14 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
-import { browserObservedUrlSchema } from './browser-protocol.js'
-import { jsonValueSchema } from './json-schema.js'
-import { workspacePresenceSchema } from './presence-protocol.js'
+import { browserObservedUrlSchema } from './browser-protocol.ts'
+import { jsonValueSchema } from './json-schema.ts'
+import { workspacePresenceSchema } from './presence-protocol.ts'
 import {
   terminalRuntimeMetadataFields,
   terminalRuntimeMetadataSchema
-} from './terminal-protocol.js'
-import { webAppPermissionSchema } from './web-app-protocol.js'
+} from './terminal-protocol.ts'
+import { webAppPermissionSchema } from './web-app-protocol.ts'
 
 export const EVENT_PROTOCOL_VERSION = 3
 

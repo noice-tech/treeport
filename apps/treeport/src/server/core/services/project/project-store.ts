@@ -7,10 +7,10 @@ import { asc, eq, sql } from 'drizzle-orm'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import { mapOperation, mapProject, mapWorktree } from '../../database'
-import { operations, projects, worktrees } from '../../database-schema'
-import { DomainError } from '../../domain'
-import { DatabasePort } from '../../database'
+import { mapOperation, mapProject, mapWorktree } from '../../database.ts'
+import { operations, projects, worktrees } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
+import { DatabasePort } from '../../database.ts'
 
 export interface ProjectStoreService {
   readonly storedProjects: (

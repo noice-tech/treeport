@@ -5,17 +5,16 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 import { z } from 'zod'
-import { appendDaemonLog } from './daemon-log'
-import { createBufferedDaemonLog } from './buffered-daemon-log'
-import { resolveDataDir } from './core/config'
+import { appendDaemonLog } from './daemon-log.ts'
+import { createBufferedDaemonLog } from './buffered-daemon-log.ts'
+import { resolveDataDir } from './core/config.ts'
 
 export function installDaemonDiagnostics(entrypoint: URL) {
-  process.env.TREEPORT_INSTANCE_ID ||= crypto.randomUUID()
-  process.env.TREEPORT_DAEMON_LIFECYCLE ||= 'external'
+  process.env.TREEPORT_INSTANCE_ID = crypto.randomUUID()
   process.env.TREEPORT_INSTALLATION_METHOD ||= 'unknown'
 
   if (!process.env.TREEPORT_APP_VERSION?.trim()) {
-    const manifestPath = new URL('../../../package.json', entrypoint)
+    const manifestPath = new URL('../../package.json', entrypoint)
 
     if (fs.existsSync(manifestPath)) {
       const manifest = z
@@ -31,10 +30,8 @@ export function installDaemonDiagnostics(entrypoint: URL) {
 
   const logPath = path.join(resolveDataDir(process.env), 'logs', 'daemon.log')
   const originalErrorWrite = process.stderr.write.bind(process.stderr)
-  const logOnly = process.env.TREEPORT_DAEMON_LOG_ONLY === '1'
-  delete process.env.TREEPORT_DAEMON_LOG_ONLY
   const build = crypto.createHash('sha256').update(fs.readFileSync(entrypoint))
-  const applicationEntrypoint = new URL('./main.js', entrypoint)
+  const applicationEntrypoint = new URL('./main.ts', entrypoint)
 
   if (fs.existsSync(applicationEntrypoint)) {
     build.update(fs.readFileSync(applicationEntrypoint))
@@ -49,7 +46,6 @@ export function installDaemonDiagnostics(entrypoint: URL) {
     node: process.version,
     installationMethod:
       process.env.TREEPORT_INSTALLATION_METHOD?.trim() || 'development',
-    lifecycle: process.env.TREEPORT_DAEMON_LIFECYCLE?.trim() || 'treeport',
     development:
       process.env.TREEPORT_INSTALLATION_METHOD?.trim() === 'development' ||
       process.env.TREEPORT_WEB_DEVELOPMENT?.trim() === '1'
@@ -60,7 +56,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
   let shutdownReason: string | null = null
 
   const buffered = createBufferedDaemonLog(
-    new URL('./daemon-log-worker.js', entrypoint),
+    new URL('./daemon-log-worker.ts', entrypoint),
     logPath,
     (error) => {
       loggingFailed = true
@@ -130,22 +126,7 @@ export function installDaemonDiagnostics(entrypoint: URL) {
       const encoding =
         typeof encodingOrCallback === 'string' ? encodingOrCallback : undefined
 
-      const persisted = persist(
-        typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk
-      )
-
-      if (persisted && logOnly) {
-        const done =
-          typeof encodingOrCallback === 'function'
-            ? encodingOrCallback
-            : callback
-
-        if (done) {
-          process.nextTick(done)
-        }
-
-        return true
-      }
+      persist(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk)
 
       return typeof encodingOrCallback === 'function'
         ? originalWrite(chunk, encodingOrCallback)

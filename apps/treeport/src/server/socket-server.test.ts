@@ -8,7 +8,7 @@ import {
   ProductEventBus,
   type AppConfig,
   type TreeportService
-} from './core/index'
+} from './core/index.ts'
 import type {
   BrowserClientMessage,
   BrowserClientToServerEvents,
@@ -32,18 +32,18 @@ import {
   createProtocolSocket,
   TERMINAL_PROTOCOL_VERSION
 } from '@treeport/shared'
-import { testAccess } from './test-access'
-import { TerminalAttachmentManager } from './terminal-attachments'
+import { testAccess } from './test-access.ts'
+import { TerminalAttachmentManager } from './terminal-attachments.ts'
 import {
   createSocketServer,
   type BrowserSessionController
-} from './socket-server'
+} from './socket-server.ts'
 import type {
   BrowserOwnerTransport,
   BrowserTransport
-} from './browser-sessions'
-import type { TerminalMetadataManager } from './terminal-metadata'
-import type { TerminalAttachmentBackend } from './core/terminal'
+} from './browser-sessions.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
+import type { TerminalAttachmentBackend } from './core/terminal.ts'
 
 class FakePty {
   readonly pid = 1
@@ -259,7 +259,6 @@ async function fixture(
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1',
     remoteUrl: null,
-    daemonLifecycle: 'treeport',
     webDevelopment: false
   } satisfies AppConfig
 

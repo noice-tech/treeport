@@ -4,21 +4,13 @@
   "version": "0.13.0",
   "description": "Browser SDK for Treeport web apps.",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./service": {
-      "types": "./dist/service.d.ts",
-      "default": "./dist/service.js"
-    }
+    ".": "./src/index.ts",
+    "./service": "./src/service.ts"
   },
   "scripts": {
-    "clean": "rm -rf dist",
-    "build": "pnpm clean && tsc -b",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "license": "Apache-2.0",

@@ -22,9 +22,12 @@ import * as Data from 'effect/Data'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import type { AppConfig } from './config'
-import { DomainError } from './domain'
-import { webAppBrowserOrigin, webAppContentSecurityPolicy } from './web-app-csp'
+import type { AppConfig } from './config.ts'
+import { DomainError } from './domain.ts'
+import {
+  webAppBrowserOrigin,
+  webAppContentSecurityPolicy
+} from './web-app-csp.ts'
 
 export interface ResolvedWebAppSource {
   root: string
@@ -111,7 +114,11 @@ export class WebAppViteRuntime {
   >()
   private httpServer?: HttpServer
 
-  constructor(private readonly config: AppConfig) {}
+  private readonly config: AppConfig
+
+  constructor(config: AppConfig) {
+    this.config = config
+  }
 
   attachHttpServer(server: HttpServer): void {
     this.httpServer = server

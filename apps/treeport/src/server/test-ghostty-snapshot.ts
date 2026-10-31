@@ -1,8 +1,8 @@
 import {
   GhosttyTerminal,
   TERMINAL_IMAGE_STORAGE_BYTES
-} from '../ghostty-vt/ghostty-vt'
-import { loadGhosttyVtModule } from '../ghostty-vt/node'
+} from '../ghostty-vt/ghostty-vt.ts'
+import { loadGhosttyVtModule } from '../ghostty-vt/node.ts'
 
 export async function restoreTestSnapshot(
   data: string,

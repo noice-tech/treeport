@@ -5,10 +5,11 @@
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,
-    "lib": ["ES2024"],
+    "lib": ["ES2024", "DOM"],
     "types": ["node"],
-    "rootDir": "src",
-    "outDir": "dist"
+    "rootDir": "../..",
+    "noEmit": true,
+    "erasableSyntaxOnly": true
   },
   "include": ["src/**/*.ts"]
 }

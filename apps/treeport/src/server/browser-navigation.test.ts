@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { expect, it, vi } from 'vitest'
-import { browserNavigation } from './browser-navigation'
+import { browserNavigation } from './browser-navigation.ts'
 
 it.each(['native', 'hosted'])(
   'settles canceled %s navigation and observes late rejection',

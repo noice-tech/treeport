@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assertLoopbackHost } from './loopback'
+import { assertLoopbackHost } from './loopback.ts'
 
 export interface AppConfig {
   host: string
@@ -15,7 +15,6 @@ export interface AppConfig {
   gitPath: string
   apiUrl: string
   remoteUrl: string | null
-  daemonLifecycle: 'treeport' | 'external'
   appVersion?: string
   instanceId?: string
   installationMethod?: string
@@ -94,12 +93,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     expandHome(env.TREEPORT_RUNTIME_DIR?.trim() || defaultRuntimeDir(env))
   )
 
-  const daemonLifecycle = env.TREEPORT_DAEMON_LIFECYCLE?.trim() || 'treeport'
-
-  if (daemonLifecycle !== 'treeport' && daemonLifecycle !== 'external') {
-    throw new Error('TREEPORT_DAEMON_LIFECYCLE must be treeport or external')
-  }
-
   const config: AppConfig = {
     defaultPackages: [
       import.meta.resolve('@treeport/review/package.json'),
@@ -124,7 +117,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gitPath: env.TREEPORT_GIT_PATH?.trim() || 'git',
     apiUrl: env.TREEPORT_API_URL?.trim() || `http://${urlHost}:${portValue}`,
     remoteUrl: env.TREEPORT_REMOTE_URL?.trim() || null,
-    daemonLifecycle,
     appVersion: env.TREEPORT_APP_VERSION?.trim() || 'development',
     instanceId: env.TREEPORT_INSTANCE_ID?.trim() || crypto.randomUUID(),
     installationMethod:

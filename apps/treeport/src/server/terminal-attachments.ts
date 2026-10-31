@@ -26,12 +26,12 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
-import type { TreeportService } from './core/index'
-import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
-import type { TerminalMetadataManager } from './terminal-metadata'
-import type { TerminalAttachmentBackend } from './core/terminal'
-import { networkTelemetry } from './network-telemetry'
-import { currentTraceContext } from './tracing'
+import type { TreeportService } from './core/index.ts'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
+import type { TerminalAttachmentBackend } from './core/terminal.ts'
+import { networkTelemetry } from './network-telemetry.ts'
+import { currentTraceContext } from './tracing.ts'
 
 type ConnectionState = 'initializing' | 'ready' | 'closed'
 
@@ -105,11 +105,19 @@ export class TerminalAttachmentManager {
   private readonly controllerGenerations = new Map<string, number>()
   private readonly dimensions = new Map<string, CanonicalTerminalDimensions>()
 
+  private readonly service: TreeportService
+  private readonly metadata: TerminalMetadataManager
+  private readonly terminalHost: TerminalAttachmentBackend
+
   constructor(
-    private readonly service: TreeportService,
-    private readonly metadata: TerminalMetadataManager,
-    private readonly terminalHost: TerminalAttachmentBackend
-  ) {}
+    service: TreeportService,
+    metadata: TerminalMetadataManager,
+    terminalHost: TerminalAttachmentBackend
+  ) {
+    this.service = service
+    this.metadata = metadata
+    this.terminalHost = terminalHost
+  }
 
   accept(
     auth: TerminalAuth,

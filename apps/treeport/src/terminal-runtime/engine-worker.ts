@@ -1,8 +1,8 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
-import { makeTerminalHostServer } from './server'
-import { makeTerminalHostSessions } from './sessions'
+import { makeTerminalHostServer } from './server.ts'
+import { makeTerminalHostSessions } from './sessions.ts'
 
 export interface EngineWorkerOptions {
   readonly runtimeDir: string

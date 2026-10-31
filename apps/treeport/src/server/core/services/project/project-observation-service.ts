@@ -4,18 +4,18 @@ import type { ProjectRecord, WorktreeRecord } from '@treeport/shared'
 import { eq } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
-import { projects, worktrees } from '../../database-schema'
-import { DomainError } from '../../domain'
-import { WorktreeReconciliation } from '../domain-services'
+import { projects, worktrees } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
+import { WorktreeReconciliation } from '../domain-services.ts'
 import {
   type ApplicationServices,
   ProjectObservations,
   WorktreeMutations
-} from '../infrastructure/application-runtime'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { ProjectFolderIdentities } from './project-folder-identities'
-import { ProjectStore } from './project-store'
+} from '../infrastructure/application-runtime.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { ProjectFolderIdentities } from './project-folder-identities.ts'
+import { ProjectStore } from './project-store.ts'
 
 export class ProjectObservationService {
   observeAvailableProject(

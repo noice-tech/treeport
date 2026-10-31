@@ -1602,7 +1602,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('shell:copy-start-command', (event) => {
     if (isTrustedShellEvent(event)) {
-      clipboard.writeText('treeport start')
+      clipboard.writeText('pnpm start')
     }
   })
   ipcMain.handle('shell:open-installation-docs', (event) => {

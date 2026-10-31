@@ -20,18 +20,18 @@ import {
   projects,
   webApps,
   workspaceItemOrders
-} from '../../database-schema'
-import { DomainError } from '../../domain'
+} from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
 import {
   AppOperations,
   ProjectObservationOperations,
   TerminalOperations
-} from '../domain-services'
-import type { ApplicationServices } from '../infrastructure/application-runtime'
-import { EventBusPort } from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { ProjectStore } from './project-store'
+} from '../domain-services.ts'
+import type { ApplicationServices } from '../infrastructure/application-runtime.ts'
+import { EventBusPort } from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { ProjectStore } from './project-store.ts'
 
 export class ProjectSnapshotService {
   private inFlight: Deferred.Deferred<ProjectRecord[], never> | null = null

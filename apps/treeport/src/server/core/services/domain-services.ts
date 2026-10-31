@@ -1,11 +1,11 @@
 import * as Context from 'effect/Context'
-import type { AppService } from './app/app-service'
-import type { ProjectObservationService } from './project/project-observation-service'
-import type { ProjectRegistrationService } from './project/project-registration-service'
-import type { ProjectSnapshotService } from './project/project-snapshot-service'
-import type { TerminalService } from './terminal/terminal-service'
-import type { WorktreeReconciler } from './worktree/worktree-reconciler'
-import type { WorktreeService } from './worktree/worktree-service'
+import type { AppService } from './app/app-service.ts'
+import type { ProjectObservationService } from './project/project-observation-service.ts'
+import type { ProjectRegistrationService } from './project/project-registration-service.ts'
+import type { ProjectSnapshotService } from './project/project-snapshot-service.ts'
+import type { TerminalService } from './terminal/terminal-service.ts'
+import type { WorktreeReconciler } from './worktree/worktree-reconciler.ts'
+import type { WorktreeService } from './worktree/worktree-service.ts'
 
 export class AppOperations extends Context.Tag('treeport/AppOperations')<
   AppOperations,

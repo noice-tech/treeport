@@ -9,7 +9,7 @@ import * as Context from 'effect/Context'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import { asEffectCommandRunner, type CommandRunner } from './command'
+import { asEffectCommandRunner, type CommandRunner } from './command.ts'
 
 export interface WorktreeListenerScope {
   worktreePath: string
@@ -232,11 +232,19 @@ function finalListeners(
 }
 
 class PromiseNetworkListenerAdapter {
+  private readonly runner: CommandRunner
+  private readonly platform: NodeJS.Platform
+  private readonly procRoot: string
+
   constructor(
-    private readonly runner: CommandRunner,
-    private readonly platform: NodeJS.Platform = process.platform,
-    private readonly procRoot = '/proc'
-  ) {}
+    runner: CommandRunner,
+    platform: NodeJS.Platform = process.platform,
+    procRoot = '/proc'
+  ) {
+    this.runner = runner
+    this.platform = platform
+    this.procRoot = procRoot
+  }
 
   async listeners(
     scope: WorktreeListenerScope

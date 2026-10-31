@@ -34,7 +34,6 @@ it('loads tools on demand and calls structured tools from codemode across reload
           ? {
               managed: true,
               apiUrl: 'http://127.0.0.1:1',
-              daemonLifecycle: 'external',
               project: {
                 id: 'project',
                 name: 'Test project',

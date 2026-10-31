@@ -7,8 +7,8 @@ import {
   authenticatedViewers,
   authorizeRequest,
   rejectHttpRequest
-} from './request-security'
-import { WorkspacePresenceManager } from './workspace-presence'
+} from './request-security.ts'
+import { WorkspacePresenceManager } from './workspace-presence.ts'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -25,12 +25,12 @@ import {
   type AppConfig,
   type TerminalSessionBackend,
   type TreeportService
-} from './core/index'
-import { testAccess } from './test-access'
-import { createApp } from './app'
-import type { WebAppAssetResolution } from './core/web-app-vite-runtime'
-import type { TerminalMetadataManager } from './terminal-metadata'
-import type { BrowserSessionManager } from './browser-sessions'
+} from './core/index.ts'
+import { testAccess } from './test-access.ts'
+import { createApp } from './app.ts'
+import type { WebAppAssetResolution } from './core/web-app-vite-runtime.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
+import type { BrowserSessionManager } from './browser-sessions.ts'
 
 function fixture(webDist = '/missing') {
   const config: AppConfig = {
@@ -44,7 +44,6 @@ function fixture(webDist = '/missing') {
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
-    daemonLifecycle: 'treeport',
     webDevelopment: false
   }
 
@@ -846,8 +845,7 @@ describe('HTTP API validation', () => {
     expect(await response.json()).toMatchObject({
       ok: true,
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
-      hostname: os.hostname(),
-      daemonLifecycle: 'treeport'
+      hostname: os.hostname()
     })
   })
 
@@ -1343,6 +1341,7 @@ describe('HTTP API validation', () => {
     const appParent = { postMessage: vi.fn() }
     vi.stubGlobal('parent', appParent)
     vi.stubGlobal('self', globalThis)
+    vi.stubGlobal('window', globalThis)
     vi.stubGlobal('addEventListener', (type: string, listener: EventListener) =>
       listeners.set(type, listener)
     )

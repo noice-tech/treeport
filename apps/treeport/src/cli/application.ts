@@ -40,7 +40,6 @@ import {
   TREE_DECORATION_TONES,
   terminalObservationResponseSchema,
   terminalResponseSchema,
-  terminatedTerminalsResponseSchema,
   WEB_APP_INPUT_MAX_BYTES,
   webAppDefinitionsResponseSchema,
   webAppInputSchema,
@@ -64,20 +63,17 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
-import { parseDurationMs } from '../duration.js'
-import { extractJsonOutput } from './args.js'
-import { OpenWorkspaceError, openWorkspace } from './open.js'
+import { parseDurationMs } from '../duration.ts'
+import { extractJsonOutput } from './args.ts'
+import { OpenWorkspaceError, openWorkspace } from './open.ts'
 import {
-  daemonDown,
   daemonHealth,
-  daemonStatus,
-  daemonUp,
   readDaemonLogs,
   resolveLocalApiUrl,
   resolvePackagePath,
   treeportVersion
-} from './lifecycle.js'
-import { humanOutput, stateName } from './output.js'
+} from './discovery.ts'
+import { humanOutput, stateName } from './output.ts'
 
 const contextPrefix = 'TREEPORT'
 let configuredApiUrl: string | undefined
@@ -85,7 +81,6 @@ let apiUrl = ''
 let contextProjectId: string | undefined
 let contextWorktreeId: string | undefined
 let contextTerminalId: string | undefined
-let configuredDaemonLifecycle: string | undefined
 let jsonOutput = false
 let workingDirectory = process.cwd()
 
@@ -129,13 +124,16 @@ class CliError<Details = undefined> extends Error {
   readonly code: string
   readonly details: Details | undefined
 
+  readonly exitCode: number
+
   constructor(
     message: string,
-    readonly exitCode: number,
+    exitCode: number,
     code?: string,
     details?: Details
   ) {
     super(message)
+    this.exitCode = exitCode
     this.code =
       code ??
       (exitCode === 2
@@ -149,22 +147,6 @@ class CliError<Details = undefined> extends Error {
               : 'UNEXPECTED_ERROR')
     this.details = details
   }
-}
-
-async function resolveDaemonLifecycle(): Promise<'treeport' | 'external'> {
-  if (configuredDaemonLifecycle === 'external') {
-    return 'external'
-  }
-
-  if (configuredApiUrl) {
-    const observed = await daemonHealth(apiUrl)
-
-    if (observed) {
-      return observed.daemonLifecycle
-    }
-  }
-
-  return 'treeport'
 }
 
 type MutableSchemaType<Value> = Value extends readonly (infer Item)[]
@@ -1077,18 +1059,12 @@ async function main(args: string[]): Promise<void> {
       )
     })
 
-    const lifecycle = await resolveDaemonLifecycle()
-
-    if (lifecycle === 'external') {
-      if (!(await daemonHealth(apiUrl))) {
-        throw new CliError(
-          `Cannot reach the externally managed Treeport daemon at ${apiUrl}. Start it through the process that owns its lifecycle and retry.`,
-          3,
-          'DAEMON_UNREACHABLE'
-        )
-      }
-    } else {
-      await daemonUp({})
+    if (!(await daemonHealth(apiUrl))) {
+      throw new CliError(
+        `Cannot reach Treeport at ${apiUrl}. Start it with pnpm start, pnpm dev, or your supervisor and retry.`,
+        3,
+        'DAEMON_UNREACHABLE'
+      )
     }
 
     const registered = await request('/api/projects', projectResponseSchema, {
@@ -1152,137 +1128,25 @@ async function main(args: string[]): Promise<void> {
     )
   })
 
-  const startCommand = program
-    .command('start')
-    .description('Ensure the local Treeport daemon is running')
-    .option('--host <address>', 'loopback listener address')
-    .option('--port <port>', 'listener port')
-    .option('--foreground', 'run in the foreground')
-    .option('--json', 'emit machine-readable JSON')
-
-  startCommand.action(async () => {
-    const lifecycle = await resolveDaemonLifecycle()
-
-    if (lifecycle === 'external') {
-      throw new CliError(
-        'Cannot run `treeport start` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
-        5,
-        'DAEMON_LIFECYCLE_EXTERNAL'
-      )
-    }
-
-    const options = startCommand.opts<{
-      host?: string
-      port?: string
-      foreground?: boolean
-    }>()
-
-    const port = options.port === undefined ? undefined : Number(options.port)
-    const daemonOptions: Parameters<typeof daemonUp>[0] = {}
-
-    if (options.host !== undefined) {
-      daemonOptions.host = options.host
-    }
-
-    if (port !== undefined) {
-      daemonOptions.port = port
-    }
-
-    if (options.foreground !== undefined) {
-      daemonOptions.foreground = options.foreground
-      daemonOptions.output = output
-    }
-
-    const result = await daemonUp(daemonOptions)
-
-    if (options.foreground) {
-      return
-    }
-
-    print(result, () =>
-      output.blocks(
-        output.summary('Treeport is running', 'success'),
-        output.rows([['URL', result.apiUrl]])
-      )
-    )
-  })
-
-  const stopCommand = program
-    .command('stop')
-    .description('Stop the local daemon and preserve terminal sessions')
-    .option(
-      '--terminate-terminals',
-      'terminate every Treeport-owned terminal process'
-    )
-    .option('--force', 'confirm termination of all terminals')
-    .option('--json', 'emit machine-readable JSON')
-
-  stopCommand.action(async () => {
-    const lifecycle = await resolveDaemonLifecycle()
-
-    if (lifecycle === 'external') {
-      throw new CliError(
-        'Cannot run `treeport stop` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
-        5,
-        'DAEMON_LIFECYCLE_EXTERNAL'
-      )
-    }
-
-    const options = stopCommand.opts<{
-      terminateTerminals?: boolean
-      force?: boolean
-    }>()
-
-    if (options.terminateTerminals && !options.force) {
-      throw new CliError(
-        'Re-run with --terminate-terminals --force to confirm termination of every terminal.',
-        2
-      )
-    }
-
-    if (options.terminateTerminals) {
-      await request(
-        '/api/admin/terminate-terminals',
-        terminatedTerminalsResponseSchema,
-        { method: 'POST' }
-      )
-    }
-
-    const result = await daemonDown()
-    print(result, () =>
-      output.summary(
-        result.wasRunning
-          ? 'Treeport is stopped'
-          : 'Treeport is already stopped',
-        'success'
-      )
-    )
-  })
-
   const statusCommand = program
     .command('status')
-    .description('Show local daemon status')
+    .description('Show server status')
     .option('--json', 'emit machine-readable JSON')
 
   statusCommand.action(async () => {
-    const [cliVersion, status] = await Promise.all([
+    const [cliVersion, health] = await Promise.all([
       treeportVersion(),
-      daemonStatus()
+      daemonHealth(apiUrl)
     ])
 
-    const observed = status
-
-    const daemonVersion =
-      observed.running && observed.verified
-        ? (observed.health?.version ?? null)
-        : null
-
-    const projectList = status.verified ? await projects() : []
+    const projectList = health ? await projects() : []
 
     const result = {
-      ...status,
+      running: health !== null,
+      health,
+      apiUrl,
       cliVersion,
-      daemonVersion,
+      daemonVersion: health?.version ?? null,
       projects: projectList.length,
       worktrees: projectList.reduce(
         (count, project) => count + project.worktrees.length,
@@ -1292,64 +1156,40 @@ async function main(args: string[]): Promise<void> {
         (count, project) =>
           count +
           project.worktrees.reduce(
-            (worktreeCount, worktree) =>
-              worktreeCount + worktree.terminals.length,
+            (total, worktree) => total + worktree.terminals.length,
             0
           ),
         0
       )
     }
 
-    print(result, () => {
-      const healthy = observed.running && observed.verified
-
-      return output.blocks(
+    print(result, () =>
+      output.blocks(
         output.heading('Treeport status'),
         output.summary(
-          !observed.state
-            ? 'Treeport is stopped'
-            : healthy
-              ? 'Treeport is running'
-              : 'Treeport is unhealthy',
-          !observed.state ? 'neutral' : healthy ? 'success' : 'failure'
+          health ? 'Treeport is running' : 'Treeport is unreachable',
+          health ? 'success' : 'failure'
         ),
         output.rows([
           ['CLI version', cliVersion],
-          ['Daemon version', daemonVersion ?? 'Unavailable'],
-          observed.state ? ['URL', observed.state.apiUrl] : null
+          ['Daemon version', result.daemonVersion ?? 'Unavailable'],
+          ['URL', apiUrl],
+          health ? ['PID', health.pid] : null,
+          health
+            ? [
+                'Workspace',
+                `${result.projects} projects · ${result.worktrees} trees · ${result.terminals} terminals`
+              ]
+            : null
         ]),
-        daemonVersion !== null &&
-          daemonVersion !== cliVersion &&
+        health &&
+          health.version !== cliVersion &&
           output.summary(
             'Version mismatch: CLI and daemon versions differ',
             'warning'
-          ),
-        healthy &&
-          output.detail(
-            output.rows([
-              [
-                'Lifecycle',
-                observed.health?.daemonLifecycle === 'external'
-                  ? 'Externally managed'
-                  : 'Treeport'
-              ],
-              ['PID', observed.state!.pid],
-              status.verified
-                ? [
-                    'Workspace',
-                    `${result.projects} projects · ${result.worktrees} trees · ${result.terminals} terminals`
-                  ]
-                : null
-            ])
-          ),
-        !healthy &&
-          observed.state !== null &&
-          output.rows([
-            ['PID', observed.state.pid],
-            ['Logs', path.join(observed.state.dataDir, 'logs', 'daemon.log')]
-          ])
+          )
       )
-    })
+    )
   })
 
   const logsCommand = program
@@ -1383,11 +1223,14 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
 
   versionCommand.action(async () => {
-    const [cli, status] = await Promise.all([treeportVersion(), daemonStatus()])
+    const [cli, health] = await Promise.all([
+      treeportVersion(),
+      daemonHealth(apiUrl)
+    ])
 
     const result = {
       cli,
-      daemon: status.verified ? (status.health?.version ?? null) : null
+      daemon: health?.version ?? null
     }
 
     print(result, () =>
@@ -1413,18 +1256,11 @@ async function main(args: string[]): Promise<void> {
 
   skillsCommand.action(async () => {
     const skill = await fs.readFile(
-      await resolvePackagePath('skills', 'treeport', 'SKILL.md'),
+      resolvePackagePath('skills', 'treeport', 'SKILL.md'),
       'utf8'
     )
 
-    writeStdout(
-      (await resolveDaemonLifecycle()) === 'external'
-        ? skill.replace(
-            '\n# Treeport\n',
-            '\n# Treeport\n\n> **Externally managed daemon lifecycle:** Do not run `treeport start` or `treeport stop`. The process that started Treeport owns startup, shutdown, remote exposure, and logs. Other Treeport commands continue to use the configured daemon normally.\n'
-          )
-        : skill
-    )
+    writeStdout(skill)
   })
 
   const contextCommand = program
@@ -1506,7 +1342,6 @@ async function main(args: string[]): Promise<void> {
     const context: TreeportContext = {
       managed: true,
       apiUrl,
-      daemonLifecycle: await resolveDaemonLifecycle(),
       project: {
         id: project.id,
         name: project.name,
@@ -1548,17 +1383,7 @@ async function main(args: string[]): Promise<void> {
             `${context.terminal.name} (${context.terminal.id}) — ${stateName(context.terminal.status)}`
           ]
         ]),
-        output.detail(
-          output.rows([
-            ['API', context.apiUrl],
-            [
-              'Lifecycle',
-              context.daemonLifecycle === 'external'
-                ? 'Externally managed'
-                : 'Treeport'
-            ]
-          ])
-        )
+        output.detail(output.rows([['API', context.apiUrl]]))
       )
     )
   })
@@ -3215,7 +3040,6 @@ export async function runCliApplication(
   contextProjectId = environment.TREEPORT_PROJECT_ID?.trim() || undefined
   contextWorktreeId = environment.TREEPORT_WORKTREE_ID?.trim() || undefined
   contextTerminalId = environment.TREEPORT_TERMINAL_ID?.trim() || undefined
-  configuredDaemonLifecycle = environment.TREEPORT_DAEMON_LIFECYCLE?.trim()
   jsonOutput = extractJsonOutput(options.args)
   workingDirectory = options.cwd ?? process.cwd()
   writeStdout = options.stdout ?? ((value) => process.stdout.write(value))

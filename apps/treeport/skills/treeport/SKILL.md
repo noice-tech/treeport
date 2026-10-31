@@ -1,6 +1,6 @@
 ---
 name: treeport
-description: Detailed Treeport CLI guidance for child-tree orchestration, and server lifecycle. Use when compact Pi guidance or command help is not sufficient. Do not load for routine background processes or browser tabs in a managed Pi session.
+description: Detailed Treeport CLI guidance for child-tree orchestration and server access. Use when compact Pi guidance or command help is not sufficient. Do not load for routine background processes or browser tabs in a managed Pi session.
 compatibility: Requires the treeport CLI on PATH and a reachable Treeport daemon. Creation commands also require the requested child executable to be installed.
 ---
 
@@ -20,9 +20,7 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - Do not place untrusted titles, prompts, or other external text into interpolated shell fragments. Pass each value as one argument or use a caller-managed file when the child supports file arguments.
 - Create terminals only for long-running processes such as servers, watchers, and agents.
 - Delete terminals you started once their processes are no longer needed. Never delete other terminals or remove a tree unless the user explicitly asks.
-- Obey the daemon lifecycle reported by `treeport context`.
-- When the lifecycle is `external`, never run `treeport start` or `treeport stop`.
-- In the external lifecycle, the parent process owns startup, shutdown, and remote exposure.
+- The user's shell or supervisor owns server startup, shutdown, and remote exposure.
 - Treeport runs from a source checkout. Update with Git and rebuild; restart only the intended server through its supervisor, with the user's permission.
 - Remote access is configured by the user with Tailscale Serve, not by Treeport commands.
 - Do not restrict a launched agent's normal tools or make it ephemeral unless the caller explicitly asks. The persistent interactive session is intended to remain useful when the user takes over.
@@ -35,7 +33,7 @@ Run:
 treeport context
 ```
 
-Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, and daemon URL. It reports whether Treeport or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
+Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, and daemon URL. It resolves the injected IDs strictly. It does not guess identity from the current path.
 
 Outside Treeport it reports that the terminal is not managed and exits successfully. `TREEPORT_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
 

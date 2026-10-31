@@ -14,15 +14,13 @@ const daemonRecordSchema = z.strictObject({
   apiUrl: z.url(),
   dataDir: z.string().min(1),
   startedAt: z.string(),
-  installationMethod: z.literal('development'),
-  daemonLifecycle: z.literal('external')
+  installationMethod: z.literal('development')
 })
 
 const healthSchema = z.looseObject({
   pid: z.number().int().positive(),
   instanceId: z.string().min(1),
-  installationMethod: z.literal('development'),
-  daemonLifecycle: z.literal('external')
+  installationMethod: z.literal('development')
 })
 
 const repositoryRoot = path.resolve(
@@ -34,10 +32,7 @@ const applicationRoot = path.join(repositoryRoot, 'apps/treeport')
 const runtimeDirectory = path.join(applicationRoot, '.treeport-dev/runtime')
 const recordPath = path.join(runtimeDirectory, 'daemon.json')
 
-const cliEntrypoint = path.join(
-  applicationRoot,
-  '.treeport-dev-dist/node/cli/index.js'
-)
+const cliEntrypoint = path.join(applicationRoot, 'bin/treeport.mjs')
 
 const recordSource = await readFile(recordPath, 'utf8').catch(() => null)
 
@@ -107,7 +102,7 @@ const processCommand = recordIsValid
 
 const expectedServerEntrypoint = path.join(
   applicationRoot,
-  '.treeport-dev-dist/node/server/index.js'
+  'src/server/index.ts'
 )
 
 const processMatches =
@@ -119,8 +114,7 @@ const healthMatches =
   health !== null &&
   health.pid === record?.pid &&
   health.instanceId === record?.instanceId &&
-  health.installationMethod === 'development' &&
-  health.daemonLifecycle === 'external'
+  health.installationMethod === 'development'
 
 if (!processMatches || !healthMatches) {
   console.error(
@@ -166,8 +160,6 @@ process.env.TREEPORT_DATA_DIR = canonicalExpectedDataDirectory
 process.env.TREEPORT_RUNTIME_DIR = runtimeDirectory
 
 process.env.TREEPORT_DAEMON_RECORD = recordPath
-
-process.env.TREEPORT_DAEMON_LIFECYCLE = 'external'
 
 process.env.TREEPORT_CLI_ENTRYPOINT = process.argv[1]
 

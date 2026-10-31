@@ -110,7 +110,7 @@ export function ConnectionPage({
             <>
               <div className="flex w-full items-center justify-between gap-3 rounded-lg bg-zinc-900 py-1 pr-1 pl-3 ring-1 ring-white/10">
                 <code className="min-w-0 truncate font-mono text-sm text-accent-200">
-                  treeport start
+                  pnpm start
                 </code>
                 <Button
                   variant="ghost"

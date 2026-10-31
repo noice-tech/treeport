@@ -407,7 +407,7 @@ function triggerFindShortcut() {
 }
 
 if (parent !== self) {
-  addEventListener(
+  window.addEventListener(
     'keydown',
     (event) => {
       const find =

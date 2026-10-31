@@ -4,7 +4,7 @@ import {
   type ViewerIdentity,
   type WorkspacePresence
 } from '@treeport/shared'
-import { DomainError, type ProductEventBus } from './core/index'
+import { DomainError, type ProductEventBus } from './core/index.ts'
 
 export class WorkspacePresenceManager {
   private readonly sessions = new Map<
@@ -13,7 +13,11 @@ export class WorkspacePresenceManager {
   >()
   private expiry: ReturnType<typeof setTimeout> | null = null
 
-  constructor(private readonly events: ProductEventBus) {}
+  private readonly events: ProductEventBus
+
+  constructor(events: ProductEventBus) {
+    this.events = events
+  }
 
   snapshot(): WorkspacePresence[] {
     return [...this.sessions.values()].map(({ viewer }) => viewer)

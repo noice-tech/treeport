@@ -444,10 +444,14 @@ function runCommandEffect(
 }
 
 export class SpawnCommandRunner implements EffectCommandRunner {
+  private readonly spawnChild: (
+    request: CommandRequest
+  ) => ChildProcessWithoutNullStreams
+
   constructor(
-    private readonly spawnChild: (
-      request: CommandRequest
-    ) => ChildProcessWithoutNullStreams = (request) =>
+    spawnChild: (request: CommandRequest) => ChildProcessWithoutNullStreams = (
+      request
+    ) =>
       spawn(request.executable, [...request.args], {
         cwd: request.cwd,
         env: request.env ?? process.env,
@@ -455,7 +459,9 @@ export class SpawnCommandRunner implements EffectCommandRunner {
         shell: false,
         detached: true
       })
-  ) {}
+  ) {
+    this.spawnChild = spawnChild
+  }
 
   runEffect(
     request: CommandRequest

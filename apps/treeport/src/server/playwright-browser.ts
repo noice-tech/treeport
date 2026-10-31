@@ -29,14 +29,14 @@ import type {
   BrowserRuntimeState
 } from '@treeport/shared'
 
-import { ChromiumWebCodecsVideo } from './chromium-webcodecs-video'
-import { PlaywrightBrowserHost } from './browser-page-host'
-import { browserRuntime } from './browser-runtime'
-import { browserNavigation } from './browser-navigation'
-import { runBrowserScript } from './browser-script'
-import { browserKey, browserTouch, browserWheel } from './browser-input'
-import { installBrowserClipboardBridge } from './browser-clipboard-bridge'
-import { browserCursor } from './browser-cursor'
+import { ChromiumWebCodecsVideo } from './chromium-webcodecs-video.ts'
+import { PlaywrightBrowserHost } from './browser-page-host.ts'
+import { browserRuntime } from './browser-runtime.ts'
+import { browserNavigation } from './browser-navigation.ts'
+import { runBrowserScript } from './browser-script.ts'
+import { browserKey, browserTouch, browserWheel } from './browser-input.ts'
+import { installBrowserClipboardBridge } from './browser-clipboard-bridge.ts'
+import { browserCursor } from './browser-cursor.ts'
 
 export interface PlaywrightBrowserCallbacks {
   state(state: BrowserRuntimeState): void
@@ -145,11 +145,19 @@ export class PlaywrightBrowser {
     viewport: { ...DEFAULT_VIEWPORT }
   }
 
+  private readonly host: PlaywrightBrowserHost
+  private readonly workspacePath: string
+  private readonly callbacks: PlaywrightBrowserCallbacks
+
   constructor(
-    private readonly host: PlaywrightBrowserHost,
-    private readonly workspacePath: string,
-    private readonly callbacks: PlaywrightBrowserCallbacks
-  ) {}
+    host: PlaywrightBrowserHost,
+    workspacePath: string,
+    callbacks: PlaywrightBrowserCallbacks
+  ) {
+    this.host = host
+    this.workspacePath = workspacePath
+    this.callbacks = callbacks
+  }
 
   static async status(cachePath: string): Promise<BrowserInstallStatus> {
     const packageJson = await import('playwright/package.json', {

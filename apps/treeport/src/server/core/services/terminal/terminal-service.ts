@@ -10,14 +10,14 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import { and, asc, eq } from 'drizzle-orm'
-import { workspaceItemOrders } from '../../database-schema'
-import { DomainError } from '../../domain'
-import type { WorktreeSetupTask } from '../../setup'
-import type { TerminalSessionBackend } from '../../terminal'
+import { workspaceItemOrders } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
+import type { WorktreeSetupTask } from '../../setup.ts'
+import type { TerminalSessionBackend } from '../../terminal.ts'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations
-} from '../domain-services'
+} from '../domain-services.ts'
 import {
   ApplicationFibers,
   type ApplicationServices,
@@ -25,17 +25,17 @@ import {
   TerminalMutations,
   TreeFileMutations,
   WorktreeMutations
-} from '../infrastructure/application-runtime'
-import { MutationLocks } from '../infrastructure/mutation-locks'
+} from '../infrastructure/application-runtime.ts'
+import { MutationLocks } from '../infrastructure/mutation-locks.ts'
 import {
   ConfigPort,
   EventBusPort,
   TerminalHostPort
-} from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { ProjectStore } from '../project/project-store'
-import { currentTraceContext } from '../../../tracing'
-import { TerminalState } from './terminal-state'
+} from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { ProjectStore } from '../project/project-store.ts'
+import { currentTraceContext } from '../../../tracing.ts'
+import { TerminalState } from './terminal-state.ts'
 
 const now = (): string => new Date().toISOString()
 
@@ -437,7 +437,6 @@ export class TerminalService {
           TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),
           TREEPORT_DATA_DIR: config.dataDir,
           TREEPORT_RUNTIME_DIR: config.runtimeDir,
-          TREEPORT_DAEMON_LIFECYCLE: config.daemonLifecycle,
           TREEPORT_PROJECT_ID: worktree.projectId,
           TREEPORT_WORKTREE_ID: worktree.id,
           TREEPORT_TERMINAL_ID: terminalId

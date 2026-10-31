@@ -1,7 +1,10 @@
 import type { BrowserServerMessage } from '@treeport/shared'
-import type { BrowserRelay, BrowserRelayStream } from './browser-relay-client'
-import type { BrowserCapturePage } from './browser-video'
-import { captureChromiumWebCodecs } from './chromium-webcodecs-capture'
+import type {
+  BrowserRelay,
+  BrowserRelayStream
+} from './browser-relay-client.ts'
+import type { BrowserCapturePage } from './browser-video.ts'
+import { captureChromiumWebCodecs } from './chromium-webcodecs-capture.ts'
 
 export interface ChromiumWebCodecsViewer {
   start(send: (message: BrowserServerMessage) => boolean): boolean
@@ -21,14 +24,28 @@ export class ChromiumWebCodecsVideo {
   private width = 0
   private height = 0
 
+  private readonly openCapturePage: () => Promise<BrowserCapturePage>
+  private readonly extensionId: string
+  private readonly relay: BrowserRelay
+  private readonly input: string | null
+  private readonly debuggingEndpoint: () => string | null
+  private readonly failed: (message: string) => void
+
   constructor(
-    private readonly openCapturePage: () => Promise<BrowserCapturePage>,
-    private readonly extensionId: string,
-    private readonly relay: BrowserRelay,
-    private readonly input: string | null,
-    private readonly debuggingEndpoint: () => string | null,
-    private readonly failed: (message: string) => void
-  ) {}
+    openCapturePage: () => Promise<BrowserCapturePage>,
+    extensionId: string,
+    relay: BrowserRelay,
+    input: string | null,
+    debuggingEndpoint: () => string | null,
+    failed: (message: string) => void
+  ) {
+    this.openCapturePage = openCapturePage
+    this.extensionId = extensionId
+    this.relay = relay
+    this.input = input
+    this.debuggingEndpoint = debuggingEndpoint
+    this.failed = failed
+  }
 
   async start(width: number, height: number): Promise<void> {
     const captureWidth = Math.max(2, Math.round(width / 2) * 2)

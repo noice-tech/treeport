@@ -2,7 +2,7 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, expect, it } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
-import { createBrowserDevtoolsBridge } from './browser-devtools'
+import { createBrowserDevtoolsBridge } from './browser-devtools.ts'
 
 const servers: Array<http.Server | WebSocketServer> = []
 

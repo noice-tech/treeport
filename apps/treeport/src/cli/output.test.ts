@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from 'node:util'
 import kleur from 'kleur'
 import { describe, expect, it } from 'vitest'
-import { humanOutput } from './output.js'
+import { humanOutput } from './output.ts'
 
 describe('human output color boundary', () => {
   it.each([
@@ -47,12 +47,12 @@ describe('human output color boundary', () => {
         output.summary('Action required', 'warning'),
         output.summary('Failed', 'failure'),
         output.detail('Secondary detail'),
-        output.next(['treeport start'])
+        output.next(['pnpm start'])
       )
 
       expect(text.includes('\u001b')).toBe(color)
       expect(stripVTControlCharacters(text)).toBe(
-        'Treeport\n\n✓ Healthy\n\n! Action required\n\n✖ Failed\n\nSecondary detail\n\nNext\n  treeport start'
+        'Treeport\n\n✓ Healthy\n\n! Action required\n\n✖ Failed\n\nSecondary detail\n\nNext\n  pnpm start'
       )
 
       if (color) {

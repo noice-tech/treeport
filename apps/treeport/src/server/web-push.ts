@@ -10,7 +10,7 @@ import {
   type ViewerIdentity,
   type WorkspacePresence
 } from '@treeport/shared'
-import { DomainError } from './core/index'
+import { DomainError } from './core/index.ts'
 
 const stateSchema = Schema.Struct({
   publicKey: Schema.String,
@@ -67,10 +67,13 @@ export class WebPushManager {
     maxTotalSockets: 4
   })
 
-  private constructor(
-    private readonly filename: string,
-    private state: PushState
-  ) {}
+  private readonly filename: string
+  private state: PushState
+
+  private constructor(filename: string, state: PushState) {
+    this.filename = filename
+    this.state = state
+  }
 
   static async open(dataDir: string): Promise<WebPushManager> {
     const filename = path.join(dataDir, 'web-push.json')

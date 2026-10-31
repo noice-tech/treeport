@@ -11,31 +11,31 @@ import { eq, sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
-import { serializeOperation } from '../../database'
-import { projects } from '../../database-schema'
-import { DomainError } from '../../domain'
-import { Setup, type WorktreeSetupTask } from '../../setup'
+import { serializeOperation } from '../../database.ts'
+import { projects } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
+import { Setup, type WorktreeSetupTask } from '../../setup.ts'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations,
   TerminalOperations
-} from '../domain-services'
+} from '../domain-services.ts'
 import {
   ApplicationFibers,
   type ApplicationServices,
   TerminalMutations,
   WorktreeMutations
-} from '../infrastructure/application-runtime'
-import { MutationLocks } from '../infrastructure/mutation-locks'
+} from '../infrastructure/application-runtime.ts'
+import { MutationLocks } from '../infrastructure/mutation-locks.ts'
 import {
   CommandPort,
   EventBusPort,
   TerminalHostPort
-} from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { ProjectStore } from '../project/project-store'
-import { TerminalState } from '../terminal/terminal-state'
+} from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { ProjectStore } from '../project/project-store.ts'
+import { TerminalState } from '../terminal/terminal-state.ts'
 
 const now = (): string => new Date().toISOString()
 
@@ -48,7 +48,11 @@ const CLEANUP_OUTPUT_TRUNCATION_MARKER = '[Earlier output was truncated]\n'
 class RemovalExecutionError {
   readonly _tag = 'RemovalExecutionError'
 
-  constructor(readonly cause: unknown) {}
+  readonly cause: unknown
+
+  constructor(cause: unknown) {
+    this.cause = cause
+  }
 }
 
 function removalAdapter<Result, Failure>(

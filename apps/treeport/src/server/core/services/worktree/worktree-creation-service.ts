@@ -21,27 +21,35 @@ import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
-import { runCheckedEffect } from '../../command'
-import { mapOperation, mapWorktree, serializeOperation } from '../../database'
-import { operations, projects, worktrees } from '../../database-schema'
-import { DomainError } from '../../domain'
-import { Setup, type WorktreeSetupTask } from '../../setup'
-import { Zed } from '../../zed'
+import { runCheckedEffect } from '../../command.ts'
+import {
+  mapOperation,
+  mapWorktree,
+  serializeOperation
+} from '../../database.ts'
+import { operations, projects, worktrees } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
+import { Setup, type WorktreeSetupTask } from '../../setup.ts'
+import { Zed } from '../../zed.ts'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations,
   TerminalOperations
-} from '../domain-services'
+} from '../domain-services.ts'
 import {
   ApplicationFibers,
   type ApplicationServices,
   WorktreeMutations
-} from '../infrastructure/application-runtime'
-import { MutationLocks } from '../infrastructure/mutation-locks'
-import { CommandPort, ConfigPort, EventBusPort } from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { ProjectStore } from '../project/project-store'
+} from '../infrastructure/application-runtime.ts'
+import { MutationLocks } from '../infrastructure/mutation-locks.ts'
+import {
+  CommandPort,
+  ConfigPort,
+  EventBusPort
+} from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { ProjectStore } from '../project/project-store.ts'
 
 const now = (): string => new Date().toISOString()
 

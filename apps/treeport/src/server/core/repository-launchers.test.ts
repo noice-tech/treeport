@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { loadRepositoryLaunchers } from './repository-launchers'
+import { loadRepositoryLaunchers } from './repository-launchers.ts'
 
 const temporary: string[] = []
 

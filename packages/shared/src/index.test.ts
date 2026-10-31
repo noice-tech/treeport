@@ -11,8 +11,8 @@ import {
   TERMINAL_NAME_MAX_LENGTH,
   LAUNCHER_ARGUMENT_MAX_COUNT,
   updateLauncherSchema as updateLauncherEffectSchema
-} from './index.js'
-import { testSchema } from './schema.test-support.js'
+} from './index.ts'
+import { testSchema } from './schema.test-support.ts'
 
 const browseDirectoryQuerySchema = testSchema(browseDirectoryQueryEffectSchema)
 const createLauncherSchema = testSchema(createLauncherEffectSchema)

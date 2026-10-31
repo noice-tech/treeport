@@ -19,9 +19,9 @@ import {
   type WebAppPermission,
   webAppPermissionSchema
 } from '@treeport/shared'
-import type { AppConfig } from './config'
-import { DomainError } from './domain'
-import { PackageMutations } from './services/package/package-mutations'
+import type { AppConfig } from './config.ts'
+import { DomainError } from './domain.ts'
+import { PackageMutations } from './services/package/package-mutations.ts'
 
 type ApplicationServices = PackageMutations
 
@@ -427,7 +427,11 @@ export class PackageSystem {
   private globalFingerprint: string | null = null
   private readonly projectFingerprints = new Map<string, string>()
 
-  constructor(private readonly config: AppConfig) {}
+  private readonly config: AppConfig
+
+  constructor(config: AppConfig) {
+    this.config = config
+  }
 
   private settingsPath(scope: PackageScope, projectId?: string): string {
     if (scope === 'global') {

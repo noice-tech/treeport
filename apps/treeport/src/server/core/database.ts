@@ -27,14 +27,14 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { formatCommandLine } from '@treeport/shared'
-import * as schema from './database-schema'
+import * as schema from './database-schema.ts'
 import type {
   operations,
   projects as projectTable,
   launchers,
   worktrees
-} from './database-schema'
-import { inferWorktreeName } from './zed'
+} from './database-schema.ts'
+import { inferWorktreeName } from './zed.ts'
 
 const LEGACY_LATEST_VERSION = 10
 

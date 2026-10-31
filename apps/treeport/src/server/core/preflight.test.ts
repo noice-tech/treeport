@@ -5,8 +5,8 @@ import {
   type CommandRequest,
   type CommandResult,
   type EffectCommandRunner
-} from './command'
-import { checkRuntimePrerequisites } from './preflight'
+} from './command.ts'
+import { checkRuntimePrerequisites } from './preflight.ts'
 
 function runner(
   effect: (

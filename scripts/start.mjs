@@ -10,15 +10,14 @@ const serverEntry = path.join(
   root,
   'apps',
   'treeport',
-  'dist',
-  'node',
+  'src',
   'server',
-  'index.js'
+  'index.ts'
 )
 
 const webDist = path.join(root, 'apps', 'treeport', 'dist', 'web')
 
-if (!fs.existsSync(serverEntry)) {
+if (!fs.existsSync(webDist)) {
   console.error('Treeport is not built. Run `pnpm build` first.')
   process.exit(1)
 }

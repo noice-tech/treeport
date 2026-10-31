@@ -8,9 +8,9 @@ import {
   decodeTerminalEngineMetadata,
   terminalSessionName,
   type TerminalHostRecord
-} from './api'
-import { inspectLegacyTerminalHost } from './legacy-host'
-import { PersistentSession } from './session-client'
+} from './api.ts'
+import { inspectLegacyTerminalHost } from './legacy-host.ts'
+import { PersistentSession } from './session-client.ts'
 
 export interface TerminalHostCompatibilityProbe {
   compatible: boolean

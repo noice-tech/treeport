@@ -4,18 +4,13 @@
   "version": "0.13.0",
   "description": "Native persistent PTY session owner for Treeport.",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "clean": "rm -rf dist",
-    "build": "pnpm build:node && pnpm build:native",
-    "build:node": "tsc -p tsconfig.json",
+    "build": "pnpm build:native",
     "build:native": "cargo build --release --locked --manifest-path native/Cargo.toml --target-dir native/target",
     "measure": "node scripts/measure.mjs",
     "check:rust": "cargo fmt --check --manifest-path native/Cargo.toml && cargo clippy --locked --all-targets --manifest-path native/Cargo.toml -- -D warnings && cargo test --locked --manifest-path native/Cargo.toml",

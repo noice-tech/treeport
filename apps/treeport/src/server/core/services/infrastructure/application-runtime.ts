@@ -5,24 +5,24 @@ import * as FiberSet from 'effect/FiberSet'
 import * as Layer from 'effect/Layer'
 import * as ManagedRuntime from 'effect/ManagedRuntime'
 import * as Option from 'effect/Option'
-import type { AppConfig } from '../../config'
-import type { EffectCommandRunner } from '../../command'
-import { DatabaseLayer, type DatabasePort } from '../../database'
-import type { ProductEventBus } from '../../events'
-import { GitLayer, type GitPort } from '../../git'
+import type { AppConfig } from '../../config.ts'
+import type { EffectCommandRunner } from '../../command.ts'
+import { DatabaseLayer, type DatabasePort } from '../../database.ts'
+import type { ProductEventBus } from '../../events.ts'
+import { GitLayer, type GitPort } from '../../git.ts'
 import {
   NetworkListenersLayer,
   type NetworkListenerPort
-} from '../../network-listeners'
-import type { PackageSystem } from '../../package-system'
-import { SetupLive, type Setup } from '../../setup'
-import type { TerminalSessionBackend } from '../../terminal'
-import { ZedLive, type Zed } from '../../zed'
+} from '../../network-listeners.ts'
+import type { PackageSystem } from '../../package-system.ts'
+import { SetupLive, type Setup } from '../../setup.ts'
+import type { TerminalSessionBackend } from '../../terminal.ts'
+import { ZedLive, type Zed } from '../../zed.ts'
 import {
   WebAppRuntimeLayer,
   type WebAppRuntimePort
-} from '../../web-app-vite-runtime'
-import { tracingLayerFromEnvironment } from '../../../tracing'
+} from '../../web-app-vite-runtime.ts'
+import { tracingLayerFromEnvironment } from '../../../tracing.ts'
 import {
   AppOperations,
   ProjectObservationOperations,
@@ -31,27 +31,30 @@ import {
   TerminalOperations,
   WorktreeOperations,
   WorktreeReconciliation
-} from '../domain-services'
-import type { AppService } from '../app/app-service'
-import { PackageMutations } from '../package/package-mutations'
-import { ProjectFolderIdentities } from '../project/project-folder-identities'
-import type { ProjectObservationService } from '../project/project-observation-service'
-import type { ProjectRegistrationService } from '../project/project-registration-service'
-import type { ProjectSnapshotService } from '../project/project-snapshot-service'
-import { ProjectStoreLive, type ProjectStore } from '../project/project-store'
-import type { TerminalService } from '../terminal/terminal-service'
-import { TerminalState } from '../terminal/terminal-state'
-import type { WorktreeReconciler } from '../worktree/worktree-reconciler'
-import type { WorktreeService } from '../worktree/worktree-service'
-import { makeMutationCoordinator } from './mutation-coordinator'
-import { MutationLocks } from './mutation-locks'
+} from '../domain-services.ts'
+import type { AppService } from '../app/app-service.ts'
+import { PackageMutations } from '../package/package-mutations.ts'
+import { ProjectFolderIdentities } from '../project/project-folder-identities.ts'
+import type { ProjectObservationService } from '../project/project-observation-service.ts'
+import type { ProjectRegistrationService } from '../project/project-registration-service.ts'
+import type { ProjectSnapshotService } from '../project/project-snapshot-service.ts'
+import {
+  ProjectStoreLive,
+  type ProjectStore
+} from '../project/project-store.ts'
+import type { TerminalService } from '../terminal/terminal-service.ts'
+import { TerminalState } from '../terminal/terminal-state.ts'
+import type { WorktreeReconciler } from '../worktree/worktree-reconciler.ts'
+import type { WorktreeService } from '../worktree/worktree-service.ts'
+import { makeMutationCoordinator } from './mutation-coordinator.ts'
+import { MutationLocks } from './mutation-locks.ts'
 import {
   CommandPort,
   ConfigPort,
   EventBusPort,
   PackageSystemPort,
   TerminalHostPort
-} from './ports'
+} from './ports.ts'
 
 export class WorktreeMutations extends Effect.Service<WorktreeMutations>()(
   'treeport/WorktreeMutations',

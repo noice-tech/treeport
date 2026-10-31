@@ -122,10 +122,13 @@ class JsonLinesSpanExporter implements SpanExporter {
   private bytes = 0
   private readonly session = `${new Date().toISOString()}-${process.pid}`
 
-  constructor(
-    private readonly serviceName: string,
-    private readonly destination: TraceDestination
-  ) {}
+  private readonly serviceName: string
+  private readonly destination: TraceDestination
+
+  constructor(serviceName: string, destination: TraceDestination) {
+    this.serviceName = serviceName
+    this.destination = destination
+  }
 
   export(
     spans: ReadableSpan[],

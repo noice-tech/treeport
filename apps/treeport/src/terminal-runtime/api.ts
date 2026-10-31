@@ -12,7 +12,7 @@ import type {
   TerminalSessionState,
   TerminalTitleState,
   TerminalTraceContext
-} from './contract'
+} from './contract.ts'
 
 const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
 

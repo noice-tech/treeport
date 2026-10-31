@@ -6,13 +6,13 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CommandRequest, CommandResult, CommandRunner } from './command'
+import type { CommandRequest, CommandResult, CommandRunner } from './command.ts'
 import {
   resolveWorktreeCleanupTasks,
   resolveWorktreeSetupTasks,
   runWorktreeSetupTasks,
   type WorktreeSetupTask
-} from './setup'
+} from './setup.ts'
 
 const temporary: string[] = []
 

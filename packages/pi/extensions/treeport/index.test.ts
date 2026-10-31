@@ -14,7 +14,6 @@ import treeportExtension from './index.ts'
 const managed = {
   managed: true,
   apiUrl: 'http://127.0.0.1:8733',
-  daemonLifecycle: 'external',
   project: { id: 'project-1', name: 'Treeport', kind: 'repository' },
   worktree: {
     id: 'tree-1',
@@ -331,7 +330,7 @@ describe('Treeport Pi extension', () => {
     const root = await mkdtemp(join(tmpdir(), 'treeport-pi-cli-'))
 
     try {
-      const cli = join(root, '.treeport-dev-dist/node/cli/index.js')
+      const cli = join(root, 'bin/treeport.mjs')
       await mkdir(dirname(cli), { recursive: true })
       await writeFile(cli, '#!/usr/bin/env node\n', { mode: 0o700 })
       vi.stubEnv(

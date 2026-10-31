@@ -1,7 +1,7 @@
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
-import type { EffectCommandRunner } from './command'
-import type { AppConfig } from './config'
+import type { EffectCommandRunner } from './command.ts'
+import type { AppConfig } from './config.ts'
 
 export interface RuntimePrerequisites {
   gitVersion: string

@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadConfig } from './config'
+import { loadConfig } from './config.ts'
 
 describe('configuration', () => {
   it('defaults to loopback and XDG data locations', () => {
@@ -17,7 +17,6 @@ describe('configuration', () => {
     expect(config.cacheDir).toBe('/tmp/cache home/treeport')
     expect(config.runtimeDir).toBe('/tmp/run/treeport')
     expect(config.shell).toBe('/bin/zsh')
-    expect(config.daemonLifecycle).toBe('treeport')
     expect(config.remoteUrl).toBeNull()
   })
 
@@ -42,7 +41,6 @@ describe('configuration', () => {
       TREEPORT_PORT: '5000',
       TREEPORT_API_URL: 'http://example.test:5000',
       TREEPORT_REMOTE_URL: 'https://machine.example.ts.net:5000',
-      TREEPORT_DAEMON_LIFECYCLE: 'external',
       TREEPORT_WEB_DEVELOPMENT: '1',
       TREEPORT_SHELL: '/bin/bash'
     })
@@ -55,7 +53,6 @@ describe('configuration', () => {
     expect(config.apiUrl).toBe('http://example.test:5000')
     expect(config.remoteUrl).toBe('https://machine.example.ts.net:5000')
     expect(config.shell).toBe('/bin/bash')
-    expect(config.daemonLifecycle).toBe('external')
     expect(config.webDevelopment).toBe(true)
   })
 
@@ -78,8 +75,5 @@ describe('configuration', () => {
     expect(() => loadConfig({ TREEPORT_PORT: '70000' })).toThrow(
       'TREEPORT_PORT must be an integer between 1 and 65535'
     )
-    expect(() =>
-      loadConfig({ TREEPORT_DAEMON_LIFECYCLE: 'development' })
-    ).toThrow('TREEPORT_DAEMON_LIFECYCLE must be treeport or external')
   })
 })

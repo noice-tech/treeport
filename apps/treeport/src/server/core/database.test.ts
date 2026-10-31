@@ -12,7 +12,7 @@ import {
   mapLauncher,
   openDatabaseForTest,
   type TreeportDatabase
-} from './database'
+} from './database.ts'
 import {
   browserApps,
   operations,
@@ -23,7 +23,7 @@ import {
   webAppPermissionGrants,
   webAppStorage,
   worktrees
-} from './database-schema'
+} from './database-schema.ts'
 
 const databases: TreeportDatabase[] = []
 const directories: string[] = []

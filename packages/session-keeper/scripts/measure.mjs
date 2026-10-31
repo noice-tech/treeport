@@ -31,9 +31,9 @@ const rustEntry = path.resolve(
     )
 )
 
-const dist = path.join(root, 'apps/treeport/dist')
-const journalEntry = path.join(dist, 'session-journal.js')
-const protocolEntry = path.join(dist, 'session-protocol.js')
+const source = path.join(root, 'apps/treeport/src/terminal-runtime')
+const journalEntry = path.join(source, 'session-journal.ts')
+const protocolEntry = path.join(source, 'session-protocol.ts')
 
 await Promise.all([fs.access(journalEntry), fs.access(protocolEntry)]).catch(
   () => {

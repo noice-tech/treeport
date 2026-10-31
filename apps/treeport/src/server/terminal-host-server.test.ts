@@ -5,9 +5,9 @@ import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TerminalHostClient } from './terminal-host-client'
-import { makeTerminalHostServer } from '../terminal-runtime/server'
-import type { TerminalHostSessions } from '../terminal-runtime/sessions'
+import { TerminalHostClient } from './terminal-host-client.ts'
+import { makeTerminalHostServer } from '../terminal-runtime/server.ts'
+import type { TerminalHostSessions } from '../terminal-runtime/sessions.ts'
 
 const directories: string[] = []
 

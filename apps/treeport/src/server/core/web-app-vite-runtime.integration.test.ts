@@ -6,13 +6,13 @@ import { fileURLToPath } from 'node:url'
 import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import type { AppConfig } from './config'
+import type { AppConfig } from './config.ts'
 import {
   WebAppViteRuntime,
   WebAppRuntimeLayer,
   WebAppRuntimePort,
   type ResolvedWebAppSource
-} from './web-app-vite-runtime'
+} from './web-app-vite-runtime.ts'
 
 const directories: string[] = []
 
@@ -102,7 +102,6 @@ async function fixture() {
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
-    daemonLifecycle: 'external',
     webDevelopment: false,
     appVersion: 'test'
   }

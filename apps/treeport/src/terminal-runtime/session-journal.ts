@@ -8,7 +8,7 @@ import {
   sessionRecordSchema,
   type SessionRecord,
   type SessionRecordInput
-} from './session-protocol'
+} from './session-protocol.ts'
 
 const SEGMENT_BYTES = 1024 * 1024
 const MAX_RETAINED_ENTRIES = 65536
@@ -219,10 +219,13 @@ export class SessionJournal {
   private activeOffsets: Array<{ sequence: number; offset: number }> = []
   sequence = 0
 
-  constructor(
-    private readonly directory: string,
-    public limitBytes: number
-  ) {
+  private readonly directory: string
+  public limitBytes: number
+
+  constructor(directory: string, limitBytes: number) {
+    this.directory = directory
+    this.limitBytes = limitBytes
+
     this.activePath = path.join(directory, 'journal.jsonl')
     this.fd = fs.openSync(this.activePath, 'wx', 0o600)
   }

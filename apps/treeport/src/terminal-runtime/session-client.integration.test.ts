@@ -8,8 +8,8 @@ import {
   getSessionKeeperPayload,
   withSessionRecovery
 } from '@treeport/session-keeper'
-import { PersistentSession } from './session-client'
-import { sessionStatusSchema } from './session-protocol'
+import { PersistentSession } from './session-client.ts'
+import { sessionStatusSchema } from './session-protocol.ts'
 
 const roots: string[] = []
 const handles: PersistentSession[] = []

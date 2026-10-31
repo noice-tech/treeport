@@ -1,8 +1,8 @@
 import * as Schema from 'effect/Schema'
-import { browserObservedUrlSchema } from './browser-protocol.js'
-import { jsonValueSchema } from './json-schema.js'
-import { terminalRuntimeMetadataSchema } from './terminal-protocol.js'
-import { webAppPermissionSchema } from './web-app-protocol.js'
+import { browserObservedUrlSchema } from './browser-protocol.ts'
+import { jsonValueSchema } from './json-schema.ts'
+import { terminalRuntimeMetadataSchema } from './terminal-protocol.ts'
+import { webAppPermissionSchema } from './web-app-protocol.ts'
 
 const projectColorSchema = Schema.Literal(
   'rose',
@@ -648,7 +648,6 @@ export const healthResponseSchema = Schema.Struct({
   pid: Schema.Int,
   instanceId: nullableStringSchema,
   installationMethod: Schema.String,
-  daemonLifecycle: Schema.Literal('treeport', 'external'),
   url: Schema.String
 })
 

@@ -4,9 +4,9 @@ import path from 'node:path'
 import type { DirectoryBrowseResponse } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
-import { DomainError } from '../../domain'
-import type { ApplicationServices } from '../infrastructure/application-runtime'
-import { GitPort } from '../../git'
+import { DomainError } from '../../domain.ts'
+import type { ApplicationServices } from '../infrastructure/application-runtime.ts'
+import { GitPort } from '../../git.ts'
 
 export class ProjectDirectoryService {
   browseDirectory(

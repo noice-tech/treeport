@@ -6,8 +6,9 @@
     "composite": false,
     "declarationMap": false,
     "sourceMap": false,
-    "rootDir": "src",
-    "outDir": "dist"
+    "rootDir": "../..",
+    "noEmit": true,
+    "erasableSyntaxOnly": true
   },
   "include": ["src/index.ts"]
 }

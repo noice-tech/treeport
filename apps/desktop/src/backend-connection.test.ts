@@ -19,8 +19,7 @@ it('reads optional metadata without imposing a daemon release or health shape', 
       Response.json({
         ...health,
         version,
-        protocolVersion: 'unknown',
-        daemonLifecycle: 'future'
+        protocolVersion: 'unknown'
       })
     )
     expect(await Effect.runPromise(checkHealth(origin))).toEqual({

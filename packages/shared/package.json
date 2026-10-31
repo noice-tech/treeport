@@ -3,24 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "exports": {
-    "./browser-host": {
-      "types": "./dist/browser-host.d.ts",
-      "default": "./dist/browser-host.js"
-    },
-    "./tracing": {
-      "types": "./dist/tracing.d.ts",
-      "default": "./dist/tracing.js"
-    },
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+    "./browser-host": "./src/browser-host.ts",
+    "./tracing": "./src/tracing.ts",
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc -b",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "devDependencies": {

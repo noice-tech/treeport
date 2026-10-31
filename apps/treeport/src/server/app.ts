@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { createReadStream, existsSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -127,21 +127,21 @@ import type {
   AppConfig,
   TerminalSessionBackend,
   TreeportService
-} from './core/index'
-import { DomainError } from './core/index'
-import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
+} from './core/index.ts'
+import { DomainError } from './core/index.ts'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
 import {
   webAppBrowserOrigin,
   webAppContentSecurityPolicy
-} from './core/web-app-csp'
-import type { TerminalMetadataManager } from './terminal-metadata'
-import type { BrowserSessionManager } from './browser-sessions'
-import { authenticatedViewers, isLoopbackAddress } from './request-security'
-import type { WorkspacePresenceManager } from './workspace-presence'
-import type { WebPushManager } from './web-push'
-import { findProjectIcon } from './project-icon'
-import type { AppServices } from './app-services'
-import { networkTelemetry } from './network-telemetry'
+} from './core/web-app-csp.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
+import type { BrowserSessionManager } from './browser-sessions.ts'
+import { authenticatedViewers, isLoopbackAddress } from './request-security.ts'
+import type { WorkspacePresenceManager } from './workspace-presence.ts'
+import type { WebPushManager } from './web-push.ts'
+import { findProjectIcon } from './project-icon.ts'
+import type { AppServices } from './app-services.ts'
+import { networkTelemetry } from './network-telemetry.ts'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
   ['application/pdf', 'pdf'],
@@ -929,7 +929,6 @@ export function createApp({
           pid: process.pid,
           instanceId: config.instanceId ?? null,
           installationMethod: config.installationMethod ?? 'development',
-          daemonLifecycle: config.daemonLifecycle,
           url: config.apiUrl
         })
       )
@@ -2393,13 +2392,9 @@ export function createApp({
   ]
 
   const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
-  const builtStaticRoot = path.resolve(moduleDirectory, '../../web')
-  const sourceStaticRoot = path.resolve(moduleDirectory, '../../dist/web')
 
   const staticRoot =
-    webDist ??
-    config.webDist ??
-    (existsSync(builtStaticRoot) ? builtStaticRoot : sourceStaticRoot)
+    webDist ?? config.webDist ?? path.resolve(moduleDirectory, '../../dist/web')
 
   routes.push(
     route(
