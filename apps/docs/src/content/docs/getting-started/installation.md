@@ -1,29 +1,28 @@
 ---
-title: Run Treeport from source
-description: Fork or clone Treeport, build it, and run your own server.
+title: Run Treeport
+description: Fork Treeport and run it on your machine.
 ---
 
-Treeport is distributed as source. Fork [the repository](https://github.com/noice-tech/treeport) and build it with your coding agent. The server keeps terminals running; connect with a browser or the desktop app.
+[Fork Treeport](https://github.com/noice-tech/treeport/fork) and run it on your machine. It's your copy, so your coding agent can change it too. The server keeps terminals running; connect with a browser or the desktop app.
 
-## Build and start
+## Install and start
 
 Use macOS or Linux with Node.js 24+, pnpm, Git, and Rust (the checkout pins its toolchain). Native dependencies may also need your platform's C/C++ build tools and Python.
 
 ```sh
-git clone https://github.com/YOUR-USERNAME/treeport.git
-cd treeport
-pnpm install --frozen-lockfile
-pnpm build
-pnpm start
+gh repo fork noice-tech/treeport --clone && cd treeport
+pnpm install --frozen-lockfile && pnpm cli:install && pnpm start
 ```
 
-Open **http://127.0.0.1:8733**. `pnpm start` runs in the foreground; Ctrl+C stops the server while preserving running terminal sessions.
+`gh repo fork --clone` creates your fork and clones it. Without the GitHub CLI, [fork in the browser](https://github.com/noice-tech/treeport/fork) and `git clone` your fork.
+
+`pnpm start` installs dependencies and builds whatever changed, then runs the server in the foreground. Open **http://127.0.0.1:8733**. Ctrl+C stops the server while preserving running terminal sessions.
 
 For automatic startup, see [service supervision](/features/service-supervision/). For another computer or phone, configure [Tailscale Serve](/features/remote-access/).
 
 ## CLI and desktop
 
-From the clone, run `pnpm exec treeport context` or `pnpm exec treeport /path/to/project`. For use outside the clone, add its `apps/treeport/bin` directory to your shell's PATH. Managed terminals receive the CLI path automatically.
+`pnpm cli:install` links the `treeport` command into pnpm's global bin, so it follows your clone without reinstalling; `pnpm cli:uninstall` removes it. Terminals managed by Treeport always run the CLI of the server that started them.
 
 `pnpm dev` starts the development server, web UI, and Electron app. To build a local desktop application, run `pnpm --filter @treeport/desktop package`; the result is under `apps/desktop/out`. The desktop app connects to your server and does not bundle it.
 
@@ -31,15 +30,11 @@ There are no prebuilt downloads or automatic updates.
 
 ## Updates
 
-From your clone:
-
 ```sh
-git pull
-pnpm install --frozen-lockfile
-pnpm build
+pnpm sync && pm2 restart treeport
 ```
 
-Restart the foreground server with `pnpm start`. If you use the pm2 setup, `pnpm pm2:restart` installs dependencies, rebuilds, and restarts its `treeport` process. Rebuild the desktop app separately if you use it.
+`pnpm sync` pulls the latest changes and stops if your clone has diverged, so you can merge. Restarting installs and builds whatever changed. Without pm2, rerun `pnpm start`. A fork pulls from its own remote, so sync it with upstream first (GitHub **Sync fork** or `gh repo sync`). Rebuild the desktop app separately if you use it.
 
 ## Start working
 
