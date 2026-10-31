@@ -13,7 +13,11 @@ const ZSH_DELEGATE = (
 fi
 `
 
-const ZSH_INTEGRATION = `${ZSH_DELEGATE('.zshrc')}
+const CLI_PATH = `# User startup files may prepend another treeport; keep this server's CLI first.
+[[ -n "\${TREEPORT_CLI_ENTRYPOINT-}" && $PATH != "\${TREEPORT_CLI_ENTRYPOINT%/*}:"* ]] && PATH="\${TREEPORT_CLI_ENTRYPOINT%/*}:$PATH"
+`
+
+const ZSH_INTEGRATION = `${ZSH_DELEGATE('.zshrc')}${CLI_PATH}
 if [[ -n "$TREEPORT_SHELL_INTEGRATION" ]]; then
   unset TREEPORT_SHELL_INTEGRATION
   autoload -Uz add-zsh-hook 2>/dev/null
@@ -73,6 +77,7 @@ unset TREEPORT_USER_ZDOTDIR
 
 const BASH_INTEGRATION = `[[ $- == *i* ]] || return
 
+${CLI_PATH}
 unset TREEPORT_SHELL_INTEGRATION
 
 _treeport_command_start() {
@@ -191,6 +196,13 @@ const FISH_INTEGRATION = `if set -q TREEPORT_FISH_XDG_DATA_DIR
 end
 set -e TREEPORT_SHELL_INTEGRATION
 
+# User config loads after vendor config and may prepend another treeport; keep this server's CLI first.
+function _treeport_cli_path
+  set -q TREEPORT_CLI_ENTRYPOINT; or return
+  set -l cli_dir (string replace -r '/[^/]*$' '' -- $TREEPORT_CLI_ENTRYPOINT)
+  test "$PATH[1]" = "$cli_dir"; or set -gx PATH $cli_dir $PATH
+end
+
 function _treeport_command_start --on-event fish_preexec
   set -l line (string replace -ar '[[:cntrl:]]' '' -- "$argv[1]" | string replace -a % %25 | string replace -a ';' %3B)
   printf '\\e]133;C;cmdline_url=%s\\e\\\\' "$line"
@@ -201,6 +213,7 @@ function _treeport_command_end --on-event fish_postexec
 end
 
 function _treeport_prompt_start --on-event fish_prompt
+  _treeport_cli_path
   # A directory or host name with a raw ESC or BEL could end OSC 7 early and inject its own sequence.
   printf '\\e]7;kitty-shell-cwd://%s%s\\e\\\\\\e]133;A\\e\\\\' (prompt_hostname | string replace -ar '[[:cntrl:]]' '') (string replace -ar '[[:cntrl:]]' '' -- "$PWD")
   # The prompt function runs after this event, so wrap it once user config has loaded.
@@ -223,6 +236,7 @@ if set -q TREEPORT_RUN_COMMAND
 
   function _treeport_run_prompt --on-event fish_prompt
     set -q _treeport_run_command; or return
+    _treeport_cli_path
     set -l run_command $_treeport_run_command
     set -e _treeport_run_command
     builtin history append -- $run_command 2>/dev/null

@@ -5,7 +5,7 @@
   "description": "A tree-first terminal driver for persistent development workspaces.",
   "type": "module",
   "bin": {
-    "treeport": "bin/treeport.mjs"
+    "treeport": "bin/treeport"
   },
   "main": "src/cli/index.ts",
   "scripts": {

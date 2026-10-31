@@ -32,7 +32,7 @@ const applicationRoot = path.join(repositoryRoot, 'apps/treeport')
 const runtimeDirectory = path.join(applicationRoot, '.treeport-dev/runtime')
 const recordPath = path.join(runtimeDirectory, 'daemon.json')
 
-const cliEntrypoint = path.join(applicationRoot, 'bin/treeport.mjs')
+const cliEntrypoint = path.join(applicationRoot, 'bin/treeport')
 
 const recordSource = await readFile(recordPath, 'utf8').catch(() => null)
 
