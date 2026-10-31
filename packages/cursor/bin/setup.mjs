@@ -17,7 +17,7 @@ const [operation, ...args] = process.argv.slice(2)
 
 if (!operation || operation === '--help' || args.includes('--help')) {
   console.log(
-    'Usage: npx @treeport/cursor <install-hooks|uninstall-hooks> [--project]'
+    'Usage: node packages/cursor/bin/setup.mjs <install-hooks|uninstall-hooks> [--project]'
   )
   console.log(
     'Install the Treeport skill and Cursor hooks, then run agent normally.'
@@ -33,7 +33,7 @@ if (
   args.some((arg) => arg !== '--project')
 ) {
   console.error(
-    'Usage: npx @treeport/cursor <install-hooks|uninstall-hooks> [--project]'
+    'Usage: node packages/cursor/bin/setup.mjs <install-hooks|uninstall-hooks> [--project]'
   )
   process.exit(1)
 }

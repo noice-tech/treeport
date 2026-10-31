@@ -976,7 +976,9 @@ export function createApp({
       '/api/phone-access',
       Effect.succeed({
         url: config.remoteUrl,
-        error: config.remoteUrl ? null : 'No remote address is configured. Run Tailscale Serve yourself, then set TREEPORT_REMOTE_URL to its HTTPS URL and restart the server.',
+        error: config.remoteUrl
+          ? null
+          : 'No remote address is configured. Run Tailscale Serve yourself, then set TREEPORT_REMOTE_URL to its HTTPS URL and restart the server.',
         setupCommand: null
       }).pipe(
         Effect.map((body) =>

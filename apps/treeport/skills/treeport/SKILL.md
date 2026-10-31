@@ -1,6 +1,6 @@
 ---
 name: treeport
-description: Detailed Treeport CLI guidance for child-tree orchestration, lifecycle, services, remote access, and updates. Use when compact Pi guidance or command help is not sufficient. Do not load for routine background processes or browser tabs in a managed Pi session.
+description: Detailed Treeport CLI guidance for child-tree orchestration, and server lifecycle. Use when compact Pi guidance or command help is not sufficient. Do not load for routine background processes or browser tabs in a managed Pi session.
 compatibility: Requires the treeport CLI on PATH and a reachable Treeport daemon. Creation commands also require the requested child executable to be installed.
 ---
 
@@ -21,16 +21,10 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - Create terminals only for long-running processes such as servers, watchers, and agents.
 - Delete terminals you started once their processes are no longer needed. Never delete other terminals or remove a tree unless the user explicitly asks.
 - Obey the daemon lifecycle reported by `treeport context`.
-- When the lifecycle is `external`, never run `treeport start`, `treeport stop`, or `treeport remote enable`.
+- When the lifecycle is `external`, never run `treeport start` or `treeport stop`.
 - In the external lifecycle, the parent process owns startup, shutdown, and remote exposure.
-- When the lifecycle is `service`, normal `start` and `stop` delegate to the OS manager.
-- Use bare `treeport update` to update a supported local npm installation. It preserves hosted terminals and an enabled service, and restarts only a daemon that was running.
-- If an update fails after installation starts, do not roll back or alter Treeport data. Reinstall the same or a newer compatible release with `npm install --global @treeport/treeport@latest`, then start Treeport normally.
-- Never run bare `treeport update` for an external or selected remote daemon.
-- Never invoke `sudo` for a normal service or update operation.
-- Normal macOS service mode is a user/login LaunchAgent and does not need an administrator.
-- Advanced headless mode is explicit.
-- If an existing headless service prints an administrator command, report the command and wait for the user.
+- Treeport runs from a source checkout. Update with Git and rebuild; restart only the intended server through its supervisor, with the user's permission.
+- Remote access is configured by the user with Tailscale Serve, not by Treeport commands.
 - Do not restrict a launched agent's normal tools or make it ephemeral unless the caller explicitly asks. The persistent interactive session is intended to remain useful when the user takes over.
 
 ## Understand the current context
@@ -41,7 +35,7 @@ Run:
 treeport context
 ```
 
-Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, and daemon URL. It reports whether Treeport, the OS service, or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
+Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, and daemon URL. It reports whether Treeport or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
 
 Outside Treeport it reports that the terminal is not managed and exits successfully. `TREEPORT_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
 

@@ -95,7 +95,7 @@ Add `--repo` to save the launcher in the current tree's `.treeport/settings.json
 
 ## Safety and command discovery
 
-- For an `external` daemon lifecycle, never run `treeport start`, `treeport stop`, `treeport update`, or `treeport remote enable`; its parent owns lifecycle management.
+- For an `external` daemon lifecycle, never run `treeport start` or `treeport stop`; its parent owns lifecycle management.
 - Do not run `sudo` or change remote exposure without explicit permission.
 - Use normal command output for reading; add `--json` for programmatic parsing, before the `--` separator.
-- Use `treeport <command> --help` for options not shown here. Run `treeport skills` for detailed guidance on child-tree orchestration, lifecycle, services, remote access, and updates.
+- Use `treeport <command> --help` for options not shown here. Run `treeport skills` for detailed guidance on child-tree orchestration, and server lifecycle.

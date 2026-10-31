@@ -95,7 +95,6 @@ These commands run with your user permissions. Use them only in repositories tha
 
 ## Packages
 
-- `packages` is a list of npm or local [packages](/features/packages/). To add a package, use `treeport install -l <source>`. To remove a package, use `treeport remove -l <source>`.
-- `npmCommand` is an optional array with the npm executable and its arguments. For example, use `["npm"]`.
+- `packages` is a list of local [packages](/features/packages/). To add a package, use `treeport install -l <source>`. To remove a package, use `treeport remove -l <source>`.
 
 Treeport reads global packages from `settings.json` in its data directory.

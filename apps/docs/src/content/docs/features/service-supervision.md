@@ -1,46 +1,33 @@
 ---
 title: Service supervision
-description: Start Treeport automatically and restart it after an unexpected exit.
+description: Run your source checkout under pm2 or another process manager.
 ---
 
-Service mode is optional. It starts Treeport automatically and restarts the backend after an unexpected exit.
+Treeport runs in the foreground with `pnpm start`. You own startup and supervision; Treeport does not install OS services.
 
-## Enable service mode
+## Optional pm2 setup
 
-```sh
-treeport service enable
-```
-
-- **macOS:** Starts after login without administrator approval.
-- **Linux:** Uses a systemd user service. Follow the printed instructions for startup without login.
-
-For macOS startup before login, use `treeport service enable --headless`. This mode requires administrator approval.
-
-## Manage the service
-
-- `treeport service status` shows its status.
-- `treeport start` starts the backend.
-- `treeport stop` stops the backend while keeping terminal sessions.
-- `treeport service disable` removes automatic startup.
-
-Disable service mode before uninstalling Treeport.
-
-## Check the logs
-
-If the backend stops or does not respond, run this command:
+Install pm2 separately, then run these commands from your built clone:
 
 ```sh
-treeport logs
+pnpm pm2:start
+pnpm pm2:save
+pnpm pm2:startup
 ```
 
-This command also works when the backend is stopped. The logs include start and stop events, error details, the software version, and backend output. Treeport keeps a limited log history after a restart.
+Follow the platform-specific instructions printed by `pm2 startup`. Keep the clone at the same path.
 
-To read more lines, use `treeport logs --lines 500`.
+- `pm2 status treeport` shows the process.
+- `pm2 logs treeport` shows supervisor output.
+- `pm2 stop treeport` stops the server.
+- After `git pull`, `pnpm restart` installs dependencies, builds, and restarts it.
 
-For service-manager logs, run this command:
+Use your supervisor, not `treeport start` or `treeport stop`, to control an externally managed server.
 
-```sh
-treeport logs --service
-```
+## Terminal persistence
 
-A forced stop or a loss of power can prevent an exit event. Without this event, the cause of the stop can be unknown.
+Session-keepers run separately from the server. On Linux with an available systemd user manager, each keeper starts in its own transient user scope so stopping or restarting pm2's service does not kill terminals. Without a user manager, Treeport uses detached processes; a supervisor that kills its entire process group or cgroup can then terminate them. macOS keepers use separate sessions.
+
+## Logs
+
+`treeport logs` reads retained server logs, even when the server is stopped. Use `treeport logs --lines 500` for more history.
