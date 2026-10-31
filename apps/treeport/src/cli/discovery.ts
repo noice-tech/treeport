@@ -2,11 +2,9 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  decodeUnknownOrNull,
-  healthResponseSchema,
-  type HealthResponse
-} from '@treeport/shared'
+import { healthResponseSchema, type HealthResponse } from '@treeport/shared'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 import { z } from 'zod'
 import { tailDaemonLog } from '../server/daemon-log.ts'
 
@@ -156,7 +154,11 @@ export async function daemonHealth(
         return null
       }
 
-      return decodeUnknownOrNull(healthResponseSchema, await response.json())
+      // EXTERNAL: After git pull, this CLI can be newer than the server still running.
+      // Ignore fields it no longer knows so a reachable server is not reported as down.
+      return Option.getOrNull(
+        Schema.decodeUnknownOption(healthResponseSchema)(await response.json())
+      )
     })
     .catch(() => null)
 }
