@@ -1,47 +1,70 @@
 import {
   appServiceSchema,
-  pushConfigResponseSchema,
-  presenceResponseSchema,
-  apiErrorBodySchema,
-  browserInstallResponseSchema,
-  decodeUnknownOrNull,
-  directoryBrowseResponseSchema,
-  gitDiffResponseSchema,
-  gitFileDiffResponseSchema,
-  gitDiffImageSchema,
   hasDataResponseSchema,
-  listenerDiscoveryResponseSchema,
-  okResponseSchema,
-  openBrowserAppResponseSchema,
   openWebAppResponseSchema,
-  operationResponseSchema,
-  operationsResponseSchema,
+  storageValueResponseSchema,
+  webAppContextResponseSchema,
+  webAppDefinitionResponseSchema,
+  webAppDefinitionsResponseSchema
+} from '#protocol/web-app'
+import { pushConfigResponseSchema } from '#protocol/push'
+import { presenceResponseSchema } from '#protocol/presence'
+import {
+  apiErrorBodySchema,
+  okResponseSchema,
+  uploadedFileResponseSchema
+} from '#protocol/api'
+import {
+  browserInstallResponseSchema,
+  openBrowserAppResponseSchema
+} from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import {
+  directoryBrowseResponseSchema,
   projectResponseSchema,
   projectsResponseSchema,
-  recentProjectsResponseSchema,
-  removePreviewResponseSchema,
-  storageValueResponseSchema,
+  recentProjectsResponseSchema
+} from '#protocol/project'
+import {
+  gitDiffResponseSchema,
+  gitFileDiffResponseSchema,
+  gitDiffImageSchema
+} from '#protocol/git-diff'
+import {
+  listenerDiscoveryResponseSchema,
+  worktreeResponseSchema
+} from '#protocol/worktree'
+import {
+  operationResponseSchema,
+  operationsResponseSchema,
+  removePreviewResponseSchema
+} from '#protocol/operation'
+import {
   launcherDefinitionListingSchema,
   launcherResponseSchema,
-  launchersResponseSchema,
-  terminalResponseSchema,
+  launchersResponseSchema
+} from '#protocol/launcher'
+import { terminalResponseSchema } from '#protocol/terminal'
+import {
   treeFileListingSchema,
   treeFileSchema,
   treeFileSearchResultSchema,
-  treeFileWriteResultSchema,
-  uploadedFileResponseSchema,
-  webAppContextResponseSchema,
-  webAppDefinitionResponseSchema,
-  webAppDefinitionsResponseSchema,
-  worktreeResponseSchema
-} from '@treeport/shared'
+  treeFileWriteResultSchema
+} from '#protocol/tree-file'
 import type * as Schema from 'effect/Schema'
 import type {
   AppService,
-  WebPushSubscription,
-  PresenceUpdate,
-  ViewerIdentity,
+  OpenWebAppResult,
+  WebAppDefinition
+} from '#protocol/web-app'
+import type { WebPushSubscription } from '#protocol/push'
+import type { PresenceUpdate, ViewerIdentity } from '#protocol/presence'
+import type {
   DirectoryBrowseResponse,
+  ProjectRecord,
+  RecentProjectRecord
+} from '#protocol/project'
+import type {
   GitDiff,
   GitDiffRequest,
   GitFileDiff,
@@ -49,23 +72,17 @@ import type {
   GitDiffImage,
   GitDiffImageRequest,
   JsonValue,
-  OpenBrowserAppResult,
-  OpenWebAppResult,
-  OperationRecord,
-  ProjectRecord,
-  RecentProjectRecord,
-  RemovePreview,
-  Launcher,
-  LauncherDefinitionListing,
-  TerminalRecord,
   TreeFileListing,
   TreeFileSearchResult,
   TreeFileWriteResult,
   WebAppContext,
-  WebAppDefinition,
-  WorktreeListenerDiscovery,
-  WorktreeRecord
-} from '@treeport/shared'
+  WorktreeListenerDiscovery
+} from '@treeport/app-sdk'
+import type { OpenBrowserAppResult } from '#protocol/browser'
+import type { OperationRecord, RemovePreview } from '#protocol/operation'
+import type { Launcher, LauncherDefinitionListing } from '#protocol/launcher'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WorktreeRecord } from '#protocol/worktree'
 
 export class RpcNetworkError extends Error {
   constructor(

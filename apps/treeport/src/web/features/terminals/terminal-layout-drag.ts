@@ -1,4 +1,4 @@
-import type { TerminalRecord } from '@treeport/shared'
+import type { TerminalRecord } from '#protocol/terminal'
 
 export interface TerminalLayoutDragSnapshot {
   terminal: TerminalRecord

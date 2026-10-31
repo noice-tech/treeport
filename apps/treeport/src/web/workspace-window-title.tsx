@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import type { ProjectRecord, WorktreeRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { useTerminalNavigationMetadata } from './terminal-runtime-metadata-react'
 
 export function WorkspaceWindowTitle({

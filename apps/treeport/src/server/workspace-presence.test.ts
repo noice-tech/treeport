@@ -1,10 +1,7 @@
 import crypto from 'node:crypto'
 import { expect, it, vi } from 'vitest'
-import {
-  PRESENCE_TIMEOUT_MS,
-  type ProductEvent,
-  type ViewerIdentity
-} from '@treeport/shared'
+import { PRESENCE_TIMEOUT_MS, type ViewerIdentity } from '#protocol/presence'
+import type { ProductEvent } from '#protocol/events'
 import { ProductEventBus } from './core/events.ts'
 import { WorkspacePresenceManager } from './workspace-presence.ts'
 

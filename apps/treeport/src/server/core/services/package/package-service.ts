@@ -2,7 +2,7 @@ import type {
   PackageListing,
   PackageOperationResult,
   PackageResourceDiagnostic
-} from '@treeport/shared'
+} from '#protocol/package'
 import { eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import { webAppPermissionGrants } from '../../database-schema.ts'

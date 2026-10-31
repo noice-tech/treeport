@@ -1,4 +1,4 @@
-import type { LauncherDefinition } from '@treeport/shared'
+import type { LauncherDefinition } from '#protocol/launcher'
 import { formatCommandLine } from './command-line'
 
 export function launcherCommand(launcher: LauncherDefinition): string {

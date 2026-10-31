@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
 import { eq, or, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import { projects, worktrees } from '../../database-schema.ts'

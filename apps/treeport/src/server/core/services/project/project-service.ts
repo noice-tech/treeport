@@ -2,13 +2,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
   DirectoryBrowseResponse,
-  OperationRecord,
   ProjectColor,
   ProjectRecord,
-  RecentProjectRecord,
-  TreeDecoration,
-  WorktreeRecord
-} from '@treeport/shared'
+  RecentProjectRecord
+} from '#protocol/project'
+import type { OperationRecord } from '#protocol/operation'
+import type { TreeDecoration } from '@treeport/app-sdk'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { and, eq, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import { projects } from '../../database-schema.ts'

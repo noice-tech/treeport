@@ -12,9 +12,9 @@ import type {
   BrowserClientMessage,
   BrowserOwnerServerMessage,
   BrowserApp,
-  BrowserServerMessage,
-  ProductEvent
-} from '@treeport/shared'
+  BrowserServerMessage
+} from '#protocol/browser'
+import type { ProductEvent } from '#protocol/events'
 import type { PlaywrightBrowserCallbacks } from './playwright-browser.ts'
 import {
   BrowserSessionManager,

@@ -1,4 +1,4 @@
-import type { TerminalAttentionReason } from '@treeport/shared'
+import type { TerminalAttentionReason } from '#protocol/terminal-session'
 import { and, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import type { DatabaseError, DatabaseService } from './database.ts'

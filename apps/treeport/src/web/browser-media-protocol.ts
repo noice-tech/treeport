@@ -1,4 +1,4 @@
-import type { BrowserMediaClientMessage } from '@treeport/shared'
+import type { BrowserMediaClientMessage } from '#protocol/browser'
 
 export type BrowserMediaWheel = Extract<
   BrowserMediaClientMessage,

@@ -1,4 +1,5 @@
-import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
+import type { TerminalRecord } from '#protocol/terminal'
 
 export function upsertProjectTerminal(
   projects: ProjectRecord[] | undefined,

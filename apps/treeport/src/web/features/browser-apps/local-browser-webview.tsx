@@ -1,19 +1,19 @@
 import { supportsLocalBrowser } from '../../desktop-capabilities'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { browserObservedUrlSchema } from '@treeport/browser-host'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import {
-  browserObservedUrlSchema,
-  decodeUnknownOrNull,
   normalizeBrowserTitle,
-  normalizeBrowserFaviconUrl,
-  readBrowserPageMetadata
-} from '@treeport/shared'
+  normalizeBrowserFaviconUrl
+} from '#protocol/browser'
+import { readBrowserPageMetadata } from '@treeport/browser-host/page-metadata'
 import type {
   BrowserClientMessage,
   BrowserApp,
   BrowserRuntimeState,
   BrowserServerMessage,
   BrowserSessionState
-} from '@treeport/shared'
+} from '#protocol/browser'
 import { traceBrowserOpen } from '../../browser-open-tracing'
 import type { BrowserAppConnection } from '../../browser-session-client'
 import {

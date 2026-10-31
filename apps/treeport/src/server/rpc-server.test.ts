@@ -2,15 +2,12 @@ import http, { type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import { RpcClient } from '@effect/rpc'
-import {
-  EVENT_PROTOCOL_VERSION,
-  TreeportRpcs,
-  treeportRpcClientLayer,
-  type BrowserApp,
-  type ProjectEventsItem,
-  type TerminalRuntimeMetadata,
-  type WebApp
-} from '@treeport/shared'
+import { EVENT_PROTOCOL_VERSION } from '#protocol/socket'
+import { TreeportRpcs, type ProjectEventsItem } from '#protocol/rpc'
+import { treeportRpcClientLayer } from '#protocol/rpc-client'
+import type { BrowserApp } from '#protocol/browser'
+import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
+import type { WebApp } from '@treeport/app-sdk'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'

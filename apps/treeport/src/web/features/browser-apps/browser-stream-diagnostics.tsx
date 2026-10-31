@@ -1,9 +1,9 @@
 import {
   DEFAULT_BROWSER_VIDEO_SETTINGS,
   browserVideoSettingsSchema,
-  isSchemaValue,
   type BrowserVideoSettings
-} from '@treeport/shared'
+} from '@treeport/browser-host/video'
+import { isSchemaValue } from '#protocol/schema'
 import { Input } from '../../components/ui/input'
 import { FormField } from '../../components/ui/form-field'
 import { Label } from '../../components/ui/label'

@@ -2,9 +2,9 @@ import type { Page } from '@playwright/test'
 import type {
   CleanupCommandProgress,
   OperationRecord,
-  ProjectRecord,
   RemovePreview
-} from '@treeport/shared'
+} from '#protocol/operation'
+import type { ProjectRecord } from '#protocol/project'
 
 export async function createWorktreeMock(page: Page, state: ProjectRecord) {
   let removePreviewOverride: Partial<RemovePreview> = {}

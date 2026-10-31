@@ -1,7 +1,7 @@
 import type {
   BrowserClientMessage,
   BrowserServerMessage
-} from '@treeport/shared'
+} from '#protocol/browser'
 import {
   connectBrowserApp,
   type BrowserVideoConnection,

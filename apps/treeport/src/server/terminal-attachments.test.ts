@@ -11,7 +11,7 @@ import {
   type TerminalServerEvent,
   type TerminalServerEventPayloads,
   type TerminalServerPayload
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import type { TreeportService } from './core/index.ts'
 import { TerminalAttachmentManager } from './terminal-attachments.ts'
 import type { TerminalAttachmentBackend } from './core/terminal.ts'

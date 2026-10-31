@@ -7,19 +7,19 @@ import {
   TREE_FILE_MAX_BYTES,
   TREE_FILE_SEARCH_MAX_MATCHES,
   TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH,
-  isSchemaValue,
   treeFilePathSchema
-} from '@treeport/shared'
+} from '#protocol/tree-file'
+import { isSchemaValue } from '#protocol/schema'
+import type { ProjectRecord } from '#protocol/project'
 import type {
-  ProjectRecord,
   TreeFile,
   TreeFileListing,
   TreeFileSearchFile,
   TreeFileSearchResult,
   TreeFileWrite,
-  TreeFileWriteResult,
-  WorktreeRecord
-} from '@treeport/shared'
+  TreeFileWriteResult
+} from '@treeport/app-sdk'
+import type { WorktreeRecord } from '#protocol/worktree'
 import * as Effect from 'effect/Effect'
 import * as Either from 'effect/Either'
 import { DomainError } from '../../domain.ts'

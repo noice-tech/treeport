@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type {
   BrowserClientMessage,
   BrowserServerMessage
-} from '@treeport/shared'
+} from '#protocol/browser'
 import { connectRemoteBrowser } from './browser-remote-connection'
 import { BrowserVideoReceiver } from './browser-video-receiver'
 

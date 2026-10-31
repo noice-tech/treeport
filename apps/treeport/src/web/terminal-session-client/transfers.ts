@@ -6,11 +6,9 @@ import * as Fiber from 'effect/Fiber'
 import * as Queue from 'effect/Queue'
 import * as Schema from 'effect/Schema'
 import { parseResponse, rpc } from '../api'
-import {
-  decodeUnknownOrNull,
-  TERMINAL_MAX_INPUT_BYTES,
-  TERMINAL_MAX_UPLOAD_BYTES
-} from '@treeport/shared'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import { TERMINAL_MAX_INPUT_BYTES } from '#protocol/terminal-session'
+import { TERMINAL_MAX_UPLOAD_BYTES } from '#protocol/terminal'
 import { errorMessage } from '../error-message'
 import { pasteTerminalText } from '../terminal-browser'
 import {

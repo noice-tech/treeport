@@ -8,7 +8,7 @@ import {
   type TerminalClientToServerEvents,
   type TerminalServerEvent,
   type TerminalProtocolInput
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import { pasteTerminalText } from '../terminal-browser'
 import {
   type TerminalSessionState,

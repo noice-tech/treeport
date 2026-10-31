@@ -1,13 +1,10 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { WEB_APP_INPUT_MAX_BYTES } from '@treeport/shared'
-import type {
-  WebAppDefinition,
-  WebAppLaunch,
-  WebAppPermission,
-  WorktreeRecord
-} from '@treeport/shared'
+import { WEB_APP_INPUT_MAX_BYTES } from '#protocol/web-app'
+import type { WebAppDefinition } from '#protocol/web-app'
+import type { WebAppLaunch, WebAppPermission } from '@treeport/app-sdk'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { and, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import { webAppPermissionGrants, webApps } from '../../database-schema.ts'

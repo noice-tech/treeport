@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { ProjectRecord, WorktreeRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { eq } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'

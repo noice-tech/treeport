@@ -3,7 +3,7 @@ import {
   PRESENCE_HEARTBEAT_MS,
   type ViewerIdentity,
   type WorkspacePresence
-} from '@treeport/shared'
+} from '#protocol/presence'
 import { parseResponse, rpc } from '../../api'
 
 interface PresenceSnapshot {

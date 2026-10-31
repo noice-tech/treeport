@@ -1,28 +1,29 @@
 import crypto from 'node:crypto'
 import {
   browserUrlSchema,
-  browserObservedUrlSchema,
-  normalizeBrowserTitle,
-  decodeUnknownOrNull,
-  webAppInputSchema
-} from '@treeport/shared'
+  browserObservedUrlSchema
+} from '@treeport/browser-host'
+import { normalizeBrowserTitle } from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import { webAppInputSchema } from '#protocol/web-app'
+import type { BrowserApp, OpenBrowserAppResult } from '#protocol/browser'
 import type {
-  BrowserApp,
   GitDiffImageRequest,
   GitDiffRequest,
   JsonValue,
-  OpenBrowserAppResult,
-  OpenWebAppResult,
-  ProjectRecord,
   WebApp,
   WebAppContext,
-  WebAppDefinition,
   WebAppLaunch,
   WebAppPermission,
-  WebAppStorageScope,
-  WorktreeListenerDiscovery,
-  WorktreeRecord
-} from '@treeport/shared'
+  WorktreeListenerDiscovery
+} from '@treeport/app-sdk'
+import type {
+  OpenWebAppResult,
+  WebAppDefinition,
+  WebAppStorageScope
+} from '#protocol/web-app'
+import type { ProjectRecord } from '#protocol/project'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { and, asc, desc, eq, ne } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'

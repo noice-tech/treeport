@@ -1,4 +1,4 @@
-import type { TerminalAfterExit, TerminalRecord } from '@treeport/shared'
+import type { TerminalAfterExit, TerminalRecord } from '#protocol/terminal'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
 import { DomainError } from '../../domain.ts'

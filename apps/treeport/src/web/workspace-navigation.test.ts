@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
 import {
   deepestProjectTarget,
   openRequestMatchesTerminal,

@@ -3,7 +3,7 @@ import type {
   TerminalActivity,
   TerminalAttentionReason,
   TerminalProgram
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import { terminalSessions } from './terminal-session'
 import type { TerminalAttentionMetadata } from './terminal-session-manager'
 

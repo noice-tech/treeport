@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { Launcher } from '@treeport/shared'
+import type { Launcher } from '#protocol/launcher'
 
 export async function createLauncherMock(page: Page) {
   const launchers: Launcher[] = [

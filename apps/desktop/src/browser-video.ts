@@ -3,7 +3,7 @@ import { BrowserWindow, session, type WebContents } from 'electron'
 import {
   BROWSER_VIDEO_CAPTURE_SOURCE,
   type BrowserVideoSettings
-} from '@treeport/shared/browser-host'
+} from '@treeport/browser-host/video'
 import * as Effect from 'effect/Effect'
 import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'

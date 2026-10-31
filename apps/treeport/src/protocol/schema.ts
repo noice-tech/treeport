@@ -1,6 +1,6 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- These helpers decode untrusted values with their supplied Effect Schema. */
-import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
+import * as Either from 'effect/Either'
 
 export function decodeUnknownOrNull<S extends Schema.Schema<any, any, never>>(
   schema: S,

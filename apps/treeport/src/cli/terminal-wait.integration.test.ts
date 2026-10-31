@@ -5,11 +5,8 @@ import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import { getSessionKeeperPayload } from '@treeport/session-keeper'
-import {
-  formatCommandLine,
-  type TerminalRecord,
-  type TerminalRuntimeMetadata
-} from '@treeport/shared'
+import { formatCommandLine, type TerminalRecord } from '#protocol/terminal'
+import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'

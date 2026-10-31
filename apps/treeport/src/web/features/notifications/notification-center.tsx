@@ -1,8 +1,6 @@
 import { useMemo, useState } from 'react'
-import {
-  terminalAttentionNotification,
-  type ProjectRecord
-} from '@treeport/shared'
+import { terminalAttentionNotification } from '#protocol/terminal-session'
+import type { ProjectRecord } from '#protocol/project'
 import { BellIcon } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'

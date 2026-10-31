@@ -1,12 +1,12 @@
+import type { ProductEvent } from '#protocol/events'
 import type {
-  ProductEvent,
   TerminalActivity,
   TerminalAttentionReason,
   TerminalProgram,
-  TerminalRecord,
-  TerminalRuntimeMetadata,
-  WorktreeRecord
-} from '@treeport/shared'
+  TerminalRuntimeMetadata
+} from '#protocol/terminal-session'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WorktreeRecord } from '#protocol/worktree'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'

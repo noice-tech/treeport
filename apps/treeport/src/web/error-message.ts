@@ -1,5 +1,6 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- These helpers immediately decode untrusted error payload fields with Effect Schema. */
-import { apiErrorBodySchema, decodeUnknownOrNull } from '@treeport/shared'
+import { apiErrorBodySchema } from '#protocol/api'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import * as Schema from 'effect/Schema'
 import { DetailedError, RpcNetworkError } from './api'
 

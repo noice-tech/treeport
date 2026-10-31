@@ -1,13 +1,9 @@
 {
-  "name": "@treeport/shared",
+  "name": "@treeport/tracing",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
   "exports": {
-    "./browser-host": "./src/browser-host.ts",
-    "./tracing": "./src/tracing.ts",
     ".": "./src/index.ts"
   },
   "scripts": {
@@ -20,9 +16,6 @@
     "@effect/opentelemetry": "^0.64.0",
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "@opentelemetry/sdk-trace-node": "^2.11.0",
-    "@effect/platform": "^0.97.1",
-    "@effect/rpc": "^0.76.2",
-    "@treeport/app-sdk": "workspace:*",
     "effect": "^3.22.1"
   }
 }

@@ -11,18 +11,14 @@ import {
 } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
-import type {
-  BrowserApp,
-  ProductEventDataMap,
-  ProjectRecord,
-  RemoveOperationRecord,
-  RemovePreview,
-  TerminalRecord,
-  WebApp,
-  WebAppDefinition,
-  WebAppInput,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { BrowserApp } from '#protocol/browser'
+import type { ProductEventDataMap } from '#protocol/events'
+import type { ProjectRecord } from '#protocol/project'
+import type { RemoveOperationRecord, RemovePreview } from '#protocol/operation'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WebApp, WebAppInput } from '@treeport/app-sdk'
+import type { WebAppDefinition } from '#protocol/web-app'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { registerBrowserOpen, traceBrowserOpen } from './browser-open-tracing'
 import {
   beginWebAppOpen,

@@ -1,11 +1,11 @@
 import type {
   CreateOperationRequest,
-  LauncherTreeTitle,
   OperationRecord,
-  RemovePreview,
-  TerminalAfterExit,
-  TerminalSize
-} from '@treeport/shared'
+  RemovePreview
+} from '#protocol/operation'
+import type { LauncherTreeTitle } from '#protocol/launcher'
+import type { TerminalAfterExit } from '#protocol/terminal'
+import type { TerminalSize } from '#protocol/terminal-session'
 import type * as Effect from 'effect/Effect'
 import type { DomainError } from '../../domain.ts'
 import type { ApplicationServices } from '../infrastructure/application-runtime.ts'

@@ -3,7 +3,7 @@ import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Queue from 'effect/Queue'
-import { type TerminalClientToServerEvents } from '@treeport/shared'
+import type { TerminalClientToServerEvents } from '#protocol/terminal-session'
 import { type TerminalSessionState } from './state'
 
 export class TerminalRenderError extends Data.TaggedError(

@@ -1,4 +1,4 @@
-export { formatCommandLine } from '@treeport/shared'
+export { formatCommandLine } from '#protocol/terminal'
 
 export type ParsedCommandLine =
   | { argv: string[]; error: null }

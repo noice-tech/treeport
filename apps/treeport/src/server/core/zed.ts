@@ -8,8 +8,8 @@ import * as Layer from 'effect/Layer'
 import type {
   LauncherDefinition,
   LauncherDefinitionDiagnostic
-} from '@treeport/shared'
-import { normalizeWorktreeName } from '@treeport/shared'
+} from '#protocol/launcher'
+import { normalizeWorktreeName } from '#protocol/worktree'
 import { readOptionalJsonc, type OptionalJsoncResult } from './jsonc.ts'
 import type { WorktreeSetupTask } from './setup.ts'
 

@@ -8,11 +8,8 @@ import {
   CheckIcon
 } from '@heroicons/react/16/solid'
 import { QuestionMarkCircleIcon } from '@heroicons/react/24/outline'
-import {
-  TERMINAL_NAME_MAX_LENGTH,
-  launcherInputNames,
-  type Launcher
-} from '@treeport/shared'
+import { TERMINAL_NAME_MAX_LENGTH } from '#protocol/terminal'
+import { launcherInputNames, type Launcher } from '#protocol/launcher'
 import { parseResponse, rpc } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
 import {

@@ -4,7 +4,7 @@ import type {
   ProductEvent,
   ProductEventInputDataMap,
   ProductEventType
-} from '@treeport/shared'
+} from '#protocol/events'
 
 export class ProductEventBus {
   private readonly emitter = new EventEmitter()

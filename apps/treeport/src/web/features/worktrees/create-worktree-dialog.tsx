@@ -1,10 +1,10 @@
 import { lazy, Suspense, useRef, type RefObject } from 'react'
+import type { ProjectRecord } from '#protocol/project'
 import type {
-  ProjectRecord,
   LauncherDefinition,
   LauncherTreeTitle,
   LauncherDefinitionDiagnostic
-} from '@treeport/shared'
+} from '#protocol/launcher'
 import {
   Dialog,
   DialogContent,

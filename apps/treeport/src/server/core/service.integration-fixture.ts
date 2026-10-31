@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 import { asc, eq, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
 import type { CommandRequest, CommandResult, CommandRunner } from './command.ts'
 import {
   mapProject,

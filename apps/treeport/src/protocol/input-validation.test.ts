@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import {
   browseDirectoryQuerySchema as browseDirectoryQueryEffectSchema,
+  registerProjectSchema as registerProjectEffectSchema
+} from './project.ts'
+import {
   createLauncherSchema as createLauncherEffectSchema,
-  createTerminalSchema as createTerminalEffectSchema,
-  createWorktreeSchema as createWorktreeEffectSchema,
-  registerProjectSchema as registerProjectEffectSchema,
-  removeWorktreeSchema as removeWorktreeEffectSchema,
-  TERMINAL_ARGUMENT_MAX_LENGTH,
-  TERMINAL_EXECUTABLE_MAX_LENGTH,
-  TERMINAL_NAME_MAX_LENGTH,
   LAUNCHER_ARGUMENT_MAX_COUNT,
   updateLauncherSchema as updateLauncherEffectSchema
-} from './index.ts'
+} from './launcher.ts'
+import {
+  createTerminalSchema as createTerminalEffectSchema,
+  TERMINAL_ARGUMENT_MAX_LENGTH,
+  TERMINAL_EXECUTABLE_MAX_LENGTH,
+  TERMINAL_NAME_MAX_LENGTH
+} from './terminal.ts'
+import { createWorktreeSchema as createWorktreeEffectSchema } from './worktree.ts'
+import { removeWorktreeSchema as removeWorktreeEffectSchema } from './operation.ts'
 import { testSchema } from './schema.test-support.ts'
 
 const browseDirectoryQuerySchema = testSchema(browseDirectoryQueryEffectSchema)

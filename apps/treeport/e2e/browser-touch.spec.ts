@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import type { BrowserClientMessage } from '@treeport/shared'
+import type { BrowserClientMessage } from '#protocol/browser'
 import { browserTouch, browserWheel } from '../src/server/browser-input'
 import { browserCursor } from '../src/server/browser-cursor'
 

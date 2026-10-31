@@ -3,13 +3,13 @@ import crypto from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { clipboard, type WebContents } from 'electron'
+import { BROWSER_MAX_UPLOAD_BYTES } from '@treeport/browser-host'
 import {
-  BROWSER_MAX_UPLOAD_BYTES,
   browserClipboardSchema,
-  browserVideoSettingsSchema,
-  copyBrowserPage,
-  decodeUnknownOrNull
-} from '@treeport/shared/browser-host'
+  copyBrowserPage
+} from '@treeport/browser-host/clipboard'
+import { browserVideoSettingsSchema } from '@treeport/browser-host/video'
+import { decodeUnknownOrNull } from './schema.ts'
 import { WebSocket, WebSocketServer } from 'ws'
 import { ElectronBrowserVideo } from './browser-video'
 import * as Cause from 'effect/Cause'

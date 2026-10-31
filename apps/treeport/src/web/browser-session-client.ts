@@ -1,21 +1,19 @@
-import {
-  apiErrorBodySchema,
-  browserTicketResponseSchema,
-  createProtocolSocket,
-  decodeUnknownOrNull
-} from '@treeport/shared'
+import { apiErrorBodySchema } from '#protocol/api'
+import { browserTicketResponseSchema } from '#protocol/browser'
+import { createProtocolSocket } from '#protocol/socket-client'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import type {
   BrowserClientMessage,
-  BrowserVideoSettings,
   BrowserClientToServerEvents,
   BrowserServerMessage,
   BrowserServerToClientEvents
-} from '@treeport/shared'
+} from '#protocol/browser'
+import type { BrowserVideoSettings } from '@treeport/browser-host/video'
 import {
   BROWSER_MAX_INSERT_TEXT_LENGTH,
   parseBrowserClientMessage,
   parseBrowserServerMessage
-} from '@treeport/shared'
+} from '#protocol/browser'
 
 export interface BrowserAppConnection {
   dispose(): void

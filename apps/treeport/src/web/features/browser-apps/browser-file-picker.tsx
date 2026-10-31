@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { BROWSER_MAX_UPLOAD_BYTES } from '@treeport/browser-host'
 import {
-  BROWSER_MAX_UPLOAD_BYTES,
   BROWSER_MAX_UPLOAD_FILES,
   type BrowserServerMessage
-} from '@treeport/shared'
+} from '#protocol/browser'
 import type { BrowserAppConnection } from '../../browser-session-client'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'

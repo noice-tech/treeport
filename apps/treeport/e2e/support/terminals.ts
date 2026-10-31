@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
-import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
+import type { TerminalRecord } from '#protocol/terminal'
 
 export async function createTerminalMock(page: Page, state: ProjectRecord) {
   let fileUploadRequests = 0

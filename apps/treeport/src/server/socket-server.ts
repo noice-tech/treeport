@@ -8,22 +8,23 @@ import {
   parseBrowserClientMessage,
   parseBrowserOwnerAuth,
   parseBrowserOwnerClientMessage,
-  parseSocketHandshake,
-  parseSocketMessage,
+  type BrowserClientMessage,
+  type BrowserOwnerAuth,
+  type BrowserOwnerClientMessage,
+  type BrowserOwnerServerMessage,
+  type BrowserServerMessage
+} from '#protocol/browser'
+import { parseSocketHandshake, parseSocketMessage } from '#protocol/socket'
+import {
   parseTerminalAuth,
   parseTerminalClientEvent,
   SOCKET_PATH,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
   TERMINAL_PROTOCOL_VERSION,
-  type BrowserClientMessage,
-  type BrowserOwnerAuth,
-  type BrowserOwnerClientMessage,
-  type BrowserOwnerServerMessage,
-  type BrowserServerMessage,
   type TerminalClientEvent,
   type TerminalServerEvent,
   type TerminalServerPayload
-} from '@treeport/shared'
+} from '#protocol/terminal-session'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'

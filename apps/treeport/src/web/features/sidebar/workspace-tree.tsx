@@ -12,13 +12,10 @@ import {
   TrashIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import type {
-  ProjectRecord,
-  TerminalRecord,
-  TreeDecoration,
-  TreeDecorationTone,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { TreeDecoration, TreeDecorationTone } from '@treeport/app-sdk'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { Button } from '../../components/ui/button'
 import {
   HoverCard,

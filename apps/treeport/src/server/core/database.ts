@@ -19,14 +19,13 @@ import type {
   ExternalRemoveOperationResult,
   OperationRecord,
   RemoveOperationRequest,
-  RemoveOperationResult,
-  ProjectRecord,
-  Launcher,
-  LauncherCommand,
-  TreeDecoration,
-  WorktreeRecord
-} from '@treeport/shared'
-import { formatCommandLine } from '@treeport/shared'
+  RemoveOperationResult
+} from '#protocol/operation'
+import type { ProjectRecord } from '#protocol/project'
+import type { Launcher, LauncherCommand } from '#protocol/launcher'
+import type { TreeDecoration } from '@treeport/app-sdk'
+import type { WorktreeRecord } from '#protocol/worktree'
+import { formatCommandLine } from '#protocol/terminal'
 import * as schema from './database-schema.ts'
 import type {
   operations,

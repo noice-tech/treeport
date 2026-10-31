@@ -28,23 +28,24 @@ import type {
   BrowserOwnerServerMessage,
   BrowserServerMessage,
   BrowserRuntimeState,
-  BrowserSessionState,
+  BrowserSessionState
+} from '#protocol/browser'
+import type {
   BrowserNativeCdpSession,
-  BrowserClipboard,
   BrowserVideoSettings
-} from '@treeport/shared'
+} from '@treeport/browser-host/video'
+import type { BrowserClipboard } from '@treeport/browser-host/clipboard'
+import { browserClipboardSchema } from '@treeport/browser-host/clipboard'
+import { DEFAULT_BROWSER_VIDEO_SETTINGS } from '@treeport/browser-host/video'
 import {
-  browserClipboardSchema,
-  DEFAULT_BROWSER_VIDEO_SETTINGS,
   browserOwnerEndpointSchema,
   browserOwnerIdentitySchema,
-  browserObservedUrlSchema,
   normalizeBrowserTitle,
-  decodeUnknownOrNull,
-  isSchemaValue,
   parseBrowserClientMessage,
   parseBrowserOwnerClientMessage
-} from '@treeport/shared'
+} from '#protocol/browser'
+import { browserObservedUrlSchema } from '@treeport/browser-host'
+import { decodeUnknownOrNull, isSchemaValue } from '#protocol/schema'
 import type { AppConfig, TreeportService } from './core/index.ts'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
 import { networkTelemetry } from './network-telemetry.ts'

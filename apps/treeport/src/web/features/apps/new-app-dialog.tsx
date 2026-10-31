@@ -5,14 +5,14 @@ import {
   GlobeAltIcon,
   MagnifyingGlassIcon
 } from '@heroicons/react/16/solid'
+import { formatCommandLine } from '#protocol/terminal'
 import {
-  formatCommandLine,
   launcherInputNames,
   resolveLauncherArgs,
   type LauncherDefinition,
-  type LauncherDefinitionDiagnostic,
-  type WebAppDefinition
-} from '@treeport/shared'
+  type LauncherDefinitionDiagnostic
+} from '#protocol/launcher'
+import type { WebAppDefinition } from '#protocol/web-app'
 import { Button } from '../../components/ui/button'
 import {
   AlertDialog,

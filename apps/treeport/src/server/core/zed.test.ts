@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
-import { normalizeWorktreeName } from '@treeport/shared'
+import { normalizeWorktreeName } from '#protocol/worktree'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   inferWorktreeName,

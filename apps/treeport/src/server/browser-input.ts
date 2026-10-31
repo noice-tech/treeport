@@ -1,4 +1,4 @@
-import type { BrowserClientMessage } from '@treeport/shared'
+import type { BrowserClientMessage } from '#protocol/browser'
 import type { CDPSession, Page } from 'playwright'
 
 const keyboardStates = new WeakMap<

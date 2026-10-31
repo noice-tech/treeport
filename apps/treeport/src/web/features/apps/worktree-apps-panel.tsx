@@ -15,7 +15,9 @@ import {
   Minimize2Icon,
   PanelRightIcon
 } from 'lucide-react'
-import type { BrowserApp, WebApp, WebAppDefinition } from '@treeport/shared'
+import type { BrowserApp } from '#protocol/browser'
+import type { WebApp } from '@treeport/app-sdk'
+import type { WebAppDefinition } from '#protocol/web-app'
 import {
   AlertDialog,
   AlertDialogAction,

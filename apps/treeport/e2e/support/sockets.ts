@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { BrowserContext, Page, WebSocketRoute } from '@playwright/test'
+import type { JsonValue } from '@treeport/app-sdk'
 import type {
-  JsonValue,
   TerminalAuth,
   TerminalRuntimeMetadata,
-  TerminalServerEventPayloads,
-  ProjectEventsItem,
-  NetworkProductEvent
-} from '@treeport/shared'
+  TerminalServerEventPayloads
+} from '#protocol/terminal-session'
+import type { ProjectEventsItem } from '#protocol/rpc'
+import type { NetworkProductEvent } from '#protocol/socket'
 import { GhosttyTerminal } from '../../src/ghostty-vt/ghostty-vt'
 
 const ghosttyModule = new WebAssembly.Module(

@@ -8,7 +8,7 @@ import {
   parseBrowserAuth,
   parseBrowserClientMessage,
   parseBrowserServerMessage
-} from './browser-protocol.ts'
+} from './browser.ts'
 import { testSchema } from './schema.test-support.ts'
 
 const browserAgentCommandSchema = testSchema(browserAgentCommandEffectSchema)

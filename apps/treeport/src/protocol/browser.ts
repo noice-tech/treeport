@@ -1,29 +1,22 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
-import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
-import { browserVideoSettingsSchema } from './browser-video.ts'
-import { browserClipboardSchema } from './browser-clipboard.ts'
-import { viewerIdentitySchema } from './presence-protocol.ts'
+import { browserVideoSettingsSchema } from '@treeport/browser-host/video'
 import {
   BROWSER_MAX_UPLOAD_BYTES,
-  browserAppIdSchema,
+  browserUrlSchema,
   browserObservedUrlSchema,
-  browserUrlSchema
-} from './browser-host.ts'
+  browserAppIdSchema
+} from '@treeport/browser-host'
+import { browserClipboardSchema } from '@treeport/browser-host/clipboard'
+import * as Either from 'effect/Either'
+import { viewerIdentitySchema } from './presence.ts'
 
-export {
-  BROWSER_MAX_UPLOAD_BYTES,
-  browserAppIdSchema,
-  browserObservedUrlSchema,
-  browserUrlSchema
-} from './browser-host.ts'
+const nullableStringSchema = Schema.NullOr(Schema.String)
 
 export const BROWSER_MAX_UPLOAD_FILES = 100
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024
 
 export const BROWSER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
-
-export type BrowserMouseButton = 'left' | 'right' | 'middle'
 
 const opaqueTokenSchema = Schema.String.pipe(
   Schema.minLength(32),
@@ -68,7 +61,7 @@ export function normalizeBrowserFaviconUrl(
     : null
 }
 
-export const browserContextActionSchema = Schema.Literal(
+const browserContextActionSchema = Schema.Literal(
   'openLink',
   'copyLink',
   'back',
@@ -94,7 +87,7 @@ export type BrowserContextResult = Schema.Schema.Type<
   typeof browserContextResultSchema
 >
 
-export const browserContextActionResultSchema = Schema.Struct({
+const browserContextActionResultSchema = Schema.Struct({
   type: Schema.Literal('contextActionResult'),
   requestId: browserRequestIdSchema,
   action: browserContextActionSchema,
@@ -119,7 +112,7 @@ const browserWheelFields = {
   deltaY: Schema.Finite.pipe(Schema.between(-10_000, 10_000))
 }
 
-export const browserClientMessageSchema = Schema.Union(
+const browserClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('setVideoSettings'),
     requestId: browserRequestIdSchema,
@@ -276,7 +269,7 @@ export type BrowserClientMessage = Schema.Schema.Type<
   typeof browserClientMessageSchema
 >
 
-export const browserMediaClientMessageSchema = Schema.Union(
+const browserMediaClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('webcodecsAck'),
     epoch: Schema.Int.pipe(Schema.between(1, 0xffffffff)),
@@ -296,7 +289,7 @@ export type BrowserMediaClientMessage = Schema.Schema.Type<
   typeof browserMediaClientMessageSchema
 >
 
-export const browserRuntimeStateSchema = Schema.Struct({
+const browserRuntimeStateSchema = Schema.Struct({
   url: Schema.Union(Schema.Literal('about:blank'), browserObservedUrlSchema),
   title: Schema.transform(Schema.String, Schema.String, {
     decode: normalizeBrowserTitle,
@@ -323,7 +316,7 @@ export type BrowserRuntimeState = Schema.Schema.Type<
   typeof browserRuntimeStateSchema
 >
 
-export const browserControllerDetailsSchema = Schema.Struct({
+const browserControllerDetailsSchema = Schema.Struct({
   kind: Schema.Literal('viewer', 'local'),
   account: Schema.NullOr(viewerIdentitySchema),
   sameAccount: Schema.Boolean,
@@ -358,7 +351,7 @@ export function browserControllerDescription(
     : 'Another window or device controls this browser.'
 }
 
-export const browserSessionStateSchema = Schema.Struct({
+const browserSessionStateSchema = Schema.Struct({
   videoSettings: Schema.NullOr(browserVideoSettingsSchema),
   ...browserRuntimeStateSchema.fields,
   controlled: Schema.Boolean,
@@ -410,7 +403,7 @@ export const browserCursorSchema = Schema.Literal(
   'zoom-out'
 )
 
-export const browserServerMessageSchema = Schema.Union(
+const browserServerMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('videoSettingsResult'),
     requestId: browserRequestIdSchema,
@@ -619,7 +612,7 @@ export type BrowserAgentCommand = Schema.Schema.Type<
   typeof browserAgentCommandSchema
 >
 
-export const browserAuthSchema = Schema.Struct({
+const browserAuthSchema = Schema.Struct({
   ticket: opaqueTokenSchema
 })
 
@@ -787,3 +780,54 @@ export function parseBrowserOwnerServerMessage(
 ): BrowserOwnerServerMessage | null {
   return decodeOrNull(browserOwnerServerMessageSchema, value)
 }
+
+export type BrowserApp = typeof browserAppSchema.Type
+
+export type OpenBrowserAppResult = typeof openBrowserAppResponseSchema.Type
+
+export const createBrowserAppSchema = Schema.Struct({
+  url: Schema.optional(browserUrlSchema),
+  sourceTerminalId: Schema.optional(
+    Schema.NullOr(
+      Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+    )
+  )
+})
+
+export const openBrowserAppFromTerminalSchema = Schema.Struct({
+  url: browserUrlSchema
+})
+
+export const browserAppSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    kind: Schema.Literal('browser'),
+    worktreeId: Schema.String,
+    title: Schema.String,
+    url: Schema.Union(Schema.Literal('about:blank'), browserObservedUrlSchema),
+    createdAt: Schema.String,
+    updatedAt: Schema.String
+  })
+)
+
+export const browserInstallStatusSchema = Schema.Struct({
+  installed: Schema.Boolean,
+  executablePath: nullableStringSchema,
+  playwrightVersion: Schema.String,
+  browserRevision: Schema.String,
+  channel: Schema.Literal('chromium', 'chrome'),
+  launchReady: Schema.Boolean,
+  launchError: nullableStringSchema
+})
+
+export const browserInstallResponseSchema = Schema.Struct({
+  message: Schema.String
+})
+
+export const browserAgentResponseSchema = Schema.Struct({
+  output: Schema.String
+})
+
+export const openBrowserAppResponseSchema = Schema.Struct({
+  app: browserAppSchema
+})

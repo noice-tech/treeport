@@ -1,7 +1,7 @@
 import type { RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
-import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
+import type { ProjectRecord, RecentProjectRecord } from '#protocol/project'
 import { parseResponse, rpc } from '../../api'
 import {
   projectsQueryKey,

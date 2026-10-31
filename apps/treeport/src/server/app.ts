@@ -12,13 +12,51 @@ import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import {
   appServiceSchema,
   appServiceRequestSchema,
+  createWebAppSchema,
+  deleteWebAppStorageSchema,
+  getWebAppStorageSchema,
+  openWebAppResponseSchema,
+  openWebAppSchema,
+  setWebAppStorageSchema,
+  storageValueResponseSchema,
+  updateWebAppPermissionGrantSchema,
+  webAppContextResponseSchema,
+  webAppDefinitionResponseSchema,
+  webAppDefinitionsResponseSchema,
+  webAppResponseSchema,
+  gitFileDiffRequestSchema,
+  gitDiffRequestSchema,
+  gitDiffImageRequestSchema,
+  hasDataResponseSchema
+} from '#protocol/web-app'
+import {
   pushConfigResponseSchema,
   pushSubscriptionSchema,
-  pushUnsubscribeSchema,
+  pushUnsubscribeSchema
+} from '#protocol/push'
+import {
   presenceUpdateSchema,
-  presenceResponseSchema,
+  presenceResponseSchema
+} from '#protocol/presence'
+import {
   apiErrorBodySchema,
+  DESKTOP_PROTOCOL_VERSION,
+  healthResponseSchema,
+  phoneAccessResponseSchema,
+  uploadedFileResponseSchema,
+  okResponseSchema,
+  type ApiErrorBody
+} from '#protocol/api'
+import {
   browseDirectoryQuerySchema,
+  directoryBrowseResponseSchema,
+  projectResponseSchema,
+  projectsResponseSchema,
+  recentProjectsResponseSchema,
+  registerProjectSchema,
+  updateProjectSchema
+} from '#protocol/project'
+import {
   browserAgentCommandSchema,
   browserAgentResponseSchema,
   browserInstallStatusSchema,
@@ -28,26 +66,52 @@ import {
   browserTicketRequestSchema,
   browserTicketResponseSchema,
   createBrowserAppSchema,
-  createLauncherSchema,
-  createTerminalSchema,
-  createWorktreeSchema,
-  createWebAppSchema,
-  deleteAppQuerySchema,
-  deleteLauncherSchema,
-  deleteWebAppStorageSchema,
-  DESKTOP_PROTOCOL_VERSION,
-  directoryBrowseResponseSchema,
-  getWebAppStorageSchema,
-  healthResponseSchema,
-  phoneAccessResponseSchema,
-  workspaceActivityResponseSchema,
   openBrowserAppFromTerminalSchema,
-  openBrowserAppResponseSchema,
-  openWebAppResponseSchema,
-  openWebAppSchema,
+  openBrowserAppResponseSchema
+} from '#protocol/browser'
+import {
+  createLauncherSchema,
+  deleteLauncherSchema,
+  launcherDefinitionListingSchema,
+  launcherDefinitionsQuerySchema,
+  launcherResponseSchema,
+  launchersResponseSchema,
+  updateLauncherSchema
+} from '#protocol/launcher'
+import {
+  createTerminalSchema,
+  terminalCaptureQuerySchema,
+  terminalCaptureResponseSchema,
+  terminalSendInputSchema,
+  terminalObservationResponseSchema,
+  terminalResponseSchema,
+  TERMINAL_MAX_UPLOAD_BYTES,
+  terminatedTerminalsResponseSchema,
+  updateTerminalSchema
+} from '#protocol/terminal'
+import {
+  createWorktreeSchema,
+  updateWorktreeTitleSchema,
+  setTreeDecorationSchema,
+  TREE_DECORATION_KEY_PATTERN,
+  worktreeResponseSchema,
+  worktreesResponseSchema,
+  listenerDiscoveryResponseSchema
+} from '#protocol/worktree'
+import {
+  deleteAppQuerySchema,
+  workspaceActivityResponseSchema,
+  reorderWorkspaceItemsSchema,
+  requestWorkspaceOpenSchema
+} from '#protocol/workspace'
+import {
   operationQuerySchema,
   operationResponseSchema,
   operationsResponseSchema,
+  removePreviewResponseSchema,
+  removeWorktreeSchema
+} from '#protocol/operation'
+import {
   packageInstallSchema,
   packageListingResponseSchema,
   packageOperationResponseSchema,
@@ -56,63 +120,25 @@ import {
   packageReloadResponseSchema,
   packageReloadSchema,
   packageRemoveSchema,
-  projectResponseSchema,
-  projectsResponseSchema,
+  packageServiceProjectsResponseSchema,
+  packageServiceSelfResponseSchema
+} from '#protocol/package'
+import {
   readTreeFileSchema,
-  recentProjectsResponseSchema,
-  removePreviewResponseSchema,
-  registerProjectSchema,
-  removeWorktreeSchema,
-  reorderWorkspaceItemsSchema,
-  requestWorkspaceOpenSchema,
   searchTreeFilesSchema,
-  setWebAppStorageSchema,
-  storageValueResponseSchema,
-  terminalAttentionAcknowledgementSchema,
-  terminalCaptureQuerySchema,
-  terminalCaptureResponseSchema,
-  terminalSendInputSchema,
-  terminalObservationResponseSchema,
-  launcherDefinitionListingSchema,
-  launcherDefinitionsQuerySchema,
-  launcherResponseSchema,
-  launchersResponseSchema,
-  terminalResponseSchema,
-  TERMINAL_MAX_UPLOAD_BYTES,
-  terminatedTerminalsResponseSchema,
   treeFileListingSchema,
   treeFileSchema,
   treeFileSearchResultSchema,
   treeFileWriteResultSchema,
-  uploadedFileResponseSchema,
-  updateProjectSchema,
-  updateWorktreeTitleSchema,
-  setTreeDecorationSchema,
-  packageServiceProjectsResponseSchema,
-  packageServiceSelfResponseSchema,
-  TREE_DECORATION_KEY_PATTERN,
-  updateLauncherSchema,
-  updateTerminalSchema,
-  updateWebAppPermissionGrantSchema,
-  webAppContextResponseSchema,
-  webAppDefinitionResponseSchema,
-  webAppDefinitionsResponseSchema,
-  webAppResponseSchema,
-  worktreeResponseSchema,
-  worktreesResponseSchema,
+  writeTreeFileSchema
+} from '#protocol/tree-file'
+import { terminalAttentionAcknowledgementSchema } from '#protocol/terminal-session'
+import {
   gitDiffResponseSchema,
-  gitFileDiffRequestSchema,
-  gitDiffRequestSchema,
   gitFileDiffResponseSchema,
-  gitDiffImageRequestSchema,
-  gitDiffImageSchema,
-  hasDataResponseSchema,
-  listenerDiscoveryResponseSchema,
-  okResponseSchema,
-  writeTreeFileSchema,
-  type ApiErrorBody,
-  type TreeportEvent
-} from '@treeport/shared'
+  gitDiffImageSchema
+} from '#protocol/git-diff'
+import type { TreeportEvent } from '@treeport/app-sdk'
 import * as Headers from '@effect/platform/Headers'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'

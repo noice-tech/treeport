@@ -5,7 +5,7 @@ import {
   PlusIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import type { TerminalRecord } from '@treeport/shared'
+import type { TerminalRecord } from '#protocol/terminal'
 import {
   Sidebar,
   SidebarContent,

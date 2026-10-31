@@ -1,4 +1,4 @@
-import type { WebAppPermission } from '@treeport/shared'
+import type { WebAppPermission } from '@treeport/app-sdk'
 
 export function describeWebAppPermissions(
   permissions: WebAppPermission[]

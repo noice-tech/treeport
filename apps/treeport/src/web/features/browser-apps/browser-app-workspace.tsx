@@ -27,19 +27,21 @@ import {
 } from '@heroicons/react/16/solid'
 import type {
   BrowserApp,
-  BrowserClipboard,
   BrowserContextResult,
   BrowserContextAction,
   BrowserServerMessage,
   BrowserSessionState
-} from '@treeport/shared'
+} from '#protocol/browser'
+import type { BrowserClipboard } from '@treeport/browser-host/clipboard'
 import {
   browserUrlSchema,
-  browserObservedUrlSchema,
+  browserObservedUrlSchema
+} from '@treeport/browser-host'
+import {
   BROWSER_MAX_INSERT_TEXT_LENGTH,
-  browserControllerDescription,
-  decodeUnknownOrNull
-} from '@treeport/shared'
+  browserControllerDescription
+} from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
 import { cn } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import {

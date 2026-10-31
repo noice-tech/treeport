@@ -1,8 +1,6 @@
-import type {
-  OperationRecord,
-  ProjectRecord,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { OperationRecord } from '#protocol/operation'
+import type { ProjectRecord } from '#protocol/project'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { asc, eq, sql } from 'drizzle-orm'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'

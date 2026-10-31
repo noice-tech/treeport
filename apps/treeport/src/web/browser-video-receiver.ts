@@ -1,8 +1,8 @@
-import {
-  gatherBrowserIce,
-  type BrowserClientMessage,
-  type BrowserServerMessage
-} from '@treeport/shared'
+import { gatherBrowserIce } from '@treeport/browser-host/video'
+import type {
+  BrowserClientMessage,
+  BrowserServerMessage
+} from '#protocol/browser'
 import type { BrowserMediaWheel } from './browser-media-protocol'
 import { presentBrowserVideo } from './browser-video-presentation'
 import { ChromiumWebCodecsReceiver } from './chromium-webcodecs-receiver'

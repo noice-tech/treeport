@@ -1,5 +1,5 @@
 import { lazy, Suspense, type RefObject } from 'react'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord } from '#protocol/project'
 import {
   Dialog,
   DialogContent,

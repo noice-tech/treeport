@@ -13,21 +13,23 @@ import type {
 } from 'playwright'
 import {
   browserObservedUrlSchema,
-  browserUrlSchema,
+  browserUrlSchema
+} from '@treeport/browser-host'
+import {
   browserContextResultSchema,
-  decodeUnknownOrNull,
   normalizeBrowserTitle,
-  normalizeBrowserFaviconUrl,
-  readBrowserPageMetadata
-} from '@treeport/shared'
+  normalizeBrowserFaviconUrl
+} from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import { readBrowserPageMetadata } from '@treeport/browser-host/page-metadata'
 import type {
   BrowserAgentCommand,
-  BrowserClipboard,
   BrowserClientMessage,
   BrowserContextResult,
   BrowserContextActionResult,
   BrowserRuntimeState
-} from '@treeport/shared'
+} from '#protocol/browser'
+import type { BrowserClipboard } from '@treeport/browser-host/clipboard'
 
 import { ChromiumWebCodecsVideo } from './chromium-webcodecs-video.ts'
 import { PlaywrightBrowserHost } from './browser-page-host.ts'

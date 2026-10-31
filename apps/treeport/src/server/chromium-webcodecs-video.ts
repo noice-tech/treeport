@@ -1,4 +1,4 @@
-import type { BrowserServerMessage } from '@treeport/shared'
+import type { BrowserServerMessage } from '#protocol/browser'
 import type {
   BrowserRelay,
   BrowserRelayStream

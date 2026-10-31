@@ -1,4 +1,4 @@
-import type { BrowserServerMessage } from '@treeport/shared'
+import type { BrowserServerMessage } from '#protocol/browser'
 import type { ChromiumWebCodecsViewer } from './chromium-webcodecs-video.ts'
 
 interface BrowserVideoSource {

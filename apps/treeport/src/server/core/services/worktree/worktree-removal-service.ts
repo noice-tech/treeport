@@ -4,9 +4,9 @@ import path from 'node:path'
 import type {
   OperationRecord,
   RemovalCheckoutIdentity,
-  RemovePreview,
-  WorktreeRecord
-} from '@treeport/shared'
+  RemovePreview
+} from '#protocol/operation'
+import type { WorktreeRecord } from '#protocol/worktree'
 import { eq, sql } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'

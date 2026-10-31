@@ -1,12 +1,12 @@
-import { Rpc, RpcGroup } from '@effect/rpc'
 import * as Schema from 'effect/Schema'
+import { Rpc, RpcGroup } from '@effect/rpc'
 import {
-  EVENT_PROTOCOL_VERSION,
   eventsSnapshotSchema,
-  productEventSchema
-} from './socket-protocol.ts'
+  productEventSchema,
+  EVENT_PROTOCOL_VERSION
+} from './socket.ts'
 
-export const projectEventsItemSchema = Schema.Union(
+const projectEventsItemSchema = Schema.Union(
   Schema.Struct({
     _tag: Schema.Literal('Snapshot'),
     snapshot: eventsSnapshotSchema
@@ -21,7 +21,7 @@ export type ProjectEventsItem = Schema.Schema.Type<
   typeof projectEventsItemSchema
 >
 
-export const projectEventsFailureSchema = Schema.Struct({
+const projectEventsFailureSchema = Schema.Struct({
   _tag: Schema.Literal('ProjectEventsFailure'),
   message: Schema.String
 })
@@ -30,7 +30,7 @@ export type ProjectEventsFailure = Schema.Schema.Type<
   typeof projectEventsFailureSchema
 >
 
-export const WatchProjectEvents = Rpc.make('WatchProjectEvents', {
+const WatchProjectEvents = Rpc.make('WatchProjectEvents', {
   payload: {
     protocol: Schema.Literal(EVENT_PROTOCOL_VERSION)
   },

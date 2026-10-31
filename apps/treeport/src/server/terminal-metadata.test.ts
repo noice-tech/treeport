@@ -1,8 +1,6 @@
-import type {
-  TerminalActivity,
-  TerminalRecord,
-  WorktreeRecord
-} from '@treeport/shared'
+import type { TerminalActivity } from '#protocol/terminal-session'
+import type { TerminalRecord } from '#protocol/terminal'
+import type { WorktreeRecord } from '#protocol/worktree'
 import * as Effect from 'effect/Effect'
 import * as Stream from 'effect/Stream'
 import { describe, expect, it, vi } from 'vitest'

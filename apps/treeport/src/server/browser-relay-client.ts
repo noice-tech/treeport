@@ -6,7 +6,7 @@ import type { Duplex } from 'node:stream'
 import type {
   BrowserClientMessage,
   BrowserServerMessage
-} from '@treeport/shared'
+} from '#protocol/browser'
 
 type WebCodecsReady = Extract<BrowserServerMessage, { type: 'webcodecsReady' }>
 

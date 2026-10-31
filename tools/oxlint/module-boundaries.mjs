@@ -38,17 +38,22 @@ const webResolver = resolver.cloneWithOptions({
 const desktopPackages = new Set([
   '@treeport/desktop-bridge',
   '@treeport/theme/styles.css',
-  '@treeport/shared/browser-host',
-  '@treeport/shared/tracing'
+  '@treeport/browser-host',
+  '@treeport/browser-host/clipboard',
+  '@treeport/browser-host/video',
+  '@treeport/tracing'
 ])
 
-const nativeUtilities = new Set([
-  'packages/shared/src/browser-host.ts',
-  'packages/shared/src/browser-clipboard.ts',
-  'packages/shared/src/browser-video.ts',
-  'packages/shared/src/schema.ts',
-  'packages/shared/src/tracing.ts'
-])
+const nativeUtilityDirectories = [
+  'packages/browser-host/src/',
+  'packages/tracing/src/'
+]
+
+function isNativeUtility(file) {
+  return nativeUtilityDirectories.some((directory) =>
+    file.startsWith(directory)
+  )
+}
 
 export default {
   meta: {
@@ -75,7 +80,7 @@ export default {
     const desktop = source.startsWith('apps/desktop/src/')
     const shell = source.startsWith('apps/desktop/src/shell/')
     const bridge = source.startsWith('packages/desktop-bridge/src/')
-    const nativeUtility = nativeUtilities.has(source)
+    const nativeUtility = isNativeUtility(source)
 
     if (!owner) {
       return {}
@@ -165,7 +170,8 @@ export default {
 
       if (
         shell &&
-        (specifier.startsWith('@treeport/shared') ||
+        (specifier.startsWith('@treeport/browser-host') ||
+          specifier.startsWith('@treeport/tracing') ||
           specifier === 'electron' ||
           isBuiltin(specifier))
       ) {
@@ -178,7 +184,7 @@ export default {
         target &&
         !target.startsWith('node_modules/') &&
         !target.startsWith('../') &&
-        !nativeUtilities.has(target)
+        !isNativeUtility(target)
       ) {
         reason =
           'Native host utilities must remain leaf modules, independent of workspace schemas and application code.'

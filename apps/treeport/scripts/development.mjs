@@ -13,7 +13,8 @@ const child = spawn(
     '--watch-path=src',
     '--watch-path=../../packages/app-sdk/src',
     '--watch-path=../../packages/session-keeper/src',
-    '--watch-path=../../packages/shared/src',
+    '--watch-path=../../packages/browser-host/src',
+    '--watch-path=../../packages/tracing/src',
     '--watch-preserve-output',
     'src/server/index.ts'
   ],
