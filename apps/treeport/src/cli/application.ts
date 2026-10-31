@@ -27,7 +27,6 @@ import {
   operationResponseSchema,
   packageListingResponseSchema,
   packageOperationResponseSchema,
-  packageOperationsResponseSchema,
   packageProjectResponseSchema,
   packageReloadResponseSchema,
   projectResponseSchema,
@@ -69,12 +68,6 @@ import { parseDurationMs } from '../duration.js'
 import { extractJsonOutput } from './args.js'
 import { OpenWorkspaceError, openWorkspace } from './open.js'
 import {
-  LocalUpdateError,
-  confirmLocalUpdate,
-  runLocalUpdate,
-  type LocalUpdateOptions
-} from './update.js'
-import {
   daemonDown,
   daemonHealth,
   daemonStatus,
@@ -100,13 +93,7 @@ import {
   serviceStatus,
   serviceStop
 } from './service.js'
-import {
-  humanOutput,
-  stateName,
-  formatServiceStatus,
-  formatLocalUpdateError,
-  formatLocalUpdateResult
-} from './output.js'
+import { humanOutput, stateName, formatServiceStatus } from './output.js'
 
 const contextPrefix = 'TREEPORT'
 let configuredApiUrl: string | undefined
@@ -130,7 +117,6 @@ let requestedExitCode = 0
 let cliEnvironment: NodeJS.ProcessEnv = process.env
 let output = humanOutput()
 let errorOutput = humanOutput()
-let updateProgressShown = false
 
 interface PackageMutationBody {
   source: string
@@ -2289,114 +2275,6 @@ async function main(args: string[]): Promise<void> {
     })
   })
 
-  const updatePackagesCommand = program
-    .command('update')
-    .description('Update Treeport or explicitly update configured packages')
-    .argument('[source]', 'one configured npm: source')
-    .option('--packages', 'update every eligible configured package')
-    .option('-y, --yes', 'approve the Treeport self-update without prompting')
-    .option('--start', 'start Treeport after a self-update if it was stopped')
-    .option('--json', 'emit machine-readable JSON')
-
-  updatePackagesCommand.action(async (source: string | undefined) => {
-    const options = updatePackagesCommand.opts<{
-      packages?: boolean
-      yes?: boolean
-      start?: boolean
-    }>()
-
-    if (source && options.packages) {
-      throw new CliError('Specify a package source or --packages, not both.', 2)
-    }
-
-    if ((source || options.packages) && (options.yes || options.start)) {
-      throw new CliError(
-        '--yes and --start apply only to Treeport self-updates.',
-        2
-      )
-    }
-
-    if (!source && !options.packages) {
-      if ((await resolveDaemonLifecycle()) === 'external') {
-        throw new CliError(
-          'Cannot update Treeport because this daemon lifecycle is externally managed.',
-          5,
-          'UPDATE_EXTERNAL_REFUSED'
-        )
-      }
-
-      const selfUpdateOptions: LocalUpdateOptions = {
-        environment: cliEnvironment,
-        yes: options.yes ?? false,
-        start: options.start ?? false
-      }
-
-      if (
-        !jsonOutput &&
-        process.stdin.isTTY &&
-        process.stdout.isTTY &&
-        process.stderr.isTTY
-      ) {
-        selfUpdateOptions.confirm = (preview, signal) =>
-          confirmLocalUpdate(
-            preview,
-            signal,
-            process.stdin,
-            process.stderr,
-            errorOutput
-          )
-      }
-
-      if (!jsonOutput) {
-        selfUpdateOptions.progress = (message) => {
-          if (!updateProgressShown) {
-            writeStderr(`${errorOutput.heading('Treeport update')}\n\n`)
-            updateProgressShown = true
-          }
-
-          writeStderr(
-            `${errorOutput.indent(errorOutput.summary(message, 'warning'))}\n`
-          )
-        }
-      }
-
-      const result = await runLocalUpdate(selfUpdateOptions)
-
-      if (updateProgressShown) {
-        writeStderr('\n')
-      }
-
-      print(result, () => formatLocalUpdateResult(result, output))
-
-      return
-    }
-
-    const results = (
-      await request('/api/packages/update', packageOperationsResponseSchema, {
-        method: 'POST',
-        body: JSON.stringify(
-          source ? { source: await packageSource(source) } : {}
-        )
-      })
-    ).results
-
-    print(results, () =>
-      output.blocks(
-        output.heading('Treeport package update'),
-        ...results.map((result) =>
-          output.blocks(
-            output.summary(
-              `${stateName(result.status)} ${result.source ?? 'packages'}`,
-              result.status === 'skipped' ? 'warning' : 'success'
-            ),
-            output.detail(output.rows([['Scope', stateName(result.scope)]])),
-            result.reason ? output.indent(result.reason) : null
-          )
-        )
-      )
-    )
-  })
-
   const reloadCommand = program
     .command('reload')
     .description('Reload package settings and resources without restarting')
@@ -3676,7 +3554,6 @@ export async function runCliApplication(
   writeStdout = options.stdout ?? ((value) => process.stdout.write(value))
   writeStderr = options.stderr ?? ((value) => process.stderr.write(value))
   requestedExitCode = 0
-  updateProgressShown = false
   output = humanOutput(
     environment,
     options.stdoutIsTTY ?? (!options.stdout && Boolean(process.stdout.isTTY)),
@@ -3692,7 +3569,7 @@ export async function runCliApplication(
     await main([...options.args])
   } catch (error) {
     const cliError =
-      error instanceof CliError || error instanceof LocalUpdateError
+      error instanceof CliError
         ? error
         : new CliError(
             error instanceof Error ? error.message : String(error),
@@ -3713,28 +3590,18 @@ export async function runCliApplication(
 
       writeStderr(`${JSON.stringify(body)}\n`)
     } else {
-      const text =
-        error instanceof LocalUpdateError
-          ? formatLocalUpdateError(
-              error.message,
-              error.details,
-              errorOutput,
-              error.code === 'UPDATE_CANCELLED' ||
-                error.code === 'UPDATE_INTERRUPTED'
-            )
-          : errorOutput.blocks(
-              errorOutput.summary(
-                cliError.code === 'USAGE_ERROR'
-                  ? 'Invalid command'
-                  : 'Command failed',
-                'failure'
-              ),
-              errorOutput.indent(cliError.message.replace(/^error: /, '')),
-              cliError.code === 'USAGE_ERROR' &&
-                errorOutput.next(['treeport --help'])
-            )
+      const text = errorOutput.blocks(
+        errorOutput.summary(
+          cliError.code === 'USAGE_ERROR'
+            ? 'Invalid command'
+            : 'Command failed',
+          'failure'
+        ),
+        errorOutput.indent(cliError.message.replace(/^error: /, '')),
+        cliError.code === 'USAGE_ERROR' && errorOutput.next(['treeport --help'])
+      )
 
-      writeStderr(`${updateProgressShown ? '\n' : ''}${text}\n`)
+      writeStderr(`${text}\n`)
     }
 
     requestedExitCode = cliError.exitCode

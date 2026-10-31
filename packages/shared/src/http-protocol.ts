@@ -844,30 +844,3 @@ export const storageValueResponseSchema = Schema.Struct({
 export const uploadedFileResponseSchema = Schema.Struct({
   file: Schema.Struct({ path: Schema.String })
 })
-
-export const applicationUpdateStatusSchema = Schema.Struct({
-  currentVersion: Schema.String,
-  latestVersion: nullableStringSchema,
-  updateAvailable: Schema.Boolean,
-  checkedAt: nullableStringSchema,
-  canUpdate: Schema.Boolean,
-  blockedReason: nullableStringSchema,
-  phase: Schema.Literal(
-    'idle',
-    'checking',
-    'starting',
-    'inspect',
-    'resolve',
-    'stage',
-    'verify',
-    'stop',
-    'activate',
-    'restart',
-    'health_check',
-    'complete',
-    'failed'
-  ),
-  operationId: nullableStringSchema,
-  targetVersion: nullableStringSchema,
-  error: nullableStringSchema
-})

@@ -1,6 +1,5 @@
 import kleur from 'kleur'
 import type { ServiceStatus } from './service.js'
-import type { LocalUpdateErrorDetails, LocalUpdateResult } from './update.js'
 
 export type OutputTone = 'success' | 'warning' | 'failure' | 'neutral'
 
@@ -182,72 +181,5 @@ export function formatServiceStatus(
           'Then run: treeport service status'
         ])
       : output.next([...new Set(status.recoveryCommands)])
-  )
-}
-
-export function formatLocalUpdateError(
-  message: string,
-  details: LocalUpdateErrorDetails,
-  output: HumanOutput,
-  cancelled = false
-): string {
-  const reasons = [
-    ...new Set(
-      [
-        cancelled
-          ? message.replace(/^Treeport update cancelled\. /, '')
-          : message,
-        details.cause
-      ].filter((value): value is string => Boolean(value))
-    )
-  ]
-
-  return output.blocks(
-    output.summary(
-      cancelled ? 'Update cancelled' : 'Update failed',
-      cancelled ? 'warning' : 'failure'
-    ),
-    output.indent(reasons.join('\n')),
-    output.next(
-      [...new Set([details.next, details.administratorCommand])].filter(
-        (value): value is string => Boolean(value)
-      )
-    ),
-    output.detail(
-      output.rows([details.phase ? ['Phase', stateName(details.phase)] : null])
-    )
-  )
-}
-
-export function formatLocalUpdateResult(
-  result: LocalUpdateResult,
-  output: HumanOutput
-): string {
-  if (result.status === 'current') {
-    return output.summary(`Treeport ${result.toVersion} is current`, 'success')
-  }
-
-  return output.blocks(
-    output.summary(
-      `Updated Treeport ${result.fromVersion} → ${result.toVersion}`,
-      'success'
-    ),
-    result.daemon.restarted
-      ? output.summary(
-          `Treeport ${result.daemon.wasRunning ? 'restarted' : 'started'} — ${result.daemon.healthy ? 'Healthy' : 'Health not verified'}`,
-          result.daemon.healthy ? 'success' : 'warning'
-        )
-      : 'Treeport remains stopped',
-    result.daemon.restarted &&
-      output.rows([
-        ['Daemon version', result.daemon.version ?? 'Unavailable'],
-        [
-          'Terminals',
-          result.terminals.preserved
-            ? `${result.terminals.before} preserved · ${result.terminals.after} available`
-            : `${result.terminals.after} of ${result.terminals.before} found`
-        ]
-      ]),
-    !result.daemon.restarted && output.next(['treeport start'])
   )
 }

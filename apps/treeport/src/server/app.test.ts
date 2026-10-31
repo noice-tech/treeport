@@ -29,10 +29,6 @@ import {
 import { testAccess } from './test-access'
 import { createApp } from './app'
 import type { WebAppAssetResolution } from './core/web-app-vite-runtime'
-import type {
-  ApplicationUpdateManager,
-  ApplicationUpdateStatus
-} from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
 
@@ -585,27 +581,6 @@ function fixture(webDist = '/missing') {
       'Preparing changes\nRunning tests'
   )
 
-  const applicationUpdateStatus: ApplicationUpdateStatus = {
-    currentVersion: '0.4.0',
-    latestVersion: null,
-    updateAvailable: false,
-    checkedAt: null,
-    canUpdate: false,
-    blockedReason: null,
-    phase: 'idle',
-    operationId: null,
-    targetVersion: null,
-    error: null
-  }
-
-  const applicationUpdate = testAccess<ApplicationUpdateManager>({
-    status: vi.fn(async () => applicationUpdateStatus),
-    check: vi.fn(async () => undefined),
-    beginPolling: vi.fn(),
-    start: vi.fn(async () => applicationUpdateStatus),
-    dispose: vi.fn()
-  })
-
   const browserIssueTicket = vi.fn(() => Effect.succeed('b'.repeat(43)))
   const browserAgentCommand = vi.fn(async () => 'browser output')
   const browserRequestAppClose = vi.fn(async () => true)
@@ -628,7 +603,6 @@ function fixture(webDist = '/missing') {
     service,
     config,
     terminalHost,
-    applicationUpdate,
     terminalMetadata,
     browserSessions,
     presence,
@@ -638,7 +612,6 @@ function fixture(webDist = '/missing') {
   return {
     app,
     presence,
-    applicationUpdate,
     browserIssueTicket,
     browserAgentCommand,
     browserRequestAppClose,
@@ -876,64 +849,6 @@ describe('HTTP API validation', () => {
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
       hostname: os.hostname(),
       daemonLifecycle: 'treeport'
-    })
-  })
-
-  it('reports and starts only the server-selected application update', async () => {
-    const { app, applicationUpdate } = fixture()
-
-    const available: ApplicationUpdateStatus = {
-      currentVersion: '0.4.0',
-      latestVersion: '0.5.0',
-      updateAvailable: true,
-      checkedAt: '2026-03-20T12:00:00.000Z',
-      canUpdate: true,
-      blockedReason: null,
-      phase: 'idle',
-      operationId: null,
-      targetVersion: '0.5.0',
-      error: null
-    }
-
-    vi.mocked(applicationUpdate.status).mockResolvedValue(available)
-    vi.mocked(applicationUpdate.start).mockResolvedValue({
-      ...available,
-      phase: 'starting'
-    })
-
-    const status = await app.request('/api/update')
-    expect(status.status).toBe(200)
-    expect(status.headers.get('cache-control')).toBe('no-store')
-    expect(await status.json()).toEqual(available)
-
-    const started = await app.request('/api/update', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ version: '99.0.0' })
-    })
-
-    expect(started.status).toBe(202)
-    expect(await started.json()).toMatchObject({
-      currentVersion: '0.4.0',
-      targetVersion: '0.5.0',
-      phase: 'starting'
-    })
-    expect(applicationUpdate.start).toHaveBeenCalledWith()
-
-    vi.mocked(applicationUpdate.start).mockRejectedValue(
-      new DomainError(
-        'APPLICATION_UPDATE_IN_PROGRESS',
-        'Another Treeport update is already running.',
-        409
-      )
-    )
-    const conflict = await app.request('/api/update', { method: 'POST' })
-    expect(conflict.status).toBe(409)
-    expect(await conflict.json()).toEqual({
-      error: {
-        code: 'APPLICATION_UPDATE_IN_PROGRESS',
-        message: 'Another Treeport update is already running.'
-      }
     })
   })
 

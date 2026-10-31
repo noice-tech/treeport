@@ -20,7 +20,6 @@ import {
 } from './core/index'
 import { createApp } from './app'
 import { ApplicationDaemons } from './core/services/infrastructure/application-runtime'
-import { createApplicationUpdateManager } from './application-update'
 import { BrowserSessionManager } from './browser-sessions'
 import { acquireDaemonOwnership } from './daemon-ownership'
 import type { installDaemonDiagnostics } from './daemon-diagnostics'
@@ -158,16 +157,6 @@ export async function main(
     const terminalMetadata = await service.runEffect(
       Scope.extend(
         acquireTerminalMetadataManager(service, terminalHost),
-        resourceScope
-      )
-    )
-
-    const applicationUpdate = await Effect.runPromise(
-      Scope.extend(
-        Effect.acquireRelease(
-          Effect.sync(() => createApplicationUpdateManager(config)),
-          (manager) => Effect.sync(() => manager.dispose())
-        ),
         resourceScope
       )
     )
@@ -324,7 +313,6 @@ export async function main(
       service,
       config,
       terminalHost,
-      applicationUpdate,
       terminalMetadata,
       browserSessions,
       appServices,
@@ -666,12 +654,6 @@ export async function main(
         )
       )
     }
-
-    await service.runEffect(
-      Effect.flatMap(ApplicationDaemons, (daemons) =>
-        daemons.fork(applicationUpdate.polling)
-      )
-    )
 
     appServices.start()
     diagnostics.event('ready', { apiUrl: config.apiUrl })

@@ -20,7 +20,6 @@ import { ResizableSidebarRail } from './workspace-shell'
 
 export interface WorkspaceSidebarProps {
   projectSwitcher: ReactNode
-  updateControl: ReactNode
   settingsMenu: ReactNode
   notificationCenter: ReactNode
   children: ReactNode
@@ -28,7 +27,6 @@ export interface WorkspaceSidebarProps {
 
 export function WorkspaceSidebar({
   projectSwitcher,
-  updateControl,
   settingsMenu,
   notificationCenter,
   children
@@ -44,7 +42,6 @@ export function WorkspaceSidebar({
       <SidebarHeader className="gap-0 p-0 max-[700px]:border-b max-[700px]:border-white/8">
         <div className="flex items-center gap-1 p-2 max-[700px]:h-10 max-[700px]:px-1.5 max-[700px]:py-1">
           <div className="min-w-0 flex-1">{projectSwitcher}</div>
-          <div className="max-[700px]:hidden">{updateControl}</div>
           <div className="flex shrink-0">{settingsMenu}</div>
           <div className="max-[700px]:hidden">{notificationCenter}</div>
           <div className="flex w-9 shrink-0 justify-center min-[701px]:hidden">
@@ -70,11 +67,9 @@ export function WorkspaceSidebar({
 
 export function WorkspaceMobileHeader({
   terminal,
-  updateControl,
   notificationCenter
 }: {
   terminal: TerminalRecord | null
-  updateControl: ReactNode
   notificationCenter: ReactNode
 }) {
   const { isMobile, openMobile } = useSidebar()
@@ -104,7 +99,6 @@ export function WorkspaceMobileHeader({
       >
         {title}
       </span>
-      {updateControl}
       <SidebarAction
         label="Zoom out terminal text"
         className="icon-button text-zinc-400 hover:bg-white/5 hover:text-zinc-100"

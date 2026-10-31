@@ -18,7 +18,6 @@ import {
   presenceUpdateSchema,
   presenceResponseSchema,
   apiErrorBodySchema,
-  applicationUpdateStatusSchema,
   browseDirectoryQuerySchema,
   browserAgentCommandSchema,
   browserAgentResponseSchema,
@@ -137,7 +136,6 @@ import {
   webAppBrowserOrigin,
   webAppContentSecurityPolicy
 } from './core/web-app-csp'
-import type { ApplicationUpdateManager } from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
 import { authenticatedViewers, isLoopbackAddress } from './request-security'
@@ -221,7 +219,6 @@ interface AppDependencies {
   service: TreeportService
   config: AppConfig
   terminalHost: TerminalSessionBackend
-  applicationUpdate: ApplicationUpdateManager
   terminalMetadata: TerminalMetadataManager
   appServices?: AppServices
   browserSessions?: BrowserSessionManager
@@ -401,7 +398,6 @@ export function createApp({
   service,
   config,
   terminalHost,
-  applicationUpdate,
   terminalMetadata: metadata,
   browserSessions,
   appServices,
@@ -1021,28 +1017,6 @@ export function createApp({
         })),
         Effect.map((body) =>
           jsonContractResponse(phoneAccessResponseSchema, body, 200, {
-            'cache-control': 'no-store'
-          })
-        )
-      )
-    ),
-    route(
-      'GET',
-      '/api/update',
-      operation(() => applicationUpdate.status()).pipe(
-        Effect.map((body) =>
-          jsonContractResponse(applicationUpdateStatusSchema, body, 200, {
-            'cache-control': 'no-store'
-          })
-        )
-      )
-    ),
-    route(
-      'POST',
-      '/api/update',
-      operation(() => applicationUpdate.start()).pipe(
-        Effect.map((body) =>
-          jsonContractResponse(applicationUpdateStatusSchema, body, 202, {
             'cache-control': 'no-store'
           })
         )
