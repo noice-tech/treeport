@@ -7,11 +7,11 @@ Treeport's package and extension system is proudly stolen from [Pi](https://pi.d
 
 Treeport packages supply [Web apps](/features/web-apps/) and [Launchers](/features/launchers/).
 
-A package can come from npm or a local directory.
+Packages load from local directories only. With no user settings file, Treeport loads review, VSCode, and GitHub from the clone's `packages/` directory. The editor requires `code-server`; GitHub features require an authenticated `gh` CLI.
 
 ## Manage packages
 
-Install an npm package with `treeport install npm:<package-name>`, or install a local directory:
+Register a local directory (Treeport does not copy it or install its dependencies):
 
 ```sh
 treeport install ./my-treeport-package
@@ -20,9 +20,10 @@ treeport install ./my-treeport-package
 Packages are global by default. To install a package for the current project, add `-l`. Treeport saves project package sources in [`.treeport/settings.json`](/reference/project-configuration/#packages).
 
 - `treeport list` shows configured packages.
-- `treeport update --packages` updates packages that are not pinned to an exact version.
 - `treeport reload` reloads package resources without restarting Treeport.
 - `treeport remove <source>` removes a configured package.
+
+Update package code with Git or your editor, then run `treeport reload`. User package settings live in the Treeport data directory's `settings.json`; an explicit packages list replaces the defaults. Relative paths in settings resolve from that settings file.
 
 Removal does not stop terminals that were started from package launchers.
 

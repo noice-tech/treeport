@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
+import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -136,18 +136,6 @@ export function App() {
               : 'pointer-events-none fixed inset-x-0 top-0 z-80 flex h-8 items-center justify-center'
           }
         >
-          {state.updateReady || state.updateError ? (
-            <Button
-              variant="ghost"
-              size="xs"
-              className="pointer-events-auto text-accent-300 hover:text-accent-100 [-webkit-app-region:no-drag]"
-              title={state.updateError ?? 'Restart to update Treeport'}
-              onClick={() => window.treeportShell.installUpdate()}
-            >
-              <DownloadIcon data-icon="inline-start" />
-              {state.updateError ? 'Desktop update failed' : 'Update & restart'}
-            </Button>
-          ) : null}
           <ComputerSelector
             state={state}
             open={selectorOpen}

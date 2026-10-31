@@ -18,7 +18,7 @@ afterEach(async () => {
   )
 })
 
-it('materializes read-only packed payloads without replacing old executable inodes', async () => {
+it('materializes read-only build payloads without replacing old executable inodes', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tp-native-cache-'))
   roots.push(root)
   const payload = path.join(root, 'payload')

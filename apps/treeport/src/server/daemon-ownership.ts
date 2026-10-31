@@ -13,7 +13,7 @@ interface DaemonRecord {
   dataDir: string
   startedAt: string
   installationMethod: string
-  daemonLifecycle: 'treeport' | 'service' | 'external'
+  daemonLifecycle: 'treeport' | 'external'
 }
 
 function processExists(pid: number): boolean {

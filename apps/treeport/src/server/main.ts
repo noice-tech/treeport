@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises'
 import { createServer, type IncomingMessage } from 'node:http'
 import path from 'node:path'
 import type { Duplex } from 'node:stream'
@@ -11,7 +10,6 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
 import type { ViteDevServer } from 'vite'
-import { z } from 'zod'
 import {
   checkRuntimePrerequisites,
   loadConfig,
@@ -19,8 +17,6 @@ import {
   TreeportService
 } from './core/index'
 import { createApp } from './app'
-import { ApplicationDaemons } from './core/services/infrastructure/application-runtime'
-import { createApplicationUpdateManager } from './application-update'
 import { BrowserSessionManager } from './browser-sessions'
 import { acquireDaemonOwnership } from './daemon-ownership'
 import type { installDaemonDiagnostics } from './daemon-diagnostics'
@@ -39,24 +35,6 @@ import { observeDaemonEventLoop } from './network-telemetry'
 import { WebPushManager } from './web-push'
 import { AppServices } from './app-services'
 import { PackageSystemPort } from './core/services/infrastructure/ports'
-
-const updateStartupTransactionSchema = z.looseObject({
-  schemaVersion: z.literal(1),
-  operationId: z.string().uuid(),
-  ownerPid: z.number().int().positive(),
-  createdAt: z.number().int().positive()
-})
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-
-    return true
-  } catch (cause) {
-    // SAFETY: Node reports process signaling failures as ErrnoException objects.
-    return (cause as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
 
 export async function main(
   diagnostics: ReturnType<typeof installDaemonDiagnostics>,
@@ -158,16 +136,6 @@ export async function main(
     const terminalMetadata = await service.runEffect(
       Scope.extend(
         acquireTerminalMetadataManager(service, terminalHost),
-        resourceScope
-      )
-    )
-
-    const applicationUpdate = await Effect.runPromise(
-      Scope.extend(
-        Effect.acquireRelease(
-          Effect.sync(() => createApplicationUpdateManager(config)),
-          (manager) => Effect.sync(() => manager.dispose())
-        ),
         resourceScope
       )
     )
@@ -324,7 +292,6 @@ export async function main(
       service,
       config,
       terminalHost,
-      applicationUpdate,
       terminalMetadata,
       browserSessions,
       appServices,
@@ -564,114 +531,8 @@ export async function main(
       process.on(signal, () => shutdown(signal))
     }
 
-    const startupDescriptorPath = path.join(
-      config.dataDir,
-      'updates',
-      'startup-transaction.json'
-    )
-
-    const startupDescriptor = await fs
-      .readFile(startupDescriptorPath, 'utf8')
-      .then((source) =>
-        updateStartupTransactionSchema.safeParse(JSON.parse(source))
-      )
-      .catch(() => null)
-
-    const requestedTransaction =
-      process.env.TREEPORT_UPDATE_STARTUP_TRANSACTION?.trim()
-
-    const externallyVerifiedStartup =
-      startupDescriptor?.success &&
-      Date.now() - startupDescriptor.data.createdAt < 5 * 60_000 &&
-      processExists(startupDescriptor.data.ownerPid) &&
-      (!requestedTransaction ||
-        requestedTransaction === startupDescriptor.data.operationId)
-        ? startupDescriptor.data
-        : null
-
-    if (!externallyVerifiedStartup) {
-      await service.runEffect(service.activateStartup())
-    }
-
+    await service.runEffect(service.activateStartup())
     await Effect.runPromise(ownership.publish())
-
-    if (externallyVerifiedStartup) {
-      const requestPath = path.join(
-        config.dataDir,
-        'updates',
-        `startup-commit-${externallyVerifiedStartup.operationId}`
-      )
-
-      const acknowledgementPath = `${requestPath}.ack`
-      await Effect.runPromise(
-        Scope.extend(
-          Effect.forkScoped(
-            Effect.gen(function* () {
-              while (true) {
-                const commitRequested = yield* Effect.tryPromise(() =>
-                  fs.access(requestPath)
-                ).pipe(
-                  Effect.as(true),
-                  Effect.catchAll(() => Effect.succeed(false))
-                )
-
-                if (commitRequested) {
-                  yield* Effect.tryPromise(() =>
-                    service.runEffect(service.activateStartup())
-                  ).pipe(Effect.orDie)
-                  yield* Effect.tryPromise(() =>
-                    fs.writeFile(acknowledgementPath, 'committed\n', {
-                      mode: 0o600
-                    })
-                  )
-                  yield* Effect.tryPromise(() =>
-                    fs.rm(requestPath, { force: true })
-                  )
-
-                  return
-                }
-
-                const transactionStillOwned = yield* Effect.tryPromise(() =>
-                  fs
-                    .readFile(startupDescriptorPath, 'utf8')
-                    .then((source) =>
-                      updateStartupTransactionSchema.safeParse(
-                        JSON.parse(source)
-                      )
-                    )
-                    .then(
-                      (parsed) =>
-                        parsed.success &&
-                        parsed.data.operationId ===
-                          externallyVerifiedStartup.operationId &&
-                        parsed.data.ownerPid ===
-                          externallyVerifiedStartup.ownerPid &&
-                        processExists(parsed.data.ownerPid)
-                    )
-                ).pipe(Effect.catchAll(() => Effect.succeed(false)))
-
-                if (!transactionStillOwned) {
-                  yield* Effect.sync(() =>
-                    shutdown('startup_transaction_aborted')
-                  )
-
-                  return
-                }
-
-                yield* Effect.sleep(50)
-              }
-            }).pipe(Effect.orDie)
-          ),
-          resourceScope
-        )
-      )
-    }
-
-    await service.runEffect(
-      Effect.flatMap(ApplicationDaemons, (daemons) =>
-        daemons.fork(applicationUpdate.polling)
-      )
-    )
 
     appServices.start()
     diagnostics.event('ready', { apiUrl: config.apiUrl })

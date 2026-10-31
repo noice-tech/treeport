@@ -613,17 +613,11 @@ const packageListingSchema = Schema.Struct({
 })
 
 const packageOperationResultSchema = Schema.Struct({
-  action: Schema.Literal('install', 'remove', 'update', 'reload'),
+  action: Schema.Literal('install', 'remove', 'reload'),
   source: nullableStringSchema,
   scope: Schema.Literal('global', 'project'),
   projectId: nullableStringSchema,
-  status: Schema.Literal(
-    'installed',
-    'removed',
-    'updated',
-    'reloaded',
-    'skipped'
-  ),
+  status: Schema.Literal('installed', 'removed', 'reloaded'),
   reason: Schema.optional(Schema.String)
 })
 
@@ -654,7 +648,7 @@ export const healthResponseSchema = Schema.Struct({
   pid: Schema.Int,
   instanceId: nullableStringSchema,
   installationMethod: Schema.String,
-  daemonLifecycle: Schema.Literal('treeport', 'service', 'external'),
+  daemonLifecycle: Schema.Literal('treeport', 'external'),
   url: Schema.String
 })
 
@@ -685,10 +679,6 @@ export const packageListingResponseSchema = Schema.Struct({
 
 export const packageOperationResponseSchema = Schema.Struct({
   result: packageOperationResultSchema
-})
-
-export const packageOperationsResponseSchema = Schema.Struct({
-  results: Schema.Array(packageOperationResultSchema)
 })
 
 export const packageReloadResponseSchema = Schema.Struct({
@@ -843,31 +833,4 @@ export const storageValueResponseSchema = Schema.Struct({
 
 export const uploadedFileResponseSchema = Schema.Struct({
   file: Schema.Struct({ path: Schema.String })
-})
-
-export const applicationUpdateStatusSchema = Schema.Struct({
-  currentVersion: Schema.String,
-  latestVersion: nullableStringSchema,
-  updateAvailable: Schema.Boolean,
-  checkedAt: nullableStringSchema,
-  canUpdate: Schema.Boolean,
-  blockedReason: nullableStringSchema,
-  phase: Schema.Literal(
-    'idle',
-    'checking',
-    'starting',
-    'inspect',
-    'resolve',
-    'stage',
-    'verify',
-    'stop',
-    'activate',
-    'restart',
-    'health_check',
-    'complete',
-    'failed'
-  ),
-  operationId: nullableStringSchema,
-  targetVersion: nullableStringSchema,
-  error: nullableStringSchema
 })

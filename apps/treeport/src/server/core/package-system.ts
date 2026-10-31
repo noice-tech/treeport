@@ -20,7 +20,6 @@ import {
   webAppPermissionSchema
 } from '@treeport/shared'
 import type { AppConfig } from './config'
-import { runChecked, type CommandRunner } from './command'
 import { DomainError } from './domain'
 import { PackageMutations } from './services/package/package-mutations'
 
@@ -29,7 +28,6 @@ type ApplicationServices = PackageMutations
 interface TreeportSettings {
   raw: object
   packages: PackageSource[]
-  npmCommand?: string[]
 }
 
 interface ParsedSettingsResult {
@@ -49,26 +47,11 @@ interface ProjectPackageContext {
   rootPath: string
 }
 
-interface ParsedNpmSource {
-  type: 'npm'
-  source: string
-  spec: string
-  name: string
-  version?: string
-  exact: boolean
-  identity: string
-  packageId: string
-}
-
-interface ParsedLocalSource {
-  type: 'local'
-  source: string
+interface ParsedPackageSource {
   path: string
   identity: string
   packageId: string
 }
-
-type ParsedPackageSource = ParsedNpmSource | ParsedLocalSource
 
 type PackageSourceObject = Exclude<PackageSource, string>
 
@@ -78,7 +61,6 @@ export interface ResolvedWebApp {
   entry: string
   packageRoot: string
   development: boolean
-  packageLockPath?: string
   relativePath: string
   enabled: boolean
 }
@@ -180,7 +162,6 @@ const webAppManifestEntrySchema = z.union([
 ])
 
 const EMPTY_SETTINGS: TreeportSettings = { raw: {}, packages: [] }
-const PACKAGE_OPERATION_TIMEOUT_MS = 5 * 60_000
 
 function packagePromise<Result>(
   evaluate: () => Promise<Result>
@@ -251,13 +232,6 @@ function titleFromPath(value: string): string {
     .join(' ')
 
   return words ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}` : name
-}
-
-function isExactNpmVersion(value: string | undefined): boolean {
-  return Boolean(
-    value &&
-    /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(value)
-  )
 }
 
 function isWithin(candidate: string, root: string): boolean {
@@ -453,10 +427,7 @@ export class PackageSystem {
   private globalFingerprint: string | null = null
   private readonly projectFingerprints = new Map<string, string>()
 
-  constructor(
-    private readonly config: AppConfig,
-    private readonly runner: CommandRunner
-  ) {}
+  constructor(private readonly config: AppConfig) {}
 
   private settingsPath(scope: PackageScope, projectId?: string): string {
     if (scope === 'global') {
@@ -518,7 +489,12 @@ export class PackageSystem {
     projectId?: string
   ): ParsedSettingsResult {
     if (content === null || content.trim() === '') {
-      return { settings: { raw: {}, packages: [] } }
+      return {
+        settings: {
+          raw: {},
+          packages: []
+        }
+      }
     }
 
     let input
@@ -539,7 +515,6 @@ export class PackageSystem {
 
     const parsedRaw = z
       .looseObject({
-        npmCommand: z.unknown().optional(),
         packages: z.unknown().optional()
       })
       .safeParse(input)
@@ -549,21 +524,6 @@ export class PackageSystem {
         diagnostic: diagnostic(
           scope,
           `${settingsPath} must contain a JSON object`,
-          { projectId, path: settingsPath }
-        )
-      }
-    }
-
-    const parsedNpmCommand = z
-      .array(z.string().min(1))
-      .min(1)
-      .safeParse(parsedRaw.data.npmCommand)
-
-    if (parsedRaw.data.npmCommand !== undefined && !parsedNpmCommand.success) {
-      return {
-        diagnostic: diagnostic(
-          scope,
-          `${settingsPath} npmCommand must be a non-empty argv string array`,
           { projectId, path: settingsPath }
         )
       }
@@ -678,10 +638,6 @@ export class PackageSystem {
 
     const settings: TreeportSettings = { raw: parsedRaw.data, packages }
 
-    if (parsedNpmCommand.success) {
-      settings.npmCommand = parsedNpmCommand.data
-    }
-
     return { settings }
   }
 
@@ -690,57 +646,6 @@ export class PackageSystem {
     settingsPath: string
   ): Promise<ParsedPackageSource> {
     const trimmed = source.trim()
-
-    if (trimmed.startsWith('npm:')) {
-      const spec = trimmed.slice(4).trim()
-      let split = -1
-
-      if (spec.startsWith('@')) {
-        const slash = spec.indexOf('/')
-        split = slash === -1 ? -1 : spec.lastIndexOf('@')
-
-        if (split <= slash) {
-          split = -1
-        }
-      } else {
-        split = spec.lastIndexOf('@')
-      }
-
-      const name = split > 0 ? spec.slice(0, split) : spec
-      const version = split > 0 ? spec.slice(split + 1) : undefined
-
-      if (
-        !name ||
-        name.includes('..') ||
-        name.includes('\\') ||
-        !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu.test(name) ||
-        (version !== undefined && !version)
-      ) {
-        throw new DomainError(
-          'INVALID_PACKAGE_SOURCE',
-          `Invalid npm package source: ${source}`,
-          400
-        )
-      }
-
-      const identity = `npm:${name}`
-
-      const parsed: ParsedNpmSource = {
-        type: 'npm',
-        source: trimmed,
-        spec,
-        name,
-        exact: isExactNpmVersion(version),
-        identity,
-        packageId: identity
-      }
-
-      if (version !== undefined) {
-        parsed.version = version
-      }
-
-      return parsed
-    }
 
     if (
       !path.isAbsolute(trimmed) &&
@@ -753,7 +658,7 @@ export class PackageSystem {
     ) {
       throw new DomainError(
         'INVALID_PACKAGE_SOURCE',
-        'Package sources must use npm: syntax or an explicit local path',
+        'Package sources must use an explicit local path',
         400
       )
     }
@@ -768,8 +673,6 @@ export class PackageSystem {
     const identity = `local:${canonical}`
 
     return {
-      type: 'local',
-      source: trimmed,
       path: canonical,
       identity,
       packageId: `local:${crypto
@@ -780,204 +683,18 @@ export class PackageSystem {
     }
   }
 
-  private npmRoot(scope: PackageScope, projectId: string | null): string {
-    return scope === 'global'
-      ? path.join(this.config.dataDir, 'npm')
-      : path.join(
-          this.projectContexts.get(projectId!)!.rootPath,
-          '.treeport',
-          'npm'
-        )
-  }
+  private async packageRoot(source: ParsedPackageSource): Promise<string> {
+    const stat = await fs.stat(source.path).catch(() => null)
 
-  private npmPackagePath(
-    source: ParsedNpmSource,
-    scope: PackageScope,
-    projectId: string | null
-  ): string {
-    return path.join(
-      this.npmRoot(scope, projectId),
-      'node_modules',
-      source.name
-    )
-  }
-
-  private npmCommand(settings: TreeportSettings): string[] {
-    return (
-      settings.npmCommand ?? this.globalState.settings.npmCommand ?? ['npm']
-    )
-  }
-
-  private async ensureNpmProject(root: string): Promise<void> {
-    await fs.mkdir(root, { recursive: true, mode: 0o700 })
-    const packageJsonPath = path.join(root, 'package.json')
-
-    const packageJsonExists = await fs
-      .stat(packageJsonPath)
-      .then((value) => value.isFile())
-      .catch(() => false)
-
-    if (!packageJsonExists) {
-      await fs.writeFile(
-        packageJsonPath,
-        `${JSON.stringify(
-          { name: 'treeport-packages', private: true },
-          null,
-          2
-        )}\n`,
-        { mode: 0o600 }
-      )
-    }
-
-    const ignorePath = path.join(root, '.gitignore')
-
-    const ignoreExists = await fs
-      .stat(ignorePath)
-      .then((value) => value.isFile())
-      .catch(() => false)
-
-    if (!ignoreExists) {
-      await fs.writeFile(ignorePath, '*\n!.gitignore\n', { mode: 0o600 })
-    }
-  }
-
-  private async runNpm(
-    action: 'install' | 'remove',
-    source: ParsedNpmSource,
-    scope: PackageScope,
-    projectId: string | null,
-    settings: TreeportSettings,
-    update = false
-  ): Promise<void> {
-    const root = this.npmRoot(scope, projectId)
-    await this.ensureNpmProject(root)
-    const command = this.npmCommand(settings)
-    const executable = command[0]
-
-    if (!executable) {
+    if (!stat?.isDirectory()) {
       throw new DomainError(
-        'INVALID_NPM_COMMAND',
-        'npmCommand must start with an executable',
+        'PACKAGE_PATH_NOT_FOUND',
+        `Package directory does not exist: ${source.path}`,
         400
       )
     }
 
-    const prefix = command.slice(1)
-    const separator = command.lastIndexOf('--')
-
-    const manager = path
-      .basename(separator >= 0 ? (command[separator + 1] ?? '') : executable)
-      .replace(/\.(?:cmd|exe)$/iu, '')
-
-    const requestedSpec =
-      update && !source.version ? `${source.name}@latest` : source.spec
-
-    let args: string[]
-
-    if (manager === 'pnpm') {
-      args =
-        action === 'install'
-          ? ['add', requestedSpec, '--dir', root, '--ignore-scripts']
-          : ['remove', source.name, '--dir', root, '--ignore-scripts']
-    } else if (manager === 'bun') {
-      args =
-        action === 'install'
-          ? ['add', requestedSpec, '--cwd', root, '--ignore-scripts']
-          : ['remove', source.name, '--cwd', root, '--ignore-scripts']
-    } else {
-      args =
-        action === 'install'
-          ? [
-              'install',
-              requestedSpec,
-              '--prefix',
-              root,
-              '--ignore-scripts',
-              '--no-audit',
-              '--no-fund'
-            ]
-          : [
-              'uninstall',
-              source.name,
-              '--prefix',
-              root,
-              '--ignore-scripts',
-              '--no-audit',
-              '--no-fund'
-            ]
-    }
-
-    await runChecked(this.runner, {
-      executable,
-      args: [...prefix, ...args],
-      timeoutMs: PACKAGE_OPERATION_TIMEOUT_MS
-    })
-  }
-
-  private async ensureInstalled(
-    source: ParsedPackageSource,
-    scope: PackageScope,
-    projectId: string | null,
-    settings: TreeportSettings,
-    forceInstall: boolean
-  ): Promise<string> {
-    if (source.type === 'local') {
-      const stat = await fs.stat(source.path).catch(() => null)
-
-      if (!stat?.isDirectory()) {
-        throw new DomainError(
-          'PACKAGE_PATH_NOT_FOUND',
-          `Package directory does not exist: ${source.path}`,
-          400
-        )
-      }
-
-      return source.path
-    }
-
-    const installedPath = this.npmPackagePath(source, scope, projectId)
-    let shouldInstall = forceInstall
-
-    const installed = await fs
-      .stat(installedPath)
-      .then((value) => value.isDirectory())
-      .catch(() => false)
-
-    if (!installed) {
-      shouldInstall = true
-    } else if (source.exact) {
-      const installedVersion = await fs
-        .readFile(path.join(installedPath, 'package.json'), 'utf8')
-        .then((content) => {
-          const parsed = z
-            .object({ version: z.string().optional() })
-            .safeParse(JSON.parse(content))
-
-          return parsed.success ? parsed.data.version : undefined
-        })
-        .catch(() => undefined)
-
-      shouldInstall = installedVersion !== source.version
-    }
-
-    if (shouldInstall) {
-      await this.runNpm('install', source, scope, projectId, settings)
-    }
-
-    const exists = await fs
-      .stat(installedPath)
-      .then((value) => value.isDirectory())
-      .catch(() => false)
-
-    if (!exists) {
-      throw new DomainError(
-        'PACKAGE_INSTALL_FAILED',
-        `Package manager completed without installing ${source.name}`,
-        500
-      )
-    }
-
-    return installedPath
+    return source.path
   }
 
   private validateManifestPatterns(
@@ -1381,26 +1098,6 @@ export class PackageSystem {
       scope
     }
 
-    const packageLockPath =
-      parsed.type === 'npm'
-        ? await Promise.all(
-            [
-              'package-lock.json',
-              'pnpm-lock.yaml',
-              'yarn.lock',
-              'bun.lock',
-              'bun.lockb'
-            ].map(async (name) => {
-              const candidate = path.join(this.npmRoot(scope, projectId), name)
-
-              return fs
-                .stat(candidate)
-                .then((stat) => (stat.isFile() ? candidate : undefined))
-                .catch(() => undefined)
-            })
-          ).then((values) => values.find(Boolean))
-        : undefined
-
     const webApps = applyNormalFilter(
       appCandidates.map((candidate): ResolvedWebApp => {
         const resourceId = encodeURIComponent(
@@ -1436,13 +1133,9 @@ export class PackageSystem {
           root: candidate.root,
           entry: 'index.html',
           packageRoot: root,
-          development: parsed.type === 'local',
+          development: true,
           relativePath: candidate.relativePath,
           enabled: true
-        }
-
-        if (packageLockPath) {
-          resolved.packageLockPath = packageLockPath
         }
 
         return resolved
@@ -1610,7 +1303,6 @@ export class PackageSystem {
     configured: PackageSource,
     scope: PackageScope,
     projectId: string | null,
-    settings: TreeportSettings,
     previous?: ResolvedPackage
   ): Promise<ResolvedPackage> {
     const settingsPath = this.settingsPath(scope, projectId ?? undefined)
@@ -1621,13 +1313,7 @@ export class PackageSystem {
     )
 
     try {
-      const root = await this.ensureInstalled(
-        parsed,
-        scope,
-        projectId,
-        settings,
-        false
-      )
+      const root = await this.packageRoot(parsed)
 
       return await this.loadPackage(configured, parsed, root, scope, projectId)
     } catch (error) {
@@ -1655,14 +1341,8 @@ export class PackageSystem {
         packageId: parsed.packageId,
         scope,
         projectId,
-        root:
-          parsed.type === 'local'
-            ? parsed.path
-            : this.npmPackagePath(parsed, scope, projectId),
-        installedPath:
-          parsed.type === 'local'
-            ? parsed.path
-            : this.npmPackagePath(parsed, scope, projectId),
+        root: parsed.path,
+        installedPath: parsed.path,
         webApps: [],
         launchers: [],
         services: [],
@@ -1734,7 +1414,10 @@ export class PackageSystem {
             const packages = new Map<string, ResolvedPackage>()
             const diagnostics: PackageResourceDiagnostic[] = []
 
-            for (const configured of parsedSettings.settings.packages) {
+            for (const configured of [
+              ...(this.config.defaultPackages ?? []),
+              ...parsedSettings.settings.packages
+            ]) {
               let parsed: ParsedPackageSource
 
               try {
@@ -1772,7 +1455,6 @@ export class PackageSystem {
                 configured,
                 'global',
                 null,
-                parsedSettings.settings,
                 this.globalState.packages.get(parsed.identity)
               )
 
@@ -1947,7 +1629,6 @@ export class PackageSystem {
                 configured,
                 'project',
                 projectId,
-                parsedSettings.settings,
                 previous?.ownPackages.get(parsed.identity)
               )
 
@@ -2282,10 +1963,6 @@ export class PackageSystem {
     parsed: ParsedPackageSource,
     settingsPath: string
   ): string {
-    if (parsed.type === 'npm') {
-      return parsed.source
-    }
-
     const relative = toPosix(
       path.relative(path.dirname(settingsPath), parsed.path)
     )
@@ -2326,13 +2003,7 @@ export class PackageSystem {
 
           const parsed = await this.parseSource(source, settingsPath)
 
-          const root = await this.ensureInstalled(
-            parsed,
-            scope,
-            projectId ?? null,
-            settings,
-            true
-          )
+          const root = await this.packageRoot(parsed)
 
           await this.loadPackage(
             this.persistedSource(parsed, settingsPath),
@@ -2431,16 +2102,6 @@ export class PackageSystem {
             )
           }
 
-          if (parsed.type === 'npm') {
-            await this.runNpm(
-              'remove',
-              parsed,
-              scope,
-              projectId ?? null,
-              settings
-            )
-          }
-
           await this.writeSettings(settingsPath, settings, remaining)
 
           return {
@@ -2460,154 +2121,6 @@ export class PackageSystem {
       }
 
       return result
-    })
-  }
-
-  update(
-    source?: string
-  ): Effect.Effect<
-    PackageOperationResult[],
-    DomainError<unknown>,
-    ApplicationServices
-  > {
-    return Effect.gen(this, function* () {
-      yield* this.reconcileGlobal()
-      yield* Effect.all(
-        [...this.projectContexts.keys()].map((projectId) =>
-          this.reconcileProject(projectId)
-        ),
-        { concurrency: 'unbounded', discard: true }
-      )
-      let requestedIdentity: string | undefined
-
-      if (source) {
-        requestedIdentity = (yield* packagePromise(() =>
-          this.parseSource(source, this.settingsPath('global'))
-        )).identity
-      }
-
-      const targets: Array<{
-        configured: PackageSource
-        scope: PackageScope
-        projectId?: string
-        settings: TreeportSettings
-        settingsPath: string
-      }> = []
-
-      for (const configured of this.globalState.settings.packages) {
-        targets.push({
-          configured,
-          scope: 'global',
-          settings: this.globalState.settings,
-          settingsPath: this.settingsPath('global')
-        })
-      }
-
-      for (const state of this.projectStates.values()) {
-        for (const configured of state.settings.packages) {
-          targets.push({
-            configured,
-            scope: 'project',
-            projectId: state.context.id,
-            settings: state.settings,
-            settingsPath: this.settingsPath('project', state.context.id)
-          })
-        }
-      }
-
-      const matching: typeof targets = []
-
-      for (const target of targets) {
-        const parsed = yield* packagePromise(() =>
-          this.parseSource(sourceString(target.configured), target.settingsPath)
-        )
-
-        if (!requestedIdentity || parsed.identity === requestedIdentity) {
-          matching.push(target)
-        }
-      }
-
-      if (source && matching.length === 0) {
-        throw new DomainError(
-          'PACKAGE_NOT_CONFIGURED',
-          `No configured package matches ${source}`,
-          404
-        )
-      }
-
-      const results: PackageOperationResult[] = []
-      const mutations = yield* PackageMutations
-
-      for (const target of matching) {
-        const parsed = yield* packagePromise(() =>
-          this.parseSource(sourceString(target.configured), target.settingsPath)
-        )
-
-        if (parsed.type === 'local') {
-          results.push({
-            action: 'update',
-            source: sourceString(target.configured),
-            scope: target.scope,
-            projectId: target.projectId ?? null,
-            status: 'skipped',
-            reason: 'Local packages are refreshed with treeport reload'
-          })
-          continue
-        }
-
-        if (parsed.exact) {
-          results.push({
-            action: 'update',
-            source: sourceString(target.configured),
-            scope: target.scope,
-            projectId: target.projectId ?? null,
-            status: 'skipped',
-            reason: 'Exact npm versions are pinned'
-          })
-          continue
-        }
-
-        if (
-          target.scope === 'project' &&
-          packageFilter(target.configured)?.autoload === false &&
-          this.globalState.packages.has(parsed.identity)
-        ) {
-          results.push({
-            action: 'update',
-            source: sourceString(target.configured),
-            scope: target.scope,
-            projectId: target.projectId ?? null,
-            status: 'skipped',
-            reason: 'Project delta inherits the global installation'
-          })
-          continue
-        }
-
-        yield* mutations.enqueue(
-          target.projectId ? `project:${target.projectId}` : 'global',
-          packagePromise(() =>
-            this.runNpm(
-              'install',
-              parsed,
-              target.scope,
-              target.projectId ?? null,
-              target.settings,
-              true
-            )
-          )
-        )
-        results.push({
-          action: 'update',
-          source: sourceString(target.configured),
-          scope: target.scope,
-          projectId: target.projectId ?? null,
-          status: 'updated'
-        })
-      }
-
-      yield* this.reload()
-
-      return results
     })
   }
 

@@ -1,81 +1,49 @@
 ---
-title: Install Treeport
-description: Install Treeport and open your first project.
+title: Run Treeport from source
+description: Fork or clone Treeport, build it, and run your own server.
 ---
 
-Treeport has a server and a client. The server runs on the machine that holds your projects and keeps your terminals and agents running. You connect to it with the macOS app or a web browser, on the same machine or another device.
+Treeport is distributed as source. Fork [the repository](https://github.com/noice-tech/treeport) and build it with your coding agent. The server keeps terminals running; connect with a browser or the desktop app.
 
-Closing the client does not stop the server or its terminal processes.
+## Build and start
 
-## Server
-
-Install the server on the machine where you want your projects and agents to run. It requires macOS or Linux, Node.js 24+, npm, and Git.
-
-### Fork it
-
-We recommend forking [Treeport](https://github.com/noice-tech/treeport) and changing it however you want. Contributions are welcome.
-
-You'll also need pnpm. Fork the repository on GitHub, then:
-
-1. Clone your fork:
-
-   ```sh
-   git clone https://github.com/YOUR-USERNAME/treeport.git
-   ```
-
-2. Enter the directory, install dependencies, and start Treeport:
-
-   ```sh
-   cd treeport
-   pnpm install
-   pnpm dev
-   ```
-
-   For access from other devices, use `pnpm dev:tailscale` instead of `pnpm dev`. Tailscale must be connected with MagicDNS enabled.
-
-3. Start working. Modify Treeport to suit your workflow.
-
-`pnpm dev` starts both the server and clients for your checkout: the backend, web interface, and Electron app. You do not need to install the server or desktop client separately.
-
-### Install from npm
+Use macOS or Linux with Node.js 24+, pnpm, Git, and Rust (the checkout pins its toolchain). Native dependencies may also need your platform's C/C++ build tools and Python.
 
 ```sh
-npm install --global @treeport/treeport
-treeport /path/to/project
+git clone https://github.com/YOUR-USERNAME/treeport.git
+cd treeport
+pnpm install --frozen-lockfile
+pnpm build
+pnpm start
 ```
 
-This starts the server and opens your project in the desktop client or browser.
+Open **http://127.0.0.1:8733**. `pnpm start` runs in the foreground; Ctrl+C stops the server while preserving running terminal sessions.
 
-To start the server automatically, enable [service supervision](/features/service-supervision/).
+For automatic startup, see [service supervision](/features/service-supervision/). For another computer or phone, configure [Tailscale Serve](/features/remote-access/).
 
-## Client
+## CLI and desktop
 
-Choose the macOS app or a web browser. Both connect to the Treeport server; the macOS app does not include the server.
+From the clone, run `pnpm exec treeport context` or `pnpm exec treeport /path/to/project`. For use outside the clone, add its `apps/treeport/bin` directory to your shell's PATH. Managed terminals receive the CLI path automatically.
 
-### Web browser
+`pnpm dev` starts the development server, web UI, and Electron app. To build a local desktop application, run `pnpm --filter @treeport/desktop package`; the result is under `apps/desktop/out`. The desktop app connects to your server and does not bundle it.
 
-The server includes the web interface, so you do not need to install a separate browser client. Run `treeport /path/to/project` on the server machine to open your project.
+There are no prebuilt downloads or automatic updates.
 
-To connect from another computer or phone, set up [remote access](/features/remote-access/) on the server and open the printed HTTPS URL in your browser.
+## Updates
 
-### macOS app
+From your clone:
 
-Download the DMG from the [latest release](https://github.com/noice-tech/treeport/releases/latest).
-Drag **Treeport** to Applications, then open it.
+```sh
+git pull
+pnpm install --frozen-lockfile
+pnpm build
+```
 
-Requires macOS 12+ on Apple Silicon or Intel. Connect to a server on the same Mac, or use [remote access](/features/remote-access/) to connect to another computer.
+Restart the foreground server with `pnpm start`. If you use the pm2 setup, `pnpm pm2:restart` installs dependencies, rebuilds, and restarts its `treeport` process. Rebuild the desktop app separately if you use it.
 
 ## Start working
 
 1. Open or create a tree for your task.
-2. Use **New app** to open a terminal and start your [coding agent](/building-apps/coding-agents/).
-3. Open another terminal for a development server, then add a [Browser](/features/browser-app/) app to check the result.
-4. Add [custom web apps](/features/web-apps/) from your project or installed packages.
-
-See [Projects, trees, and apps](/concepts/projects-worktrees-terminals/) for how the workspace fits together.
-
-## Updates
-
-For an npm installation, run `treeport update` on the server machine. The macOS client offers its own updates.
-
-If an update fails, reinstall the latest release.
+2. Open a terminal and start your [coding agent](/building-apps/coding-agents/).
+3. Add a [Browser](/features/browser-app/) to check your work.
+4. Use the included review and editor apps, or add [local packages](/features/packages/).

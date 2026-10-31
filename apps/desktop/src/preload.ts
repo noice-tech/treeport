@@ -442,9 +442,6 @@ const shellBridge = Object.freeze({
   retryConnection(): void {
     ipcRenderer.send('shell:retry-connection')
   },
-  installUpdate(): void {
-    ipcRenderer.send('shell:install-update')
-  },
   navigateHistory(direction: DesktopNavigationDirection): void {
     ipcRenderer.send('shell:navigate-history', direction)
   },

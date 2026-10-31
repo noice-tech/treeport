@@ -39,7 +39,6 @@ const ContextSchema = Type.Union([
       apiUrl: Type.String({ minLength: 1 }),
       daemonLifecycle: Type.Union([
         Type.Literal('treeport'),
-        Type.Literal('service'),
         Type.Literal('external')
       ]),
       project: Type.Object(

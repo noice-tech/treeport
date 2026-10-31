@@ -10,10 +10,10 @@ Use [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) to ac
 Install Tailscale on the host and connecting device. Sign in to the same tailnet, then run this command on the host:
 
 ```sh
-treeport remote enable
+tailscale serve --bg http://127.0.0.1:8733
 ```
 
-Open the printed HTTPS URL from a permitted, user-owned Tailscale device.
+Open the printed HTTPS URL from a permitted, user-owned Tailscale device. To enable the desktop app's **Open on phone** shortcut, set `TREEPORT_REMOTE_URL` to that URL when starting the server.
 
 In the macOS app, select the computer name, then **Connect to another computer…**. Enter the same URL.
 
@@ -31,7 +31,9 @@ Treeport shows other people in the workspace. Select the people button to see th
 
 ## Manage access
 
-- `treeport remote status` checks the private endpoint.
-- `treeport remote disable` removes Treeport's remote access route.
+- `tailscale serve status` checks the private endpoint.
+- `tailscale serve --https=443 off` removes that HTTPS route.
+
+You manage Tailscale directly. Use the port configured for your server if it differs from 8733.
 
 Use [Service supervision](/features/service-supervision/) to start the backend automatically.

@@ -143,11 +143,7 @@ type TreeFileApi = Pick<
 
 type PackageManagementApi = Pick<
   PackageService,
-  | 'installPackage'
-  | 'listPackages'
-  | 'reloadPackages'
-  | 'removePackage'
-  | 'updatePackages'
+  'installPackage' | 'listPackages' | 'reloadPackages' | 'removePackage'
 >
 
 export class TreeportService {
@@ -170,7 +166,7 @@ export class TreeportService {
 
   constructor(deps: ServiceDependencies) {
     this.events = deps.events ?? new ProductEventBus()
-    this.packages = new PackageSystem(deps.config, deps.runner)
+    this.packages = new PackageSystem(deps.config)
     this.terminalService = new TerminalService()
     this.launcherService = new LauncherService()
     this.appService = new AppService()

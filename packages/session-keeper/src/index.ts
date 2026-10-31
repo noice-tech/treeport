@@ -17,10 +17,7 @@ export const SESSION_KEEPER_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
 
 export function getSessionKeeperPayload(): string {
   return fileURLToPath(
-    new URL(
-      `./native/${process.platform}-${process.arch}/treeport-session-keeper`,
-      import.meta.url
-    )
+    new URL('../native/target/release/treeport-session-keeper', import.meta.url)
   )
 }
 
@@ -338,9 +335,8 @@ export async function withSessionRecovery<A>(
   }
 }
 
-/** npm tarballs normalize non-bin payloads to 0644. Materialize the selected
- * native payload in private runtime storage, without editing the installation
- * or replacing executable inodes belonging to already-running owners. */
+/** Keep a private immutable copy so rebuilding the clone cannot replace
+ * executable inodes belonging to already-running session owners. */
 export async function prepareSessionKeeper(
   payload: string,
   directory: string

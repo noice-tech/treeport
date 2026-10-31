@@ -112,8 +112,8 @@ async function fixture() {
     entry: 'index.html',
     packageRoot,
     development: false,
-    definitionId: 'package:npm:@acme/review:web-app:review',
-    packageSource: 'npm:@acme/review@1.0.0',
+    definitionId: 'package:local:review:web-app:review',
+    packageSource: './review',
     allowNetworkRequests: false
   }
 

@@ -3,7 +3,6 @@ import {
   pushConfigResponseSchema,
   presenceResponseSchema,
   apiErrorBodySchema,
-  applicationUpdateStatusSchema,
   browserInstallResponseSchema,
   decodeUnknownOrNull,
   directoryBrowseResponseSchema,
@@ -67,7 +66,6 @@ import type {
   WorktreeListenerDiscovery,
   WorktreeRecord
 } from '@treeport/shared'
-import type { ApplicationUpdateStatus } from '../server/application-update'
 
 export class RpcNetworkError extends Error {
   constructor(
@@ -796,21 +794,7 @@ export const rpc = {
             )
         }
       }
-    ),
-    update: {
-      $get: () =>
-        endpoint<ApplicationUpdateStatus>(
-          'GET',
-          '/api/update',
-          applicationUpdateStatusSchema
-        ),
-      $post: () =>
-        endpoint<ApplicationUpdateStatus>(
-          'POST',
-          '/api/update',
-          applicationUpdateStatusSchema
-        )
-    }
+    )
   }
 }
 

@@ -137,29 +137,6 @@ export class PackageService {
     })
   }
 
-  updatePackages(
-    source?: string
-  ): Effect.Effect<
-    PackageOperationResult[],
-    DomainError<unknown>,
-    ApplicationServices
-  > {
-    const resourcesChanged = this.resourcesChanged.bind(this)
-
-    return Effect.gen(function* () {
-      const packages = yield* PackageSystemPort
-      const projectStore = yield* ProjectStore
-      const webAppRuntime = yield* WebAppRuntimePort
-      const projects = yield* projectStore.storedProjects()
-      yield* Effect.sync(() => packages.syncProjects(projects))
-      const results = yield* packages.update(source)
-      yield* webAppRuntime.disposeDevelopmentServers().pipe(Effect.orDie)
-      yield* resourcesChanged()
-
-      return results
-    })
-  }
-
   reloadPackages(projectId?: string): Effect.Effect<
     {
       results: PackageOperationResult[]

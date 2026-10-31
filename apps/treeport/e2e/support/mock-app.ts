@@ -7,7 +7,6 @@ import { createProjectMock } from './projects'
 import { installMockSockets, type TerminalMock } from './sockets'
 import { createTerminalMock } from './terminals'
 import type { MockAppOptions } from './types'
-import { createUpdateMock } from './updates'
 import { createWorktreeMock } from './worktrees'
 
 type MockApp = {
@@ -16,7 +15,6 @@ type MockApp = {
     ReturnType<typeof installMockSockets>
   >['emitProjectEvent']
 } & Omit<Awaited<ReturnType<typeof createProjectMock>>, 'state'> &
-  Awaited<ReturnType<typeof createUpdateMock>> &
   Awaited<ReturnType<typeof createWorktreeMock>> &
   Awaited<ReturnType<typeof createTerminalMock>>
 
@@ -62,7 +60,6 @@ export async function mockApp(
   )
 
   const { state, ...projects } = await createProjectMock(page, options)
-  const updates = await createUpdateMock(page, options)
   await createLauncherMock(page)
   const worktrees = await createWorktreeMock(page, state)
   const terminals = await createTerminalMock(page, state)
@@ -73,7 +70,6 @@ export async function mockApp(
   return {
     ...sockets,
     ...projects,
-    ...updates,
     ...worktrees,
     ...terminals
   }

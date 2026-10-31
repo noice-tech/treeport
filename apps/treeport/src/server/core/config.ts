@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { assertLoopbackHost } from './loopback'
 
 export interface AppConfig {
@@ -14,12 +15,13 @@ export interface AppConfig {
   gitPath: string
   apiUrl: string
   remoteUrl: string | null
-  daemonLifecycle: 'treeport' | 'service' | 'external'
+  daemonLifecycle: 'treeport' | 'external'
   appVersion?: string
   instanceId?: string
   installationMethod?: string
   webDist?: string
   webDevelopment: boolean
+  defaultPackages?: string[]
 }
 
 function expandHome(value: string): string {
@@ -94,17 +96,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const daemonLifecycle = env.TREEPORT_DAEMON_LIFECYCLE?.trim() || 'treeport'
 
-  if (
-    daemonLifecycle !== 'treeport' &&
-    daemonLifecycle !== 'service' &&
-    daemonLifecycle !== 'external'
-  ) {
-    throw new Error(
-      'TREEPORT_DAEMON_LIFECYCLE must be treeport, service, or external'
-    )
+  if (daemonLifecycle !== 'treeport' && daemonLifecycle !== 'external') {
+    throw new Error('TREEPORT_DAEMON_LIFECYCLE must be treeport or external')
   }
 
   const config: AppConfig = {
+    defaultPackages: [
+      import.meta.resolve('@treeport/review/package.json'),
+      import.meta.resolve('@treeport/vscode/package.json'),
+      import.meta.resolve('@treeport/github/package.json')
+    ].map((manifest) => path.dirname(fileURLToPath(manifest))),
     host,
     port: portValue,
     dataDir,

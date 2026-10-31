@@ -242,11 +242,11 @@ export interface PackageListing {
 }
 
 export interface PackageOperationResult {
-  action: 'install' | 'remove' | 'update' | 'reload'
+  action: 'install' | 'remove' | 'reload'
   source: string | null
   scope: PackageScope
   projectId: string | null
-  status: 'installed' | 'removed' | 'updated' | 'reloaded' | 'skipped'
+  status: 'installed' | 'removed' | 'reloaded'
   reason?: string
 }
 
@@ -435,7 +435,7 @@ export type TreeportContext =
   | {
       managed: true
       apiUrl: string
-      daemonLifecycle: 'treeport' | 'service' | 'external'
+      daemonLifecycle: 'treeport' | 'external'
       project: Pick<
         ProjectRecord,
         | 'id'
@@ -1283,12 +1283,6 @@ export const packageInstallSchema = Schema.Struct({
 export const packageRemoveSchema = Schema.Struct({
   source: Schema.String.pipe(Schema.minLength(1)),
   projectId: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
-})
-
-export const packageUpdateSchema = Schema.Struct({
-  source: Schema.optional(
-    Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(4_096))
-  )
 })
 
 export const packageReloadSchema = Schema.Struct({

@@ -1,16 +1,9 @@
 {
   "name": "@treeport/pi",
+  "private": true,
   "version": "0.13.0",
   "description": "On-demand Treeport tools for Pi and codemode.",
   "type": "module",
-  "files": [
-    "extensions/treeport/index.ts",
-    "extensions/treeport/treeport-cli.ts",
-    "extensions/treeport/tools.ts",
-    "skills/treeport/SKILL.md",
-    "LICENSE",
-    "README.md"
-  ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty",
     "test:package": "node scripts/check-package.mjs"
@@ -45,9 +38,6 @@
     "url": "https://github.com/noice-tech/treeport/issues"
   },
   "homepage": "https://treeport.app",
-  "publishConfig": {
-    "access": "public"
-  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"

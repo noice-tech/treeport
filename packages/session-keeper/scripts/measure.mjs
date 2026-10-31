@@ -27,7 +27,7 @@ const rustEntry = path.resolve(
   process.env.TREEPORT_KEEPER_RUST_BINARY ??
     path.join(
       root,
-      `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
+      'packages/session-keeper/native/target/release/treeport-session-keeper'
     )
 )
 
@@ -294,9 +294,13 @@ async function fixture(limit = 512 * 1024 * 1024) {
     { mode: 0o600 }
   )
 
-  const bootstrap = spawn(rustEntry, ['--detach', directory], {
-    stdio: ['ignore', 'ignore', 'pipe']
-  })
+  const bootstrap = spawn(
+    rustEntry,
+    ['--detach', directory, 'treeport-session'],
+    {
+      stdio: ['ignore', 'ignore', 'pipe']
+    }
+  )
 
   let stderr = ''
   bootstrap.stderr.on('data', (data) => {

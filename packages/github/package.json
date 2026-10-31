@@ -1,12 +1,9 @@
 {
   "name": "@treeport/github",
+  "private": true,
   "version": "0.13.0",
   "description": "GitHub pull request status on Treeport trees.",
   "type": "module",
-  "files": [
-    "dist",
-    "LICENSE"
-  ],
   "keywords": [
     "treeport-package"
   ],
@@ -35,9 +32,6 @@
     "url": "https://github.com/noice-tech/treeport/issues"
   },
   "homepage": "https://treeport.app",
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "clean": "rm -rf dist",
     "build": "pnpm clean && tsc -p tsconfig.json",

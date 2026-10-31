@@ -18,23 +18,9 @@ import { humanOutput, type HumanOutput } from './output.js'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8733
 
-interface RemotePreference {
-  port: number
-  target: string
-  url?: string | undefined
-}
-
 interface Preferences {
   host?: string | undefined
   port?: number | undefined
-  remote?: RemotePreference | undefined
-}
-
-export interface TailscaleRemoteStatus {
-  configured: boolean
-  active: boolean
-  port: number | null
-  url: string | null
 }
 
 export interface DaemonRecord {
@@ -45,16 +31,10 @@ export interface DaemonRecord {
   dataDir: string
   startedAt: string
   installationMethod: string
-  daemonLifecycle: 'treeport' | 'service' | 'external'
+  daemonLifecycle: 'treeport' | 'external'
 }
 
 export type HealthRecord = HealthResponse
-
-export interface DoctorCheck {
-  name: string
-  ok: boolean
-  detail: string
-}
 
 function listenerUrl(host: string, port: number): string {
   const urlHost =
@@ -69,7 +49,7 @@ function expandHome(value: string): string {
     : value
 }
 
-export interface LocalPaths {
+interface LocalPaths {
   dataDir: string
   runtimeDir: string
   preferencesPath: string
@@ -78,7 +58,7 @@ export interface LocalPaths {
   logPath: string
 }
 
-export function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
+function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
   const defaultDataDir = env.XDG_DATA_HOME
     ? path.join(expandHome(env.XDG_DATA_HOME), 'treeport')
     : process.platform === 'darwin'
@@ -120,14 +100,7 @@ async function readJson<Output>(
 
 const preferencesSchema: z.ZodType<Preferences> = z.looseObject({
   host: z.string().optional(),
-  port: z.number().optional(),
-  remote: z
-    .strictObject({
-      port: z.number(),
-      target: z.string(),
-      url: z.string().optional()
-    })
-    .optional()
+  port: z.number().optional()
 })
 
 const daemonRecordSchema = z.strictObject({
@@ -138,7 +111,7 @@ const daemonRecordSchema = z.strictObject({
   dataDir: z.string(),
   startedAt: z.string(),
   installationMethod: z.string(),
-  daemonLifecycle: z.enum(['treeport', 'service', 'external'])
+  daemonLifecycle: z.enum(['treeport', 'external'])
 })
 
 async function preferences(
@@ -339,388 +312,6 @@ async function stopOwned(state: DaemonRecord): Promise<void> {
   )
 }
 
-async function executableCheck(
-  executable: string,
-  args: string[]
-): Promise<{ ok: boolean; detail: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(executable, args, {
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-
-    let output = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      output += chunk
-    })
-    child.stderr.on('data', (chunk: string) => {
-      output += chunk
-    })
-    child.once('error', (error) =>
-      resolve({ ok: false, detail: error.message })
-    )
-    child.once('close', (code) =>
-      resolve({
-        ok: code === 0,
-        detail: output.trim() || `exited with status ${code ?? 1}`
-      })
-    )
-  })
-}
-
-type TailscaleTcpListener = Record<never, never>
-
-interface TailscaleServeConfiguration {
-  TCP?: Record<string, TailscaleTcpListener> | undefined
-  Foreground?: { [name: string]: TailscaleServeConfiguration } | undefined
-  Web?:
-    | {
-        [hostPort: string]: {
-          Handlers?:
-            | { [path: string]: { Proxy?: string | undefined } }
-            | undefined
-        }
-      }
-    | undefined
-}
-
-const tailscaleStatusResponseSchema = z.looseObject({
-  BackendState: z.string().optional(),
-  Self: z
-    .looseObject({
-      DNSName: z.string().optional()
-    })
-    .optional()
-})
-
-const tailscaleServeConfigurationSchema: z.ZodType<TailscaleServeConfiguration> =
-  z.lazy(() =>
-    z.looseObject({
-      TCP: z.record(z.string(), z.looseObject({})).optional(),
-      Foreground: z
-        .record(z.string(), tailscaleServeConfigurationSchema)
-        .optional(),
-      Web: z
-        .record(
-          z.string(),
-          z.looseObject({
-            Handlers: z
-              .record(
-                z.string(),
-                z.looseObject({ Proxy: z.string().optional() })
-              )
-              .optional()
-          })
-        )
-        .optional()
-    })
-  )
-
-async function tailscale(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('tailscale', args, {
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-
-    let stdout = ''
-    let stderr = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk: string) => {
-      stderr += chunk
-    })
-    child.once('error', (error) =>
-      reject(
-        new Error(
-          // SAFETY: ChildProcess spawn errors carry Node's ErrnoException code.
-          (error as NodeJS.ErrnoException).code === 'ENOENT'
-            ? 'Tailscale is required for remote access. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
-            : `Could not run Tailscale: ${error.message}`
-        )
-      )
-    )
-    child.once('close', (code) => {
-      if (code === 0) {
-        resolve(stdout)
-
-        return
-      }
-
-      const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
-      reject(
-        new Error(
-          `Tailscale ${args[0]} failed${detail ? `: ${detail}` : ` (status ${code ?? 1})`}`
-        )
-      )
-    })
-  })
-}
-
-function tailscaleJson<Output>(
-  value: string,
-  command: string,
-  schema: z.ZodType<Output>
-): Output {
-  const result = schema.safeParse(JSON.parse(value))
-
-  if (!result.success) {
-    throw new Error(`Tailscale ${command} returned an invalid JSON response`)
-  }
-
-  return result.data
-}
-
-function remotePreference(value: Preferences): RemotePreference | null {
-  if (value.remote === undefined) {
-    return null
-  }
-
-  if (
-    !Number.isInteger(value.remote.port) ||
-    value.remote.port < 1 ||
-    value.remote.port > 65_535 ||
-    !value.remote.target
-  ) {
-    throw new Error('Treeport remote access preferences are invalid')
-  }
-
-  return value.remote
-}
-
-function localProxyTarget(apiUrl: string): string {
-  if (!URL.canParse(apiUrl)) {
-    throw new Error('Treeport remote access requires a loopback daemon URL')
-  }
-
-  const url = new URL(apiUrl)
-
-  if (
-    url.protocol !== 'http:' ||
-    !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname)
-  ) {
-    throw new Error(
-      'Treeport remote access requires a loopback daemon. Run `treeport start --host 127.0.0.1`, then try again.'
-    )
-  }
-
-  return `http://${url.host}`
-}
-
-function portIsServed(
-  config: TailscaleServeConfiguration,
-  port: number
-): boolean {
-  const tcp = config.TCP
-
-  if (tcp && Object.hasOwn(tcp, String(port))) {
-    return true
-  }
-
-  return Object.values(config.Foreground ?? {}).some((value) =>
-    portIsServed(value, port)
-  )
-}
-
-function rootProxyForPort(
-  config: TailscaleServeConfiguration,
-  port: number
-): string | null {
-  for (const [hostPort, server] of Object.entries(config.Web ?? {})) {
-    if (!hostPort.endsWith(`:${port}`)) {
-      continue
-    }
-
-    const proxy = server.Handlers?.['/']?.Proxy
-
-    if (proxy !== undefined) {
-      return proxy
-    }
-  }
-
-  return null
-}
-
-function proxyMatches(
-  actual: string | null,
-  expected: string | undefined
-): boolean {
-  return (
-    actual !== null &&
-    expected !== undefined &&
-    actual.replace(/\/$/, '') === expected.replace(/\/$/, '')
-  )
-}
-
-async function tailscaleServeConfig(): Promise<TailscaleServeConfiguration> {
-  return tailscaleJson(
-    await tailscale(['serve', 'status', '--json']),
-    'serve status',
-    tailscaleServeConfigurationSchema
-  )
-}
-
-async function tailscaleRemoteUrl(port: number): Promise<string> {
-  const status = tailscaleJson(
-    await tailscale(['status', '--json']),
-    'status',
-    tailscaleStatusResponseSchema
-  )
-
-  if (status.BackendState !== 'Running') {
-    throw new Error(
-      'Tailscale is not connected. Run `tailscale up` then try again.'
-    )
-  }
-
-  const dnsName = status.Self?.DNSName
-
-  if (!dnsName?.trim()) {
-    throw new Error(
-      'Tailscale did not report a DNS name. Enable MagicDNS, then try again.'
-    )
-  }
-
-  return `https://${dnsName.trim().replace(/\.$/, '')}${port === 443 ? '' : `:${port}`}`
-}
-
-export async function enableTailscaleRemote(options: {
-  port?: number
-  daemon?: { apiUrl: string }
-}): Promise<{ alreadyEnabled: boolean; port: number; url: string }> {
-  if (
-    options.port !== undefined &&
-    (!Number.isInteger(options.port) ||
-      options.port < 1 ||
-      options.port > 65_535)
-  ) {
-    throw new Error('--port must be an integer between 1 and 65535')
-  }
-
-  const saved = await preferences()
-  const remote = remotePreference(saved)
-  const port = options.port ?? remote?.port ?? DEFAULT_PORT
-
-  if (remote && remote.port !== port) {
-    throw new Error(
-      `Treeport remote access is already configured on port ${remote.port}. Run \`treeport remote disable\` before choosing another port.`
-    )
-  }
-
-  const current = await daemonStatus()
-
-  const expectedTarget = localProxyTarget(
-    current.state?.apiUrl ?? (await resolveLocalApiUrl())
-  )
-
-  const [url, config] = await Promise.all([
-    tailscaleRemoteUrl(port),
-    tailscaleServeConfig()
-  ])
-
-  const existingTarget = rootProxyForPort(config, port)
-
-  if (
-    (portIsServed(config, port) || existingTarget !== null) &&
-    !proxyMatches(existingTarget, expectedTarget) &&
-    !proxyMatches(existingTarget, remote?.target)
-  ) {
-    throw new Error(
-      `Tailscale Serve already uses port ${port}. Choose another port with \`treeport remote enable --port <port>\`.`
-    )
-  }
-
-  const daemon = options.daemon ?? (await daemonUp({}))
-  const target = localProxyTarget(daemon.apiUrl)
-  const alreadyEnabled = proxyMatches(existingTarget, target)
-
-  if (!alreadyEnabled) {
-    await tailscale(['serve', '--bg', `--https=${port}`, target])
-  }
-
-  await savePreferences({ ...saved, remote: { port, target, url } })
-
-  return { alreadyEnabled, port, url }
-}
-
-export async function tailscaleRemoteStatus(): Promise<TailscaleRemoteStatus> {
-  const saved = await preferences()
-  const remote = remotePreference(saved)
-
-  if (!remote) {
-    return { configured: false, active: false, port: null, url: null }
-  }
-
-  const [url, config] = await Promise.all([
-    tailscaleRemoteUrl(remote.port),
-    tailscaleServeConfig()
-  ])
-
-  return {
-    configured: true,
-    active: proxyMatches(rootProxyForPort(config, remote.port), remote.target),
-    port: remote.port,
-    url
-  }
-}
-
-export async function disableTailscaleRemote(): Promise<{
-  wasEnabled: boolean
-  changedTailscale: boolean
-}> {
-  const saved = await preferences()
-  const remote = remotePreference(saved)
-
-  if (!remote) {
-    return { wasEnabled: false, changedTailscale: false }
-  }
-
-  const config = await tailscaleServeConfig()
-
-  if (proxyMatches(rootProxyForPort(config, remote.port), remote.target)) {
-    await tailscale(['serve', `--https=${remote.port}`, 'off'])
-    delete saved.remote
-    await savePreferences(saved)
-
-    return { wasEnabled: true, changedTailscale: true }
-  }
-
-  delete saved.remote
-  await savePreferences(saved)
-
-  return { wasEnabled: false, changedTailscale: false }
-}
-
-export async function runDoctor(): Promise<DoctorCheck[]> {
-  const paths = localPaths()
-  const gitPath = process.env.TREEPORT_GIT_PATH?.trim() || 'git'
-  const git = await executableCheck(gitPath, ['--version'])
-
-  const checkDirectory = (directoryPath: string) =>
-    fs
-      .mkdir(directoryPath, { recursive: true, mode: 0o700 })
-      .then(() => ({ ok: true, detail: directoryPath }))
-      .catch((error) => ({
-        ok: false,
-        detail: `${directoryPath}: ${error instanceof Error ? error.message : String(error)}`
-      }))
-
-  const [dataDirectory, runtimeDirectory] = await Promise.all([
-    checkDirectory(paths.dataDir),
-    checkDirectory(paths.runtimeDir)
-  ])
-
-  return [
-    { name: 'Node', ok: true, detail: process.version },
-    { name: 'Git', ...git },
-    { name: 'Data directory', ...dataDirectory },
-    { name: 'Runtime directory', ...runtimeDirectory }
-  ]
-}
-
 export async function daemonStatus(): Promise<{
   running: boolean
   state: DaemonRecord | null
@@ -823,14 +414,6 @@ export async function daemonUp(options: {
     await stopOwned(existing.state)
   }
 
-  const failedChecks = (await runDoctor()).filter((check) => !check.ok)
-
-  if (failedChecks.length) {
-    throw new Error(
-      failedChecks.map((check) => `${check.name}: ${check.detail}`).join('\n')
-    )
-  }
-
   const serverEntry = await resolvePackagePath(
     'dist',
     'node',
@@ -856,7 +439,7 @@ export async function daemonUp(options: {
     TREEPORT_APP_VERSION: currentVersion,
     TREEPORT_INSTANCE_ID: instanceId,
     TREEPORT_INSTALLATION_METHOD:
-      process.env.TREEPORT_INSTALLATION_METHOD?.trim() || 'npm',
+      process.env.TREEPORT_INSTALLATION_METHOD?.trim() || 'source',
     TREEPORT_DAEMON_LIFECYCLE: 'treeport',
     TREEPORT_WEB_DIST: webDist
   }
@@ -967,7 +550,7 @@ export async function daemonDown(): Promise<{ wasRunning: boolean }> {
   return { wasRunning: true }
 }
 
-export async function resolveDaemonLogPaths(
+async function resolveDaemonLogPaths(
   targetApiUrl?: string
 ): Promise<LocalPaths> {
   const inheritedRecordPath = process.env.TREEPORT_DAEMON_RECORD?.trim()

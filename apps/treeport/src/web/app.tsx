@@ -51,7 +51,6 @@ import {
 } from './features/sidebar/workspace-shell'
 import { LaunchersDialog } from './features/launchers/launchers-dialog'
 import { SettingsMenu } from './features/settings/settings-menu'
-import { UpdateControl } from './features/updates/update-control'
 import { NewAppDialog } from './features/apps/new-app-dialog'
 import { useToolPicker } from './features/apps/tool-picker-context'
 import { useWorkspaceSurfaceFocus } from './features/apps/workspace-surface-focus-context'
@@ -1894,7 +1893,6 @@ function WorkspaceApp() {
       <ProjectSwitcherShortcut blocked={dialog !== null} />
       <WorkspaceMobileHeader
         terminal={selectedTerminal}
-        updateControl={<UpdateControl />}
         notificationCenter={
           <NotificationCenter
             projects={projects}
@@ -1905,7 +1903,6 @@ function WorkspaceApp() {
         }
       />
       <WorkspaceSidebar
-        updateControl={<UpdateControl />}
         settingsMenu={
           <SettingsMenu
             onManageLaunchers={(trigger) =>

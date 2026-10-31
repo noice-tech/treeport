@@ -16,41 +16,11 @@ Treeport is also what Mitchell Hashimoto calls an [agentic inbox](https://mitche
 - 🌐 **Browsers and custom apps.** Open websites and development servers in browser tabs that you and your agent can use. Add a diff viewer, editor, dashboard, or another project tool as a web app, and install packages to add apps and reusable terminal commands to any project.
 - ♾️ **Keep work running.** Agents, development servers, and other terminal programs keep running when you close the client or disconnect. Reconnect from the macOS app or a browser, including from another computer or phone through Tailscale.
 
-## Install
+## Run from source
 
-Treeport runs on macOS and Linux. It requires Node.js 24+, npm, and Git.
+Fork or clone Treeport, build it with your coding agent, and run the server yourself. Updates are `git pull`, a rebuild, and a server restart; there are no npm installations or prebuilt downloads.
 
-### Fork it (recommended)
-
-We recommend forking Treeport and changing it however you want. Contributions are welcome.
-
-You'll also need pnpm. [Fork the repository](https://github.com/noice-tech/treeport/fork), then clone your fork and start Treeport:
-
-```sh
-git clone https://github.com/YOUR-USERNAME/treeport.git
-cd treeport
-pnpm install
-pnpm dev
-```
-
-`pnpm dev` starts the backend, web interface, and Electron app for your checkout. You do not need to install the server or desktop client separately.
-
-For access from other devices, use `pnpm dev:tailscale` instead. Tailscale must be connected with MagicDNS enabled.
-
-### Install from npm
-
-```sh
-npm install --global @treeport/treeport
-treeport /path/to/project
-```
-
-This starts the server and opens your project in the desktop client or browser. Run `treeport update` to update.
-
-### macOS app
-
-The macOS app is a client for a Treeport server on the same Mac or another computer. Download the DMG from the [latest release](https://github.com/noice-tech/treeport/releases/latest).
-
-See [Install Treeport](https://treeport.app/getting-started/installation/) for details. To connect from another device, use [private remote access](https://treeport.app/features/remote-access/). Do not expose Treeport directly to the public internet.
+See [Run Treeport from source](https://treeport.app/getting-started/installation/) for prerequisites, foreground startup, and desktop builds. [Service supervision](https://treeport.app/features/service-supervision/) covers optional pm2 setup. For another device, configure [private remote access](https://treeport.app/features/remote-access/); do not expose Treeport directly to the public internet.
 
 ## Documentation
 
