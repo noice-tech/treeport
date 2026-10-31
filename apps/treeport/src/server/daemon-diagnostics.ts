@@ -10,7 +10,7 @@ import { createBufferedDaemonLog } from './buffered-daemon-log.ts'
 import { resolveDataDir } from './core/config.ts'
 
 export function installDaemonDiagnostics(entrypoint: URL) {
-  process.env.TREEPORT_INSTANCE_ID ||= crypto.randomUUID()
+  process.env.TREEPORT_INSTANCE_ID = crypto.randomUUID()
   process.env.TREEPORT_INSTALLATION_METHOD ||= 'unknown'
 
   if (!process.env.TREEPORT_APP_VERSION?.trim()) {

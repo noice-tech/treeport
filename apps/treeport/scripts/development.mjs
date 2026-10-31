@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import '../../../scripts/development-tracing.mjs'
 
 const serverOnly = process.argv.includes('--server')
+const managed = Boolean(process.env.TREEPORT_DAEMON_RECORD)
 
 const child = spawn(
   process.execPath,
@@ -15,11 +16,14 @@ const child = spawn(
       TREEPORT_WEB_DEVELOPMENT: serverOnly
         ? process.env.TREEPORT_WEB_DEVELOPMENT
         : '1',
-      TREEPORT_DATA_DIR: process.env.TREEPORT_DATA_DIR || '.treeport-dev/data',
+      // EXTERNAL: Managed terminals inherit their parent's directories, not this worktree's.
+      TREEPORT_DATA_DIR:
+        (!managed && process.env.TREEPORT_DATA_DIR) || '.treeport-dev/data',
       TREEPORT_RUNTIME_DIR:
-        process.env.TREEPORT_RUNTIME_DIR || '.treeport-dev/runtime',
+        (!managed && process.env.TREEPORT_RUNTIME_DIR) ||
+        '.treeport-dev/runtime',
       TREEPORT_CACHE_DIR:
-        process.env.TREEPORT_CACHE_DIR || '.treeport-dev/cache'
+        (!managed && process.env.TREEPORT_CACHE_DIR) || '.treeport-dev/cache'
     },
     stdio: 'inherit'
   }
