@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -17,9 +16,20 @@ const serverEntry = path.join(
 
 const webDist = path.join(root, 'apps', 'treeport', 'dist', 'web')
 
-if (!fs.existsSync(webDist)) {
-  console.error('Treeport is not built. Run `pnpm build` first.')
-  process.exit(1)
+for (const [label, args] of [
+  ['install dependencies', ['install', '--frozen-lockfile']],
+  ['build Treeport', ['build:server']]
+]) {
+  const step = spawnSync('pnpm', args, { cwd: root, stdio: 'inherit' })
+
+  if (step.status !== 0) {
+    console.error(
+      step.error
+        ? `Failed to ${label}: ${step.error.message}`
+        : `Failed to ${label}.`
+    )
+    process.exit(step.status ?? 1)
+  }
 }
 
 const host = process.env.TREEPORT_HOST?.trim() || '127.0.0.1'

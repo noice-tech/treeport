@@ -64,10 +64,7 @@ async function treeportExecutable(): Promise<string> {
     const developmentRuntime = dirname(dirname(daemonRecord))
 
     if (basename(developmentRuntime) === '.treeport-dev') {
-      const developmentCli = join(
-        dirname(developmentRuntime),
-        'bin/treeport.mjs'
-      )
+      const developmentCli = join(dirname(developmentRuntime), 'bin/treeport')
 
       if (
         await access(developmentCli, fsConstants.X_OK).then(

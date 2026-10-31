@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type {
   TerminalAfterExit,
   TerminalRecord,
@@ -36,6 +37,10 @@ import { DatabasePort } from '../../database.ts'
 import { ProjectStore } from '../project/project-store.ts'
 import { currentTraceContext } from '../../../tracing.ts'
 import { TerminalState } from './terminal-state.ts'
+
+const serverCliDirectory = fileURLToPath(
+  new URL('../../../../../bin', import.meta.url)
+)
 
 const now = (): string => new Date().toISOString()
 
@@ -432,6 +437,10 @@ export class TerminalService {
           PI_HYPERLINKS: '1',
           PI_CLIPBOARD_OSC52: '1',
           ...(options?.env ?? {}),
+          PATH: [serverCliDirectory, options?.env?.PATH ?? process.env.PATH]
+            .filter(Boolean)
+            .join(path.delimiter),
+          TREEPORT_CLI_ENTRYPOINT: path.join(serverCliDirectory, 'treeport'),
           TREEPORT_API_URL: config.apiUrl,
           TREEPORT_MANAGED_API_URL: config.apiUrl,
           TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),

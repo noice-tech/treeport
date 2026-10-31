@@ -16,11 +16,18 @@ Treeport is also what Mitchell Hashimoto calls an [agentic inbox](https://mitche
 - 🌐 **Browsers and custom apps.** Open websites and development servers in browser tabs that you and your agent can use. Add a diff viewer, editor, dashboard, or another project tool as a web app, and install packages to add apps and reusable terminal commands to any project.
 - ♾️ **Keep work running.** Agents, development servers, and other terminal programs keep running when you close the client or disconnect. Reconnect from the macOS app or a browser, including from another computer or phone through Tailscale.
 
-## Run from source
+## Run it
 
-Fork or clone Treeport, build it with your coding agent, and run the server yourself. Updates are `git pull`, a rebuild, and a server restart; there are no npm installations or prebuilt downloads.
+[Fork Treeport](https://github.com/noice-tech/treeport/fork) and run the server yourself; there are no npm installations or prebuilt downloads.
 
-See [Run Treeport from source](https://treeport.app/getting-started/installation/) for prerequisites, foreground startup, and desktop builds. [Service supervision](https://treeport.app/features/service-supervision/) covers optional pm2 setup. For another device, configure [private remote access](https://treeport.app/features/remote-access/); do not expose Treeport directly to the public internet.
+```sh
+gh repo fork noice-tech/treeport --clone && cd treeport
+pnpm install --frozen-lockfile && pnpm cli:install && pnpm start
+```
+
+To update, run `pnpm sync`.
+
+See [Run Treeport](https://treeport.app/getting-started/installation/) for prerequisites, the CLI, updates, and desktop builds. [Service supervision](https://treeport.app/features/service-supervision/) covers optional pm2 setup. For another device, configure [private remote access](https://treeport.app/features/remote-access/); do not expose Treeport directly to the public internet.
 
 ## Documentation
 

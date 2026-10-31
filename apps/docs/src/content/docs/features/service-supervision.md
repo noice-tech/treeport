@@ -1,13 +1,13 @@
 ---
 title: Service supervision
-description: Run your source checkout under pm2 or another process manager.
+description: Keep Treeport running under pm2 or another process manager.
 ---
 
 Treeport runs in the foreground with `pnpm start`. You own startup and supervision; Treeport does not install OS services.
 
 ## Optional pm2 setup
 
-Install pm2 separately, then run these commands from your built clone:
+Install pm2 separately, then run these commands from your clone:
 
 ```sh
 pnpm pm2:start
@@ -20,7 +20,7 @@ Follow the platform-specific instructions printed by `pm2 startup`. Keep the clo
 - `pm2 status treeport` shows the process.
 - `pm2 logs treeport` shows supervisor output.
 - `pm2 stop treeport` stops the server.
-- After `git pull`, `pnpm pm2:restart` installs dependencies, builds, and restarts it.
+- `pnpm sync` updates and restarts it, and leaves it running if the update fails.
 
 Use your supervisor to start, restart, and stop the server.
 

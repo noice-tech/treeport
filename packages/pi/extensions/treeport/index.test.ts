@@ -330,7 +330,7 @@ describe('Treeport Pi extension', () => {
     const root = await mkdtemp(join(tmpdir(), 'treeport-pi-cli-'))
 
     try {
-      const cli = join(root, 'bin/treeport.mjs')
+      const cli = join(root, 'bin/treeport')
       await mkdir(dirname(cli), { recursive: true })
       await writeFile(cli, '#!/usr/bin/env node\n', { mode: 0o700 })
       vi.stubEnv(
