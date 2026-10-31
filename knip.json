@@ -25,10 +25,9 @@
       ],
       "ignoreDependencies": [
         "@electron-forge/maker-dmg",
-        "@electron-forge/maker-zip",
-        "@electron-forge/publisher-github"
+        "@electron-forge/maker-zip"
       ],
-      "ignoreBinaries": ["iconutil", "lipo", "plutil"]
+      "ignoreBinaries": ["iconutil"]
     },
     "packages/claude-code": {
       "entry": ["hooks/treeport.mjs"]

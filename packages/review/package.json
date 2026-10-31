@@ -1,10 +1,8 @@
 {
   "name": "@treeport/review",
+  "private": true,
   "version": "0.13.0",
   "description": "Code review for Treeport.",
-  "files": [
-    "web-apps/review"
-  ],
   "type": "module",
   "keywords": [
     "treeport-package"
@@ -24,9 +22,6 @@
     "url": "https://github.com/noice-tech/treeport/issues"
   },
   "homepage": "https://treeport.app",
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "typecheck": "tsc --noEmit --pretty"
   },

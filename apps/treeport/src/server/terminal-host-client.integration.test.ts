@@ -530,7 +530,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       ),
       sessionExecutable: path.join(
         repositoryRoot,
-        `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
+        'packages/session-keeper/native/target/release/treeport-session-keeper'
       ),
       journalLimitBytes: 64 * 1024
     }
@@ -1346,7 +1346,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       ),
       sessionExecutable: path.join(
         repositoryRoot,
-        `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
+        'packages/session-keeper/native/target/release/treeport-session-keeper'
       )
     }
 

@@ -7,7 +7,6 @@ import {
 } from '@treeport/shared/browser-host'
 import {
   app,
-  autoUpdater,
   BrowserWindow,
   WebContentsView,
   clipboard,
@@ -25,7 +24,6 @@ import {
   type MenuItemConstructorOptions,
   type WebContents
 } from 'electron'
-import { updateElectronApp, UpdateSourceType } from 'update-electron-app'
 import { z } from 'zod'
 import { WebSocket, WebSocketServer } from 'ws'
 import * as Effect from 'effect/Effect'
@@ -109,9 +107,6 @@ protocol.registerSchemesAsPrivileged([
 
 const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
 
-const desktopUpdateReady =
-  desktopE2e && process.env.TREEPORT_DESKTOP_E2E_UPDATE_READY === '1'
-
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
 
 if (desktopE2e && process.platform === 'darwin') {
@@ -150,9 +145,6 @@ let store: ComputerStore | null = null
 const desktopRuntime = new DesktopRuntime()
 let windowRuntime: DesktopRuntime | null = null
 let fullscreen = false
-let updateReady = desktopUpdateReady
-let updateError: string | null = null
-let installUpdateOnQuit = false
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 const workspaceTargets = Effect.unsafeMakeSemaphore(1)
 
@@ -215,8 +207,6 @@ function shellState(): DesktopShellState {
     appVersion: app.getVersion(),
     platform: process.platform,
     fullscreen,
-    updateReady,
-    updateError,
     computers: store?.summaries() ?? [],
     connection: hostSessions?.active?.connection ?? { status: 'empty' },
     navigation: navigationState(),
@@ -1604,52 +1594,6 @@ function registerIpc(): void {
       void connectSelected()
     }
   })
-  ipcMain.on('shell:install-update', (event) => {
-    if (!isTrustedShellEvent(event)) {
-      return
-    }
-
-    if (updateError) {
-      desktopRuntime.fork(
-        Effect.gen(function* () {
-          const { response } = yield* Effect.tryPromise(() =>
-            dialog.showMessageBox({
-              type: 'error',
-              title: 'Desktop update failed',
-              message: 'Treeport could not install the desktop update.',
-              detail: `${updateError}\nThe backend has not been changed. Install the latest desktop application manually, or wait for the next automatic check.`,
-              buttons: ['Installation instructions', 'Dismiss'],
-              cancelId: 1
-            })
-          )
-
-          if (response === 0) {
-            yield* Effect.tryPromise(() =>
-              shell.openExternal(
-                'https://treeport.app/getting-started/installation/'
-              )
-            )
-          }
-        })
-      )
-
-      return
-    }
-
-    if (!updateReady) {
-      return
-    }
-
-    if (desktopE2e) {
-      updateReady = false
-      broadcastState()
-
-      return
-    }
-
-    installUpdateOnQuit = true
-    app.quit()
-  })
   ipcMain.on('shell:navigate-history', (event, direction) => {
     const parsed = z.enum(['back', 'forward']).safeParse(direction)
 
@@ -2034,37 +1978,6 @@ if (!hasSingleInstanceLock) {
         createWindow()
       }
 
-      autoUpdater.on('error', (error) => {
-        updateError = error.message
-        updateReady = false
-        broadcastState()
-      })
-      autoUpdater.on('update-not-available', () => {
-        updateError = null
-        broadcastState()
-      })
-      autoUpdater.on('update-downloaded', () => {
-        updateError = null
-        updateReady = true
-        broadcastState()
-      })
-
-      if (app.isPackaged && process.platform === 'darwin' && !desktopE2e) {
-        const updater = updateElectronApp({
-          updateSource: {
-            type: UpdateSourceType.ElectronPublicUpdateService,
-            repo: 'noice-tech/treeport',
-            host: 'https://update.electronjs.org'
-          },
-          updateInterval: '10 minutes',
-          notifyUser: false
-        })
-
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => updater.stopUpdates())
-        )
-      }
-
       app.on('activate', () => {
         if (!mainWindow) {
           createWindow()
@@ -2100,11 +2013,7 @@ if (!hasSingleInstanceLock) {
 
       quitReady = true
 
-      if (installUpdateOnQuit) {
-        autoUpdater.quitAndInstall()
-      } else {
-        app.quit()
-      }
+      app.quit()
     })
   })
   app.on('window-all-closed', () => {

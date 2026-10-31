@@ -1,5 +1,6 @@
 {
   "name": "@treeport/app-sdk",
+  "private": true,
   "version": "0.13.0",
   "description": "Browser SDK for Treeport web apps.",
   "type": "module",
@@ -15,18 +16,9 @@
       "default": "./dist/service.js"
     }
   },
-  "files": [
-    "dist/index.js",
-    "dist/index.d.ts",
-    "dist/service.js",
-    "dist/service.d.ts",
-    "LICENSE",
-    "README.md"
-  ],
   "scripts": {
     "clean": "rm -rf dist",
     "build": "pnpm clean && tsc -b",
-    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "license": "Apache-2.0",
@@ -37,8 +29,5 @@
   "bugs": {
     "url": "https://github.com/noice-tech/treeport/issues"
   },
-  "homepage": "https://treeport.app",
-  "publishConfig": {
-    "access": "public"
-  }
+  "homepage": "https://treeport.app"
 }

@@ -1,5 +1,6 @@
 {
   "name": "@treeport/treeport",
+  "private": true,
   "version": "0.13.0",
   "description": "A tree-first terminal driver for persistent development workspaces.",
   "type": "module",
@@ -7,26 +8,14 @@
     "treeport": "bin/treeport.mjs"
   },
   "main": "dist/node/cli/index.js",
-  "files": [
-    "bin",
-    "dist",
-    "drizzle",
-    "skills",
-    "LICENSE",
-    "THIRD_PARTY_NOTICES",
-    "README.md"
-  ],
   "scripts": {
     "clean": "rm -rf dist dist-types",
-    "build": "pnpm clean && pnpm build:node && pnpm build:web && pnpm check:package",
+    "build": "pnpm clean && pnpm build:node && pnpm build:web",
     "build:node": "tsdown",
     "build:web": "vite build",
     "build:ghostty-vt": "bash scripts/build-ghostty-vt.sh",
     "check:ghostty-vt": "bash scripts/build-ghostty-vt.sh --check",
-    "prepack": "pnpm --dir=../.. exec turbo run build --filter=@treeport/treeport 1>&2",
-    "check:package": "node scripts/check-package.mjs",
     "check:terminal-runtime": "node scripts/check-terminal-runtime.mjs",
-    "test:package": "node scripts/check-package.mjs --packed",
     "dev": "node scripts/development.mjs",
     "dev:server": "node scripts/development.mjs --server",
     "start": "TREEPORT_WEB_DIST=dist/web node dist/node/server/index.js",
@@ -51,9 +40,6 @@
     "url": "https://github.com/noice-tech/treeport/issues"
   },
   "homepage": "https://treeport.app",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@effect/opentelemetry": "^0.64.0",
     "@effect/platform": "^0.97.1",

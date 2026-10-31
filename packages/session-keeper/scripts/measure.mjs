@@ -27,7 +27,7 @@ const rustEntry = path.resolve(
   process.env.TREEPORT_KEEPER_RUST_BINARY ??
     path.join(
       root,
-      `packages/session-keeper/dist/native/${process.platform}-${process.arch}/treeport-session-keeper`
+      'packages/session-keeper/native/target/release/treeport-session-keeper'
     )
 )
 

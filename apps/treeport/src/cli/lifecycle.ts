@@ -49,7 +49,7 @@ function expandHome(value: string): string {
     : value
 }
 
-export interface LocalPaths {
+interface LocalPaths {
   dataDir: string
   runtimeDir: string
   preferencesPath: string
@@ -58,7 +58,7 @@ export interface LocalPaths {
   logPath: string
 }
 
-export function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
+function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
   const defaultDataDir = env.XDG_DATA_HOME
     ? path.join(expandHome(env.XDG_DATA_HOME), 'treeport')
     : process.platform === 'darwin'
@@ -550,7 +550,7 @@ export async function daemonDown(): Promise<{ wasRunning: boolean }> {
   return { wasRunning: true }
 }
 
-export async function resolveDaemonLogPaths(
+async function resolveDaemonLogPaths(
   targetApiUrl?: string
 ): Promise<LocalPaths> {
   const inheritedRecordPath = process.env.TREEPORT_DAEMON_RECORD?.trim()

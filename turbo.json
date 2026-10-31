@@ -52,14 +52,6 @@
     "//#knip": {
       "cache": false
     },
-    "@treeport/treeport#test:package": {
-      "dependsOn": ["build"],
-      "cache": false
-    },
-    "@treeport/session-keeper#test:package": {
-      "dependsOn": ["build"],
-      "cache": false
-    },
     "@treeport/pi#test:package": {
       "cache": false
     },
