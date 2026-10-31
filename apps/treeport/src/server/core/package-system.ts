@@ -489,7 +489,13 @@ export class PackageSystem {
     projectId?: string
   ): ParsedSettingsResult {
     if (content === null || content.trim() === '') {
-      return { settings: { raw: {}, packages: [] } }
+      return {
+        settings: {
+          raw: {},
+          packages:
+            scope === 'global' ? [...(this.config.defaultPackages ?? [])] : []
+        }
+      }
     }
 
     let input

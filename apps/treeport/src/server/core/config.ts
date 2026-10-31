@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { assertLoopbackHost } from './loopback'
 
 export interface AppConfig {
@@ -20,6 +21,7 @@ export interface AppConfig {
   installationMethod?: string
   webDist?: string
   webDevelopment: boolean
+  defaultPackages?: string[]
 }
 
 function expandHome(value: string): string {
@@ -99,6 +101,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const config: AppConfig = {
+    defaultPackages: [
+      import.meta.resolve('@treeport/review/package.json'),
+      import.meta.resolve('@treeport/vscode/package.json'),
+      import.meta.resolve('@treeport/github/package.json')
+    ].map((manifest) => path.dirname(fileURLToPath(manifest))),
     host,
     port: portValue,
     dataDir,

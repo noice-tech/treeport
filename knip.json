@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreBinaries": ["tailscale", "Xorg", "xrandr"],
+  "ignoreBinaries": ["tailscale", "Xorg", "xrandr", "pm2"],
   "ignoreIssues": {
     "tools/oxlint/anti-slop/vendor/**": ["types"]
   },
