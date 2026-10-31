@@ -39,7 +39,7 @@ pnpm install --frozen-lockfile
 pnpm build
 ```
 
-Restart the foreground server with `pnpm start`. If you use the pm2 setup, `pnpm restart` installs dependencies, rebuilds, and restarts its `treeport` process. Rebuild the desktop app separately if you use it.
+Restart the foreground server with `pnpm start`. If you use the pm2 setup, `pnpm pm2:restart` installs dependencies, rebuilds, and restarts its `treeport` process. Rebuild the desktop app separately if you use it.
 
 ## Start working
 

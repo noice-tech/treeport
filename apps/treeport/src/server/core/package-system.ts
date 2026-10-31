@@ -492,8 +492,7 @@ export class PackageSystem {
       return {
         settings: {
           raw: {},
-          packages:
-            scope === 'global' ? [...(this.config.defaultPackages ?? [])] : []
+          packages: []
         }
       }
     }
@@ -1415,7 +1414,10 @@ export class PackageSystem {
             const packages = new Map<string, ResolvedPackage>()
             const diagnostics: PackageResourceDiagnostic[] = []
 
-            for (const configured of parsedSettings.settings.packages) {
+            for (const configured of [
+              ...(this.config.defaultPackages ?? []),
+              ...parsedSettings.settings.packages
+            ]) {
               let parsed: ParsedPackageSource
 
               try {

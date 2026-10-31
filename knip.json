@@ -6,6 +6,7 @@
   },
   "workspaces": {
     ".": {
+      "entry": ["ecosystem.config.cjs"],
       "ignoreDependencies": ["@treeport/treeport"]
     },
     "apps/treeport": {
