@@ -15,26 +15,26 @@ import {
   loadConfig,
   SpawnCommandRunner,
   TreeportService
-} from './core/index'
-import { createApp } from './app'
-import { BrowserSessionManager } from './browser-sessions'
-import { acquireDaemonOwnership } from './daemon-ownership'
-import type { installDaemonDiagnostics } from './daemon-diagnostics'
+} from './core/index.ts'
+import { createApp } from './app.ts'
+import { BrowserSessionManager } from './browser-sessions.ts'
+import { acquireDaemonOwnership } from './daemon-ownership.ts'
+import type { installDaemonDiagnostics } from './daemon-diagnostics.ts'
 import {
   authenticatedViewers,
   authorizeRequest,
   rejectHttpRequest
-} from './request-security'
-import { WorkspacePresenceManager } from './workspace-presence'
-import { createSocketServer } from './socket-server'
-import { createBrowserDevtoolsBridge } from './browser-devtools'
-import { makeRpcHttpApp } from './rpc-server'
-import { acquireTerminalMetadataManager } from './terminal-metadata'
-import { connectOrStartTerminalHost } from './terminal-host-client'
-import { observeDaemonEventLoop } from './network-telemetry'
-import { WebPushManager } from './web-push'
-import { AppServices } from './app-services'
-import { PackageSystemPort } from './core/services/infrastructure/ports'
+} from './request-security.ts'
+import { WorkspacePresenceManager } from './workspace-presence.ts'
+import { createSocketServer } from './socket-server.ts'
+import { createBrowserDevtoolsBridge } from './browser-devtools.ts'
+import { makeRpcHttpApp } from './rpc-server.ts'
+import { acquireTerminalMetadataManager } from './terminal-metadata.ts'
+import { connectOrStartTerminalHost } from './terminal-host-client.ts'
+import { observeDaemonEventLoop } from './network-telemetry.ts'
+import { WebPushManager } from './web-push.ts'
+import { AppServices } from './app-services.ts'
+import { PackageSystemPort } from './core/services/infrastructure/ports.ts'
 
 export async function main(
   diagnostics: ReturnType<typeof installDaemonDiagnostics>,
@@ -81,7 +81,7 @@ export async function main(
     )
 
     const launcherPath = fileURLToPath(
-      new URL('./core/launcher.js', entrypoint)
+      new URL('../terminal-runtime/launcher.ts', entrypoint)
     )
 
     const terminalHost = await Effect.runPromise(
@@ -91,7 +91,7 @@ export async function main(
           runtimeDir: config.runtimeDir,
           launcherPath,
           engineWorkerPath: fileURLToPath(
-            new URL('./terminal-engine-worker.js', entrypoint)
+            new URL('../terminal-runtime/engine-worker.ts', entrypoint)
           ),
           sessionExecutable: getSessionKeeperPayload(),
           journalLimitBytes,
@@ -148,7 +148,7 @@ export async function main(
               new BrowserSessionManager(service, {
                 ...config,
                 browserRelayEntry: fileURLToPath(
-                  new URL('./browser-relay.js', entrypoint)
+                  new URL('./browser-relay.ts', entrypoint)
                 )
               })
           ),
@@ -428,9 +428,10 @@ export async function main(
           Effect.acquireRelease(
             Effect.tryPromise(() =>
               createViteServer({
+                configLoader: 'native',
                 configFile: path.resolve(
                   path.dirname(fileURLToPath(entrypoint)),
-                  '../../../vite.config.ts'
+                  '../../vite.config.ts'
                 ),
                 appType: 'spa',
                 server: {

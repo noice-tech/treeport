@@ -1,9 +1,9 @@
 import * as Context from 'effect/Context'
-import type { AppConfig } from '../../config'
-import type { EffectCommandRunner } from '../../command'
-import type { ProductEventBus } from '../../events'
-import type { PackageSystem } from '../../package-system'
-import type { TerminalSessionBackend } from '../../terminal'
+import type { AppConfig } from '../../config.ts'
+import type { EffectCommandRunner } from '../../command.ts'
+import type { ProductEventBus } from '../../events.ts'
+import type { PackageSystem } from '../../package-system.ts'
+import type { TerminalSessionBackend } from '../../terminal.ts'
 
 export class ConfigPort extends Context.Tag('treeport/Config')<
   ConfigPort,

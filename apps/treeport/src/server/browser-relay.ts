@@ -10,7 +10,7 @@ import {
 import type {
   BrowserRelayCommand,
   BrowserRelayEvent
-} from './browser-relay-client'
+} from './browser-relay-client.ts'
 
 type Wheel = Extract<BrowserMediaClientMessage, { type: 'wheel' }>
 

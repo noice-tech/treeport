@@ -1,7 +1,7 @@
 import type { TerminalAfterExit, TerminalRecord } from '@treeport/shared'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
-import { DomainError } from '../../domain'
+import { DomainError } from '../../domain.ts'
 
 interface State {
   readonly terminals: Map<string, TerminalRecord>

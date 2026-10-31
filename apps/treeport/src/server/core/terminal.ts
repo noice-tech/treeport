@@ -14,7 +14,7 @@ import {
   type TerminalSessionState,
   type TerminalTitleState,
   type TerminalTraceContext
-} from '../../terminal-runtime/contract'
+} from '../../terminal-runtime/contract.ts'
 
 export {
   type HostedTerminal,
@@ -27,7 +27,7 @@ export {
   type TerminalSessionState,
   type TerminalTitleState,
   type TerminalTraceContext
-} from '../../terminal-runtime/contract'
+} from '../../terminal-runtime/contract.ts'
 
 export interface TerminalHostAttachment extends TerminalHostSnapshot {
   output: Stream.Stream<TerminalHostOutput, unknown>

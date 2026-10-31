@@ -4,17 +4,18 @@ import type {
   TreeportEvent,
   TreeportProject,
   TreeportServiceSdk
-} from './index.js'
+} from './index.ts'
 
 declare const process: { env: Record<string, string | undefined> }
 
 export class TreeportRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string | null,
-    message: string
-  ) {
+  readonly status: number
+  readonly code: string | null
+
+  constructor(status: number, code: string | null, message: string) {
     super(message)
+    this.status = status
+    this.code = code
     this.name = 'TreeportRequestError'
   }
 }

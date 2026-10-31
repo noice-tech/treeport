@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { AppConfig } from './core/config'
-import { acquireDaemonOwnership } from './daemon-ownership'
+import type { AppConfig } from './core/config.ts'
+import { acquireDaemonOwnership } from './daemon-ownership.ts'
 
 const temporary: string[] = []
 

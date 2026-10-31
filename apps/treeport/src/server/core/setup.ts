@@ -6,9 +6,9 @@ import * as Context from 'effect/Context'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import { parseDurationMs } from '../../duration'
-import { asEffectCommandRunner, type CommandRunner } from './command'
-import { resolveZedCreateWorktreeSetupTasks } from './zed'
+import { parseDurationMs } from '../../duration.ts'
+import { asEffectCommandRunner, type CommandRunner } from './command.ts'
+import { resolveZedCreateWorktreeSetupTasks } from './zed.ts'
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30 * 60_000
 const MAX_SETUP_OUTPUT = 4_000

@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { BrowserVideoViewer } from './browser-video-viewer'
+import { BrowserVideoViewer } from './browser-video-viewer.ts'
 
 function deferred<T>() {
   let resolve!: (value: T) => void

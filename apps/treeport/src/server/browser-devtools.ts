@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
-import { authorizeRequest } from './request-security'
+import { authorizeRequest } from './request-security.ts'
 
 const APP_PATH = /^\/api\/browser-devtools\/(app_[a-f0-9]{32})$/u
 

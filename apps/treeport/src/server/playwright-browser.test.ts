@@ -8,11 +8,11 @@ import type { BrowserRuntimeState } from '@treeport/shared'
 import {
   prepareBrowserVideoExtension,
   type BrowserCapturePage
-} from './browser-video'
-import type { BrowserClipboardReader } from './browser-clipboard'
-import { PlaywrightBrowser } from './playwright-browser'
-import type { PlaywrightBrowserHost } from './browser-page-host'
-import { testAccess } from './test-access'
+} from './browser-video.ts'
+import type { BrowserClipboardReader } from './browser-clipboard.ts'
+import { PlaywrightBrowser } from './playwright-browser.ts'
+import type { PlaywrightBrowserHost } from './browser-page-host.ts'
+import { testAccess } from './test-access.ts'
 
 it('keeps the attempted HTTP URL when Chromium navigates to an internal error page', async () => {
   let currentUrl = 'about:blank'

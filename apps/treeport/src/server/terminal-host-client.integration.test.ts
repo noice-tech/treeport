@@ -16,21 +16,21 @@ import {
   connectOrStartTerminalHost as connectOrStartTerminalHostEffect,
   TerminalHostClient as EffectTerminalHostClient,
   type TerminalHostClientOptions
-} from './terminal-host-client'
+} from './terminal-host-client.ts'
 import {
   encodeTerminalHostFrame as encodeTerminalHostFrameEffect,
   makeTerminalHostFrameDecoder,
   type TerminalHostFrame
-} from '../terminal-runtime/api'
+} from '../terminal-runtime/api.ts'
 import {
   makeTerminalHostServer,
   type TerminalHostServerOptions
-} from '../terminal-runtime/server'
-import type { TerminalHostSessions } from '../terminal-runtime/sessions'
-import { probeTerminalHostCompatibility } from '../terminal-runtime/preflight'
-import { sessionStatusSchema } from '../terminal-runtime/session-protocol'
-import { PersistentSession } from '../terminal-runtime/session-client'
-import { hasKittyImage, restoreTestSnapshot } from './test-ghostty-snapshot'
+} from '../terminal-runtime/server.ts'
+import type { TerminalHostSessions } from '../terminal-runtime/sessions.ts'
+import { probeTerminalHostCompatibility } from '../terminal-runtime/preflight.ts'
+import { sessionStatusSchema } from '../terminal-runtime/session-protocol.ts'
+import { PersistentSession } from '../terminal-runtime/session-client.ts'
+import { hasKittyImage, restoreTestSnapshot } from './test-ghostty-snapshot.ts'
 
 async function runLegacy<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   const exit = await Effect.runPromise(Effect.exit(effect))
@@ -526,7 +526,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
       launcherPath,
       engineWorkerPath: path.join(
         repositoryRoot,
-        'apps/treeport/dist/node/server/terminal-engine-worker.js'
+        'apps/treeport/src/terminal-runtime/engine-worker.ts'
       ),
       sessionExecutable: path.join(
         repositoryRoot,
@@ -1338,11 +1338,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
       runtimeDir,
       launcherPath: path.join(
         repositoryRoot,
-        'apps/treeport/dist/node/server/core/launcher.js'
+        'apps/treeport/src/terminal-runtime/launcher.ts'
       ),
       engineWorkerPath: path.join(
         repositoryRoot,
-        'apps/treeport/dist/node/server/terminal-engine-worker.js'
+        'apps/treeport/src/terminal-runtime/engine-worker.ts'
       ),
       sessionExecutable: path.join(
         repositoryRoot,

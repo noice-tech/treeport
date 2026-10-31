@@ -11,7 +11,7 @@ import {
   withSessionRecovery
 } from '@treeport/session-keeper'
 import type { IDisposable, IPty } from 'node-pty'
-import { SessionJournal } from './session-journal'
+import { SessionJournal } from './session-journal.ts'
 import {
   SESSION_DEFAULT_JOURNAL_LIMIT,
   SESSION_MAX_FRAME_BYTES,
@@ -22,7 +22,7 @@ import {
   type SessionRecord,
   type SessionRequest,
   type SessionStatus
-} from './session-protocol'
+} from './session-protocol.ts'
 
 type EnginePty = Pick<
   IPty,
@@ -104,11 +104,19 @@ export class PersistentSession implements EnginePty {
   readonly ready: Promise<void>
   fault: Error | null = null
 
+  readonly directory: string
+  readonly manifest: SessionManifest
+  private readonly journalLimitBytes: number | undefined
+
   private constructor(
-    readonly directory: string,
-    readonly manifest: SessionManifest,
-    private readonly journalLimitBytes: number | undefined
+    directory: string,
+    manifest: SessionManifest,
+    journalLimitBytes: number | undefined
   ) {
+    this.directory = directory
+    this.manifest = manifest
+    this.journalLimitBytes = journalLimitBytes
+
     this.ready = new Promise((resolve, reject) => {
       this.readyResolve = resolve
       this.readyReject = reject

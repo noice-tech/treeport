@@ -63,17 +63,17 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
-import { parseDurationMs } from '../duration.js'
-import { extractJsonOutput } from './args.js'
-import { OpenWorkspaceError, openWorkspace } from './open.js'
+import { parseDurationMs } from '../duration.ts'
+import { extractJsonOutput } from './args.ts'
+import { OpenWorkspaceError, openWorkspace } from './open.ts'
 import {
   daemonHealth,
   readDaemonLogs,
   resolveLocalApiUrl,
   resolvePackagePath,
   treeportVersion
-} from './discovery.js'
-import { humanOutput, stateName } from './output.js'
+} from './discovery.ts'
+import { humanOutput, stateName } from './output.ts'
 
 const contextPrefix = 'TREEPORT'
 let configuredApiUrl: string | undefined
@@ -124,13 +124,16 @@ class CliError<Details = undefined> extends Error {
   readonly code: string
   readonly details: Details | undefined
 
+  readonly exitCode: number
+
   constructor(
     message: string,
-    readonly exitCode: number,
+    exitCode: number,
     code?: string,
     details?: Details
   ) {
     super(message)
+    this.exitCode = exitCode
     this.code =
       code ??
       (exitCode === 2
@@ -1135,7 +1138,9 @@ async function main(args: string[]): Promise<void> {
       treeportVersion(),
       daemonHealth(apiUrl)
     ])
+
     const projectList = health ? await projects() : []
+
     const result = {
       running: health !== null,
       health,
@@ -1251,7 +1256,7 @@ async function main(args: string[]): Promise<void> {
 
   skillsCommand.action(async () => {
     const skill = await fs.readFile(
-      await resolvePackagePath('skills', 'treeport', 'SKILL.md'),
+      resolvePackagePath('skills', 'treeport', 'SKILL.md'),
       'utf8'
     )
 

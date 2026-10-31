@@ -3,19 +3,19 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { eq, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import { serializeOperation } from '../../database'
-import { projects } from '../../database-schema'
-import { ProjectSnapshotOperations } from '../domain-services'
+import { serializeOperation } from '../../database.ts'
+import { projects } from '../../database-schema.ts'
+import { ProjectSnapshotOperations } from '../domain-services.ts'
 import {
   type ApplicationServices,
   WorktreeMutations
-} from '../infrastructure/application-runtime'
-import { MutationLocks } from '../infrastructure/mutation-locks'
-import { EventBusPort, TerminalHostPort } from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { ProjectStore } from '../project/project-store'
-import { TerminalState } from '../terminal/terminal-state'
+} from '../infrastructure/application-runtime.ts'
+import { MutationLocks } from '../infrastructure/mutation-locks.ts'
+import { EventBusPort, TerminalHostPort } from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { ProjectStore } from '../project/project-store.ts'
+import { TerminalState } from '../terminal/terminal-state.ts'
 
 const now = (): string => new Date().toISOString()
 

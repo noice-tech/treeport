@@ -31,25 +31,25 @@ import {
   webApps,
   webAppStorage,
   workspaceItemOrders
-} from '../../database-schema'
-import { DomainError } from '../../domain'
+} from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
 import type {
   ResolvedWebAppSource,
   WebAppAssetResolution
-} from '../../web-app-vite-runtime'
+} from '../../web-app-vite-runtime.ts'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations,
   TerminalOperations
-} from '../domain-services'
-import type { ApplicationServices } from '../infrastructure/application-runtime'
-import { EventBusPort, TerminalHostPort } from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { NetworkListenerPort } from '../../network-listeners'
-import { WebAppRuntimePort } from '../../web-app-vite-runtime'
-import { ProjectStore } from '../project/project-store'
-import { AppDefinitionService } from './app-definition-service'
+} from '../domain-services.ts'
+import type { ApplicationServices } from '../infrastructure/application-runtime.ts'
+import { EventBusPort, TerminalHostPort } from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { NetworkListenerPort } from '../../network-listeners.ts'
+import { WebAppRuntimePort } from '../../web-app-vite-runtime.ts'
+import { ProjectStore } from '../project/project-store.ts'
+import { AppDefinitionService } from './app-definition-service.ts'
 
 const now = (): string => new Date().toISOString()
 

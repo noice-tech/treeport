@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadConfig } from './config'
+import { loadConfig } from './config.ts'
 
 describe('configuration', () => {
   it('defaults to loopback and XDG data locations', () => {

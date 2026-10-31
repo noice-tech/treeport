@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import { afterEach, expect, it, vi } from 'vitest'
-import { browserRuntime } from './browser-runtime'
+import { browserRuntime } from './browser-runtime.ts'
 
 afterEach(() => {
   vi.unstubAllEnvs()

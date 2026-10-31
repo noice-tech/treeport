@@ -10,7 +10,7 @@ import {
   loadZedLauncherDefinitions,
   resolveZedCreateWorktreeSetupTasks,
   resolveZedWorktreePath
-} from './zed'
+} from './zed.ts'
 
 const temporary: string[] = []
 

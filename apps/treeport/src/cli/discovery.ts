@@ -8,27 +8,10 @@ import {
   type HealthResponse
 } from '@treeport/shared'
 import { z } from 'zod'
-import { tailDaemonLog } from '../server/daemon-log.js'
+import { tailDaemonLog } from '../server/daemon-log.ts'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8733
-
-interface Preferences {
-  host?: string | undefined
-  port?: number | undefined
-}
-
-export interface DaemonRecord {
-  pid: number
-  instanceId: string
-  version: string
-  apiUrl: string
-  dataDir: string
-  startedAt: string
-  installationMethod: string
-}
-
-export type HealthRecord = HealthResponse
 
 function listenerUrl(host: string, port: number): string {
   const urlHost =
@@ -46,7 +29,6 @@ function expandHome(value: string): string {
 interface LocalPaths {
   dataDir: string
   runtimeDir: string
-  preferencesPath: string
   statePath: string
   logPath: string
 }
@@ -74,7 +56,6 @@ function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
   return {
     dataDir,
     runtimeDir,
-    preferencesPath: path.join(dataDir, 'config.json'),
     statePath: path.join(runtimeDir, 'daemon.json'),
     logPath: path.join(dataDir, 'logs', 'daemon.log')
   }
@@ -90,11 +71,6 @@ async function readJson<Output>(
     .catch(() => null)
 }
 
-const preferencesSchema: z.ZodType<Preferences> = z.looseObject({
-  host: z.string().optional(),
-  port: z.number().optional()
-})
-
 const daemonRecordSchema = z.strictObject({
   pid: z.number(),
   instanceId: z.string(),
@@ -104,14 +80,6 @@ const daemonRecordSchema = z.strictObject({
   startedAt: z.string(),
   installationMethod: z.string()
 })
-
-async function preferences(
-  env: NodeJS.ProcessEnv = process.env
-): Promise<Preferences> {
-  return (
-    (await readJson(localPaths(env).preferencesPath, preferencesSchema)) ?? {}
-  )
-}
 
 export async function resolveLocalApiUrl(
   env: NodeJS.ProcessEnv = process.env
@@ -150,47 +118,26 @@ export async function resolveLocalApiUrl(
     return record.apiUrl.replace(/\/$/, '')
   }
 
-  const saved = await preferences(env)
-
-  const host =
-    env.TREEPORT_HOST?.trim() || env.HOST?.trim() || saved.host || DEFAULT_HOST
+  const host = env.TREEPORT_HOST?.trim() || env.HOST?.trim() || DEFAULT_HOST
 
   const port = Number.parseInt(
-    env.TREEPORT_PORT?.trim() ||
-      env.PORT?.trim() ||
-      String(saved.port ?? DEFAULT_PORT),
+    env.TREEPORT_PORT?.trim() || env.PORT?.trim() || String(DEFAULT_PORT),
     10
   )
 
   return listenerUrl(host, port)
 }
 
-export async function resolvePackagePath(
-  ...segments: string[]
-): Promise<string> {
-  const candidates = [
-    fileURLToPath(new URL('../', import.meta.url)),
-    fileURLToPath(new URL('../../../', import.meta.url)),
-    fileURLToPath(new URL('../../', import.meta.url))
-  ]
-
-  for (const candidate of candidates) {
-    const manifest = await fs
-      .access(path.join(candidate, 'package.json'))
-      .then(() => true)
-      .catch(() => false)
-
-    if (manifest) {
-      return path.join(candidate, ...segments)
-    }
-  }
-
-  throw new Error('Could not locate the Treeport package directory')
+export function resolvePackagePath(...segments: string[]): string {
+  return path.join(
+    fileURLToPath(new URL('../../', import.meta.url)),
+    ...segments
+  )
 }
 
 export async function treeportVersion(): Promise<string> {
   const manifest = await readJson(
-    await resolvePackagePath('package.json'),
+    resolvePackagePath('package.json'),
     z.looseObject({ version: z.string().optional() })
   )
 
@@ -200,7 +147,7 @@ export async function treeportVersion(): Promise<string> {
 export async function daemonHealth(
   apiUrl: string,
   timeoutMs = 1_500
-): Promise<HealthRecord | null> {
+): Promise<HealthResponse | null> {
   const signal = AbortSignal.timeout(timeoutMs)
 
   return fetch(`${apiUrl}/api/health`, { signal })
@@ -276,19 +223,9 @@ export async function readDaemonLogs(
 ): Promise<string> {
   const paths = await resolveDaemonLogPaths(targetApiUrl)
 
-  const sources = [paths.logPath]
+  const value = await tailDaemonLog(paths.logPath, lines)
 
-  const sections: string[] = []
-
-  for (const logPath of sources) {
-    const value = await tailDaemonLog(logPath, lines)
-
-    if (value) {
-      sections.push(`=== ${logPath} (including retained history) ===\n${value}`)
-    }
-  }
-
-  return sections.length
-    ? `${sections.join('\n')}\nAn absent exit event does not prove a crash; termination may be unknown. For supervisor evidence, check its logs and OS logs.\n`
+  return value
+    ? `=== ${paths.logPath} (including retained history) ===\n${value}\nAn absent exit event does not prove a crash; termination may be unknown. For supervisor evidence, check its logs and OS logs.\n`
     : `No daemon logs found at ${paths.logPath}. Check your supervisor for startup diagnostics.\n`
 }

@@ -23,8 +23,8 @@ import {
   TERMINAL_BACKGROUND,
   TERMINAL_FOREGROUND,
   TERMINAL_IMAGE_STORAGE_BYTES
-} from '../ghostty-vt/ghostty-vt'
-import { loadGhosttyVtModule } from '../ghostty-vt/node'
+} from '../ghostty-vt/ghostty-vt.ts'
+import { loadGhosttyVtModule } from '../ghostty-vt/node.ts'
 import {
   TERMINAL_PROGRESS_STALE_MS,
   type HostedTerminal,
@@ -39,15 +39,15 @@ import {
   type TerminalProcess,
   type TerminalSessionState,
   type TerminalTitleState
-} from './contract'
-import { PersistentSession } from './session-client'
-import { decodeTerminalEngineMetadata, terminalSessionName } from './api'
+} from './contract.ts'
+import { PersistentSession } from './session-client.ts'
+import { decodeTerminalEngineMetadata, terminalSessionName } from './api.ts'
 import {
   integrateShellLaunch,
   prepareShellIntegration
-} from './shell-integration'
+} from './shell-integration.ts'
 
-export type { TerminalHostRuntimeEvent } from './contract'
+export type { TerminalHostRuntimeEvent } from './contract.ts'
 
 const HOST_SCROLLBACK_LINES = 50_000
 
@@ -434,8 +434,30 @@ export class TerminalHostSessions {
 
   readonly shellIntegrationDir: string
 
+  private readonly options: Required<
+    Pick<
+      TerminalHostSessionsOptions,
+      | 'runtimeDir'
+      | 'launcherPath'
+      | 'spawnPty'
+      | 'terminateProcessTree'
+      | 'progressStaleMs'
+      | 'sshAgentDiscovery'
+    >
+  >
+  private readonly sessions: SynchronizedRef.SynchronizedRef<
+    ReadonlyMap<string, HostedTerminalSession | null>
+  >
+  private readonly cleanups: FiberSet.FiberSet<void, never>
+  private readonly pendingCleanups: Set<PendingCleanup>
+  private readonly recoveryScope: Scope.Scope
+  private readonly persistentOptions: Pick<
+    TerminalHostSessionsOptions,
+    'sessionExecutable' | 'journalLimitBytes'
+  >
+
   private constructor(
-    private readonly options: Required<
+    options: Required<
       Pick<
         TerminalHostSessionsOptions,
         | 'runtimeDir'
@@ -446,17 +468,24 @@ export class TerminalHostSessions {
         | 'sshAgentDiscovery'
       >
     >,
-    private readonly sessions: SynchronizedRef.SynchronizedRef<
+    sessions: SynchronizedRef.SynchronizedRef<
       ReadonlyMap<string, HostedTerminalSession | null>
     >,
-    private readonly cleanups: FiberSet.FiberSet<void, never>,
-    private readonly pendingCleanups: Set<PendingCleanup>,
-    private readonly recoveryScope: Scope.Scope,
-    private readonly persistentOptions: Pick<
+    cleanups: FiberSet.FiberSet<void, never>,
+    pendingCleanups: Set<PendingCleanup>,
+    recoveryScope: Scope.Scope,
+    persistentOptions: Pick<
       TerminalHostSessionsOptions,
       'sessionExecutable' | 'journalLimitBytes'
     >
   ) {
+    this.options = options
+    this.sessions = sessions
+    this.cleanups = cleanups
+    this.pendingCleanups = pendingCleanups
+    this.recoveryScope = recoveryScope
+    this.persistentOptions = persistentOptions
+
     this.shellIntegrationDir = path.join(
       options.runtimeDir,
       'terminal-shell-integration'

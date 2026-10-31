@@ -6,22 +6,22 @@ import { afterAll, afterEach, beforeAll } from 'vitest'
 import { asc, eq, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import type { ProjectRecord } from '@treeport/shared'
-import type { CommandRequest, CommandResult, CommandRunner } from './command'
+import type { CommandRequest, CommandResult, CommandRunner } from './command.ts'
 import {
   mapProject,
   openDatabaseForTest,
   type TreeportDatabase
-} from './database'
-import { projects, worktrees } from './database-schema'
-import { TreeportService } from './service'
-import type { AppConfig } from './config'
-import type { ApplicationServices } from './services/infrastructure/application-runtime'
+} from './database.ts'
+import { projects, worktrees } from './database-schema.ts'
+import { TreeportService } from './service.ts'
+import type { AppConfig } from './config.ts'
+import type { ApplicationServices } from './services/infrastructure/application-runtime.ts'
 import type {
   HostedTerminal,
   TerminalCreateInput,
   TerminalSessionBackend,
   TerminalSessionState
-} from './terminal'
+} from './terminal.ts'
 
 const directories: string[] = []
 let templateDirectory: string
@@ -766,7 +766,11 @@ class SystemDouble implements CommandRunner {
 }
 
 export class TerminalHostDouble implements TerminalSessionBackend {
-  constructor(private readonly system: SystemDouble) {}
+  private readonly system: SystemDouble
+
+  constructor(system: SystemDouble) {
+    this.system = system
+  }
 
   initialize() {
     return Effect.succeed(true)

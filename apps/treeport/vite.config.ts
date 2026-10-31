@@ -38,7 +38,7 @@ export default defineConfig({
   server: {
     allowedHosts: ['.ts.net'],
     watch: {
-      ignored: ['**/.treeport-dev/**', '**/.treeport-dev-dist/**']
+      ignored: ['**/.treeport-dev/**']
     }
   }
 })

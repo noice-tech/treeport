@@ -5,14 +5,14 @@ import type {
 } from '@treeport/shared'
 import { eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import { webAppPermissionGrants } from '../../database-schema'
-import type { DomainError } from '../../domain'
-import { AppOperations, ProjectSnapshotOperations } from '../domain-services'
-import type { ApplicationServices } from '../infrastructure/application-runtime'
-import { EventBusPort, PackageSystemPort } from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { WebAppRuntimePort } from '../../web-app-vite-runtime'
-import { ProjectStore } from '../project/project-store'
+import { webAppPermissionGrants } from '../../database-schema.ts'
+import type { DomainError } from '../../domain.ts'
+import { AppOperations, ProjectSnapshotOperations } from '../domain-services.ts'
+import type { ApplicationServices } from '../infrastructure/application-runtime.ts'
+import { EventBusPort, PackageSystemPort } from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { WebAppRuntimePort } from '../../web-app-vite-runtime.ts'
+import { ProjectStore } from '../project/project-store.ts'
 
 export class PackageService {
   listPackages(): Effect.Effect<

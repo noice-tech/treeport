@@ -8,8 +8,8 @@ import {
   parseTerminalServerEvent,
   terminalAttentionAcknowledgementSchema as terminalAttentionAcknowledgementEffectSchema,
   terminalSizeSchema as terminalSizeEffectSchema
-} from './index.js'
-import { testSchema } from './schema.test-support.js'
+} from './index.ts'
+import { testSchema } from './schema.test-support.ts'
 
 const terminalAttentionAcknowledgementSchema = testSchema(
   terminalAttentionAcknowledgementEffectSchema

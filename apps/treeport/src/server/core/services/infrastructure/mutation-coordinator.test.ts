@@ -3,8 +3,8 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import { describe, expect, it } from 'vitest'
-import { ApplicationDaemons, ApplicationFibers } from './application-runtime'
-import { makeMutationCoordinator } from './mutation-coordinator'
+import { ApplicationDaemons, ApplicationFibers } from './application-runtime.ts'
+import { makeMutationCoordinator } from './mutation-coordinator.ts'
 
 class TestValue extends Context.Tag('treeport/test/MutationCoordinatorValue')<
   TestValue,

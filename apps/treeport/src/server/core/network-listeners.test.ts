@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CommandRequest, CommandResult, CommandRunner } from './command'
-import { NetworkListenerAdapter } from './network-listeners'
+import type { CommandRequest, CommandResult, CommandRunner } from './command.ts'
+import { NetworkListenerAdapter } from './network-listeners.ts'
 
 const temporary: string[] = []
 

@@ -5,8 +5,8 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import * as Effect from 'effect/Effect'
-import type { TerminalLaunchSpec } from './contract'
-import { integrateShellLaunch } from './shell-integration'
+import type { TerminalLaunchSpec } from './contract.ts'
+import { integrateShellLaunch } from './shell-integration.ts'
 
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 

@@ -1,14 +1,14 @@
 import http from 'node:http'
 import { sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { TreeportService } from './service'
+import { TreeportService } from './service.ts'
 import {
   databases,
   fixture,
   integrationService,
   services,
   TerminalHostDouble
-} from './service.integration-fixture'
+} from './service.integration-fixture.ts'
 
 describe('operation recovery', () => {
   it('replays a tree creation that had not started before restart', async () => {

@@ -2,9 +2,9 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { openDatabaseForTest } from './database'
-import type { DomainError } from './domain'
-import { TreeportService } from './service'
+import { openDatabaseForTest } from './database.ts'
+import type { DomainError } from './domain.ts'
+import { TreeportService } from './service.ts'
 import {
   databases,
   fixture,
@@ -13,8 +13,8 @@ import {
   persistedProjectMetadata,
   persistedProjectOpen,
   services
-} from './service.integration-fixture'
-import { TerminalHostDouble } from './service.integration-fixture'
+} from './service.integration-fixture.ts'
+import { TerminalHostDouble } from './service.integration-fixture.ts'
 
 describe('ordinary folder projects', () => {
   it('registers, uses, reopens, moves, and removes a folder without Git operations', async () => {

@@ -11,30 +11,30 @@ import type {
 } from '@treeport/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import { projects } from '../../database-schema'
-import { DomainError } from '../../domain'
+import { projects } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
 import {
   ProjectObservationOperations,
   ProjectRegistrationOperations,
   ProjectSnapshotOperations
-} from '../domain-services'
+} from '../domain-services.ts'
 import {
   type ApplicationServices,
   ProjectObservations,
   WorktreeMutations
-} from '../infrastructure/application-runtime'
-import { MutationLocks } from '../infrastructure/mutation-locks'
+} from '../infrastructure/application-runtime.ts'
+import { MutationLocks } from '../infrastructure/mutation-locks.ts'
 import {
   EventBusPort,
   PackageSystemPort,
   TerminalHostPort
-} from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { TerminalState } from '../terminal/terminal-state'
-import { ProjectDirectoryService } from './project-directory-service'
-import { ProjectFolderIdentities } from './project-folder-identities'
-import { ProjectStore } from './project-store'
+} from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { TerminalState } from '../terminal/terminal-state.ts'
+import { ProjectDirectoryService } from './project-directory-service.ts'
+import { ProjectFolderIdentities } from './project-folder-identities.ts'
+import { ProjectStore } from './project-store.ts'
 
 const now = (): string => new Date().toISOString()
 

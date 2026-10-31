@@ -2,9 +2,9 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
-import { SpawnCommandRunner } from './command'
-import { fixture } from './service.integration-fixture'
-import { CommandPort } from './services/infrastructure/ports'
+import { SpawnCommandRunner } from './command.ts'
+import { fixture } from './service.integration-fixture.ts'
+import { CommandPort } from './services/infrastructure/ports.ts'
 
 describe('tree cleanup completion', () => {
   it.each([0, 1])(

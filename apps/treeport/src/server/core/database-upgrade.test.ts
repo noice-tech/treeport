@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { sql } from 'drizzle-orm'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { expect, it } from 'vitest'
-import { openDatabaseForTest, type TreeportDatabase } from './database'
+import { openDatabaseForTest, type TreeportDatabase } from './database.ts'
 import baseline from './fixtures/database-0.5.0.json' with { type: 'json' }
 
 it('preserves the published database contract through upgrade and downgrade refusal', async () => {

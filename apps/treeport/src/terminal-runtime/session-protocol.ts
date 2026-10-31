@@ -2,7 +2,6 @@ export {
   sessionRecordSchema,
   sessionManifestSchema,
   sessionStatusSchema,
-  sessionRequestSchema,
   sessionFrameSchema,
   SESSION_MAX_FRAME_BYTES,
   SESSION_DEFAULT_JOURNAL_LIMIT,

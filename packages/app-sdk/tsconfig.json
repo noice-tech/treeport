@@ -3,9 +3,10 @@
   "compilerOptions": {
     "declarationMap": false,
     "sourceMap": false,
-    "rootDir": "src",
-    "outDir": "dist",
-    "tsBuildInfoFile": "dist/.tsbuildinfo"
+    "rootDir": "../..",
+    "composite": false,
+    "noEmit": true,
+    "erasableSyntaxOnly": true
   },
   "include": ["src/**/*.ts"]
 }

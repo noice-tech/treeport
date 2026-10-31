@@ -29,21 +29,24 @@ import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
 import * as Queue from 'effect/Queue'
 import { WebSocket, WebSocketServer } from 'ws'
-import type { AppConfig, TreeportService } from './core/index'
-import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
+import type { AppConfig, TreeportService } from './core/index.ts'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
 import {
   TerminalAttachmentManager,
   type TerminalTransport
-} from './terminal-attachments'
-import { authorizeRequest, type AuthenticatedViewer } from './request-security'
-import type { TerminalMetadataManager } from './terminal-metadata'
-import type { TerminalAttachmentBackend } from './core/terminal'
+} from './terminal-attachments.ts'
+import {
+  authorizeRequest,
+  type AuthenticatedViewer
+} from './request-security.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
+import type { TerminalAttachmentBackend } from './core/terminal.ts'
 import {
   BrowserSessionManager,
   type BrowserOwnerTransport,
   type BrowserTransport
-} from './browser-sessions'
-import { networkTelemetry } from './network-telemetry'
+} from './browser-sessions.ts'
+import { networkTelemetry } from './network-telemetry.ts'
 
 const HANDSHAKE_TIMEOUT_MS = 10_000
 const OUTBOUND_QUEUE_CAPACITY = 512

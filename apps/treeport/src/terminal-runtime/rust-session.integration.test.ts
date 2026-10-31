@@ -10,14 +10,14 @@ import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { getSessionKeeperPayload } from '@treeport/session-keeper'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PersistentSession } from './session-client'
-import { SessionJournal } from './session-journal'
+import { PersistentSession } from './session-client.ts'
+import { SessionJournal } from './session-journal.ts'
 import {
   SESSION_MAX_FRAME_BYTES,
   sessionFrameSchema,
   sessionStatusSchema,
   type SessionFrame
-} from './session-protocol'
+} from './session-protocol.ts'
 
 const binary = getSessionKeeperPayload()
 const execute = promisify(execFile)
@@ -125,8 +125,8 @@ os.execv(${JSON.stringify(launch.executable)}, ${JSON.stringify([launch.executab
 }
 
 async function bundledJournalUrl() {
-  const dist = path.resolve(import.meta.dirname, '../../dist')
-  const entry = path.join(dist, 'session-journal.js')
+  const source = import.meta.dirname
+  const entry = path.join(source, 'session-journal.ts')
   await fs.access(entry)
 
   return pathToFileURL(entry).href

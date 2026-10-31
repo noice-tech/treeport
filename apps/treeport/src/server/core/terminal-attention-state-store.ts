@@ -1,8 +1,8 @@
 import type { TerminalAttentionReason } from '@treeport/shared'
 import { and, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import type { DatabaseError, DatabaseService } from './database'
-import { terminalAttentionStates } from './database-schema'
+import type { DatabaseError, DatabaseService } from './database.ts'
+import { terminalAttentionStates } from './database-schema.ts'
 
 export interface TerminalAttentionState {
   terminalId: string
@@ -24,7 +24,11 @@ export interface TerminalAttentionStateStore {
 }
 
 export class DatabaseTerminalAttentionStateStore implements TerminalAttentionStateStore {
-  constructor(private readonly database: DatabaseService) {}
+  private readonly database: DatabaseService
+
+  constructor(database: DatabaseService) {
+    this.database = database
+  }
 
   load(): Effect.Effect<TerminalAttentionState[], DatabaseError> {
     return this.database

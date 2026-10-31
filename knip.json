@@ -10,7 +10,14 @@
       "ignoreDependencies": ["@treeport/treeport"]
     },
     "apps/treeport": {
-      "entry": ["web/public/sw.js", "web/public/browser-latency-probe.js"],
+      "entry": [
+        "web/public/sw.js",
+        "web/public/browser-latency-probe.js",
+        "src/server/daemon-log-worker.ts",
+        "src/server/browser-relay.ts",
+        "src/terminal-runtime/engine-worker.ts",
+        "src/terminal-runtime/launcher.ts"
+      ],
       "ignoreDependencies": [
         "@effect/opentelemetry",
         "@opentelemetry/sdk-trace-base",

@@ -4,23 +4,23 @@ import path from 'node:path'
 import type { ProjectRecord } from '@treeport/shared'
 import { eq, or, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import { projects, worktrees } from '../../database-schema'
-import { DomainError } from '../../domain'
+import { projects, worktrees } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
 import {
   ProjectSnapshotOperations,
   WorktreeReconciliation
-} from '../domain-services'
+} from '../domain-services.ts'
 import {
   type ApplicationServices,
   ProjectObservations,
   WorktreeMutations
-} from '../infrastructure/application-runtime'
-import { MutationLocks } from '../infrastructure/mutation-locks'
-import { EventBusPort, PackageSystemPort } from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { GitPort } from '../../git'
-import { ProjectFolderIdentities } from './project-folder-identities'
-import { ProjectStore } from './project-store'
+} from '../infrastructure/application-runtime.ts'
+import { MutationLocks } from '../infrastructure/mutation-locks.ts'
+import { EventBusPort, PackageSystemPort } from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { GitPort } from '../../git.ts'
+import { ProjectFolderIdentities } from './project-folder-identities.ts'
+import { ProjectStore } from './project-store.ts'
 
 const now = (): string => new Date().toISOString()
 

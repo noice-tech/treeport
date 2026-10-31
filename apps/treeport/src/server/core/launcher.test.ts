@@ -10,8 +10,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   runLaunchSpec,
   type LauncherDependencies
-} from '../../terminal-runtime/launcher'
-import type { TerminalLaunchSpec } from './terminal'
+} from '../../terminal-runtime/launcher.ts'
+import type { TerminalLaunchSpec } from './terminal.ts'
 
 class FakeChild extends EventEmitter {
   readonly kill = vi.fn((signal: NodeJS.Signals) => {

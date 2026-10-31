@@ -32,10 +32,7 @@ const applicationRoot = path.join(repositoryRoot, 'apps/treeport')
 const runtimeDirectory = path.join(applicationRoot, '.treeport-dev/runtime')
 const recordPath = path.join(runtimeDirectory, 'daemon.json')
 
-const cliEntrypoint = path.join(
-  applicationRoot,
-  '.treeport-dev-dist/node/cli/index.js'
-)
+const cliEntrypoint = path.join(applicationRoot, 'bin/treeport.mjs')
 
 const recordSource = await readFile(recordPath, 'utf8').catch(() => null)
 
@@ -105,7 +102,7 @@ const processCommand = recordIsValid
 
 const expectedServerEntrypoint = path.join(
   applicationRoot,
-  '.treeport-dev-dist/node/server/index.js'
+  'src/server/index.ts'
 )
 
 const processMatches =

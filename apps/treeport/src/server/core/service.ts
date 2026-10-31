@@ -5,16 +5,16 @@ import type {
   ServerResponse
 } from 'node:http'
 import type { Duplex } from 'node:stream'
-import type { AppConfig } from './config'
-import { asEffectCommandRunner, type CommandRunner } from './command'
-import type { DomainError } from './domain'
-import { ProductEventBus } from './events'
-import { PackageSystem } from './package-system'
+import type { AppConfig } from './config.ts'
+import { asEffectCommandRunner, type CommandRunner } from './command.ts'
+import type { DomainError } from './domain.ts'
+import { ProductEventBus } from './events.ts'
+import { PackageSystem } from './package-system.ts'
 import {
   type WebAppViteRuntime,
   WebAppRuntimePort
-} from './web-app-vite-runtime'
-import { ApplicationLifecycle } from './services/infrastructure/application-lifecycle'
+} from './web-app-vite-runtime.ts'
+import { ApplicationLifecycle } from './services/infrastructure/application-lifecycle.ts'
 import {
   type ApplicationRuntime,
   type ApplicationServices,
@@ -24,19 +24,19 @@ import {
   TerminalUploadMutations,
   makeApplicationRuntime,
   runApplicationEffect
-} from './services/infrastructure/application-runtime'
-import type { TerminalSessionBackend } from './terminal'
-import { PackageService } from './services/package/package-service'
-import { ProjectObservationService } from './services/project/project-observation-service'
-import { ProjectRegistrationService } from './services/project/project-registration-service'
-import { ProjectSnapshotService } from './services/project/project-snapshot-service'
-import { ProjectService } from './services/project/project-service'
-import { AppService } from './services/app/app-service'
-import { LauncherService } from './services/launcher/launcher-service'
-import { TerminalService } from './services/terminal/terminal-service'
-import { TreeFileService } from './services/tree-file/tree-file-service'
-import { WorktreeService } from './services/worktree/worktree-service'
-import { WorktreeReconciler } from './services/worktree/worktree-reconciler'
+} from './services/infrastructure/application-runtime.ts'
+import type { TerminalSessionBackend } from './terminal.ts'
+import { PackageService } from './services/package/package-service.ts'
+import { ProjectObservationService } from './services/project/project-observation-service.ts'
+import { ProjectRegistrationService } from './services/project/project-registration-service.ts'
+import { ProjectSnapshotService } from './services/project/project-snapshot-service.ts'
+import { ProjectService } from './services/project/project-service.ts'
+import { AppService } from './services/app/app-service.ts'
+import { LauncherService } from './services/launcher/launcher-service.ts'
+import { TerminalService } from './services/terminal/terminal-service.ts'
+import { TreeFileService } from './services/tree-file/tree-file-service.ts'
+import { WorktreeService } from './services/worktree/worktree-service.ts'
+import { WorktreeReconciler } from './services/worktree/worktree-reconciler.ts'
 
 interface ServiceDependencies {
   config: AppConfig

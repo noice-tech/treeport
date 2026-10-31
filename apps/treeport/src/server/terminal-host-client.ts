@@ -26,7 +26,7 @@ import type {
   TerminalSessionState,
   TerminalTitleState,
   TerminalTraceContext
-} from './core/terminal'
+} from './core/terminal.ts'
 import {
   decodeTerminalHostRecord,
   decodeTerminalHostResult,
@@ -45,10 +45,10 @@ import {
   type TerminalHostResult,
   type TerminalHostResponseFrame,
   type TerminalHostResults
-} from '../terminal-runtime/api'
-import { inspectLegacyTerminalHost } from '../terminal-runtime/legacy-host'
+} from '../terminal-runtime/api.ts'
+import { inspectLegacyTerminalHost } from '../terminal-runtime/legacy-host.ts'
 import { prepareSessionKeeper } from '@treeport/session-keeper'
-import { startTerminalEngineWorker } from './terminal-engine-worker'
+import { startTerminalEngineWorker } from './terminal-engine-worker.ts'
 
 const TERMINAL_HOST_REQUEST_TIMEOUT_MS = 30_000
 const LEGACY_HOST_STOP_TIMEOUT_MS = 10_000
@@ -233,16 +233,32 @@ export class TerminalHostClient
 {
   private readonly routeLocks = new Map<string, RouteLock>()
 
+  readonly record: TerminalHostRecord
+  private readonly outgoing: Queue.Queue<Buffer>
+  private readonly pending: SynchronizedRef.SynchronizedRef<
+    ReadonlyMap<string, PendingRequest>
+  >
+  private readonly outputRoutes: Map<string, OutputRoute>
+  private readonly runtimeRoutes: Map<string, RuntimeRoute>
+  private readonly closed: SynchronizedRef.SynchronizedRef<boolean>
+
   private constructor(
-    readonly record: TerminalHostRecord,
-    private readonly outgoing: Queue.Queue<Buffer>,
-    private readonly pending: SynchronizedRef.SynchronizedRef<
+    record: TerminalHostRecord,
+    outgoing: Queue.Queue<Buffer>,
+    pending: SynchronizedRef.SynchronizedRef<
       ReadonlyMap<string, PendingRequest>
     >,
-    private readonly outputRoutes: Map<string, OutputRoute>,
-    private readonly runtimeRoutes: Map<string, RuntimeRoute>,
-    private readonly closed: SynchronizedRef.SynchronizedRef<boolean>
-  ) {}
+    outputRoutes: Map<string, OutputRoute>,
+    runtimeRoutes: Map<string, RuntimeRoute>,
+    closed: SynchronizedRef.SynchronizedRef<boolean>
+  ) {
+    this.record = record
+    this.outgoing = outgoing
+    this.pending = pending
+    this.outputRoutes = outputRoutes
+    this.runtimeRoutes = runtimeRoutes
+    this.closed = closed
+  }
 
   static connect(
     socketPath: string,

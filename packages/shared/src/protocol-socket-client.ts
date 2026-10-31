@@ -4,9 +4,9 @@ import * as FiberId from 'effect/FiberId'
 import * as Layer from 'effect/Layer'
 import * as Queue from 'effect/Queue'
 import * as Socket from '@effect/platform/Socket'
-import { parseSocketMessage } from './socket-protocol.js'
-import { decodeUnknownOrNull } from './schema.js'
-import { SOCKET_PATH } from './terminal-protocol.js'
+import { parseSocketMessage } from './socket-protocol.ts'
+import { decodeUnknownOrNull } from './schema.ts'
+import { SOCKET_PATH } from './terminal-protocol.ts'
 import * as Schema from 'effect/Schema'
 
 type EventArguments<
@@ -128,10 +128,13 @@ class EffectProtocolSocket<
   private reconnectAttempt = 0
   private manuallyClosed = false
 
-  constructor(
-    private readonly namespace: string,
-    private readonly options: ProtocolSocketOptions
-  ) {
+  private readonly namespace: string
+  private readonly options: ProtocolSocketOptions
+
+  constructor(namespace: string, options: ProtocolSocketOptions) {
+    this.namespace = namespace
+    this.options = options
+
     this.reconnectEnabled = options.reconnection ?? false
 
     if (options.autoConnect !== false) {

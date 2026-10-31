@@ -1,22 +1,22 @@
 /* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
 import * as Either from 'effect/Either'
 import * as Schema from 'effect/Schema'
-import { browserVideoSettingsSchema } from './browser-video.js'
-import { browserClipboardSchema } from './browser-clipboard.js'
-import { viewerIdentitySchema } from './presence-protocol.js'
+import { browserVideoSettingsSchema } from './browser-video.ts'
+import { browserClipboardSchema } from './browser-clipboard.ts'
+import { viewerIdentitySchema } from './presence-protocol.ts'
 import {
   BROWSER_MAX_UPLOAD_BYTES,
   browserAppIdSchema,
   browserObservedUrlSchema,
   browserUrlSchema
-} from './browser-host.js'
+} from './browser-host.ts'
 
 export {
   BROWSER_MAX_UPLOAD_BYTES,
   browserAppIdSchema,
   browserObservedUrlSchema,
   browserUrlSchema
-} from './browser-host.js'
+} from './browser-host.ts'
 
 export const BROWSER_MAX_UPLOAD_FILES = 100
 export const BROWSER_MAX_INSERT_TEXT_LENGTH = 1024 * 1024

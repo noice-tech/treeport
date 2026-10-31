@@ -1,7 +1,6 @@
 node_modules/
 .turbo/
 .treeport-dev/
-.treeport-dev-dist/
 pnpm-debug.log*
 dist/
 dist-types/

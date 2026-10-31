@@ -1,27 +1,20 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": ".",
-    "outDir": "dist-types",
-    "tsBuildInfoFile": "dist-types/.tsbuildinfo",
+    "rootDir": "../..",
     "jsx": "react-jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "paths": {
       "@/*": ["./src/web/*"]
     },
-    "emitDeclarationOnly": true,
-    "composite": true
+    "composite": false,
+    "noEmit": true
   },
   "include": [
     "src/web/**/*.ts",
     "src/web/**/*.tsx",
     "e2e/**/*.ts",
     "vite.config.ts"
-  ],
-  "references": [
-    { "path": "../../packages/desktop-bridge" },
-    { "path": "../../packages/shared" },
-    { "path": "./tsconfig.node.json" }
   ]
 }

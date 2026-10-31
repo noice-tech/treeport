@@ -4,7 +4,7 @@ import {
   EVENT_PROTOCOL_VERSION,
   eventsSnapshotSchema,
   productEventSchema
-} from './socket-protocol.js'
+} from './socket-protocol.ts'
 
 export const projectEventsItemSchema = Schema.Union(
   Schema.Struct({

@@ -13,17 +13,17 @@ import {
   TerminalUploadMutations,
   TreeFileMutations,
   WorktreeMutations
-} from './application-runtime'
-import { MutationLocks } from './mutation-locks'
+} from './application-runtime.ts'
+import { MutationLocks } from './mutation-locks.ts'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations,
   WorktreeOperations
-} from '../domain-services'
-import { PackageMutations } from '../package/package-mutations'
-import { ProjectStore } from '../project/project-store'
-import { PackageSystemPort, TerminalHostPort } from './ports'
-import { DatabasePort } from '../../database'
+} from '../domain-services.ts'
+import { PackageMutations } from '../package/package-mutations.ts'
+import { ProjectStore } from '../project/project-store.ts'
+import { PackageSystemPort, TerminalHostPort } from './ports.ts'
+import { DatabasePort } from '../../database.ts'
 
 const now = (): string => new Date().toISOString()
 

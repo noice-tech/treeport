@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assertLoopbackHost } from './loopback'
+import { assertLoopbackHost } from './loopback.ts'
 
 export interface AppConfig {
   host: string

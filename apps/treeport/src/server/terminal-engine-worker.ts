@@ -1,7 +1,7 @@
 import { Worker } from 'node:worker_threads'
 import * as Effect from 'effect/Effect'
-import type { EngineWorkerOptions } from '../terminal-runtime/engine-worker'
-import { TerminalHostConnectionError } from '../terminal-runtime/api'
+import type { EngineWorkerOptions } from '../terminal-runtime/engine-worker.ts'
+import { TerminalHostConnectionError } from '../terminal-runtime/api.ts'
 
 export function startTerminalEngineWorker(
   entry: string,
@@ -29,12 +29,12 @@ export function startTerminalEngineWorker(
           })
 
           const started = new Promise<void>((resolve, reject) => {
-            worker.once('message', (message: 'ready') => {
+            // eslint-disable-next-line anti-slop/no-unknown-parameters -- Worker IPC includes Node watch dependency reports; only the readiness literal is accepted.
+            worker.on('message', function onMessage(message: unknown) {
               if (message === 'ready') {
+                worker.off('message', onMessage)
                 ready = true
                 resolve()
-              } else {
-                reject(new Error('Invalid terminal engine readiness message'))
               }
             })
             worker.on('error', reject)

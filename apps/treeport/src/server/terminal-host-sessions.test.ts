@@ -12,10 +12,10 @@ import * as Stream from 'effect/Stream'
 import {
   makeTerminalHostSessions,
   type TerminalHostRuntimeEvent
-} from '../terminal-runtime/sessions'
-import { GhosttyTerminal } from '../ghostty-vt/ghostty-vt'
-import { testAccess } from './test-access'
-import { restoreTestSnapshot } from './test-ghostty-snapshot'
+} from '../terminal-runtime/sessions.ts'
+import { GhosttyTerminal } from '../ghostty-vt/ghostty-vt.ts'
+import { testAccess } from './test-access.ts'
+import { restoreTestSnapshot } from './test-ghostty-snapshot.ts'
 
 class FakePty {
   readonly pid = 42

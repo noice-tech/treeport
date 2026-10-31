@@ -16,11 +16,11 @@ import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ProductEventBus, type TreeportService } from './core/index'
-import { makeRpcHttpApp } from './rpc-server'
-import { WorkspacePresenceManager } from './workspace-presence'
-import { testAccess } from './test-access'
-import type { TerminalMetadataManager } from './terminal-metadata'
+import { ProductEventBus, type TreeportService } from './core/index.ts'
+import { makeRpcHttpApp } from './rpc-server.ts'
+import { WorkspacePresenceManager } from './workspace-presence.ts'
+import { testAccess } from './test-access.ts'
+import type { TerminalMetadataManager } from './terminal-metadata.ts'
 
 interface RpcFixture {
   readonly url: string

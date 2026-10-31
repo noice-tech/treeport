@@ -7,15 +7,15 @@ import type {
   TerminalSize
 } from '@treeport/shared'
 import type * as Effect from 'effect/Effect'
-import type { DomainError } from '../../domain'
-import type { ApplicationServices } from '../infrastructure/application-runtime'
+import type { DomainError } from '../../domain.ts'
+import type { ApplicationServices } from '../infrastructure/application-runtime.ts'
 import {
   type CreateWorktreeResult,
   WorktreeCreationService
-} from './worktree-creation-service'
-import { WorktreeRemovalService } from './worktree-removal-service'
+} from './worktree-creation-service.ts'
+import { WorktreeRemovalService } from './worktree-removal-service.ts'
 
-export type { CreateWorktreeResult } from './worktree-creation-service'
+export type { CreateWorktreeResult } from './worktree-creation-service.ts'
 
 export class WorktreeService {
   private readonly creation: WorktreeCreationService

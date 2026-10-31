@@ -65,16 +65,28 @@ export class BrowserRelay {
     }
   >()
 
+  private readonly entry: string
+  private readonly input: {
+    wheel(
+      attachment: string,
+      message: Extract<BrowserClientMessage, { type: 'wheel' }>
+    ): void
+    cursor(attachment: string, point: { x: number; y: number }): void
+  }
+
   constructor(
-    private readonly entry: string,
-    private readonly input: {
+    entry: string,
+    input: {
       wheel(
         attachment: string,
         message: Extract<BrowserClientMessage, { type: 'wheel' }>
       ): void
       cursor(attachment: string, point: { x: number; y: number }): void
     }
-  ) {}
+  ) {
+    this.entry = entry
+    this.input = input
+  }
 
   open(
     params: {

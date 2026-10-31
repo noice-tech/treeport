@@ -11,8 +11,8 @@ import path from 'node:path'
 import type { Duplex } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { AppService } from '@treeport/shared'
-import { DomainError } from './core/domain'
-import type { PackageServiceDeclaration } from './core/package-system'
+import { DomainError } from './core/domain.ts'
+import type { PackageServiceDeclaration } from './core/package-system.ts'
 
 interface ServiceContext {
   packageRoot: string
@@ -67,7 +67,11 @@ export class AppServices {
   private syncing: Promise<void> | null = null
   private disposed = false
 
-  constructor(private readonly options: AppServicesOptions) {}
+  private readonly options: AppServicesOptions
+
+  constructor(options: AppServicesOptions) {
+    this.options = options
+  }
 
   start(): void {
     void this.sync()

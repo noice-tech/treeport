@@ -13,8 +13,8 @@ import * as Queue from 'effect/Queue'
 import * as Ref from 'effect/Ref'
 import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
-import type { TerminalCreateInput } from './contract'
-import type { TerminalHostSessions } from './sessions'
+import type { TerminalCreateInput } from './contract.ts'
+import type { TerminalHostSessions } from './sessions.ts'
 import {
   decodeTerminalHostInput,
   decodeTerminalHostRecord,
@@ -26,7 +26,7 @@ import {
   type TerminalHostRequestFrame,
   type TerminalHostResponseFrame,
   type TerminalHostResults
-} from './api'
+} from './api.ts'
 
 const TERMINAL_HOST_EVENT_HIGH_WATERMARK = 4 * 1024 * 1024
 const TERMINAL_HOST_EVENT_LOW_WATERMARK = 1024 * 1024

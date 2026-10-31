@@ -9,7 +9,7 @@
     },
     "@treeport/session-keeper#build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"],
+      "outputs": ["native/target/release/treeport-session-keeper"],
       "cache": false,
       "passThroughEnv": [
         "CARGO",
@@ -46,7 +46,7 @@
       "outputs": []
     },
     "@treeport/treeport#typecheck": {
-      "dependsOn": ["build"],
+      "dependsOn": ["^build"],
       "outputs": []
     },
     "//#knip": {
@@ -62,7 +62,7 @@
       "cache": false
     },
     "//#test:unit": {
-      "dependsOn": ["@treeport/shared#build", "@treeport/session-keeper#build"],
+      "dependsOn": ["@treeport/session-keeper#build"],
       "cache": false
     },
     "//#test:integration:run": {

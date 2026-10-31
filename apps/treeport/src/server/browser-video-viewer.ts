@@ -1,5 +1,5 @@
 import type { BrowserServerMessage } from '@treeport/shared'
-import type { ChromiumWebCodecsViewer } from './chromium-webcodecs-video'
+import type { ChromiumWebCodecsViewer } from './chromium-webcodecs-video.ts'
 
 interface BrowserVideoSource {
   webcodecs: ChromiumWebCodecsViewer | null
@@ -14,10 +14,16 @@ export class BrowserVideoViewer {
   #retirement: Promise<void> | null = null
   #disposed = false
 
+  private readonly send: (message: BrowserServerMessage) => boolean
+  private readonly release: () => void
+
   constructor(
-    private readonly send: (message: BrowserServerMessage) => boolean,
-    private readonly release: () => void = () => undefined
-  ) {}
+    send: (message: BrowserServerMessage) => boolean,
+    release: () => void = () => undefined
+  ) {
+    this.send = send
+    this.release = release
+  }
 
   resume(source: BrowserVideoSource): void {
     if (this.#disposed || this.#source) {

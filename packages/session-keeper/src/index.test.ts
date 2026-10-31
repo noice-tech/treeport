@@ -6,7 +6,10 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { afterEach, expect, it } from 'vitest'
-import { prepareSessionKeeper, SESSION_KEEPER_MAX_PAYLOAD_BYTES } from './index'
+import {
+  prepareSessionKeeper,
+  SESSION_KEEPER_MAX_PAYLOAD_BYTES
+} from './index.ts'
 
 const execute = promisify(execFile)
 
@@ -133,7 +136,7 @@ it('refuses a FIFO source payload in an isolated, deadline-bounded launcher', as
   await execute('mkfifo', [payload])
 
   const module = pathToFileURL(
-    path.resolve(import.meta.dirname, '../dist/index.js')
+    path.resolve(import.meta.dirname, './index.ts')
   ).href
 
   const result = await execute(

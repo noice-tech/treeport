@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { expect, it } from 'vitest'
-import { startTerminalEngineWorker } from './terminal-engine-worker'
+import { startTerminalEngineWorker } from './terminal-engine-worker.ts'
 
 it('joins worker shutdown and settles startup errors without leaking its scope', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-worker-'))
@@ -31,6 +31,7 @@ it('joins worker shutdown and settles startup errors without leaking its scope',
         await fs.writeFile(workerData.recordPath, 'stopped')
         parentPort.close()
       })
+      parentPort.postMessage({ 'watch:import': [import.meta.url] })
       parentPort.postMessage('ready')
     `
     )

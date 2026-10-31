@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { SharedRead } from './shared-read'
+import { SharedRead } from './shared-read.ts'
 import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -18,12 +18,12 @@ import * as Data from 'effect/Data'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import { asEffectCommandRunner, type CommandRunner } from './command'
+import { asEffectCommandRunner, type CommandRunner } from './command.ts'
 import {
   ExternalCommandError,
   OutputLimitCommandError,
   runChecked
-} from './command'
+} from './command.ts'
 
 export interface GitWorktreeInfo {
   path: string
@@ -244,11 +244,19 @@ class PromiseGitAdapter {
   private readonly committedPatches = new Map<string, GitFileDiff>()
   private committedPatchBytes = 0
 
+  private readonly runner: CommandRunner
+  private readonly executable: string
+  private readonly cancellation: AsyncLocalStorage<AbortSignal>
+
   constructor(
-    private readonly runner: CommandRunner,
-    private readonly executable = 'git',
-    private readonly cancellation = new AsyncLocalStorage<AbortSignal>()
-  ) {}
+    runner: CommandRunner,
+    executable = 'git',
+    cancellation = new AsyncLocalStorage<AbortSignal>()
+  ) {
+    this.runner = runner
+    this.executable = executable
+    this.cancellation = cancellation
+  }
 
   private read<A>(
     key: readonly unknown[],

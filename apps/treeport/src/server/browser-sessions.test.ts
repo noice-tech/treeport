@@ -15,7 +15,7 @@ import type {
   BrowserServerMessage,
   ProductEvent
 } from '@treeport/shared'
-import type { PlaywrightBrowserCallbacks } from './playwright-browser'
+import type { PlaywrightBrowserCallbacks } from './playwright-browser.ts'
 import {
   BrowserSessionManager,
   type BrowserAgentCliRunner,
@@ -26,8 +26,8 @@ import {
   type BrowserOwnerTransport,
   type BrowserSessionService,
   type BrowserTransport
-} from './browser-sessions'
-import { testAccess } from './test-access'
+} from './browser-sessions.ts'
+import { testAccess } from './test-access.ts'
 
 const browsers: FakeBrowser[] = []
 
@@ -78,14 +78,18 @@ class FakeBrowser implements BrowserSessionBrowser {
   closeRequests: boolean[] = []
   closeRequiresConfirmation = false
   closes = 0
+  readonly callbacks: PlaywrightBrowserCallbacks
+
   constructor(
     _cachePath: string,
     _worktreePath: string,
     _title: string,
     _appId: string,
     _worktreeId: string,
-    readonly callbacks: PlaywrightBrowserCallbacks
+    callbacks: PlaywrightBrowserCallbacks
   ) {
+    this.callbacks = callbacks
+
     browsers.push(this)
   }
   frozen = false

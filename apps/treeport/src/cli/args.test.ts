@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractJsonOutput } from './args.js'
+import { extractJsonOutput } from './args.ts'
 
 describe('CLI global argument parsing', () => {
   it('consumes --json before the command separator', () => {

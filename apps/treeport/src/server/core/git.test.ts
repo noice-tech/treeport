@@ -3,14 +3,14 @@ import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it } from 'vitest'
-import { SpawnCommandRunner } from './command'
+import { SpawnCommandRunner } from './command.ts'
 import {
   detectDefaultBranch,
   GitAdapter,
   parseDirtyStatus,
   parseGitDiffFiles,
   parseWorktreePorcelain
-} from './git'
+} from './git.ts'
 
 describe('git parsing', () => {
   it('parses changed files and preserves rename origins', () => {

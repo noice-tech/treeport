@@ -3,7 +3,7 @@ import path from 'node:path'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import type { Scope } from 'effect/Scope'
-import type { AppConfig } from './core/config'
+import type { AppConfig } from './core/config.ts'
 
 interface DaemonRecord {
   pid: number

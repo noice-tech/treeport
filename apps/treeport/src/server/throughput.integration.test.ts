@@ -12,12 +12,12 @@ import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import { expect, it } from 'vitest'
-import { SpawnCommandRunner } from './core/command'
-import { GitAdapter } from './core/git'
-import { TerminalHostClient } from './terminal-host-client'
-import { startTerminalEngineWorker } from './terminal-engine-worker'
-import { makeTerminalHostSessions } from '../terminal-runtime/sessions'
-import { makeTerminalHostServer } from '../terminal-runtime/server'
+import { SpawnCommandRunner } from './core/command.ts'
+import { GitAdapter } from './core/git.ts'
+import { TerminalHostClient } from './terminal-host-client.ts'
+import { startTerminalEngineWorker } from './terminal-engine-worker.ts'
+import { makeTerminalHostSessions } from '../terminal-runtime/sessions.ts'
+import { makeTerminalHostServer } from '../terminal-runtime/server.ts'
 
 it.skipIf(process.env.MEASURE_TREEPORT_THROUGHPUT !== '1')(
   'measures embedded versus worker terminal parsing with Git and HTTP control traffic',
@@ -45,14 +45,11 @@ it.skipIf(process.env.MEASURE_TREEPORT_THROUGHPUT !== '1')(
     const url = `http://127.0.0.1:${address.port}`
 
     const launcherPath = fileURLToPath(
-      new URL('../../dist/node/server/core/launcher.js', import.meta.url)
+      new URL('../terminal-runtime/launcher.ts', import.meta.url)
     )
 
     const workerEntry = fileURLToPath(
-      new URL(
-        '../../dist/node/server/terminal-engine-worker.js',
-        import.meta.url
-      )
+      new URL('../terminal-runtime/engine-worker.ts', import.meta.url)
     )
 
     const files = Array.from({ length: 20 }, (_, index) => `file-${index}.txt`)

@@ -45,24 +45,24 @@ import {
   parseBrowserClientMessage,
   parseBrowserOwnerClientMessage
 } from '@treeport/shared'
-import type { AppConfig, TreeportService } from './core/index'
-import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
-import { networkTelemetry } from './network-telemetry'
+import type { AppConfig, TreeportService } from './core/index.ts'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
+import { networkTelemetry } from './network-telemetry.ts'
 import {
   PlaywrightBrowser,
   type BrowserInstallStatus,
   type PlaywrightBrowserCallbacks
-} from './playwright-browser'
-import { browserNavigation } from './browser-navigation'
-import { runBrowserScript } from './browser-script'
-import { PlaywrightBrowserHost } from './browser-page-host'
-import { BrowserVideoViewer } from './browser-video-viewer'
-import { BrowserRelay } from './browser-relay-client'
-import { browserKey, browserTouch, browserWheel } from './browser-input'
-import { browserSetupGuidance } from './browser-runtime'
+} from './playwright-browser.ts'
+import { browserNavigation } from './browser-navigation.ts'
+import { runBrowserScript } from './browser-script.ts'
+import { PlaywrightBrowserHost } from './browser-page-host.ts'
+import { BrowserVideoViewer } from './browser-video-viewer.ts'
+import { BrowserRelay } from './browser-relay-client.ts'
+import { browserKey, browserTouch, browserWheel } from './browser-input.ts'
+import { browserSetupGuidance } from './browser-runtime.ts'
 
-import { browserCursor } from './browser-cursor'
-import type { AuthenticatedViewer } from './request-security'
+import { browserCursor } from './browser-cursor.ts'
+import type { AuthenticatedViewer } from './request-security.ts'
 
 export interface BrowserTransport {
   id: string
@@ -343,12 +343,18 @@ export class BrowserSessionManager {
   private disposing: Promise<void> | null = null
   private disposed = false
 
+  private readonly service: BrowserSessionService
+  private readonly config: BrowserSessionConfig
+  private readonly browserFactory: BrowserSessionBrowserFactory
+  private readonly agentCliRunner: BrowserAgentCliRunner | null
+  private readonly connectLocalAutomation: BrowserLocalAutomationConnector
+
   constructor(
-    private readonly service: BrowserSessionService,
-    private readonly config: BrowserSessionConfig,
-    private readonly browserFactory: BrowserSessionBrowserFactory = defaultBrowserFactory,
-    private readonly agentCliRunner: BrowserAgentCliRunner | null = null,
-    private readonly connectLocalAutomation: BrowserLocalAutomationConnector = async (
+    service: BrowserSessionService,
+    config: BrowserSessionConfig,
+    browserFactory: BrowserSessionBrowserFactory = defaultBrowserFactory,
+    agentCliRunner: BrowserAgentCliRunner | null = null,
+    connectLocalAutomation: BrowserLocalAutomationConnector = async (
       endpoint
     ) => {
       const { chromium } = await import('playwright')
@@ -356,6 +362,12 @@ export class BrowserSessionManager {
       return chromium.connectOverCDP(endpoint, { timeout: 10_000 })
     }
   ) {
+    this.service = service
+    this.config = config
+    this.browserFactory = browserFactory
+    this.agentCliRunner = agentCliRunner
+    this.connectLocalAutomation = connectLocalAutomation
+
     this.cachePath = path.join(config.cacheDir, 'browser')
     this.relay = config.browserRelayEntry
       ? new BrowserRelay(config.browserRelayEntry, {

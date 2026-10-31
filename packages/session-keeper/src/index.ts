@@ -9,9 +9,9 @@ import {
   sessionFrameSchema,
   sessionStatusSchema,
   type SessionStatus
-} from './protocol.js'
+} from './protocol.ts'
 
-export * from './protocol.js'
+export * from './protocol.ts'
 
 export const SESSION_KEEPER_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
 

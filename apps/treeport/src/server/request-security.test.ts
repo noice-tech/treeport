@@ -5,8 +5,8 @@ import http, {
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
-import { testAccess } from './test-access'
-import { authorizeRequest, rejectHttpRequest } from './request-security'
+import { testAccess } from './test-access.ts'
+import { authorizeRequest, rejectHttpRequest } from './request-security.ts'
 
 interface ResponseRecord {
   status: number

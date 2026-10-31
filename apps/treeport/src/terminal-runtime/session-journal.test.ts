@@ -4,8 +4,8 @@ import path from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { randomBytes } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
-import { SessionJournal } from './session-journal'
-import type { SessionRecord } from './session-protocol'
+import { SessionJournal } from './session-journal.ts'
+import type { SessionRecord } from './session-protocol.ts'
 
 const roots: string[] = []
 

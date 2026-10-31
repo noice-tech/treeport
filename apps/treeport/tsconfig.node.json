@@ -3,11 +3,11 @@
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "composite": true,
-    "emitDeclarationOnly": true,
+    "composite": false,
     "allowImportingTsExtensions": true,
-    "outDir": "dist-types/node",
-    "tsBuildInfoFile": "dist-types/node.tsbuildinfo"
+    "noEmit": true,
+    "rootDir": "../..",
+    "erasableSyntaxOnly": true
   },
   "include": [
     "src/cli/**/*.ts",
@@ -17,8 +17,6 @@
     "src/ghostty-vt/**/*.ts",
     "src/duration.ts",
     "drizzle.config.ts",
-    "tsdown.config.ts",
     "package.json"
-  ],
-  "references": [{ "path": "../../packages/shared" }]
+  ]
 }

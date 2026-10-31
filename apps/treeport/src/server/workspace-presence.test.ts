@@ -5,8 +5,8 @@ import {
   type ProductEvent,
   type ViewerIdentity
 } from '@treeport/shared'
-import { ProductEventBus } from './core/events'
-import { WorkspacePresenceManager } from './workspace-presence'
+import { ProductEventBus } from './core/events.ts'
+import { WorkspacePresenceManager } from './workspace-presence.ts'
 
 it('renews quiet viewers without broadcasts, expires lost tabs, and bounds memory', ({
   onTestFinished

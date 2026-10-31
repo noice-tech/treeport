@@ -10,8 +10,8 @@ import type {
   LauncherDefinitionDiagnostic
 } from '@treeport/shared'
 import { normalizeWorktreeName } from '@treeport/shared'
-import { readOptionalJsonc, type OptionalJsoncResult } from './jsonc'
-import type { WorktreeSetupTask } from './setup'
+import { readOptionalJsonc, type OptionalJsoncResult } from './jsonc.ts'
+import type { WorktreeSetupTask } from './setup.ts'
 
 const DEFAULT_WORKTREE_DIRECTORY = '../worktrees'
 

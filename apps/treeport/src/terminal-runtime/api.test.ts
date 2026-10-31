@@ -7,7 +7,7 @@ import {
   decodeTerminalHostResult,
   encodeTerminalHostFrame,
   makeTerminalHostFrameDecoder
-} from './api'
+} from './api.ts'
 
 describe('stable terminal host API', () => {
   it('decodes fragmented compact output mixed with JSON without changing fences', async () => {

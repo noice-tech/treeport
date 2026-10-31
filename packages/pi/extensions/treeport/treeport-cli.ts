@@ -66,7 +66,7 @@ async function treeportExecutable(): Promise<string> {
     if (basename(developmentRuntime) === '.treeport-dev') {
       const developmentCli = join(
         dirname(developmentRuntime),
-        '.treeport-dev-dist/node/cli/index.js'
+        'bin/treeport.mjs'
       )
 
       if (

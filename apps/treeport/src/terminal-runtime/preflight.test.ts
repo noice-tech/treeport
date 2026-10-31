@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Effect from 'effect/Effect'
-import { probeTerminalHostCompatibility } from './preflight'
-import { makeTerminalHostServer } from './server'
-import type { TerminalHostSessions } from './sessions'
+import { probeTerminalHostCompatibility } from './preflight.ts'
+import { makeTerminalHostServer } from './server.ts'
+import type { TerminalHostSessions } from './sessions.ts'
 
 const roots: string[] = []
 

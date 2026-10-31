@@ -6,11 +6,11 @@ import type { Browser, BrowserContext, Page } from 'playwright'
 import {
   prepareBrowserVideoExtension,
   type BrowserCapturePage
-} from './browser-video'
-import { browserRuntime } from './browser-runtime'
-import { browserClipboard } from './browser-clipboard'
-import { startBrowserDisplay, type BrowserDisplay } from './browser-display'
-import type { BrowserRelay } from './browser-relay-client'
+} from './browser-video.ts'
+import { browserRuntime } from './browser-runtime.ts'
+import { browserClipboard } from './browser-clipboard.ts'
+import { startBrowserDisplay, type BrowserDisplay } from './browser-display.ts'
+import type { BrowserRelay } from './browser-relay-client.ts'
 
 interface PlaywrightBrowserLease {
   browser: Browser
@@ -58,10 +58,13 @@ export class PlaywrightBrowserHost {
   private closeOperation: Promise<void> | null = null
   private readonly closingPages = new Map<Page, Promise<void>>()
 
-  constructor(
-    readonly profilePath: string,
-    private readonly relay: BrowserRelay | null
-  ) {}
+  readonly profilePath: string
+  private readonly relay: BrowserRelay | null
+
+  constructor(profilePath: string, relay: BrowserRelay | null) {
+    this.profilePath = profilePath
+    this.relay = relay
+  }
 
   get started(): boolean {
     return this.context !== null

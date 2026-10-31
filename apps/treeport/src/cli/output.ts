@@ -100,8 +100,6 @@ export function humanOutput(
   }
 }
 
-export type HumanOutput = ReturnType<typeof humanOutput>
-
 export function stateName(state: string): string {
   const words = state.replaceAll('_', ' ')
 

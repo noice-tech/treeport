@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from 'node:util'
 import kleur from 'kleur'
 import { describe, expect, it } from 'vitest'
-import { humanOutput } from './output.js'
+import { humanOutput } from './output.ts'
 
 describe('human output color boundary', () => {
   it.each([

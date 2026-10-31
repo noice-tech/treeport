@@ -6,17 +6,17 @@ import type {
   WebAppInput,
   WebAppPermission
 } from '@treeport/app-sdk'
-import { browserUrlSchema } from './browser-protocol.js'
-import { jsonValueSchema } from './json-schema.js'
-import type { WorkspacePresence } from './presence-protocol.js'
+import { browserUrlSchema } from './browser-protocol.ts'
+import { jsonValueSchema } from './json-schema.ts'
+import type { WorkspacePresence } from './presence-protocol.ts'
 import {
   webAppPermissionSchema,
   webAppStorageScopeSchema
-} from './web-app-protocol.js'
+} from './web-app-protocol.ts'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
-} from './terminal-protocol.js'
+} from './terminal-protocol.ts'
 
 export type {
   GitDiff,
@@ -52,35 +52,35 @@ export type {
   TreeportTree
 } from '@treeport/app-sdk'
 
-export * from './browser-protocol.js'
+export * from './browser-protocol.ts'
 
-export * from './browser-clipboard.js'
+export * from './browser-clipboard.ts'
 
-export * from './browser-page-metadata.js'
+export * from './browser-page-metadata.ts'
 
-export * from './browser-video.js'
+export * from './browser-video.ts'
 
-export * from './http-protocol.js'
+export * from './http-protocol.ts'
 
-export * from './json-schema.js'
+export * from './json-schema.ts'
 
-export * from './network-rpc.js'
+export * from './network-rpc.ts'
 
-export * from './network-rpc-client.js'
+export * from './network-rpc-client.ts'
 
-export * from './protocol-socket-client.js'
+export * from './protocol-socket-client.ts'
 
-export * from './presence-protocol.js'
+export * from './presence-protocol.ts'
 
-export * from './push-protocol.js'
+export * from './push-protocol.ts'
 
-export * from './schema.js'
+export * from './schema.ts'
 
-export * from './socket-protocol.js'
+export * from './socket-protocol.ts'
 
-export * from './terminal-protocol.js'
+export * from './terminal-protocol.ts'
 
-export * from './web-app-protocol.js'
+export * from './web-app-protocol.ts'
 
 export const PRODUCT_NAME = 'Treeport'
 export const API_VERSION = 1

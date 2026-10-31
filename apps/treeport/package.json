@@ -7,21 +7,20 @@
   "bin": {
     "treeport": "bin/treeport.mjs"
   },
-  "main": "dist/node/cli/index.js",
+  "main": "src/cli/index.ts",
   "scripts": {
     "clean": "rm -rf dist dist-types",
-    "build": "pnpm clean && pnpm build:node && pnpm build:web",
-    "build:node": "tsdown",
+    "build": "pnpm build:web",
     "build:web": "vite build",
     "build:ghostty-vt": "bash scripts/build-ghostty-vt.sh",
     "check:ghostty-vt": "bash scripts/build-ghostty-vt.sh --check",
     "check:terminal-runtime": "node scripts/check-terminal-runtime.mjs",
     "dev": "node scripts/development.mjs",
     "dev:server": "node scripts/development.mjs --server",
-    "start": "TREEPORT_WEB_DIST=dist/web node dist/node/server/index.js",
+    "start": "TREEPORT_WEB_DIST=dist/web node src/server/index.ts",
     "db:generate": "drizzle-kit generate",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
-    "typecheck:node": "tsc -b tsconfig.node.json --pretty",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --pretty",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --pretty"
   },
   "engines": {
@@ -100,7 +99,6 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.6.0",
-    "tsdown": "0.22.14"
+    "tailwind-merge": "^3.6.0"
   }
 }

@@ -7,7 +7,7 @@ import {
   currentPromiseSpan,
   makeTracingLayer,
   tracingLayerFromEnvironment
-} from './tracing'
+} from './tracing.ts'
 
 const directories: string[] = []
 

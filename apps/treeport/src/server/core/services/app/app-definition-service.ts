@@ -10,17 +10,17 @@ import type {
 } from '@treeport/shared'
 import { and, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
-import { webAppPermissionGrants, webApps } from '../../database-schema'
-import { DomainError } from '../../domain'
-import type { ResolvedWebAppSource } from '../../web-app-vite-runtime'
+import { webAppPermissionGrants, webApps } from '../../database-schema.ts'
+import { DomainError } from '../../domain.ts'
+import type { ResolvedWebAppSource } from '../../web-app-vite-runtime.ts'
 import {
   ProjectObservationOperations,
   ProjectSnapshotOperations
-} from '../domain-services'
-import type { ApplicationServices } from '../infrastructure/application-runtime'
-import { EventBusPort, PackageSystemPort } from '../infrastructure/ports'
-import { DatabasePort } from '../../database'
-import { ProjectStore } from '../project/project-store'
+} from '../domain-services.ts'
+import type { ApplicationServices } from '../infrastructure/application-runtime.ts'
+import { EventBusPort, PackageSystemPort } from '../infrastructure/ports.ts'
+import { DatabasePort } from '../../database.ts'
+import { ProjectStore } from '../project/project-store.ts'
 
 const now = (): string => new Date().toISOString()
 const WEB_APP_ICON_MAX_BYTES = 64 * 1024

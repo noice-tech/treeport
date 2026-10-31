@@ -16,7 +16,7 @@ Run `treeport context` before Treeport operations. It identifies this terminal, 
 
 Use the inherited instance and exact IDs from context. Never infer the target from the current folder, a familiar port, or the visible Treeport window. A worktree's development instance may differ from the instance hosting this terminal. Do not mutate another instance without permission.
 
-For CLI installations with a machine-local development wrapper, use the executable in `TREEPORT_CLI_ENTRYPOINT` if set. If `TREEPORT_DAEMON_RECORD` points to `<app>/.treeport-dev/runtime/daemon.json`, the matching CLI is `<app>/.treeport-dev-dist/node/cli/index.js`. Pass the inherited `TREEPORT_API_URL`; do not use a development wrapper that switches to another instance.
+For CLI installations with a machine-local development wrapper, use the executable in `TREEPORT_CLI_ENTRYPOINT` if set. If `TREEPORT_DAEMON_RECORD` points to `<app>/.treeport-dev/runtime/daemon.json`, the matching CLI is `<app>/bin/treeport.mjs`. Pass the inherited `TREEPORT_API_URL`; do not use a development wrapper that switches to another instance.
 
 ## Persistent terminals
 
