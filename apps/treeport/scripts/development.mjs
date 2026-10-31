@@ -7,7 +7,16 @@ const managed = Boolean(process.env.TREEPORT_DAEMON_RECORD)
 
 const child = spawn(
   process.execPath,
-  ['--watch', '--watch-preserve-output', 'src/server/index.ts'],
+  [
+    // EXTERNAL: Plain --watch also watches imported node_modules files, and pnpm installs
+    // in other trees change their hard-link counts, which Node reports as edits.
+    '--watch-path=src',
+    '--watch-path=../../packages/app-sdk/src',
+    '--watch-path=../../packages/session-keeper/src',
+    '--watch-path=../../packages/shared/src',
+    '--watch-preserve-output',
+    'src/server/index.ts'
+  ],
   {
     env: {
       ...process.env,
