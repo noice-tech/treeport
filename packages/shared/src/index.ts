@@ -435,7 +435,7 @@ export type TreeportContext =
   | {
       managed: true
       apiUrl: string
-      daemonLifecycle: 'treeport' | 'service' | 'external'
+      daemonLifecycle: 'treeport' | 'external'
       project: Pick<
         ProjectRecord,
         | 'id'

@@ -14,7 +14,7 @@ export interface AppConfig {
   gitPath: string
   apiUrl: string
   remoteUrl: string | null
-  daemonLifecycle: 'treeport' | 'service' | 'external'
+  daemonLifecycle: 'treeport' | 'external'
   appVersion?: string
   instanceId?: string
   installationMethod?: string
@@ -94,14 +94,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const daemonLifecycle = env.TREEPORT_DAEMON_LIFECYCLE?.trim() || 'treeport'
 
-  if (
-    daemonLifecycle !== 'treeport' &&
-    daemonLifecycle !== 'service' &&
-    daemonLifecycle !== 'external'
-  ) {
-    throw new Error(
-      'TREEPORT_DAEMON_LIFECYCLE must be treeport, service, or external'
-    )
+  if (daemonLifecycle !== 'treeport' && daemonLifecycle !== 'external') {
+    throw new Error('TREEPORT_DAEMON_LIFECYCLE must be treeport or external')
   }
 
   const config: AppConfig = {

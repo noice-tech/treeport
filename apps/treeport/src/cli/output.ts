@@ -1,5 +1,4 @@
 import kleur from 'kleur'
-import type { ServiceStatus } from './service.js'
 
 export type OutputTone = 'success' | 'warning' | 'failure' | 'neutral'
 
@@ -107,79 +106,4 @@ export function stateName(state: string): string {
   const words = state.replaceAll('_', ' ')
 
   return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
-export function formatServiceStatus(
-  status: ServiceStatus,
-  output: HumanOutput
-): string {
-  const tone: OutputTone =
-    !status.supported || status.state === 'unhealthy'
-      ? 'failure'
-      : status.state === 'healthy' ||
-          status.state === 'stopped' ||
-          status.state === 'disabled'
-        ? 'success'
-        : 'warning'
-
-  return output.blocks(
-    output.heading('Treeport service'),
-    output.summary(
-      status.administratorCommand
-        ? 'Administrator action required'
-        : status.state === 'stale'
-          ? 'Needs repair'
-          : status.state === 'disabled'
-            ? 'Not installed'
-            : stateName(status.state),
-      tone
-    ),
-    output.rows([
-      [
-        'Mode',
-        status.mode === 'headless'
-          ? 'Headless service'
-          : status.mode === 'user'
-            ? 'User service'
-            : 'Not installed'
-      ],
-      [
-        'Startup',
-        !status.installed
-          ? 'Not enabled'
-          : status.enabledAtBoot
-            ? 'Before login'
-            : status.mode === 'headless'
-              ? 'Not enabled before login'
-              : 'After login'
-      ]
-    ]),
-    output.detail(
-      output.rows([
-        ['Manager', status.manager ?? 'Unsupported'],
-        status.definitionPath && status.issues.length
-          ? ['Definition', status.definitionPath]
-          : null,
-        status.daemon?.state ? ['PID', status.daemon.state.pid] : null
-      ])
-    ),
-    status.issues.length > 0 &&
-      output.section(
-        'Attention',
-        [...new Set(status.issues)]
-          .map((issue) =>
-            issue.replace(
-              'Run `treeport service enable --headless`; routine start and stop then need no administrator.',
-              'After migration, routine start and stop need no administrator.'
-            )
-          )
-          .join('\n')
-      ),
-    status.administratorCommand
-      ? output.next([
-          status.administratorCommand,
-          'Then run: treeport service status'
-        ])
-      : output.next([...new Set(status.recoveryCommands)])
-  )
 }

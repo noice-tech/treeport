@@ -56,9 +56,6 @@ describe('configuration', () => {
     expect(config.remoteUrl).toBe('https://machine.example.ts.net:5000')
     expect(config.shell).toBe('/bin/bash')
     expect(config.daemonLifecycle).toBe('external')
-    expect(
-      loadConfig({ TREEPORT_DAEMON_LIFECYCLE: 'service' }).daemonLifecycle
-    ).toBe('service')
     expect(config.webDevelopment).toBe(true)
   })
 
@@ -83,8 +80,6 @@ describe('configuration', () => {
     )
     expect(() =>
       loadConfig({ TREEPORT_DAEMON_LIFECYCLE: 'development' })
-    ).toThrow(
-      'TREEPORT_DAEMON_LIFECYCLE must be treeport, service, or external'
-    )
+    ).toThrow('TREEPORT_DAEMON_LIFECYCLE must be treeport or external')
   })
 })
