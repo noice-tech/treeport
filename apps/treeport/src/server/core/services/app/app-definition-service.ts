@@ -125,14 +125,7 @@ export class AppDefinitionService {
       const definitions: ResolvedDefinition[] = [
         ...(yield* localWebAppDefinitions(worktreeId)),
         ...packageDefinitions.map(
-          ({
-            definition,
-            root,
-            entry,
-            packageRoot,
-            development,
-            packageLockPath
-          }) => {
+          ({ definition, root, entry, packageRoot, development }) => {
             const resolved: ResolvedDefinition = {
               ...definition,
               root,
@@ -141,10 +134,6 @@ export class AppDefinitionService {
               development,
               definitionId: definition.id,
               allowNetworkRequests: definition.sandbox.allowSameOrigin
-            }
-
-            if (packageLockPath) {
-              resolved.packageLockPath = packageLockPath
             }
 
             if (definition.source.type === 'package') {
@@ -304,7 +293,6 @@ export class AppDefinitionService {
           entry: _entry,
           packageRoot: _packageRoot,
           development: _development,
-          packageLockPath: _packageLockPath,
           definitionId: _definitionId,
           packageSource: _packageSource,
           allowNetworkRequests: _allowNetworkRequests,

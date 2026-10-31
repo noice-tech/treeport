@@ -201,7 +201,7 @@ function fixture(webDist = '/missing') {
     listLauncherDefinitions: vi.fn(() => ({
       definitions: [
         {
-          id: 'package:npm:@acme/tools:launcher:dev',
+          id: 'package:local:tools:launcher:dev',
           name: 'Package dev',
           executable: 'pnpm',
           args: ['dev'],
@@ -211,8 +211,8 @@ function fixture(webDist = '/missing') {
           closeOnSuccess: false,
           source: {
             type: 'package',
-            packageId: 'npm:@acme/tools',
-            source: 'npm:@acme/tools',
+            packageId: 'local:tools',
+            source: './tools',
             scope: 'global'
           }
         }
@@ -239,7 +239,6 @@ function fixture(webDist = '/missing') {
       projectId: projectId ?? null,
       status: 'removed'
     })),
-    updatePackages: vi.fn(() => []),
     reloadPackages: vi.fn(() => ({ results: [], diagnostics: [] })),
     createLauncher: vi.fn(
       (input: {

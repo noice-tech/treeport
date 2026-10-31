@@ -307,11 +307,6 @@ export function integrationService(
       application.packageManagement.removePackage.bind(
         application.packageManagement
       )
-    ),
-    updatePackages: run(
-      application.packageManagement.updatePackages.bind(
-        application.packageManagement
-      )
     )
   } satisfies PromiseDomainApi<ApplicationApis>
 

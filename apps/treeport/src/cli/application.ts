@@ -410,10 +410,6 @@ async function resolveProject(identifier?: string): Promise<ProjectRecord> {
 }
 
 async function packageSource(value: string): Promise<string> {
-  if (value.startsWith('npm:')) {
-    return value
-  }
-
   if (
     path.isAbsolute(value) ||
     value === '.' ||
@@ -1855,8 +1851,8 @@ async function main(args: string[]): Promise<void> {
 
   const installCommand = program
     .command('install')
-    .description('Install and configure a Treeport package')
-    .argument('<source>', 'npm: source or local directory')
+    .description('Register a local package in Treeport settings')
+    .argument('<source>', 'local directory')
     .option(
       '-l, --local',
       'configure the registered project containing the current directory'
@@ -1892,7 +1888,7 @@ async function main(args: string[]): Promise<void> {
     .command('remove')
     .alias('uninstall')
     .description('Remove a configured Treeport package')
-    .argument('<source>', 'npm: source or local directory')
+    .argument('<source>', 'local directory')
     .option(
       '-l, --local',
       'remove from the registered project containing the current directory'

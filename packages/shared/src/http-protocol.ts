@@ -613,17 +613,11 @@ const packageListingSchema = Schema.Struct({
 })
 
 const packageOperationResultSchema = Schema.Struct({
-  action: Schema.Literal('install', 'remove', 'update', 'reload'),
+  action: Schema.Literal('install', 'remove', 'reload'),
   source: nullableStringSchema,
   scope: Schema.Literal('global', 'project'),
   projectId: nullableStringSchema,
-  status: Schema.Literal(
-    'installed',
-    'removed',
-    'updated',
-    'reloaded',
-    'skipped'
-  ),
+  status: Schema.Literal('installed', 'removed', 'reloaded'),
   reason: Schema.optional(Schema.String)
 })
 
@@ -685,10 +679,6 @@ export const packageListingResponseSchema = Schema.Struct({
 
 export const packageOperationResponseSchema = Schema.Struct({
   result: packageOperationResultSchema
-})
-
-export const packageOperationsResponseSchema = Schema.Struct({
-  results: Schema.Array(packageOperationResultSchema)
 })
 
 export const packageReloadResponseSchema = Schema.Struct({

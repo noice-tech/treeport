@@ -51,13 +51,11 @@ import {
   packageInstallSchema,
   packageListingResponseSchema,
   packageOperationResponseSchema,
-  packageOperationsResponseSchema,
   packageProjectQuerySchema,
   packageProjectResponseSchema,
   packageReloadResponseSchema,
   packageReloadSchema,
   packageRemoveSchema,
-  packageUpdateSchema,
   projectResponseSchema,
   projectsResponseSchema,
   readTreeFileSchema,
@@ -1148,19 +1146,6 @@ export function createApp({
         return jsonContractResponse(packageOperationResponseSchema, {
           result: yield* operation(() =>
             service.packageManagement.removePackage(body.source, body.projectId)
-          )
-        })
-      })
-    ),
-    route(
-      'POST',
-      '/api/packages/update',
-      Effect.gen(function* () {
-        const body = yield* requestBody(packageUpdateSchema)
-
-        return jsonContractResponse(packageOperationsResponseSchema, {
-          results: yield* operation(() =>
-            service.packageManagement.updatePackages(body.source)
           )
         })
       })

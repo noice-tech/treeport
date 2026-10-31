@@ -31,7 +31,6 @@ export interface ResolvedWebAppSource {
   entry: string
   packageRoot: string
   development: boolean
-  packageLockPath?: string
   definitionId: string
   packageSource?: string
   allowNetworkRequests: boolean
@@ -228,10 +227,7 @@ export class WebAppViteRuntime {
 
     await visit(source.root)
 
-    for (const file of [
-      path.join(source.packageRoot, 'package.json'),
-      source.packageLockPath
-    ]) {
+    for (const file of [path.join(source.packageRoot, 'package.json')]) {
       if (!file) {
         continue
       }
