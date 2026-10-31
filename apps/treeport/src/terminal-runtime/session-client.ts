@@ -192,13 +192,19 @@ export class PersistentSession implements EnginePty {
     // into a user scope before it forks the keeper, so stopping a supervisor's
     // control group cannot kill terminals. A scope stays alive while any of its
     // descendants remain, even after the short-lived bootstrap exits.
+    const scopeEnvironment = {
+      ...process.env,
+      XDG_RUNTIME_DIR:
+        process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.()}`
+    }
+
     const systemd =
       process.platform === 'linux'
         ? await Promise.all([
             promisify(execFile)(
               'systemctl',
               ['--user', 'show', '--property=Version', '--value'],
-              { timeout: 2000 }
+              { timeout: 2000, env: scopeEnvironment }
             ),
             promisify(execFile)('systemd-run', ['--help'], { timeout: 2000 })
           ]).then(
@@ -232,7 +238,7 @@ export class PersistentSession implements EnginePty {
           : `treeport-session ${terminalId}`,
       detached: true,
       stdio: ['ignore', log.fd, log.fd],
-      env: process.env
+      env: systemd === null ? process.env : scopeEnvironment
     })
 
     child.unref()
