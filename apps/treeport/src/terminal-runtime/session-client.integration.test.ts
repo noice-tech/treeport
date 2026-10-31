@@ -158,7 +158,8 @@ process.exit(result.status ?? 1)
         '--',
         getSessionKeeperPayload(),
         '--detach',
-        value.directory
+        value.directory,
+        'treeport-session'
       ])
     }
 

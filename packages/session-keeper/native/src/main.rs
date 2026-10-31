@@ -33,13 +33,13 @@ fn main() -> Result<()> {
     }
     if first == "--detach" {
         let directory = args.next().context("Missing session directory")?;
+        let title = args.next().context("Missing process title")?;
+        if args.next().is_some() {
+            bail!("Unexpected detach arguments");
+        }
         let mut command = std::process::Command::new(std::env::current_exe()?);
         command.arg(directory);
-        command.arg0(
-            std::env::args_os()
-                .next()
-                .context("Missing process title")?,
-        );
+        command.arg0(title);
         // SAFETY: pre_exec calls only the async-signal-safe setsid syscall.
         unsafe {
             command.pre_exec(|| {

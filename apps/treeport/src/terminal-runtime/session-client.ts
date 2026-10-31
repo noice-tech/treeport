@@ -43,6 +43,16 @@ type RequestInput = SessionRequest extends infer Request
     : never
   : never
 
+let userScope: Promise<string | null> | null = null
+
+function scopeEnvironment(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    XDG_RUNTIME_DIR:
+      process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.()}`
+  }
+}
+
 function sessionSocketPath(directory: string): string {
   const key = crypto
     .createHash('sha256')
@@ -192,32 +202,36 @@ export class PersistentSession implements EnginePty {
     // into a user scope before it forks the keeper, so stopping a supervisor's
     // control group cannot kill terminals. A scope stays alive while any of its
     // descendants remain, even after the short-lived bootstrap exits.
-    const scopeEnvironment = {
-      ...process.env,
-      XDG_RUNTIME_DIR:
-        process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.()}`
-    }
-
-    const systemd =
+    userScope ??=
       process.platform === 'linux'
-        ? await Promise.all([
+        ? Promise.all([
             promisify(execFile)(
               'systemctl',
               ['--user', 'show', '--property=Version', '--value'],
-              { timeout: 2000, env: scopeEnvironment }
+              { timeout: 2000, env: scopeEnvironment() }
             ),
             promisify(execFile)('systemd-run', ['--help'], { timeout: 2000 })
           ]).then(
             ([, help]) => help.stdout,
             () => null
           )
-        : null
+        : Promise.resolve(null)
 
-    const executable = systemd === null ? options.executable : 'systemd-run'
+    const systemd = await userScope
 
-    const args =
+    const keeper = [
+      options.executable,
+      '--detach',
+      options.directory,
+      terminalId === null
+        ? 'treeport-session'
+        : `treeport-session ${terminalId}`
+    ]
+
+    const child = spawn(
+      systemd === null ? keeper[0]! : 'systemd-run',
       systemd === null
-        ? ['--detach', options.directory]
+        ? keeper.slice(1)
         : [
             '--user',
             '--scope',
@@ -226,20 +240,14 @@ export class PersistentSession implements EnginePty {
               ? ['--expand-environment=no']
               : []),
             '--',
-            options.executable,
-            '--detach',
-            options.directory
-          ]
-
-    const child = spawn(executable, args, {
-      argv0:
-        terminalId === null
-          ? 'treeport-session'
-          : `treeport-session ${terminalId}`,
-      detached: true,
-      stdio: ['ignore', log.fd, log.fd],
-      env: systemd === null ? process.env : scopeEnvironment
-    })
+            ...keeper
+          ],
+      {
+        detached: true,
+        stdio: ['ignore', log.fd, log.fd],
+        env: systemd === null ? process.env : scopeEnvironment()
+      }
+    )
 
     child.unref()
     let launchError: Error | null = null
