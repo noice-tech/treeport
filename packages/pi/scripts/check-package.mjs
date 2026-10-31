@@ -5,11 +5,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const directory = fileURLToPath(new URL('..', import.meta.url))
+
 const manifest = JSON.parse(
   await fs.readFile(path.join(directory, 'package.json'), 'utf8')
 )
 
 assert.deepEqual(manifest.pi.extensions, ['./extensions/treeport/index.ts'])
+
 assert.deepEqual(manifest.pi.skills, ['./skills/treeport'])
 
 for (const resource of [...manifest.pi.extensions, ...manifest.pi.skills]) {

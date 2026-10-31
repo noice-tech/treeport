@@ -9,6 +9,7 @@ import type { ForgeConfig } from '@electron-forge/shared-types'
 import { FuseV1Options, FuseVersion } from '@electron/fuses'
 
 const execute = promisify(execFile)
+
 const packagerConfig: NonNullable<ForgeConfig['packagerConfig']> = {
   name: 'Treeport',
   appBundleId: 'tech.noice.treeport',

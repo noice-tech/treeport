@@ -98,7 +98,6 @@ let writeStderr: (value: string) => void = (value) => {
 }
 
 let requestedExitCode = 0
-let cliEnvironment: NodeJS.ProcessEnv = process.env
 let output = humanOutput()
 let errorOutput = humanOutput()
 
@@ -3211,7 +3210,6 @@ export async function runCliApplication(
   options: CliApplicationOptions
 ): Promise<number> {
   const environment = options.environment ?? process.env
-  cliEnvironment = environment
   configuredApiUrl = environment.TREEPORT_API_URL?.trim()
   apiUrl = (await resolveLocalApiUrl(environment)).replace(/\/$/, '')
   contextProjectId = environment.TREEPORT_PROJECT_ID?.trim() || undefined

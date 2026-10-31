@@ -439,7 +439,7 @@ export async function daemonUp(options: {
     TREEPORT_APP_VERSION: currentVersion,
     TREEPORT_INSTANCE_ID: instanceId,
     TREEPORT_INSTALLATION_METHOD:
-      process.env.TREEPORT_INSTALLATION_METHOD?.trim() || 'npm',
+      process.env.TREEPORT_INSTALLATION_METHOD?.trim() || 'source',
     TREEPORT_DAEMON_LIFECYCLE: 'treeport',
     TREEPORT_WEB_DIST: webDist
   }

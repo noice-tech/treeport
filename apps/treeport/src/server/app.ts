@@ -974,45 +974,11 @@ export function createApp({
     route(
       'GET',
       '/api/phone-access',
-      operation(async () => {
-        if (config.remoteUrl || config.daemonLifecycle === 'external') {
-          return config.remoteUrl
-        }
-
-        const saved = await fs
-          .readFile(path.join(config.dataDir, 'config.json'), 'utf8')
-          .then((value) =>
-            Schema.decodeUnknownOption(
-              Schema.Struct({
-                remote: Schema.optional(
-                  Schema.Struct({
-                    target: Schema.String,
-                    url: Schema.optional(Schema.String)
-                  })
-                )
-              })
-            )(JSON.parse(value))
-          )
-          .catch(() => Option.none())
-
-        const remote = Option.getOrNull(saved)?.remote
-
-        return remote?.target === config.apiUrl.replace(/\/$/, '')
-          ? (remote.url ?? null)
-          : null
+      Effect.succeed({
+        url: config.remoteUrl,
+        error: config.remoteUrl ? null : 'No remote address is configured. Run Tailscale Serve yourself, then set TREEPORT_REMOTE_URL to its HTTPS URL and restart the server.',
+        setupCommand: null
       }).pipe(
-        Effect.map((url) => ({
-          url,
-          error: url
-            ? null
-            : config.daemonLifecycle === 'external'
-              ? 'No remote address is configured for this instance. Configure remote access through the process that started Treeport.'
-              : 'No remote address is configured for this instance. Run treeport remote enable on this computer, then retry.',
-          setupCommand:
-            !url && config.daemonLifecycle !== 'external'
-              ? 'treeport remote enable'
-              : null
-        })),
         Effect.map((body) =>
           jsonContractResponse(phoneAccessResponseSchema, body, 200, {
             'cache-control': 'no-store'

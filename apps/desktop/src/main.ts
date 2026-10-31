@@ -10,7 +10,6 @@ import {
   BrowserWindow,
   WebContentsView,
   clipboard,
-  dialog,
   ipcMain,
   Menu,
   nativeTheme,
