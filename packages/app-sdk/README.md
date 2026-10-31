@@ -2,11 +2,7 @@
 
 Typed browser SDK for [Treeport](https://treeport.app) web apps.
 
-Install the SDK as a development dependency for editor and TypeScript support:
-
-```sh
-pnpm add --save-dev @treeport/app-sdk
-```
+Use the SDK from this clone for editor and TypeScript support. See [Web apps](https://treeport.app/features/web-apps/) for local app setup.
 
 Treeport compiles app source with its built-in Vite toolchain and resolves `@treeport/app-sdk` to the host's runtime copy. App modules can therefore import the SDK directly without bundling their own copy, adding an import map, or defining a package-owned build step:
 

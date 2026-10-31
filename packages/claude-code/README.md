@@ -10,16 +10,9 @@ Tell Claude Code that it works inside Treeport and how to use the Treeport CLI f
 
 Make sure that the `treeport` command is on `PATH`.
 
-## Install
+## Setup
 
-In Claude Code, add the Treeport marketplace and install the plugin:
-
-```text
-/plugin marketplace add https://treeport.app/claude-code/marketplace.json
-/plugin install treeport@treeport
-```
-
-Then start `claude` in a Treeport terminal.
+Load the plugin directly from the clone. See [Coding agents](https://treeport.app/building-apps/coding-agents/#claude-code-and-cursor) for the local plugin command.
 
 The plugin acts only in a terminal that Treeport manages. Outside Treeport, its hooks do nothing.
 

@@ -2,36 +2,11 @@
 
 Tell Pi that it works inside Treeport, describe Treeport capabilities, and provide access to the Treeport CLI.
 
-## Requirements
+## Setup
 
-Install these applications first:
+Use the package directly from the clone. See [Coding agents](https://treeport.app/building-apps/coding-agents/#work-with-pi) for local installation instructions.
 
-- Treeport `0.5.0` or later;
-- Pi `0.84.3` or later;
-- Node.js 24 or later;
-- macOS or Linux.
-
-Make sure that the `treeport` command is on `PATH`.
-
-## Install
-
-Install the package globally in Pi:
-
-```sh
-pi install npm:@treeport/pi
-```
-
-The package contains a Pi extension and the detailed Treeport skill.
-
-The extension starts only in a terminal that Treeport manages.
-
-A managed Pi session shows this footer status:
-
-```text
-treeport · <tree-name>
-```
-
-Outside Treeport, the extension adds no guidance, notification, or footer status.
+The integration activates inside Treeport-managed terminals and provides on-demand Treeport tools and the detailed CLI skill.
 
 ## Use natural requests
 
@@ -66,18 +41,6 @@ The browser tabs stay open so you can inspect them.
 
 The safety guidance requires your approval before a browser runtime installation.
 
-## Use the skill for detailed workflows
+## Detailed workflows
 
-The bundled skill contains detailed Treeport CLI procedures.
-
-Pi does not need the skill for routine terminal or browser operations.
-
-Use the skill for lifecycle operations, remote access, updates, recovery, or complex child-tree work.
-
-## Remove
-
-Remove the package from Pi:
-
-```sh
-pi remove npm:@treeport/pi
-```
+The bundled skill covers CLI orchestration and server lifecycle boundaries. To remove the integration, use `pi remove /absolute/path/to/treeport/packages/pi`.
