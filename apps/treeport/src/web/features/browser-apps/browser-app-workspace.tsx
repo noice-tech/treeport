@@ -2,6 +2,7 @@ import type { DesktopBrowserPermissionPrompt } from '@treeport/desktop-bridge'
 import { z } from 'zod'
 import {
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type FormEvent,
@@ -870,6 +871,12 @@ export function BrowserAppWorkspace({
     setError(message.type === 'closed' ? message.reason : message.message)
   }
 
+  const receiveRemoteMessage = useEffectEvent((message: BrowserServerMessage) =>
+    receiveMessage(message)
+  )
+
+  const remoteVisible = useEffectEvent(() => active && !document.hidden)
+
   useEffect(() => {
     if (localBrowser) {
       return
@@ -903,13 +910,14 @@ export function BrowserAppWorkspace({
     video.addEventListener('playing', playing)
 
     const connection = connectRemoteBrowser(app.id, video, canvas, {
-      message: receiveMessage,
+      message: receiveRemoteMessage,
       failed: (message) => setFailure({ message }),
       statusChanged: setStreamStatus,
       presented: playing
     })
 
     connection.setMuted(audioMutedRef.current)
+    connection.setVisible(remoteVisible())
     remoteConnectionRef.current = connection
     connectionRef.current = connection
     setConnection(connection)
@@ -945,7 +953,7 @@ export function BrowserAppWorkspace({
       connection.dispose()
       canvas.remove()
     }
-  }, [connectionRevision, localBrowser, app.id, receiveMessage, send])
+  }, [connectionRevision, localBrowser, app.id, send])
 
   const setLocalConnection = (connection: BrowserAppConnection | null) => {
     connectionRef.current = connection
