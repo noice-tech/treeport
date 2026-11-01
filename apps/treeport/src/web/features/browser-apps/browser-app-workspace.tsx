@@ -871,8 +871,8 @@ export function BrowserAppWorkspace({
     setError(message.type === 'closed' ? message.reason : message.message)
   }
 
-  const receiveRemoteMessage = useEffectEvent(
-    (message: BrowserServerMessage) => receiveMessage(message)
+  const receiveRemoteMessage = useEffectEvent((message: BrowserServerMessage) =>
+    receiveMessage(message)
   )
 
   const remoteVisible = useEffectEvent(() => active && !document.hidden)
