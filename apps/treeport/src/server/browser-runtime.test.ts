@@ -13,14 +13,16 @@ it('discovers native Chrome or Chromium on macOS and Linux without downloading a
   await expect(browserRuntime('darwin')).resolves.toEqual({
     executablePath: null,
     channel: 'chrome',
-    launchError: expect.stringContaining('No supported Chrome or Chromium')
+    launchError: expect.objectContaining({
+      message: expect.stringContaining('No supported Chrome or Chromium')
+    })
   })
   const missing = await browserRuntime('linux')
   expect(missing.executablePath).toBeNull()
-  expect(missing.launchError).toContain('sudo snap install chromium')
-  expect(missing.launchError).toContain('Treeport daemon host')
-  expect(missing.launchError).toContain('TREEPORT_BROWSER_EXECUTABLE')
-  expect(missing.launchError).toContain('Retry')
+  expect(missing.launchError?.installCommand).toBeNull()
+  expect(missing.launchError?.message).toContain('Treeport daemon host')
+  expect(missing.launchError?.message).toContain('TREEPORT_BROWSER_EXECUTABLE')
+  expect(missing.launchError?.message).toContain('Retry')
 
   for (const [platform, executablePath] of [
     ['darwin', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
@@ -62,8 +64,10 @@ it('uses an explicit native executable and reports invalid executable paths with
   })
   access.mockClear()
   vi.stubEnv('TREEPORT_BROWSER_EXECUTABLE', './chromium')
-  expect((await browserRuntime('linux')).launchError).toContain('absolute path')
-  expect(access).not.toHaveBeenCalled()
+  expect((await browserRuntime('linux')).launchError?.message).toContain(
+    'absolute path'
+  )
+  expect(access).not.toHaveBeenCalledWith('./chromium', expect.anything())
 
   vi.stubEnv('TREEPORT_BROWSER_EXECUTABLE', '/custom/chromium')
 
@@ -71,13 +75,13 @@ it('uses an explicit native executable and reports invalid executable paths with
     access.mockClear().mockRejectedValue(new Error(reason))
     const runtime = await browserRuntime('linux')
     expect(runtime.executablePath).toBe('/custom/chromium')
-    expect(runtime.launchError).toContain('missing or not executable')
-    expect(runtime.launchError).toContain('/custom/chromium')
-    expect(runtime.launchError).toContain('restart the daemon')
-    expect(access).toHaveBeenCalledExactlyOnceWith(
+    expect(runtime.launchError?.message).toContain('missing or not executable')
+    expect(runtime.launchError?.message).toContain('/custom/chromium')
+    expect(runtime.launchError?.message).toContain('restart the daemon')
+    expect(access.mock.calls.map(([target]) => target)).toEqual([
       '/custom/chromium',
-      fs.constants.X_OK
-    )
+      '/usr/bin/apt'
+    ])
   }
 
   access.mockResolvedValue(undefined)

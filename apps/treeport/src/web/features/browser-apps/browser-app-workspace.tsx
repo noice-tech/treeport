@@ -304,7 +304,10 @@ export function BrowserAppWorkspace({
 
   const [failure, setFailure] = useState<{
     message: string
+    setup: { installCommand: string | null } | null
   } | null>(null)
+
+  const [installCommandCopied, setInstallCommandCopied] = useState(false)
 
   const { localBrowser, computerId } = getDesktopRuntime()
 
@@ -854,7 +857,10 @@ export function BrowserAppWorkspace({
         onFaviconChange(app.id, null)
       }
 
-      setFailure({ message: message.message })
+      setFailure({
+        message: message.message,
+        setup: message.type === 'browserUnavailable' ? message.setup : null
+      })
 
       return
     }
@@ -911,7 +917,7 @@ export function BrowserAppWorkspace({
 
     const connection = connectRemoteBrowser(app.id, video, canvas, {
       message: receiveRemoteMessage,
-      failed: (message) => setFailure({ message }),
+      failed: (message) => setFailure({ message, setup: null }),
       statusChanged: setStreamStatus,
       presented: playing
     })
@@ -2771,7 +2777,74 @@ export function BrowserAppWorkspace({
                 onClose={() => setPageDialog(null)}
               />
             ) : null}
-            {failure ? (
+            {failure?.setup ? (
+              <div
+                className="absolute inset-0 flex flex-col items-center justify-center overflow-y-auto bg-zinc-950 p-6 text-center text-zinc-400"
+                role="alert"
+              >
+                <div className="flex max-w-[44ch] flex-col items-center gap-2">
+                  <h2 className="text-base font-semibold text-balance text-zinc-50">
+                    Browser tabs need Chrome
+                  </h2>
+                  <p className="text-base/7 text-pretty sm:text-sm/6">
+                    Install Google Chrome on the computer running Treeport, then
+                    retry.
+                  </p>
+                </div>
+                {failure.setup.installCommand ? (
+                  <div className="mt-5 flex w-full max-w-md items-start gap-2 rounded-md bg-white/5 py-1 pr-1 pl-3 ring-1 ring-white/10">
+                    <code className="min-w-0 flex-1 py-1 text-left font-mono text-sm/5 break-all text-zinc-100 select-all">
+                      {failure.setup.installCommand}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        void navigator.clipboard
+                          ?.writeText(failure.setup?.installCommand ?? '')
+                          .then(() => setInstallCommandCopied(true))
+                      }}
+                    >
+                      {installCommandCopied ? 'Copied' : 'Copy'}
+                    </Button>
+                  </div>
+                ) : null}
+                <div className="mt-5 flex items-center gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setFailure(null)
+                      setStreamStatus('Connecting to remote browser…')
+                      setConnectionRevision((value) => value + 1)
+                    }}
+                  >
+                    Retry
+                  </Button>
+                  <Button variant="ghost" asChild>
+                    <a
+                      href="https://www.google.com/chrome/"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Download Chrome
+                    </a>
+                  </Button>
+                </div>
+                <details className="group mt-6 max-w-[52ch] text-base/7 sm:text-sm/6">
+                  <summary className="cursor-pointer list-none text-zinc-500 hover:text-zinc-300">
+                    Already installed?
+                  </summary>
+                  <p className="mt-2 text-pretty text-zinc-500 group-not-open:hidden">
+                    Chromium works too. {failure.message} Set{' '}
+                    <code className="font-mono text-zinc-300">
+                      TREEPORT_BROWSER_EXECUTABLE
+                    </code>{' '}
+                    to the browser’s path and restart Treeport.
+                  </p>
+                </details>
+              </div>
+            ) : failure ? (
               <div
                 className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center text-zinc-400"
                 role="alert"

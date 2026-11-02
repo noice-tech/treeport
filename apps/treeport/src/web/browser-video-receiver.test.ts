@@ -252,7 +252,7 @@ it('bounds connection retries and closes media when the signaling session is los
   receiver.receive({
     type: 'browserUnavailable',
     message: 'Disconnected',
-    installCommand: null
+    setup: null
   })
   await vi.advanceTimersByTimeAsync(60_000)
   expect(FakePeer.instances).toHaveLength(4)

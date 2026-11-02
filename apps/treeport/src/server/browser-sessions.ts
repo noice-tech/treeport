@@ -60,7 +60,11 @@ import { PlaywrightBrowserHost } from './browser-page-host.ts'
 import { BrowserVideoViewer } from './browser-video-viewer.ts'
 import { BrowserRelay } from './browser-relay-client.ts'
 import { browserKey, browserTouch, browserWheel } from './browser-input.ts'
-import { browserSetupGuidance } from './browser-runtime.ts'
+import {
+  BrowserNotFoundError,
+  browserSetupGuidance,
+  chromeInstallCommand
+} from './browser-runtime.ts'
 
 import { browserCursor } from './browser-cursor.ts'
 import type { AuthenticatedViewer } from './request-security.ts'
@@ -1734,7 +1738,7 @@ export class BrowserSessionManager {
         type: 'browserUnavailable',
         message:
           'This Browser already has the maximum of eight attached clients.',
-        installCommand: null
+        setup: null
       })
 
       return transport.id
@@ -1850,8 +1854,16 @@ export class BrowserSessionManager {
 
       transport.sendMessage({
         type: 'browserUnavailable',
-        message: error instanceof Error ? error.message : String(error),
-        installCommand: null
+        message:
+          error instanceof BrowserNotFoundError
+            ? error.reason
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        setup:
+          error instanceof BrowserNotFoundError
+            ? { installCommand: error.installCommand }
+            : null
       })
     }
 
@@ -2246,10 +2258,15 @@ export class BrowserSessionManager {
         attachment.transport.sendMessage({
           type: 'browserUnavailable',
           message:
-            runtimeError instanceof Error
-              ? runtimeError.message
-              : String(runtimeError),
-          installCommand: null
+            runtimeError instanceof BrowserNotFoundError
+              ? runtimeError.reason
+              : runtimeError instanceof Error
+                ? runtimeError.message
+                : String(runtimeError),
+          setup:
+            runtimeError instanceof BrowserNotFoundError
+              ? { installCommand: runtimeError.installCommand }
+              : null
         })
       }
 
@@ -4132,7 +4149,7 @@ export class BrowserSessionManager {
   }
 
   async install(): Promise<string> {
-    throw new Error(browserSetupGuidance())
+    throw new Error(browserSetupGuidance(await chromeInstallCommand()))
   }
 
   dispose(): Promise<void> {

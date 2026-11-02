@@ -105,8 +105,9 @@ export class PlaywrightBrowserHost {
         const runtime = await browserRuntime()
 
         if (runtime.launchError || !runtime.executablePath) {
-          throw new Error(
-            runtime.launchError ?? 'Browser executable is unavailable.'
+          throw (
+            runtime.launchError ??
+            new Error('Browser executable is unavailable.')
           )
         }
 

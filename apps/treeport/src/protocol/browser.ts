@@ -492,7 +492,9 @@ const browserServerMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('browserUnavailable'),
     message: Schema.String,
-    installCommand: Schema.NullOr(Schema.String)
+    setup: Schema.NullOr(
+      Schema.Struct({ installCommand: Schema.NullOr(Schema.String) })
+    )
   }),
   Schema.Struct({
     type: Schema.Literal('videoUnavailable'),

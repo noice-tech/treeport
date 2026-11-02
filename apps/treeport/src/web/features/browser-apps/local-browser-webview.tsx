@@ -171,7 +171,7 @@ export function LocalBrowserWebview({
       onMessage({
         type: 'browserUnavailable',
         message: cause instanceof Error ? cause.message : String(cause),
-        installCommand: null
+        setup: null
       })
     }
 
