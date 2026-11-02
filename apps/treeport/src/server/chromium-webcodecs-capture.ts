@@ -2,7 +2,8 @@ export async function captureChromiumWebCodecs(
   track: MediaStreamTrack,
   audio: MediaStreamTrack | null,
   url: string,
-  token: string
+  token: string,
+  colorMatrix: 'bt709' | 'smpte170m'
 ) {
   // SAFETY: Chromium's optional window track processor is capability-checked below.
   const { MediaStreamTrackProcessor } = globalThis as typeof globalThis & {
@@ -343,9 +344,38 @@ export async function captureChromiumWebCodecs(
     encode()
   }
 
+  // EXTERNAL: Encoders signal the input frame's colour space, so mislabelled
+  // capture frames are re-tagged with the matrix their pixels actually use.
+  const relabel = async (frame: VideoFrame): Promise<VideoFrame> => {
+    if (colorMatrix === 'bt709' || !frame.format || !frame.visibleRect) {
+      return frame
+    }
+
+    const buffer = new Uint8Array(frame.allocationSize())
+    const layout = await frame.copyTo(buffer)
+    const { x, y, width, height } = frame.visibleRect
+
+    const relabelled = new VideoFrame(buffer, {
+      format: frame.format,
+      codedWidth: frame.codedWidth,
+      codedHeight: frame.codedHeight,
+      timestamp: frame.timestamp,
+      layout,
+      visibleRect: { x, y, width, height },
+      displayWidth: frame.displayWidth,
+      displayHeight: frame.displayHeight,
+      colorSpace: { ...frame.colorSpace.toJSON(), matrix: colorMatrix },
+      transfer: [buffer.buffer]
+    })
+
+    frame.close()
+
+    return relabelled
+  }
+
   const pump = async () => {
     while (!stopped) {
-      const { value: frame, done } = await reader.read()
+      const { value: raw, done } = await reader.read()
 
       if (done) {
         if (!stopped) {
@@ -356,11 +386,12 @@ export async function captureChromiumWebCodecs(
       }
 
       if (stopped) {
-        frame.close()
+        raw.close()
 
         return
       }
 
+      const frame = await relabel(raw)
       captured++
 
       if (latest && !latestEncoded) {
