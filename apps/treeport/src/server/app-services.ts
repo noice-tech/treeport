@@ -406,8 +406,14 @@ export class AppServices {
         this.restart(entry)
       }
     })
-    child.once('error', (error) => {
-      entry.error = `Could not start ${declaration.executable}: ${error.message}. Install the executable and make it available on Treeport's PATH.`
+    child.once('error', (error: NodeJS.ErrnoException) => {
+      const executable = substitute(declaration.executable)
+      entry.error =
+        error.code === 'ENOENT'
+          ? `${executable} isn’t installed, or Treeport can’t find it. Install ${executable}, make sure it’s on the PATH Treeport starts with, then try again.`
+          : error.code === 'EACCES'
+            ? `Treeport found ${executable} but isn’t allowed to run it. Check that the file is executable, then try again.`
+            : `Couldn’t start ${executable}: ${error.message}`
       entry.status = 'failed'
     })
 
