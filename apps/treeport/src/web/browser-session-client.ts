@@ -121,7 +121,7 @@ export function connectBrowserApp(
     handlers.message({
       type: 'browserUnavailable',
       message: cause instanceof Error ? cause.message : String(cause),
-      installCommand: null
+      setup: null
     })
   }
 

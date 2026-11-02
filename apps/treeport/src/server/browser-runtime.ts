@@ -1,14 +1,25 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-export function browserSetupGuidance(platform = process.platform): string {
+// EXTERNAL: Google ships Linux Chrome only as x86-64 .deb/.rpm packages.
+export async function chromeInstallCommand(
+  platform = process.platform
+): Promise<string | null> {
+  const apt = await fs.access('/usr/bin/apt', fs.constants.X_OK).then(
+    () => true,
+    () => false
+  )
+
+  return platform === 'linux' && process.arch === 'x64' && apt
+    ? 'wget -qO /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install -y /tmp/chrome.deb'
+    : null
+}
+
+export function browserSetupGuidance(installCommand: string | null): string {
   return [
     'Install Google Chrome or Chromium on the Treeport daemon host (which may be different from this device).',
-    ...(platform === 'linux'
-      ? [
-          'On Ubuntu with Snap available, run: sudo snap install chromium',
-          'Ubuntu installation instructions: https://snapcraft.io/install/chromium/ubuntu'
-        ]
+    ...(installCommand
+      ? [`To install Google Chrome, run: ${installCommand}`]
       : []),
     'Google Chrome: https://www.google.com/chrome/',
     'Then click Retry, or retry your browser command.',
@@ -17,10 +28,21 @@ export function browserSetupGuidance(platform = process.platform): string {
   ].join('\n')
 }
 
+export class BrowserNotFoundError extends Error {
+  readonly reason: string
+  readonly installCommand: string | null
+
+  constructor(reason: string, installCommand: string | null) {
+    super(`${reason}\n${browserSetupGuidance(installCommand)}`)
+    this.reason = reason
+    this.installCommand = installCommand
+  }
+}
+
 export async function browserRuntime(platform = process.platform): Promise<{
   executablePath: string | null
   channel: 'chrome' | 'chromium'
-  launchError: string | null
+  launchError: BrowserNotFoundError | null
 }> {
   const configured = process.env.TREEPORT_BROWSER_EXECUTABLE?.trim()
 
@@ -43,7 +65,10 @@ export async function browserRuntime(platform = process.platform): Promise<{
     return {
       executablePath: configured,
       channel,
-      launchError: `TREEPORT_BROWSER_EXECUTABLE must be an absolute path.\n${browserSetupGuidance(platform)}`
+      launchError: new BrowserNotFoundError(
+        'TREEPORT_BROWSER_EXECUTABLE must be an absolute path.',
+        await chromeInstallCommand(platform)
+      )
     }
   }
 
@@ -65,6 +90,11 @@ export async function browserRuntime(platform = process.platform): Promise<{
   return {
     executablePath: configured || null,
     channel,
-    launchError: `${configured ? `TREEPORT_BROWSER_EXECUTABLE is missing or not executable: ${configured}.` : 'No supported Chrome or Chromium executable was found on the Treeport daemon host.'}\n${browserSetupGuidance(platform)}`
+    launchError: new BrowserNotFoundError(
+      configured
+        ? `TREEPORT_BROWSER_EXECUTABLE is missing or not executable: ${configured}.`
+        : 'No supported Chrome or Chromium executable was found on the Treeport daemon host.',
+      await chromeInstallCommand(platform)
+    )
   }
 }

@@ -168,7 +168,7 @@ export class PlaywrightBrowser {
 
     const runtime = await browserRuntime()
     const { executablePath, channel } = runtime
-    let launchError = runtime.launchError
+    let launchError = runtime.launchError?.message ?? null
     const installed = executablePath !== null && launchError === null
     let browserRevision = 'unknown'
     let launchReady = false
