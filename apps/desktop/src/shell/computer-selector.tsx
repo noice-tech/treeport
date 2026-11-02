@@ -177,7 +177,7 @@ export function ComputerSelector({
               disabled={!selected}
               onSelect={onOpenOnPhone}
             >
-              Open on phone…
+              Show QR Code…
             </DropdownMenu.Item>
           </DropdownMenu.Group>
           <DropdownMenu.Separator className="h-px shrink-0 bg-white/8" />

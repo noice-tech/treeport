@@ -8,7 +8,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 
-export const phoneAccess = (origin: string) =>
+export const phoneAccess = (origin: string, enable: boolean) =>
   Effect.tryPromise(async (signal): Promise<PhoneAccessResponse> => {
     const computer = parseComputerUrl(origin)
 
@@ -17,6 +17,7 @@ export const phoneAccess = (origin: string) =>
     }
 
     const response = await fetch(new URL('/api/phone-access', computer), {
+      method: enable ? 'POST' : 'GET',
       redirect: 'error',
       signal
     })
@@ -45,7 +46,7 @@ export const phoneAccess = (origin: string) =>
 
     return result
   }).pipe(
-    Effect.timeout('12 seconds'),
+    Effect.timeout('30 seconds'),
     Effect.catchAll((cause) =>
       Effect.succeed<PhoneAccessResponse>({
         url: null,

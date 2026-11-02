@@ -1,9 +1,11 @@
+import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import * as NodeHttpServerRequest from '@effect/platform-node/NodeHttpServerRequest'
 import * as HttpApp from '@effect/platform/HttpApp'
 import * as HttpRouter from '@effect/platform/HttpRouter'
@@ -418,6 +420,26 @@ export interface TreeportHttpApp {
   request(input: string | URL | Request, init?: RequestInit): Promise<Response>
 }
 
+const execute = promisify(execFile)
+
+const tailscaleServeStatusSchema = Schema.parseJson(
+  Schema.Struct({
+    Web: Schema.optional(
+      Schema.Record({
+        key: Schema.String,
+        value: Schema.Struct({
+          Handlers: Schema.optional(
+            Schema.Record({
+              key: Schema.String,
+              value: Schema.Struct({ Proxy: Schema.optional(Schema.String) })
+            })
+          )
+        })
+      })
+    )
+  })
+)
+
 export function createApp({
   service,
   config,
@@ -538,6 +560,61 @@ export function createApp({
 
     return identity
   })
+
+  const tailscaleTarget = `http://127.0.0.1:${config.port}`
+
+  const tailscaleServeCommand = `tailscale serve --bg --https=${config.port} ${tailscaleTarget}`
+
+  // EXTERNAL: Tailscale Serve owns the remote address. Read its routes instead of
+  // configuring one, so routes added by the desktop app or by hand both work.
+  const phoneAccess = async () => {
+    if (config.remoteUrl) {
+      return { url: config.remoteUrl, error: null, setupCommand: null }
+    }
+
+    const status = await execute('tailscale', ['serve', 'status', '--json'], {
+      timeout: 5_000
+    }).then(
+      ({ stdout }) =>
+        Option.getOrElse(
+          Schema.decodeUnknownOption(tailscaleServeStatusSchema)(stdout),
+          () => ({ Web: undefined })
+        ),
+      () => null
+    )
+
+    if (!status) {
+      return {
+        url: null,
+        error:
+          'Install Tailscale and sign in on this computer to open Treeport from other devices.',
+        setupCommand: null
+      }
+    }
+
+    const hostPort = Object.entries(status.Web ?? {}).find(([, server]) => {
+      const proxy = URL.parse(server.Handlers?.['/']?.Proxy ?? '')
+
+      return (
+        proxy !== null &&
+        ['127.0.0.1', 'localhost', '[::1]'].includes(proxy.hostname) &&
+        proxy.port === String(config.port)
+      )
+    })?.[0]
+
+    return hostPort
+      ? {
+          url: `https://${hostPort.replace(/:443$/u, '')}`,
+          error: null,
+          setupCommand: null
+        }
+      : {
+          url: null,
+          error:
+            'Tailscale access is off. Turn it on to serve Treeport privately to devices on your tailnet.',
+          setupCommand: tailscaleServeCommand
+        }
+  }
 
   const routes = [
     ...(push
@@ -999,12 +1076,32 @@ export function createApp({
     route(
       'GET',
       '/api/phone-access',
-      Effect.succeed({
-        url: config.remoteUrl,
-        error: config.remoteUrl
-          ? null
-          : 'No remote address is configured. Run Tailscale Serve yourself, then set TREEPORT_REMOTE_URL to its HTTPS URL and restart the server.',
-        setupCommand: null
+      operation(phoneAccess).pipe(
+        Effect.map((body) =>
+          jsonContractResponse(phoneAccessResponseSchema, body, 200, {
+            'cache-control': 'no-store'
+          })
+        )
+      )
+    ),
+    route(
+      'POST',
+      '/api/phone-access',
+      operation(async () => {
+        const serve = await execute(
+          'tailscale',
+          ['serve', '--bg', `--https=${config.port}`, tailscaleTarget],
+          { timeout: 20_000 }
+        ).then(
+          () => null,
+          (error: { stderr?: string; message: string }) => ({
+            url: null,
+            error: `Tailscale couldn’t serve Treeport: ${error.stderr?.trim() || error.message}`,
+            setupCommand: tailscaleServeCommand
+          })
+        )
+
+        return serve ?? (await phoneAccess())
       }).pipe(
         Effect.map((body) =>
           jsonContractResponse(phoneAccessResponseSchema, body, 200, {

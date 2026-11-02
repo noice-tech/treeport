@@ -13,7 +13,7 @@ export function OpenOnPhoneDialog({
   onClose: () => void
 }) {
   const [result, setResult] = useState<PhoneAccessResponse | null>(null)
-  const [attempt, setAttempt] = useState(0)
+  const [attempt, setAttempt] = useState({ count: 0, enable: false })
 
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
     'idle'
@@ -21,7 +21,7 @@ export function OpenOnPhoneDialog({
 
   useEffect(() => {
     let active = true
-    window.treeportShell.phoneAccess(computer.id).then(
+    window.treeportShell.phoneAccess(computer.id, attempt.enable).then(
       (value) => {
         if (active) {
           setResult(value)
@@ -44,13 +44,15 @@ export function OpenOnPhoneDialog({
   }, [computer.id, attempt])
 
   return (
-    <Dialog title="Open on phone" onClose={onClose}>
+    <Dialog title="QR Code" onClose={onClose}>
       <p className="text-center text-sm font-medium text-zinc-100">
         {computer.name}
       </p>
       {!result ? (
         <p className="py-12 text-center text-sm text-zinc-400" role="status">
-          Loading remote address…
+          {attempt.enable
+            ? 'Turning on Tailscale access…'
+            : 'Loading remote address…'}
         </p>
       ) : result.url ? (
         <>
@@ -96,12 +98,22 @@ export function OpenOnPhoneDialog({
           onClick={() => {
             setResult(null)
             setCopyState('idle')
-            setAttempt((value) => value + 1)
+            setAttempt(({ count }) => ({ count: count + 1, enable: false }))
           }}
         >
           <RefreshCwIcon data-icon="inline-start" />
           Retry
         </Button>
+        {result && !result.url && result.setupCommand ? (
+          <Button
+            onClick={() => {
+              setResult(null)
+              setAttempt(({ count }) => ({ count: count + 1, enable: true }))
+            }}
+          >
+            Turn On
+          </Button>
+        ) : null}
         {result?.url ? (
           <Button
             aria-label="Copy link"
