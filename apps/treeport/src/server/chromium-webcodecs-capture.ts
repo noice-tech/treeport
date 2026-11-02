@@ -364,8 +364,7 @@ export async function captureChromiumWebCodecs(
       visibleRect: { x, y, width, height },
       displayWidth: frame.displayWidth,
       displayHeight: frame.displayHeight,
-      colorSpace: { ...frame.colorSpace.toJSON(), matrix: colorMatrix },
-      transfer: [buffer.buffer]
+      colorSpace: { ...frame.colorSpace.toJSON(), matrix: colorMatrix }
     })
 
     frame.close()
