@@ -23,11 +23,18 @@ const execute = promisify(execFile)
 function spawnInClone(
   root: string,
   script: string,
-  options: { detached: boolean; stdio: StdioOptions; env: NodeJS.ProcessEnv }
+  options: {
+    origin: string
+    detached: boolean
+    stdio: StdioOptions
+    env: NodeJS.ProcessEnv
+  }
 ): ChildProcess {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('TREEPORT_'))
   )
+
+  const port = new URL(options.origin).port
 
   // EXTERNAL: Apps opened from Finder get launchd's minimal PATH. An interactive login
   // shell loads the user's node and pnpm setup (Homebrew, nvm, fnm, and similar).
@@ -39,7 +46,7 @@ function spawnInClone(
       cwd: root,
       detached: options.detached,
       stdio: options.stdio,
-      env: { ...env, ...options.env }
+      env: { ...env, TREEPORT_PORT: port, ...options.env }
     }
   )
 }
@@ -123,6 +130,7 @@ export class LocalServer {
     const log = await fs.open(this.logPath, 'w')
 
     const child = spawnInClone(root, 'scripts/start.mjs', {
+      origin: this.state.origin,
       detached: true,
       stdio: ['ignore', log.fd, log.fd],
       env: { TREEPORT_INSTALLATION_METHOD: INSTALLATION_METHOD }
@@ -173,7 +181,10 @@ export class LocalServer {
   }
 
   async runUpdate(): Promise<{ ok: boolean; output: string }> {
+    const ownedPid = this.ownedPid
+
     const child = spawnInClone(this.state.sourceRoot, 'scripts/update.mjs', {
+      origin: this.state.origin,
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {}
@@ -190,6 +201,22 @@ export class LocalServer {
       })
       child.once('exit', (exitCode) => resolve(exitCode ?? 1))
     })
+
+    // EXTERNAL: update.mjs stops the server this app started and leaves the restart to
+    // the app. The loaded page keeps the connection ready, so auto-start never fires.
+    if (code === 0 && ownedPid !== null) {
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const health = await Effect.runPromise(checkHealth(this.state.origin))
+
+        if (health?.pid !== ownedPid) {
+          break
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+
+      await this.start()
+    }
 
     return { ok: code === 0, output: stripVTControlCharacters(output).trim() }
   }
