@@ -802,6 +802,12 @@ async function updateLocalServer(): Promise<void> {
     item.enabled = true
   }
 
+  const host = hostSessions?.active
+
+  if (result.ok && host?.computer.origin === server.state.origin) {
+    host.view.webContents.reload()
+  }
+
   void describeLocalClone()
   await showMessage({
     type: result.ok ? 'info' : 'error',
