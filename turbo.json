@@ -15,7 +15,8 @@
         "CARGO",
         "CARGO_HOME",
         "RUSTUP_HOME",
-        "RUSTUP_TOOLCHAIN"
+        "RUSTUP_TOOLCHAIN",
+        "TREEPORT_BUILD_KEEPER"
       ]
     },
     "@treeport/session-keeper#check:rust": {

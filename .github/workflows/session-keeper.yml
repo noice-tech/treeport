@@ -1,0 +1,113 @@
+name: Session keeper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/session-keeper.yml
+      - packages/session-keeper/native/**
+      - rust-toolchain.toml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: session-keeper
+  cancel-in-progress: false
+
+jobs:
+  key:
+    if: github.repository == 'noice-tech/treeport'
+    runs-on: ubuntu-24.04
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: key
+        run: echo "key=$(node packages/session-keeper/scripts/build-native.mjs --print-key)" >> "$GITHUB_OUTPUT"
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: session-keeper-${{ steps.key.outputs.key }}
+        run: |
+          if gh release view "$RELEASE" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo published=true >> "$GITHUB_OUTPUT"
+          else
+            echo published=false >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: key
+    if: needs.key.outputs.published == 'false'
+    strategy:
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            zig: '.2.28'
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            zig: '.2.28'
+          - platform: darwin-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-15
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      MANIFEST: packages/session-keeper/native/Cargo.toml
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal --target ${{ matrix.target }}
+      - if: matrix.zig
+        run: |
+          python3 -m pip install --user --break-system-packages ziglang==0.13.0
+          cargo install --locked cargo-zigbuild@0.21.8
+          cargo zigbuild --release --locked --manifest-path "$MANIFEST" --target ${{ matrix.target }}${{ matrix.zig }}
+      - if: ${{ !matrix.zig }}
+        run: cargo build --release --locked --manifest-path "$MANIFEST" --target ${{ matrix.target }}
+      - run: |
+          mkdir dist
+          cp packages/session-keeper/native/target/${{ matrix.target }}/release/treeport-session-keeper dist/treeport-session-keeper-${{ matrix.platform }}
+      - if: matrix.platform != 'darwin-x64'
+        run: dist/treeport-session-keeper-${{ matrix.platform }} --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: [key, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - working-directory: dist
+        run: sha256sum treeport-session-keeper-* > SHA256SUMS
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ needs.key.outputs.key }}
+        run: |
+          gh release create "session-keeper-$KEY" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "Session keeper $KEY" \
+            --notes "Prebuilt session keeper binaries for source $KEY. pnpm start downloads these instead of compiling Rust."
