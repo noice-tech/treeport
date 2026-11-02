@@ -1,8 +1,13 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import {
+  execFile,
+  spawn,
+  type ChildProcess,
+  type StdioOptions
+} from 'node:child_process'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { stripVTControlCharacters } from 'node:util'
+import { promisify, stripVTControlCharacters } from 'node:util'
 import * as Effect from 'effect/Effect'
 import { checkHealth } from './backend-connection'
 import type { ConnectionState, LocalServerState } from './desktop-contract'
@@ -13,6 +18,31 @@ declare const __TREEPORT_SOURCE_ROOT__: string
 const INSTALLATION_METHOD = 'desktop-app'
 const AUTO_START_INTERVAL_MS = 60_000
 const OUTPUT_LINES = 12
+const execute = promisify(execFile)
+
+function spawnInClone(
+  root: string,
+  script: string,
+  options: { detached: boolean; stdio: StdioOptions; env: NodeJS.ProcessEnv }
+): ChildProcess {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('TREEPORT_'))
+  )
+
+  // EXTERNAL: Apps opened from Finder get launchd's minimal PATH. An interactive login
+  // shell loads the user's node and pnpm setup (Homebrew, nvm, fnm, and similar).
+  return spawn(
+    process.env.SHELL ||
+      (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh'),
+    ['-ilc', `exec node ${script}`],
+    {
+      cwd: root,
+      detached: options.detached,
+      stdio: options.stdio,
+      env: { ...env, ...options.env }
+    }
+  )
+}
 
 export class LocalServer {
   state: LocalServerState
@@ -92,25 +122,11 @@ export class LocalServer {
 
     const log = await fs.open(this.logPath, 'w')
 
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([key]) => !key.startsWith('TREEPORT_')
-      )
-    )
-
-    // EXTERNAL: Apps opened from Finder get launchd's minimal PATH. An interactive login
-    // shell loads the user's node and pnpm setup (Homebrew, nvm, fnm, and similar).
-    const child = spawn(
-      process.env.SHELL ||
-        (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh'),
-      ['-ilc', 'exec node scripts/start.mjs'],
-      {
-        cwd: root,
-        detached: true,
-        stdio: ['ignore', log.fd, log.fd],
-        env: { ...env, TREEPORT_INSTALLATION_METHOD: INSTALLATION_METHOD }
-      }
-    )
+    const child = spawnInClone(root, 'scripts/start.mjs', {
+      detached: true,
+      stdio: ['ignore', log.fd, log.fd],
+      env: { TREEPORT_INSTALLATION_METHOD: INSTALLATION_METHOD }
+    })
 
     await log.close()
     child.unref()
@@ -154,6 +170,51 @@ export class LocalServer {
       this.update({ status: 'stopped', canStop: false })
       process.kill(health.pid, 'SIGTERM')
     }
+  }
+
+  async runUpdate(): Promise<{ ok: boolean; output: string }> {
+    const child = spawnInClone(this.state.sourceRoot, 'scripts/update.mjs', {
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {}
+    })
+
+    let output = ''
+    child.stdout?.on('data', (chunk: Buffer) => (output += chunk.toString()))
+    child.stderr?.on('data', (chunk: Buffer) => (output += chunk.toString()))
+
+    const code = await new Promise<number>((resolve) => {
+      child.once('error', (error) => {
+        output += error.message
+        resolve(1)
+      })
+      child.once('exit', (exitCode) => resolve(exitCode ?? 1))
+    })
+
+    return { ok: code === 0, output: stripVTControlCharacters(output).trim() }
+  }
+
+  async describeClone(): Promise<string> {
+    const git = (args: string[]) =>
+      execute('git', ['-C', this.state.sourceRoot, ...args]).then(
+        ({ stdout }) => stdout.trim(),
+        () => null
+      )
+
+    const [commit, changes] = await Promise.all([
+      git(['log', '-1', '--format=%h %s']),
+      git(['status', '--porcelain'])
+    ])
+
+    return [
+      `Clone: ${this.state.sourceRoot}`,
+      commit === null ? null : `Commit: ${commit}`,
+      changes === null
+        ? null
+        : `Local changes: ${changes === '' ? 'none' : 'yes'}`
+    ]
+      .filter((line) => line !== null)
+      .join('\n')
   }
 
   private autoStart(): void {

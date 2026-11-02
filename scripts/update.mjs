@@ -2,24 +2,19 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { runSteps } from './steps.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-for (const [label, command, args] of [
-  ['pull', 'git', ['pull', '--ff-only']],
-  ['install dependencies', 'pnpm', ['install', '--frozen-lockfile']],
-  ['build Treeport', 'pnpm', ['build:server']]
-]) {
-  const step = spawnSync(command, args, { cwd: root, stdio: 'inherit' })
+const status = runSteps(root, [
+  ['Pulling changes', 'git', ['pull', '--ff-only']],
+  ['Installing dependencies', 'pnpm', ['install', '--frozen-lockfile']],
+  ['Building Treeport', 'pnpm', ['build:server']]
+])
 
-  if (step.status !== 0) {
-    console.error(
-      step.error
-        ? `Failed to ${label}: ${step.error.message}`
-        : `Failed to ${label}. The running server was left untouched.`
-    )
-    process.exit(step.status ?? 1)
-  }
+if (status !== 0) {
+  console.error('\nUpdate stopped. The running Treeport was left untouched.')
+  process.exit(status)
 }
 
 const commit = spawnSync('git', ['log', '-1', '--format=%h %s'], {
@@ -36,18 +31,17 @@ const health = await fetch(`http://127.0.0.1:${port}/api/health`)
   .catch(() => null)
 
 if (health?.installationMethod === 'pm2') {
-  const restart = spawnSync('pm2', ['restart', 'ecosystem.config.cjs'], {
-    cwd: root,
-    stdio: 'inherit'
-  })
-
-  process.exit(restart.status ?? 1)
+  process.exit(
+    runSteps(root, [
+      ['Restarting', 'pnpm', ['pm2', 'restart', 'ecosystem.config.cjs']]
+    ])
+  )
 }
 
 if (health?.installationMethod === 'desktop-app') {
   process.kill(health.pid, 'SIGTERM')
   console.log(
-    'Stopped the server started by the Treeport app. The app starts it again, or open Treeport if it is closed.'
+    'Restarting through the Treeport app. Open Treeport if it is closed.'
   )
 } else if (health) {
   console.log(

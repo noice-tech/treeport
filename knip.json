@@ -6,6 +6,7 @@
   },
   "workspaces": {
     ".": {
+      "entry": ["scripts/update.mjs"],
       "ignoreDependencies": ["@treeport/treeport"]
     },
     "apps/treeport": {

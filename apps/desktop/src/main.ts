@@ -743,13 +743,71 @@ async function confirmStopLocalServer(): Promise<void> {
       'Terminals keep running. Treeport disconnects until you start the server again.'
   }
 
+  if ((await showMessage(options)) === 0) {
+    await localServer?.stop()
+  }
+}
+
+async function showMessage(
+  options: Electron.MessageBoxOptions
+): Promise<number> {
   const { response } = mainWindow
     ? await dialog.showMessageBox(mainWindow, options)
     : await dialog.showMessageBox(options)
 
-  if (response === 0) {
-    await localServer?.stop()
+  return response
+}
+
+async function describeLocalClone(): Promise<void> {
+  if (localServer) {
+    app.setAboutPanelOptions({
+      applicationName: 'Treeport',
+      applicationVersion: app.getVersion(),
+      credits: await localServer.describeClone()
+    })
   }
+}
+
+async function updateLocalServer(): Promise<void> {
+  const server = localServer
+  const item = Menu.getApplicationMenu()?.getMenuItemById('server-update')
+
+  if (!server || item?.enabled === false) {
+    return
+  }
+
+  const response = await showMessage({
+    type: 'question',
+    buttons: ['Update', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Update Treeport?',
+    detail:
+      'Pulls the latest changes into your clone, rebuilds, and restarts the server. Terminals keep running.'
+  })
+
+  if (response !== 0) {
+    return
+  }
+
+  if (item) {
+    item.enabled = false
+  }
+
+  mainWindow?.setProgressBar(2)
+  const result = await server.runUpdate()
+  mainWindow?.setProgressBar(-1)
+
+  if (item) {
+    item.enabled = true
+  }
+
+  void describeLocalClone()
+  await showMessage({
+    type: result.ok ? 'info' : 'error',
+    message: result.ok ? 'Treeport is updated' : 'Treeport couldn’t update',
+    detail: result.output.split('\n').slice(-15).join('\n')
+  })
 }
 
 function installMenu(): void {
@@ -773,6 +831,11 @@ function installMenu(): void {
         {
           label: 'Show Server Logs',
           click: () => void shell.openPath(server.logPath)
+        },
+        {
+          id: 'server-update',
+          label: 'Update Treeport…',
+          click: () => void updateLocalServer()
         }
       ]
     : []
@@ -2064,6 +2127,7 @@ if (!hasSingleInstanceLock) {
           path.join(app.getPath('userData'), 'local-server-chosen'),
           () => broadcastState()
         )
+        void describeLocalClone()
       }
 
       installMenu()

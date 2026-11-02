@@ -18,7 +18,6 @@
     "cli:uninstall": "pnpm remove -g @treeport/treeport",
     "signoff": "bash scripts/signoff.sh",
     "start": "node scripts/start.mjs",
-    "sync": "node scripts/sync.mjs",
     "app:install": "node scripts/app-install.mjs",
     "pm2": "pm2",
     "pm2:start": "pm2 start ecosystem.config.cjs",
