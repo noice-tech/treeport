@@ -1,12 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreBinaries": ["tailscale", "Xorg", "xrandr", "pm2"],
+  "ignoreBinaries": ["tailscale", "Xorg", "xrandr", "ditto"],
   "ignoreIssues": {
     "tools/oxlint/anti-slop/vendor/**": ["types"]
   },
   "workspaces": {
     ".": {
-      "entry": ["ecosystem.config.cjs"],
+      "entry": ["scripts/update.mjs"],
       "ignoreDependencies": ["@treeport/treeport"]
     },
     "apps/treeport": {

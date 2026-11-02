@@ -54,6 +54,17 @@ export type ConnectionState =
       message: string
     }
 
+export interface LocalServerState {
+  status: 'idle' | 'starting' | 'failed' | 'stopped'
+  chosen: boolean
+  origin: string
+  sourceRoot: string
+  startedAt: number | null
+  output: string[]
+  error: string | null
+  canStop: boolean
+}
+
 export interface DesktopShellState {
   appVersion: string
   platform: NodeJS.Platform
@@ -61,6 +72,7 @@ export interface DesktopShellState {
   selectedComputerId?: string
   computers: ComputerSummary[]
   connection: ConnectionState
+  localServer: LocalServerState | null
   navigation: DesktopNavigationState
   theme: TreeportTheme
 }

@@ -450,6 +450,15 @@ const shellBridge = Object.freeze({
   },
   openInstallationDocs(): Promise<void> {
     return ipcRenderer.invoke('shell:open-installation-docs')
+  },
+  startLocalServer(): Promise<void> {
+    return ipcRenderer.invoke('shell:start-local-server')
+  },
+  showLocalServerLogs(): Promise<void> {
+    return ipcRenderer.invoke('shell:show-local-server-logs')
+  },
+  openLocalServerSource(): Promise<void> {
+    return ipcRenderer.invoke('shell:open-local-server-source')
   }
 })
 

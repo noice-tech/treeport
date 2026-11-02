@@ -24,7 +24,9 @@ it('reads optional metadata without imposing a daemon release or health shape', 
     )
     expect(await Effect.runPromise(checkHealth(origin))).toEqual({
       hostname: health.hostname,
-      version
+      version,
+      pid: null,
+      installationMethod: null
     })
   }
 
@@ -33,12 +35,16 @@ it('reads optional metadata without imposing a daemon release or health shape', 
   )
   expect(await Effect.runPromise(checkHealth(origin))).toEqual({
     hostname: health.hostname,
-    version: null
+    version: null,
+    pid: null,
+    installationMethod: null
   })
   request.mockResolvedValueOnce(Response.json({}))
   expect(await Effect.runPromise(checkHealth(origin))).toEqual({
     hostname: null,
-    version: null
+    version: null,
+    pid: null,
+    installationMethod: null
   })
 })
 

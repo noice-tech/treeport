@@ -1,13 +1,13 @@
 ---
-title: Service supervision
-description: Keep Treeport running under pm2 or another process manager.
+title: Always on
+description: Keep Treeport running without opening the app, with pm2.
 ---
 
-Treeport runs in the foreground with `pnpm start`. You own startup and supervision; Treeport does not install OS services.
+The Mac app starts Treeport when you open it. Use pm2 when Treeport should run without anyone opening the app: on a server, at boot, and after a crash. Treeport does not install OS services.
 
-## Optional pm2 setup
+## Set up pm2
 
-Install pm2 separately, then run these commands from your clone:
+pm2 comes with your clone. Run these commands from your clone:
 
 ```sh
 pnpm pm2:start
@@ -15,12 +15,12 @@ pnpm pm2:save
 pnpm pm2:startup
 ```
 
-Follow the platform-specific instructions printed by `pm2 startup`. Keep the clone at the same path.
+Follow the platform-specific instructions printed by `pnpm pm2:startup`. Keep the clone at the same path.
 
-- `pm2 status treeport` shows the process.
-- `pm2 logs treeport` shows supervisor output.
-- `pm2 stop treeport` stops the server.
-- `pnpm sync` updates and restarts it, and leaves it running if the update fails.
+- `pnpm pm2 status treeport` shows the process.
+- `pnpm pm2 logs treeport` shows supervisor output.
+- `pnpm pm2 stop treeport` stops the server.
+- `treeport update` updates and restarts it, and leaves it running if the update fails.
 
 Use your supervisor to start, restart, and stop the server.
 

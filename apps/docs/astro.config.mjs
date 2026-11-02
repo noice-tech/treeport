@@ -57,6 +57,10 @@ export default defineConfig({
           items: [
             { label: 'Install Treeport', slug: 'getting-started/installation' },
             {
+              label: 'Change Treeport',
+              slug: 'getting-started/change-treeport'
+            },
+            {
               label: 'Projects, trees, and apps',
               slug: 'concepts/projects-worktrees-terminals'
             }
@@ -82,7 +86,7 @@ export default defineConfig({
             { label: 'Launchers', slug: 'features/launchers' },
             { label: 'Remote access', slug: 'features/remote-access' },
             {
-              label: 'Service supervision',
+              label: 'Always on',
               slug: 'features/service-supervision'
             },
             {

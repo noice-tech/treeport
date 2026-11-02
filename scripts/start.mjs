@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { runSteps } from './steps.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -16,20 +17,13 @@ const serverEntry = path.join(
 
 const webDist = path.join(root, 'apps', 'treeport', 'dist', 'web')
 
-for (const [label, args] of [
-  ['install dependencies', ['install', '--frozen-lockfile']],
-  ['build Treeport', ['build:server']]
-]) {
-  const step = spawnSync('pnpm', args, { cwd: root, stdio: 'inherit' })
+const status = runSteps(root, [
+  ['Installing dependencies', 'pnpm', ['install', '--frozen-lockfile']],
+  ['Building Treeport', 'pnpm', ['build:server']]
+])
 
-  if (step.status !== 0) {
-    console.error(
-      step.error
-        ? `Failed to ${label}: ${step.error.message}`
-        : `Failed to ${label}.`
-    )
-    process.exit(step.status ?? 1)
-  }
+if (status !== 0) {
+  process.exit(status)
 }
 
 const host = process.env.TREEPORT_HOST?.trim() || '127.0.0.1'

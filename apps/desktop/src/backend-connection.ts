@@ -86,7 +86,9 @@ export const checkHealth = (origin: string) =>
       ? z
           .object({
             version: z.string().nullable().catch(null),
-            hostname: z.string().nullable().catch(null)
+            hostname: z.string().nullable().catch(null),
+            pid: z.number().int().nullable().catch(null),
+            installationMethod: z.string().nullable().catch(null)
           })
           .parse(await response.json())
       : null

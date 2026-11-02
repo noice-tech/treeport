@@ -18,20 +18,20 @@ Treeport is also what Mitchell Hashimoto calls an [agentic inbox](https://mitche
 
 ## Run it
 
-[Fork Treeport](https://github.com/noice-tech/treeport/fork) and run the server yourself; there are no npm installations or prebuilt downloads.
+Treeport runs from your own fork, so you and your agent can change it.
 
 ```sh
 gh repo fork noice-tech/treeport --clone && cd treeport
-pnpm install --frozen-lockfile && pnpm cli:install && pnpm start
+pnpm install && pnpm cli:install
+pnpm app:install    # Mac app; or `pnpm start` and open http://127.0.0.1:8733
 ```
 
-To update, run `pnpm sync`.
-
-See [Run Treeport](https://treeport.app/getting-started/installation/) for prerequisites, the CLI, updates, and desktop builds. [Service supervision](https://treeport.app/features/service-supervision/) covers optional pm2 setup. For another device, configure [private remote access](https://treeport.app/features/remote-access/); do not expose Treeport directly to the public internet.
+Update with `treeport update`. See [Install Treeport](https://treeport.app/getting-started/installation/), [Change Treeport](https://treeport.app/getting-started/change-treeport/), and [Remote access](https://treeport.app/features/remote-access/); do not expose Treeport directly to the public internet.
 
 ## Documentation
 
 - [Install Treeport](https://treeport.app/getting-started/installation/)
+- [Change Treeport](https://treeport.app/getting-started/change-treeport/)
 - [Projects, trees, and apps](https://treeport.app/concepts/projects-worktrees-terminals/)
 - [Coding agents](https://treeport.app/building-apps/coding-agents/)
 - [Browser tabs](https://treeport.app/features/browser-app/)

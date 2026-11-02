@@ -1,40 +1,40 @@
 ---
-title: Run Treeport
-description: Fork Treeport and run it on your machine.
+title: Install Treeport
+description: Fork Treeport, open it, and keep it up to date.
 ---
 
-[Fork Treeport](https://github.com/noice-tech/treeport/fork) and run it on your machine. It's your copy, so your coding agent can change it too. The server keeps terminals running; connect with a browser or the desktop app.
+Treeport runs from your own fork, so you and your coding agent can [change it](/getting-started/change-treeport/). You need macOS or Linux with Node.js 24+, pnpm, and Git.
 
-## Install and start
-
-Use macOS or Linux with Node.js 24+, pnpm, Git, and Rust (the checkout pins its toolchain). Native dependencies may also need your platform's C/C++ build tools and Python.
+## Install
 
 ```sh
 gh repo fork noice-tech/treeport --clone && cd treeport
-pnpm install --frozen-lockfile && pnpm cli:install && pnpm start
+pnpm install && pnpm cli:install
 ```
 
-`gh repo fork --clone` creates your fork and clones it. Without the GitHub CLI, [fork in the browser](https://github.com/noice-tech/treeport/fork) and `git clone` your fork.
+Without the GitHub CLI, [fork in the browser](https://github.com/noice-tech/treeport/fork) and `git clone` your fork. `pnpm cli:install` adds the `treeport` command.
 
-`pnpm start` installs dependencies and builds whatever changed, then runs the server in the foreground. Open **http://127.0.0.1:8733**. Ctrl+C stops the server while preserving running terminal sessions.
+## Open
 
-For automatic startup, see [service supervision](/features/service-supervision/). For another computer or phone, configure [Tailscale Serve](/features/remote-access/).
-
-## CLI and desktop
-
-`pnpm cli:install` links the `treeport` command into pnpm's global bin, so it follows your clone without reinstalling; `pnpm cli:uninstall` removes it. Terminals managed by Treeport always run the CLI of the server that started them.
-
-`pnpm dev` starts the development server, web UI, and Electron app. To build a local desktop application, run `pnpm --filter @treeport/desktop package`; the result is under `apps/desktop/out`. The desktop app connects to your server and does not bundle it.
-
-There are no prebuilt downloads or automatic updates.
-
-## Updates
+On a Mac, install the app:
 
 ```sh
-pnpm sync
+pnpm app:install
 ```
 
-`pnpm sync` pulls the latest changes, installs dependencies, rebuilds what changed, and restarts the pm2 `treeport` process. Without pm2, restart `pnpm start` afterwards. If your clone has diverged or the build fails, it stops and leaves the running server untouched. A fork pulls from its own remote, so sync it with upstream first (GitHub **Sync fork** or `gh repo sync`). Rebuild the desktop app separately if you use it.
+Open Treeport from Launchpad or Spotlight and choose **Run Treeport on this Mac**. The first start takes a few minutes. After that, the app starts Treeport whenever it isn't running, and quitting the app leaves your terminals running.
+
+Without the app, run `pnpm start` and open **http://127.0.0.1:8733**.
+
+To control Treeport on another computer, such as a Linux server, set it up there with [Always on](/features/service-supervision/) and [Remote access](/features/remote-access/), then choose **Connect to another computer** in the app.
+
+## Update
+
+```sh
+treeport update
+```
+
+Or choose **Update Treeport…** in the app's Treeport menu. Treeport pulls your fork, rebuilds, and restarts; if anything fails, the running Treeport stays as it was. Use **Sync fork** on GitHub first to get upstream changes.
 
 ## Start working
 
@@ -42,3 +42,8 @@ pnpm sync
 2. Open a terminal and start your [coding agent](/building-apps/coding-agents/).
 3. Add a [Browser](/features/browser-app/) to check your work.
 4. Use the included review and editor apps, or add [local packages](/features/packages/).
+
+## Troubleshooting
+
+- **The app can't find node or pnpm:** the app starts Treeport through your login shell, so both must work in a new terminal window.
+- **Rust:** only needed when no prebuilt session keeper matches your platform; the build tells you if so.

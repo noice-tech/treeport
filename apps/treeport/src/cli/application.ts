@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Command, CommanderError } from 'commander'
@@ -1266,6 +1267,32 @@ async function main(args: string[]): Promise<void> {
           )
       )
     )
+  })
+
+  const updateCommand = program
+    .command('update')
+    .description('Pull, rebuild, and restart the Treeport this CLI belongs to')
+
+  updateCommand.action(async () => {
+    const script = resolvePackagePath('..', '..', 'scripts', 'update.mjs')
+
+    await fs.access(script).catch(() => {
+      throw new CliError(
+        `treeport update needs the Treeport clone this CLI was installed from; ${script} is missing.`,
+        5,
+        'UPDATE_UNAVAILABLE'
+      )
+    })
+
+    const child = spawn(process.execPath, [script], {
+      cwd: path.dirname(path.dirname(script)),
+      stdio: 'inherit'
+    })
+
+    requestedExitCode = await new Promise<number>((resolve) => {
+      child.once('error', () => resolve(1))
+      child.once('exit', (code) => resolve(code ?? 1))
+    })
   })
 
   const skillsCommand = program

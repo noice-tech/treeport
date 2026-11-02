@@ -3,6 +3,9 @@ import path from 'node:path'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
+  define: {
+    __TREEPORT_SOURCE_ROOT__: JSON.stringify(path.resolve('../..'))
+  },
   build: {
     copyPublicDir: false,
     emptyOutDir: false,
