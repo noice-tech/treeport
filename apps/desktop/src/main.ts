@@ -8,6 +8,7 @@ import {
   BrowserWindow,
   WebContentsView,
   clipboard,
+  dialog,
   ipcMain,
   Menu,
   nativeTheme,
@@ -29,6 +30,7 @@ import { DesktopRuntime } from './desktop-runtime'
 import { checkActivity, phoneAccess } from './backend-connection'
 import { HostSession, HostSessions } from './host-session'
 import { ComputerStore } from './computer-store'
+import { LocalServer } from './local-server'
 import type {
   DesktopBrowserToolbarCommand,
   DesktopCommand,
@@ -139,6 +141,7 @@ let shellOverlayOpen = false
 let windowState: WindowState | null = null
 let theme = defaultTheme
 let store: ComputerStore | null = null
+let localServer: LocalServer | null = null
 const desktopRuntime = new DesktopRuntime()
 let windowRuntime: DesktopRuntime | null = null
 let fullscreen = false
@@ -206,6 +209,7 @@ function shellState(): DesktopShellState {
     fullscreen,
     computers: store?.summaries() ?? [],
     connection: hostSessions?.active?.connection ?? { status: 'empty' },
+    localServer: localServer?.state ?? null,
     navigation: navigationState(),
     theme
   }
@@ -256,6 +260,15 @@ function broadcastState(): void {
 
   if (forwardItem) {
     forwardItem.enabled = state.navigation.canGoForward
+  }
+
+  const startServerItem = menu?.getMenuItemById('server-start')
+  const stopServerItem = menu?.getMenuItemById('server-stop')
+
+  if (startServerItem && stopServerItem && state.localServer) {
+    stopServerItem.visible = state.localServer.canStop
+    startServerItem.visible = !state.localServer.canStop
+    startServerItem.enabled = state.localServer.status !== 'starting'
   }
 
   const renderer = shellView?.webContents
@@ -654,6 +667,10 @@ function connectSelected(options: { url?: string } = {}): void {
         preferences: rendererWindowPreferences(),
         isForeground: () => hosts.active === created && !shellOverlayOpen,
         changed: () => {
+          if (computer.origin === localServer?.state.origin) {
+            localServer.observe(created.connection.status)
+          }
+
           if (hostSessions === hosts && hosts.active === created) {
             broadcastState()
           }
@@ -715,12 +732,70 @@ function rendererWindowPreferences(): Electron.WebPreferences {
   }
 }
 
+async function confirmStopLocalServer(): Promise<void> {
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['Stop Server', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    message: 'Stop the Treeport server?',
+    detail:
+      'Terminals keep running. Treeport disconnects until you start the server again.'
+  }
+
+  const { response } = mainWindow
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options)
+
+  if (response === 0) {
+    await localServer?.stop()
+  }
+}
+
 function installMenu(): void {
   const navigation = navigationState()
+  const server = localServer
+
+  const serverItems: MenuItemConstructorOptions[] = server
+    ? [
+        { type: 'separator' },
+        {
+          id: 'server-start',
+          label: 'Start Server',
+          click: () => void server.start()
+        },
+        {
+          id: 'server-stop',
+          label: 'Stop Server…',
+          visible: false,
+          click: () => void confirmStopLocalServer()
+        },
+        {
+          label: 'Show Server Logs',
+          click: () => void shell.openPath(server.logPath)
+        }
+      ]
+    : []
 
   const template: MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
-      ? ([{ role: 'appMenu' }] satisfies MenuItemConstructorOptions[])
+      ? ([
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' },
+              ...serverItems,
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' }
+            ]
+          }
+        ] satisfies MenuItemConstructorOptions[])
       : []),
     {
       label: 'File',
@@ -777,6 +852,7 @@ function installMenu(): void {
         ...(process.platform === 'darwin'
           ? []
           : ([
+              ...serverItems,
               { type: 'separator' },
               { role: 'quit' }
             ] satisfies MenuItemConstructorOptions[]))
@@ -1603,6 +1679,21 @@ function registerIpc(): void {
       clipboard.writeText('pnpm start')
     }
   })
+  ipcMain.handle('shell:start-local-server', (event) => {
+    if (isTrustedShellEvent(event)) {
+      return localServer?.start()
+    }
+  })
+  ipcMain.handle('shell:show-local-server-logs', (event) => {
+    if (isTrustedShellEvent(event) && localServer) {
+      return shell.openPath(localServer.logPath).then(() => undefined)
+    }
+  })
+  ipcMain.handle('shell:open-local-server-source', (event) => {
+    if (isTrustedShellEvent(event) && localServer) {
+      return shell.openPath(localServer.state.sourceRoot).then(() => undefined)
+    }
+  })
   ipcMain.handle('shell:open-installation-docs', (event) => {
     if (isTrustedShellEvent(event)) {
       return desktopRuntime.run(
@@ -1965,6 +2056,16 @@ if (!hasSingleInstanceLock) {
         seedComputerUrl,
         { synchronizeSelectedLoopback: !app.isPackaged }
       )
+
+      if (app.isPackaged && !desktopE2e && process.platform !== 'win32') {
+        localServer = new LocalServer(
+          defaultComputerUrl,
+          path.join(app.getPath('userData'), 'server-output.log'),
+          path.join(app.getPath('userData'), 'local-server-chosen'),
+          () => broadcastState()
+        )
+      }
+
       installMenu()
       const startupTarget = pendingWorkspaceTarget
       pendingWorkspaceTarget = null

@@ -31,6 +31,9 @@ declare global {
       navigateHistory: (direction: DesktopNavigationDirection) => void
       copyStartCommand: () => Promise<void>
       openInstallationDocs: () => Promise<void>
+      startLocalServer: () => Promise<void>
+      showLocalServerLogs: () => Promise<void>
+      openLocalServerSource: () => Promise<void>
     }>
   }
 }
