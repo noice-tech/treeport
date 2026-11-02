@@ -6,11 +6,30 @@ import { runSteps } from './steps.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-const status = runSteps(root, [
-  ['Pulling changes', 'git', ['pull', '--ff-only']],
-  ['Installing dependencies', 'pnpm', ['install', '--frozen-lockfile']],
-  ['Building Treeport', 'pnpm', ['build:server']]
-])
+let status = runSteps(root, [['Fetching changes', 'git', ['fetch']]])
+
+const divergence = spawnSync(
+  'git',
+  ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'],
+  { cwd: root, encoding: 'utf8' }
+)
+
+const [local, remote] = divergence.stdout.trim().split(/\s+/).map(Number)
+
+if (status === 0 && local > 0 && remote > 0) {
+  console.error(
+    `\nYour clone has ${local} commit${local === 1 ? '' : 's'} your fork doesn't, and your fork has ${remote} new commit${remote === 1 ? '' : 's'}. Ask your coding agent to merge them, then run treeport update again.`
+  )
+  status = 1
+}
+
+if (status === 0) {
+  status = runSteps(root, [
+    ['Updating your clone', 'git', ['merge', '--ff-only', '@{upstream}']],
+    ['Installing dependencies', 'pnpm', ['install', '--frozen-lockfile']],
+    ['Building Treeport', 'pnpm', ['build:server']]
+  ])
+}
 
 if (status !== 0) {
   console.error('\nUpdate stopped. The running Treeport was left untouched.')

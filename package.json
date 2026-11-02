@@ -14,7 +14,7 @@
     "build:server": "turbo run build --filter=@treeport/treeport... --ui=stream --output-logs=errors-only",
     "check": "pnpm check:terminal-runtime && turbo run knip fmt:check lint typecheck check:rust test:unit test:integration:run test:package @treeport/docs#build @treeport/desktop#build --ui=stream",
     "ci:local": "bash scripts/ci-local.sh",
-    "cli:install": "pnpm add -g link:$PWD/apps/treeport",
+    "cli:install": "node scripts/cli-install.mjs",
     "cli:uninstall": "pnpm remove -g @treeport/treeport",
     "signoff": "bash scripts/signoff.sh",
     "start": "node scripts/start.mjs",
