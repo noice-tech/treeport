@@ -70,6 +70,9 @@ jobs:
       - run: |
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
           rustup toolchain install "$channel" --profile minimal --target ${{ matrix.target }}
+          # Pin the toolchain so rustup skips the clippy/rustfmt components from
+          # rust-toolchain.toml, which conflict with the runner's preinstalled Rust.
+          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
       - if: matrix.zig
         run: |
           python3 -m pip install --user --break-system-packages ziglang==0.13.0
