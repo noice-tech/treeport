@@ -1518,11 +1518,16 @@ child.once('exit', (code) => process.exit(code ?? 1))
     restoredShell.dispose()
     shellAttachment?.unsubscribe()
     await type(restoredDaemon, 'reboot-shell', 'echo "AFTER_REBOOT:$PWD"\r', 1)
+
+    // EXTERNAL: macOS temp paths sit behind the /var -> /private/var symlink, and the
+    // relaunched shell starts in the resolved path. Long paths also wrap in the capture.
+    const restoredDirectory = await fs.realpath(workDir)
+
     await waitFor(
       async () =>
-        (await restoredDaemon.captureTerminal('reboot-shell', 50))?.includes(
-          `AFTER_REBOOT:${workDir}`
-        ) ?? false,
+        (await restoredDaemon.captureTerminal('reboot-shell', 50))
+          ?.replaceAll('\n', '')
+          .includes(`AFTER_REBOOT:${restoredDirectory}`) ?? false,
       'The relaunched shell did not accept input in its last directory',
       10_000
     )
@@ -1569,8 +1574,11 @@ child.once('exit', (code) => process.exit(code ?? 1))
       'running'
     )
     expect(
-      await reattachedDaemon.captureTerminal('reboot-shell', 50)
-    ).toContain(`AFTER_REBOOT:${workDir}`)
+      (await reattachedDaemon.captureTerminal('reboot-shell', 50))?.replaceAll(
+        '\n',
+        ''
+      )
+    ).toContain(`AFTER_REBOOT:${restoredDirectory}`)
     expect(
       (await reattachedDaemon.listProcesses('worktree-reboot')).map(
         (item) => item.pid
