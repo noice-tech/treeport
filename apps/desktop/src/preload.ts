@@ -417,8 +417,8 @@ const shellBridge = Object.freeze({
       .invoke('shell:copy-phone-link', url)
       .then((value) => z.boolean().parse(value))
   },
-  phoneAccess(id: string): Promise<PhoneAccessResponse> {
-    return ipcRenderer.invoke('shell:phone-access', id).then(
+  phoneAccess(id: string, enable: boolean): Promise<PhoneAccessResponse> {
+    return ipcRenderer.invoke('shell:phone-access', id, enable).then(
       (value) =>
         phoneAccessResponseSchema.safeParse(value).data ?? {
           url: null,

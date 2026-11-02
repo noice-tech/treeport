@@ -810,6 +810,56 @@ async function updateLocalServer(): Promise<void> {
   })
 }
 
+async function setUpTailscaleAccess(): Promise<void> {
+  const server = localServer
+
+  if (!server) {
+    return
+  }
+
+  let result = await desktopRuntime.run(phoneAccess(server.state.origin, false))
+
+  if (!result.url && result.setupCommand) {
+    const response = await showMessage({
+      type: 'question',
+      buttons: ['Turn On', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message: 'Turn on Tailscale access?',
+      detail: `Treeport will be served privately to devices on your tailnet with Tailscale Serve:\n\n${result.setupCommand}\n\nAnyone with access to this computer on your tailnet can control its terminals.`
+    })
+
+    if (response !== 0) {
+      return
+    }
+
+    result = await desktopRuntime.run(phoneAccess(server.state.origin, true))
+  }
+
+  if (!result.url) {
+    await showMessage({
+      type: 'error',
+      message: 'Tailscale access isn’t available',
+      detail: [result.error, result.setupCommand].filter(Boolean).join('\n\n')
+    })
+
+    return
+  }
+
+  const response = await showMessage({
+    type: 'info',
+    buttons: ['Copy Link', 'Done'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Tailscale access is on',
+    detail: `Open this address on a device signed in to your tailnet:\n\n${result.url}\n\nUse Show QR Code in the computer menu to scan it with your phone.`
+  })
+
+  if (response === 0) {
+    clipboard.writeText(result.url)
+  }
+}
+
 function installMenu(): void {
   const navigation = navigationState()
   const server = localServer
@@ -831,6 +881,10 @@ function installMenu(): void {
         {
           label: 'Show Server Logs',
           click: () => void shell.openPath(server.logPath)
+        },
+        {
+          label: 'Set Up Tailscale Access…',
+          click: () => void setUpTailscaleAccess()
         },
         {
           id: 'server-update',
@@ -1592,7 +1646,7 @@ function registerIpc(): void {
 
     return true
   })
-  ipcMain.handle('shell:phone-access', (event, id) =>
+  ipcMain.handle('shell:phone-access', (event, id, enable) =>
     desktopRuntime.run(
       Effect.gen(function* () {
         const computer = store?.selectedComputer
@@ -1605,7 +1659,7 @@ function registerIpc(): void {
           }
         }
 
-        return yield* phoneAccess(computer.origin)
+        return yield* phoneAccess(computer.origin, enable === true)
       })
     )
   )

@@ -20,7 +20,7 @@ declare global {
       onAttentionSound: (listener: () => void) => () => void
       releaseTerminalSelection: () => void
       copyPhoneLink: (url: string) => Promise<boolean>
-      phoneAccess: (id: string) => Promise<PhoneAccessResponse>
+      phoneAccess: (id: string, enable: boolean) => Promise<PhoneAccessResponse>
       selectComputer: (id: string) => Promise<boolean>
       addComputer: (origin: string) => Promise<ComputerMutationResult>
       updateComputer: (
