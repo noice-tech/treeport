@@ -214,14 +214,19 @@ pub fn recover(directory: &Path, manifest: &Manifest) -> Result<()> {
                     .command
                     .as_ref()
                     .context("Command ownership is unknown; retaining session evidence")?;
-                if process::identity(original.pid)?
+                let current = process::identity(original.pid)?;
+                if current
+                    .as_ref()
                     .is_some_and(|current| current.birth == original.birth)
                 {
                     bail!("Session keeper is gone but its recorded command still exists; retaining session evidence");
                 }
-                if process::snapshot()?
-                    .values()
-                    .any(|row| row.session == original.session)
+                let session_reassigned = original.session == original.pid
+                    && current.is_some_and(|current| current.session == current.pid);
+                if !session_reassigned
+                    && process::snapshot()?
+                        .values()
+                        .any(|row| row.session == original.session)
                 {
                     bail!("Session keeper is gone but its command session still has processes; retaining session evidence");
                 }
