@@ -23,6 +23,7 @@ export class ChromiumWebCodecsVideo {
   private restartedAt = -Infinity
   private width = 0
   private height = 0
+  private colorMatrix: 'bt709' | 'smpte170m' | null = null
 
   private readonly openCapturePage: () => Promise<BrowserCapturePage>
   private readonly extensionId: string
@@ -135,7 +136,8 @@ export class ChromiumWebCodecsVideo {
 
     this.stream = stream
     let timeout: ReturnType<typeof setTimeout> | null = null
-    await Promise.all([
+
+    const [, colorMatrix] = await Promise.all([
       Promise.race([
         stream.connected,
         new Promise<never>((_, reject) => {
@@ -150,6 +152,35 @@ export class ChromiumWebCodecsVideo {
           target => target.id === ${JSON.stringify(targetId)}
         );
         if (!target?.tabId) throw new Error('The Browser capture target is unavailable.');
+        // EXTERNAL: Chromium's software compositor converts captured pixels to YUV
+        // with BT.601 coefficients but labels them BT.709, which shifts every
+        // colour. Capture this page painted a known green once to tell which
+        // matrix it used; the GPU path labels correctly and paints no hidden tab.
+        const colorMatrix = ${JSON.stringify(this.colorMatrix)} ?? await (async () => {
+          const style = document.createElement('style');
+          style.textContent = 'html{background:#22aa77}body::after{content:"";display:block;width:2px;height:2px;animation:treeport-probe .1s infinite alternate}@keyframes treeport-probe{to{opacity:.5}}';
+          document.head.append(style);
+          const probe = await navigator.mediaDevices.getUserMedia({ video: { mandatory: {
+            chromeMediaSource: 'tab',
+            chromeMediaSourceId: await chrome.tabCapture.getMediaStreamId({
+              targetTabId: (await chrome.tabs.getCurrent()).id
+            }),
+            maxWidth: 64, maxHeight: 64
+          } } });
+          const track = probe.getVideoTracks()[0];
+          const { value: frame } = await Promise.race([
+            new MediaStreamTrackProcessor({ track }).readable.getReader().read(),
+            new Promise(resolve => setTimeout(() => resolve({ value: null }), 500))
+          ]);
+          track.stop();
+          style.remove();
+          if (!frame) return 'bt709';
+          const context = new OffscreenCanvas(1, 1).getContext('2d');
+          context.drawImage(frame, frame.displayWidth / 2, frame.displayHeight / 2, 1, 1, 0, 0, 1, 1);
+          frame.close();
+          // BT.709 decoding of BT.601 data turns green 170 into 154.
+          return context.getImageData(0, 0, 1, 1).data[1] < 162 ? 'smpte170m' : 'bt709';
+        })().catch(() => 'bt709');
         const sourceId = await chrome.tabCapture.getMediaStreamId({ targetTabId: target.tabId });
         // Bound native acquisition, not just post-capture scaling. This helper
         // is recreated on resize so a larger viewport never upscales an old track.
@@ -171,17 +202,21 @@ export class ChromiumWebCodecsVideo {
           track.contentHint = 'motion';
           globalThis.__treeportWebCodecs = await (${captureChromiumWebCodecs.toString()})(
             track, stream.getAudioTracks()[0] ?? null,
-            ${JSON.stringify(`ws://127.0.0.1:${stream.port}`)}, ${JSON.stringify(stream.token)}
+            ${JSON.stringify(`ws://127.0.0.1:${stream.port}`)}, ${JSON.stringify(stream.token)},
+            colorMatrix
           );
         })().catch(error => {
           stream.getTracks().forEach(track => track.stop());
           throw error;
         });
+        return colorMatrix;
       })()`)
     ]).catch(async (error) => {
       await this.stop()
       throw error
     })
+
+    this.colorMatrix = colorMatrix === 'smpte170m' ? 'smpte170m' : 'bt709'
     this.connected = this.stream === stream
   }
 
