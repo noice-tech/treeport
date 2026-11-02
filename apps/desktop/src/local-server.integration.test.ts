@@ -69,7 +69,10 @@ it('restarts the server it started after updating the clone', async () => {
     )
   }
 
-  await fs.writeFile(path.join(upstream, 'scripts', 'start.mjs'), serverReportingCommit)
+  await fs.writeFile(
+    path.join(upstream, 'scripts', 'start.mjs'),
+    serverReportingCommit
+  )
   await fs.writeFile(
     path.join(upstream, 'package.json'),
     JSON.stringify({
