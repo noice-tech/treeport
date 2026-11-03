@@ -2,9 +2,26 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { runSteps } from './steps.mjs'
+import { report, runSteps } from './steps.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+report({
+  type: 'plan',
+  steps: [
+    'Fetching changes',
+    'Updating your clone',
+    'Installing dependencies',
+    'Building Treeport',
+    'Restarting'
+  ]
+})
+
+const head = () =>
+  spawnSync('git', ['log', '-1', '--format=%h %s'], {
+    cwd: root,
+    encoding: 'utf8'
+  }).stdout.trim()
 
 let status = runSteps(root, [['Fetching changes', 'git', ['fetch']]])
 
@@ -20,7 +37,15 @@ if (status === 0 && local > 0 && remote > 0) {
   console.error(
     `\nYour clone has ${local} commit${local === 1 ? '' : 's'} your fork doesn't, and your fork has ${remote} new commit${remote === 1 ? '' : 's'}. Ask your coding agent to merge them, then run treeport update again.`
   )
+  report({ type: 'diverged', local, remote })
   status = 1
+}
+
+if (status === 0 && remote === 0) {
+  const current = head()
+  console.log(`Treeport is already up to date at ${current}`)
+  report({ type: 'up-to-date', head: current })
+  process.exit(0)
 }
 
 if (status === 0) {
@@ -36,12 +61,11 @@ if (status !== 0) {
   process.exit(status)
 }
 
-const commit = spawnSync('git', ['log', '-1', '--format=%h %s'], {
-  cwd: root,
-  encoding: 'utf8'
-})
+const current = head()
 
-console.log(`Treeport is at ${commit.stdout.trim()}`)
+console.log(`Treeport is at ${current}`)
+
+report({ type: 'updated', commits: remote, head: current })
 
 const port = process.env.TREEPORT_PORT?.trim() || '8733'
 

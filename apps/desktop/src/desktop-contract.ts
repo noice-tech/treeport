@@ -54,6 +54,21 @@ export type ConnectionState =
       message: string
     }
 
+export interface LocalServerUpdateStep {
+  label: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+  seconds: number | null
+}
+
+export interface LocalServerUpdate {
+  status: 'running' | 'updated' | 'failed'
+  startedAt: number
+  steps: LocalServerUpdateStep[]
+  commits: number | null
+  error: string | null
+  output: string[]
+}
+
 export interface LocalServerState {
   status: 'idle' | 'starting' | 'failed' | 'stopped'
   chosen: boolean
@@ -63,6 +78,7 @@ export interface LocalServerState {
   output: string[]
   error: string | null
   canStop: boolean
+  update: LocalServerUpdate | null
 }
 
 export interface DesktopShellState {
