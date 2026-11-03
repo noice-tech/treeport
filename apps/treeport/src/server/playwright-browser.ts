@@ -266,6 +266,31 @@ export class PlaywrightBrowser {
     await installBrowserClipboardBridge(page, (clipboard) =>
       this.callbacks.clipboard(clipboard)
     )
+    // EXTERNAL: While its tab is captured, Chromium keeps page fullscreen
+    // within the tab, and leaving it resizes the page to the whole window,
+    // discarding the emulated viewport. Playwright skips unchanged viewports,
+    // so step through another size to reapply it.
+    await page.exposeBinding('__treeportFullscreenExited', async () => {
+      const { width, height } = this.stateValue.viewport
+      await page.setViewportSize({ width, height: height + 1 })
+      await page.setViewportSize(this.stateValue.viewport)
+    })
+    await page.addInitScript(() => {
+      if (window !== window.top) {
+        return
+      }
+
+      document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement) {
+          // SAFETY: exposeBinding installs this page-scoped function before init scripts.
+          void (
+            window as typeof window & {
+              __treeportFullscreenExited(): Promise<void>
+            }
+          ).__treeportFullscreenExited()
+        }
+      })
+    })
     await page.setViewportSize(this.stateValue.viewport)
     const cdp = await context.newCDPSession(page)
     this.cdp = cdp

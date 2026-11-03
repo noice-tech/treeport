@@ -62,6 +62,24 @@ export async function browserKey(
     return
   }
 
+  // EXTERNAL: Chrome exits page fullscreen on a native Escape before the page
+  // sees the key, but CDP key events bypass that browser shortcut.
+  if (
+    message.key === 'Escape' &&
+    message.phase === 'down' &&
+    (await page.evaluate(() => {
+      if (!document.fullscreenElement) {
+        return false
+      }
+
+      void document.exitFullscreen()
+
+      return true
+    }))
+  ) {
+    return
+  }
+
   // EXTERNAL: Playwright only knows US-layout keys and throws for characters such as
   // Cyrillic letters. Enter them as text, which is what a local keypress produces.
   if (/^[\u0080-\u{10ffff}]$/u.test(message.key)) {
