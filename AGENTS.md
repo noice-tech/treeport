@@ -20,6 +20,7 @@ Treeport development terminals are usually managed by an outer Treeport instance
 
 - Do not infer the target instance from a familiar port or whichever Treeport window is visible.
 - Never mutate the outer instance or another worktree’s dev instance unless explicitly requested.
+- When starting the app for verification, always use `pnpm dev:tailscale`.
 
 ## Documentation
 
