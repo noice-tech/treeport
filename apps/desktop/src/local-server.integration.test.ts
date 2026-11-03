@@ -130,7 +130,9 @@ it('restarts the server it started after updating the clone', async () => {
   expect(before?.version).toBe(git(clone, 'rev-parse', 'HEAD'))
 
   const result = await server.runUpdate()
-  expect(result.ok, result.output).toBe(true)
+  expect(result.outcome, server.state.update?.error ?? undefined).toBe(
+    'updated'
+  )
 
   const after = await Effect.runPromise(checkHealth(origin))
   expect(after?.version).toBe(git(upstream, 'rev-parse', 'HEAD'))

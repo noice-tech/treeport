@@ -4,13 +4,18 @@ import {
   type ChildProcess,
   type StdioOptions
 } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { createWriteStream, existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { promisify, stripVTControlCharacters } from 'node:util'
 import * as Effect from 'effect/Effect'
 import { checkHealth } from './backend-connection'
-import type { ConnectionState, LocalServerState } from './desktop-contract'
+import type {
+  ConnectionState,
+  LocalServerState,
+  LocalServerUpdate,
+  LocalServerUpdateStep
+} from './desktop-contract'
 
 // EXTERNAL: Vite's define replaces this with the clone the app was packaged from.
 declare const __TREEPORT_SOURCE_ROOT__: string
@@ -18,6 +23,7 @@ declare const __TREEPORT_SOURCE_ROOT__: string
 const INSTALLATION_METHOD = 'desktop-app'
 const AUTO_START_INTERVAL_MS = 60_000
 const OUTPUT_LINES = 12
+const UPDATED_VISIBLE_MS = 8_000
 const execute = promisify(execFile)
 
 function spawnInClone(
@@ -51,6 +57,13 @@ function spawnInClone(
   )
 }
 
+interface UpdateResult {
+  outcome: 'updated' | 'up-to-date' | 'diverged' | 'failed'
+  head: string | null
+  local: number
+  remote: number
+}
+
 export class LocalServer {
   state: LocalServerState
   private child: ChildProcess | null = null
@@ -59,12 +72,15 @@ export class LocalServer {
   private lastAutoStart = 0
   private connection: ConnectionState['status'] | null = null
 
+  readonly updateLogPath: string
+
   constructor(
     origin: string,
     readonly logPath: string,
     private readonly choicePath: string,
     private readonly changed: () => void
   ) {
+    this.updateLogPath = path.join(path.dirname(logPath), 'update-output.log')
     this.state = {
       status: 'idle',
       chosen: existsSync(choicePath),
@@ -73,7 +89,8 @@ export class LocalServer {
       startedAt: null,
       output: [],
       error: null,
-      canStop: false
+      canStop: false,
+      update: null
     }
   }
 
@@ -180,31 +197,138 @@ export class LocalServer {
     }
   }
 
-  async runUpdate(): Promise<{ ok: boolean; output: string }> {
+  async runUpdate(): Promise<UpdateResult> {
     const ownedPid = this.ownedPid
+
+    const result: UpdateResult = {
+      outcome: 'updated',
+      head: null,
+      local: 0,
+      remote: 0
+    }
+
+    let update: LocalServerUpdate = {
+      status: 'running',
+      startedAt: Date.now(),
+      steps: [],
+      commits: null,
+      error: null,
+      output: []
+    }
+
+    const setUpdate = (next: Partial<LocalServerUpdate>) => {
+      update = { ...update, ...next }
+      this.update({ update })
+    }
+
+    const setStep = (label: string, step: Partial<LocalServerUpdateStep>) =>
+      setUpdate({
+        steps: update.steps.map((item) =>
+          item.label === label ? { ...item, ...step } : item
+        )
+      })
+
+    setUpdate({})
+
+    const log = createWriteStream(this.updateLogPath)
 
     const child = spawnInClone(this.state.sourceRoot, 'scripts/update.mjs', {
       origin: this.state.origin,
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {}
+      env: { TREEPORT_PROGRESS: '1' }
     })
 
-    let output = ''
-    child.stdout?.on('data', (chunk: Buffer) => (output += chunk.toString()))
-    child.stderr?.on('data', (chunk: Buffer) => (output += chunk.toString()))
+    let pending = ''
+    let errors = ''
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      const lines = (pending + chunk.toString()).split('\n')
+      pending = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.startsWith('::treeport ')) {
+          log.write(`${line}\n`)
+          continue
+        }
+
+        const event = JSON.parse(line.slice('::treeport '.length))
+
+        if (event.type === 'plan') {
+          setUpdate({
+            steps: event.steps.map((label: string) => ({
+              label,
+              status: 'pending',
+              seconds: null
+            }))
+          })
+        } else if (event.type === 'step') {
+          setStep(event.label, { status: 'running' })
+        } else if (event.type === 'done' || event.type === 'failed') {
+          setStep(event.label, {
+            status: event.type,
+            seconds: event.seconds
+          })
+        } else if (event.type === 'updated') {
+          result.head = event.head
+          setUpdate({ commits: event.commits })
+        } else if (event.type === 'up-to-date') {
+          result.outcome = 'up-to-date'
+          result.head = event.head
+        } else if (event.type === 'diverged') {
+          result.outcome = 'diverged'
+          result.local = event.local
+          result.remote = event.remote
+        }
+      }
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      errors += chunk.toString()
+      log.write(chunk)
+    })
 
     const code = await new Promise<number>((resolve) => {
       child.once('error', (error) => {
-        output += error.message
+        errors += error.message
         resolve(1)
       })
       child.once('exit', (exitCode) => resolve(exitCode ?? 1))
     })
 
+    log.end(pending)
+
+    if (code !== 0 && result.outcome !== 'diverged') {
+      const failed = update.steps.find((step) => step.status === 'failed')
+      result.outcome = 'failed'
+      setUpdate({
+        status: 'failed',
+        error: failed
+          ? `${failed.label} failed. Your running Treeport wasn’t changed.`
+          : code === 127
+            ? 'Treeport couldn’t find node or pnpm in your login shell.'
+            : 'The update stopped. Your running Treeport wasn’t changed.',
+        output: stripVTControlCharacters(errors)
+          .split(/\r?\n/)
+          .map((line) => line.trimEnd())
+          // EXTERNAL: The interactive login shell warns about job control without a TTY.
+          .filter(
+            (line) =>
+              line !== '' &&
+              !line.startsWith('Update stopped.') &&
+              !/^\w+: (no job control|cannot set terminal process group)/.test(
+                line
+              )
+          )
+          .slice(-4)
+      })
+    }
+
     // EXTERNAL: update.mjs stops the server this app started and leaves the restart to
     // the app. The loaded page keeps the connection ready, so auto-start never fires.
-    if (code === 0 && ownedPid !== null) {
+    if (code === 0 && result.outcome === 'updated' && ownedPid !== null) {
+      setStep('Restarting', { status: 'running' })
+      const startedAt = Date.now()
+
       for (let attempt = 0; attempt < 40; attempt++) {
         const health = await Effect.runPromise(checkHealth(this.state.origin))
 
@@ -216,9 +340,45 @@ export class LocalServer {
       }
 
       await this.start()
+
+      const started = this.state.status === 'idle'
+      setStep('Restarting', {
+        status: started ? 'done' : 'failed',
+        seconds: Math.round((Date.now() - startedAt) / 1000)
+      })
+
+      if (!started) {
+        result.outcome = 'failed'
+        setUpdate({
+          status: 'failed',
+          error: 'Treeport updated but didn’t start again.',
+          output: this.state.output.slice(-4)
+        })
+      }
     }
 
-    return { ok: code === 0, output: stripVTControlCharacters(output).trim() }
+    if (result.outcome === 'updated') {
+      setUpdate({
+        status: 'updated',
+        steps: update.steps.filter((step) => step.status !== 'pending')
+      })
+      const finished = update
+      setTimeout(() => {
+        if (this.state.update === finished) {
+          this.update({ update: null })
+        }
+      }, UPDATED_VISIBLE_MS)
+    } else if (result.outcome !== 'failed') {
+      this.update({ update: null })
+    }
+
+    return result
+  }
+
+  dismissUpdate(): void {
+    if (this.state.update?.status !== 'running') {
+      this.update({ update: null })
+    }
   }
 
   async describeClone(): Promise<string> {

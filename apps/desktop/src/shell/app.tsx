@@ -11,6 +11,7 @@ import { ManageComputersDialog } from './manage-computers-dialog'
 import { OpenOnPhoneDialog } from './open-on-phone-dialog'
 import { selectedComputer, useShellState } from './shell-state'
 import { Button } from './ui'
+import { UpdateChip } from './update-chip'
 
 function Titlebar() {
   const state = useShellState()
@@ -62,6 +63,9 @@ export function App() {
   )
 
   const [selectorOpen, setSelectorOpen] = useState(false)
+  const [updateOpenAt, setUpdateOpenAt] = useState<number | null>(null)
+  const update = state?.localServer?.update ?? null
+  const updateOpen = update !== null && update.startedAt === updateOpenAt
   const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
 
   useEffect(
@@ -85,8 +89,10 @@ export function App() {
   const connectionReady = state?.connection.status === 'ready' && computer
 
   useEffect(() => {
-    window.treeportShell.setOverlayOpen(dialog !== null || selectorOpen)
-  }, [dialog, selectorOpen])
+    window.treeportShell.setOverlayOpen(
+      dialog !== null || selectorOpen || updateOpen
+    )
+  }, [dialog, selectorOpen, updateOpen])
 
   const captureTerminalSelectionPointer = (
     event: ReactPointerEvent<HTMLDivElement>
@@ -132,10 +138,20 @@ export function App() {
         <div
           className={
             state.platform === 'darwin'
-              ? 'pointer-events-none fixed top-0 right-2 z-80 flex h-8 items-center'
-              : 'pointer-events-none fixed inset-x-0 top-0 z-80 flex h-8 items-center justify-center'
+              ? 'pointer-events-none fixed top-0 right-2 z-80 flex h-8 items-center gap-1'
+              : 'pointer-events-none fixed inset-x-0 top-0 z-80 flex h-8 items-center justify-center gap-1'
           }
         >
+          {update ? (
+            <UpdateChip
+              update={update}
+              align={state.platform === 'darwin' ? 'end' : 'center'}
+              open={updateOpen}
+              onOpenChange={(open) =>
+                setUpdateOpenAt(open ? update.startedAt : null)
+              }
+            />
+          ) : null}
           <ComputerSelector
             state={state}
             open={selectorOpen}

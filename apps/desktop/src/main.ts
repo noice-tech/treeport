@@ -271,6 +271,22 @@ function broadcastState(): void {
     startServerItem.enabled = state.localServer.status !== 'starting'
   }
 
+  const update = state.localServer?.update
+  const updateItem = menu?.getMenuItemById('server-update')
+
+  if (updateItem) {
+    updateItem.enabled = update?.status !== 'running'
+  }
+
+  if (update?.status === 'running' && update.steps.length > 0) {
+    mainWindow?.setProgressBar(
+      update.steps.filter((step) => step.status === 'done').length /
+        update.steps.length
+    )
+  } else {
+    mainWindow?.setProgressBar(update?.status === 'running' ? 2 : -1)
+  }
+
   const renderer = shellView?.webContents
 
   if (renderer && !renderer.isDestroyed()) {
@@ -790,30 +806,43 @@ async function updateLocalServer(): Promise<void> {
     return
   }
 
-  if (item) {
-    item.enabled = false
-  }
-
-  mainWindow?.setProgressBar(2)
   const result = await server.runUpdate()
-  mainWindow?.setProgressBar(-1)
-
-  if (item) {
-    item.enabled = true
-  }
-
   const host = hostSessions?.active
 
-  if (result.ok && host?.computer.origin === server.state.origin) {
+  if (
+    result.outcome === 'updated' &&
+    host?.computer.origin === server.state.origin
+  ) {
     host.view.webContents.reload()
   }
 
   void describeLocalClone()
-  await showMessage({
-    type: result.ok ? 'info' : 'error',
-    message: result.ok ? 'Treeport is updated' : 'Treeport couldn’t update',
-    detail: result.output.split('\n').slice(-15).join('\n')
-  })
+
+  if (result.outcome === 'up-to-date') {
+    await showMessage({
+      type: 'info',
+      message: 'Treeport is up to date',
+      detail: result.head ? `You’re on ${result.head}.` : ''
+    })
+  } else if (result.outcome === 'diverged') {
+    const commits = (count: number) =>
+      `${count} commit${count === 1 ? '' : 's'}`
+
+    const response = await showMessage({
+      type: 'warning',
+      buttons: ['Copy Agent Prompt', 'OK'],
+      defaultId: 1,
+      cancelId: 1,
+      message: 'Your clone needs a merge',
+      detail: `Your clone has ${commits(result.local)} your fork doesn’t, and your fork has ${commits(result.remote)} new. Ask your coding agent to merge them, then update again.`
+    })
+
+    if (response === 0) {
+      clipboard.writeText(
+        `Merge the upstream changes into my Treeport clone at ${server.state.sourceRoot} and keep my local commits. Then run treeport update.`
+      )
+    }
+  }
 }
 
 async function setUpTailscaleAccess(): Promise<void> {
@@ -1810,6 +1839,16 @@ function registerIpc(): void {
   ipcMain.handle('shell:show-local-server-logs', (event) => {
     if (isTrustedShellEvent(event) && localServer) {
       return shell.openPath(localServer.logPath).then(() => undefined)
+    }
+  })
+  ipcMain.handle('shell:show-update-log', (event) => {
+    if (isTrustedShellEvent(event) && localServer) {
+      return shell.openPath(localServer.updateLogPath).then(() => undefined)
+    }
+  })
+  ipcMain.handle('shell:dismiss-update', (event) => {
+    if (isTrustedShellEvent(event)) {
+      localServer?.dismissUpdate()
     }
   })
   ipcMain.handle('shell:open-local-server-source', (event) => {
