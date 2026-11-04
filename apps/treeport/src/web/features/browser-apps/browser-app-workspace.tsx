@@ -71,6 +71,7 @@ import { LocalBrowserWebview } from './local-browser-webview'
 import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
 import { BrowserFilePicker } from './browser-file-picker'
 import { BrowserPageDialog } from './browser-page-dialog'
+import { BrowserSelectPicker } from './browser-select-picker'
 import { useProjectSwitcherOpen } from '../sidebar/workspace-shell'
 import { isApplePlatform } from '../../lib/platform'
 
@@ -248,6 +249,11 @@ export function BrowserAppWorkspace({
     BrowserServerMessage,
     { type: 'dialog' }
   > | null>(null)
+
+  const [pageSelect, setPageSelect] = useState<{
+    request: Extract<BrowserServerMessage, { type: 'select' }>
+    anchor: { left: number; top: number; width: number; height: number }
+  } | null>(null)
 
   const [connectionRevision, setConnectionRevision] = useState(0)
   const [addressFocusRevision, setAddressFocusRevision] = useState(0)
@@ -606,6 +612,63 @@ export function BrowserAppWorkspace({
       return
     }
 
+    if (message.type === 'select') {
+      const video = videoRef.current
+
+      if (!video) {
+        connectionRef.current?.send({
+          type: 'selectResponse',
+          requestId: message.requestId,
+          index: null
+        })
+
+        return
+      }
+
+      // EXTERNAL: The video letterboxes the page, so map page pixels through
+      // the same fit that pointer input uses.
+      const bounds = video.getBoundingClientRect()
+      const viewport = stateRef.current?.viewport ?? viewportRef.current
+
+      const image =
+        video.videoWidth && video.videoHeight
+          ? { width: video.videoWidth, height: video.videoHeight }
+          : viewport
+
+      const fit = Math.min(
+        bounds.width / image.width,
+        bounds.height / image.height
+      )
+
+      const scaleX = (image.width * fit) / viewport.width
+      const scaleY = (image.height * fit) / viewport.height
+      setPageSelect({
+        request: message,
+        anchor: {
+          left:
+            bounds.left +
+            (bounds.width - image.width * fit) / 2 +
+            message.x * scaleX,
+          top:
+            bounds.top +
+            (bounds.height - image.height * fit) / 2 +
+            message.y * scaleY,
+          width: message.width * scaleX,
+          height: message.height * scaleY
+        }
+      })
+
+      return
+    }
+
+    if (message.type === 'selectClosed') {
+      setPageSelect((current) =>
+        current?.request.requestId === message.requestId ? null : current
+      )
+
+      return
+    }
+
     if (message.type === 'download') {
       const link = document.createElement('a')
       link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`
@@ -777,6 +840,7 @@ export function BrowserAppWorkspace({
 
       if (message.type === 'ready') {
         setPageDialog(null)
+        setPageSelect(null)
         traceBrowserOpen(app.id, 'browser.open.runtime_ready')
         setAddressFocusRevision((revision) => revision + 1)
         setFailure(null)
@@ -2766,6 +2830,22 @@ export function BrowserAppWorkspace({
                 request={fileChooser}
                 connection={connection}
                 onCancel={() => setFileChooser(null)}
+              />
+            ) : null}
+            {pageSelect &&
+            connection &&
+            state?.controlled &&
+            active &&
+            !inputBlocked ? (
+              <BrowserSelectPicker
+                key={pageSelect.request.requestId}
+                request={pageSelect.request}
+                anchor={pageSelect.anchor}
+                connection={connection}
+                onClose={() => {
+                  setPageSelect(null)
+                  focusPage()
+                }}
               />
             ) : null}
             {pageDialog && connection && active ? (

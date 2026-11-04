@@ -378,6 +378,7 @@ export function connectBrowserApp(
         command.type !== 'copy' &&
         command.type !== 'fileChooserResponse' &&
         command.type !== 'dialogResponse' &&
+        command.type !== 'selectResponse' &&
         command.type !== 'videoOffer' &&
         command.type !== 'inputBarrier' &&
         command.type !== 'refreshRate' &&

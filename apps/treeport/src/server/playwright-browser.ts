@@ -8,6 +8,7 @@ import type {
   Dialog,
   Download,
   FileChooser,
+  Frame,
   Page,
   Request
 } from 'playwright'
@@ -17,6 +18,7 @@ import {
 } from '@treeport/browser-host'
 import {
   browserContextResultSchema,
+  browserSelectSchema,
   normalizeBrowserTitle,
   normalizeBrowserFaviconUrl
 } from '#protocol/browser'
@@ -27,7 +29,8 @@ import type {
   BrowserClientMessage,
   BrowserContextResult,
   BrowserContextActionResult,
-  BrowserRuntimeState
+  BrowserRuntimeState,
+  BrowserSelect
 } from '#protocol/browser'
 import type { BrowserClipboard } from '@treeport/browser-host/clipboard'
 
@@ -45,6 +48,7 @@ export interface PlaywrightBrowserCallbacks {
   clipboard(clipboard: BrowserClipboard): boolean
   fileChooser(chooser: FileChooser | null): void
   dialog(dialog: Dialog | null, agent: boolean): void
+  select(select: BrowserSelect | null): void
   download(download: Download): void
   popup(url: string): void
   navigationError(message: string, source?: 'video'): void
@@ -132,6 +136,11 @@ export class PlaywrightBrowser {
     backendNodeId: number | null
     targetId: string | null
     createdAt: number
+  } | null = null
+  private selectMenu: {
+    requestId: string
+    frame: Frame
+    pageRequestId: string
   } | null = null
   private historyRevision = 0
   private pointerPoint: { x: number; y: number } | null = null
@@ -291,6 +300,173 @@ export class PlaywrightBrowser {
         }
       })
     })
+    await page.exposeBinding(
+      '__treeportSelectOpen',
+      async ({ frame }, value) => {
+        const select = decodeUnknownOrNull(browserSelectSchema, value)
+
+        if (!select || this.agentInteracting || !this.cdp) {
+          return
+        }
+
+        let { x, y } = select
+
+        if (frame !== page.mainFrame()) {
+          const box = await (await frame.frameElement()).boundingBox()
+
+          if (!box) {
+            return
+          }
+
+          x += box.x
+          y += box.y
+        }
+
+        const { cssVisualViewport } = await this.cdp.send(
+          'Page.getLayoutMetrics'
+        )
+
+        const { scale, offsetX, offsetY } = cssVisualViewport
+        const requestId = randomUUID()
+
+        this.closeSelect()
+        this.selectMenu = {
+          requestId,
+          frame,
+          pageRequestId: select.requestId
+        }
+        this.callbacks.select({
+          ...select,
+          requestId,
+          x: (x - offsetX) * scale,
+          y: (y - offsetY) * scale,
+          width: select.width * scale,
+          height: select.height * scale
+        })
+      }
+    )
+    await page.addInitScript(() => {
+      interface SelectWindow {
+        __treeportSelectOpen(select: BrowserSelect): Promise<void>
+      }
+
+      const selects = new Map<string, HTMLSelectElement>()
+      let nextId = 0
+
+      const open = (select: HTMLSelectElement): boolean => {
+        if (select.multiple || select.size > 1 || select.disabled) {
+          return false
+        }
+
+        nextId += 1
+        selects.clear()
+        selects.set(String(nextId), select)
+        select.focus({ preventScroll: true })
+        const rect = select.getBoundingClientRect()
+
+        // SAFETY: exposeBinding installs this page-scoped function before init scripts.
+        void (window as typeof window & SelectWindow).__treeportSelectOpen({
+          type: 'select',
+          requestId: String(nextId),
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height,
+          selectedIndex: select.selectedIndex,
+          options: [...select.options].slice(0, 10_000).map((option) => {
+            const group =
+              option.parentElement instanceof HTMLOptGroupElement
+                ? option.parentElement
+                : null
+
+            return {
+              label: option.label.slice(0, 1_024),
+              group: group ? group.label.slice(0, 1_024) : null,
+              disabled: option.disabled || (group?.disabled ?? false),
+              hidden: option.hidden !== false
+            }
+          })
+        })
+
+        return true
+      }
+
+      const target = (event: Event) =>
+        event
+          .composedPath()
+          .find(
+            (node): node is HTMLSelectElement =>
+              node instanceof HTMLSelectElement
+          ) ?? null
+
+      // EXTERNAL: Chromium opens the popup as the default action of these
+      // events. Bubble-phase listeners leave pages that prevent it alone.
+      window.addEventListener('mousedown', (event) => {
+        const select = target(event)
+
+        if (
+          event.isTrusted &&
+          event.button === 0 &&
+          !event.defaultPrevented &&
+          select &&
+          open(select)
+        ) {
+          event.preventDefault()
+        }
+      })
+      window.addEventListener('keydown', (event) => {
+        const select = target(event)
+
+        if (
+          event.isTrusted &&
+          !event.defaultPrevented &&
+          select &&
+          (event.key === ' ' ||
+            event.key === 'Enter' ||
+            event.key === 'F4' ||
+            (event.altKey &&
+              (event.key === 'ArrowDown' || event.key === 'ArrowUp'))) &&
+          open(select)
+        ) {
+          event.preventDefault()
+        }
+      })
+
+      const showPicker = HTMLSelectElement.prototype.showPicker
+      HTMLSelectElement.prototype.showPicker = function () {
+        if (!open(this)) {
+          showPicker.call(this)
+        }
+      }
+
+      Object.defineProperty(window, '__treeportSelectChoose', {
+        value: (id: string, index: number | null) => {
+          const select = selects.get(id)
+          selects.delete(id)
+
+          if (!select?.isConnected) {
+            return
+          }
+
+          select.focus({ preventScroll: true })
+
+          if (
+            index === null ||
+            index === select.selectedIndex ||
+            !select.options[index] ||
+            select.options[index].disabled
+          ) {
+            return
+          }
+
+          select.selectedIndex = index
+          select.dispatchEvent(
+            new Event('input', { bubbles: true, composed: true })
+          )
+          select.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+      })
+    })
     await page.setViewportSize(this.stateValue.viewport)
     const cdp = await context.newCDPSession(page)
     this.cdp = cdp
@@ -394,6 +570,7 @@ export class PlaywrightBrowser {
         request.frame() === page.mainFrame()
       ) {
         this.contextMenu = null
+        this.closeSelect()
         this.faviconSource = null
         this.updateState({
           url: request.url(),
@@ -413,14 +590,22 @@ export class PlaywrightBrowser {
         this.updateState({ loading: false })
       }
     })
-    page.on('framedetached', () => {
+    page.on('framedetached', (frame) => {
       this.callbacks.fileChooser(null)
       this.contextMenu = null
+
+      if (this.selectMenu?.frame === frame) {
+        this.closeSelect()
+      }
     })
     page.on('framenavigated', (frame) => {
       this.callbacks.fileChooser(null)
       this.contextMenu = null
       this.pointerPoint = null
+
+      if (this.selectMenu?.frame === frame) {
+        this.closeSelect()
+      }
 
       if (frame === page.mainFrame()) {
         void this.refreshPageState()
@@ -512,6 +697,13 @@ export class PlaywrightBrowser {
     }, 500)
     this.titleTimer.unref()
     await this.refreshPageState()
+  }
+
+  private closeSelect(): void {
+    if (this.selectMenu) {
+      this.selectMenu = null
+      this.callbacks.select(null)
+    }
   }
 
   private updateState(patch: Partial<BrowserRuntimeState>): void {
@@ -925,6 +1117,30 @@ export class PlaywrightBrowser {
           message.action === 'inspect' ? context.backendNodeId : null,
         targetId: message.action === 'inspect' ? context.targetId : null
       }
+    }
+
+    if (message.type === 'selectResponse') {
+      const menu = this.selectMenu
+
+      if (menu?.requestId !== message.requestId) {
+        return
+      }
+
+      this.closeSelect()
+      await menu.frame
+        .evaluate(
+          ([id, index]) =>
+            // SAFETY: The page init script defines this function in every frame.
+            (
+              window as typeof window & {
+                __treeportSelectChoose(id: string, index: number | null): void
+              }
+            ).__treeportSelectChoose(id, index),
+          [menu.pageRequestId, message.index] as const
+        )
+        .catch(() => undefined)
+
+      return
     }
 
     if (message.type !== 'videoOffer') {
