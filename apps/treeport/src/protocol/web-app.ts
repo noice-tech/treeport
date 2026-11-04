@@ -54,6 +54,16 @@ export const appDirtyMessageSchema = Schema.Struct({
   dirty: Schema.Boolean
 })
 
+export const appTreeWatchMessageSchema = Schema.Struct({
+  source: appMessageSourceSchema,
+  method: Schema.Literal('tree.watch'),
+  watching: Schema.Boolean
+})
+
+export const webAppTreeEventSchema = Schema.Struct({
+  type: Schema.Literal('resync', 'changed', 'unavailable')
+})
+
 const appRequestFields = {
   source: appMessageSourceSchema,
   id: Schema.String

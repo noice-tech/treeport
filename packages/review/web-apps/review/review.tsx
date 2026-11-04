@@ -1188,7 +1188,12 @@ function ReviewApp() {
   }, [observedFileIds, loadFile])
 
   useEffect(() => {
+    let stale = false
+    let polling = false
+
     const refresh = async () => {
+      stale = true
+
       if (refreshPending.current || document.hidden) {
         return
       }
@@ -1196,29 +1201,46 @@ function ReviewApp() {
       refreshPending.current = true
 
       try {
-        await load()
-        await refreshVisibleFiles(
-          loadedRef.current?.files ?? [],
-          visibleFiles.current,
-          collapsedFilesRef.current,
-          loadFile
-        )
+        while (stale && !document.hidden) {
+          stale = false
+          await load()
+          await refreshVisibleFiles(
+            loadedRef.current?.files ?? [],
+            visibleFiles.current,
+            collapsedFilesRef.current,
+            loadFile
+          )
+        }
       } finally {
         refreshPending.current = false
       }
     }
 
+    const refreshStale = () => {
+      if (stale) {
+        void refresh()
+      }
+    }
+
     refresh()
     addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refreshStale)
+
+    const stopWatching = treeport.tree.onChange((event) => {
+      polling = event.type === 'unavailable'
+      void refresh()
+    })
 
     const interval = setInterval(() => {
-      if (document.hasFocus()) {
+      if (polling && document.hasFocus()) {
         refresh()
       }
     }, AUTO_REFRESH_INTERVAL_MS)
 
     return () => {
       removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refreshStale)
+      stopWatching()
       clearInterval(interval)
     }
   }, [load, loadFile])

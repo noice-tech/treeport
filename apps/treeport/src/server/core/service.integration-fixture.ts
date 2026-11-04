@@ -237,6 +237,9 @@ export function integrationService(
     getWebAppDiffImage: run(
       application.apps.getWebAppDiffImage.bind(application.apps)
     ),
+    watchWebAppTree: run(
+      application.apps.watchWebAppTree.bind(application.apps)
+    ),
     getWebAppListeners: run(
       application.apps.getWebAppListeners.bind(application.apps)
     ),
