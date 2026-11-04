@@ -51,6 +51,7 @@ import { NetworkListenerPort } from '../../network-listeners.ts'
 import { WebAppRuntimePort } from '../../web-app-vite-runtime.ts'
 import { ProjectStore } from '../project/project-store.ts'
 import { AppDefinitionService } from './app-definition-service.ts'
+import { TreeWatchService } from './tree-watch-service.ts'
 
 const now = (): string => new Date().toISOString()
 
@@ -65,6 +66,7 @@ type AppEffect<A> = Effect.Effect<A, DomainError<unknown>, ApplicationServices>
 
 export class AppService {
   private readonly definitions = new AppDefinitionService()
+  private readonly treeWatches = new TreeWatchService()
 
   private requireAvailableWorktree(
     worktreeId: string,
@@ -1128,6 +1130,43 @@ export class AppService {
                 'GIT_DIFF_UNAVAILABLE',
                 reason.message || 'Could not inspect tree changes',
                 422
+              )
+          )
+        )
+    })
+  }
+
+  watchWebAppTree(appId: string, onChange: () => void): AppEffect<() => void> {
+    const getWebAppContext = this.getWebAppContext.bind(this)
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const treeWatches = this.treeWatches
+
+    return Effect.gen(function* () {
+      const git = yield* GitPort
+      const events = yield* EventBusPort
+      const context = yield* getWebAppContext(appId)
+
+      if (context.project.kind !== 'repository') {
+        return yield* Effect.fail(
+          new DomainError(
+            'GIT_NOT_AVAILABLE',
+            'Tree changes are not available for a folder project',
+            409
+          )
+        )
+      }
+
+      const worktree = yield* requireAvailableWorktree(context.app.worktreeId)
+
+      return yield* treeWatches
+        .watch(worktree, git, events, onChange)
+        .pipe(
+          Effect.mapError(
+            (reason) =>
+              new DomainError(
+                'TREE_WATCH_UNAVAILABLE',
+                reason.message || 'Could not watch tree changes',
+                503
               )
           )
         )

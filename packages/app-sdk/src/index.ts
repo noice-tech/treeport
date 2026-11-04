@@ -216,6 +216,19 @@ export interface WebAppControls {
   setDirty(dirty: boolean): void
 }
 
+/**
+ * A change to the app's tree. `resync` arrives whenever watching (re)starts,
+ * and `unavailable` means changes will not be reported, so poll instead.
+ */
+export interface WebAppTreeEvent {
+  type: 'resync' | 'changed' | 'unavailable'
+}
+
+export interface WebAppTree {
+  /** Run a handler when files, the index, or HEAD of this tree change. */
+  onChange(handler: (event: WebAppTreeEvent) => void): () => void
+}
+
 export interface WebAppShortcuts {
   /** Run a handler when the user invokes Find with Cmd/Ctrl+F. */
   onFind(handler: () => void): () => void
@@ -376,6 +389,8 @@ export interface TreeportAppSdk {
   readonly storage: WebAppStorage
   /** Shortcuts delivered whether focus is in the app or Treeport host. */
   readonly shortcuts: WebAppShortcuts
+  /** Changes to this app's tree, pushed by Treeport. */
+  readonly tree: WebAppTree
 }
 
 interface HostResponse {
@@ -393,12 +408,19 @@ interface HostShortcut {
   shortcut: 'find'
 }
 
+interface HostTreeEvent {
+  source: 'treeport-host-v1'
+  method: 'tree.event'
+  event: WebAppTreeEvent
+}
+
 interface PendingRequest {
   complete(response: HostResponse): void
 }
 
 const pending = new Map<string, PendingRequest>()
 const shortcutEvents = new EventTarget()
+const treeHandlers = new Set<(event: WebAppTreeEvent) => void>()
 let findSubscribers = 0
 let serial = 0
 
@@ -446,7 +468,7 @@ if (parent !== self) {
 
 addEventListener(
   'message',
-  (event: MessageEvent<HostResponse | HostShortcut>) => {
+  (event: MessageEvent<HostResponse | HostShortcut | HostTreeEvent>) => {
     const message = event.data
 
     if (event.source !== parent) {
@@ -460,6 +482,12 @@ addEventListener(
     if ('method' in message) {
       if (message.method === 'shortcut' && message.shortcut === 'find') {
         triggerFindShortcut()
+      }
+
+      if (message.method === 'tree.event') {
+        for (const handler of treeHandlers) {
+          handler(message.event)
+        }
       }
 
       return
@@ -584,6 +612,36 @@ export const treeport: TreeportAppSdk = Object.freeze({
       call<void>('storage.set', { key, value, ...options }),
     delete: (key: string, options?: WebAppStorageOptions) =>
       call<void>('storage.delete', { key, ...options })
+  }),
+  tree: Object.freeze({
+    onChange: (handler: (event: WebAppTreeEvent) => void) => {
+      if (parent === self) {
+        handler({ type: 'unavailable' })
+
+        return () => {}
+      }
+
+      const listener = (event: WebAppTreeEvent) => handler(event)
+      treeHandlers.add(listener)
+
+      if (treeHandlers.size === 1) {
+        parent.postMessage(
+          { source: 'treeport-app-v1', method: 'tree.watch', watching: true },
+          '*'
+        )
+      }
+
+      return () => {
+        if (!treeHandlers.delete(listener) || treeHandlers.size) {
+          return
+        }
+
+        parent.postMessage(
+          { source: 'treeport-app-v1', method: 'tree.watch', watching: false },
+          '*'
+        )
+      }
+    }
   }),
   shortcuts: Object.freeze({
     onFind: (handler: () => void) => {

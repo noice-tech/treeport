@@ -5,9 +5,15 @@ import {
   appDirtyMessageSchema,
   appRequestMessageSchema,
   appTitleMessageSchema,
+  appTreeWatchMessageSchema,
+  webAppTreeEventSchema,
   workspaceSelectionMessageSchema
 } from '#protocol/web-app'
-import type { WebApp, GitFileDiffRequest } from '@treeport/app-sdk'
+import type {
+  WebApp,
+  WebAppTreeEvent,
+  GitFileDiffRequest
+} from '@treeport/app-sdk'
 import { parseResponse, rpc, treeFilesRpc } from '../../api'
 import { errorDescription, errorDetails } from '../../error-message'
 import { cn } from '../../lib/utils'
@@ -46,6 +52,10 @@ export function WebAppWorkspace({
     null
   )
 
+  const [treeWatchRevision, setTreeWatchRevision] = useState<string | null>(
+    null
+  )
+
   useEffect(() => {
     traceWebAppOpen(app.id, 'web_app.open.frame_mounted', {
       reloadRevision
@@ -66,6 +76,43 @@ export function WebAppWorkspace({
 
     return () => window.cancelAnimationFrame(frame)
   }, [active, autoFocusBlocked, loadedAppRevision, appRevision])
+
+  useEffect(() => {
+    if (!active || treeWatchRevision !== appRevision) {
+      return
+    }
+
+    const send = (event: WebAppTreeEvent) =>
+      (frameRef.current?.contentWindow ?? appWindowRef.current)?.postMessage(
+        { source: 'treeport-host-v1', method: 'tree.event', event },
+        '*'
+      )
+
+    const source = new EventSource(
+      `/api/apps/${encodeURIComponent(app.id)}/tree/changes`
+    )
+
+    source.addEventListener('message', (message) => {
+      const event = decodeUnknownOrNull(
+        webAppTreeEventSchema,
+        JSON.parse(message.data)
+      )
+
+      if (event) {
+        send(event)
+      }
+    })
+
+    // EXTERNAL: EventSource retries dropped streams by itself and closes only
+    // after the server rejects the stream.
+    source.addEventListener('error', () => {
+      if (source.readyState === EventSource.CLOSED) {
+        send({ type: 'unavailable' })
+      }
+    })
+
+    return () => source.close()
+  }, [active, app.id, appRevision, treeWatchRevision])
 
   useEffect(() => {
     if (!active) {
@@ -160,6 +207,17 @@ export function WebAppWorkspace({
 
       if (selectionMessage) {
         onSelectWorkspace(selectionMessage.index)
+
+        return
+      }
+
+      const treeWatchMessage = decodeUnknownOrNull(
+        appTreeWatchMessageSchema,
+        event.data
+      )
+
+      if (treeWatchMessage) {
+        setTreeWatchRevision(treeWatchMessage.watching ? appRevision : null)
 
         return
       }
@@ -334,7 +392,8 @@ export function WebAppWorkspace({
     onSelectWorkspace,
     onTitleChange,
     app.id,
-    app.permissions
+    app.permissions,
+    appRevision
   ])
 
   return (

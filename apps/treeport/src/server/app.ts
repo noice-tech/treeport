@@ -140,7 +140,7 @@ import {
   gitFileDiffResponseSchema,
   gitDiffImageSchema
 } from '#protocol/git-diff'
-import type { TreeportEvent } from '@treeport/app-sdk'
+import type { TreeportEvent, WebAppTreeEvent } from '@treeport/app-sdk'
 import * as Headers from '@effect/platform/Headers'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
@@ -1945,6 +1945,44 @@ export function createApp({
             service.apps.getWebAppDiff(params.appId!, query.scope)
           )
         })
+      })
+    ),
+    route(
+      'GET',
+      '/api/apps/:appId/tree/changes',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const encoder = new TextEncoder()
+        let emitChange: (() => void) | null = null
+
+        const message = (event: WebAppTreeEvent) =>
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+
+        const release = yield* operation(() =>
+          service.apps.watchWebAppTree(params.appId!, () => emitChange?.())
+        )
+
+        return HttpServerResponse.stream(
+          Stream.async<Uint8Array>((emit) => {
+            emitChange = () => void emit.single(message({ type: 'changed' }))
+            void emit.single(message({ type: 'resync' }))
+
+            const heartbeat = setInterval(
+              () => void emit.single(encoder.encode(': keepalive\n\n')),
+              25_000
+            )
+
+            return Effect.sync(() => {
+              emitChange = null
+              release()
+              clearInterval(heartbeat)
+            })
+          }),
+          {
+            contentType: 'text/event-stream',
+            headers: Headers.fromInput({ 'cache-control': 'no-store' })
+          }
+        )
       })
     ),
     route(

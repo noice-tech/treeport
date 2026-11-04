@@ -119,6 +119,7 @@ type AppApi = Pick<
   | 'getWebAppDiff'
   | 'getWebAppFileDiff'
   | 'getWebAppDiffImage'
+  | 'watchWebAppTree'
   | 'getWebAppListeners'
   | 'getWebAppStorage'
   | 'hasWebAppStorage'

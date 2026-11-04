@@ -847,6 +847,38 @@ class PromiseGitAdapter {
     return [...new Set(result.stdout.split('\0').filter(Boolean))].sort()
   }
 
+  async ignoredPaths(cwd: string): Promise<string[]> {
+    const result = await this.checked(cwd, [
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '--directory',
+      '-z'
+    ])
+
+    return result.stdout
+      .split('\0')
+      .filter(Boolean)
+      .map((entry) => entry.replace(/\/$/u, ''))
+  }
+
+  async checkIgnored(cwd: string, paths: readonly string[]): Promise<string[]> {
+    const result = await this.runner.run({
+      executable: this.executable,
+      args: ['check-ignore', '--stdin', '-z'],
+      cwd,
+      stdin: paths.map((entry) => `${entry}\0`).join(''),
+      timeoutMs: 30_000
+    })
+
+    if (result.exitCode > 1) {
+      throw new Error(result.stderr.trim() || 'git check-ignore failed')
+    }
+
+    return result.stdout.split('\0').filter(Boolean)
+  }
+
   async diffImage(
     cwd: string,
     input: GitDiffImageRequest
@@ -1652,6 +1684,18 @@ export class GitAdapter {
   worktreeFiles(cwd: string): GitEffect<string[]> {
     return this.operation('worktreeFiles', () =>
       this.implementation.worktreeFiles(cwd)
+    )
+  }
+
+  ignoredPaths(cwd: string): GitEffect<string[]> {
+    return this.operation('ignoredPaths', () =>
+      this.implementation.ignoredPaths(cwd)
+    )
+  }
+
+  checkIgnored(cwd: string, paths: readonly string[]): GitEffect<string[]> {
+    return this.operation('checkIgnored', () =>
+      this.implementation.checkIgnored(cwd, paths)
     )
   }
 
