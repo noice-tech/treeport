@@ -28,6 +28,7 @@ import type {
   BrowserOwnerServerMessage,
   BrowserServerMessage,
   BrowserRuntimeState,
+  BrowserSelect,
   BrowserSessionState
 } from '#protocol/browser'
 import type {
@@ -282,6 +283,7 @@ interface BrowserSession {
     dialog: Dialog
     message: Extract<BrowserServerMessage, { type: 'dialog' }>
   } | null
+  select: BrowserSelect | null
   touchAttachmentId: string | null
   touchIds: Set<number>
   retainLocalAgentPaint: boolean
@@ -636,6 +638,27 @@ export class BrowserSessionManager {
         ? pending.dialog.accept(response.promptText ?? undefined)
         : pending.dialog.dismiss()
     ).catch(() => undefined)
+  }
+
+  private broadcastSelect(
+    session: BrowserSession,
+    select: BrowserSelect | null
+  ): void {
+    const previous = session.select
+    session.select = select
+
+    for (const attachment of session.attachments.values()) {
+      if (previous) {
+        attachment.transport.sendMessage({
+          type: 'selectClosed',
+          requestId: previous.requestId
+        })
+      }
+
+      if (select) {
+        attachment.transport.sendMessage(select)
+      }
+    }
   }
 
   private openFileChooser(
@@ -1247,6 +1270,7 @@ export class BrowserSessionManager {
       fileChooserInput: null,
       fileChooser: null,
       dialog: null,
+      select: null,
       touchAttachmentId: null,
       touchIds: new Set(),
       retainLocalAgentPaint: false,
@@ -1417,6 +1441,16 @@ export class BrowserSessionManager {
               attachment.transport.sendMessage(session.dialog.message)
             }
           },
+          select: (select) => {
+            if (
+              runtimeReady &&
+              session.browser === browser &&
+              session.generation === runtimeGeneration &&
+              !session.localOwner
+            ) {
+              this.broadcastSelect(session, select)
+            }
+          },
           download: (download) => {
             const attachment = [...session.attachments.values()].find(
               (candidate) =>
@@ -1557,6 +1591,7 @@ export class BrowserSessionManager {
 
             this.closeFileChooser(session)
             this.closeDialog(session)
+            this.broadcastSelect(session, null)
             session.crashMessage = message
 
             for (const attachment of session.attachments.values()) {
@@ -1832,6 +1867,10 @@ export class BrowserSessionManager {
 
       if (session.dialog) {
         transport.sendMessage(session.dialog.message)
+      }
+
+      if (session.select) {
+        transport.sendMessage(session.select)
       }
 
       this.prepareVideoViewer(session, attachment)
@@ -3212,6 +3251,7 @@ export class BrowserSessionManager {
   private async closePlaywrightRuntime(session: BrowserSession): Promise<void> {
     this.closeFileChooser(session)
     this.closeDialog(session)
+    this.broadcastSelect(session, null)
     await this.waitForAppState(session)
     await this.detachAgent(session)
     const launch = session.launch

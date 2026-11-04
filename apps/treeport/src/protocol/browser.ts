@@ -167,6 +167,11 @@ const browserClientMessageSchema = Schema.Union(
     )
   }),
   Schema.Struct({
+    type: Schema.Literal('selectResponse'),
+    requestId: browserRequestIdSchema,
+    index: Schema.NullOr(Schema.NonNegativeInt)
+  }),
+  Schema.Struct({
     type: Schema.Literal('contextMenu'),
     requestId: browserRequestIdSchema,
     x: Schema.Finite.pipe(Schema.between(0, 3_840)),
@@ -403,6 +408,28 @@ export const browserCursorSchema = Schema.Literal(
   'zoom-out'
 )
 
+// EXTERNAL: Chromium draws select popups as separate native windows, which tab
+// capture omits, so viewers draw the picker themselves.
+export const browserSelectSchema = Schema.Struct({
+  type: Schema.Literal('select'),
+  requestId: browserRequestIdSchema,
+  x: Schema.Finite,
+  y: Schema.Finite,
+  width: Schema.Finite.pipe(Schema.nonNegative()),
+  height: Schema.Finite.pipe(Schema.nonNegative()),
+  selectedIndex: Schema.Int.pipe(Schema.greaterThanOrEqualTo(-1)),
+  options: Schema.Array(
+    Schema.Struct({
+      label: Schema.String.pipe(Schema.maxLength(1_024)),
+      group: Schema.NullOr(Schema.String.pipe(Schema.maxLength(1_024))),
+      disabled: Schema.Boolean,
+      hidden: Schema.Boolean
+    })
+  ).pipe(Schema.maxItems(10_000))
+})
+
+export type BrowserSelect = Schema.Schema.Type<typeof browserSelectSchema>
+
 const browserServerMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('videoSettingsResult'),
@@ -429,6 +456,11 @@ const browserServerMessageSchema = Schema.Union(
   }),
   Schema.Struct({
     type: Schema.Literal('dialogClosed'),
+    requestId: browserRequestIdSchema
+  }),
+  browserSelectSchema,
+  Schema.Struct({
+    type: Schema.Literal('selectClosed'),
     requestId: browserRequestIdSchema
   }),
   Schema.Struct({
