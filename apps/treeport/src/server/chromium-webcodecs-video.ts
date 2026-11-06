@@ -14,12 +14,12 @@ export class ChromiumWebCodecsVideo {
   private helper: BrowserCapturePage['page'] | null = null
   private stream: BrowserRelayStream | null = null
   private connected = false
-  private viewer: {
-    id: string
-    epoch: number
-    send(message: BrowserServerMessage): boolean
-  } | null = null
-  private epoch = 0
+  private readonly viewers = new Map<
+    string,
+    { generation: number; send(message: BrowserServerMessage): boolean }
+  >()
+  private controller: string | null = null
+  private generation = 0
   private restartedAt = -Infinity
   private width = 0
   private height = 0
@@ -97,12 +97,12 @@ export class ChromiumWebCodecsVideo {
             input: this.input
           },
           {
-            ready: (config) => {
-              const viewer = this.viewer
+            ready: (attachment, generation, config) => {
+              const viewer = this.viewers.get(attachment)
 
               if (
                 this.stream === stream &&
-                viewer?.epoch === config.epoch &&
+                viewer?.generation === generation &&
                 !viewer.send(config)
               ) {
                 this.failed('Viewer metadata queue is full.')
@@ -218,6 +218,7 @@ export class ChromiumWebCodecsVideo {
 
     this.colorMatrix = colorMatrix === 'smpte170m' ? 'smpte170m' : 'bt709'
     this.connected = this.stream === stream
+    stream.control(this.controller)
   }
 
   viewerSource(id: string): ChromiumWebCodecsViewer {
@@ -227,8 +228,9 @@ export class ChromiumWebCodecsVideo {
           return false
         }
 
-        this.viewer = { id, epoch: ++this.epoch, send }
-        this.stream.start(id, this.epoch)
+        const generation = ++this.generation
+        this.viewers.set(id, { generation, send })
+        this.stream.start(id, generation)
 
         return true
       }
@@ -236,12 +238,14 @@ export class ChromiumWebCodecsVideo {
   }
 
   async closeViewer(id: string): Promise<void> {
-    if (this.viewer?.id !== id) {
-      return
+    if (this.viewers.delete(id)) {
+      this.stream?.closeViewer(id)
     }
+  }
 
-    this.viewer = null
-    this.stream?.closeViewer(id)
+  control(id: string | null): void {
+    this.controller = id
+    this.stream?.control(id)
   }
 
   private async restart(
@@ -249,20 +253,24 @@ export class ChromiumWebCodecsVideo {
     height: number,
     message: string
   ): Promise<void> {
-    const viewer = this.viewer
+    const viewers = [...this.viewers]
     await this.stop()
     await this.start(width, height).catch((error) => {
       this.failed(message)
       throw error
     })
 
-    if (viewer && !this.viewerSource(viewer.id).start(viewer.send)) {
-      this.failed('Capture helper unavailable after restarting.')
+    for (const [id, viewer] of viewers) {
+      if (!this.viewerSource(id).start(viewer.send)) {
+        this.failed('Capture helper unavailable after restarting.')
+
+        return
+      }
     }
   }
 
   async stop(): Promise<void> {
-    this.viewer = null
+    this.viewers.clear()
     this.connected = false
     this.stream?.close()
     this.stream = null

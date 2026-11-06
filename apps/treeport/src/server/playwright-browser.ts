@@ -842,6 +842,10 @@ export class PlaywrightBrowser {
     await this.video?.closeViewer(viewerId)
   }
 
+  controlVideo(viewerId: string | null): void {
+    this.video?.control(viewerId)
+  }
+
   async setScreencasting(enabled: boolean): Promise<void> {
     const page = this.page
     const video = this.video
