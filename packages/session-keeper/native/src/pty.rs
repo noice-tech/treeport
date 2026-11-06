@@ -156,7 +156,19 @@ pub fn foreground(descriptor: &AsyncFd<OwnedFd>) -> Result<Option<(String, Vec<S
     if group == 0 {
         return Ok(None);
     }
-    Ok(process::identity(group as u32)?.map(|row| (row.name, process::arguments(group as u32))))
+    // macOS denies inspecting another user's process, such as setuid sudo
+    // waiting for a password. Keep the last known foreground process.
+    let row = match process::identity(group as u32) {
+        Err(error)
+            if error
+                .downcast_ref::<io::Error>()
+                .is_some_and(|cause| cause.kind() == io::ErrorKind::PermissionDenied) =>
+        {
+            return Ok(None);
+        }
+        row => row?,
+    };
+    Ok(row.map(|row| (row.name, process::arguments(group as u32))))
 }
 
 async fn read(descriptor: &AsyncFd<OwnedFd>) -> io::Result<Vec<u8>> {
