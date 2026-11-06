@@ -380,7 +380,18 @@ export function makeBrowser(
       dependencies.reconnectImmediately()
     }
 
-    function restoreTerminal(snapshot: string): void {
+    function decodeBase64(data: string): Uint8Array {
+      const binary = atob(data)
+      const bytes = new Uint8Array(binary.length)
+
+      for (let index = 0; index < binary.length; index++) {
+        bytes[index] = binary.charCodeAt(index)
+      }
+
+      return bytes
+    }
+
+    function restoreTerminal(snapshot: string, complete: boolean): void {
       const terminal = state.terminal
       const terminalCore = terminal?.bridge
 
@@ -388,16 +399,41 @@ export function makeBrowser(
         return
       }
 
-      const binary = atob(snapshot)
-      const bytes = new Uint8Array(binary.length)
+      terminalCore.restore(decodeBase64(snapshot))
 
-      for (let index = 0; index < binary.length; index++) {
-        bytes[index] = binary.charCodeAt(index)
+      if (complete) {
+        terminalCore.restoreHistory(Number.POSITIVE_INFINITY)
       }
 
-      terminalCore.restore(bytes)
       // EXTERNAL: An empty write makes wterm repaint the restored grid and history.
       terminal.write('')
+    }
+
+    function appendTerminalHistory(data: string): void {
+      const terminalCore = state.terminal?.bridge
+
+      if (terminalCore instanceof GhosttyTerminalCore) {
+        terminalCore.appendHistory(decodeBase64(data))
+      }
+    }
+
+    function restoreTerminalHistory(deadline: number): boolean {
+      const terminal = state.terminal
+      const terminalCore = terminal?.bridge
+
+      if (
+        !terminal ||
+        !(terminalCore instanceof GhosttyTerminalCore) ||
+        !terminalCore.historyPending
+      ) {
+        return true
+      }
+
+      const complete = terminalCore.restoreHistory(deadline)
+      // EXTERNAL: An empty write makes wterm repaint the restored grid and history.
+      terminal.write('')
+
+      return complete
     }
 
     function setTerminalScrolling(scrolling: boolean): void {
@@ -424,6 +460,8 @@ export function makeBrowser(
     return {
       openTerminal,
       restoreTerminal,
+      appendTerminalHistory,
+      restoreTerminalHistory,
       setTerminalScrolling
     }
   })

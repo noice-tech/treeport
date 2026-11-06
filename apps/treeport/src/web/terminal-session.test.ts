@@ -727,7 +727,7 @@ describe('TerminalSession', () => {
         reconnectionDelay: 100,
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
-        query: { terminalProtocol: '10' }
+        query: { terminalProtocol: '11' }
       })
     )
 
@@ -813,7 +813,8 @@ describe('TerminalSession', () => {
         cols: 80,
         rows: 24,
         revision: 1,
-        snapshot: ghosttySnapshot('shared history\r\n', 80, 24)
+        snapshot: ghosttySnapshot('shared history\r\n', 80, 24),
+        historyBytes: 0
       })
       socket.emitServer('output', {
         streamId: 'stream',
@@ -861,7 +862,8 @@ describe('TerminalSession', () => {
       cols: 80,
       rows: 24,
       revision: 1,
-      snapshot: ghosttySnapshot('historical output', 80, 24)
+      snapshot: ghosttySnapshot('historical output', 80, 24),
+      historyBytes: 0
     })
     await vi.waitFor(() =>
       expect(socket.emit).toHaveBeenCalledWith('query_authority', {
@@ -976,7 +978,8 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ghosttySnapshot('\x1b[?2026hpartial frame')
+      snapshot: ghosttySnapshot('\x1b[?2026hpartial frame'),
+      historyBytes: 0
     })
     await vi.waitFor(() => expect(session.getSnapshot().phase).toBe('ready'))
     expect(terminal.bridge.synchronizedOutput()).toBe(true)
@@ -1000,7 +1003,8 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ghosttySnapshot()
+      snapshot: ghosttySnapshot(),
+      historyBytes: 0
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
@@ -1059,7 +1063,8 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ghosttySnapshot()
+      snapshot: ghosttySnapshot(),
+      historyBytes: 0
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
@@ -1102,7 +1107,8 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ghosttySnapshot('first stream\r\n')
+      snapshot: ghosttySnapshot('first stream\r\n'),
+      historyBytes: 0
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
@@ -1118,7 +1124,8 @@ describe('TerminalSession', () => {
       cols: 120,
       rows: 40,
       revision: 2,
-      snapshot: ghosttySnapshot('second stream\r\n', 120, 40)
+      snapshot: ghosttySnapshot('second stream\r\n', 120, 40),
+      historyBytes: 0
     })
     socket.emitServer('output', {
       streamId: 'stream-2',
@@ -1179,7 +1186,8 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ghosttySnapshot()
+      snapshot: ghosttySnapshot(),
+      historyBytes: 0
     })
     await vi.waitFor(() =>
       expect(session.getSnapshot()).toMatchObject({
@@ -1606,7 +1614,8 @@ describe('TerminalSession', () => {
       cols: 80,
       rows: 24,
       revision: 1,
-      snapshot: ghosttySnapshot('initial output', 80, 24)
+      snapshot: ghosttySnapshot('initial output', 80, 24),
+      historyBytes: 0
     })
     expect(session.getSnapshot().phase).toBe('connecting')
     await vi.waitFor(() => expect(session.getSnapshot().phase).toBe('ready'))
@@ -1643,7 +1652,8 @@ describe('TerminalSession', () => {
         cols: 100,
         rows: 30,
         revision: 2,
-        snapshot: ghosttySnapshot()
+        snapshot: ghosttySnapshot(),
+        historyBytes: 0
       }
     )
     await vi.advanceTimersByTimeAsync(150)
@@ -1731,7 +1741,8 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ghosttySnapshot()
+      snapshot: ghosttySnapshot(),
+      historyBytes: 0
     })
     terminalSessionTestAccess(session).state.proposedDimensions = {
       cols: 5_000,
@@ -1786,7 +1797,8 @@ describe('TerminalSession', () => {
       cols: 100,
       rows: 30,
       revision: 1,
-      snapshot: ghosttySnapshot()
+      snapshot: ghosttySnapshot(),
+      historyBytes: 0
     })
 
     session.focus()

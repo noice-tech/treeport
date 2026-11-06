@@ -18,6 +18,14 @@ import type { TerminalAttachmentBackend } from './core/terminal.ts'
 import type { TerminalMetadataManager } from './terminal-metadata.ts'
 import { testAccess } from './test-access.ts'
 
+function snapshotRecord(tag: number, payload: string): Buffer {
+  const header = Buffer.alloc(10)
+  header.writeUInt16LE(tag, 0)
+  header.writeUInt32LE(Buffer.byteLength(payload), 2)
+
+  return Buffer.concat([header, Buffer.from(payload)])
+}
+
 class HostDouble implements TerminalAttachmentBackend {
   readonly outputListeners = new Set<(data: string, sequence: number) => void>()
   readonly runtimeListeners = new Set<(event: never) => void>()
@@ -34,7 +42,12 @@ class HostDouble implements TerminalAttachmentBackend {
   hostAuthorityCount = 0
   transitionSerial = 0
   snapshotFence = 0
-  snapshotData = 'canonical snapshot'
+  snapshotData = Buffer.concat([
+    Buffer.from('GHOSTSNP\x01\x00'),
+    snapshotRecord(5, ''),
+    snapshotRecord(4, 'history page'),
+    snapshotRecord(6, '')
+  ]).toString('base64')
   snapshotGate: Promise<void> | null = null
   writeError: Error | null = null
   status: 'running' | 'exited' = 'running'
@@ -374,10 +387,25 @@ describe('TerminalAttachmentManager', () => {
     await waitForEvent(transport, 'ready')
     await waitForEvent(transport, 'output')
 
-    expect(readyPayload(transport).snapshot).toBe('canonical snapshot')
+    const historyStart = 10 + 10
+    const snapshot = Buffer.from(host.snapshotData, 'base64')
+    expect(readyPayload(transport)).toMatchObject({
+      snapshot: snapshot.subarray(0, historyStart).toString('base64'),
+      historyBytes: snapshot.length - historyStart
+    })
+    expect(eventPayloads(transport, 'history')).toEqual([
+      {
+        streamId: readyPayload(transport).streamId,
+        data: snapshot.subarray(historyStart).toString('base64')
+      }
+    ])
     const output = eventPayloads(transport, 'output')
     expect(output.map((item) => item.data)).toEqual([concurrentSuffix])
     expect(transport.connected).toBe(true)
+    manager.message(connectionId, 'history_ack', {
+      streamId: readyPayload(transport).streamId,
+      bytes: snapshot.length - historyStart
+    })
     manager.message(connectionId, 'resize', {
       generation: readyPayload(transport).generation,
       cols: 120,

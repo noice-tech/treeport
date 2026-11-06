@@ -141,7 +141,9 @@ export class TerminalSession {
             setTerminalScrolling: browser.setTerminalScrolling,
             stopWithError: connection.stopWithError,
             update: (...args) => this.update(...args),
-            restoreTerminal: browser.restoreTerminal
+            restoreTerminal: browser.restoreTerminal,
+            appendTerminalHistory: browser.appendTerminalHistory,
+            restoreTerminalHistory: browser.restoreTerminalHistory
           })
 
           return {

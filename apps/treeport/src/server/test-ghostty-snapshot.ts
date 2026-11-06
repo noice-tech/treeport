@@ -8,7 +8,7 @@ export async function restoreTestSnapshot(
   data: string,
   writePty: ((data: Uint8Array) => void) | null = null
 ): Promise<GhosttyTerminal> {
-  return GhosttyTerminal.restore(
+  const terminal = GhosttyTerminal.restore(
     await loadGhosttyVtModule(),
     Buffer.from(data, 'base64'),
     {
@@ -32,6 +32,10 @@ export async function restoreTestSnapshot(
       clipboardWrite: null
     }
   )
+
+  terminal.restoreHistory(Infinity)
+
+  return terminal
 }
 
 export function hasKittyImage(

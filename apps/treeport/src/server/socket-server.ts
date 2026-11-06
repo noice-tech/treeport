@@ -61,6 +61,7 @@ const TERMINAL_EVENTS = new Set<TerminalClientEvent>([
   'resize',
   'take_control',
   'output_ack',
+  'history_ack',
   'query_authority'
 ])
 
@@ -128,14 +129,22 @@ export function createSocketServer({
   attachmentManager,
   browserSessions
 }: SocketServerDependencies): SocketServerResult {
-  const websocketServer = new WebSocketServer({
+  const browserWebsocketServer = new WebSocketServer({
     noServer: true,
     perMessageDeflate: false,
+    maxPayload: BROWSER_MAX_MESSAGE_BYTES
+  })
+
+  const terminalWebsocketServer = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: { threshold: 1024 },
     maxPayload: Math.max(
       BROWSER_MAX_MESSAGE_BYTES,
       TERMINAL_MAX_CLIENT_MESSAGE_BYTES
     )
   })
+
+  const websocketServers = [browserWebsocketServer, terminalWebsocketServer]
 
   const attachments =
     attachmentManager ??
@@ -558,6 +567,9 @@ export function createSocketServer({
       return true
     }
 
+    const websocketServer =
+      channel === 'terminals' ? terminalWebsocketServer : browserWebsocketServer
+
     websocketServer.handleUpgrade(request, socket, head, (accepted) => {
       websocketServer.emit('connection', accepted, request)
 
@@ -577,7 +589,9 @@ export function createSocketServer({
     browserSessions: hostedBrowsers,
     handleUpgrade,
     closeConnections: () => {
-      for (const client of websocketServer.clients) {
+      for (const client of websocketServers.flatMap((server) => [
+        ...server.clients
+      ])) {
         client.close(1012, 'Treeport reconnect required')
       }
     },
@@ -585,12 +599,15 @@ export function createSocketServer({
       closing = true
       attachments.dispose()
 
-      for (const client of websocketServer.clients) {
+      const clients = () =>
+        websocketServers.flatMap((server) => [...server.clients])
+
+      for (const client of clients()) {
         client.close(1001, 'Treeport is shutting down')
       }
 
       const forceClose = setTimeout(() => {
-        for (const client of websocketServer.clients) {
+        for (const client of clients()) {
           client.terminate()
         }
       }, 250)
@@ -605,8 +622,11 @@ export function createSocketServer({
         )
       )
       clearTimeout(forceClose)
-      await new Promise<void>((resolve) =>
-        websocketServer.close(() => resolve())
+      await Promise.all(
+        websocketServers.map(
+          (server) =>
+            new Promise<void>((resolve) => server.close(() => resolve()))
+        )
       )
     }
   }

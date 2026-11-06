@@ -283,7 +283,8 @@ export async function installMockSockets(
           cols: state.cols,
           rows: state.rows,
           revision: state.revision,
-          snapshot: emptySnapshot(state.cols, state.rows)
+          snapshot: emptySnapshot(state.cols, state.rows),
+          historyBytes: 0
         })
         connection.receive('output', {
           streamId: connection.streamId,

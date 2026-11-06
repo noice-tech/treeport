@@ -100,7 +100,8 @@ describe('WebSocket contracts', () => {
         cols: 120,
         rows: 40,
         revision: 1,
-        snapshot: '\u001b[Hready'
+        snapshot: '\u001b[Hready',
+        historyBytes: 0
       })
     ).toMatchObject({
       streamId: 'stream',

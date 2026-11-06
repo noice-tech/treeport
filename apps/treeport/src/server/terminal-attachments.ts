@@ -4,11 +4,14 @@ import {
   terminalBinarySchema,
   terminalInputSchema,
   terminalOutputAckSchema,
+  terminalHistoryAckSchema,
   terminalQueryAuthorityRequestSchema,
   terminalResizeSchema,
   terminalSizeSchema,
   terminalTakeControlSchema,
   TERMINAL_CONTROLLER_GRACE_MS,
+  TERMINAL_HISTORY_CHUNK_BYTES,
+  TERMINAL_HISTORY_WINDOW_CHUNKS,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_OUTPUT_HIGH_WATERMARK,
@@ -70,6 +73,7 @@ interface ClientConnection {
   queryTransitionId: string | null
   pendingDirectOutput: Array<{ data: string; ownerSequence: number }>
   pendingDirectOutputBytes: number
+  history: { data: Buffer; sent: number; acknowledged: number } | null
   exitObserved: boolean
   pendingExitCode: number | null
   protocolVersion: TerminalProtocolVersion
@@ -156,6 +160,7 @@ export class TerminalAttachmentManager {
       queryTransitionId: null,
       pendingDirectOutput: [],
       pendingDirectOutputBytes: 0,
+      history: null,
       exitObserved: false,
       pendingExitCode: null,
       protocolVersion,
@@ -253,6 +258,28 @@ export class TerminalAttachmentManager {
       }
 
       this.acknowledgeOutput(connection, parsed.streamId, parsed.sequence)
+
+      return
+    }
+
+    if (event === 'history_ack') {
+      const parsed = decodeUnknownOrNull(terminalHistoryAckSchema, value)
+      const history = connection.history
+
+      if (
+        !parsed ||
+        !history ||
+        parsed.streamId !== connection.streamId ||
+        parsed.bytes < history.acknowledged ||
+        parsed.bytes > history.sent
+      ) {
+        this.protocolError(connection, 'INVALID_MESSAGE', 'Invalid history ACK')
+
+        return
+      }
+
+      history.acknowledged = parsed.bytes
+      this.sendHistory(connection)
 
       return
     }
@@ -394,6 +421,7 @@ export class TerminalAttachmentManager {
     }
 
     connection.pendingDirectOutput = []
+    connection.history = null
     connection.pendingDirectOutputBytes = 0
     networkTelemetry.watermarkBytesNow('terminals', 'unacknowledged_output', 0)
     networkTelemetry.watermarkBytesNow('terminals', 'pending_output', 0)
@@ -632,6 +660,27 @@ export class TerminalAttachmentManager {
       self.claimController(connection)
       connection.state = 'ready'
       const lease = self.controllers.get(connection.terminalId)
+      // EXTERNAL: A Ghostty snapshot is a 10-byte envelope followed by records of
+      // u16 tag, u32 payload length, u32 CRC32C, and payload. Records through
+      // READY (tag 5) render the screen; older history pages follow it. Send the
+      // screen first so a large scrollback does not delay the terminal.
+      const snapshot = Buffer.from(initial.data, 'base64')
+      let readyEnd = 10
+
+      while (readyEnd + 10 <= snapshot.length) {
+        const tag = snapshot.readUInt16LE(readyEnd)
+        readyEnd += 10 + snapshot.readUInt32LE(readyEnd + 2)
+
+        if (tag === 5) {
+          break
+        }
+      }
+
+      readyEnd = Math.min(readyEnd, snapshot.length)
+      connection.history =
+        readyEnd < snapshot.length
+          ? { data: snapshot.subarray(readyEnd), sent: 0, acknowledged: 0 }
+          : null
 
       if (
         !self.send(connection, 'ready', {
@@ -643,14 +692,18 @@ export class TerminalAttachmentManager {
           cols: dimensions.cols,
           rows: dimensions.rows,
           revision: dimensions.revision,
-          snapshot: initial.data
+          snapshot: snapshot.subarray(0, readyEnd).toString('base64'),
+          historyBytes: snapshot.length - readyEnd
         })
       ) {
         return
       }
 
+      self.sendHistory(connection)
+
       yield* Effect.annotateCurrentSpan({
-        'treeport.terminal.snapshot_bytes': Buffer.byteLength(initial.data),
+        'treeport.terminal.snapshot_bytes': snapshot.length,
+        'treeport.terminal.snapshot_ready_bytes': readyEnd,
         'treeport.terminal.pending_output_bytes':
           connection.pendingDirectOutputBytes
       })
@@ -1159,6 +1212,15 @@ export class TerminalAttachmentManager {
       )
 
       for (const client of active) {
+        // EXTERNAL: Ghostty drops snapshot history pages restored after a column
+        // change, so a client still receiving history reattaches at the new width.
+        if (client.history && next.cols !== current.cols) {
+          client.transport.disconnect(true)
+          this.close(client.id)
+
+          continue
+        }
+
         this.send(client, 'dimensions', {
           cols: next.cols,
           rows: next.rows,
@@ -1411,6 +1473,40 @@ export class TerminalAttachmentManager {
     })
     connection.transport.disconnect(false)
     this.close(connection.id)
+  }
+
+  private sendHistory(connection: ClientConnection): void {
+    const history = connection.history
+
+    if (!history) {
+      return
+    }
+
+    while (
+      history.sent < history.data.length &&
+      history.sent - history.acknowledged <
+        TERMINAL_HISTORY_WINDOW_CHUNKS * TERMINAL_HISTORY_CHUNK_BYTES
+    ) {
+      const end = Math.min(
+        history.sent + TERMINAL_HISTORY_CHUNK_BYTES,
+        history.data.length
+      )
+
+      if (
+        !this.send(connection, 'history', {
+          streamId: connection.streamId!,
+          data: history.data.subarray(history.sent, end).toString('base64')
+        })
+      ) {
+        return
+      }
+
+      history.sent = end
+    }
+
+    if (history.acknowledged === history.data.length) {
+      connection.history = null
+    }
   }
 
   private send(

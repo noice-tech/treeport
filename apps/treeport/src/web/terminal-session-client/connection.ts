@@ -278,6 +278,7 @@ export function makeConnection(
       socket.on('ready', (value) => receive('ready', value))
       socket.on('dimensions', (value) => receive('dimensions', value))
       socket.on('output', (value) => receive('output', value))
+      socket.on('history', (value) => receive('history', value))
       socket.on('input_ack', (value) => receive('input_ack', value))
       socket.on('title', (value) => receive('title', value))
       socket.on('control', (value) => receive('control', value))
@@ -384,6 +385,7 @@ export function makeConnection(
 
       if (
         event === 'output_ack' ||
+        event === 'history_ack' ||
         event === 'resize' ||
         event === 'take_control' ||
         event === 'query_authority'
