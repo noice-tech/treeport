@@ -36,21 +36,6 @@ export class BrowserVideoReceiver {
       return
     }
 
-    if (
-      (message.type === 'ready' ||
-        message.type === 'state' ||
-        message.type === 'controlChanged') &&
-      !message.state.controlled
-    ) {
-      if (this.webcodecsEpoch !== null) {
-        this.stop()
-      }
-
-      if (message.state.hasController) {
-        this.statusChanged('Paused while another window has control.')
-      }
-    }
-
     if (message.type === 'videoChannel') {
       this.mediaToken = message.mediaToken
       this.webcodecs?.connect(message.mediaToken)

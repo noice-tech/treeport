@@ -68,6 +68,7 @@ class FakeBrowser implements BrowserSessionBrowser {
   readonly closeVideoViewer = vi.fn(
     async (_viewerId: string): Promise<void> => undefined
   )
+  readonly controlVideo = vi.fn((_viewerId: string | null): void => undefined)
   webcodecsViewer(
     viewerId: string
   ): ReturnType<BrowserSessionBrowser['webcodecsViewer']> {
@@ -516,7 +517,7 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
   })
 
-  it('authorizes one-use attachment tickets, shares control, and isolates hosted video viewers', async () => {
+  it('authorizes one-use attachment tickets, shares control, and shares hosted video with observers', async () => {
     const value = fixture()
 
     const identity = {
@@ -622,7 +623,10 @@ describe('Browser sessions', () => {
     expect(
       second.messages.some((message) => message.type === 'videoAnswer')
     ).toBe(false)
-    expect(browser.startVideo.mock.calls.map(([id]) => id)).toEqual(['first'])
+    expect(browser.startVideo.mock.calls.map(([id]) => id)).toEqual([
+      'first',
+      'second'
+    ])
 
     const lateObserver = value.transport('late-observer')
     await runEffect(
@@ -642,7 +646,7 @@ describe('Browser sessions', () => {
     expect(lateObserver.messages).not.toContainEqual({ type: 'videoReady' })
     expect(
       lateObserver.messages.some((message) => message.type === 'webcodecsReady')
-    ).toBe(false)
+    ).toBe(true)
     expect(
       lateObserver.messages.some(
         (message) => message.type === 'videoUnavailable'

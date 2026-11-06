@@ -5,7 +5,8 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws'
 import {
   parseBrowserMediaClientMessage,
   parseBrowserServerMessage,
-  type BrowserMediaClientMessage
+  type BrowserMediaClientMessage,
+  type BrowserServerMessage
 } from '#protocol/browser'
 import type {
   BrowserRelayCommand,
@@ -13,6 +14,13 @@ import type {
 } from './browser-relay-client.ts'
 
 type Wheel = Extract<BrowserMediaClientMessage, { type: 'wheel' }>
+
+interface Viewer {
+  generation: number
+  early: Uint8Array[]
+  ready: boolean
+  awaitingKey: boolean
+}
 
 interface Stream {
   id: string
@@ -26,13 +34,12 @@ interface Stream {
     { resolve(result: CdpResult): void; reject(error: Error): void }
   >
   nextCall: number
-  viewer: {
-    attachment: string
-    epoch: number
-    early: Uint8Array[]
-    ready: boolean
-    awaitingKey: boolean
-  } | null
+  epoch: number
+  config: Extract<BrowserServerMessage, { type: 'webcodecsReady' }> | null
+  viewers: Map<string, Viewer>
+  controller: string | null
+  keyedAt: number
+  keyTimer: ReturnType<typeof setTimeout> | null
   wheels: { attachment: string; message: Wheel; arrived: number }[]
   inFlight: number[]
   congested: boolean
@@ -57,6 +64,10 @@ const GESTURE_GAP_MS = 250
 const BARRIER_TIMEOUT_MS = 1_000
 const MAX_MEDIA_BUFFER = 2 * 1024 * 1024
 const AUDIO_PACKET = 2
+
+const KEYFRAME_SPACING_MS = 500
+
+let nextEpoch = 0
 
 const streams = new Map<string, Stream>()
 
@@ -161,9 +172,44 @@ const call = (
 }
 
 const viewerStream = (attachment: string) =>
-  [...streams.values()].find(
-    (stream) => stream.viewer?.attachment === attachment
-  ) ?? null
+  [...streams.values()].find((stream) => stream.viewers.has(attachment)) ?? null
+
+const requestKeyframe = (stream: Stream) => {
+  if (stream.keyTimer || !stream.epoch) {
+    return
+  }
+
+  const wait = stream.keyedAt + KEYFRAME_SPACING_MS - performance.now()
+
+  if (wait > 0) {
+    stream.keyTimer = setTimeout(() => {
+      stream.keyTimer = null
+
+      if ([...stream.viewers.values()].some((viewer) => viewer.awaitingKey)) {
+        requestKeyframe(stream)
+      }
+    }, wait)
+
+    return
+  }
+
+  stream.keyedAt = performance.now()
+  stream.capture?.send(
+    JSON.stringify({ type: 'keyframe', epoch: stream.epoch })
+  )
+}
+
+const stopEncoder = (stream: Stream) => {
+  stream.epoch = 0
+  stream.config = null
+
+  if (stream.keyTimer) {
+    clearTimeout(stream.keyTimer)
+    stream.keyTimer = null
+  }
+
+  stream.capture?.send(JSON.stringify({ type: 'stop' }))
+}
 
 const fail = (stream: Stream, message: string) => {
   if (streams.get(stream.id) === stream) {
@@ -179,8 +225,10 @@ const close = (stream: Stream) => {
 
   streams.delete(stream.id)
 
-  if (stream.timer) {
-    clearTimeout(stream.timer)
+  for (const timer of [stream.timer, stream.keyTimer]) {
+    if (timer) {
+      clearTimeout(timer)
+    }
   }
 
   for (const client of stream.server.clients) {
@@ -193,7 +241,8 @@ const close = (stream: Stream) => {
 
 const forward = (
   stream: Stream,
-  viewer: NonNullable<Stream['viewer']>,
+  attachment: string,
+  viewer: Viewer,
   packet: Uint8Array,
   key: boolean
 ) => {
@@ -202,7 +251,7 @@ const forward = (
   }
 
   viewer.awaitingKey = false
-  const socket = media.get(viewer.attachment)
+  const socket = media.get(attachment)
 
   if (
     socket?.readyState === WebSocket.OPEN &&
@@ -214,9 +263,7 @@ const forward = (
   }
 
   viewer.awaitingKey = true
-  stream.capture?.send(
-    JSON.stringify({ type: 'keyframe', epoch: viewer.epoch })
-  )
+  requestKeyframe(stream)
 }
 
 const cursor = (attachment: string, x: number, y: number) => {
@@ -433,7 +480,7 @@ const pump = (stream: Stream) => {
 const wheel = (attachment: string, message: Wheel) => {
   const stream = viewerStream(attachment)
 
-  if (!stream?.session) {
+  if (!stream?.session || stream.controller !== attachment) {
     emit({
       type: 'wheel',
       attachment,
@@ -473,18 +520,16 @@ const attachMedia = (attachment: string, socket: WebSocket) => {
     }
 
     const stream = viewerStream(attachment)
-    const viewer = stream?.viewer
+    const viewer = stream?.viewers.get(attachment)
 
-    if (!stream || !viewer || viewer.epoch !== message.epoch) {
+    if (!stream || !viewer || stream.epoch !== message.epoch) {
       return
     }
 
     if (message.type === 'webcodecsKeyframe') {
       if (viewer.ready) {
         viewer.awaitingKey = true
-        stream.capture?.send(
-          JSON.stringify({ type: 'keyframe', epoch: viewer.epoch })
-        )
+        requestKeyframe(stream)
       }
 
       return
@@ -495,20 +540,26 @@ const attachMedia = (attachment: string, socket: WebSocket) => {
         viewer.ready = true
 
         for (const packet of viewer.early.splice(0)) {
-          forward(stream, viewer, packet, packet[16] === 1)
+          forward(stream, attachment, viewer, packet, packet[16] === 1)
         }
       }
 
       return
     }
 
-    stream.capture?.send(
-      JSON.stringify({
-        type: 'ack',
-        epoch: viewer.epoch,
-        sequence: message.sequence
-      })
-    )
+    if (
+      stream.controller === attachment ||
+      !stream.controller ||
+      !stream.viewers.has(stream.controller)
+    ) {
+      stream.capture?.send(
+        JSON.stringify({
+          type: 'ack',
+          epoch: stream.epoch,
+          sequence: message.sequence
+        })
+      )
+    }
   })
   socket.on('close', () => {
     if (media.get(attachment) === socket) {
@@ -519,8 +570,6 @@ const attachMedia = (attachment: string, socket: WebSocket) => {
 }
 
 const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
-  const viewer = stream.viewer
-
   if (!binary) {
     const value = Object(parse(data))
 
@@ -533,17 +582,27 @@ const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
     const config = parseBrowserServerMessage(value)
 
     if (
-      viewer &&
+      stream.epoch &&
       config?.type === 'webcodecsReady' &&
-      config.epoch === viewer.epoch
+      config.epoch === stream.epoch
     ) {
-      emit({ type: 'ready', stream: stream.id, config })
+      stream.config = config
+
+      for (const [attachment, viewer] of stream.viewers) {
+        emit({
+          type: 'ready',
+          stream: stream.id,
+          attachment,
+          generation: viewer.generation,
+          config
+        })
+      }
     }
 
     return
   }
 
-  if (!viewer || !Buffer.isBuffer(data)) {
+  if (!stream.epoch || !Buffer.isBuffer(data)) {
     return
   }
 
@@ -557,39 +616,36 @@ const captureMessage = (stream: Stream, data: RawData, binary: boolean) => {
 
   const header = new DataView(packet.buffer, packet.byteOffset)
 
-  if (header.getUint32(0) !== viewer.epoch) {
+  if (header.getUint32(0) !== stream.epoch) {
     return
   }
 
   const kind = header.getUint8(16)
-
-  if (kind === AUDIO_PACKET) {
-    const socket = media.get(viewer.attachment)
-
-    if (
-      viewer.ready &&
-      socket?.readyState === WebSocket.OPEN &&
-      socket.bufferedAmount < MAX_MEDIA_BUFFER
-    ) {
-      socket.send(packet)
-    }
-
-    return
-  }
-
   const key = kind === 1
 
-  if (!viewer.ready) {
-    if (key) {
-      viewer.early = []
+  for (const [attachment, viewer] of stream.viewers) {
+    if (kind === AUDIO_PACKET) {
+      const socket = media.get(attachment)
+
+      if (
+        viewer.ready &&
+        socket?.readyState === WebSocket.OPEN &&
+        socket.bufferedAmount < MAX_MEDIA_BUFFER
+      ) {
+        socket.send(packet)
+      }
+    } else if (!viewer.ready) {
+      if (key) {
+        viewer.early = []
+      }
+
+      if (key || viewer.early.length > 0) {
+        viewer.early.push(packet)
+      }
+    } else {
+      forward(stream, attachment, viewer, packet, key)
     }
-
-    viewer.early.push(packet)
-
-    return
   }
-
-  forward(stream, viewer, packet, key)
 }
 
 const open = async (
@@ -615,7 +671,12 @@ const open = async (
     input: command.input,
     calls: new Map(),
     nextCall: 0,
-    viewer: null,
+    epoch: 0,
+    config: null,
+    viewers: new Map(),
+    controller: null,
+    keyedAt: -Infinity,
+    keyTimer: null,
     wheels: [],
     inFlight: [],
     congested: false,
@@ -807,19 +868,38 @@ process.on('message', (value, handle) => {
       return
     }
 
-    stream.viewer = {
-      attachment: command.attachment,
-      epoch: command.epoch,
+    stream.viewers.set(command.attachment, {
+      generation: command.generation,
       early: [],
       ready: false,
-      awaitingKey: false
+      awaitingKey: true
+    })
+
+    if (!stream.epoch) {
+      stream.epoch = ++nextEpoch
+      stream.keyedAt = performance.now()
+      stream.capture.send(
+        JSON.stringify({ type: 'start', epoch: stream.epoch })
+      )
+    } else {
+      if (stream.config) {
+        emit({
+          type: 'ready',
+          stream: stream.id,
+          attachment: command.attachment,
+          generation: command.generation,
+          config: stream.config
+        })
+      }
+
+      requestKeyframe(stream)
     }
-    stream.capture.send(JSON.stringify({ type: 'start', epoch: command.epoch }))
   } else if (command.type === 'closeViewer') {
-    if (stream.viewer?.attachment === command.attachment) {
-      stream.viewer = null
-      stream.capture?.send(JSON.stringify({ type: 'stop' }))
+    if (stream.viewers.delete(command.attachment) && !stream.viewers.size) {
+      stopEncoder(stream)
     }
+  } else if (command.type === 'control') {
+    stream.controller = command.attachment
   } else {
     close(stream)
   }

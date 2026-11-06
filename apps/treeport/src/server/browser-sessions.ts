@@ -119,6 +119,7 @@ export interface BrowserSessionBrowser {
   ): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
   closeVideoViewer(viewerId: string): Promise<void>
+  controlVideo(viewerId: string | null): void
   devtoolsEndpoint?(): Promise<string>
   requestClose(force: boolean): Promise<boolean>
   close(): Promise<void>
@@ -2400,8 +2401,7 @@ export class BrowserSessionManager {
 
   private prepareVideoViewer(
     session: BrowserSession,
-    attachment: BrowserAttachment,
-    controllerId = session.controllerId
+    attachment: BrowserAttachment
   ): void {
     if (
       session.videoError ||
@@ -2409,15 +2409,6 @@ export class BrowserSessionManager {
       !attachment.visible ||
       !attachment.transport.isConnected()
     ) {
-      return
-    }
-
-    if (
-      !session.localOwner &&
-      controllerId !== attachmentController(attachment)
-    ) {
-      attachment.video.suspend()
-
       return
     }
 
@@ -2437,7 +2428,10 @@ export class BrowserSessionManager {
             .then(() => undefined)
       })
     } else if (!session.localOwner && browser) {
-      if (attachment.refreshRate) {
+      if (
+        attachment.refreshRate &&
+        session.controllerId === attachmentController(attachment)
+      ) {
         this.browserHost.setRefreshRate(attachment.refreshRate)
       }
 
@@ -3101,14 +3095,6 @@ export class BrowserSessionManager {
     controllerId = session.controllerId,
     settings = session.videoSettings
   ): Promise<void> {
-    if (!session.localOwner) {
-      for (const attachment of session.attachments.values()) {
-        if (controllerId !== attachmentController(attachment)) {
-          attachment.video.suspend()
-        }
-      }
-    }
-
     const touchAttachment = session.touchAttachmentId
       ? session.attachments.get(session.touchAttachmentId)
       : null
@@ -3190,12 +3176,14 @@ export class BrowserSessionManager {
 
     const browser = await session.launch.catch(() => null)
 
-    const viewport = [...session.attachments.values()].find(
+    const controller = [...session.attachments.values()].find(
       (attachment) =>
         !attachment.closing &&
         attachment.visible &&
         attachmentController(attachment) === controllerId
-    )?.viewport
+    )
+
+    const viewport = controller?.viewport
 
     if (
       browser &&
@@ -3220,8 +3208,10 @@ export class BrowserSessionManager {
         )
       )
 
+    browser?.controlVideo(controller?.id ?? null)
+
     for (const attachment of session.attachments.values()) {
-      this.prepareVideoViewer(session, attachment, controllerId)
+      this.prepareVideoViewer(session, attachment)
     }
   }
 

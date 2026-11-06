@@ -19,8 +19,9 @@ export type BrowserRelayCommand =
       targetId: string
       input: string | null
     }
-  | { type: 'start'; stream: string; attachment: string; epoch: number }
+  | { type: 'start'; stream: string; attachment: string; generation: number }
   | { type: 'closeViewer'; stream: string; attachment: string }
+  | { type: 'control'; stream: string; attachment: string | null }
   | { type: 'close'; stream: string }
   | {
       type: 'media'
@@ -35,7 +36,13 @@ export type BrowserRelayCommand =
 export type BrowserRelayEvent =
   | { type: 'opened'; stream: string; port: number; token: string }
   | { type: 'connected'; stream: string }
-  | { type: 'ready'; stream: string; config: WebCodecsReady }
+  | {
+      type: 'ready'
+      stream: string
+      attachment: string
+      generation: number
+      config: WebCodecsReady
+    }
   | { type: 'failed'; stream: string; message: string }
   | {
       type: 'wheel'
@@ -48,8 +55,9 @@ export interface BrowserRelayStream {
   port: number
   token: string
   connected: Promise<void>
-  start(attachment: string, epoch: number): void
+  start(attachment: string, generation: number): void
   closeViewer(attachment: string): void
+  control(attachment: string | null): void
   close(): void
 }
 
@@ -60,7 +68,11 @@ export class BrowserRelay {
     {
       opened(port: number, token: string): void
       connected(): void
-      ready(config: WebCodecsReady): void
+      ready(
+        attachment: string,
+        generation: number,
+        config: WebCodecsReady
+      ): void
       failed(message: string): void
     }
   >()
@@ -96,7 +108,11 @@ export class BrowserRelay {
       input: string | null
     },
     handlers: {
-      ready(config: WebCodecsReady): void
+      ready(
+        attachment: string,
+        generation: number,
+        config: WebCodecsReady
+      ): void
       failed(message: string): void
     }
   ): Promise<BrowserRelayStream> {
@@ -119,10 +135,12 @@ export class BrowserRelay {
             port,
             token,
             connected,
-            start: (attachment, epoch) =>
-              this.send({ type: 'start', stream, attachment, epoch }),
+            start: (attachment, generation) =>
+              this.send({ type: 'start', stream, attachment, generation }),
             closeViewer: (attachment) =>
               this.send({ type: 'closeViewer', stream, attachment }),
+            control: (attachment) =>
+              this.send({ type: 'control', stream, attachment }),
             close: () => {
               if (this.#streams.delete(stream)) {
                 this.send({ type: 'close', stream })
@@ -230,7 +248,7 @@ export class BrowserRelay {
       } else if (event.type === 'connected') {
         stream.connected()
       } else if (event.type === 'ready') {
-        stream.ready(event.config)
+        stream.ready(event.attachment, event.generation, event.config)
       } else {
         this.#streams.delete(event.stream)
         stream.failed(event.message)
