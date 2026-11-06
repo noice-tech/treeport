@@ -233,6 +233,21 @@ export class GhosttyTerminalCore implements TerminalCore {
     )
   }
 
+  get historyPending(): boolean {
+    return this.session?.terminal.historyPending ?? false
+  }
+
+  appendHistory(bytes: Uint8Array): void {
+    this.session?.terminal.appendSnapshot(bytes)
+  }
+
+  restoreHistory(deadline: number): boolean {
+    const complete = this.session?.terminal.restoreHistory(deadline) ?? true
+    this.invalidate()
+
+    return complete
+  }
+
   resize(cols: number, rows: number): void {
     this.session?.terminal.resize(cols, rows)
     this.invalidate()

@@ -292,6 +292,7 @@ export class GhosttyVt {
 
 export class GhosttyTerminal {
   private disposed = false
+  private history: { decoder: number; pending: Uint8Array[] } | null = null
 
   readonly vt: GhosttyVt
   readonly handle: number
@@ -320,6 +321,8 @@ export class GhosttyTerminal {
     return terminal
   }
 
+  // EXTERNAL: Ghostty's decoder makes the terminal renderable at READY and then
+  // prepends older history pages while the terminal stays live.
   static restore(
     module: WebAssembly.Module,
     snapshot: Uint8Array,
@@ -327,28 +330,99 @@ export class GhosttyTerminal {
     callbacks: GhosttyTerminalCallbacks
   ): GhosttyTerminal {
     const vt = new GhosttyVt(module)
-    const ptr = vt.call('ghostty_wasm_alloc', snapshot.length)
-    vt.bytes().set(snapshot, ptr)
+    const pending = [snapshot]
 
-    const decoder = vt.opaque('ghostty_snapshot_decoder_new_buf', (out) =>
-      vt.call('ghostty_snapshot_decoder_new_buf', 0, out, ptr, snapshot.length)
+    const read = vt.callback(
+      (_user, buffer, capacity, outRead) => {
+        let length = 0
+
+        while (length < capacity && pending.length) {
+          const chunk = pending[0]!
+          const count = Math.min(chunk.length, capacity - length)
+          vt.bytes().set(chunk.subarray(0, count), buffer + length)
+          length += count
+
+          if (count === chunk.length) {
+            pending.shift()
+          } else {
+            pending[0] = chunk.subarray(count)
+          }
+        }
+
+        vt.view().setUint32(outRead, length, true)
+
+        return 1
+      },
+      4,
+      true
     )
 
-    let handle = 0
+    const reader = vt.call('ghostty_wasm_alloc', vt.size('GhosttyReader'))
+    const view = vt.view()
+    view.setUint32(reader + vt.offset('GhosttyReader', 'read'), read, true)
+    view.setUint32(reader + vt.offset('GhosttyReader', 'userdata'), 0, true)
 
-    try {
-      handle = vt.opaque('ghostty_snapshot_decoder_decode', (out) =>
-        vt.call('ghostty_snapshot_decoder_decode', decoder, out)
-      )
-    } finally {
+    const decoder = vt.opaque('ghostty_snapshot_decoder_new', (out) =>
+      vt.call('ghostty_snapshot_decoder_new', 0, out, reader)
+    )
+
+    vt.call('ghostty_wasm_free', reader, vt.size('GhosttyReader'))
+
+    const handle = vt.tryOpaque((out) =>
+      vt.call('ghostty_snapshot_decoder_ready', decoder, out)
+    )
+
+    if (handle === null) {
       vt.call('ghostty_snapshot_decoder_free', decoder)
-      vt.call('ghostty_wasm_free', ptr, snapshot.length)
+      throw new Error('ghostty_snapshot_decoder_ready failed')
     }
 
     const terminal = new GhosttyTerminal(vt, handle)
+    terminal.history = { decoder, pending }
     terminal.configure(options, callbacks)
 
     return terminal
+  }
+
+  get historyPending(): boolean {
+    return this.history !== null
+  }
+
+  appendSnapshot(bytes: Uint8Array): void {
+    this.history?.pending.push(bytes)
+  }
+
+  // EXTERNAL: Ghostty treats an exhausted reader as the end of the snapshot, so
+  // restore history only after every snapshot byte has been appended.
+  restoreHistory(deadline: number): boolean {
+    const history = this.history
+
+    if (!history) {
+      return true
+    }
+
+    const { vt } = this
+    let result = GHOSTTY_SUCCESS
+
+    while (result === GHOSTTY_SUCCESS && performance.now() < deadline) {
+      result = vt.call('ghostty_snapshot_decoder_next', history.decoder)
+    }
+
+    if (result === GHOSTTY_SUCCESS) {
+      return false
+    }
+
+    vt.call('ghostty_snapshot_decoder_free', history.decoder)
+    this.history = null
+
+    if (result !== vt.value('GhosttyResult', 'NO_VALUE')) {
+      // EXTERNAL: Ghostty keeps the terminal usable with the history restored so far.
+      console.warn(
+        `Terminal history restore stopped with Ghostty result ${result}`
+      )
+    }
+
+    return true
   }
 
   private configure(
@@ -855,6 +929,12 @@ export class GhosttyTerminal {
     }
 
     this.disposed = true
+
+    if (this.history) {
+      this.vt.call('ghostty_snapshot_decoder_free', this.history.decoder)
+      this.history = null
+    }
+
     this.vt.call('ghostty_terminal_free', this.handle)
   }
 }

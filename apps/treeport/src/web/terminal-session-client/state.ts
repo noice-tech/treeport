@@ -118,6 +118,8 @@ export class TerminalSessionState {
   renderFailed = false
   focusAfterRender = false
   expectedSequence = 1
+  historyBytes = 0
+  historyReceived = 0
   lastParsedSequence = 0
   readonly parsedSequences = new Set<number>()
   selectionDragCancel: (() => void) | null = null

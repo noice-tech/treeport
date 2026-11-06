@@ -3,13 +3,15 @@ import * as Schema from 'effect/Schema'
 import * as Either from 'effect/Either'
 
 export const SOCKET_PATH = '/api/socket'
-export const TERMINAL_PROTOCOL_VERSION = 10
+export const TERMINAL_PROTOCOL_VERSION = 11
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
 export const TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES = 4 * 1024 * 1024
 export const TERMINAL_MAX_CLIENT_MESSAGE_BYTES = 128 * 1024
 export const TERMINAL_MAX_INPUT_BYTES = 64 * 1024
+export const TERMINAL_HISTORY_CHUNK_BYTES = 256 * 1024
+export const TERMINAL_HISTORY_WINDOW_CHUNKS = 2
 
 export type TerminalProtocolInput =
   | string
@@ -165,6 +167,11 @@ export const terminalOutputAckSchema = Schema.Struct({
   sequence: Schema.NonNegativeInt
 })
 
+export const terminalHistoryAckSchema = Schema.Struct({
+  streamId,
+  bytes: Schema.NonNegativeInt
+})
+
 export const terminalQueryAuthorityRequestSchema = Schema.Struct({
   generation,
   cellSize: Schema.optionalWith(
@@ -193,7 +200,13 @@ const terminalReadySchema = Schema.Struct({
   ...terminalReadyBase,
   ...dimensions,
   revision: positiveInt,
-  snapshot: Schema.String
+  snapshot: Schema.String,
+  historyBytes: Schema.NonNegativeInt
+})
+
+const terminalHistorySchema = Schema.Struct({
+  streamId,
+  data: Schema.String
 })
 
 const terminalDimensionsSchema = Schema.Struct({
@@ -252,6 +265,8 @@ type TerminalTakeControlPayload = TerminalTakeControl
 
 type TerminalOutputAck = Schema.Schema.Type<typeof terminalOutputAckSchema>
 
+type TerminalHistoryAck = Schema.Schema.Type<typeof terminalHistoryAckSchema>
+
 type TerminalQueryAuthorityRequest = Schema.Schema.Type<
   typeof terminalQueryAuthorityRequestSchema
 >
@@ -261,6 +276,8 @@ export type TerminalReady = Schema.Schema.Type<typeof terminalReadySchema>
 type TerminalDimensions = Schema.Schema.Type<typeof terminalDimensionsSchema>
 
 type TerminalOutput = Schema.Schema.Type<typeof terminalOutputSchema>
+
+type TerminalHistory = Schema.Schema.Type<typeof terminalHistorySchema>
 
 type TerminalTitle = Schema.Schema.Type<typeof terminalTitleSchema>
 
@@ -280,6 +297,7 @@ export interface TerminalClientEventPayloads {
   resize: TerminalResize
   take_control: TerminalTakeControlPayload
   output_ack: TerminalOutputAck
+  history_ack: TerminalHistoryAck
   query_authority: TerminalQueryAuthorityRequest
 }
 
@@ -295,6 +313,7 @@ export interface TerminalServerEventPayloads {
   ready: TerminalReady
   dimensions: TerminalDimensions
   output: TerminalOutput
+  history: TerminalHistory
   title: TerminalTitle
   control: TerminalControl
   exit: TerminalExit
@@ -330,6 +349,7 @@ export function parseTerminalClientEvent<E extends TerminalClientEvent>(
     resize: terminalResizeSchema,
     take_control: terminalTakeControlSchema,
     output_ack: terminalOutputAckSchema,
+    history_ack: terminalHistoryAckSchema,
     query_authority: terminalQueryAuthorityRequestSchema
   }[event]
 
@@ -355,6 +375,7 @@ export function parseTerminalServerEvent<E extends TerminalServerEvent>(
     ready: terminalReadySchema,
     dimensions: terminalDimensionsSchema,
     output: terminalOutputSchema,
+    history: terminalHistorySchema,
     title: terminalTitleSchema,
     control: terminalControlSchema,
     exit: terminalExitSchema,

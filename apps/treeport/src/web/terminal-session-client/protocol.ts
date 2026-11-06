@@ -41,7 +41,9 @@ interface Dependencies {
   setTerminalScrolling(scrolling: boolean): void
   stopWithError(message: string): void
   update(patch: Partial<TerminalSessionSnapshot>): void
-  restoreTerminal(snapshot: string): void
+  restoreTerminal(snapshot: string, complete: boolean): void
+  appendTerminalHistory(data: string): void
+  restoreTerminalHistory(deadline: number): boolean
 }
 
 export function makeProtocol(
@@ -56,6 +58,8 @@ export function makeProtocol(
     | 'disposed'
     | 'expectedSequence'
     | 'focusAfterRender'
+    | 'historyBytes'
+    | 'historyReceived'
     | 'host'
     | 'lastParsedSequence'
     | 'parsedSequences'
@@ -133,6 +137,8 @@ export function makeProtocol(
         state.canonicalRevision = revision
         state.appliedRevision = 0
         state.expectedSequence = 1
+        state.historyBytes = message.historyBytes
+        state.historyReceived = 0
         state.lastParsedSequence = 0
         state.parsedSequences.clear()
         state.selectionDragCancel?.()
@@ -156,7 +162,10 @@ export function makeProtocol(
               return
             }
 
-            dependencies.restoreTerminal(message.snapshot)
+            dependencies.restoreTerminal(
+              message.snapshot,
+              message.historyBytes === 0
+            )
             dependencies.applyCanonicalDimensions(
               dimensions.cols,
               dimensions.rows,
@@ -196,6 +205,56 @@ export function makeProtocol(
         return
       }
 
+      if (event === 'history') {
+        const message = parseTerminalServerEvent('history', value)
+
+        if (!message) {
+          dependencies.failProtocol('The terminal server sent invalid history')
+
+          return
+        }
+
+        if (!state.ready || message.streamId !== state.streamId) {
+          return
+        }
+
+        const { data } = message
+        state.historyReceived +=
+          (data.length / 4) * 3 -
+          (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0)
+
+        if (state.historyReceived > state.historyBytes) {
+          dependencies.failProtocol('The terminal server sent too much history')
+
+          return
+        }
+
+        dependencies.send('history_ack', {
+          streamId: message.streamId,
+          bytes: state.historyReceived
+        })
+        const epoch = state.renderEpoch
+        dependencies.enqueueRender(
+          epoch,
+          Effect.sync(() => dependencies.appendTerminalHistory(data))
+        )
+
+        if (state.historyReceived === state.historyBytes) {
+          const restoreHistory: Effect.Effect<void> = Effect.sync(() => {
+            if (!dependencies.restoreTerminalHistory(performance.now() + 8)) {
+              dependencies.enqueueRender(
+                epoch,
+                Effect.zipRight(Effect.sleep(0), restoreHistory)
+              )
+            }
+          })
+
+          dependencies.enqueueRender(epoch, restoreHistory)
+        }
+
+        return
+      }
+
       if (event === 'dimensions') {
         const message = parseTerminalServerEvent('dimensions', value)
 
@@ -221,6 +280,13 @@ export function makeProtocol(
           Effect.sync(() => {
             if (state.disposed || epoch !== state.renderEpoch) {
               return
+            }
+
+            if (
+              state.terminal?.cols !== message.cols &&
+              state.historyReceived === state.historyBytes
+            ) {
+              dependencies.restoreTerminalHistory(Number.POSITIVE_INFINITY)
             }
 
             dependencies.applyCanonicalDimensions(
