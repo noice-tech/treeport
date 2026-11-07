@@ -32,6 +32,7 @@
     "test:keeper:stress": "SESSION_KEEPER_STRESS=1 turbo run test:integration:run --ui=stream -- apps/treeport/src/terminal-runtime/rust-session.integration.test.ts",
     "measure:keeper": "pnpm --filter @treeport/session-keeper measure",
     "test:web": "playwright test",
+    "test:desktop": "turbo run @treeport/treeport#build @treeport/desktop#build && playwright test --config playwright.desktop.config.ts",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
