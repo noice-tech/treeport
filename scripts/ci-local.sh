@@ -14,6 +14,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     '  pnpm test:unit         Isolated behavior.' \
     '  pnpm test:integration  Component interactions, including terminal hosts and shells; builds prerequisites.' \
     '  pnpm test:web          Browser UI workflows; not part of this gate.' \
+    '  pnpm test:desktop      Desktop app workflows in Electron; not part of this gate.' \
     '' \
     'Integration tests require zsh and Bash on PATH.' \
     'Fish coverage is optional and is reported as skipped when fish is absent.' \

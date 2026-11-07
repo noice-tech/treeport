@@ -11,6 +11,7 @@
     "noEmit": true
   },
   "include": [
+    "e2e/**/*.ts",
     "forge.config.ts",
     "forge.env.d.ts",
     "src/**/*.ts",
