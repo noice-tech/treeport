@@ -9,8 +9,23 @@ export default defineConfig({
       description:
         'A workspace for coding agents, browsers, custom apps, and services.',
       favicon: '/favicon.svg',
+      logo: {
+        light: './src/assets/icon.svg',
+        dark: './src/assets/icon-dark.svg'
+      },
       disable404Route: true,
       head: [
+        {
+          tag: 'link',
+          attrs: { rel: 'stylesheet', href: 'https://rsms.me/inter/inter.css' }
+        },
+        {
+          tag: 'link',
+          attrs: {
+            rel: 'stylesheet',
+            href: 'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..500,100,0;1,9..144,300..500,100,0&family=JetBrains+Mono:wght@400;500&display=swap'
+          }
+        },
         {
           tag: 'meta',
           attrs: {

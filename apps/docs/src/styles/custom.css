@@ -1,22 +1,76 @@
 :root {
-  --sl-color-accent-low: #083344;
-  --sl-color-accent: #22d3ee;
-  --sl-color-accent-high: #cffafe;
-  --sl-font: var(--sl-font-system);
-  --sl-font-mono: var(--sl-font-system-mono);
+  --sl-font: InterVariable, Inter, ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --treeport-font-display: Fraunces, ui-serif, Georgia, serif;
+
+  /* Dark: forest night. */
+  --sl-color-accent-low: #173826;
+  --sl-color-accent: #9dbf95;
+  --sl-color-accent-high: #e3f0dd;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e8ebe3;
+  --sl-color-gray-2: #c9cfc6;
+  --sl-color-gray-3: #9aa39b;
+  --sl-color-gray-4: #637068;
+  --sl-color-gray-5: #34443a;
+  --sl-color-gray-6: #1c2a22;
+  --sl-color-black: #111b15;
 }
 
 :root[data-theme='light'] {
-  --sl-color-accent-low: #cffafe;
-  --sl-color-accent: #0891b2;
-  --sl-color-accent-high: #164e63;
+  /* Light: warm paper. */
+  --sl-color-accent-low: #dbe9d6;
+  --sl-color-accent: #24583f;
+  --sl-color-accent-high: #143525;
+  --sl-color-white: #18241d;
+  --sl-color-gray-1: #24302a;
+  --sl-color-gray-2: #3b463f;
+  --sl-color-gray-3: #5f6a63;
+  --sl-color-gray-4: #8a918a;
+  --sl-color-gray-5: #d9d1c1;
+  --sl-color-gray-6: #ebe4d5;
+  --sl-color-gray-7: #f3efe6;
+  --sl-color-black: #f8f5ee;
 }
 
-.hero > img,
-.hero .hero-html {
-  filter: drop-shadow(
-    0 1.5rem 3rem color-mix(in srgb, var(--sl-color-accent) 22%, transparent)
-  );
+body {
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+}
+
+.site-title {
+  gap: 0.625rem;
+  font-family: var(--treeport-font-display);
+  font-size: 1.5rem;
+  font-weight: 400;
+  font-variation-settings:
+    'SOFT' 100,
+    'WONK' 0;
+  letter-spacing: -0.02em;
+  color: var(--sl-color-white);
+}
+
+.site-title img {
+  height: 2rem;
+  width: 2rem;
+}
+
+h1#_top,
+.sl-markdown-content :is(h1, h2, h3):not(:where(.not-content *)) {
+  font-family: var(--treeport-font-display);
+  font-weight: 350;
+  letter-spacing: -0.02em;
+  font-variation-settings:
+    'SOFT' 100,
+    'WONK' 0;
+}
+
+h1#_top {
+  font-size: clamp(2.5rem, 5vw, 3.25rem);
+  line-height: 1.05;
+}
+
+.sl-markdown-content h2:not(:where(.not-content *)) {
+  font-size: 2rem;
 }
 
 .sl-markdown-content code:not(:where(.not-content *)) {

@@ -1,0 +1,922 @@
+---
+const description = 'A place for your agents to work.'
+
+const features = [
+  {
+    title: 'Isolated by default.',
+    body: 'Each tree gets its own files, ports, and sessions, so parallel work never collides.',
+    path: 'M6.429 9.75 2.25 12l4.179 2.25m0-4.5 5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0 4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0-5.571 3-5.571-3'
+  },
+  {
+    title: 'Keeps running.',
+    body: 'Agents and servers live in persistent terminals. Close the window and the work carries on.',
+    path: 'm6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z'
+  },
+  {
+    title: 'A streamed browser.',
+    body: 'A real browser runs on the host, next to your agents and servers, and streams to any device. You, your agent, and your teammates see the same live page.',
+    path: 'M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418'
+  },
+  {
+    title: 'Your own tools.',
+    body: 'Add a diff viewer, an editor, or a dashboard as an app, and it shows up in every tree.',
+    path: 'M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z'
+  }
+]
+
+const links = [
+  { label: 'Trees', href: '#trees' },
+  { label: 'Inbox', href: '#inbox' },
+  { label: 'Anywhere', href: '#anywhere' },
+  { label: 'Docs', href: '/getting-started/installation/' }
+]
+
+const github = 'https://github.com/noice-tech/treeport'
+
+const arrow =
+  'M2 8a.75.75 0 0 1 .75-.75h8.69L8.22 4.03a.75.75 0 0 1 1.06-1.06l4.5 4.5a.75.75 0 0 1 0 1.06l-4.5 4.5a.75.75 0 0 1-1.06-1.06l3.22-3.22H2.75A.75.75 0 0 1 2 8Z'
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Treeport</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href="/brand/icon.svg" />
+    <meta property="og:title" content="Treeport" />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content="https://treeport.app/social-card.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://rsms.me/" />
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..500,100,0;1,9..144,300..500,100,0&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+  </head>
+  <body>
+    <div class="page">
+      <header class="container">
+        <nav class="nav" aria-label="Main">
+          <div class="nav-side">
+            <a href="/" aria-label="Homepage" class="brand">
+              <img src="/brand/icon.svg" alt="" class="brand-icon" />
+              <span>Treeport</span>
+            </a>
+          </div>
+          <div class="nav-links">
+            {links.map((link) => <a href={link.href}>{link.label}</a>)}
+          </div>
+          <div class="nav-side nav-end">
+            <a href={github} class="nav-ghost">GitHub</a>
+            <a href="/getting-started/installation/" class="nav-soft">Install</a>
+            <button
+              type="button"
+              popovertarget="menu"
+              class="menu-button"
+              aria-label="Open menu"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" class="icon-24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path>
+              </svg>
+              <span class="touch" aria-hidden="true"></span>
+            </button>
+          </div>
+        </nav>
+        <div id="menu" popover class="menu">
+          <div class="menu-head">
+            <span class="brand"><img src="/brand/icon.svg" alt="" class="brand-icon" /><span>Treeport</span></span>
+            <button
+              type="button"
+              popovertarget="menu"
+              popovertargetaction="hide"
+              class="menu-button"
+              aria-label="Close menu"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" class="icon-24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"></path>
+              </svg>
+              <span class="touch" aria-hidden="true"></span>
+            </button>
+          </div>
+          <div class="menu-links">
+            {links.map((link) => <a href={link.href}>{link.label}</a>)}
+            <a href={github}>GitHub</a>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="container">
+            <div class="hero-copy">
+              <h1 class="display">A place for your <em>agents</em> to work.</h1>
+              <p class="lede">
+                Give every task its own tree. Run agents side by side, and see at a glance which
+                one needs you.
+              </p>
+              <div class="actions">
+                <a href="/getting-started/installation/" class="button-primary">Install Treeport</a>
+                <a href="#source" class="button-link">
+                  Run it from source
+                  <svg viewBox="0 0 16 16" class="icon-16"><path fill-rule="evenodd" clip-rule="evenodd" d={arrow}></path></svg>
+                </a>
+              </div>
+            </div>
+            <div class="frame frame-hero">
+              <img
+                src="/brand/shots/hero.webp"
+                width="2880"
+                height="1800"
+                alt="Treeport showing several trees in the sidebar, an agent working in a terminal, and the app it is building in a browser tab"
+                class="frame-inner shot-raised"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section id="trees" class="section">
+          <div class="container">
+            <h2 class="display h2">One tree for every task.</h2>
+            <p class="lede lede-left">
+              A tree is a self-contained place to work, with its own copy of your project,
+              terminals, browser tabs, and apps. Start a fix, a feature, and an experiment at once.
+              Nothing one does spills into the others.
+            </p>
+            <div class="split split-features">
+              <dl class="features">
+                {
+                  features.map((feature) => (
+                    <div class="feature">
+                      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" class="icon-24 feature-icon" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d={feature.path} />
+                      </svg>
+                      <div>
+                        <dt>{feature.title}</dt>
+                        <dd>{feature.body}</dd>
+                      </div>
+                    </div>
+                  ))
+                }
+              </dl>
+              <div class="frame frame-well">
+                <img
+                  src="/brand/shots/review.webp"
+                  width="2880"
+                  height="1800"
+                  alt="A tree in Treeport with the Review app showing the changes its agent made"
+                  class="frame-inner shot-light"
+                  loading="lazy"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="inbox" class="section section-dark">
+          <div class="container split">
+            <div>
+              <h2 class="display h2">Know which agent needs you.</h2>
+              <p class="lede lede-left">
+                Every tree shows whether its agent is working, done, or waiting on you. Stop
+                hunting through tabs and answer the one that is stuck.
+              </p>
+            </div>
+            <div class="frame frame-glass">
+              <video
+                autoplay
+                muted
+                loop
+                playsinline
+                poster="/brand/shots/inbox-poster.webp"
+                aria-label="Treeport switching between trees while agents work, wait, and finish"
+                class="frame-inner shot-dark"
+              >
+                <source src="/brand/shots/inbox.webm" type="video/webm" />
+                <source src="/brand/shots/inbox.mp4" type="video/mp4" />
+              </video>
+            </div>
+          </div>
+        </section>
+
+        <section id="anywhere" class="section">
+          <div class="container split">
+            <div>
+              <h2 class="display h2">Pick up right where you left off.</h2>
+              <p class="lede lede-left">
+                Treeport runs on your Mac or a server you own. Reconnect from the Mac app, any
+                browser, or your phone over Tailscale. Terminals and browser tabs stream from the host, so every session is exactly as you left it.
+              </p>
+            </div>
+            <div class="devices">
+              <div class="frame frame-well devices-desktop">
+                <img
+                  src="/brand/shots/browser.webp"
+                  width="2880"
+                  height="1800"
+                  alt="The app an agent built, open in a Treeport browser tab"
+                  class="frame-inner shot-light"
+                  loading="lazy"
+                />
+              </div>
+              <div class="phone">
+                <img
+                  src="/brand/shots/mobile.webp"
+                  width="780"
+                  height="1688"
+                  alt="Treeport on a phone"
+                  loading="lazy"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="source" class="section section-rule">
+          <div class="container split">
+            <div>
+              <h2 class="display h2">Fork it. <em>Grow your own.</em></h2>
+              <p class="lede lede-left">
+                Treeport runs from your own fork, so you and your agent can change anything. Install
+                packages to add apps and commands to any project. MIT licensed.
+              </p>
+            </div>
+            <div class="code">
+              <p><span>$ </span>gh repo fork noice-tech/treeport --clone</p>
+              <p><span>$ </span>cd treeport &amp;&amp; pnpm install</p>
+              <p><span>$ </span>pnpm cli:install</p>
+              <p><span>$ </span>pnpm app:install</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section section-cta">
+          <div class="container">
+            <div class="hero-copy">
+              <img src="/brand/icon.svg" alt="" class="cta-icon" />
+              <h2 class="display h2">Plant your first tree.</h2>
+              <p class="lede">Free and open source. Works with any agent that runs in a terminal.</p>
+              <div class="actions">
+                <a href="/getting-started/installation/" class="button-soft">Read the install guide</a>
+                <a href={github} class="button-link">
+                  View on GitHub
+                  <svg viewBox="0 0 16 16" class="icon-16"><path fill-rule="evenodd" clip-rule="evenodd" d={arrow}></path></svg>
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="container footer-row">
+          <a href="/" aria-label="Homepage" class="brand brand-footer">
+            <img src="/brand/icon.svg" alt="" class="brand-icon" />
+            <span>Treeport</span>
+          </a>
+          <div class="footer-links">
+            <a href="/getting-started/installation/">Docs</a>
+            <a href={github}>GitHub</a>
+            <a href={`${github}/blob/main/LICENSE`}>MIT License</a>
+            <span>Made by Noice</span>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --paper: #f3efe6;
+    --paper-deep: #ebe4d5;
+    --ink: #18241d;
+    --ink-soft: #4a564e;
+    --ink-mute: #7d857e;
+    --forest: #24583f;
+    --forest-deep: #143525;
+    --moss: #9dbf95;
+    --font-sans: InterVariable, Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-display: Fraunces, ui-serif, Georgia, serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    color-scheme: light;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    background: var(--paper);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+  }
+
+  h1,
+  h2,
+  p,
+  dl,
+  dd {
+    margin: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  img,
+  video {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+</style>
+
+<style>
+  .page {
+    isolation: isolate;
+    overflow-x: clip;
+  }
+
+  .container {
+    max-width: 80rem;
+    margin-inline: auto;
+    padding-inline: 1.5rem;
+  }
+
+  @media (min-width: 64rem) {
+    .container {
+      padding-inline: 2rem;
+    }
+  }
+
+  /* Icons */
+  .icon-24 {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+    stroke: currentColor;
+  }
+
+  .icon-16 {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    fill: currentColor;
+  }
+
+  /* Header */
+  .nav {
+    display: flex;
+    align-items: center;
+    height: 5rem;
+  }
+
+  .nav-side {
+    display: flex;
+    flex: 1;
+    align-items: center;
+  }
+
+  .nav-end {
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    font-family: var(--font-display);
+    font-size: 1.625rem;
+    font-weight: 400;
+    font-variation-settings: 'SOFT' 100, 'WONK' 0;
+    letter-spacing: -0.02em;
+  }
+
+  .brand-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    flex-shrink: 0;
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 2rem;
+    font-size: 0.875rem;
+    line-height: 1.5rem;
+    font-weight: 500;
+    color: var(--ink-soft);
+  }
+
+  .nav-links a:hover,
+  .nav-ghost:hover {
+    color: var(--ink);
+  }
+
+  .nav-ghost,
+  .nav-soft {
+    border-radius: 999px;
+    padding: 0.375rem 0.875rem;
+    font-size: 0.875rem;
+    line-height: 1.5rem;
+    font-weight: 500;
+  }
+
+  .nav-ghost {
+    color: var(--ink-soft);
+  }
+
+  .nav-soft {
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  }
+
+  .nav-soft:hover {
+    background: color-mix(in srgb, var(--ink) 11%, transparent);
+  }
+
+  .menu-button {
+    position: relative;
+    margin-right: -0.5rem;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.5rem;
+    background: none;
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+
+  .menu-button:hover {
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  }
+
+  .touch {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 3rem);
+    height: max(100%, 3rem);
+    translate: -50% -50%;
+  }
+
+  @media (pointer: fine) {
+    .touch {
+      display: none;
+    }
+  }
+
+  .menu {
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    padding: 1rem 1.5rem;
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  .menu-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 3rem;
+  }
+
+  .menu-links {
+    display: grid;
+    margin-top: 1.5rem;
+    font-size: 1.125rem;
+    line-height: 1.75rem;
+    font-weight: 500;
+  }
+
+  .menu-links a {
+    padding-block: 0.75rem;
+  }
+
+  .menu-links a + a {
+    border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  }
+
+  @media (max-width: 63.99rem) {
+    .nav-links,
+    .nav-ghost,
+    .nav-soft {
+      display: none;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .menu-button {
+      display: none;
+    }
+  }
+
+  /* Type */
+  .display {
+    font-family: var(--font-display);
+    font-weight: 420;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+    font-variation-settings: 'SOFT' 100, 'WONK' 0;
+  }
+
+  .display em {
+    color: var(--forest);
+  }
+
+  h1.display {
+    max-width: 14ch;
+    font-size: 3.75rem;
+    line-height: 1;
+  }
+
+  .h2 {
+    max-width: 20ch;
+    font-size: 3rem;
+    line-height: 1;
+  }
+
+  @media (min-width: 40rem) {
+    h1.display {
+      font-size: 6rem;
+    }
+
+    .h2 {
+      font-size: 4.5rem;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    h1.display {
+      font-size: 7.5rem;
+    }
+  }
+
+  .lede {
+    max-width: 40ch;
+    margin-top: 1.5rem;
+    font-size: 1.25rem;
+    line-height: 2rem;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+
+  .lede-left {
+    max-width: 48ch;
+  }
+
+  @media (min-width: 40rem) {
+    .lede {
+      font-size: 1.125rem;
+    }
+  }
+
+  /* Buttons */
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem 1.5rem;
+    margin-top: 2.5rem;
+  }
+
+  .button-primary,
+  .button-soft {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.75rem 1.25rem;
+    font-size: 1rem;
+    line-height: 1.5rem;
+    font-weight: 500;
+  }
+
+  .button-primary {
+    background: var(--ink);
+    color: var(--paper);
+  }
+
+  .button-primary:hover {
+    background: var(--forest);
+  }
+
+  .button-primary:focus-visible {
+    outline: 2px solid var(--forest);
+    outline-offset: 2px;
+  }
+
+  .button-soft {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+
+  .button-soft:hover {
+    background: color-mix(in srgb, var(--ink) 13%, transparent);
+  }
+
+  .button-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 1rem;
+    line-height: 1.5rem;
+    font-weight: 500;
+  }
+
+  .button-link:hover {
+    color: var(--forest);
+  }
+
+  /* Hero */
+  .hero {
+    padding-top: 4rem;
+  }
+
+  @media (min-width: 40rem) {
+    .hero {
+      padding-top: 6rem;
+    }
+  }
+
+  .hero-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .hero-copy .display,
+  .hero-copy .lede {
+    margin-inline: auto;
+  }
+
+  /* Frames: concentric radii */
+  .frame {
+    --radius: min(1.6vw, 1rem);
+    --pad: 0.5rem;
+    border-radius: var(--radius);
+    padding: var(--pad);
+  }
+
+  .frame-inner {
+    width: 100%;
+    border-radius: max(0px, calc(var(--radius) - var(--pad)));
+  }
+
+  @media (min-width: 40rem) {
+    .frame {
+      --pad: 0.75rem;
+    }
+  }
+
+  .frame-hero {
+    margin-top: 4rem;
+    background: linear-gradient(to bottom, var(--forest), var(--forest-deep));
+  }
+
+  @media (min-width: 40rem) {
+    .frame-hero {
+      --pad: 1.5rem;
+      margin-top: 5rem;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .frame-hero {
+      --pad: 2.5rem;
+    }
+  }
+
+  .frame-well {
+    background: var(--paper-deep);
+  }
+
+  .frame-glass {
+    background: color-mix(in srgb, var(--paper) 5%, transparent);
+  }
+
+  .shot-raised {
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.4);
+    outline: 1px solid rgb(255 255 255 / 0.1);
+    outline-offset: -1px;
+  }
+
+  .shot-light {
+    box-shadow: 0 20px 25px -5px color-mix(in srgb, var(--ink) 10%, transparent);
+    outline: 1px solid rgb(0 0 0 / 0.1);
+    outline-offset: -1px;
+  }
+
+  .shot-dark {
+    outline: 1px solid rgb(255 255 255 / 0.1);
+    outline-offset: -1px;
+  }
+
+  /* Sections */
+  .section {
+    padding-block: 6rem;
+  }
+
+  @media (min-width: 40rem) {
+    .section {
+      padding-block: 8rem;
+    }
+  }
+
+  .split {
+    display: grid;
+    align-items: center;
+    gap: 3rem 4rem;
+  }
+
+  .split-features {
+    margin-top: 4rem;
+  }
+
+  @media (min-width: 64rem) {
+    .split {
+      grid-template-columns: 5fr 7fr;
+    }
+  }
+
+  .features {
+    display: grid;
+    gap: 2.5rem;
+  }
+
+  /* Icon sits in a box one line tall so it centers on the first line of text. */
+  .feature {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    font-size: 1rem;
+    line-height: 1.75rem;
+  }
+
+  .feature-icon {
+    height: 1lh;
+    color: var(--forest);
+  }
+
+  .feature dt {
+    display: inline;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .feature dd {
+    display: inline;
+    color: var(--ink-soft);
+  }
+
+  .feature dt::after {
+    content: ' ';
+  }
+
+  .section-dark {
+    background: var(--forest-deep);
+    color: var(--paper);
+  }
+
+  .section-dark .display em {
+    color: var(--paper);
+  }
+
+  .section-dark .lede {
+    color: color-mix(in srgb, var(--paper) 70%, transparent);
+  }
+
+  .devices {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1.5rem;
+  }
+
+  @media (min-width: 40rem) {
+    .devices {
+      gap: 2.5rem;
+    }
+  }
+
+  .devices-desktop {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .phone {
+    width: 25%;
+    flex-shrink: 0;
+    border-radius: min(5vw, 2.5rem);
+    padding: 0.375rem;
+    background: var(--ink);
+    box-shadow: 0 25px 50px -12px color-mix(in srgb, var(--ink) 30%, transparent);
+  }
+
+  .phone img {
+    width: 100%;
+    border-radius: min(4.2vw, 2rem);
+  }
+
+  .section-rule {
+    border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  }
+
+  .code {
+    border-radius: 1rem;
+    padding: 1.5rem;
+    background: var(--ink);
+    color: color-mix(in srgb, var(--paper) 90%, transparent);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.75rem;
+    overflow-x: auto;
+  }
+
+  .code span {
+    color: color-mix(in srgb, var(--paper) 40%, transparent);
+    user-select: none;
+  }
+
+  @media (min-width: 40rem) {
+    .code {
+      padding: 2rem;
+    }
+  }
+
+  .section-cta {
+    background: var(--paper-deep);
+  }
+
+  .cta-icon {
+    width: 6rem;
+    height: 6rem;
+    margin-bottom: 2rem;
+  }
+
+  /* Footer */
+  .footer {
+    padding-block: 3rem;
+  }
+
+  .footer-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+  }
+
+  .brand-footer {
+    font-size: 1.5rem;
+  }
+
+  .brand-footer .brand-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2rem;
+    font-size: 1rem;
+    line-height: 1.75rem;
+    font-weight: 400;
+    color: var(--ink-soft);
+  }
+
+  .footer-links a:hover {
+    color: var(--ink);
+  }
+
+  .footer-links span {
+    color: var(--ink-mute);
+  }
+
+  @media (min-width: 40rem) {
+    .footer-links {
+      font-size: 0.875rem;
+      line-height: 1.5rem;
+    }
+  }
+</style>
