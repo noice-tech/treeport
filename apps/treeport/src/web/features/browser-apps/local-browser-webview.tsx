@@ -1,5 +1,11 @@
 import { supportsLocalBrowser } from '../../desktop-capabilities'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { browserObservedUrlSchema } from '@treeport/browser-host'
 import { decodeUnknownOrNull } from '#protocol/schema'
 import {
@@ -65,10 +71,10 @@ export function LocalBrowserWebview({
   active,
   inputBlocked,
   viewport,
-  onConnection,
-  onMessage,
-  onPaintRetentionChange,
-  onFocusSurface
+  onConnection: connectionChanged,
+  onMessage: messageReceived,
+  onPaintRetentionChange: paintRetentionChanged,
+  onFocusSurface: surfaceFocused
 }: {
   app: BrowserApp
   active: boolean
@@ -79,7 +85,25 @@ export function LocalBrowserWebview({
   onPaintRetentionChange: (retained: boolean) => Promise<boolean>
   onFocusSurface: () => void
 }) {
-  const { dismiss: dismissToolPicker } = useToolPicker()
+  const { dismiss } = useToolPicker()
+
+  // EXTERNAL: Re-running the setup effect on a mounted <webview> cannot re-attach its
+  // guest, so the desktop rejects every later registration. Callers' callbacks change
+  // identity while pages load, so the effect reads them as effect events.
+  const onConnection = useEffectEvent(
+    (connection: BrowserAppConnection | null) => connectionChanged(connection)
+  )
+
+  const onMessage = useEffectEvent((message: BrowserServerMessage) =>
+    messageReceived(message)
+  )
+
+  const onPaintRetentionChange = useEffectEvent((retained: boolean) =>
+    paintRetentionChanged(retained)
+  )
+
+  const onFocusSurface = useEffectEvent(() => surfaceFocused())
+  const dismissToolPicker = useEffectEvent(() => dismiss())
   const webviewRef = useRef<TreeportBrowserWebview>(null)
   const activeRef = useRef(active)
   const inputBlockedRef = useRef(inputBlocked)
@@ -736,14 +760,7 @@ export function LocalBrowserWebview({
       webview.removeEventListener('dom-ready', browserReady)
       connection.dispose()
     }
-  }, [
-    onConnection,
-    onMessage,
-    onPaintRetentionChange,
-    onFocusSurface,
-    dismissToolPicker,
-    app.id
-  ])
+  }, [app.id])
 
   useEffect(() => {
     const bridge = window.treeportDesktop
