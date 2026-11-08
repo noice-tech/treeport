@@ -16,7 +16,7 @@ import { UpdateChip } from './update-chip'
 function Titlebar() {
   const state = useShellState()
 
-  if (!state || (state.platform === 'darwin' && state.fullscreen)) {
+  if (!state) {
     return null
   }
 
@@ -26,7 +26,7 @@ function Titlebar() {
     <header className="fixed inset-x-0 top-0 z-80 flex h-8 select-none items-center bg-zinc-900 [-webkit-app-region:drag]">
       <nav
         aria-label="Workspace history"
-        className={`flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag] ${state.platform === 'darwin' ? 'ml-[76px]' : 'ml-2'}`}
+        className={`flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag] ${state.platform === 'darwin' && !state.fullscreen ? 'ml-[76px]' : 'ml-2'}`}
       >
         <Button
           variant="ghost"
@@ -83,8 +83,7 @@ export function App() {
 
   const computer = state ? selectedComputer(state) : undefined
 
-  const showTitlebar =
-    state && !(state.platform === 'darwin' && state.fullscreen)
+  const showTitlebar = state !== null
 
   const connectionReady = state?.connection.status === 'ready' && computer
 
