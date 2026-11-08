@@ -9,7 +9,10 @@ export default defineConfig({
       description:
         'A workspace for coding agents, browsers, custom apps, and services.',
       favicon: '/favicon.svg',
-      logo: { light: './src/assets/icon.svg', dark: './src/assets/icon-dark.svg' },
+      logo: {
+        light: './src/assets/icon.svg',
+        dark: './src/assets/icon-dark.svg'
+      },
       disable404Route: true,
       head: [
         {

@@ -42,7 +42,9 @@ body {
   font-family: var(--treeport-font-display);
   font-size: 1.5rem;
   font-weight: 400;
-  font-variation-settings: 'SOFT' 100, 'WONK' 0;
+  font-variation-settings:
+    'SOFT' 100,
+    'WONK' 0;
   letter-spacing: -0.02em;
   color: var(--sl-color-white);
 }
@@ -57,7 +59,9 @@ h1#_top,
   font-family: var(--treeport-font-display);
   font-weight: 350;
   letter-spacing: -0.02em;
-  font-variation-settings: 'SOFT' 100, 'WONK' 0;
+  font-variation-settings:
+    'SOFT' 100,
+    'WONK' 0;
 }
 
 h1#_top {
