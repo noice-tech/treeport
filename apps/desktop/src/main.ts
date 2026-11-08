@@ -229,7 +229,7 @@ function layoutWorkspace(): void {
   const host = hostSessions?.active
   const workspace = host?.view
   const { width, height } = mainWindow.getContentBounds()
-  const top = process.platform === 'darwin' && fullscreen ? 0 : TITLEBAR_HEIGHT
+  const top = TITLEBAR_HEIGHT
   workspace?.setBounds({
     x: 0,
     y: top,
