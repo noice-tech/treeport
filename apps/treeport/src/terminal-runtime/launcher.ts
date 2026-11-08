@@ -353,9 +353,12 @@ export function runLaunchSpec(
         )
 
         if (!reported) {
-          await fs.writeFile(`${resultPath}.tmp`, JSON.stringify(exitCode), {
-            mode: 0o600
-          })
+          // EXTERNAL: Flush before the rename so a system crash cannot keep the
+          // result's name with empty contents.
+          const file = await fs.open(`${resultPath}.tmp`, 'w', 0o600)
+          await file.writeFile(JSON.stringify(exitCode))
+          await file.sync()
+          await file.close()
           await fs.rename(`${resultPath}.tmp`, resultPath)
         }
       })

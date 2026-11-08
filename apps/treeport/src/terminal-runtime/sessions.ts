@@ -1719,10 +1719,12 @@ export class TerminalHostSessions {
         return
       }
 
-      const exitCode = yield* Effect.try({
-        try: () => z.int().parse(JSON.parse(source)),
-        catch: effectError
-      })
+      // EXTERNAL: A system crash can persist the result's rename without its
+      // contents. The launcher writes the result only after the command exits,
+      // so an unreadable result is an unknown exit code, as the launcher reports.
+      const exitCode = yield* Effect.try(() =>
+        z.int().parse(JSON.parse(source))
+      ).pipe(Effect.orElseSucceed(() => 1))
 
       session.commandExitCode = exitCode
       yield* PubSub.publish(session.runtime, { commandExitCode: exitCode })
