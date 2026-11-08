@@ -432,7 +432,8 @@ export class GhosttyTerminal {
     const { vt } = this
     const option = (name: string) => vt.value('GhosttyTerminalOption', name)
     this.setSize(option('CONTINUATION_MAX_BYTES'), options.continuationBytes)
-    this.set(option('SCROLLBACK_MAX_BYTES'), 0)
+    // EXTERNAL: SIZE_MAX disables the byte limit; NULL restores the 10 KB default.
+    this.setSize(option('SCROLLBACK_MAX_BYTES'), 0xffffffff)
     this.setSize(option('SCROLLBACK_MAX_LINES'), options.scrollbackLines)
     this.setColor(option('COLOR_FOREGROUND'), options.foreground)
     this.setColor(option('COLOR_BACKGROUND'), options.background)
@@ -876,35 +877,37 @@ export class GhosttyTerminal {
 
   text(format: 'PLAIN' | 'VT' = 'PLAIN'): string {
     const { vt } = this
-    const options = 'GhosttyFormatterTerminalOptions'
-    const extra = 'GhosttyFormatterTerminalExtra'
-    const screen = 'GhosttyFormatterScreenExtra'
-    const ptr = vt.call('ghostty_wasm_alloc', vt.size(options))
-    vt.bytes().fill(0, ptr, ptr + vt.size(options))
-    const view = vt.view()
-    view.setUint32(ptr, vt.size(options), true)
-    view.setInt32(
-      ptr + vt.offset(options, 'emit'),
-      vt.value('GhosttyFormatterFormat', format),
-      true
-    )
-    view.setUint8(ptr + vt.offset(options, 'trim'), 1)
-    const extraPtr = ptr + vt.offset(options, 'extra')
-    view.setUint32(extraPtr, vt.size(extra), true)
-    const screenPtr = extraPtr + vt.offset(extra, 'screen')
-    view.setUint32(screenPtr, vt.size(screen), true)
-
-    if (format === 'VT') {
-      view.setUint8(ptr + vt.offset(options, 'unwrap'), 1)
-      view.setUint8(screenPtr + vt.offset(screen, 'style'), 1)
-      view.setUint8(screenPtr + vt.offset(screen, 'hyperlink'), 1)
-    }
 
     const formatter = vt.opaque('ghostty_formatter_terminal_new', (out) =>
-      vt.call('ghostty_formatter_terminal_new', 0, out, this.handle, ptr)
+      vt.call('ghostty_formatter_terminal_new', 0, out, this.handle)
     )
 
-    vt.call('ghostty_wasm_free', ptr, vt.size(options))
+    const set = (name: string, write: (view: DataView) => void) => {
+      write(vt.view())
+      vt.check(
+        vt.call(
+          'ghostty_formatter_set',
+          formatter,
+          vt.value('GhosttyFormatterOption', name),
+          vt.scratch
+        ),
+        `ghostty_formatter_set(${name})`
+      )
+    }
+
+    // EXTERNAL: GHOSTTY_FORMATTER_EXTRA_STYLE | GHOSTTY_FORMATTER_EXTRA_HYPERLINK.
+    const extras = format === 'VT' ? (1 << 7) | (1 << 8) : 0
+
+    set('EMIT', (view) =>
+      view.setInt32(
+        vt.scratch,
+        vt.value('GhosttyFormatterFormat', format),
+        true
+      )
+    )
+    set('TRIM', (view) => view.setUint8(vt.scratch, 1))
+    set('UNWRAP', (view) => view.setUint8(vt.scratch, format === 'VT' ? 1 : 0))
+    set('EXTRAS', (view) => view.setUint32(vt.scratch, extras, true))
 
     try {
       return decoder.decode(

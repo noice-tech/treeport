@@ -362,7 +362,6 @@ export class GhosttyTerminalCore implements TerminalCore {
           {
             style: (x) => {
               vt.call('ghostty_render_state_row_cells_select', session.cells, x)
-              vt.view().setUint32(session.style, vt.size('GhosttyStyle'), true)
 
               const result = vt.call(
                 'ghostty_render_state_row_cells_get',
@@ -627,14 +626,17 @@ export class GhosttyTerminalCore implements TerminalCore {
     const view = vt.view()
     const field = (name: string) => ptr + vt.offset('GhosttyStyle', name)
 
-    const flag = (name: string, value: number) =>
-      view.getUint8(field(name)) ? value : 0
+    const styleFlags = view.getUint16(field('flags'), true)
+
+    // EXTERNAL: GHOSTTY_STYLE_FLAG_* bit positions.
+    const flag = (bit: number, value: number) =>
+      styleFlags & (1 << bit) ? value : 0
 
     // EXTERNAL: wterm themes the 16 ANSI colors but builds indices 16-255 from a
     // 51-step cube instead of xterm's, so those resolve through Ghostty's palette.
     const color = (name: string) => {
       const base = field(name)
-      const tag = view.getInt32(base, true)
+      const tag = view.getUint8(base)
       const value = base + layout.colorValue
       const palette = tag === layout.colorPalette ? view.getUint8(value) : null
 
@@ -649,22 +651,21 @@ export class GhosttyTerminalCore implements TerminalCore {
       }
     }
 
-    const underline =
-      UNDERLINE_STYLES[view.getInt32(field('underline'), true)] ?? 'single'
+    const underline = UNDERLINE_STYLES[(styleFlags >> 8) & 0x7] ?? 'single'
 
     const fg = color('fg_color')
     const bg = color('bg_color')
 
     return {
       flags:
-        flag('bold', 0x01) |
-        flag('faint', 0x02) |
-        flag('italic', 0x04) |
+        flag(0, 0x01) |
+        flag(2, 0x02) |
+        flag(1, 0x04) |
         (underline === 'none' ? 0 : 0x08) |
-        flag('blink', 0x10) |
-        flag('inverse', 0x20) |
-        flag('invisible', 0x40) |
-        flag('strikethrough', 0x80),
+        flag(3, 0x10) |
+        flag(4, 0x20) |
+        flag(5, 0x40) |
+        flag(6, 0x80),
       fg: fg.palette,
       fgRgb: fg.rgb,
       bg: bg.palette,
@@ -719,7 +720,6 @@ export class GhosttyTerminalCore implements TerminalCore {
   private gridRef(point: number): boolean {
     const session = this.session!
     const { vt } = session
-    vt.view().setUint32(session.ref, vt.size('GhosttyGridRef'), true)
 
     return (
       vt.call(
@@ -860,7 +860,6 @@ export class GhosttyTerminalCore implements TerminalCore {
         {
           style: (column) => {
             x(column)
-            vt.view().setUint32(session.style, vt.size('GhosttyStyle'), true)
 
             return vt.call(
               'ghostty_grid_ref_style',
@@ -1244,11 +1243,6 @@ export class GhosttyTerminalCore implements TerminalCore {
           vt.size('GhosttyKittyGraphicsPlacementRenderInfo'),
           true
         )
-        vt.view().setUint32(
-          session.selection,
-          vt.size('GhosttySelection'),
-          true
-        )
 
         if (
           !descriptor ||
@@ -1349,8 +1343,10 @@ export class GhosttyTerminalCore implements TerminalCore {
         : null
 
     const format = get('FORMAT')
-    const ptr = get('DATA_PTR')
-    const length = get('DATA_LEN')
+    const ptr = get('PIXELS')
+
+    const length =
+      ptr === null ? null : vt.view().getUint32(session.out + 4, true)
 
     if (ptr === null || length === null) {
       return null
@@ -1425,7 +1421,7 @@ export class GhosttyTerminalCore implements TerminalCore {
         session.out
       ) === 0
 
-    if (!get('DATA_PTR') || !get('WIDTH')) {
+    if (!get('PIXELS') || !get('WIDTH')) {
       return null
     }
 
@@ -1481,8 +1477,8 @@ function readLayout(vt: GhosttyVt) {
     colorValue: vt.offset('GhosttyStyleColor', 'value'),
     dirtyFalse: value('GhosttyRenderStateDirty', 'FALSE'),
     dirtyFull: value('GhosttyRenderStateDirty', 'FULL'),
-    cursorBar: value('GhosttyRenderStateCursorVisualStyle', 'BAR'),
-    cursorUnderline: value('GhosttyRenderStateCursorVisualStyle', 'UNDERLINE'),
+    cursorBar: value('GhosttyCursorStyle', 'BAR'),
+    cursorUnderline: value('GhosttyCursorStyle', 'UNDERLINE'),
     screenAlternate: value('GhosttyTerminalScreen', 'ALTERNATE')
   }
 }
