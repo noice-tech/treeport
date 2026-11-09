@@ -101,7 +101,7 @@ export function ProjectForm({
 
   return (
     <form
-      className="flex flex-col gap-3 max-[700px]:gap-4"
+      className="flex min-w-0 flex-col gap-3 max-[700px]:gap-4"
       onSubmit={(event) => {
         event.preventDefault()
 
