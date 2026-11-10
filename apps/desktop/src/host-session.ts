@@ -18,6 +18,15 @@ import { DesktopRuntime } from './desktop-runtime'
 import { loadRenderer } from './renderer-load'
 import { isLoopbackUrl } from './renderer-url'
 
+type HostSessionPhase =
+  | 'idle'
+  | 'connecting'
+  | 'retrying'
+  | 'loaded'
+  | 'ready'
+  | 'lost'
+  | 'disposed'
+
 export class HostSession {
   readonly view: WebContentsView
   readonly runtime: DesktopRuntime
@@ -25,10 +34,9 @@ export class HostSession {
   connection: ConnectionState
   private generation = 0
   private connectionFiber: Fiber.RuntimeFiber<void> | null = null
-  private loading = false
-  private documentAvailable = false
+  private phase: HostSessionPhase = 'idle'
+  private documentGeneration: number | null = null
   private historyInitialized = false
-  private disposed = false
   private lastUrl: string
 
   constructor(
@@ -69,7 +77,7 @@ export class HostSession {
       Scope.addFinalizer(
         this.runtime.scope,
         Effect.sync(() => {
-          this.disposed = true
+          this.transition('disposed')
 
           if (!options.window.isDestroyed()) {
             options.window.contentView.removeChildView(this.view)
@@ -82,13 +90,15 @@ export class HostSession {
       )
     )
     renderer.on('did-navigate', (_event, url, status) => {
-      this.documentAvailable = status < 400 && this.ownsUrl(url)
+      this.documentGeneration =
+        status < 400 && this.ownsUrl(url) ? this.generation : null
 
       if (this.ownsUrl(url)) {
         this.lastUrl = url
       }
 
       if (status >= 400 && !this.loading) {
+        this.transition('lost')
         this.connect()
       }
 
@@ -101,7 +111,10 @@ export class HostSession {
       }
     })
     renderer.on('did-finish-load', () => {
-      if (!this.documentAvailable || !this.ownsUrl(renderer.getURL())) {
+      if (
+        this.documentGeneration !== this.generation ||
+        !this.ownsUrl(renderer.getURL())
+      ) {
         return
       }
 
@@ -110,6 +123,7 @@ export class HostSession {
         this.historyInitialized = true
       }
 
+      this.transition('ready')
       this.connection = {
         status: 'ready',
         computerId: computer.id,
@@ -124,16 +138,18 @@ export class HostSession {
     })
     renderer.on('did-fail-load', (_event, code, _description, url, main) => {
       if (main && code !== -3 && this.ownsUrl(url)) {
-        this.documentAvailable = false
+        this.documentGeneration = null
         this.lastUrl = url
 
         if (!this.loading) {
+          this.transition('lost')
           this.connect()
         }
       }
     })
     renderer.on('render-process-gone', () => {
-      this.documentAvailable = false
+      this.documentGeneration = null
+      this.transition('lost')
       this.connect(this.lastUrl)
     })
     renderer.on('page-title-updated', () => options.changed())
@@ -145,7 +161,7 @@ export class HostSession {
 
   trusts(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
     return (
-      !this.disposed &&
+      this.phase !== 'disposed' &&
       !this.runtime.isClosed &&
       event.sender === this.view.webContents &&
       event.senderFrame === event.sender.mainFrame &&
@@ -158,19 +174,33 @@ export class HostSession {
     this.browser.suspendPresentation()
   }
 
-  connect(url?: string): void {
-    if (this.disposed || this.runtime.isClosed) {
+  private get loading(): boolean {
+    return this.phase === 'connecting' || this.phase === 'retrying'
+  }
+
+  private transition(phase: HostSessionPhase): void {
+    if (this.phase !== 'disposed') {
+      this.phase = phase
+    }
+  }
+
+  connect(url?: string, options: { force: boolean } = { force: false }): void {
+    if (this.phase === 'disposed' || this.runtime.isClosed) {
       return
     }
 
-    if (!url && (this.documentAvailable || this.loading)) {
+    if (
+      !url &&
+      !options.force &&
+      (this.documentGeneration !== null || this.loading)
+    ) {
       return
     }
 
     const requestedUrl = url && this.ownsUrl(url) ? url : this.lastUrl
     const generation = ++this.generation
     const previous = this.connectionFiber
-    this.loading = true
+    this.transition('connecting')
     this.view.webContents.stop()
     this.connection = { status: 'connecting', computerId: this.computer.id }
     this.options.changed()
@@ -194,12 +224,23 @@ export class HostSession {
               return
             }
 
+            const message = `The desktop app could not reach ${this.computer.origin}.`
+
+            const unchanged =
+              this.connection.status === 'unavailable' &&
+              this.connection.message === message
+
+            this.transition('retrying')
+
             this.connection = {
               status: 'unavailable',
               computerId: this.computer.id,
-              message: `The desktop app could not reach ${this.computer.origin}.`
+              message
             }
-            this.options.changed()
+
+            if (!unchanged) {
+              this.options.changed()
+            }
           }
         )
 
@@ -207,7 +248,10 @@ export class HostSession {
           return
         }
 
-        this.loading = false
+        if (this.loading) {
+          this.transition('loaded')
+        }
+
         const health = yield* checkHealth(this.computer.origin)
 
         if (!health || generation !== this.generation) {
@@ -233,8 +277,8 @@ export class HostSession {
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
-            if (generation === this.generation) {
-              this.loading = false
+            if (generation === this.generation && this.loading) {
+              this.transition('lost')
             }
           })
         )
@@ -243,7 +287,7 @@ export class HostSession {
   }
 
   dispose(): Effect.Effect<void> {
-    this.disposed = true
+    this.transition('disposed')
     this.generation++
     this.deactivate()
     this.browser.detach()

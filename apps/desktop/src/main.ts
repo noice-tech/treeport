@@ -651,7 +651,9 @@ const nativeBrowserPresentationSchema = nativeBrowserAppSchema.extend({
   active: z.boolean()
 })
 
-function connectSelected(options: { url?: string } = {}): void {
+function connectSelected(
+  options: { url?: string; force?: boolean } = {}
+): void {
   const hosts = hostSessions
   const runtime = windowRuntime
 
@@ -724,7 +726,7 @@ function connectSelected(options: { url?: string } = {}): void {
 
   if (host) {
     host.view.webContents.send('fullscreen-change', fullscreen)
-    host.connect(options.url)
+    host.connect(options.url, { force: options.force ?? false })
 
     if (!shellOverlayOpen && host.connection.status === 'ready') {
       host.view.webContents.focus()
@@ -1816,7 +1818,7 @@ function registerIpc(): void {
   )
   ipcMain.on('shell:retry-connection', (event) => {
     if (isTrustedShellEvent(event)) {
-      void connectSelected()
+      void connectSelected({ force: true })
     }
   })
   ipcMain.on('shell:navigate-history', (event, direction) => {
