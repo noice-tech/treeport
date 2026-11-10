@@ -256,6 +256,17 @@ interface BrowserAppStatePersistence {
   ready: boolean
 }
 
+type BrowserRuntimePhase = 'none' | 'launching' | 'ready' | 'crashed'
+
+function setRuntimePhase(
+  session: BrowserSession,
+  phase: BrowserRuntimePhase,
+  crashMessage: string | null = null
+): void {
+  session.runtimePhase = phase
+  session.crashMessage = crashMessage
+}
+
 interface BrowserSession {
   appId: string
   worktreeId: string
@@ -264,6 +275,8 @@ interface BrowserSession {
   browser: BrowserSessionBrowser | null
   idleTimer: ReturnType<typeof setTimeout> | null
   launch: Promise<BrowserSessionBrowser> | null
+  runtimePhase: BrowserRuntimePhase
+  crashMessage: string | null
   localOwner: BrowserLocalOwner | null
   localAutomation: BrowserLocalAutomation | null
   localAutomationLaunch: Promise<BrowserLocalAutomation> | null
@@ -296,7 +309,6 @@ interface BrowserSession {
   agentAttached: boolean
   agentSessionName: string | null
   agentProcess: ChildProcess | null
-  crashMessage: string | null
   closing: boolean
   closeApproved: boolean
   closeRequest: Promise<boolean> | null
@@ -1013,6 +1025,7 @@ export class BrowserSessionManager {
       session.closing ||
       !session.scheduler.accepting ||
       session.localOwner ||
+      session.runtimePhase !== 'ready' ||
       !session.browser ||
       session.browser.frozen ||
       session.scheduler.pending.size > 0 ||
@@ -1043,6 +1056,7 @@ export class BrowserSessionManager {
           if (
             !session.closing &&
             !session.localOwner &&
+            session.runtimePhase === 'ready' &&
             browser &&
             browser.idle &&
             !session.state.loading &&
@@ -1261,6 +1275,8 @@ export class BrowserSessionManager {
       browser: null,
       idleTimer: null,
       launch: null,
+      runtimePhase: 'none',
+      crashMessage: null,
       localOwner: null,
       localAutomation: null,
       localAutomationLaunch: null,
@@ -1302,7 +1318,6 @@ export class BrowserSessionManager {
       agentAttached: false,
       agentSessionName: null,
       agentProcess: null,
-      crashMessage: null,
       closing: false,
       closeApproved: false,
       closeRequest: null,
@@ -1333,19 +1348,36 @@ export class BrowserSessionManager {
       throw new Error('This Browser is open in a local Treeport desktop app.')
     }
 
-    if (session.launch) {
+    if (session.launch && session.runtimePhase !== 'crashed') {
       return session.launch
     }
 
+    const crashedBrowser = session.browser
+    session.launch = null
+    session.browser = null
+
+    if (crashedBrowser) {
+      this.resetVideoDelivery(session)
+      session.agentAttached = false
+      session.agentSessionName = null
+    }
+
     const runtimeGeneration = ++session.generation
+    setRuntimePhase(session, 'launching')
     const restoredUrl = session.state.url
     const restoredTitle = session.state.title
 
     const launch = (async () => {
+      await crashedBrowser?.close().catch(() => undefined)
       await fs.rm(session.agentDirectory, { recursive: true, force: true })
       await fs.mkdir(session.agentDirectory, { recursive: true, mode: 0o700 })
       await fs.chmod(session.agentDirectory, 0o700)
-      let runtimeReady = false
+
+      const current = () =>
+        session.runtimePhase === 'ready' &&
+        session.browser === browser &&
+        session.generation === runtimeGeneration &&
+        !session.localOwner
 
       const browser = this.browserFactory(
         this.browserHost,
@@ -1355,12 +1387,7 @@ export class BrowserSessionManager {
         session.worktreeId,
         {
           state: (state) => {
-            if (
-              !runtimeReady ||
-              session.browser !== browser ||
-              session.generation !== runtimeGeneration ||
-              session.localOwner
-            ) {
+            if (!current()) {
               return
             }
 
@@ -1400,9 +1427,7 @@ export class BrowserSessionManager {
             }
 
             if (
-              !runtimeReady ||
-              session.generation !== runtimeGeneration ||
-              session.localOwner ||
+              !current() ||
               session.closing ||
               (!agent &&
                 ![...session.attachments.values()].some(
@@ -1443,12 +1468,7 @@ export class BrowserSessionManager {
             }
           },
           select: (select) => {
-            if (
-              runtimeReady &&
-              session.browser === browser &&
-              session.generation === runtimeGeneration &&
-              !session.localOwner
-            ) {
+            if (current()) {
               this.broadcastSelect(session, select)
             }
           },
@@ -1460,14 +1480,7 @@ export class BrowserSessionManager {
                 session.controllerId === attachmentController(candidate)
             )
 
-            if (
-              !runtimeReady ||
-              session.browser !== browser ||
-              session.generation !== runtimeGeneration ||
-              session.localOwner ||
-              session.closing ||
-              !attachment
-            ) {
+            if (!current() || session.closing || !attachment) {
               void download.cancel().catch(() => undefined)
 
               if (attachment === undefined && session.browser === browser) {
@@ -1530,10 +1543,7 @@ export class BrowserSessionManager {
             const input = session.clipboardInput
 
             if (
-              !runtimeReady ||
-              session.browser !== browser ||
-              session.generation !== runtimeGeneration ||
-              session.localOwner ||
+              !current() ||
               session.closing ||
               !input ||
               Date.now() > input.expiresAt ||
@@ -1554,12 +1564,7 @@ export class BrowserSessionManager {
             })
           },
           popup: (url) => {
-            if (
-              !runtimeReady ||
-              session.browser !== browser ||
-              session.generation !== runtimeGeneration ||
-              session.localOwner
-            ) {
+            if (!current()) {
               return
             }
 
@@ -1581,19 +1586,14 @@ export class BrowserSessionManager {
             }
           },
           crashed: (message) => {
-            if (
-              !runtimeReady ||
-              session.browser !== browser ||
-              session.generation !== runtimeGeneration ||
-              session.localOwner
-            ) {
+            if (!current()) {
               return
             }
 
             this.closeFileChooser(session)
             this.closeDialog(session)
             this.broadcastSelect(session, null)
-            session.crashMessage = message
+            setRuntimePhase(session, 'crashed', message)
 
             for (const attachment of session.attachments.values()) {
               attachment.transport.sendMessage({
@@ -1636,7 +1636,10 @@ export class BrowserSessionManager {
             }
       }
 
-      runtimeReady = true
+      if (session.generation === runtimeGeneration) {
+        setRuntimePhase(session, 'ready')
+      }
+
       session.state = browser.state
       this.queueAppState(session, session.state)
       this.broadcastState(session)
@@ -1647,6 +1650,7 @@ export class BrowserSessionManager {
         await session.browser?.close().catch(() => undefined)
         session.launch = null
         session.browser = null
+        setRuntimePhase(session, 'none')
       }
 
       throw cause
@@ -1654,7 +1658,15 @@ export class BrowserSessionManager {
 
     session.launch = launch
 
-    return launch
+    if (!crashedBrowser) {
+      return launch
+    }
+
+    return launch.then(async (browser) => {
+      await this.updateScreencast(session).catch(() => undefined)
+
+      return browser
+    })
   }
 
   private browserFor(session: BrowserSession): Promise<BrowserSessionBrowser> {
@@ -1852,7 +1864,7 @@ export class BrowserSessionManager {
       })
       this.broadcastState(session, 'controlChanged')
 
-      if (session.crashMessage) {
+      if (session.runtimePhase === 'crashed' && session.crashMessage) {
         transport.sendMessage({
           type: 'browserCrashed',
           message: session.crashMessage
@@ -2001,6 +2013,7 @@ export class BrowserSessionManager {
         }
 
         let owner: BrowserLocalOwner
+        setRuntimePhase(session, 'none')
 
         if (previousOwner) {
           Deferred.unsafeDone(previousOwner.readiness, Effect.void)
@@ -2186,7 +2199,7 @@ export class BrowserSessionManager {
     }
 
     if (message.type === 'crashed') {
-      session.crashMessage = message.message
+      setRuntimePhase(session, 'crashed', message.message)
 
       for (const attachment of session.attachments.values()) {
         attachment.transport.sendMessage({
@@ -3251,6 +3264,7 @@ export class BrowserSessionManager {
     if (session.launch === launch) {
       session.launch = null
       session.browser = null
+      setRuntimePhase(session, 'none')
     }
 
     this.resetVideoDelivery(session)
