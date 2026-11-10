@@ -61,7 +61,14 @@ export class BrowserVideoReceiver {
       if (!this.webcodecs) {
         this.webcodecs = new ChromiumWebCodecsReceiver(
           this.canvas,
-          this.presented,
+          () => {
+            if (this.timer) {
+              clearTimeout(this.timer)
+              this.timer = null
+            }
+
+            this.presented()
+          },
           (wheel) =>
             this.send({
               type: 'wheel',
@@ -70,7 +77,13 @@ export class BrowserVideoReceiver {
               deltaX: wheel.deltaX,
               deltaY: wheel.deltaY,
               modifiers: wheel.modifiers
-            })
+            }),
+          (reason) => {
+            if (this.webcodecsEpoch !== null) {
+              this.stop()
+              this.failed(reason)
+            }
+          }
         )
         this.webcodecs.setMuted(this.muted)
 
@@ -81,6 +94,10 @@ export class BrowserVideoReceiver {
 
       const receiver = this.webcodecs
       this.webcodecsEpoch = message.epoch
+      this.timer = setTimeout(() => {
+        this.stop()
+        this.failed('Browser video connection timed out.')
+      }, 15_000)
       void receiver.start(message).catch((error) => {
         if (this.webcodecsEpoch === message.epoch) {
           this.send({

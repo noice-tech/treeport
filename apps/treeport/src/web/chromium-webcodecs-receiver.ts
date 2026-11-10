@@ -25,7 +25,8 @@ export class ChromiumWebCodecsReceiver {
   constructor(
     canvas: HTMLCanvasElement,
     private readonly presented: () => void,
-    private readonly fallback: (message: BrowserMediaWheel) => void
+    private readonly fallback: (message: BrowserMediaWheel) => void,
+    private readonly failed: (message: string) => void
   ) {
     this.worker = new Worker(
       new URL('./browser-media.worker.ts', import.meta.url),
@@ -36,6 +37,10 @@ export class ChromiumWebCodecsReceiver {
     }: MessageEvent<BrowserMediaWorkerEvent>) => {
       if (data.type === 'media') {
         this.connected = data.connected
+
+        if (data.failed) {
+          this.failed('Browser video connection lost.')
+        }
       } else if (data.type === 'audio') {
         this.play(data.sampleRate, data.planes)
       } else if (data.type === 'wheel') {

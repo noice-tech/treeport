@@ -17,6 +17,6 @@ export type BrowserMediaWorkerCommand =
 
 export type BrowserMediaWorkerEvent =
   | { type: 'presented'; epoch: number }
-  | { type: 'media'; connected: boolean }
+  | { type: 'media'; connected: boolean; failed: boolean }
   | { type: 'wheel'; message: BrowserMediaWheel }
   | { type: 'audio'; sampleRate: number; planes: Float32Array<ArrayBuffer>[] }
