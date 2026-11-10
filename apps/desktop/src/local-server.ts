@@ -64,9 +64,19 @@ interface UpdateResult {
   remote: number
 }
 
+type LocalServerEvent =
+  | { type: 'startRequested' }
+  | { type: 'healthy' }
+  | { type: 'childError'; error: string }
+  | { type: 'childExited'; error: string; output: string[] }
+  | { type: 'crashLoop'; output: string[] }
+  | { type: 'stopRequested' }
+  | { type: 'connectionReady' }
+
 export class LocalServer {
   state: LocalServerState
   private child: ChildProcess | null = null
+  private starting: Promise<void> | null = null
   private ownedPid: number | null = null
   private seenServer = false
   private lastAutoStart = 0
@@ -109,24 +119,35 @@ export class LocalServer {
     }
   }
 
-  async start(): Promise<void> {
-    const { status, sourceRoot: root } = this.state
-
-    if (status === 'starting') {
-      return
+  start(): Promise<void> {
+    if (this.state.status === 'starting' && this.starting) {
+      return this.starting
     }
 
-    if (!this.state.chosen) {
+    this.transition({ type: 'startRequested' })
+
+    const starting: Promise<void> = this.launch().catch((error: Error) => {
+      if (this.starting === starting && this.state.status === 'starting') {
+        this.transition({
+          type: 'childError',
+          error: error.message
+        })
+      }
+    })
+
+    this.starting = starting
+
+    return starting
+  }
+
+  private async launch(): Promise<void> {
+    const { chosen, sourceRoot: root } = this.state
+
+    if (!chosen) {
       await fs.writeFile(this.choicePath, `${new Date().toISOString()}\n`)
     }
 
-    this.update({
-      chosen: true,
-      status: 'starting',
-      startedAt: Date.now(),
-      output: [],
-      error: null
-    })
+    this.update({ chosen: true })
 
     const hasSource = await fs
       .access(path.join(root, 'scripts', 'start.mjs'))
@@ -136,8 +157,8 @@ export class LocalServer {
       )
 
     if (!hasSource) {
-      this.update({
-        status: 'failed',
+      this.transition({
+        type: 'childError',
         error: `Treeport’s source isn’t at ${root} anymore. Rebuild the app from your clone with pnpm app:install.`
       })
 
@@ -159,7 +180,7 @@ export class LocalServer {
     child.once('error', (error) => {
       if (this.child === child) {
         this.child = null
-        this.update({ status: 'failed', error: error.message })
+        this.transition({ type: 'childError', error: error.message })
       }
     })
     child.once('exit', (code, signal) => void this.exited(child, code, signal))
@@ -175,7 +196,7 @@ export class LocalServer {
 
       if (health) {
         this.adopt(health)
-        this.update({ status: 'idle', output: [] })
+        this.transition({ type: 'healthy' })
 
         return
       }
@@ -192,7 +213,7 @@ export class LocalServer {
       health.installationMethod === INSTALLATION_METHOD &&
       health.pid === this.ownedPid
     ) {
-      this.update({ status: 'stopped', canStop: false })
+      this.transition({ type: 'stopRequested' })
       process.kill(health.pid, 'SIGTERM')
     }
   }
@@ -415,11 +436,7 @@ export class LocalServer {
 
     if (Date.now() - this.lastAutoStart < AUTO_START_INTERVAL_MS) {
       void this.readOutput().then((output) =>
-        this.update({
-          status: 'failed',
-          output,
-          error: 'Treeport stopped again less than a minute after starting.'
-        })
+        this.transition({ type: 'crashLoop', output })
       )
 
       return
@@ -445,6 +462,7 @@ export class LocalServer {
     this.ownedPid =
       health.installationMethod === INSTALLATION_METHOD ? health.pid : null
     this.update({ chosen: true, canStop: this.ownedPid !== null })
+    this.transition({ type: 'connectionReady' })
   }
 
   private async exited(
@@ -466,13 +484,13 @@ export class LocalServer {
 
     if (health) {
       this.adopt(health)
-      this.update({ status: 'idle', output: [] })
+      this.transition({ type: 'healthy' })
 
       return
     }
 
-    this.update({
-      status: 'failed',
+    this.transition({
+      type: 'childExited',
       output: await this.readOutput(),
       error:
         code === 127
@@ -489,6 +507,48 @@ export class LocalServer {
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .slice(-OUTPUT_LINES)
+  }
+
+  private transition(event: LocalServerEvent): void {
+    switch (event.type) {
+      case 'startRequested':
+        this.update({
+          status: 'starting',
+          startedAt: Date.now(),
+          output: [],
+          error: null
+        })
+        break
+      case 'healthy':
+        this.update({ status: 'idle', output: [] })
+        break
+      case 'childError':
+        this.update({ status: 'failed', error: event.error })
+        break
+      case 'childExited':
+        this.update({
+          status: 'failed',
+          error: event.error,
+          output: event.output
+        })
+        break
+      case 'crashLoop':
+        this.update({
+          status: 'failed',
+          output: event.output,
+          error: 'Treeport stopped again less than a minute after starting.'
+        })
+        break
+      case 'stopRequested':
+        this.update({ status: 'stopped', canStop: false })
+        break
+      case 'connectionReady':
+        if (this.state.status === 'failed') {
+          this.update({ status: 'idle', error: null, output: [] })
+        }
+
+        break
+    }
   }
 
   private update(state: Partial<LocalServerState>): void {
