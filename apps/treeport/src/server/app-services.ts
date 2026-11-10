@@ -19,11 +19,20 @@ interface ServiceContext {
   treePath: string
 }
 
+type ServicePhase =
+  | 'idle'
+  | 'starting'
+  | 'ready'
+  | 'backoff'
+  | 'failed'
+  | 'stopping'
+
 interface ServiceEntry {
   id: string
   declaration: PackageServiceDeclaration
   token: string
-  status: AppService['status']
+  desired: 'running' | 'stopped'
+  phase: ServicePhase
   error: string | null
   logs: string
   child: ChildProcess | null
@@ -34,7 +43,6 @@ interface ServiceEntry {
   socketPath: string | null
   socketDirectory: string | null
   connections: Set<Duplex>
-  stopped: boolean
   startedAt: number
   restarts: number
   restartTimer: NodeJS.Timeout | null
@@ -58,6 +66,20 @@ const LOG_LIMIT = 64 * 1024
 
 const SYNC_INTERVAL_MS = 5_000
 const MAX_RESTART_DELAY_MS = 60_000
+
+function setPhase(
+  entry: ServiceEntry,
+  phase: ServicePhase,
+  error: string | null
+): void {
+  if (entry.phase === 'backoff' && entry.restartTimer) {
+    clearTimeout(entry.restartTimer)
+    entry.restartTimer = null
+  }
+
+  entry.phase = phase
+  entry.error = error
+}
 
 export class AppServices {
   private readonly entries = new Map<string, ServiceEntry>()
@@ -142,6 +164,10 @@ export class AppServices {
       this.entries.delete(id)
       this.tokens.delete(entry.token)
       await this.stopEntry(entry)
+
+      if (this.disposed) {
+        return
+      }
     }
 
     for (const [id, declaration] of next) {
@@ -153,7 +179,8 @@ export class AppServices {
         id,
         declaration,
         token: crypto.randomBytes(32).toString('base64url'),
-        status: 'stopped',
+        desired: 'running',
+        phase: 'idle',
         error: null,
         logs: '',
         child: null,
@@ -164,7 +191,6 @@ export class AppServices {
         socketPath: null,
         socketDirectory: null,
         connections: new Set(),
-        stopped: false,
         startedAt: 0,
         restarts: 0,
         restartTimer: null
@@ -226,13 +252,18 @@ export class AppServices {
     return {
       id: entry.id,
       name: entry.declaration.name,
-      status: entry.status,
+      status:
+        entry.phase === 'idle' || entry.phase === 'stopping'
+          ? 'stopped'
+          : entry.phase === 'backoff'
+            ? 'failed'
+            : entry.phase,
       pid:
         entry.child?.exitCode === null && entry.child.signalCode === null
           ? (entry.child.pid ?? null)
           : null,
       url:
-        entry.status === 'ready' && entry.declaration.readinessPath
+        entry.phase === 'ready' && entry.declaration.readinessPath
           ? `${PREFIX}${entry.id}/${query.size ? `?${query}` : ''}`
           : null,
       logs: entry.logs,
@@ -254,7 +285,7 @@ export class AppServices {
 
     await this.run(entry)
 
-    if (entry.status !== 'ready') {
+    if (entry.phase !== 'ready') {
       throw new DomainError(
         'SERVICE_STOPPED',
         entry.error ?? 'The service stopped while starting',
@@ -266,24 +297,27 @@ export class AppServices {
   }
 
   private run(entry: ServiceEntry): Promise<void> {
-    if (!entry.starting && entry.status !== 'ready') {
-      if (entry.restartTimer) {
-        clearTimeout(entry.restartTimer)
-        entry.restartTimer = null
-      }
-
-      entry.stopped = false
+    if (
+      !entry.starting &&
+      (entry.phase === 'idle' ||
+        entry.phase === 'failed' ||
+        entry.phase === 'backoff')
+    ) {
+      entry.desired = 'running'
       entry.abort = new AbortController()
-      entry.status = 'starting'
-      entry.error = null
+      setPhase(entry, 'starting', null)
       entry.logs = ''
       entry.starting = this.launch(entry)
         .catch(async (error) => {
-          entry.error = error instanceof Error ? error.message : String(error)
-          entry.status = 'failed'
-          await this.terminate(entry)
-          this.restart(entry)
-          throw new DomainError('SERVICE_START_FAILED', entry.error, 503)
+          const message = error instanceof Error ? error.message : String(error)
+
+          if (entry.desired === 'running') {
+            setPhase(entry, 'failed', message)
+            await this.terminate(entry)
+            this.restart(entry)
+          }
+
+          throw new DomainError('SERVICE_START_FAILED', message, 503)
         })
         .finally(() => {
           entry.starting = null
@@ -296,7 +330,7 @@ export class AppServices {
   private restart(entry: ServiceEntry): void {
     if (
       entry.declaration.start !== 'always' ||
-      entry.stopped ||
+      entry.desired === 'stopped' ||
       entry.restartTimer ||
       this.disposed ||
       this.entries.get(entry.id) !== entry
@@ -312,12 +346,13 @@ export class AppServices {
     this.options.log(
       `Service ${entry.declaration.packageId} ${entry.declaration.name}: ${entry.error}; restarting in ${wait / 1_000}s\n${entry.logs.slice(-2_048)}`
     )
+    setPhase(entry, 'backoff', entry.error)
     entry.restartTimer = setTimeout(() => {
       entry.restartTimer = null
       void (async () => {
         await entry.stopping
 
-        if (!entry.stopped && !this.disposed) {
+        if (entry.desired === 'running' && !this.disposed) {
           await this.run(entry)
         }
       })().catch(() => undefined)
@@ -383,14 +418,21 @@ export class AppServices {
       child.once('close', () => resolve())
     })
     child.once('exit', (code, signal) => {
-      const crashed = entry.child === child && entry.status === 'ready'
+      const crashed =
+        entry.child === child &&
+        entry.phase === 'ready' &&
+        entry.desired === 'running'
 
       if (
         entry.child === child &&
-        (entry.status === 'ready' || entry.status === 'starting')
+        (entry.phase === 'ready' || entry.phase === 'starting')
       ) {
-        entry.status = 'failed'
-        entry.error ??= `Service exited (${signal ?? code ?? 'unknown status'})`
+        setPhase(
+          entry,
+          'failed',
+          entry.error ??
+            `Service exited (${signal ?? code ?? 'unknown status'})`
+        )
       }
 
       if (crashed) {
@@ -408,13 +450,19 @@ export class AppServices {
     })
     child.once('error', (error: NodeJS.ErrnoException) => {
       const executable = substitute(declaration.executable)
-      entry.error =
+
+      const message =
         error.code === 'ENOENT'
           ? `${executable} isn’t installed, or Treeport can’t find it. Install ${executable}, make sure it’s on the PATH Treeport starts with, then try again.`
           : error.code === 'EACCES'
             ? `Treeport found ${executable} but isn’t allowed to run it. Check that the file is executable, then try again.`
             : `Couldn’t start ${executable}: ${error.message}`
-      entry.status = 'failed'
+
+      if (entry.desired === 'running') {
+        setPhase(entry, 'failed', message)
+      } else {
+        entry.error = message
+      }
     })
 
     const append = (chunk: Buffer) => {
@@ -435,7 +483,9 @@ export class AppServices {
         throw new Error(entry.error)
       }
 
-      entry.status = 'ready'
+      if (entry.desired === 'running' && entry.phase === 'starting') {
+        setPhase(entry, 'ready', null)
+      }
 
       return
     }
@@ -474,7 +524,9 @@ export class AppServices {
           throw new Error(entry.error)
         }
 
-        entry.status = 'ready'
+        if (entry.desired === 'running' && entry.phase === 'starting') {
+          setPhase(entry, 'ready', null)
+        }
 
         return
       }
@@ -526,7 +578,7 @@ export class AppServices {
   }
 
   private stopEntry(entry: ServiceEntry): Promise<void> {
-    entry.stopped = true
+    entry.desired = 'stopped'
 
     if (entry.restartTimer) {
       clearTimeout(entry.restartTimer)
@@ -534,13 +586,12 @@ export class AppServices {
     }
 
     if (!entry.stopping) {
-      entry.status = 'stopped'
+      setPhase(entry, 'stopping', entry.error)
       entry.abort.abort()
       entry.stopping = (async () => {
         await entry.starting?.catch(() => undefined)
         await this.terminate(entry)
-        entry.status = 'stopped'
-        entry.error = null
+        setPhase(entry, 'idle', null)
       })().finally(() => {
         entry.stopping = null
       })
@@ -574,7 +625,7 @@ export class AppServices {
 
     const entry = this.entries.get(match[1]!)
 
-    if (!entry || entry.status !== 'ready' || !entry.socketPath) {
+    if (!entry || entry.phase !== 'ready' || !entry.socketPath) {
       if (response) {
         response.writeHead(503, {
           'content-type': 'text/plain',
