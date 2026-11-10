@@ -494,14 +494,19 @@ export async function main(
       })
     })
 
-    let shuttingDown = false
+    /** starting -> ready; starting | ready -> stopping */
+    type DaemonPhase = 'starting' | 'ready' | 'stopping'
+
+    // SAFETY: shutdown() writes phase from signal handlers during the awaits
+    // below; widen it so TypeScript does not narrow it to the initial value.
+    let phase = 'starting' as DaemonPhase
 
     function shutdown(signal: string): void {
-      if (shuttingDown) {
+      if (phase === 'stopping') {
         return
       }
 
-      shuttingDown = true
+      phase = 'stopping'
       diagnostics.shutdown(signal)
       devtoolsBridge.close()
       server.close()
@@ -533,7 +538,17 @@ export async function main(
     }
 
     await service.runEffect(service.activateStartup())
+
+    if (phase === 'stopping') {
+      return
+    }
+
     await Effect.runPromise(ownership.publish())
+
+    // SAFETY: a signal may have moved phase to stopping during publish.
+    if ((phase as DaemonPhase) === 'stopping') {
+      return
+    }
 
     appServices.start()
     diagnostics.event('ready', { apiUrl: config.apiUrl })
@@ -541,6 +556,8 @@ export async function main(
     console.log(`database: ${config.databasePath}`)
     console.log(`git: ${prerequisites.gitVersion}`)
     console.log(`terminal engine: ${terminalHost.record.pid}`)
+
+    phase = 'ready'
   } catch (error) {
     diagnostics.failed(inspect(error, { depth: 8, colors: false }), 'startup')
     await Effect.runPromise(Scope.close(resourceScope, Exit.fail(error))).catch(
