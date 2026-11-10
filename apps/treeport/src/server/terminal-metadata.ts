@@ -321,6 +321,59 @@ export class TerminalMetadataManager {
     )
   }
 
+  markAttentionUnread(
+    terminalId: string,
+    sequence: number
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    return this.service.terminalMetadataMutation(
+      terminalId,
+      Effect.gen(this, function* () {
+        const entry = this.entries.get(terminalId)
+
+        if (!entry) {
+          return yield* Effect.fail(
+            new DomainError(
+              'TERMINAL_NOT_FOUND',
+              `Terminal not found: ${terminalId}`,
+              404
+            )
+          )
+        }
+
+        const attention = entry.attention
+
+        if (!attention || attention.sequence !== sequence || attention.unread) {
+          return
+        }
+
+        const state = {
+          terminalId,
+          worktreeId: entry.worktreeId,
+          sequence,
+          occurredAt: attention.at,
+          reason: attention.reason,
+          unread: true
+        }
+
+        yield* this.attentionStateStore
+          .upsert(state)
+          .pipe(
+            Effect.orDie,
+            Effect.withSpan('treeport.terminal.attention.mark_unread.persist')
+          )
+        yield* Effect.sync(() => {
+          this.persistedAttention.set(terminalId, state)
+
+          if (this.entries.get(terminalId) === entry) {
+            entry.attention = { ...attention, unread: true }
+            entry.acknowledgedAttentionSequence = sequence - 1
+            this.publish(entry)
+          }
+        })
+      })
+    )
+  }
+
   removeTerminal(terminalId: string): void {
     const entry = this.entries.get(terminalId)
 

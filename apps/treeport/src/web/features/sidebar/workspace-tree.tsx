@@ -5,6 +5,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   DocumentDuplicateIcon,
+  EnvelopeIcon,
   FolderIcon,
   LinkSlashIcon,
   PencilIcon,
@@ -45,8 +46,10 @@ import {
 import { cn } from '../../lib/utils'
 import {
   terminalActivityLabel,
-  terminalDisplayTitle
+  terminalDisplayTitle,
+  terminalSessions
 } from '../../terminal-session'
+import { notifyError } from '../notifications/error-notifications'
 import { ReorderableItems } from '../../use-reorderable-items'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
 import { terminalLayoutDrag } from '../terminals/terminal-layout-drag'
@@ -845,6 +848,13 @@ export function WorkspaceTree({
                             terminalAttention.get(terminal.id) ?? null
 
                           const needsAttention = attention !== null
+
+                          const readAttention = needsAttention
+                            ? null
+                            : (terminalSessions
+                                .getAttentionMetadataSnapshot()
+                                .get(terminal.id) ?? null)
+
                           const activity = terminalActivity.get(terminal.id)
 
                           const working =
@@ -1035,6 +1045,25 @@ export function WorkspaceTree({
                                       >
                                         <LinkSlashIcon />
                                         Disconnect from split
+                                      </ContextMenuItem>
+                                    ) : null}
+                                    {readAttention ? (
+                                      <ContextMenuItem
+                                        onSelect={() => {
+                                          void terminalSessions
+                                            .markAttentionUnread(
+                                              terminal.id,
+                                              readAttention.sequence
+                                            )
+                                            .catch((error) => {
+                                              notifyError(error, {
+                                                operation: `mark terminal “${title}” as unread`
+                                              })
+                                            })
+                                        }}
+                                      >
+                                        <EnvelopeIcon />
+                                        Mark as unread
                                       </ContextMenuItem>
                                     ) : null}
                                     <ContextMenuItem

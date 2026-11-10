@@ -768,6 +768,18 @@ export const rpc = {
                 okResponseSchema,
                 { json }
               )
+          },
+          unread: {
+            $post: ({
+              param,
+              json
+            }: RequestInput<{ terminalId: string }, unknown>) =>
+              endpoint<{ ok: true }>(
+                'POST',
+                `/api/terminals/${id(param.terminalId)}/attention/unread`,
+                okResponseSchema,
+                { json }
+              )
           }
         },
         files: {

@@ -2181,8 +2181,9 @@ describe('TerminalSessionManager', () => {
       ...metadata,
       attention: { ...metadata.attention, unread: false }
     })
-    manager.applyRuntimeMetadata(metadata)
     expect(manager.getAttentionSnapshot().has('background')).toBe(false)
+    manager.applyRuntimeMetadata(metadata)
+    expect(manager.getAttentionSnapshot().has('background')).toBe(true)
 
     manager.replaceRuntimeMetadata([
       {
