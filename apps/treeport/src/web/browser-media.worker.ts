@@ -155,20 +155,29 @@ const paint = () => {
   }
 }
 
+type MediaPhase = 'connecting' | 'open' | 'backoff' | 'failed'
+
 let media: {
+  phase: MediaPhase
   url: string
   token: string
   socket: WebSocket | null
-  connected: boolean
   pending: string[]
   attempts: number
   timer: ReturnType<typeof setTimeout> | null
 } | null = null
 
-const setConnected = (connected: boolean) => {
-  if (media && media.connected !== connected) {
-    media.connected = connected
-    post({ type: 'media', connected })
+const setMediaPhase = (
+  current: NonNullable<typeof media>,
+  phase: MediaPhase
+) => {
+  const wasOpen = current.phase === 'open'
+  current.phase = phase
+
+  if (phase === 'failed') {
+    post({ type: 'media', connected: false, failed: true })
+  } else if (wasOpen !== (phase === 'open')) {
+    post({ type: 'media', connected: phase === 'open', failed: false })
   }
 }
 
@@ -179,7 +188,7 @@ const sendMedia = (
 ) => {
   const data = JSON.stringify(message)
 
-  if (media?.connected && media.socket) {
+  if (media?.phase === 'open' && media.socket) {
     media.socket.send(data)
   } else if (media && media.pending.length < 16) {
     media.pending.push(data)
@@ -197,9 +206,12 @@ const requestKey = () => {
 }
 
 const closeMedia = () => {
-  setConnected(false)
   const current = media
   media = null
+
+  if (current?.phase === 'open') {
+    post({ type: 'media', connected: false, failed: false })
+  }
 
   if (current?.timer) {
     clearTimeout(current.timer)
@@ -216,6 +228,7 @@ const openMedia = () => {
   }
 
   current.timer = null
+  setMediaPhase(current, 'connecting')
   const socket = new WebSocket(current.url, ['treeport-media', current.token])
   socket.binaryType = 'arraybuffer'
   current.socket = socket
@@ -230,7 +243,7 @@ const openMedia = () => {
       socket.send(pending)
     }
 
-    setConnected(true)
+    setMediaPhase(current, 'open')
 
     if (stream && stream.sequence > 0) {
       stream.keyRequested = false
@@ -252,14 +265,14 @@ const openMedia = () => {
     }
 
     current.socket = null
-    setConnected(false)
 
     if (current.attempts >= 8) {
-      closeMedia()
+      setMediaPhase(current, 'failed')
 
       return
     }
 
+    setMediaPhase(current, 'backoff')
     current.timer = setTimeout(
       openMedia,
       Math.min(2_000, 100 * 2 ** current.attempts++)
@@ -358,16 +371,16 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
   }
 
   if (data.type === 'connect') {
-    if (media?.token === data.token) {
+    if (media?.token === data.token && media.phase !== 'failed') {
       return
     }
 
     closeMedia()
     media = {
+      phase: 'connecting',
       url: data.url,
       token: data.token,
       socket: null,
-      connected: false,
       pending: [],
       attempts: 0,
       timer: null
@@ -378,7 +391,7 @@ scope.onmessage = ({ data }: MessageEvent<BrowserMediaWorkerCommand>) => {
   }
 
   if (data.type === 'wheel') {
-    if (media?.connected && media.socket) {
+    if (media?.phase === 'open' && media.socket) {
       media.socket.send(JSON.stringify(data.message))
     } else {
       post({ type: 'wheel', message: data.message })
