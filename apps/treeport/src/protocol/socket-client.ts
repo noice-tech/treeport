@@ -55,7 +55,7 @@ export interface ProtocolSocket<
       ...args: EventArguments<ClientEvents, Event>
     ): void
   }
-  connected: boolean
+  readonly connected: boolean
   connect(): this
   disconnect(): this
   emit<Event extends keyof ClientEvents & string>(
@@ -98,11 +98,12 @@ function websocketUrl(namespace: string): string {
   return base.href
 }
 
+type SocketPhase = 'idle' | 'connecting' | 'connected' | 'backoff' | 'closed'
+
 class EffectProtocolSocket<
   ServerEvents extends object,
   ClientEvents extends object
 > implements ProtocolSocket<ServerEvents, ClientEvents> {
-  connected = false
   readonly volatile = { emit: this.emit.bind(this) }
   readonly manager = {
     reconnection: (enabled: boolean) => {
@@ -126,7 +127,8 @@ class EffectProtocolSocket<
   private reconnectEnabled: boolean
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempt = 0
-  private manuallyClosed = false
+  private phase: SocketPhase = 'idle'
+  private rejection: string | null = null
 
   private readonly namespace: string
   private readonly options: ProtocolSocketOptions
@@ -140,6 +142,10 @@ class EffectProtocolSocket<
     if (options.autoConnect !== false) {
       this.connect()
     }
+  }
+
+  get connected(): boolean {
+    return this.phase === 'connected'
   }
 
   on(event: string, listener: (...args: any[]) => void): this {
@@ -174,7 +180,7 @@ class EffectProtocolSocket<
     const payload = JSON.stringify({ event, payload: args[0] ?? null })
 
     if (!Queue.unsafeOffer(this.outgoing, payload)) {
-      this.disconnect()
+      this.abortTransport()
     }
   }
 
@@ -183,7 +189,8 @@ class EffectProtocolSocket<
       return this
     }
 
-    this.manuallyClosed = false
+    this.rejection = null
+    this.transition('connecting')
     const auth = this.options.authorize?.() ?? this.options.auth ?? {}
 
     const handshake = JSON.stringify({
@@ -211,7 +218,7 @@ class EffectProtocolSocket<
         yield* socket.runRaw(
           (data) => {
             if (data instanceof Uint8Array) {
-              this.disconnect()
+              this.abortTransport()
 
               return
             }
@@ -221,7 +228,7 @@ class EffectProtocolSocket<
             try {
               value = JSON.parse(data)
             } catch {
-              this.disconnect()
+              this.abortTransport()
 
               return
             }
@@ -229,15 +236,13 @@ class EffectProtocolSocket<
             const message = parseSocketMessage(value)
 
             if (!message) {
-              this.disconnect()
+              this.abortTransport()
 
               return
             }
 
             if (message.event === 'connected') {
-              this.connected = true
-              this.reconnectAttempt = 0
-              this.dispatch('connect')
+              this.transition('connected')
 
               return
             }
@@ -248,8 +253,8 @@ class EffectProtocolSocket<
                 message.payload
               )
 
-              const reason = payload?.message ?? 'websocket error'
-              this.dispatch('connect_error', new Error(reason))
+              this.rejection = payload?.message ?? 'websocket error'
+              this.dispatch('connect_error', new Error(this.rejection))
 
               return
             }
@@ -277,16 +282,9 @@ class EffectProtocolSocket<
         return
       }
 
-      const wasConnected = this.connected
       this.fiber = null
       this.outgoing = null
-      this.connected = false
-
-      if (!wasConnected) {
-        this.dispatch('connect_error', new Error('websocket error'))
-      }
-
-      this.dispatch('disconnect', 'transport close')
+      this.transition('idle')
       this.scheduleReconnect()
     })
 
@@ -294,8 +292,6 @@ class EffectProtocolSocket<
   }
 
   disconnect(): this {
-    this.manuallyClosed = true
-
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -304,15 +300,33 @@ class EffectProtocolSocket<
     const fiber = this.fiber
     this.fiber = null
     this.outgoing = null
-    const wasConnected = this.connected
-    this.connected = false
     fiber?.unsafeInterruptAsFork(FiberId.none)
-
-    if (wasConnected) {
-      this.dispatch('disconnect', 'client disconnect')
-    }
+    this.transition('closed')
 
     return this
+  }
+
+  private abortTransport(): void {
+    this.outgoing = null
+    this.fiber?.unsafeInterruptAsFork(FiberId.none)
+  }
+
+  private transition(next: SocketPhase): void {
+    const previous = this.phase
+    this.phase = next
+
+    if (next === 'connected') {
+      this.reconnectAttempt = 0
+      this.dispatch('connect')
+    } else if (next === 'idle') {
+      if (previous === 'connecting' && this.rejection === null) {
+        this.dispatch('connect_error', new Error('websocket error'))
+      }
+
+      this.dispatch('disconnect', 'transport close')
+    } else if (next === 'closed' && previous === 'connected') {
+      this.dispatch('disconnect', 'client disconnect')
+    }
   }
 
   private dispatch(event: string, ...args: any[]): void {
@@ -320,10 +334,15 @@ class EffectProtocolSocket<
   }
 
   private scheduleReconnect(): void {
-    if (this.manuallyClosed || !this.reconnectEnabled || this.reconnectTimer) {
+    if (
+      this.phase !== 'idle' ||
+      !this.reconnectEnabled ||
+      this.reconnectTimer
+    ) {
       return
     }
 
+    this.transition('backoff')
     this.managerListeners.forEach((listener) => listener())
     const minimum = this.options.reconnectionDelay ?? 100
     const maximum = this.options.reconnectionDelayMax ?? 1_000
