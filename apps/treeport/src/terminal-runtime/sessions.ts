@@ -134,10 +134,17 @@ type RuntimeCommand =
       readonly batch: number
       readonly replaying: boolean
     }
-  | { readonly _tag: 'Reset' }
+  | {
+      readonly _tag: 'Reset'
+      readonly at: number
+      readonly batch: number
+      readonly replaying: boolean
+    }
   | { readonly _tag: 'Exit'; readonly exitCode: number; readonly at: number }
 
 type ProgramStatusRecord = Omit<TerminalActivity, 'since'>
+
+type ActivityModePhase = 'progress' | 'program'
 
 interface PauseLease {
   readonly release: Effect.Effect<void>
@@ -157,7 +164,8 @@ interface HostedTerminalSession extends Omit<HostedTerminal, 'status'> {
   pwd: string | null
   activity: TerminalActivity
   progressFiber: Fiber.RuntimeFiber<void, never> | null
-  statusRecords: Map<string, ProgramStatusRecord> | null
+  activityMode: ActivityModePhase
+  statusRecords: Map<string, ProgramStatusRecord>
   attention: TerminalAttention | null
   attentionBatch: number
   readonly pty: IPty | PersistentSession
@@ -727,13 +735,19 @@ export class TerminalHostSessions {
             null,
             restored
           ).pipe(
-            Effect.catchAll((error) =>
+            Effect.tapError((error) =>
               Effect.logError('Failed to relaunch restored terminal').pipe(
                 Effect.annotateLogs({
                   terminalId: input.terminalId,
                   cause: error.message
                 })
               )
+            ),
+            Effect.mapError(
+              (error) =>
+                new Error(
+                  `Failed to relaunch restored terminal: ${error.message}`
+                )
             )
           )
         }).pipe(
@@ -1386,7 +1400,12 @@ export class TerminalHostSessions {
           },
           reset: () => {
             if (hosted) {
-              Queue.unsafeOffer(hosted.runtimeCommands, { _tag: 'Reset' })
+              Queue.unsafeOffer(hosted.runtimeCommands, {
+                _tag: 'Reset',
+                at: hosted.processingTime,
+                batch: hosted.processingSequence,
+                replaying: hosted.replaying
+              })
             }
           },
           unknownOsc: null,
@@ -1519,7 +1538,8 @@ export class TerminalHostSessions {
         pwd: null,
         activity: IDLE_ACTIVITY,
         progressFiber: null,
-        statusRecords: null,
+        activityMode: 'progress',
+        statusRecords: new Map(),
         attention: null,
         attentionBatch: -1,
         pty: child,
@@ -1789,10 +1809,8 @@ export class TerminalHostSessions {
               session.progressFiber = null
             }
 
-            const records =
-              session.statusRecords ?? new Map<string, ProgramStatusRecord>()
-
-            session.statusRecords = records
+            session.activityMode = 'program'
+            const records = session.statusRecords
             const { report } = command
 
             if (report.state === 'clear') {
@@ -1827,7 +1845,7 @@ export class TerminalHostSessions {
           }
 
           case 'Prompt':
-            if (session.statusRecords) {
+            if (session.activityMode === 'program') {
               for (const [id, record] of session.statusRecords) {
                 if (record.state === 'working' || record.state === 'blocked') {
                   session.statusRecords.delete(id)
@@ -1839,11 +1857,21 @@ export class TerminalHostSessions {
 
             return
           case 'Reset':
-            session.statusRecords = null
+            session.activityMode = 'progress'
+            session.statusRecords.clear()
+
+            if (session.progressFiber) {
+              yield* Fiber.interrupt(session.progressFiber)
+              session.progressFiber = null
+            }
+
+            if (session.activity.state !== 'idle') {
+              yield* this.applyProgramStatus(session, command)
+            }
 
             return
           case 'Progress': {
-            if (session.statusRecords) {
+            if (session.activityMode === 'program') {
               return
             }
 
@@ -1948,8 +1976,7 @@ export class TerminalHostSessions {
     source: { at: number; batch: number; replaying: boolean }
   ): Effect.Effect<void> {
     return Effect.gen(function* () {
-      const records =
-        session.statusRecords ?? new Map<string, ProgramStatusRecord>()
+      const records = session.statusRecords
 
       let top: [string, ProgramStatusRecord] | null = null
 
