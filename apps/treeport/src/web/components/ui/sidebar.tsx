@@ -23,14 +23,44 @@ const SIDEBAR_WIDTH = '16rem'
 const SIDEBAR_WIDTH_MOBILE = 'min(88vw, 18rem)'
 const SIDEBAR_WIDTH_ICON = '3rem'
 
+type MobileDrawerPhase = 'closed' | 'open'
+
+type MobileDrawer = {
+  phase: MobileDrawerPhase
+  restoreTarget: HTMLElement | null
+  restoreOnClose: boolean
+}
+
+function transitionMobileDrawer(
+  current: MobileDrawer,
+  next: MobileDrawerPhase,
+  restoreFocus: boolean
+): MobileDrawer {
+  if (current.phase === next) {
+    return current
+  }
+
+  if (next === 'open') {
+    return {
+      phase: 'open',
+      restoreTarget:
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
+      restoreOnClose: true
+    }
+  }
+
+  return { ...current, phase: 'closed', restoreOnClose: restoreFocus }
+}
+
 type SidebarContextProps = {
   state: 'expanded' | 'collapsed'
   open: boolean
   setOpen: (open: boolean) => void
   openMobile: boolean
   setOpenMobile: React.Dispatch<React.SetStateAction<boolean>>
-  mobileRestoreFocusRef: React.RefObject<HTMLElement | null>
-  skipMobileFocusRestoreRef: React.RefObject<boolean>
+  mobileDrawer: MobileDrawer
   closeMobileWithoutFocusRestore: () => void
   isMobile: boolean
   toggleSidebar: () => void
@@ -69,31 +99,37 @@ const SidebarProvider = React.forwardRef<
     ref
   ) => {
     const isMobile = useIsMobile()
-    const [openMobile, setOpenMobileState] = React.useState(false)
-    const mobileRestoreFocusRef = React.useRef<HTMLElement | null>(null)
-    const skipMobileFocusRestoreRef = React.useRef(false)
+
+    const [mobileDrawer, setMobileDrawer] = React.useState<MobileDrawer>({
+      phase: 'closed',
+      restoreTarget: null,
+      restoreOnClose: true
+    })
+
+    const openMobile = mobileDrawer.phase === 'open'
 
     const setOpenMobile = React.useCallback<
       React.Dispatch<React.SetStateAction<boolean>>
     >((value) => {
-      setOpenMobileState((current) => {
-        const next = value instanceof Function ? value(current) : value
+      setMobileDrawer((current) => {
+        const next =
+          value instanceof Function ? value(current.phase === 'open') : value
 
-        if (!current && next) {
-          mobileRestoreFocusRef.current =
-            document.activeElement instanceof HTMLElement
-              ? document.activeElement
-              : null
-        }
-
-        return next
+        return transitionMobileDrawer(current, next ? 'open' : 'closed', true)
       })
     }, [])
 
     const closeMobileWithoutFocusRestore = React.useCallback(() => {
-      skipMobileFocusRestoreRef.current = true
-      setOpenMobileState(false)
+      setMobileDrawer((current) =>
+        transitionMobileDrawer(current, 'closed', false)
+      )
     }, [])
+
+    if (!isMobile && openMobile) {
+      setMobileDrawer((current) =>
+        transitionMobileDrawer(current, 'closed', false)
+      )
+    }
 
     const [_open, _setOpen] = React.useState(defaultOpen)
     const open = openProp ?? _open
@@ -127,12 +163,21 @@ const SidebarProvider = React.forwardRef<
         isMobile,
         openMobile,
         setOpenMobile,
-        mobileRestoreFocusRef,
-        skipMobileFocusRestoreRef,
+        mobileDrawer,
         closeMobileWithoutFocusRestore,
         toggleSidebar
       }),
-      [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
+      [
+        state,
+        open,
+        setOpen,
+        isMobile,
+        openMobile,
+        setOpenMobile,
+        mobileDrawer,
+        closeMobileWithoutFocusRestore,
+        toggleSidebar
+      ]
     )
 
     return (
@@ -182,14 +227,8 @@ const Sidebar = React.forwardRef<
     },
     ref
   ) => {
-    const {
-      isMobile,
-      state,
-      openMobile,
-      setOpenMobile,
-      mobileRestoreFocusRef,
-      skipMobileFocusRestoreRef
-    } = useSidebar()
+    const { isMobile, state, openMobile, setOpenMobile, mobileDrawer } =
+      useSidebar()
 
     if (isMobile) {
       return (
@@ -206,10 +245,11 @@ const Sidebar = React.forwardRef<
             onCloseAutoFocus={(event) => {
               event.preventDefault()
 
-              if (skipMobileFocusRestoreRef.current) {
-                skipMobileFocusRestoreRef.current = false
-              } else if (mobileRestoreFocusRef.current?.isConnected) {
-                mobileRestoreFocusRef.current.focus()
+              if (
+                mobileDrawer.restoreOnClose &&
+                mobileDrawer.restoreTarget?.isConnected
+              ) {
+                mobileDrawer.restoreTarget.focus()
               }
             }}
           >
