@@ -40,12 +40,17 @@ const IDLE_ACTIVITY: TerminalActivity = {
 
 type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 
+type TerminalRuntimePhase = 'idle' | 'subscribed' | 'failed'
+
 interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   worktreeId: string
   status: TerminalRecord['status']
   titleState: TerminalTitleState
   titleStateEvents: number
-  runtimeScope: Scope.CloseableScope | null
+  runtime: {
+    phase: TerminalRuntimePhase
+    scope: Scope.CloseableScope | null
+  }
   acknowledgedAttentionSequence: number
 }
 
@@ -224,7 +229,7 @@ export class TerminalMetadataManager {
           attention,
           titleState: { title: null, command: null, running: null },
           titleStateEvents: 0,
-          runtimeScope: null,
+          runtime: { phase: 'idle', scope: null },
           acknowledgedAttentionSequence: attention
             ? attention.unread
               ? attention.sequence - 1
@@ -459,12 +464,13 @@ export class TerminalMetadataManager {
     entry: TerminalMetadataEntry
   ): Effect.Effect<void, unknown, ApplicationServices> {
     return Effect.gen(this, function* () {
-      if (entry.runtimeScope) {
+      if (entry.runtime.phase === 'subscribed') {
         return
       }
 
       const runtimeScope = yield* Scope.make()
-      entry.runtimeScope = runtimeScope
+      this.setRuntimePhase(entry, 'subscribed', runtimeScope)
+      let streamEndPhase: TerminalRuntimePhase = 'idle'
       yield* Effect.forkIn(
         Stream.runForEach(
           this.terminalHost.runtimeEvents(entry.terminalId),
@@ -511,10 +517,19 @@ export class TerminalMetadataManager {
               }
             })
         ).pipe(
-          Effect.catchAll((error) =>
-            Effect.logError(
+          Effect.catchAll((error) => {
+            streamEndPhase = 'failed'
+
+            return Effect.logError(
               `Terminal runtime stream failed for ${entry.terminalId}`
             ).pipe(Effect.annotateLogs({ cause: String(error) }))
+          }),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (entry.runtime.scope === runtimeScope) {
+                this.setRuntimePhase(entry, streamEndPhase)
+              }
+            })
           )
         ),
         runtimeScope
@@ -525,7 +540,15 @@ export class TerminalMetadataManager {
       const [state, titleState] = yield* Effect.all([
         this.terminalHost.runtimeState(entry.terminalId),
         this.terminalHost.terminalTitleState(entry.terminalId)
-      ])
+      ]).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            if (entry.runtime.scope === runtimeScope) {
+              this.setRuntimePhase(entry, 'failed')
+            }
+          })
+        )
+      )
 
       if (this.entries.get(entry.terminalId) !== entry) {
         return
@@ -552,13 +575,21 @@ export class TerminalMetadataManager {
     })
   }
 
-  private stopRuntime(entry: TerminalMetadataEntry): void {
-    const runtimeScope = entry.runtimeScope
-    entry.runtimeScope = null
+  private setRuntimePhase(
+    entry: TerminalMetadataEntry,
+    phase: TerminalRuntimePhase,
+    scope: Scope.CloseableScope | null = null
+  ): void {
+    const previousScope = entry.runtime.scope
+    entry.runtime = { phase, scope }
 
-    if (runtimeScope) {
-      this.service.forkApplicationEffect(Scope.close(runtimeScope, Exit.void))
+    if (previousScope) {
+      this.service.forkApplicationEffect(Scope.close(previousScope, Exit.void))
     }
+  }
+
+  private stopRuntime(entry: TerminalMetadataEntry): void {
+    this.setRuntimePhase(entry, 'idle')
 
     this.update(entry, {
       activity:
