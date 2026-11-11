@@ -1,4 +1,4 @@
-import { appIconSvg, DEFAULT_ICON_ACCENT } from '@treeport/theme/app-icon'
+import { appIconDataUrl } from '@treeport/theme/app-icon'
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import {
   type PointerEvent as ReactPointerEvent,
@@ -89,7 +89,7 @@ export function App() {
   const connectionReady = state?.connection.status === 'ready' && computer
 
   const darwin = state?.platform === 'darwin'
-  const iconAccent = state?.theme.accent ?? DEFAULT_ICON_ACCENT
+  const iconAccent = state?.theme.accent ?? null
   const iconMode = state?.theme.mode
   const iconBadge = state ? !state.packaged : false
 
@@ -102,16 +102,11 @@ export function App() {
     let current = true
 
     const render = async () => {
-      const systemMode = lightScheme.matches ? 'light' : 'dark'
       const image = new Image()
-      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-        appIconSvg({
-          accent: iconAccent,
-          mode: iconMode === 'auto' ? systemMode : iconMode,
-          badge: iconBadge,
-          framing: 'dock'
-        })
-      )}`
+      image.src = appIconDataUrl(
+        { mode: iconMode, accent: iconAccent },
+        { badge: iconBadge, framing: 'dock' }
+      )
       await image.decode()
       const canvas = document.createElement('canvas')
       canvas.width = 1024

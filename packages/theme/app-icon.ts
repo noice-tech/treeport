@@ -9,7 +9,7 @@ const TOP_TIER = 'M12 3L5.5 11.5h13Z'
 const BOTTOM_TIER = 'M12 7.5L3.5 18.5h17Z'
 const TRUNK = 'M10.6 18h2.8v3.2a.9.9 0 0 1-.9.9h-1a.9.9 0 0 1-.9-.9Z'
 
-export const DEFAULT_ICON_ACCENT = '#6ccefe'
+export const DEFAULT_ACCENT = '#6ccefe'
 
 function mix(color: string, target: string, amount: number) {
   const channel = (hex: string, index: number) =>
@@ -79,4 +79,22 @@ ${tier(TOP_TIER, 'front', 'top-clip')}
 <g fill="#18181b"><path fill-rule="evenodd" d="M584 766h29c27 0 41 14 41 37s-14 37-41 37h-29zm18 16v42h10c16 0 24-7 24-21s-8-21-24-21z"/><path d="M669 766h54v16h-36v13h32v16h-32v13h36v16h-54z"/><path d="M735 766h20l17 51 17-51h20l-27 74h-20z"/></g>`
       : ''
   }</svg>`
+}
+
+export function appIconDataUrl(
+  theme: { mode: 'auto' | 'dark' | 'light'; accent: string | null },
+  { badge, framing }: { badge: boolean; framing: 'dock' | 'favicon' }
+) {
+  const systemMode = window.matchMedia('(prefers-color-scheme: light)').matches
+    ? 'light'
+    : 'dark'
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    appIconSvg({
+      accent: theme.accent ?? DEFAULT_ACCENT,
+      mode: theme.mode === 'auto' ? systemMode : theme.mode,
+      badge,
+      framing
+    })
+  )}`
 }
