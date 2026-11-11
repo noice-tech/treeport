@@ -703,7 +703,7 @@ export function WorkspaceTree({
                                     className={cn(
                                       'size-4 shrink-0 min-[701px]:size-3.5!',
                                       selectedWorktree?.id === worktree.id
-                                        ? 'text-zinc-300'
+                                        ? 'text-accent-400'
                                         : 'text-zinc-500'
                                     )}
                                     aria-hidden="true"
