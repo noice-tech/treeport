@@ -203,6 +203,7 @@ function WorktreeShell({
       <span className="flex min-w-12 flex-1 flex-col">
         <span
           className={cn('truncate', titlePending && 'worktree-title-pending')}
+          title={name}
         >
           {name}
         </span>
