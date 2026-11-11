@@ -1,5 +1,4 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
-import { GitBranchIcon } from 'lucide-react'
 import {
   ArrowUturnLeftIcon,
   ChevronDownIcon,
@@ -147,6 +146,38 @@ function TreeDecorationLabel({
   )
 }
 
+function TreeIcon({ className }: { className: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path className="tree-icon-trunk" pathLength={1} d="M12 21V3" />
+      <path
+        className="tree-icon-tier-low"
+        pathLength={1}
+        d="M12 16l-6.5 4M12 16l6.5 4"
+      />
+      <path
+        className="tree-icon-tier-mid"
+        pathLength={1}
+        d="M12 11.5l-5 3.5M12 11.5l5 3.5"
+      />
+      <path
+        className="tree-icon-tier-top"
+        pathLength={1}
+        d="M12 7 8.5 9.5M12 7l3.5 2.5"
+      />
+    </svg>
+  )
+}
+
 function WorktreeShell({
   name,
   title,
@@ -156,7 +187,6 @@ function WorktreeShell({
   selected = false,
   pending = false,
   titlePending = false,
-  busy = false,
   id,
   className,
   ariaLabel,
@@ -171,7 +201,6 @@ function WorktreeShell({
   selected?: boolean
   pending?: boolean
   titlePending?: boolean
-  busy?: boolean
   id?: string
   className?: string
   ariaLabel?: string | undefined
@@ -189,7 +218,6 @@ function WorktreeShell({
         : 'text-zinc-200',
     onClick && 'hover:bg-white/5 hover:text-zinc-50 active:bg-white/8',
     'max-[700px]:flex-1 max-[700px]:hover:bg-transparent max-[700px]:active:bg-transparent',
-    (pending || busy) && 'motion-safe:animate-pulse',
     pending && 'pointer-events-none',
     className
   )
@@ -676,7 +704,6 @@ export function WorkspaceTree({
                               decorations={worktree.decorations}
                               selected={selectedWorktree?.id === worktree.id}
                               className="min-[701px]:pr-7"
-                              busy={Boolean(pendingRemovals[worktree.id])}
                               ariaLabel={
                                 pendingRemovals[worktree.id] === 'checking'
                                   ? `${worktree.name}, preparing removal`
@@ -688,30 +715,16 @@ export function WorkspaceTree({
                                 onOpenBrowserUrl(project, worktree, url)
                               }
                               icon={
-                                pendingRemovals[worktree.id] ? (
-                                  <GitBranchIcon
-                                    className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <svg
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.75"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    className={cn(
-                                      'size-4 shrink-0 min-[701px]:size-3.5!',
-                                      selectedWorktree?.id === worktree.id
+                                <TreeIcon
+                                  className={cn(
+                                    'size-4 shrink-0 min-[701px]:size-3.5!',
+                                    pendingRemovals[worktree.id]
+                                      ? 'tree-icon-removing text-rose-400'
+                                      : selectedWorktree?.id === worktree.id
                                         ? 'text-zinc-300'
                                         : 'text-zinc-500'
-                                    )}
-                                    aria-hidden="true"
-                                  >
-                                    <path d="M12 3v18M12 7 8.5 9.5M12 7l3.5 2.5M12 11.5l-5 3.5M12 11.5l5 3.5M12 16l-6.5 4M12 16l6.5 4" />
-                                  </svg>
-                                )
+                                  )}
+                                />
                               }
                             />
                             <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:shrink-0 max-[700px]:opacity-100">
@@ -1190,10 +1203,7 @@ export function WorkspaceTree({
                         title={`Creating ${pending.typedName}`}
                         pending
                         icon={
-                          <GitBranchIcon
-                            className="worktree-progress-icon size-4 shrink-0 stroke-accent-400 stroke-[1.5] min-[701px]:size-3.5!"
-                            aria-hidden="true"
-                          />
+                          <TreeIcon className="tree-icon-growing size-4 shrink-0 text-accent-400 min-[701px]:size-3.5!" />
                         }
                       />
                     </SidebarMenuItem>
