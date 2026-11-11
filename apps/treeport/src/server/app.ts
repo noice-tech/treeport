@@ -2283,6 +2283,27 @@ export function createApp({
         Effect.withSpan('treeport.terminal.attention.acknowledge.request')
       )
     ),
+    route(
+      'POST',
+      '/api/terminals/:terminalId/attention/unread',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(terminalAttentionAcknowledgementSchema)
+        yield* Effect.annotateCurrentSpan({
+          'treeport.terminal.id': params.terminalId!
+        })
+        yield* operation(() =>
+          service.terminals.getKnownTerminal(params.terminalId!)
+        )
+        yield* operation(() =>
+          metadata.markAttentionUnread(params.terminalId!, body.sequence)
+        )
+
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      }).pipe(
+        Effect.withSpan('treeport.terminal.attention.mark_unread.request')
+      )
+    ),
     ...(['/api/files', '/api/terminals/:terminalId/files'] as const).map(
       (routePath) =>
         route(

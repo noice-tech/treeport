@@ -110,9 +110,7 @@ export class TerminalRuntimeMetadataStore {
     const attentionIsCurrent =
       incomingAttention !== null &&
       (!currentAttention ||
-        incomingAttention.sequence > currentAttention.sequence ||
-        (incomingAttention.sequence === currentAttention.sequence &&
-          (currentAttention.unread || !incomingAttention.unread)))
+        incomingAttention.sequence >= currentAttention.sequence)
 
     const attentionMetadataChanged =
       attentionIsCurrent &&
@@ -408,6 +406,18 @@ export class TerminalRuntimeMetadataStore {
       this.attentionMetadata = attentionMetadata
       this.emit()
     }
+  }
+
+  async markAttentionUnread(
+    terminalId: string,
+    sequence: number
+  ): Promise<void> {
+    await parseResponse(
+      rpc.api.terminals[':terminalId'].attention.unread.$post({
+        param: { terminalId },
+        json: { sequence }
+      })
+    )
   }
 
   acknowledgeAttention(terminalId: string, sequence: number): Promise<void> {

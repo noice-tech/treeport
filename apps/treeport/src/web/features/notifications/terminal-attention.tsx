@@ -51,7 +51,16 @@ export function TerminalAttention({
     } satisfies Presence
   })
 
+  const readWhileSelected = useRef<{
+    terminalId: string
+    sequence: number
+  } | null>(null)
+
   useLayoutEffect(() => {
+    if (latest.current.selectedTerminalId !== selectedTerminalId) {
+      readWhileSelected.current = null
+    }
+
     latest.current.projects = projects
     latest.current.selectedTerminalId = selectedTerminalId
     latest.current.titles = titles
@@ -61,7 +70,7 @@ export function TerminalAttention({
     const current = latest.current
     const terminalId = current.selectedTerminalId
 
-    if (!terminalId || !current.presence.focused || !current.presence.visible) {
+    if (!terminalId) {
       return
     }
 
@@ -69,7 +78,22 @@ export function TerminalAttention({
       .getAttentionMetadataSnapshot()
       .get(terminalId)
 
-    if (!attention?.unread) {
+    if (!attention) {
+      return
+    }
+
+    if (!attention.unread) {
+      readWhileSelected.current = { terminalId, sequence: attention.sequence }
+
+      return
+    }
+
+    if (
+      !current.presence.focused ||
+      !current.presence.visible ||
+      (readWhileSelected.current?.terminalId === terminalId &&
+        readWhileSelected.current.sequence === attention.sequence)
+    ) {
       return
     }
 

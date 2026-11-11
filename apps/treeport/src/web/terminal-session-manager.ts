@@ -108,4 +108,8 @@ export class TerminalSessionManager {
   acknowledgeAttention(terminalId: string, sequence: number): Promise<void> {
     return this.runtimeMetadata.acknowledgeAttention(terminalId, sequence)
   }
+
+  markAttentionUnread(terminalId: string, sequence: number): Promise<void> {
+    return this.runtimeMetadata.markAttentionUnread(terminalId, sequence)
+  }
 }
