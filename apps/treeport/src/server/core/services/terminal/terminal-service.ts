@@ -823,7 +823,7 @@ export class TerminalService {
 
       const folder =
         folderPath ??
-        (yield* terminalHost.runtimeState(terminalId).pipe(Effect.orDie))?.cwd
+        (yield* terminalHost.terminalCwd(terminalId).pipe(Effect.orDie))
 
       if (!folder) {
         return yield* Effect.fail(

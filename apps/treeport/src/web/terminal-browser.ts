@@ -99,9 +99,8 @@ export function terminalTitleInTree(title: string, treePath: string): string {
 
   const treeRootLength = [...titlePath.matchAll(/\/|$/gu)]
     .map((match) => match.index)
-    .findLast(
-      (index) => index > 0 && treePath.endsWith(titlePath.slice(0, index))
-    )
+    .reverse()
+    .find((index) => index > 0 && treePath.endsWith(titlePath.slice(0, index)))
 
   return treeRootLength === undefined
     ? title

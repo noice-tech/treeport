@@ -94,6 +94,7 @@ export interface TerminalSessionBackend {
     updatedAt: string
   ): Effect.Effect<void, unknown>
   listTerminals(worktreeId: string): Effect.Effect<HostedTerminal[], unknown>
+  terminalCwd(terminalId: string): Effect.Effect<string | null, unknown>
   listProcesses(worktreeId: string): Effect.Effect<TerminalProcess[], unknown>
   terminalState(
     terminalId: string

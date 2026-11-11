@@ -554,6 +554,12 @@ export class TerminalHostClient
     return this.request('runtimeState', { terminalId })
   }
 
+  terminalCwd(terminalId: string) {
+    return this.runtimeState(terminalId).pipe(
+      Effect.map((state) => state?.cwd ?? null)
+    )
+  }
+
   write(
     terminalId: string,
     data: string | Buffer,
