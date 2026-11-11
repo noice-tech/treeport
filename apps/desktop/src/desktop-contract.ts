@@ -83,6 +83,7 @@ export interface LocalServerState {
 
 export interface DesktopShellState {
   appVersion: string
+  packaged: boolean
   platform: NodeJS.Platform
   fullscreen: boolean
   selectedComputerId?: string

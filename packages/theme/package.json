@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
-    "./styles.css": "./styles.css"
+    "./styles.css": "./styles.css",
+    "./app-icon": "./app-icon.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "catalog:",

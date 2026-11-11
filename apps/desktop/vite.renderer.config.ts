@@ -45,7 +45,8 @@ export default defineConfig({
           !(
             repositoryPath.startsWith('packages/theme/') &&
             repositoryPath.endsWith('.css')
-          )
+          ) &&
+          repositoryPath !== 'packages/theme/app-icon.ts'
         ) {
           this.error(
             `Desktop shell cannot bundle ${repositoryPath}. Only shell code and shared theme assets belong here.`

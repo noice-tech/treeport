@@ -1,10 +1,11 @@
 import type { TreeportTheme } from '@treeport/desktop-bridge'
+import { appIconDataUrl, DEFAULT_ACCENT } from '@treeport/theme/app-icon'
 
 const THEME_STORAGE_KEY = 'treeport-theme'
 const ACCENT_STORAGE_KEY = 'treeport-accent'
 
 export const ACCENT_PRESETS = [
-  { label: 'Tide', color: '#6ccefe' },
+  { label: 'Tide', color: DEFAULT_ACCENT },
   { label: 'Moss', color: '#7bd997' },
   { label: 'Amber', color: '#f2b458' },
   { label: 'Rose', color: '#f7a7b3' },
@@ -50,6 +51,12 @@ export function applyTheme(theme: ReturnType<typeof storedTheme>) {
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute('content', mode === 'light' ? '#fafcfe' : '#09090b')
+  document
+    .querySelector('link[rel="icon"]')
+    ?.setAttribute(
+      'href',
+      appIconDataUrl(theme, { badge: false, framing: 'favicon' })
+    )
   localStorage.setItem(THEME_STORAGE_KEY, theme.mode)
   localStorage.setItem(ACCENT_STORAGE_KEY, theme.accent)
   window.treeportDesktop?.setTheme?.(theme)
