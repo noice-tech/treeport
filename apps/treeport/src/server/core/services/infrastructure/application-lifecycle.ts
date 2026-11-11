@@ -17,6 +17,7 @@ import {
 import { MutationLocks } from './mutation-locks.ts'
 import {
   ProjectObservationOperations,
+  ProjectRegistrationOperations,
   ProjectSnapshotOperations,
   WorktreeOperations
 } from '../domain-services.ts'
@@ -100,6 +101,9 @@ export class ApplicationLifecycle {
       const worktreeMutations = yield* WorktreeMutations
 
       yield* observations.reconcile()
+      yield* Effect.flatMap(ProjectRegistrationOperations, (registration) =>
+        registration.registerHomeProject()
+      )
 
       const daemons = yield* ApplicationDaemons
       const snapshots = yield* ProjectSnapshotOperations

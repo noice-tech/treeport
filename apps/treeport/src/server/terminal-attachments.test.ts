@@ -109,6 +109,7 @@ class HostDouble implements TerminalAttachmentBackend {
   runtimeState() {
     return Effect.succeed({
       title: null,
+      cwd: null,
       status: this.status,
       activity: {
         state: 'idle' as const,

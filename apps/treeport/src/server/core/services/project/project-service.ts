@@ -618,7 +618,13 @@ export class ProjectService {
       yield* projectObservations.enqueue(
         projectId,
         Effect.gen(function* () {
-          yield* projectStore.getProject(projectId)
+          const project = yield* projectStore.getProject(projectId)
+
+          if (project.isHome) {
+            return yield* Effect.fail(
+              new DomainError('PROJECT_IS_HOME', 'Home cannot be closed', 409)
+            )
+          }
 
           if ((yield* projectStore.projectOpenState(projectId)) !== true) {
             return

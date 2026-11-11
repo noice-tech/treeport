@@ -74,6 +74,7 @@ import {
 import {
   projectResponseSchema,
   projectsResponseSchema,
+  terminalProjectResponseSchema,
   type ProjectRecord
 } from '#protocol/project'
 import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
@@ -354,7 +355,20 @@ async function canonical(value: string): Promise<string> {
 }
 
 async function projects(): Promise<ProjectRecord[]> {
-  return (await request('/api/projects', projectsResponseSchema)).projects
+  const all = (await request('/api/projects', projectsResponseSchema)).projects
+
+  for (const project of all) {
+    for (const worktree of project.worktrees) {
+      if (
+        worktree.terminals.some((terminal) => terminal.id === contextTerminalId)
+      ) {
+        contextProjectId = project.id
+        contextWorktreeId = worktree.id
+      }
+    }
+  }
+
+  return all
 }
 
 function pathContains(candidate: string, parent: string): boolean {
@@ -1314,6 +1328,10 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
 
   contextCommand.action(async () => {
+    if (contextTerminalId) {
+      await projects()
+    }
+
     const projectId = contextProjectId
     const worktreeId = contextWorktreeId
     const terminalId = contextTerminalId
@@ -1864,18 +1882,47 @@ async function main(args: string[]): Promise<void> {
     .command('add')
     .description('Register a folder or Git repository')
     .argument('<path>', 'folder path')
+    .option(
+      '--move-terminal [terminal-id]',
+      'move a terminal (default: this one) and the terminals it started into the project'
+    )
     .option('--json', 'emit machine-readable JSON')
 
   projectAddCommand.action(async (repository: string) => {
-    const body = await request('/api/projects', projectResponseSchema, {
-      method: 'POST',
-      body: JSON.stringify({ path: await canonical(repository) })
-    })
+    const { moveTerminal } = projectAddCommand.opts<{
+      moveTerminal?: string | true
+    }>()
+
+    const movedTerminalId =
+      moveTerminal === true ? contextTerminalId : moveTerminal
+
+    if (moveTerminal !== undefined && !movedTerminalId) {
+      throw new CliError(
+        '--move-terminal needs a terminal ID outside a Treeport terminal',
+        2
+      )
+    }
+
+    const body = movedTerminalId
+      ? await request(
+          `/api/terminals/${encodeURIComponent(movedTerminalId)}/project`,
+          terminalProjectResponseSchema,
+          {
+            method: 'POST',
+            body: JSON.stringify({ path: await canonical(repository) })
+          }
+        )
+      : await request('/api/projects', projectResponseSchema, {
+          method: 'POST',
+          body: JSON.stringify({ path: await canonical(repository) })
+        })
 
     print(
       body.project,
       () =>
-        `Registered ${body.project.name} (${body.project.id})\n${body.project.rootPath}`
+        `Registered ${body.project.name} (${body.project.id})\n${body.project.rootPath}${
+          movedTerminalId ? `\nMoved terminal ${movedTerminalId} into it` : ''
+        }`
     )
   })
 

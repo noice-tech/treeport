@@ -29,6 +29,7 @@ const IDLE: TerminalActivity = {
 
 type HostRuntimeState = {
   title: string | null
+  cwd: string | null
   status: 'running' | 'exited'
   activity: TerminalActivity
   attention: {
@@ -50,6 +51,7 @@ class HostDouble implements TerminalAttachmentBackend {
   }
   state: HostRuntimeState = {
     title: null,
+    cwd: null,
     status: 'running',
     activity: IDLE,
     attention: null

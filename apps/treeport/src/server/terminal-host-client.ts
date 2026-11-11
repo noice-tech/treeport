@@ -554,6 +554,12 @@ export class TerminalHostClient
     return this.request('runtimeState', { terminalId })
   }
 
+  terminalCwd(terminalId: string) {
+    return this.runtimeState(terminalId).pipe(
+      Effect.map((state) => state?.cwd ?? null)
+    )
+  }
+
   write(
     terminalId: string,
     data: string | Buffer,
@@ -608,6 +614,12 @@ export class TerminalHostClient
 
   inputTerminal(terminalId: string, steps: readonly TerminalInputStep[]) {
     return this.request('input', { terminalId, steps })
+  }
+
+  moveTerminal(terminalId: string, worktreeId: string, updatedAt: string) {
+    return this.request('move', { terminalId, worktreeId, updatedAt }).pipe(
+      Effect.asVoid
+    )
   }
 
   renameTerminal(terminalId: string, name: string, updatedAt: string) {

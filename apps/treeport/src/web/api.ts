@@ -23,7 +23,8 @@ import {
   directoryBrowseResponseSchema,
   projectResponseSchema,
   projectsResponseSchema,
-  recentProjectsResponseSchema
+  recentProjectsResponseSchema,
+  terminalProjectResponseSchema
 } from '#protocol/project'
 import {
   gitDiffResponseSchema,
@@ -781,6 +782,15 @@ export const rpc = {
                 { json }
               )
           }
+        },
+        project: {
+          $post: ({ param }: RequestInput<{ terminalId: string }>) =>
+            endpoint<{ project: ProjectRecord; terminal: TerminalRecord }>(
+              'POST',
+              `/api/terminals/${id(param.terminalId)}/project`,
+              terminalProjectResponseSchema,
+              { json: {} }
+            )
         },
         files: {
           $post: (

@@ -202,6 +202,11 @@ const terminalHostInputSchemas = {
     name: Schema.String,
     updatedAt: Schema.String
   }),
+  move: Schema.Struct({
+    terminalId: nonEmptyString,
+    worktreeId: nonEmptyString,
+    updatedAt: Schema.String
+  }),
   processes: worktreeIdSchema,
   titleState: terminalIdSchema,
   signal: Schema.Struct({
@@ -231,6 +236,7 @@ const TERMINAL_HOST_REQUEST_METHODS = [
   'resize',
   'capture',
   'rename',
+  'move',
   'processes',
   'titleState',
   'signal',
@@ -308,6 +314,7 @@ export interface TerminalHostResults {
   unsubscribeRuntime: null
   runtimeState: {
     title: string | null
+    cwd: string | null
     status: HostedTerminal['status']
     activity: TerminalActivity
     attention: TerminalAttention | null
@@ -320,6 +327,7 @@ export interface TerminalHostResults {
   resize: null
   capture: string | null
   rename: null
+  move: null
   processes: Array<{ pid: number; terminalId: string }>
   titleState: TerminalTitleState | null
   signal: null
@@ -420,6 +428,7 @@ const terminalHostResultSchemas = {
   runtimeState: Schema.NullOr(
     Schema.Struct({
       title: Schema.NullOr(Schema.String),
+      cwd: Schema.NullOr(Schema.String),
       status: terminalStatusSchema,
       activity: terminalActivitySchema,
       attention: Schema.NullOr(terminalAttentionSchema)
@@ -436,6 +445,7 @@ const terminalHostResultSchemas = {
   resize: nullResultSchema,
   capture: Schema.NullOr(Schema.String),
   rename: nullResultSchema,
+  move: nullResultSchema,
   processes: Schema.Array(
     Schema.Struct({ pid: positiveInteger, terminalId: Schema.String })
   ),

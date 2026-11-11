@@ -1,19 +1,22 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { ProjectRecord } from '#protocol/project'
 import type { TerminalAfterExit, TerminalRecord } from '#protocol/terminal'
 import type { TerminalSize } from '#protocol/terminal-session'
 import type { WorktreeRecord } from '#protocol/worktree'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { workspaceItemOrders } from '../../database-schema.ts'
 import { DomainError } from '../../domain.ts'
 import type { WorktreeSetupTask } from '../../setup.ts'
 import type { TerminalSessionBackend } from '../../terminal.ts'
 import {
   ProjectObservationOperations,
+  ProjectRegistrationOperations,
   ProjectSnapshotOperations
 } from '../domain-services.ts'
 import {
@@ -794,6 +797,130 @@ export class TerminalService {
       }
 
       return refreshed
+    })
+  }
+
+  /**
+   * Registers a folder (by default the terminal's current one) as a project and
+   * moves the terminal and the terminals it started into that project's tree.
+   */
+  moveTerminalToProject(
+    terminalId: string,
+    folderPath: string | null
+  ): TerminalEffect<{ project: ProjectRecord; terminal: TerminalRecord }> {
+    const getTerminal = this.getTerminal.bind(this)
+    const listProjects = this.listProjects.bind(this)
+
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const registration = yield* ProjectRegistrationOperations
+      const terminalHost = yield* TerminalHostPort
+      const terminal = yield* getTerminal(terminalId)
+
+      const folder =
+        folderPath ??
+        (yield* terminalHost.terminalCwd(terminalId).pipe(Effect.orDie))
+
+      if (!folder) {
+        return yield* Effect.fail(
+          new DomainError(
+            'TERMINAL_FOLDER_UNKNOWN',
+            'The terminal has not reported its current folder yet',
+            409
+          )
+        )
+      }
+
+      const project = yield* registration.registerProject(folder)
+
+      if (project.isHome) {
+        return yield* Effect.fail(
+          new DomainError(
+            'TERMINAL_FOLDER_IS_HOME',
+            'Change to a folder inside your home folder first',
+            409
+          )
+        )
+      }
+
+      const realFolder = yield* Effect.tryPromise(() =>
+        fs.realpath(folder)
+      ).pipe(Effect.orElseSucceed(() => folder))
+
+      const target =
+        project.worktrees
+          .filter(
+            (worktree) =>
+              realFolder === worktree.path ||
+              realFolder.startsWith(`${worktree.path}${path.sep}`)
+          )
+          .sort((left, right) => right.path.length - left.path.length)[0] ??
+        project.worktrees[0]!
+
+      const source = (yield* listProjects())
+        .flatMap((candidate) => candidate.worktrees)
+        .find((worktree) => worktree.id === terminal.worktreeId)!
+
+      if (target.id === source.id) {
+        return { project, terminal }
+      }
+
+      const movedIds = [terminal.id]
+
+      for (const candidate of source.terminals) {
+        if (
+          candidate.parentTerminalId &&
+          movedIds.includes(candidate.parentTerminalId) &&
+          !movedIds.includes(candidate.id)
+        ) {
+          movedIds.push(candidate.id)
+        }
+      }
+
+      const timestamp = now()
+
+      for (const movedId of movedIds) {
+        yield* terminalHost
+          .moveTerminal(movedId, target.id, timestamp)
+          .pipe(Effect.orDie)
+      }
+
+      yield* database
+        .execute('terminal.service.move', (db) =>
+          db
+            .delete(workspaceItemOrders)
+            .where(
+              and(
+                eq(workspaceItemOrders.surface, 'terminal'),
+                inArray(workspaceItemOrders.itemId, movedIds)
+              )
+            )
+        )
+        .pipe(Effect.orDie)
+
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('worktree.updated', { worktreeId: source.id })
+        events.publish('worktree.updated', { worktreeId: target.id })
+
+        for (const movedId of movedIds) {
+          events.publish('terminal.updated', {
+            worktreeId: target.id,
+            terminalId: movedId
+          })
+        }
+      })
+
+      const projects = yield* listProjects()
+
+      return {
+        project: projects.find((candidate) => candidate.id === project.id)!,
+        terminal: yield* getTerminal(terminalId)
+      }
     })
   }
 

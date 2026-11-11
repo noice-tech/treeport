@@ -457,7 +457,7 @@ test.describe('desktop terminal input and removal', () => {
     page
   }) => {
     const mocked = await mockApp(page)
-    await page.getByRole('button', { name: 'topic', exact: true }).click()
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page).toHaveURL(/wt_topic/)
     let acceptRemoval: () => void = () => {}
 
@@ -479,7 +479,7 @@ test.describe('desktop terminal input and removal', () => {
     await expect.poll(() => mocked.removeRequests()).toBe(1)
 
     await expect(
-      page.getByRole('button', { name: 'topic', exact: true })
+      page.locator('#worktree-wt_topic:not([aria-label])')
     ).toHaveCount(0)
     await expect(page).toHaveURL(/wt_main/)
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
@@ -500,7 +500,7 @@ test.describe('desktop terminal input and removal', () => {
     })
     await pendingRefresh
     await expect(
-      page.getByRole('button', { name: 'topic', exact: true })
+      page.locator('#worktree-wt_topic:not([aria-label])')
     ).toHaveCount(0)
 
     mocked.setRemovalCleanup('failed', [], 'Git refused removal')
@@ -512,7 +512,7 @@ test.describe('desktop terminal input and removal', () => {
     await page.getByRole('button', { name: 'Remove tree', exact: true }).click()
     await expect.poll(() => mocked.removeRequests()).toBe(2)
     await expect(
-      page.getByRole('button', { name: 'topic', exact: true })
+      page.locator('#worktree-wt_topic:not([aria-label])')
     ).toHaveCount(0)
 
     mocked.completeRemoval()
@@ -529,7 +529,7 @@ test.describe('desktop terminal input and removal', () => {
     })
     await removedRefresh
     await expect(
-      page.getByRole('button', { name: 'topic', exact: true })
+      page.locator('#worktree-wt_topic:not([aria-label])')
     ).toHaveCount(0)
     await expect(page).toHaveURL(/wt_main/)
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)

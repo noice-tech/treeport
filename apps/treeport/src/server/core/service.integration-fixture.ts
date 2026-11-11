@@ -179,6 +179,9 @@ export function integrationService(
     renameTerminal: run(
       application.terminals.renameTerminal.bind(application.terminals)
     ),
+    moveTerminalToProject: run(
+      application.terminals.moveTerminalToProject.bind(application.terminals)
+    ),
     reorderTerminals: run(
       application.terminals.reorderTerminals.bind(application.terminals)
     ),
@@ -865,6 +868,23 @@ export class TerminalHostDouble implements TerminalSessionBackend {
         terminal.updatedAt = updatedAt
       }
     })
+  }
+
+  moveTerminal(terminalId: string, worktreeId: string, updatedAt: string) {
+    return Effect.sync(() => {
+      const terminal = [...this.system.sessions.values()].find(
+        (candidate) => candidate.id === terminalId
+      )
+
+      if (terminal) {
+        terminal.worktreeId = worktreeId
+        terminal.updatedAt = updatedAt
+      }
+    })
+  }
+
+  terminalCwd() {
+    return Effect.succeed(null)
   }
 
   listProcesses() {

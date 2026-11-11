@@ -86,6 +86,27 @@ export function terminalDisplayTitle(
   )
 }
 
+export function terminalTitleInTree(title: string, treePath: string): string {
+  const titlePath = title.startsWith('~/')
+    ? title.slice(1)
+    : title.startsWith('/')
+      ? title
+      : null
+
+  if (titlePath === null) {
+    return title
+  }
+
+  const treeRootLength = [...titlePath.matchAll(/\/|$/gu)]
+    .map((match) => match.index)
+    .reverse()
+    .find((index) => index > 0 && treePath.endsWith(titlePath.slice(0, index)))
+
+  return treeRootLength === undefined
+    ? title
+    : `${treePath.split('/').at(-1)}${titlePath.slice(treeRootLength)}`
+}
+
 export interface TerminalInputModifiers {
   ctrl: boolean
   alt: boolean

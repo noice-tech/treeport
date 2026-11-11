@@ -73,6 +73,7 @@ import { useProjectEventsBridge } from './project-events-bridge'
 import { useWorkspacePresence } from './features/presence/use-workspace-presence'
 import { WorkspaceViewers } from './features/presence/workspace-viewers'
 import {
+  projectsQueryKey,
   projectsQueryOptions,
   launcherDefinitionsQueryOptions,
   launchersQueryOptions
@@ -1436,6 +1437,50 @@ function WorkspaceApp() {
     navigateToTerminal(terminal)
   }
 
+  const makeProjectFromTerminal = async (terminal: TerminalRecord) => {
+    const moved = await parseResponse(
+      rpc.api.terminals[':terminalId'].project.$post({
+        param: { terminalId: terminal.id }
+      })
+    ).catch((error) => {
+      notifyError(error, { operation: 'make a project from this folder' })
+
+      return null
+    })
+
+    if (!moved) {
+      return
+    }
+
+    const nextProjects = [
+      ...projects
+        .filter((project) => project.id !== moved.project.id)
+        .map((project) => ({
+          ...project,
+          worktrees: project.worktrees.map((worktree) => ({
+            ...worktree,
+            terminals: worktree.terminals.filter(
+              (candidate) =>
+                !moved.project.worktrees.some((target) =>
+                  target.terminals.some((item) => item.id === candidate.id)
+                )
+            )
+          }))
+        })),
+      moved.project
+    ]
+
+    queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, nextProjects)
+    const target = targetForTerminal(nextProjects, moved.terminal)
+
+    if (target) {
+      focusSurface('terminal')
+      await navigateToWorkspace(target)
+    }
+
+    await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+  }
+
   const selectApp = (app: BrowserApp | WebApp) => {
     focusSurface('tool')
     revealTool(app, false)
@@ -1941,6 +1986,9 @@ function WorkspaceApp() {
           onRetryProjects={() => void refetchProjects()}
           onSelectTerminal={selectTerminal}
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
+          onMakeProjectFromTerminal={(terminal) =>
+            void makeProjectFromTerminal(terminal)
+          }
           onReorderTerminals={reorderTerminals}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
@@ -2178,7 +2226,11 @@ function WorkspaceApp() {
         open={dialog?.type === 'app'}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef}
-        worktreeName={appDialogWorktree?.name ?? null}
+        worktreeName={
+          appDialogProject?.isHome
+            ? appDialogProject.name
+            : (appDialogWorktree?.name ?? null)
+        }
         launchers={availableLaunchers}
         launcherDiagnostics={launcherDiagnostics}
         launchersLoading={launcherDefinitionsQuery.isPending}

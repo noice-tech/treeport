@@ -52,10 +52,12 @@ import {
 import {
   browseDirectoryQuerySchema,
   directoryBrowseResponseSchema,
+  moveTerminalToProjectSchema,
   projectResponseSchema,
   projectsResponseSchema,
   recentProjectsResponseSchema,
   registerProjectSchema,
+  terminalProjectResponseSchema,
   updateProjectSchema
 } from '#protocol/project'
 import {
@@ -2282,6 +2284,24 @@ export function createApp({
       }).pipe(
         Effect.withSpan('treeport.terminal.attention.acknowledge.request')
       )
+    ),
+    route(
+      'POST',
+      '/api/terminals/:terminalId/project',
+      Effect.gen(function* () {
+        const params = yield* routeParams
+        const body = yield* requestBody(moveTerminalToProjectSchema)
+
+        return jsonContractResponse(
+          terminalProjectResponseSchema,
+          yield* operation(() =>
+            service.terminals.moveTerminalToProject(
+              params.terminalId!,
+              body.path ?? null
+            )
+          )
+        )
+      }).pipe(Effect.withSpan('treeport.terminal.project.request'))
     ),
     route(
       'POST',

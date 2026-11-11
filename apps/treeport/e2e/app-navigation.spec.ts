@@ -10,9 +10,10 @@ test.describe('desktop worktree terminal UI', () => {
       })
     ).toBeVisible()
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
-    await expect(
-      page.getByRole('button', { name: /^(main tree|topic)$/ })
-    ).toHaveText(['main tree', 'topic'])
+    await expect(page.locator('.worktree-row')).toHaveText([
+      'main tree',
+      'topic'
+    ])
 
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
