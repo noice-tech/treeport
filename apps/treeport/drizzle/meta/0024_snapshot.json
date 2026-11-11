@@ -53,11 +53,7 @@
       "indexes": {
         "browser_apps_worktree_order_idx": {
           "name": "browser_apps_worktree_order_idx",
-          "columns": [
-            "worktree_id",
-            "created_at",
-            "id"
-          ],
+          "columns": ["worktree_id", "created_at", "id"],
           "isUnique": false
         }
       },
@@ -66,12 +62,8 @@
           "name": "browser_apps_worktree_id_worktrees_id_fk",
           "tableFrom": "browser_apps",
           "tableTo": "worktrees",
-          "columnsFrom": [
-            "worktree_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["worktree_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -144,10 +136,7 @@
       "indexes": {
         "terminal_presets_order_idx": {
           "name": "terminal_presets_order_idx",
-          "columns": [
-            "created_at",
-            "id"
-          ],
+          "columns": ["created_at", "id"],
           "isUnique": false
         }
       },
@@ -238,18 +227,12 @@
       "indexes": {
         "operations_worktree_idx": {
           "name": "operations_worktree_idx",
-          "columns": [
-            "worktree_id"
-          ],
+          "columns": ["worktree_id"],
           "isUnique": false
         },
         "operations_project_kind_status_idx": {
           "name": "operations_project_kind_status_idx",
-          "columns": [
-            "project_id",
-            "kind",
-            "status"
-          ],
+          "columns": ["project_id", "kind", "status"],
           "isUnique": false
         }
       },
@@ -258,12 +241,8 @@
           "name": "operations_project_id_projects_id_fk",
           "tableFrom": "operations",
           "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -271,12 +250,8 @@
           "name": "operations_worktree_id_worktrees_id_fk",
           "tableFrom": "operations",
           "tableTo": "worktrees",
-          "columnsFrom": [
-            "worktree_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["worktree_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -432,16 +407,12 @@
       "indexes": {
         "projects_repository_path_unique": {
           "name": "projects_repository_path_unique",
-          "columns": [
-            "repository_path"
-          ],
+          "columns": ["repository_path"],
           "isUnique": true
         },
         "projects_repository_identity_idx": {
           "name": "projects_repository_identity_idx",
-          "columns": [
-            "repository_identity"
-          ],
+          "columns": ["repository_identity"],
           "isUnique": true,
           "where": "\"projects\".\"repository_identity\" IS NOT NULL"
         },
@@ -457,9 +428,7 @@
         },
         "projects_home_idx": {
           "name": "projects_home_idx",
-          "columns": [
-            "is_home"
-          ],
+          "columns": ["is_home"],
           "isUnique": true,
           "where": "\"projects\".\"is_home\" = 1"
         }
@@ -546,12 +515,8 @@
           "name": "terminal_attention_states_worktree_id_worktrees_id_fk",
           "tableFrom": "terminal_attention_states",
           "tableTo": "worktrees",
-          "columnsFrom": [
-            "worktree_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["worktree_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -615,9 +580,7 @@
       "indexes": {
         "web_app_permission_definition_idx": {
           "name": "web_app_permission_definition_idx",
-          "columns": [
-            "definition_id"
-          ],
+          "columns": ["definition_id"],
           "isUnique": false
         }
       },
@@ -668,18 +631,12 @@
       "indexes": {
         "web_app_storage_app_key_idx": {
           "name": "web_app_storage_app_key_idx",
-          "columns": [
-            "app_id",
-            "key"
-          ],
+          "columns": ["app_id", "key"],
           "isUnique": true
         },
         "web_app_storage_definition_key_idx": {
           "name": "web_app_storage_definition_key_idx",
-          "columns": [
-            "definition_id",
-            "key"
-          ],
+          "columns": ["definition_id", "key"],
           "isUnique": true
         }
       },
@@ -688,12 +645,8 @@
           "name": "web_app_storage_app_id_web_apps_id_fk",
           "tableFrom": "web_app_storage",
           "tableTo": "web_apps",
-          "columnsFrom": [
-            "app_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["app_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -771,11 +724,7 @@
       "indexes": {
         "web_apps_worktree_order_idx": {
           "name": "web_apps_worktree_order_idx",
-          "columns": [
-            "worktree_id",
-            "created_at",
-            "id"
-          ],
+          "columns": ["worktree_id", "created_at", "id"],
           "isUnique": false
         }
       },
@@ -784,12 +733,8 @@
           "name": "web_apps_worktree_id_worktrees_id_fk",
           "tableFrom": "web_apps",
           "tableTo": "worktrees",
-          "columnsFrom": [
-            "worktree_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["worktree_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -833,19 +778,12 @@
       "indexes": {
         "workspace_item_orders_item_idx": {
           "name": "workspace_item_orders_item_idx",
-          "columns": [
-            "surface",
-            "item_id"
-          ],
+          "columns": ["surface", "item_id"],
           "isUnique": true
         },
         "workspace_item_orders_worktree_idx": {
           "name": "workspace_item_orders_worktree_idx",
-          "columns": [
-            "worktree_id",
-            "surface",
-            "position"
-          ],
+          "columns": ["worktree_id", "surface", "position"],
           "isUnique": false
         }
       },
@@ -854,12 +792,8 @@
           "name": "workspace_item_orders_worktree_id_worktrees_id_fk",
           "tableFrom": "workspace_item_orders",
           "tableTo": "worktrees",
-          "columnsFrom": [
-            "worktree_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["worktree_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1008,24 +942,17 @@
       "indexes": {
         "worktrees_path_unique": {
           "name": "worktrees_path_unique",
-          "columns": [
-            "path"
-          ],
+          "columns": ["path"],
           "isUnique": true
         },
         "worktrees_project_idx": {
           "name": "worktrees_project_idx",
-          "columns": [
-            "project_id"
-          ],
+          "columns": ["project_id"],
           "isUnique": false
         },
         "worktrees_git_key_idx": {
           "name": "worktrees_git_key_idx",
-          "columns": [
-            "project_id",
-            "git_worktree_key"
-          ],
+          "columns": ["project_id", "git_worktree_key"],
           "isUnique": true,
           "where": "\"worktrees\".\"git_worktree_key\" IS NOT NULL"
         }
@@ -1035,12 +962,8 @@
           "name": "worktrees_project_id_projects_id_fk",
           "tableFrom": "worktrees",
           "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
