@@ -379,6 +379,9 @@ const shellBridge = Object.freeze({
   setOverlayOpen(open: boolean) {
     ipcRenderer.send('shell:set-overlay-open', open)
   },
+  setDockIcon(png: string) {
+    ipcRenderer.send('shell:set-dock-icon', png)
+  },
   computerActivity(): Promise<ComputerActivity[]> {
     return ipcRenderer.invoke('shell:computer-activity')
   },

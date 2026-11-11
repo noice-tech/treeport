@@ -38,6 +38,7 @@ const webResolver = resolver.cloneWithOptions({
 const desktopPackages = new Set([
   '@treeport/desktop-bridge',
   '@treeport/theme/styles.css',
+  '@treeport/theme/app-icon',
   '@treeport/browser-host',
   '@treeport/browser-host/clipboard',
   '@treeport/browser-host/video',

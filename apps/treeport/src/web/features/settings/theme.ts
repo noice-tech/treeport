@@ -1,4 +1,5 @@
 import type { TreeportTheme } from '@treeport/desktop-bridge'
+import { appIconSvg } from '@treeport/theme/app-icon'
 
 const THEME_STORAGE_KEY = 'treeport-theme'
 const ACCENT_STORAGE_KEY = 'treeport-accent'
@@ -50,6 +51,17 @@ export function applyTheme(theme: ReturnType<typeof storedTheme>) {
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute('content', mode === 'light' ? '#fafcfe' : '#09090b')
+  document.querySelector('link[rel="icon"]')?.setAttribute(
+    'href',
+    `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+      appIconSvg({
+        accent: theme.accent,
+        mode,
+        badge: false,
+        framing: 'favicon'
+      })
+    )}`
+  )
   localStorage.setItem(THEME_STORAGE_KEY, theme.mode)
   localStorage.setItem(ACCENT_STORAGE_KEY, theme.accent)
   window.treeportDesktop?.setTheme?.(theme)

@@ -1,3 +1,4 @@
+import { appIconSvg, DEFAULT_ICON_ACCENT } from '@treeport/theme/app-icon'
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import {
   type PointerEvent as ReactPointerEvent,
@@ -86,6 +87,50 @@ export function App() {
   const showTitlebar = state !== null
 
   const connectionReady = state?.connection.status === 'ready' && computer
+
+  const darwin = state?.platform === 'darwin'
+  const iconAccent = state?.theme.accent ?? DEFAULT_ICON_ACCENT
+  const iconMode = state?.theme.mode
+  const iconBadge = state ? !state.packaged : false
+
+  useEffect(() => {
+    if (!darwin || !iconMode) {
+      return
+    }
+
+    const lightScheme = window.matchMedia('(prefers-color-scheme: light)')
+    let current = true
+
+    const render = async () => {
+      const systemMode = lightScheme.matches ? 'light' : 'dark'
+      const image = new Image()
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+        appIconSvg({
+          accent: iconAccent,
+          mode: iconMode === 'auto' ? systemMode : iconMode,
+          badge: iconBadge,
+          framing: 'dock'
+        })
+      )}`
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = 1024
+      canvas.height = 1024
+      canvas.getContext('2d')?.drawImage(image, 0, 0)
+
+      if (current) {
+        window.treeportShell.setDockIcon(canvas.toDataURL('image/png'))
+      }
+    }
+
+    void render()
+    lightScheme.addEventListener('change', render)
+
+    return () => {
+      current = false
+      lightScheme.removeEventListener('change', render)
+    }
+  }, [darwin, iconAccent, iconMode, iconBadge])
 
   useEffect(() => {
     window.treeportShell.setOverlayOpen(

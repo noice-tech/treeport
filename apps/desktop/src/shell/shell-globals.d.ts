@@ -11,6 +11,7 @@ declare global {
   interface Window {
     readonly treeportShell: Readonly<{
       setOverlayOpen: (open: boolean) => void
+      setDockIcon: (png: string) => void
       computerActivity: () => Promise<ComputerActivity[]>
       getState: () => Promise<DesktopShellState>
       onState: (listener: (state: DesktopShellState) => void) => () => void

@@ -11,6 +11,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   protocol,
   screen,
@@ -205,6 +206,7 @@ function navigationState(): DesktopNavigationState {
 function shellState(): DesktopShellState {
   const state: DesktopShellState = {
     appVersion: app.getVersion(),
+    packaged: app.isPackaged,
     platform: process.platform,
     fullscreen,
     computers: store?.summaries() ?? [],
@@ -1375,6 +1377,17 @@ function registerIpc(): void {
           localBrowser: isLoopbackUrl(new URL(computer.origin))
         }
       : null
+  })
+  ipcMain.on('shell:set-dock-icon', (event, value) => {
+    const parsed = z
+      .string()
+      .startsWith('data:image/png;base64,')
+      .max(8_000_000)
+      .safeParse(value)
+
+    if (isTrustedShellEvent(event) && parsed.success) {
+      app.dock?.setIcon(nativeImage.createFromDataURL(parsed.data))
+    }
   })
   ipcMain.on('shell:set-overlay-open', (event, value) => {
     const parsed = z.boolean().safeParse(value)
